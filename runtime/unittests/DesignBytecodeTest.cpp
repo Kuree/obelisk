@@ -11972,92 +11972,104 @@ TEST(DesignBytecode, PackedCanonicalLoadsMatchBitwiseBoundsAndPublication) {
   constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
-  for (bool fourState : {false, true}) {
-    for (uint32_t width : {1, 7, 8, 31, 32, 63, 64, 65, 127, 130}) {
-      SCOPED_TRACE(width);
-      SCOPED_TRACE(fourState);
-      Fixture fixture;
-      fixture.bytecode = makeAutomaticFrameLoadBytecode();
-      size_t limbs = (width + 63) / 64;
-      size_t resultSize = limbs * 8 * (fourState ? 2 : 1);
-      auto &bytes = fixture.bytecode;
-      bytes[layoutOffset + 9 * 40] =
-          fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
-      put32(bytes, layoutOffset + 9 * 40 + 4, width);
-      put64(bytes, layoutOffset + 9 * 40 + 16, resultSize);
-      put64(bytes, functionOffset + 56, 144 + resultSize);
-      instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-                  OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 130, 0);
-      put64(bytes, 32, imageChecksum(bytes));
-      fixture.execution.bytecode = bytes.data();
-      fixture.execution.bytecode_size = bytes.size();
-      fixture.execution.checksum = imageChecksum(bytes);
-      fixture.execution.state_bit_count = 256;
-      fixture.layout.frame_size = std::max<size_t>(8, resultSize);
-      fixture.layout.checksum = frameChecksum(fixture.layout);
-      obelisk_rt_context *context = nullptr;
-      ASSERT_EQ(
-          obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-          OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 53, 130),
-                OBELISK_RT_OK);
-      context->stateValue.assign(4, UINT64_C(0x96e1a5c387f0b42d));
-      context->stateUnknown.assign(4, UINT64_C(0x1042088102044080));
-      uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
-      uint8_t publishedValue = 0xa5, publishedUnknown = 0x3c;
-      ClockConditionPublicationView publication{
-          obelisk_rt_v1_native_handle_offset(root, 64), 8, 0, &publishedValue,
-          &publishedUnknown};
-      for (bool overlay : {false, true}) {
-        context->observerForcesCanonicalPlane = overlay;
-        context->conditionPublication = overlay ? &publication : nullptr;
-        for (int64_t offset : {-3, 0, 1, 63, 129, 130, 131}) {
-          SCOPED_TRACE(offset);
-          SCOPED_TRACE(overlay);
-          uint64_t selected = obelisk_rt_v1_native_handle_offset(root, offset);
-          obelisk_rt_process_instance_v1 *instance = nullptr;
-          ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
-                                                          &instance),
-                    OBELISK_RT_OK);
-          void *frame = nullptr;
-          uint64_t frameSize = 0;
-          ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame,
-                                                         &frameSize),
-                    OBELISK_RT_OK);
-          std::memcpy(frame, &selected, sizeof(selected));
-          obelisk_rt_fragment_action_v1 action{};
-          ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                        instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-                    OBELISK_RT_OK);
-          std::vector<uint64_t> expected(resultSize / 8, 0);
-          for (uint32_t bit = 0; bit != width; ++bit) {
-            int64_t source = offset + bit;
-            bool valid = source >= 0 && source < 130;
-            bool v = valid && ((context->stateValue[(53 + source) / 64] >>
-                                ((53 + source) % 64)) &
-                               1);
-            bool x = valid ? ((context->stateUnknown[(53 + source) / 64] >>
-                               ((53 + source) % 64)) &
-                              1)
-                           : fourState;
-            if (overlay && source >= 64 && source < 72) {
-              v = (publishedValue >> (source - 64)) & 1;
-              x = (publishedUnknown >> (source - 64)) & 1;
+  for (bool boundedStatic : {false, true}) {
+    SCOPED_TRACE(boundedStatic);
+    for (bool fourState : {false, true}) {
+      for (uint32_t width : {1, 7, 8, 31, 32, 63, 64, 65, 127, 130}) {
+        SCOPED_TRACE(width);
+        SCOPED_TRACE(fourState);
+        Fixture fixture;
+        fixture.bytecode = makeAutomaticFrameLoadBytecode();
+        size_t limbs = (width + 63) / 64;
+        size_t resultSize = limbs * 8 * (fourState ? 2 : 1);
+        auto &bytes = fixture.bytecode;
+        bytes[layoutOffset + 9 * 40] =
+            fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
+        put32(bytes, layoutOffset + 9 * 40 + 4, width);
+        put64(bytes, layoutOffset + 9 * 40 + 16, resultSize);
+        put64(bytes, functionOffset + 56, 144 + resultSize);
+        instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
+                    OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 130, 0);
+        put64(bytes, 32, imageChecksum(bytes));
+        fixture.execution.bytecode = bytes.data();
+        fixture.execution.bytecode_size = bytes.size();
+        fixture.execution.checksum = imageChecksum(bytes);
+        fixture.execution.state_bit_count = 256;
+        fixture.layout.frame_size = std::max<size_t>(8, resultSize);
+        fixture.layout.checksum = frameChecksum(fixture.layout);
+        obelisk_rt_context *context = nullptr;
+        ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+                                                          &context),
+                  OBELISK_RT_OK);
+        if (boundedStatic)
+          ASSERT_EQ(
+              obelisk_rt_v1_native_state_register_static(context, 1, 53, 130),
+              OBELISK_RT_OK);
+        context->stateValue.assign(4, UINT64_C(0x96e1a5c387f0b42d));
+        context->stateUnknown.assign(4, UINT64_C(0x1042088102044080));
+        uint64_t root =
+            boundedStatic ? obelisk_rt_v1_native_state_static_handle(1) : 0;
+        uint8_t publishedValue = 0xa5, publishedUnknown = 0x3c;
+        ClockConditionPublicationView publication{
+            obelisk_rt_v1_native_handle_offset(root, 64), 8, 0, &publishedValue,
+            &publishedUnknown};
+        for (bool overlay : {false, true}) {
+          context->observerForcesCanonicalPlane = overlay;
+          context->conditionPublication = overlay ? &publication : nullptr;
+          for (int64_t offset : {-3, 0, 1, 63, 129, 130, 131}) {
+            // Negative flat offsets have no stable-handle representation;
+            // signed partial views cross this ABI through bounded handles.
+            if (!boundedStatic && offset < 0)
+              continue;
+            SCOPED_TRACE(offset);
+            SCOPED_TRACE(overlay);
+            uint64_t selected =
+                obelisk_rt_v1_native_handle_offset(root, offset);
+            obelisk_rt_process_instance_v1 *instance = nullptr;
+            ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                                                            &instance),
+                      OBELISK_RT_OK);
+            void *frame = nullptr;
+            uint64_t frameSize = 0;
+            ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame,
+                                                           &frameSize),
+                      OBELISK_RT_OK);
+            std::memcpy(frame, &selected, sizeof(selected));
+            obelisk_rt_fragment_action_v1 action{};
+            ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                          instance, context, OBELISK_RT_TIER_BYTECODE, &action),
+                      OBELISK_RT_OK);
+            std::vector<uint64_t> expected(resultSize / 8, 0);
+            for (uint32_t bit = 0; bit != width; ++bit) {
+              int64_t source = offset + bit;
+              bool valid = source >= 0 && source < (boundedStatic ? 130 : 256);
+              int64_t absolute = (boundedStatic ? 53 : 0) + source;
+              bool v =
+                  valid &&
+                  ((context->stateValue[absolute / 64] >> (absolute % 64)) & 1);
+              bool x = valid ? ((context->stateUnknown[absolute / 64] >>
+                                 (absolute % 64)) &
+                                1)
+                             : fourState;
+              if (overlay && source >= 64 && source < 72) {
+                v = (publishedValue >> (source - 64)) & 1;
+                x = (publishedUnknown >> (source - 64)) & 1;
+              }
+              if (v && (fourState || !x))
+                expected[bit / 64] |= uint64_t{1} << (bit % 64);
+              if (fourState && x)
+                expected[limbs + bit / 64] |= uint64_t{1} << (bit % 64);
             }
-            if (v && (fourState || !x))
-              expected[bit / 64] |= uint64_t{1} << (bit % 64);
-            if (fourState && x)
-              expected[limbs + bit / 64] |= uint64_t{1} << (bit % 64);
+            std::vector<uint64_t> actual(expected.size());
+            std::memcpy(actual.data(), frame, resultSize);
+            EXPECT_EQ(actual, expected);
+            EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance),
+                      OBELISK_RT_OK);
           }
-          std::vector<uint64_t> actual(expected.size());
-          std::memcpy(actual.data(), frame, resultSize);
-          EXPECT_EQ(actual, expected);
-          EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance),
-                    OBELISK_RT_OK);
         }
+        context->conditionPublication = nullptr;
+        obelisk_rt_v1_context_destroy(context);
       }
-      context->conditionPublication = nullptr;
-      obelisk_rt_v1_context_destroy(context);
     }
   }
 }

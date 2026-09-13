@@ -87,18 +87,6 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
   instance->ownership_context = nullptr;
 }
 
-bool byteBit(const uint8_t *bytes, uint64_t bit) {
-  return (bytes[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
-}
-
-void setByteBit(uint8_t *bytes, uint64_t bit, bool value) {
-  uint8_t mask = static_cast<uint8_t>(1u << (bit % 8));
-  if (value)
-    bytes[bit / 8] |= mask;
-  else
-    bytes[bit / 8] &= static_cast<uint8_t>(~mask);
-}
-
 bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                     const uint8_t *value,
                                     const uint8_t *unknown, uint64_t bitCount) {
@@ -817,19 +805,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
         bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset)) {
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
-      bool readGlobal = !context->observerForcesCanonicalPlane &&
-                        isStaticControlAOT(context);
-      uint64_t globalValue = loadPackedBytes(globalPlane, source, bitWidth);
-      uint64_t canonicalValue =
-          loadPackedBits(*canonicalPlane, source, bitWidth);
-      uint64_t overrideMask = 0;
-      if (!context->forceMask.empty())
-        overrideMask |= loadPackedBits(context->forceMask, source, bitWidth);
-      if (!context->assignMask.empty())
-        overrideMask |= loadPackedBits(context->assignMask, source, bitWidth);
-      uint64_t value = readGlobal ? globalValue
-                                  : (canonicalValue & ~overrideMask) |
-                                        (globalValue & overrideMask);
+      bool readGlobal =
+          !context->observerForcesCanonicalPlane && isStaticControlAOT(context);
+      uint64_t value;
+      if (readGlobal) {
+        value = loadPackedBytes(globalPlane, source, bitWidth);
+      } else {
+        value = loadPackedBits(*canonicalPlane, source, bitWidth);
+        uint64_t overrideMask = 0;
+        if (!context->forceMask.empty())
+          overrideMask |= loadPackedBits(context->forceMask, source, bitWidth);
+        if (!context->assignMask.empty())
+          overrideMask |= loadPackedBits(context->assignMask, source, bitWidth);
+        if (overrideMask)
+          value =
+              (value & ~overrideMask) |
+              (loadPackedBytes(globalPlane, source, bitWidth) & overrideMask);
+      }
       for (uint64_t byte = 0; byte != byteCount; ++byte)
         outValue[byte] = static_cast<uint8_t>(value >> (byte * 8));
       if (context->observerForcesCanonicalPlane &&

@@ -82,8 +82,19 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
 
 const NativeStaticState *
 findNativeStaticState(const obelisk_rt_context *context, uint32_t id);
-bool byteBit(const uint8_t *bytes, uint64_t bit);
-void setByteBit(uint8_t *bytes, uint64_t bit, bool value);
+// These leaf accesses also serve bytecode publication and NBA boundaries.
+// Keep their bodies visible to callers without requiring whole-runtime LTO.
+inline bool byteBit(const uint8_t *bytes, uint64_t bit) {
+  return (bytes[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
+}
+
+inline void setByteBit(uint8_t *bytes, uint64_t bit, bool value) {
+  uint8_t mask = static_cast<uint8_t>(1u << (bit % 8));
+  if (value)
+    bytes[bit / 8] |= mask;
+  else
+    bytes[bit / 8] &= static_cast<uint8_t>(~mask);
+}
 bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
                                uint64_t bitOffset, uint64_t bitWidth);
 bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,

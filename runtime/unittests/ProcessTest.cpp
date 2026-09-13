@@ -2448,6 +2448,7 @@ TEST(RuntimeInternals, ClockConditionPublicationViewMergesOnlyCapturedOverlap) {
   // A negative view base must not hide its in-bounds publication overlap.
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 64),
             OBELISK_RT_OK);
+  context->stateUnknown[0] = 0;
   uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
   publication.stableID = obelisk_rt_v1_native_handle_offset(root, 16);
   std::array<uint8_t, 4> partialValue{}, partialUnknown{};

@@ -5,6 +5,7 @@
 #include "DesignBytecodeLogic.h"
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeRoots.h"
+#include "ProcessPacking.h"
 #include "ProcessShared.h"
 #include "ProcessSignals.h"
 #include "ProcessValidation.h"
@@ -2005,7 +2006,38 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                       LimbVector(limbCount(value.width))};
         uint64_t mirroredBegin = UINT64_MAX;
         uint64_t mirroredEnd = 0;
-        for (uint64_t bitIndex = 0; bitIndex != value.width; ++bitIndex) {
+        // Fully bounded canonical reads share the native packed-plane helper.
+        // Keep partial/invalid views on the bitwise path for IEEE 1800-2023
+        // 11.5.1's per-bit X/zero fill. Publication overlays still run below.
+        bool packedLoad = isLoad && !local && !automatic && start >= 0 &&
+                          start >= begin && start <= end &&
+                          value.width <= static_cast<uint64_t>(end - start);
+        if (packedLoad) {
+          uint64_t absolute = static_cast<uint64_t>(start);
+          uint64_t available = boundedStatic ? staticState->bitWidth
+                                             : context->stateValue.size() * 64;
+          if (absolute > available || value.width > available - absolute)
+            return OBELISK_RT_INVALID_HANDLE;
+          uint64_t source =
+              boundedStatic ? staticState->bitOffset + absolute : absolute;
+          // Canonical value and unknown planes normally have identical size.
+          // Retain the old zero-fill behavior if an unknown plane is shorter.
+          packedLoad =
+              source <= context->stateUnknown.size() * 64 &&
+              value.width <= context->stateUnknown.size() * 64 - source;
+          if (packedLoad) {
+            for (uint64_t bitIndex = 0; bitIndex < value.width;
+                 bitIndex += 64) {
+              uint64_t width = std::min<uint64_t>(64, value.width - bitIndex);
+              value.value[bitIndex / 64] =
+                  loadPackedBits(context->stateValue, source + bitIndex, width);
+              value.unknown[bitIndex / 64] = loadPackedBits(
+                  context->stateUnknown, source + bitIndex, width);
+            }
+          }
+        }
+        for (uint64_t bitIndex = packedLoad ? value.width : 0;
+             bitIndex != value.width; ++bitIndex) {
           bool valid = bitIndex <= uint64_t{INT64_MAX} &&
                        start <= INT64_MAX - static_cast<int64_t>(bitIndex);
           int64_t coordinate =
