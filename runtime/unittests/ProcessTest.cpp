@@ -3756,6 +3756,22 @@ TEST(Scheduler, AOTClockKernelIngressSuppressesDuplicateBits) {
   clockCoordinatorIngress = ingress;
   clockCoordinatorWords = std::size(ingress);
   clockCoordinatorCalls = 0;
+  // A VPI deposit inside an active scheduler/checkpoint publishes ingress but
+  // must not recursively run the clock loop. The outer drain consumes it once
+  // the current actor has returned.
+  context->nativeScheduleRunning = true;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run_clock_coordinator(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(clockCoordinatorCalls, 0u);
+  EXPECT_EQ(ingress[1], 2u);
+  context->nativeScheduleRunning = false;
+  obelisk_rt_process_instance_v1 active{};
+  context->activeNativeProcess = &active;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_run_clock_coordinator(context),
+            OBELISK_RT_OK);
+  EXPECT_EQ(clockCoordinatorCalls, 0u);
+  EXPECT_EQ(ingress[1], 2u);
+  context->activeNativeProcess = nullptr;
   EXPECT_EQ(obelisk_rt_v1_scheduler_run_clock_coordinator(context),
             OBELISK_RT_OK);
   EXPECT_EQ(clockCoordinatorCalls, 1u);

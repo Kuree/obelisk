@@ -1775,6 +1775,13 @@ obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
       const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
       if (!plan || !plan->timeslot_coordinator || !plan->run)
         return OBELISK_RT_INVALID_LIFECYCLE;
+      // A deposit from an executing runtime checkpoint has already published
+      // its ingress. The enclosing scheduler must settle it after the actor
+      // returns; recursively entering run_until here can replay that actor or
+      // spin on its still-active handoff. This also preserves statement order
+      // for multiple writes in one VPI callback.
+      if (context->nativeScheduleRunning || context->activeNativeProcess)
+        return OBELISK_RT_OK;
       run = plan->run;
       coordinator = plan->timeslot_coordinator;
       mutableState = plan->mutable_state;
