@@ -13,32 +13,32 @@
 // RUN: obelisk -O3 --vpi=read -emit-sim %t/fused-ssa.sv -o %t/fused-ssa-read.mlir
 // RUN: FileCheck %s --check-prefix=READ-FUSED-SSA < %t/fused-ssa-read.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.fused
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/fused-ssa.sv -o %t/fused-ssa.fused
 // RUN: %t/fused-ssa.unfused > %t/fused-ssa.unfused.out
 // RUN: %t/fused-ssa.fused > %t/fused-ssa.fused.out
 // RUN: diff %t/fused-ssa.unfused.out %t/fused-ssa.fused.out
 // RUN: obelisk -O3 -emit-sim %t/fused-four-state.sv -o %t/fused-four-state.mlir
 // RUN: FileCheck %s --check-prefix=FOUR-STATE < %t/fused-four-state.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.fused
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.fused
 // RUN: %t/fused-four-state.unfused > %t/fused-four-state.unfused.out
 // RUN: %t/fused-four-state.fused > %t/fused-four-state.fused.out
 // RUN: diff %t/fused-four-state.unfused.out %t/fused-four-state.fused.out
 // RUN: obelisk -O3 -emit-sim %t/fused-callee-write.sv -o %t/fused-callee-write.mlir
 // RUN: FileCheck %s --check-prefix=CALLEE-WRITE-IR < %t/fused-callee-write.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.fused
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.fused
 // RUN: %t/fused-callee-write.unfused > %t/fused-callee-write.unfused.out
 // RUN: %t/fused-callee-write.fused > %t/fused-callee-write.fused.out
 // RUN: diff %t/fused-callee-write.unfused.out %t/fused-callee-write.fused.out
 // RUN: FileCheck %s --check-prefix=CALLEE-WRITE < %t/fused-callee-write.fused.out
-// RUN: obelisk -O3 --native-scheduler=generic %t/materialize.sv -o %t/generic
-// RUN: obelisk -O3 --native-scheduler=aot %t/materialize.sv -o %t/aot
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/materialize.sv -o %t/generic
+// RUN: obelisk -fno-lto -O3 --native-scheduler=aot %t/materialize.sv -o %t/aot
 // RUN: %t/generic > %t/generic.out
 // RUN: %t/aot > %t/aot.out
 // RUN: diff %t/generic.out %t/aot.out
 // RUN: obelisk -O0 --native-scheduler=generic %t/order.sv -o %t/order.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/order.sv -o %t/order.fused
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/order.sv -o %t/order.fused
 // RUN: %t/order.unfused > %t/order.unfused.out
 // RUN: %t/order.fused > %t/order.fused.out
 // RUN: diff %t/order.unfused.out %t/order.fused.out
@@ -46,7 +46,7 @@
 // RUN: obelisk -O3 -emit-sim %t/order.sv -o %t/order.mlir
 // RUN: FileCheck %s --check-prefix=REJECTED < %t/order.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/random.sv -o %t/random.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/random.sv -o %t/random.optimized
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/random.sv -o %t/random.optimized
 // RUN: %t/random.unfused > %t/random.unfused.out
 // RUN: %t/random.optimized > %t/random.optimized.out
 // RUN: diff %t/random.unfused.out %t/random.optimized.out
@@ -54,7 +54,7 @@
 // RUN: obelisk -O3 -emit-sim %t/random.sv -o %t/random.mlir
 // RUN: FileCheck %s --check-prefix=REJECTED < %t/random.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.fused
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.fused
 // RUN: %t/nba-order.unfused > %t/nba-order.unfused.out
 // RUN: %t/nba-order.fused > %t/nba-order.fused.out
 // RUN: diff %t/nba-order.unfused.out %t/nba-order.fused.out
@@ -62,7 +62,7 @@
 // RUN: obelisk -O3 -emit-sim %t/rejected.sv -o %t/rejected.mlir
 // RUN: FileCheck %s --check-prefix=REJECTED < %t/rejected.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/deadline-order.sv -o %t/deadline-order.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/deadline-order.sv -o %t/deadline-order.optimized
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/deadline-order.sv -o %t/deadline-order.optimized
 // RUN: %t/deadline-order.unfused > %t/deadline-order.unfused.out
 // RUN: %t/deadline-order.optimized > %t/deadline-order.optimized.out
 // RUN: diff %t/deadline-order.unfused.out %t/deadline-order.optimized.out
@@ -71,8 +71,8 @@
 // RUN: FileCheck %s --check-prefix=REJECTED < %t/deadline-order.mlir
 // RUN: obelisk -O3 -emit-sim %t/multiple-producers.sv -o %t/multiple-producers.mlir
 // RUN: FileCheck %s --check-prefix=MULTIPLE-PRODUCERS < %t/multiple-producers.mlir
-// RUN: obelisk -O3 --native-scheduler=generic %t/backedge.sv -o %t/backedge.generic
-// RUN: obelisk -O3 --native-scheduler=aot %t/backedge.sv -o %t/backedge.aot
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/backedge.sv -o %t/backedge.generic
+// RUN: obelisk -fno-lto -O3 --native-scheduler=aot %t/backedge.sv -o %t/backedge.aot
 // RUN: %t/backedge.generic > %t/backedge.generic.out
 // RUN: %t/backedge.aot > %t/backedge.aot.out
 // RUN: diff %t/backedge.generic.out %t/backedge.aot.out
@@ -80,7 +80,7 @@
 // RUN: obelisk -O3 -emit-sim %t/backedge.sv -o %t/backedge.mlir
 // RUN: FileCheck %s --check-prefix=BACKEDGE-IR < %t/backedge.mlir
 // RUN: obelisk -O0 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.optimized
+// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.optimized
 // RUN: %t/entry-order.unfused > %t/entry-order.unfused.out
 // RUN: %t/entry-order.optimized > %t/entry-order.optimized.out
 // RUN: diff %t/entry-order.unfused.out %t/entry-order.optimized.out
