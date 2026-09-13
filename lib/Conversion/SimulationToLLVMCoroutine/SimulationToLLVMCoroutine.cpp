@@ -21,6 +21,7 @@
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Runtime/OutputItemFlags.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -76,6 +77,57 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
 #include "obelisk/Conversion/Passes.h.inc"
 
 namespace {
+
+constexpr StringLiteral directOutputAttr = "obelisk.eval.direct_output";
+
+// A private generated activation may print snapshots without scheduling a
+// process or consulting canonical design state. Keep dynamic formats, managed
+// values, file channels and strength queries on the ordinary checkpoint route.
+bool isDirectOutput(sim::SimDisplayOp display) {
+  auto descriptor =
+      display.getDescriptor().getDefiningOp<arith::ConstantIntOp>();
+  if (!descriptor || descriptor.value() != 1 || !display.getScopeAttr())
+    return false;
+  constexpr uint32_t allowed =
+      OBELISK_RT_OUTPUT_ITEM_SIGNED | OBELISK_RT_OUTPUT_ITEM_OMITTED |
+      OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_NET;
+  for (int32_t flags : display.getItemFlags())
+    if (uint32_t(flags) & ~allowed)
+      return false;
+  for (Value item : display.getItems()) {
+    if (isa<sim::BytesType>(item.getType())) {
+      auto literal = item.getDefiningOp<sim::SimBytesConstantOp>();
+      if (!literal)
+        return false;
+      // Over-accept format modifiers here only to reject possible strength
+      // queries conservatively. The formatter still validates the syntax.
+      // Escaped %% and literal text containing 'v' do not query strengths.
+      StringRef format = literal.getValue();
+      while (!format.empty()) {
+        size_t percent = format.find('%');
+        if (percent == StringRef::npos)
+          break;
+        format = format.drop_front(percent + 1);
+        if (format.consume_front("%"))
+          continue;
+        format = format.ltrim("0123456789-.");
+        if (format.starts_with_insensitive("v"))
+          return false;
+        if (!format.empty())
+          format = format.drop_front();
+      }
+    } else if (!isa<IntegerType, Float64Type, sim::LogicType, sim::NetType>(
+                   item.getType())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool isDirectOutput(Operation *operation) {
+  return isa<sim::SimDisplayOp>(operation) &&
+         operation->hasAttr(directOutputAttr);
+}
 
 class ExpandIntegerPower final : public OpRewritePattern<math::IPowIOp> {
 public:
@@ -333,6 +385,13 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
 
   if (sources.empty())
     return success();
+  // Only mark private activation roots, not shared canonical helpers or
+  // independently scheduled monitor/observer callbacks.
+  for (sim::SimFuncOp root : roots)
+    root.walk([&](sim::SimDisplayOp display) {
+      if (isDirectOutput(display))
+        display->setAttr(directOutputAttr, UnitAttr::get(module.getContext()));
+    });
   llvm::SmallPtrSet<Operation *, 32> variantEligibleSources;
   if (!forceTwoState) {
     // A transient two-state route need not be globally two-state.  It is
@@ -414,6 +473,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // predecessor and are still analyzed normally.
       llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
       source.walk([&](Operation *operation) {
+        if (isDirectOutput(operation))
+          return;
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
                 sim::SimProgramExitOp, sim::SimErrorOp,
                 sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
@@ -421,6 +482,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
+        if (isDirectOutput(operation))
+          return;
         // Pass-connected nets require component-wide resolution after every
         // driver publication (IEEE 1800-2017 28.8 and 28.13). The native
         // lowering performs that resolution through the scheduler runtime,
@@ -880,6 +943,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           bool trackKnownState = true) -> FailureOr<sim::SimFuncOp> {
     llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
     source.walk([&](Operation *operation) {
+      if (isDirectOutput(operation))
+        return;
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
               sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
               sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(operation))
@@ -998,7 +1063,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         // Probes observe control flow without executing source statements.
         // Count a line only in the selected body or its cold callback.
         if (!isa<sim::SimCoveragePointHitOp>(operation) &&
-            !terminalStores.contains(&operation))
+            !isDirectOutput(&operation) && !terminalStores.contains(&operation))
           builder.clone(operation, mapping);
       }
     }
@@ -1589,7 +1654,8 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
       if (std::optional<StringRef> callee = call.getCallee()) {
         if (callee->starts_with("obelisk_rt_")) {
           if (*callee == prioritySignalQuery ||
-              *callee == strengthResolveQuery || *callee == coveragePointHit)
+              *callee == strengthResolveQuery || *callee == coveragePointHit ||
+              *callee == "obelisk_rt_v1_eval_display")
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
@@ -4146,7 +4212,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         function.walk([&](LLVM::CallOp call) {
           if (std::optional<StringRef> callee = call.getCallee();
               callee && callee->starts_with("obelisk_rt_") &&
-              *callee != "obelisk_rt_v1_coverage_point_hit")
+              *callee != "obelisk_rt_v1_coverage_point_hit" &&
+              *callee != "obelisk_rt_v1_eval_display")
             checkpointBlocks.try_emplace(call->getBlock(), call.getOperation());
         });
         if (checkpointBlocks.empty())

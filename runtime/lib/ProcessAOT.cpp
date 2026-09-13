@@ -3134,6 +3134,11 @@ retryNativeSchedule:;
               }
               ++context->schedulerSlotProgress;
               finishing |= context->schedulerFinishRequested;
+              if (context->signalDiagnosticsEnabled) {
+                ++context->signalDiagnostics.aotCheckpoints;
+                if (context->schedulerFinishRequested)
+                  ++context->signalDiagnostics.aotTerminalCheckpoints;
+              }
             }
             if (status != OBELISK_RT_AOT_GENERATED_CHECKPOINT)
               break;

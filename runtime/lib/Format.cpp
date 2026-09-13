@@ -1310,6 +1310,37 @@ extern "C" obelisk_rt_status obelisk_rt_v1_string_output_format(
   });
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_eval_display(
+    obelisk_rt_context *context, uint32_t descriptor, uint32_t appendNewline,
+    obelisk_rt_radix defaultRadix, const obelisk_rt_arg_v1 *items,
+    uint64_t itemCount, const obelisk_rt_format_env_v1 *environment) {
+  if (!context || descriptor != 1 || (itemCount != 0 && !items))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  for (uint64_t i = 0; i != itemCount; ++i)
+    if (items[i].kind != OBELISK_RT_ARG_LOGIC &&
+        items[i].kind != OBELISK_RT_ARG_STRING &&
+        items[i].kind != OBELISK_RT_ARG_REAL &&
+        items[i].kind != OBELISK_RT_ARG_EMPTY)
+      return OBELISK_RT_INVALID_ARGUMENT;
+  return guarded(context, [&] {
+    std::string output, error;
+    std::vector<std::string> warnings;
+    obelisk_rt_status status =
+        buildDisplay(context, output, defaultRadix, items, itemCount,
+                     environment, snapshotTimeFormat(context), error, warnings);
+    if (status != OBELISK_RT_OK) {
+      setLastError(context, std::move(error));
+      return status;
+    }
+    reportFormatWarnings(context, warnings);
+    if (appendNewline)
+      output.push_back('\n');
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    return writeUnlocked(context, descriptor, output.data(), output.size(),
+                         nullptr);
+  });
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
                       uint32_t appendNewline, obelisk_rt_radix defaultRadix,

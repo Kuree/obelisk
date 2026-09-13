@@ -160,6 +160,9 @@ getOrCreateDeclaration(Operation *anchor, runtime::RuntimeCall call,
                        const ABITypes &abi) {
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   StringRef name = runtime::getRuntimeSymbol(call);
+  if (call == runtime::RuntimeCall::Display &&
+      anchor->hasAttr("obelisk.eval.direct_output"))
+    name = "obelisk_rt_v1_eval_display";
   LLVM::LLVMFunctionType expected = getFunctionType(call, abi);
   if (Operation *existing = SymbolTable::lookupSymbolIn(module, name)) {
     auto function = dyn_cast<LLVM::LLVMFuncOp>(existing);

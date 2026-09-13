@@ -4828,6 +4828,14 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
                       const obelisk_rt_arg_v1 *items, uint64_t item_count,
                       const obelisk_rt_format_env_v1 *environment);
 
+// Generated, non-monitor stdout output. Arguments are self-contained packed
+// snapshots/literal bytes/reals, never managed objects or net handles. This
+// service neither reads canonical design state nor re-enters the scheduler.
+obelisk_rt_status obelisk_rt_v1_eval_display(
+    obelisk_rt_context *context, uint32_t descriptor, uint32_t append_newline,
+    obelisk_rt_radix default_radix, const obelisk_rt_arg_v1 *items,
+    uint64_t item_count, const obelisk_rt_format_env_v1 *environment);
+
 // File channels. Calls using one context are serialized around each libc stream
 // operation. Descriptor close/reuse must be coordinated by the caller so no
 // thread begins an operation after another thread closes that descriptor. The

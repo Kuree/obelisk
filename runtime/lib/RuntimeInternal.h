@@ -1272,6 +1272,8 @@ struct SignalSubscriptionDiagnostics {
   uint64_t aotStateSlowPaths = 0;
   uint64_t aotDeadlineHighWater = 0;
   uint64_t aotFallbacks = 0;
+  uint64_t aotCheckpoints = 0;
+  uint64_t aotTerminalCheckpoints = 0;
 };
 
 // Three packed edge planes with allocation-free storage for common signals up

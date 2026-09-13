@@ -289,7 +289,8 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
       "aot_region_passes=%llu aot_fanout_entries=%llu "
       "aot_nba_stages=%llu aot_nba_commits=%llu "
       "aot_state_fast_paths=%llu aot_state_slow_paths=%llu "
-      "aot_deadline_high_water=%llu aot_fallbacks=%llu\n",
+      "aot_deadline_high_water=%llu aot_fallbacks=%llu "
+      "aot_checkpoints=%llu aot_terminal_checkpoints=%llu\n",
       static_cast<unsigned long long>(context->signalDiagnostics.publications),
       static_cast<unsigned long long>(
           context->signalDiagnostics.subscriptionsCurrent),
@@ -319,7 +320,11 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
           context->signalDiagnostics.aotStateSlowPaths),
       static_cast<unsigned long long>(
           context->signalDiagnostics.aotDeadlineHighWater),
-      static_cast<unsigned long long>(context->signalDiagnostics.aotFallbacks));
+      static_cast<unsigned long long>(context->signalDiagnostics.aotFallbacks),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotCheckpoints),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotTerminalCheckpoints));
   for (unsigned slot = 0; slot != 64; ++slot)
     if (context->signalDiagnostics.aotActorExecutions[slot] != 0)
       std::fprintf(stderr, "obelisk-aot-actor slot=%u executions=%llu\n", slot,

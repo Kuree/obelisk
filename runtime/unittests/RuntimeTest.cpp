@@ -1836,6 +1836,43 @@ TEST_F(RuntimeTest, DisplayValidatesItemsAndHandlesEmptyValues) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, EvalDisplayUsesSnapshotsWithoutMonitorOrSchedulerEffects) {
+  LogicValue value("10xz");
+  std::string formatString = "bits=%b";
+  std::vector<obelisk_rt_arg_v1> items = {
+      stringArg(formatString, OBELISK_RT_ARG_FORMAT_STRING), value.arg()};
+  context->activeLogicalProcessToken = 17;
+  context->monitorLogicalProcessToken = 17;
+  context->monitorEnabled = false;
+  context->monitorReported = true;
+  context->monitorReport = "unchanged";
+  testing::internal::CaptureStdout();
+  EXPECT_EQ(obelisk_rt_v1_eval_display(context, 1, 1, OBELISK_RT_RADIX_DECIMAL,
+                                       items.data(), items.size(), nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(testing::internal::GetCapturedStdout(), "bits=10xz\n");
+  EXPECT_EQ(context->activeLogicalProcessToken, 17u);
+  EXPECT_EQ(context->monitorLogicalProcessToken, 17u);
+  EXPECT_EQ(context->monitorReport, "unchanged");
+  EXPECT_FALSE(context->monitorEnabled);
+  EXPECT_FALSE(context->schedulerFinishRequested);
+}
+
+TEST_F(RuntimeTest, EvalDisplayRejectsRuntimeOwnedArgumentsAndChannels) {
+  EXPECT_EQ(obelisk_rt_v1_eval_display(context, 2, 0, OBELISK_RT_RADIX_DECIMAL,
+                                       nullptr, 0, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  for (uint32_t kind :
+       {OBELISK_RT_ARG_NET, OBELISK_RT_ARG_MANAGED_STRING,
+        OBELISK_RT_ARG_MANAGED_CONTAINER, OBELISK_RT_ARG_MANAGED_OBJECT,
+        OBELISK_RT_ARG_ENUM, OBELISK_RT_ARG_PROCESS}) {
+    obelisk_rt_arg_v1 item{kind, 0, 0, nullptr, nullptr};
+    EXPECT_EQ(obelisk_rt_v1_eval_display(
+                  context, 1, 0, OBELISK_RT_RADIX_DECIMAL, &item, 1, nullptr),
+              OBELISK_RT_INVALID_ARGUMENT);
+  }
+}
+
 TEST_F(RuntimeTest, ReadsWritesAndPositionsBinaryFiles) {
   TempDirectory temporary;
   uint32_t descriptor = open(temporary.file("roundtrip.bin"), "w+b");

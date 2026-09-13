@@ -142,6 +142,13 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op,
             "net output item did not convert to packed value and i64 handle");
       Value unknown = converted.size() == 2 ? converted[1] : Value();
+      if (op->hasAttr("obelisk.eval.direct_output")) {
+        arguments.push_back(runtime::RTArgumentPackedOp::create(
+            rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
+            converted.front(), unknown,
+            (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+        continue;
+      }
       arguments.push_back(runtime::RTArgumentNetOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
           converted.front(), unknown, convertedHandle.front(),
@@ -347,10 +354,12 @@ public:
     Value newline = iConstant(rewriter, loc, rewriter.getI1Type(),
                               op.getAppendNewline() ? 1 : 0);
     auto radix = static_cast<runtime::Radix>(op.getDefaultRadix());
-    Value status = runtime::RTDisplayOp::create(
+    auto display = runtime::RTDisplayOp::create(
         rewriter, loc, runtime::StatusType::get(rewriter.getContext()), context,
         fd, newline, output->first, output->second, radix);
-    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    if (op->hasAttr("obelisk.eval.direct_output"))
+      display->setAttr("obelisk.eval.direct_output", rewriter.getUnitAttr());
+    sim::SimStatusCheckOp::create(rewriter, loc, display.getStatus());
     rewriter.eraseOp(op);
     return success();
   }
