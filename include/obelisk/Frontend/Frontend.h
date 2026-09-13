@@ -84,6 +84,14 @@ mlir::FailureOr<std::string>
 preprocessSystemVerilog(llvm::ArrayRef<std::string> inputFilenames,
                         const FrontendOptions &options);
 
+/// Lex the given files as written, without preprocessing, and list each token
+/// and comment on its own line as "<byte offset> <byte length> <kind>", where
+/// kind is slang's TokenKind or TriviaKind name. Whitespace is omitted. With
+/// more than one file, each file's lines follow a "file <path>" line.
+mlir::FailureOr<std::string>
+listSystemVerilogTokens(llvm::ArrayRef<std::string> inputFilenames,
+                        const FrontendOptions &options);
+
 /// Import one SystemVerilog compilation from the given primary source files.
 /// Frontend search paths, macros, libraries, and language settings are supplied
 /// through `options`. The returned module has passed the MLIR verifier when

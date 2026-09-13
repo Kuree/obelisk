@@ -1179,10 +1179,12 @@ static int executeCompilation(
   frontendOptions.collectCoverageSourceFiles =
       args.hasArg(OPT_coverage, OPT_coverage_EQ);
 
-  const Arg *action = args.getLastArg(
-      OPT_E, OPT_emit_slang, OPT_emit_bindings, OPT_emit_obelisk, OPT_emit_sim,
-      OPT_emit_schedule, OPT_c, OPT_emit_llvm, OPT_emit_dpi_header);
+  const Arg *action =
+      args.getLastArg(OPT_E, OPT_dump_tokens, OPT_emit_slang, OPT_emit_bindings,
+                      OPT_emit_obelisk, OPT_emit_sim, OPT_emit_schedule, OPT_c,
+                      OPT_emit_llvm, OPT_emit_dpi_header);
   bool preprocess = action && action->getOption().matches(OPT_E);
+  bool dumpTokens = action && action->getOption().matches(OPT_dump_tokens);
   bool emitSlang = action && action->getOption().matches(OPT_emit_slang);
   bool emitBindings = action && action->getOption().matches(OPT_emit_bindings);
   bool emitSim = action && action->getOption().matches(OPT_emit_sim);
@@ -1233,10 +1235,13 @@ static int executeCompilation(
   inputs.assign(classifiedInputs.systemVerilog.begin(),
                 classifiedInputs.systemVerilog.end());
 
-  if (preprocess) {
-    FailureOr<std::string> preprocessed =
-        obelisk::frontend::preprocessSystemVerilog(inputs, frontendOptions);
-    if (failed(preprocessed))
+  if (preprocess || dumpTokens) {
+    FailureOr<std::string> text =
+        preprocess ? obelisk::frontend::preprocessSystemVerilog(inputs,
+                                                                frontendOptions)
+                   : obelisk::frontend::listSystemVerilogTokens(
+                         inputs, frontendOptions);
+    if (failed(text))
       return 1;
     std::string outputFilename = args.getLastArgValue(OPT_o, "-").str();
     std::error_code error;
@@ -1246,7 +1251,7 @@ static int executeCompilation(
                       "': " + error.message());
       return 1;
     }
-    output.os() << *preprocessed;
+    output.os() << *text;
     output.keep();
     return 0;
   }

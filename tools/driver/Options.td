@@ -25,6 +25,10 @@ def E : Flag<["-"], "E">, Group<Action_Group>,
   HelpText<"Run only the SystemVerilog preprocessor">;
 def preprocess : Flag<["--"], "preprocess">, Alias<E>,
   Flags<[HelpHidden]>;
+def dump_tokens : Flag<["-"], "dump-tokens">, Group<Action_Group>,
+  Flags<[HelpHidden]>,
+  HelpText<"List each token and comment of the unpreprocessed source as "
+           "'<byte offset> <byte length> <kind>'">;
 def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,

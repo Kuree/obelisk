@@ -5,6 +5,7 @@ set_source_files_properties(Frontend.cpp PROPERTIES COMPILE_OPTIONS "-fexception
 add_mlir_library(ObeliskFrontend
   Frontend.cpp
   SDF.cpp
+  Tokens.cpp
 
   DEPENDS
   SlangEnumsIncGen
