@@ -109,6 +109,10 @@ module param_cell #(parameter int W = 8) (input logic [W-1:0] p);
 endmodule
 
 module automatic top;
+  task automatic work;
+    event ready;
+    event events[2];
+  endtask
   cellmod u();
   cellmod v();
   param_cell #(.W(8)) p8a();
@@ -170,6 +174,12 @@ endpackage
 // FRONTEND-DAG: obelisk_sim.vpi_definition.decl @[[INTERFACE:[^ ]+]] type 601 name "iftop"
 // FRONTEND-DAG: obelisk_sim.scope.decl {{.*}} hierarchy "top.i" {{.*}} vpi_kind 601 definition @[[INTERFACE]]
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 7 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "top">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
+// The automatic task and named events freeze declaration-specific lifetime.
+// Events remain queryable even when no activation frame is alive.
+// FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "top.work" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
+// FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 34 {{.*}} hierarchy "top.work.ready" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
+// FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 129 {{.*}} hierarchy "top.work.events" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
+// FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 34 {{.*}} hierarchy "top.work.events[0]" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top.u" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 8 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "cellmod">]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top.v" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 8 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "cellmod">]>
 // FRONTEND-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 601 {{.*}} hierarchy "top.i" {{.*}} vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 9 : i32, value = "iftop">]>

@@ -533,6 +533,8 @@ TEST(GeneratedVPIStaticArrays, TraversesNamedEventArraysAndEventTypespecs) {
   char scalarName[] = "top.event";
   vpiHandle scalar = vpi_handle_by_name(scalarName, nullptr);
   ASSERT_NE(scalar, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, scalar), 0);
+  EXPECT_EQ(vpi_get(vpiAutomatic, array), 0);
   EXPECT_EQ(vpi_get(vpiArrayMember, scalar), 0);
   EXPECT_EQ(vpi_iterate(vpiIndex, scalar), nullptr);
   EXPECT_EQ(vpi_get(vpiSize, array), vpiUndefined);
@@ -545,6 +547,8 @@ TEST(GeneratedVPIStaticArrays, TraversesNamedEventArraysAndEventTypespecs) {
   vpiHandle named = vpi_handle_by_name(memberName, nullptr);
   ASSERT_NE(selected, nullptr);
   ASSERT_NE(named, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, selected), 0);
+  EXPECT_EQ(vpi_get(vpiAutomatic, named), 0);
   EXPECT_EQ(vpi_compare_objects(selected, named), 1);
   EXPECT_EQ(vpi_get(vpiArrayMember, selected), 1);
   vpiHandle parent = vpi_handle(vpiParent, selected);
@@ -561,6 +565,7 @@ TEST(GeneratedVPIStaticArrays, TraversesNamedEventArraysAndEventTypespecs) {
   vpiHandle partial = vpi_handle_by_index(array, 0);
   ASSERT_NE(partial, nullptr);
   EXPECT_EQ(vpi_get(vpiType, partial), vpiNamedEventArray);
+  EXPECT_EQ(vpi_get(vpiAutomatic, partial), 0);
   EXPECT_STREQ(vpi_get_str(vpiFullName, partial), "top.events[0]");
   vpiHandle partialTypespec = vpi_handle(vpiTypespec, partial);
   ASSERT_NE(partialTypespec, nullptr);

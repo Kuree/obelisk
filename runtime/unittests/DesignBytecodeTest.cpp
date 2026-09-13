@@ -2116,6 +2116,27 @@ std::vector<uint8_t> makeScopeIdentityPropertyDatabase() {
   return bytes;
 }
 
+std::vector<uint8_t> makeAutomaticNamedEventDatabase() {
+  std::vector<uint8_t> bytes = makeFixedPropertyDatabase(false);
+  constexpr uint64_t objectOffset = 240;
+  put32(bytes, objectOffset,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiNamedEvent));
+
+  const uint32_t directoryOffset = get32(bytes, 12);
+  const uint64_t propertyOffset = get64(bytes, directoryOffset + 112);
+  const uint64_t propertyCount = get64(bytes, directoryOffset + 120);
+  bytes.resize(bytes.size() + 16, 0);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset + 120, propertyCount + 1);
+  const uint64_t automaticOffset = propertyOffset + propertyCount * 16;
+  put32(bytes, automaticOffset, uint32_t{1} << 30);
+  put16(bytes, automaticOffset + 4, vpiAutomatic);
+  put16(bytes, automaticOffset + 6, 0); // Boolean property.
+  put64(bytes, automaticOffset + 8, 1);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeDefinitionPropertyDatabase() {
   std::vector<uint8_t> bytes = makeDatabase();
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
@@ -6309,7 +6330,40 @@ TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
   EXPECT_EQ(vpi_get(vpiUnit, module), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
+  char valueName[] = "top.value";
+  vpiHandle value = vpi_handle_by_name(valueName, nullptr);
+  ASSERT_NE(value, nullptr);
+  // Persistent design storage has static lifetime. This remains a derived
+  // query because the same VPI variable kind can also represent an automatic
+  // frame local or a dynamic class property.
+  EXPECT_EQ(vpi_get(vpiAutomatic, value), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ReadsAutomaticNamedEventFromSparseImage) {
+  Fixture fixture;
+  fixture.database = makeAutomaticNamedEventDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char name[] = "top.value";
+  vpiHandle event = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(event, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, event), vpiNamedEvent);
+  EXPECT_EQ(vpi_get(vpiAutomatic, event), 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  EXPECT_EQ(vpi_release_handle(event), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -9205,6 +9259,7 @@ TEST(VPI, NonArraySemanticPayloadIsNotAnElementTypespec) {
   vpiHandle mailbox = vpi_handle(vpiTypespec, object);
   ASSERT_NE(mailbox, nullptr);
   EXPECT_EQ(vpi_get(vpiType, mailbox), vpiClassTypespec);
+  EXPECT_EQ(vpi_get(vpiAutomatic, mailbox), 1);
   EXPECT_EQ(vpi_handle(vpiElemTypespec, mailbox), nullptr);
 
   EXPECT_EQ(vpi_release_handle(mailbox), 1);
@@ -9914,10 +9969,12 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   char absoluteMemberName[] = "top.value";
   vpiHandle direct = vpi_handle_by_name(absoluteMemberName, nullptr);
   ASSERT_NE(direct, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, direct), 0);
   EXPECT_EQ(vpi_get(vpiHasActual, direct), 1);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   vpiHandle directBit = vpi_handle_by_index(direct, 64);
   ASSERT_NE(directBit, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, directBit), 0);
   EXPECT_EQ(vpi_get(vpiHasActual, directBit), 1);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value directValue{};
@@ -9933,18 +9990,22 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   vpiHandle classDefinition = vpi_handle_by_name(className, nullptr);
   ASSERT_NE(classDefinition, nullptr);
   EXPECT_EQ(vpi_get(vpiType, classDefinition), vpiClassDefn);
+  EXPECT_EQ(vpi_get(vpiAutomatic, classDefinition), 1);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get(vpiHasActual, classDefinition), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   vpiHandle lexicalVariables = vpi_iterate(vpiVariables, classDefinition);
   ASSERT_NE(lexicalVariables, nullptr);
   vpiHandle iteratedMember = vpi_scan(lexicalVariables);
   ASSERT_NE(iteratedMember, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, iteratedMember), 0);
   EXPECT_EQ(vpi_get(vpiHasActual, iteratedMember), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_scan(lexicalVariables), nullptr);
   char relativeMemberName[] = "value";
   vpiHandle derived = vpi_handle_by_name(relativeMemberName, classDefinition);
   ASSERT_NE(derived, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, derived), 0);
   EXPECT_EQ(vpi_get(vpiHasActual, derived), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value derivedValue{};
@@ -9960,6 +10021,7 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
 
   vpiHandle derivedBit = vpi_handle_by_index(derived, 64);
   ASSERT_NE(derivedBit, nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, derivedBit), 0);
   EXPECT_EQ(vpi_get(vpiHasActual, derivedBit), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value derivedBitValue{};
@@ -14083,11 +14145,17 @@ TEST(VPI, ResolvesCompactStaticSemanticEndpoints) {
     ASSERT_NE(source, nullptr);
     EXPECT_EQ(vpi_get(vpiType, source),
               classIdentity ? vpiClassTypespec : vpiEnumTypespec);
+    if (classIdentity) {
+      EXPECT_EQ(vpi_get(vpiAutomatic, source), 1);
+    }
     vpiHandle endpoint =
         vpi_handle(classIdentity ? vpiClassDefn : vpiTypedefAlias, source);
     ASSERT_NE(endpoint, nullptr);
     EXPECT_EQ(vpi_get(vpiType, endpoint),
               classIdentity ? vpiClassDefn : vpiEnumTypespec);
+    if (classIdentity) {
+      EXPECT_EQ(vpi_get(vpiAutomatic, endpoint), 1);
+    }
     EXPECT_STREQ(vpi_get_str(vpiName, endpoint), "logic");
     EXPECT_EQ(vpi_compare_objects(source, endpoint), 0);
     EXPECT_EQ(vpi_release_handle(endpoint), 1);
