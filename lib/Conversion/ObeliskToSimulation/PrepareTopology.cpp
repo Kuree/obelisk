@@ -63,12 +63,21 @@ FailureOr<StaticStorageView> getStaticStorageView(Operation *expression) {
         *type};
   }
 
+  // This is a speculative alias query, not expression validation. In
+  // particular, concatenations and streams may contain legal void-typed
+  // zero-width elements which have no independently normalizable storage.
+  if (!isa<semantic::SVMemberAccessExpressionOp,
+           semantic::SVElementSelectExpressionOp,
+           semantic::SVRangeSelectExpressionOp>(expression))
+    return failure();
   SmallVector<Operation *> children = getChildren(expression);
   if (children.empty())
     return failure();
   FailureOr<StaticStorageView> base = getStaticStorageView(children.front());
+  if (failed(base))
+    return failure();
   FailureOr<Type> resultType = getNormalizedSemanticType(expression);
-  if (failed(base) || failed(resultType))
+  if (failed(resultType))
     return failure();
   auto resultSemanticType =
       expression->getAttrOfType<TypeAttr>("semantic_type");
@@ -809,6 +818,13 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   llvm::DenseMap<Operation *, SmallVector<int64_t>> namedEventArrayRanges;
   llvm::DenseSet<Operation *> scalarNamedEvents;
   module.walk([&](semantic::SVInstanceArraySymbolOp array) {
+    // Forwarded interface-array ports can reference a detached, elementless
+    // Slang symbol stub. It describes the connection's type/shape, not a
+    // second elaborated array with a runtime VPI identity. Real arrays live
+    // in the elaborated hierarchy and must still satisfy the extent checks.
+    if (isa<ModuleOp>(array->getParentOp()) &&
+        array.getBody().front().empty())
+      return;
     if (isa_and_nonnull<semantic::SVInstanceArraySymbolOp>(
             array->getParentOp()))
       return;

@@ -5428,13 +5428,18 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
 
   if (isa<sim::RefType>((*input).getType())) {
     Type selected = sim::RefType::get(function.getContext(), *resultType);
+    Value reference;
     if (constant)
-      return sim::SimRefExtractOp::create(builder, location, selected, *input,
-                                          builder.getI64IntegerAttr(lowBit))
-          .getResult();
-    return sim::SimRefDynExtractOp::create(builder, location, selected, *input,
-                                           dynamicLow)
-        .getResult();
+      reference = sim::SimRefExtractOp::create(
+          builder, location, selected, *input, builder.getI64IntegerAttr(lowBit));
+    else
+      reference = sim::SimRefDynExtractOp::create(
+          builder, location, selected, *input, dynamicLow);
+    if (lvalue)
+      return reference;
+    // Assertion sampling requests an addressable base even for an rvalue.
+    // A constant slice still needs a sampled read, not an escaping lvalue.
+    return loadReference(reference, location);
   }
   if (isa<sim::NetType>((*input).getType())) {
     if (!constant) {
