@@ -2,6 +2,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=BARRIER < %t.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
@@ -49,6 +50,19 @@
 // NBAKNOWN-NEXT: llvm.br
 // NBAKNOWN: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
 // NBAKNOWN: llvm.mlir.addressof @__obelisk_state_unknown
+
+// A fixed-only design must return directly when its bitmap is empty, before
+// probing unknown state or selecting/calling an NBA barrier.
+// BARRIER-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1(
+// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER: %[[DIRTY:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// BARRIER-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
+// BARRIER-NEXT: %[[EMPTY:.*]] = llvm.icmp "eq" %[[DIRTY]], %[[ZERO]] : i64
+// BARRIER-NEXT: %[[OK:.*]] = llvm.mlir.constant(0 : i32)
+// BARRIER-NEXT: llvm.cond_br %[[EMPTY]], ^[[DONE:bb[0-9]+]](%[[OK]] : i32), ^[[COMMIT:bb[0-9]+]]
+// BARRIER-NEXT: ^[[COMMIT]]:
+// BARRIER: ^[[DONE]](%[[STATUS:.*]]: i32):
+// BARRIER-NEXT: llvm.return %[[STATUS]] : i32
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

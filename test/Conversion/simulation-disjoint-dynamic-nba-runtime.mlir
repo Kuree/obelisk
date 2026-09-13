@@ -1,6 +1,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=GUARD < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=BARRIER < %t.llvm.mlir
 // Empty dynamic slots must bypass stale address/value/unknown loads in all
 // three commit variants. The runtime checks below cover independent slots,
 // aliasing lanes, and negative/out-of-range/unknown indices.
@@ -47,6 +48,82 @@
 // CHECK-NEXT: 00000055 00550000
 // CHECK-NEXT: 00000055 00550000
 // CHECK-NEXT: 00550055 00550000
+
+// The coordinator must include BOTH dynamic slots in its empty-barrier test.
+// Neither slot sets fixed dirty bits. Check every coordinator variant; the
+// executable assertions below catch lost dynamic-only NBA publications.
+// BARRIER-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1(
+// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER: %[[D0:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// BARRIER-NEXT: %[[A0:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_0
+// BARRIER-NEXT: %[[V0:.*]] = llvm.load %[[A0]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[Z0:.*]] = llvm.zext %[[V0]] : i32 to i64
+// BARRIER-NEXT: %[[P0:.*]] = llvm.or %[[D0]], %[[Z0]] : i64
+// BARRIER-NEXT: %[[B0:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_1
+// BARRIER-NEXT: %[[W0:.*]] = llvm.load %[[B0]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[X0:.*]] = llvm.zext %[[W0]] : i32 to i64
+// BARRIER-NEXT: %[[Q0:.*]] = llvm.or %[[P0]], %[[X0]] : i64
+// BARRIER-NEXT: %[[ZERO0:.*]] = llvm.mlir.constant(0 : i64)
+// BARRIER-NEXT: %[[EMPTY0:.*]] = llvm.icmp "eq" %[[Q0]], %[[ZERO0]] : i64
+// BARRIER-NEXT: %[[OK0:.*]] = llvm.mlir.constant(0 : i32)
+// BARRIER-NEXT: llvm.cond_br %[[EMPTY0]], ^[[DONE0:bb[0-9]+]](%[[OK0]] : i32), ^[[COMMIT0:bb[0-9]+]]
+// BARRIER-NEXT: ^[[COMMIT0]]:
+// BARRIER: ^[[DONE0]](%[[STATUS0:.*]]: i32):
+// BARRIER-NEXT: llvm.return %[[STATUS0]] : i32
+// BARRIER-LABEL: llvm.func @__obelisk_eval_fast_coordinator_two_state_v1(
+// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER: %[[D1:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// BARRIER-NEXT: %[[A1:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_0
+// BARRIER-NEXT: %[[V1:.*]] = llvm.load %[[A1]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[Z1:.*]] = llvm.zext %[[V1]] : i32 to i64
+// BARRIER-NEXT: %[[P1:.*]] = llvm.or %[[D1]], %[[Z1]] : i64
+// BARRIER-NEXT: %[[B1:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_1
+// BARRIER-NEXT: %[[W1:.*]] = llvm.load %[[B1]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[X1:.*]] = llvm.zext %[[W1]] : i32 to i64
+// BARRIER-NEXT: %[[Q1:.*]] = llvm.or %[[P1]], %[[X1]] : i64
+// BARRIER-NEXT: %[[ZERO1:.*]] = llvm.mlir.constant(0 : i64)
+// BARRIER-NEXT: %[[EMPTY1:.*]] = llvm.icmp "eq" %[[Q1]], %[[ZERO1]] : i64
+// BARRIER-NEXT: %[[OK1:.*]] = llvm.mlir.constant(0 : i32)
+// BARRIER-NEXT: llvm.cond_br %[[EMPTY1]], ^[[DONE1:bb[0-9]+]](%[[OK1]] : i32), ^[[COMMIT1:bb[0-9]+]]
+// BARRIER-NEXT: ^[[COMMIT1]]:
+// BARRIER: ^[[DONE1]](%[[STATUS1:.*]]: i32):
+// BARRIER-NEXT: llvm.return %[[STATUS1]] : i32
+// BARRIER-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1(
+// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER: %[[D2:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// BARRIER-NEXT: %[[A2:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_0
+// BARRIER-NEXT: %[[V2:.*]] = llvm.load %[[A2]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[Z2:.*]] = llvm.zext %[[V2]] : i32 to i64
+// BARRIER-NEXT: %[[P2:.*]] = llvm.or %[[D2]], %[[Z2]] : i64
+// BARRIER-NEXT: %[[B2:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_1
+// BARRIER-NEXT: %[[W2:.*]] = llvm.load %[[B2]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[X2:.*]] = llvm.zext %[[W2]] : i32 to i64
+// BARRIER-NEXT: %[[Q2:.*]] = llvm.or %[[P2]], %[[X2]] : i64
+// BARRIER-NEXT: %[[ZERO2:.*]] = llvm.mlir.constant(0 : i64)
+// BARRIER-NEXT: %[[EMPTY2:.*]] = llvm.icmp "eq" %[[Q2]], %[[ZERO2]] : i64
+// BARRIER-NEXT: %[[OK2:.*]] = llvm.mlir.constant(0 : i32)
+// BARRIER-NEXT: llvm.cond_br %[[EMPTY2]], ^[[DONE2:bb[0-9]+]](%[[OK2]] : i32), ^[[COMMIT2:bb[0-9]+]]
+// BARRIER-NEXT: ^[[COMMIT2]]:
+// BARRIER: ^[[DONE2]](%[[STATUS2:.*]]: i32):
+// BARRIER-NEXT: llvm.return %[[STATUS2]] : i32
+// BARRIER-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1(
+// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER: %[[D3:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// BARRIER-NEXT: %[[A3:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_0
+// BARRIER-NEXT: %[[V3:.*]] = llvm.load %[[A3]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[Z3:.*]] = llvm.zext %[[V3]] : i32 to i64
+// BARRIER-NEXT: %[[P3:.*]] = llvm.or %[[D3]], %[[Z3]] : i64
+// BARRIER-NEXT: %[[B3:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_1
+// BARRIER-NEXT: %[[W3:.*]] = llvm.load %[[B3]] {{.*}} : !llvm.ptr -> i32
+// BARRIER-NEXT: %[[X3:.*]] = llvm.zext %[[W3]] : i32 to i64
+// BARRIER-NEXT: %[[Q3:.*]] = llvm.or %[[P3]], %[[X3]] : i64
+// BARRIER-NEXT: %[[ZERO3:.*]] = llvm.mlir.constant(0 : i64)
+// BARRIER-NEXT: %[[EMPTY3:.*]] = llvm.icmp "eq" %[[Q3]], %[[ZERO3]] : i64
+// BARRIER-NEXT: %[[OK3:.*]] = llvm.mlir.constant(0 : i32)
+// BARRIER-NEXT: llvm.cond_br %[[EMPTY3]], ^[[DONE3:bb[0-9]+]](%[[OK3]] : i32), ^[[COMMIT3:bb[0-9]+]]
+// BARRIER-NEXT: ^[[COMMIT3]]:
+// BARRIER: ^[[DONE3]](%[[STATUS3:.*]]: i32):
+// BARRIER-NEXT: llvm.return %[[STATUS3]] : i32
 
 !words = !obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>
 

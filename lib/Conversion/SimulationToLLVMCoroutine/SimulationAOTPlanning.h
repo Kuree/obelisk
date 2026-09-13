@@ -140,6 +140,8 @@ struct NativeEvalCoordinatorPlan {
   const llvm::BitVector &nbaTaintedOwners;
   uint32_t nbaTaintWordCount = 0;
   bool prioritySignalHandoff = false;
+  /// Dynamic slots are staged independently of the fixed-root dirty bitmap.
+  mlir::ArrayRef<std::string> dynamicNBAValidNames;
 };
 
 struct NativeEvalCoordinatorOptions {

@@ -4267,6 +4267,9 @@ FailureOr<bool> makeNativeEvalPlan(
   constexpr StringLiteral evalFourStateNBAHandoffName =
       "__obelisk_eval_four_state_nba_handoff_v1";
 
+  SmallVector<std::string> dynamicNBAValidNames;
+  for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
+    dynamicNBAValidNames.push_back(entry.validName);
   NativeEvalCoordinatorPlan coordinatorPlan{clockKernels,
                                             mergedFragments,
                                             mergedExecutors,
@@ -4276,7 +4279,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                             recordNBATaintMasks,
                                             nbaTaintedRecords,
                                             nbaTaintWordCount,
-                                            prioritySignalHandoff};
+                                            prioritySignalHandoff,
+                                            dynamicNBAValidNames};
   auto makeFastCoordinator =
       [&](StringRef functionName, ArrayRef<std::string> executors,
           bool promotedCoordinator, bool hybridCoordinator = false,

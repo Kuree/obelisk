@@ -501,18 +501,38 @@ LogicalResult materializeNativeEvalCoordinator(
                          ArrayRef<int32_t>{});
 
   builder.setInsertionPointToStart(commit);
-  // The generated commit already consumes the compact dirty-root bitmap. Keep
-  // the coordinator's common path branch-free instead of loading the same
-  // bitmap here as a precheck; for clocked designs at least one root is dirty
-  // on almost every entry, and the redundant guard measurably lengthens the
-  // whole-cycle loop. Designs without fixed NBA roots bypass the barrier.
+  // NBA fanout often needs a blocking-only settle iteration. At quiescence,
+  // skip the entire commit/probe path if that iteration staged no new NBA.
+  // Dynamic slots do not set fixed-root dirty bits, so both representations
+  // must be empty. This does not clear any four-state/promotion evidence.
+  Value pendingNBA = llvmConstant(builder, location, i64, 0);
   if (nbaTaintWordCount != 0) {
-    cf::BranchOp::create(builder, location, performCommit);
-  } else {
-    cf::BranchOp::create(
-        builder, location, complete,
-        ValueRange{llvmConstant(builder, location, i32, OBELISK_RT_OK)});
+    Value dirtyBase = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                nbaDirtyRootsName);
+    for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
+      Value dirty =
+          LLVM::LoadOp::create(builder, location, i64,
+                               byteGEP(builder, location, dirtyBase,
+                                       uint64_t{word} * sizeof(uint64_t)),
+                               8);
+      pendingNBA = arith::OrIOp::create(builder, location, pendingNBA, dirty);
+    }
   }
+  for (const std::string &name : plan.dynamicNBAValidNames) {
+    Value valid = LLVM::LoadOp::create(
+        builder, location, i32,
+        LLVM::AddressOfOp::create(builder, location, pointer, name), 4);
+    pendingNBA = arith::OrIOp::create(
+        builder, location, pendingNBA,
+        arith::ExtUIOp::create(builder, location, i64, valid));
+  }
+  Value noNBA = arith::CmpIOp::create(builder, location,
+                                      arith::CmpIPredicate::eq, pendingNBA,
+                                      llvmConstant(builder, location, i64, 0));
+  cf::CondBranchOp::create(
+      builder, location, noNBA, complete,
+      ValueRange{llvmConstant(builder, location, i32, OBELISK_RT_OK)},
+      performCommit, ValueRange{});
 
   builder.setInsertionPointToStart(performCommit);
   if (observesFourStateFallback) {
