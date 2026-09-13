@@ -11,6 +11,18 @@
 // RUN: FileCheck %s < %t.out
 // RUN: FileCheck %s --check-prefix=TICKS < %t.out
 // RUN: FileCheck %s --check-prefix=TIER < %t.diagnostics
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
+// RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.read.llvm.mlir
+// RUN: FileCheck %s --check-prefix=BARRIER < %t.read.llvm.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.read.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.read.o
+// RUN: %llvm_dist/bin/clang++ %t.read.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.read.exe
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.read.exe > %t.read.out 2> %t.read.diagnostics
+// RUN: cmp %t.out %t.read.out
+// RUN: FileCheck %s --check-prefix=TIER < %t.read.diagnostics
+// Read-only VPI capability without live readers must retain the same Tier-1
+// loop, direct display, and NBA fast paths. The node/checkpoint counts must
+// stay bounded by startup/reset/finish, not grow with the 2501 displays.
 // Ordinary stdout snapshots remain inside the clock-group evaluator. Prints
 // must not replay NBA effects or execute in dry-run promotion probes. Only
 // the deliberate reset/finish runtime work leaves the generated evaluator.
