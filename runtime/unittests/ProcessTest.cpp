@@ -1225,6 +1225,70 @@ TEST(RuntimeInternals, SharedPackedByteAccessMatchesBitwiseReference) {
     }
 }
 
+TEST(RuntimeInternals, PackedRangeExistenceMatchesIndividualBits) {
+  EXPECT_FALSE(anyPackedBits(nullptr, 0, 0));
+  EXPECT_FALSE(anyPackedBits(nullptr, 7, 100));
+  for (uint64_t offset = 0; offset != 16; ++offset)
+    for (uint64_t width = 0; width <= 130; ++width) {
+      SCOPED_TRACE(::testing::Message()
+                   << "offset=" << offset << " width=" << width);
+      std::vector<uint8_t> bytes((offset + width + 7) / 8, 0);
+      EXPECT_FALSE(anyPackedBits(bytes.data(), offset, width));
+      for (uint64_t bit = 0; bit < bytes.size() * 8; ++bit) {
+        bytes[bit / 8] = uint8_t{1} << (bit % 8);
+        EXPECT_EQ(anyPackedBits(bytes.data(), offset, width),
+                  bit >= offset && bit - offset < width);
+        bytes[bit / 8] = 0;
+      }
+    }
+}
+
+TEST(RuntimeInternals, PackedPublicationPreservesUnchangedAndForcedBits) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 256;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 53, 128),
+            OBELISK_RT_OK);
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  for (uint64_t width : {1, 7, 8, 31, 32, 63, 64})
+    for (bool forced : {false, true})
+      for (bool establishesOverride : {false, true}) {
+        context->stateValue.assign(4, UINT64_C(0x9696969696969696));
+        context->stateUnknown.assign(4, UINT64_C(0x6969696969696969));
+        context->forceMask.assign(4, forced ? UINT64_C(0x2222222222222222) : 0);
+        auto expectedValue = context->stateValue;
+        auto expectedUnknown = context->stateUnknown;
+        std::array<uint8_t, 8> changed{}, value{}, unknown{};
+        changed.fill(0x5a);
+        value.fill(0xc3);
+        unknown.fill(0x3c);
+        for (uint64_t bit = 0; bit != width; ++bit) {
+          uint64_t absolute = 53 + bit;
+          uint64_t mask = uint64_t{1} << (absolute % 64);
+          if (!((changed[bit / 8] >> (bit % 8)) & 1) ||
+              (!establishesOverride &&
+               (context->forceMask[absolute / 64] & mask)))
+            continue;
+          auto apply = [&](auto &plane, const auto &input) {
+            auto &word = plane[absolute / 64];
+            word = ((input[bit / 8] >> (bit % 8)) & 1) ? word | mask
+                                                       : word & ~mask;
+          };
+          apply(expectedValue, value);
+          apply(expectedUnknown, unknown);
+        }
+        ASSERT_TRUE(publishNativeSignalTransitionUnlocked(
+            context, handle, width, changed.data(), nullptr, nullptr, nullptr,
+            nullptr, value.data(), unknown.data(), establishesOverride));
+        EXPECT_EQ(context->stateValue, expectedValue);
+        EXPECT_EQ(context->stateUnknown, expectedUnknown);
+      }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeInternals, ReusableByteBuffersAreSafeAcrossWorkers) {
   ReusableByteBufferPool pool;
   std::atomic<unsigned> failures{0};

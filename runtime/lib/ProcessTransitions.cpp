@@ -1332,20 +1332,28 @@ static bool signalTransitionBatchMatches(const Subscription &subscription,
   __int128 overlapEnd =
       std::min(static_cast<__int128>(publishedOffset) + bitWidth,
                static_cast<__int128>(subscribedOffset) + subscription.bitWidth);
-  for (__int128 coordinate = overlapBegin; coordinate < overlapEnd;
-       ++coordinate) {
-    uint64_t index =
-        edgeBitOffset + static_cast<uint64_t>(coordinate - publishedOffset);
-    uint32_t observed = byteBit(changed, index) ? OBELISK_RT_SIGNAL_CHANGE : 0;
-    if (byteBit(posedge, index))
-      observed |= OBELISK_RT_SIGNAL_POSEDGE;
-    if (byteBit(negedge, index))
-      observed |= OBELISK_RT_SIGNAL_NEGEDGE;
-    if (observed != 0 &&
-        (!direct || signalEdgeMatches(subscription.edge, observed)))
-      return true;
+  if (overlapBegin >= overlapEnd)
+    return false;
+  uint64_t index =
+      edgeBitOffset + static_cast<uint64_t>(overlapBegin - publishedOffset);
+  uint64_t width = static_cast<uint64_t>(overlapEnd - overlapBegin);
+  if (!direct)
+    return anyPackedBits(changed, index, width) ||
+           anyPackedBits(posedge, index, width) ||
+           anyPackedBits(negedge, index, width);
+  switch (subscription.edge) {
+  case OBELISK_RT_WAIT_EDGE_CHANGE:
+    return anyPackedBits(changed, index, width);
+  case OBELISK_RT_WAIT_EDGE_POSEDGE:
+    return anyPackedBits(posedge, index, width);
+  case OBELISK_RT_WAIT_EDGE_NEGEDGE:
+    return anyPackedBits(negedge, index, width);
+  case OBELISK_RT_WAIT_EDGE_BOTH:
+    return anyPackedBits(posedge, index, width) ||
+           anyPackedBits(negedge, index, width);
+  default:
+    return false;
   }
-  return false;
 }
 
 static bool publishCovergroupClockTransitionUnlocked(
@@ -1574,21 +1582,18 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
     uint64_t overlapLow = std::max(publishedLow, entry->low_bit);
     uint64_t overlapHigh =
         std::min(publishedLow + bitWidth, entry->low_bit + entry->bit_width);
-    bool matched = false;
-    for (uint64_t coordinate = overlapLow; coordinate < overlapHigh;
-         ++coordinate) {
-      uint64_t bit = coordinate - publishedLow;
-      if (entry->edge == OBELISK_RT_WAIT_EDGE_CHANGE)
-        matched = byteBit(changed, bit);
-      else if (entry->edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
-        matched = byteBit(posedge, bit);
-      else if (entry->edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
-        matched = byteBit(negedge, bit);
-      else
-        matched = byteBit(posedge, bit) || byteBit(negedge, bit);
-      if (matched)
-        break;
-    }
+    if (overlapLow >= overlapHigh)
+      continue;
+    uint64_t offset = overlapLow - publishedLow;
+    uint64_t width = overlapHigh - overlapLow;
+    bool matched = entry->edge == OBELISK_RT_WAIT_EDGE_CHANGE
+                       ? anyPackedBits(changed, offset, width)
+                   : entry->edge == OBELISK_RT_WAIT_EDGE_POSEDGE
+                       ? anyPackedBits(posedge, offset, width)
+                   : entry->edge == OBELISK_RT_WAIT_EDGE_NEGEDGE
+                       ? anyPackedBits(negedge, offset, width)
+                       : anyPackedBits(posedge, offset, width) ||
+                             anyPackedBits(negedge, offset, width);
     if (!matched)
       continue;
     if (!published) {
@@ -1891,17 +1896,41 @@ bool publishNativeSignalTransitionUnlocked(
           context, bitOffset, bitWidth, changed, posedge, negedge, 0, &sequence,
           oldValue, oldUnknown, newValue, newUnknown))
     return false;
-  for (uint64_t bit = 0; bit != bitWidth; ++bit) {
-    uint64_t absolute = 0;
-    if (!byteBit(changed, bit) || !canonicalBit(bit, absolute))
-      continue;
-    uint64_t mask = uint64_t{1} << (absolute % 64);
-    uint64_t &valueLimb = context->stateValue[absolute / 64];
-    uint64_t &unknownLimb = context->stateUnknown[absolute / 64];
-    valueLimb = byteBit(newValue, bit) ? valueLimb | mask : valueLimb & ~mask;
-    unknownLimb = newUnknown && byteBit(newUnknown, bit) ? unknownLimb | mask
-                                                         : unknownLimb & ~mask;
-  }
+  uint64_t firstCanonicalBit = 0;
+  uint64_t lastCanonicalBit = 0;
+  bool packedCanonical = bitWidth <= 64 && bitWidth != 0 &&
+                         canonicalBit(0, firstCanonicalBit) &&
+                         canonicalBit(bitWidth - 1, lastCanonicalBit);
+  if (packedCanonical) {
+    // Preserve the publication-before-canonical ordering above, but merge a
+    // bounded payload with word operations instead of revisiting every bit.
+    uint64_t mask = loadPackedBytes(changed, 0, bitWidth);
+    uint64_t value = loadPackedBytes(newValue, 0, bitWidth);
+    uint64_t unknown =
+        newUnknown ? loadPackedBytes(newUnknown, 0, bitWidth) : 0;
+    storePackedBits(
+        context->stateValue, firstCanonicalBit, bitWidth,
+        (loadPackedBits(context->stateValue, firstCanonicalBit, bitWidth) &
+         ~mask) |
+            (value & mask));
+    storePackedBits(
+        context->stateUnknown, firstCanonicalBit, bitWidth,
+        (loadPackedBits(context->stateUnknown, firstCanonicalBit, bitWidth) &
+         ~mask) |
+            (unknown & mask));
+  } else
+    for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+      uint64_t absolute = 0;
+      if (!byteBit(changed, bit) || !canonicalBit(bit, absolute))
+        continue;
+      uint64_t mask = uint64_t{1} << (absolute % 64);
+      uint64_t &valueLimb = context->stateValue[absolute / 64];
+      uint64_t &unknownLimb = context->stateUnknown[absolute / 64];
+      valueLimb = byteBit(newValue, bit) ? valueLimb | mask : valueLimb & ~mask;
+      unknownLimb = newUnknown && byteBit(newUnknown, bit)
+                        ? unknownLimb | mask
+                        : unknownLimb & ~mask;
+    }
   obelisk_rt_invalidate_signal_snapshots_unlocked(context, bitOffset, bitWidth);
   if (obelisk_rt_has_conditional_signal_waiters(context)) {
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {

@@ -12,6 +12,7 @@
 
 #include "obelisk/Runtime/StableHandle.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -60,6 +61,54 @@ inline uint64_t nativeHandleOffset(uint64_t handle, int64_t amount) {
 
 inline uint64_t packedWidthMask(uint64_t bitWidth) {
   return bitWidth == 64 ? UINT64_MAX : (uint64_t{1} << bitWidth) - 1;
+}
+
+// Test only the requested bits, without reading beyond their final byte.
+// Publication matching needs existence, not a per-bit edge reconstruction.
+inline bool anyPackedBits(const uint8_t *plane, uint64_t bitOffset,
+                          uint64_t bitWidth) {
+  if (!plane || bitWidth == 0)
+    return false;
+  plane += bitOffset / 8;
+  unsigned shift = bitOffset % 8;
+  if (shift) {
+    uint64_t count = std::min<uint64_t>(bitWidth, 8 - shift);
+    if ((*plane >> shift) & packedWidthMask(count))
+      return true;
+    ++plane;
+    bitWidth -= count;
+  }
+  while (bitWidth >= 64) {
+    uint64_t word;
+    std::memcpy(&word, plane, sizeof(word));
+    if (word)
+      return true;
+    plane += 8;
+    bitWidth -= 64;
+  }
+  if (bitWidth >= 32) {
+    uint32_t word;
+    std::memcpy(&word, plane, sizeof(word));
+    if (word)
+      return true;
+    plane += 4;
+    bitWidth -= 32;
+  }
+  if (bitWidth >= 16) {
+    uint16_t word;
+    std::memcpy(&word, plane, sizeof(word));
+    if (word)
+      return true;
+    plane += 2;
+    bitWidth -= 16;
+  }
+  if (bitWidth >= 8) {
+    if (*plane)
+      return true;
+    ++plane;
+    bitWidth -= 8;
+  }
+  return bitWidth && (*plane & packedWidthMask(bitWidth));
 }
 
 inline uint64_t loadPackedBits(const std::vector<uint64_t> &plane,
