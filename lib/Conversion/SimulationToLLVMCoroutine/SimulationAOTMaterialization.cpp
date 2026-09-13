@@ -5542,6 +5542,22 @@ FailureOr<bool> makeNativeEvalPlan(
         builder, location, knownEntry->getArgument(1),
         llvmConstant(builder, location, i64, UINT64_MAX), taintedRoots);
     dirty = arith::AndIOp::create(builder, location, dirty, taintedRoots);
+    // Post-NBA combinational settling often reaches this predicate without
+    // staging another NBA. Skip an empty bitmap word before examining any of
+    // its roots; otherwise even an empty barrier tests up to 64 accumulators.
+    // Dynamic accumulators were checked above and retain their cold route.
+    Block *inspectWord = new Block;
+    Block *nextWord = new Block;
+    nbaKnown.getBody().getBlocks().insert(Region::iterator(knownTrue),
+                                          inspectWord);
+    nbaKnown.getBody().getBlocks().insert(Region::iterator(knownTrue),
+                                          nextWord);
+    Value emptyWord =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              dirty, llvmConstant(builder, location, i64, 0));
+    cf::CondBranchOp::create(builder, location, emptyWord, nextWord,
+                             ValueRange{}, inspectWord, ValueRange{});
+    builder.setInsertionPointToStart(inspectWord);
     uint64_t supportedMask = 0;
     for (uint32_t rootIndex : scalarRootsByWord[word])
       supportedMask |= uint64_t{1} << (rootIndex % 64);
@@ -5651,7 +5667,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                ValueRange{}, nextRoot, ValueRange{});
       rootCursor = nextRoot;
     }
-    wordCursor = rootCursor;
+    builder.setInsertionPointToStart(rootCursor);
+    cf::BranchOp::create(builder, location, nextWord);
+    wordCursor = nextWord;
   }
   builder.setInsertionPointToStart(wordCursor);
   cf::BranchOp::create(builder, location, knownTrue);

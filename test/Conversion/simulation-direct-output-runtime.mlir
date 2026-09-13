@@ -1,6 +1,7 @@
 // RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
@@ -33,6 +34,21 @@
 // CHECK: startup
 // CHECK: reset 5
 // CHECK: done 10005
+
+// The known-state predicate must bypass every accumulator in an empty bitmap
+// word, as occurs in the post-NBA combinational fixpoint. The dirty-root path
+// remains separate and retains its canonical/staged unknown checks.
+// NBAKNOWN-LABEL: llvm.func internal @__obelisk_eval_nba_known_v1
+// NBAKNOWN: %[[DIRTY:.*]] = llvm.and {{.*}} : i64
+// NBAKNOWN-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
+// NBAKNOWN-NEXT: %[[EMPTY:.*]] = llvm.icmp "eq" %[[DIRTY]], %[[ZERO]] : i64
+// NBAKNOWN-NEXT: llvm.cond_br %[[EMPTY]], ^[[NEXT:bb[0-9]+]], ^[[INSPECT:bb[0-9]+]]
+// NBAKNOWN: ^[[INSPECT]]:
+// NBAKNOWN: llvm.cond_br
+// NBAKNOWN: ^[[NEXT]]:
+// NBAKNOWN-NEXT: llvm.br
+// NBAKNOWN: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
+// NBAKNOWN: llvm.mlir.addressof @__obelisk_state_unknown
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
