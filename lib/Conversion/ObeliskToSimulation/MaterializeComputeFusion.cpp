@@ -31,6 +31,16 @@ namespace obelisk {
 
 namespace {
 
+static void retargetCoverageKeepalives(sim::SimFuncOp source,
+                                       sim::SimFuncOp replacement) {
+  auto design = source->getParentOfType<sim::SimDesignOp>();
+  for (auto keepalive :
+       design.getBody().front().getOps<sim::SimCoverageKeepaliveOp>())
+    if (keepalive.getFunction() == source.getSymName())
+      keepalive.setFunctionAttr(
+          FlatSymbolRefAttr::get(replacement.getSymNameAttr()));
+}
+
 constexpr StringLiteral evalOriginNBASiteAttr = "obelisk.eval.origin_nba_site";
 static void preserveEvalNBASiteOrigins(sim::SimFuncOp body) {
   body.walk([&](sim::SimNBAEnqueueOp enqueue) {
@@ -325,7 +335,8 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   };
   for (Block *source : preambleBlocks) {
     for (Operation &operation : source->without_terminator())
-      builder.clone(operation, mapping);
+      if (!isa<sim::SimCoveragePointHitOp>(operation))
+        builder.clone(operation, mapping);
     auto branch = cast<cf::BranchOp>(source->getTerminator());
     if (startsAtActivation && branch.getDest() == activation) {
       if (failed(appendMappedValues(branch.getDestOperands(),
@@ -397,12 +408,17 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   }
   if (!startsAtActivation && !cloneTerminalWait)
     for (Operation &operation : wait->without_terminator())
-      builder.clone(operation, mapping);
+      if (!isa<sim::SimCoveragePointHitOp>(operation))
+        builder.clone(operation, mapping);
   builder.setInsertionPointToEnd(&evalEntry);
   cf::BranchOp::create(builder, function.getLoc(), mapping.lookup(activation),
                        entryOperands);
 
   bool supported = true;
+  auto cloneWaitCoverage = [&](OpBuilder &atReturn) {
+    for (auto hit : wait->getOps<sim::SimCoveragePointHitOp>())
+      atReturn.clone(*hit.getOperation(), mapping);
+  };
   for (Block *source : activationBlocks) {
     builder.setInsertionPointToEnd(mapping.lookup(source));
     for (Operation &operation : *source) {
@@ -426,6 +442,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
         if (auto branch = dyn_cast<cf::BranchOp>(operation);
             branch && branch.getDest() == wait) {
           if (!cloneTerminalWait) {
+            cloneWaitCoverage(builder);
             sim::SimReturnOp::create(builder, branch.getLoc(), ValueRange{});
             continue;
           }
@@ -442,6 +459,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
           if (trueWait || falseWait) {
             if (!cloneTerminalWait) {
               if (trueWait && falseWait) {
+                cloneWaitCoverage(builder);
                 sim::SimReturnOp::create(builder, branch.getLoc(),
                                          ValueRange{});
                 continue;
@@ -449,6 +467,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
               Block *returnBlock = new Block;
               evalBody.getBody().push_back(returnBlock);
               OpBuilder returnBuilder = OpBuilder::atBlockEnd(returnBlock);
+              cloneWaitCoverage(returnBuilder);
               sim::SimReturnOp::create(returnBuilder, branch.getLoc(),
                                        ValueRange{});
               SmallVector<Value> trueOperands;
@@ -513,7 +532,8 @@ bool hasOnlyPureEntryPreamble(sim::SimFuncOp function, Block *wait,
       (!allowThreadedValues && !branch.getDestOperands().empty()))
     return false;
   return llvm::all_of(entry.without_terminator(), [](Operation &operation) {
-    return isMemoryEffectFree(&operation);
+    return isMemoryEffectFree(&operation) ||
+           isa<sim::SimCoveragePointHitOp>(operation);
   });
 }
 
@@ -553,6 +573,11 @@ void collectLiveEntryPreamble(BodyFusionCandidate &candidate) {
   Block &entry = candidate.function.getBody().front();
   llvm::SmallPtrSet<Operation *, 16> needed;
   SmallVector<Value> pending;
+  for (Operation &operation : entry.without_terminator())
+    if (isa<sim::SimCoveragePointHitOp>(operation)) {
+      needed.insert(&operation);
+      llvm::append_range(pending, operation.getOperands());
+    }
   pending.append(candidate.threadedEntryValues.begin(),
                  candidate.threadedEntryValues.end());
   pending.append(candidate.wait->getTerminator()->operand_begin(),
@@ -1666,8 +1691,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                             operands, ArrayAttr{}, ArrayAttr{});
     for (Candidate &candidate : candidates)
       candidate.spawn.erase();
-    for (Candidate &candidate : candidates)
+    for (Candidate &candidate : candidates) {
+      retargetCoverageKeepalives(candidate.function, kernel);
       candidate.function.erase();
+    }
     return kernel;
   }
 
@@ -2288,8 +2315,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                           operands, ArrayAttr{}, ArrayAttr{});
   for (Candidate &candidate : candidates)
     candidate.spawn.erase();
-  for (Candidate &candidate : candidates)
+  for (Candidate &candidate : candidates) {
+    retargetCoverageKeepalives(candidate.function, kernel);
     candidate.function.erase();
+  }
   return kernel;
 }
 
@@ -2372,8 +2401,12 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         break;
       }
     }
-    if (!wait || !wait->without_terminator().empty() ||
-        (!evalBodyFusion && wait->getNumArguments() != 0) ||
+    bool coverageWait =
+        wait &&
+        llvm::all_of(wait->without_terminator(), [](Operation &operation) {
+          return isa<arith::ConstantOp, sim::SimCoveragePointHitOp>(operation);
+        });
+    if (!coverageWait || (!evalBodyFusion && wait->getNumArguments() != 0) ||
         !isTypedDirectWait(wait->getTerminator()) ||
         wait->getNumSuccessors() != 1 ||
         (!evalBodyFusion && wait->getSuccessor(0)->getNumArguments() != 0) ||
@@ -2668,6 +2701,11 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   cf::BranchOp::create(builder, fused.getLoc(), wait);
 
   builder.setInsertionPointToStart(wait);
+  // Each original actor executes its wait instrumentation at bootstrap and
+  // after an activation. Keep those hits in the shared suspension block.
+  for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
+    for (Operation &operation : candidate.wait->without_terminator())
+      builder.clone(operation, *mapping);
   builder.clone(*candidates.front().wait->getTerminator(), *mappings.front());
   for (auto [candidateIndex, pair] :
        llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
@@ -2740,8 +2778,10 @@ FailureOr<sim::SimFuncOp> materializeFusion(
                           operands, ArrayAttr{}, ArrayAttr{});
   for (BodyFusionCandidate &candidate : candidates)
     candidate.spawn.erase();
-  for (BodyFusionCandidate &candidate : candidates)
+  for (BodyFusionCandidate &candidate : candidates) {
+    retargetCoverageKeepalives(candidate.function, fused);
     candidate.function.erase();
+  }
 
   // Remove private activation temporaries before if-converting NBA diamonds.
   // Besides avoiding canonical state publication, this turns overwrite-arm
@@ -2838,7 +2878,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       evalMapping.map(source, destination);
     builder.setInsertionPointToStart(&evalEntry);
     for (Operation &operation : fused.getBody().front().without_terminator())
-      builder.clone(operation, evalMapping);
+      if (!isa<sim::SimCoveragePointHitOp>(operation))
+        builder.clone(operation, evalMapping);
 
     Block *activation = wait->getSuccessor(0);
     SmallVector<Block *> activationBlocks;
@@ -2878,6 +2919,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         if (&operation == source->getTerminator()) {
           if (auto branch = dyn_cast<cf::BranchOp>(operation);
               branch && branch.getDest() == wait) {
+            for (Operation &waitOperation : wait->without_terminator())
+              builder.clone(waitOperation, evalMapping);
             sim::SimReturnOp::create(builder, branch.getLoc(), ValueRange{});
             continue;
           }
@@ -2886,6 +2929,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
             bool falseWait = branch.getFalseDest() == wait;
             if (trueWait || falseWait) {
               if (trueWait && falseWait) {
+                for (Operation &waitOperation : wait->without_terminator())
+                  builder.clone(waitOperation, evalMapping);
                 sim::SimReturnOp::create(builder, branch.getLoc(),
                                          ValueRange{});
                 continue;
@@ -2893,6 +2938,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
               Block *returnBlock = new Block;
               evalBody.getBody().push_back(returnBlock);
               OpBuilder returnBuilder = OpBuilder::atBlockEnd(returnBlock);
+              for (Operation &waitOperation : wait->without_terminator())
+                returnBuilder.clone(waitOperation, evalMapping);
               sim::SimReturnOp::create(returnBuilder, branch.getLoc(),
                                        ValueRange{});
               SmallVector<Value> trueOperands;

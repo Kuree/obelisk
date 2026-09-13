@@ -153,15 +153,32 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
       // extra clock action; the executable sequence must still be exactly
       // load -> not -> store.
       if (!isa<sim::SimContextStorageOp, sim::SimRefSubelementOp,
-               arith::ConstantOp>(operation))
+               arith::ConstantOp, sim::SimCoveragePointHitOp>(operation))
         toggleOperations.push_back(&operation);
     if (toggleOperations.size() != 3 || toggleOperations[0] != load ||
         toggleOperations[1] != toggleOperation || toggleOperations[2] != store)
       return WalkResult::advance();
     bool unsupported = false;
+    SmallVector<uint64_t> coveragePoints;
     function.walk([&](Operation *operation) {
       if (operation == function.getOperation())
         return;
+      if (auto hit = dyn_cast<sim::SimCoveragePointHitOp>(operation)) {
+        if (hit->getBlock() != wait && hit->getBlock() != toggle) {
+          // Entry instrumentation runs once in the bootstrap coroutine.
+          unsupported |= hit->getBlock() != &function.getBody().front();
+          return;
+        }
+        auto enabled = hit.getEnabled().getDefiningOp<arith::ConstantOp>();
+        auto value =
+            enabled ? dyn_cast<IntegerAttr>(enabled.getValue()) : IntegerAttr{};
+        if (!value) {
+          unsupported = true;
+        } else if (!value.getValue().isZero()) {
+          coveragePoints.push_back(hit.getPoint());
+        }
+        return;
+      }
       if (isa<sim::SimSuspendDelayOp, sim::SimRefLoadOp, sim::SimRefStoreOp,
               sim::SimLogicUnaryOp, sim::SimTimeConstantOp,
               sim::SimContextStorageOp, arith::XOrIOp, arith::ConstantOp,
@@ -208,7 +225,7 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
       return delay.emitOpError("periodic clock wait has no continuation ID"),
              WalkResult::interrupt();
     clocks.push_back({actor->second, site.getId(), bound->handleID, bitOffset,
-                      period.getValue()});
+                      period.getValue(), std::move(coveragePoints)});
     return WalkResult::advance();
   });
   if (result.wasInterrupted())
@@ -441,11 +458,32 @@ LogicalResult materializeNativePeriodicClockPlan(
   Location location = module.getLoc();
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  Type entryType =
-      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32, i32, i64, i64});
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type entryType = LLVM::LLVMStructType::getLiteral(
+      context, {i32, i32, i32, i32, i64, i64, pointer, i64});
   Type tableType = LLVM::LLVMArrayType::get(entryType, periodicClocks.size());
   if (module.lookupSymbol("__obelisk_periodic_clock_plan_v1"))
     return module.emitError("duplicate generated periodic-clock plan");
+  SmallVector<std::string> coverageSymbols(periodicClocks.size());
+  for (auto [index, clock] : llvm::enumerate(periodicClocks)) {
+    if (clock.coveragePoints.empty())
+      continue;
+    coverageSymbols[index] =
+        (Twine("__obelisk_periodic_clock_coverage_") + Twine(index)).str();
+    Type pointsType =
+        LLVM::LLVMArrayType::get(i64, clock.coveragePoints.size());
+    makeConstantGlobal(
+        module, location, pointsType, coverageSymbols[index],
+        LLVM::Linkage::Internal, 8, [&](OpBuilder &initializer) {
+          Value points =
+              LLVM::ZeroOp::create(initializer, location, pointsType);
+          for (auto [pointIndex, point] : llvm::enumerate(clock.coveragePoints))
+            points = insertValue(
+                initializer, location, points,
+                llvmConstant(initializer, location, i64, point), pointIndex);
+          return points;
+        });
+  }
   makeConstantGlobal(
       module, location, tableType, "__obelisk_periodic_clock_plan_v1",
       LLVM::Linkage::Internal, 8, [&](OpBuilder &initializer) {
@@ -467,6 +505,17 @@ LogicalResult materializeNativePeriodicClockPlan(
           entry = insertValue(
               initializer, location, entry,
               llvmConstant(initializer, location, i64, clock.halfPeriod), 5);
+          if (!coverageSymbols[index].empty()) {
+            entry = insertValue(
+                initializer, location, entry,
+                LLVM::AddressOfOp::create(initializer, location, pointer,
+                                          coverageSymbols[index]),
+                6);
+            entry = insertValue(initializer, location, entry,
+                                llvmConstant(initializer, location, i64,
+                                             clock.coveragePoints.size()),
+                                7);
+          }
           table = LLVM::InsertValueOp::create(
               initializer, location, table, entry,
               ArrayRef<int64_t>{static_cast<int64_t>(index)});

@@ -3193,6 +3193,10 @@ typedef struct obelisk_rt_native_periodic_clock_v1 {
   uint32_t reserved;
   uint64_t bit_offset;
   uint64_t half_period;
+  // Line hits normally emitted by the clock's toggle/rearm blocks. The cold
+  // bootstrap advances proven clocks directly, so it must retain these hits.
+  const uint64_t *coverage_points;
+  uint64_t coverage_point_count;
 } obelisk_rt_native_periodic_clock_v1;
 
 // Proven one-bit projection of a periodic source through a single-driver

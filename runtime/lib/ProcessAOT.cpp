@@ -2143,6 +2143,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         clockProcess.wakeTime += clock.half_period;
         setNativeAOTDeadlineUnlocked(context, clock.actor_slot,
                                      clockProcess.wakeTime);
+        if (clock.coverage_point_count && !clock.coverage_points)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        for (uint64_t point = 0; point != clock.coverage_point_count; ++point) {
+          status = obelisk_rt_v1_coverage_point_hit(
+              context, clock.coverage_points[point], 1);
+          if (status != OBELISK_RT_OK)
+            return status;
+        }
 
         auto queueFanout = [&](const obelisk_rt_static_fanout_entry &entry)
             -> obelisk_rt_status {

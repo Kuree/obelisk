@@ -3158,6 +3158,18 @@ FailureOr<bool> makeNativeEvalPlan(
     Value directReady = llvmConstant(builder, location, i64, 0);
     Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
                                                  "__obelisk_state_value");
+    auto recordClockCoverage = [&](const NativePeriodicClock &clock,
+                                   Value enabled) {
+      if (clock.coveragePoints.empty())
+        return;
+      Value flag = arith::ExtUIOp::create(builder, location, i32, enabled);
+      for (uint64_t point : clock.coveragePoints)
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_point_hit"),
+            ValueRange{runEntry->getArgument(1),
+                       llvmConstant(builder, location, i64, point), flag});
+    };
     auto publishRuntimeClockBit = [&](uint32_t staticState,
                                       uint64_t absoluteBit, Value oldSet,
                                       Value newSet) -> LogicalResult {
@@ -3238,6 +3250,7 @@ FailureOr<bool> makeNativeEvalPlan(
               builder, location, oldSet,
               llvmConstant(builder, location, builder.getI1Type(), 1)),
           oldSet);
+      recordClockCoverage(clock, due);
       if (mlir::failed(publishRuntimeClockBit(clock.staticState,
                                               clock.bitOffset, oldSet, newSet)))
         return failure();
@@ -3915,6 +3928,8 @@ FailureOr<bool> makeNativeEvalPlan(
 
       builder.setInsertionPointToStart(advanceSilentFall);
       const NativePeriodicClock &clock = periodicClocks.front();
+      recordClockCoverage(
+          clock, llvmConstant(builder, location, builder.getI1Type(), 1));
       Value sourceAddress =
           byteGEP(builder, location, stateValue, clock.bitOffset / 8);
       Value source = LLVM::LoadOp::create(

@@ -190,6 +190,7 @@ struct NativePeriodicClock {
   uint32_t staticState = 0;
   uint64_t bitOffset = 0;
   uint64_t halfPeriod = 0;
+  llvm::SmallVector<uint64_t> coveragePoints;
 };
 
 /// A proven one-bit, single-driver port projection of a periodic source.  The
