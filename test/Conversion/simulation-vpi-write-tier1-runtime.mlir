@@ -6,6 +6,7 @@
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
 // RUN: FileCheck %s < %t.out
 // RUN: FileCheck %s --check-prefix=TIERS < %t.diag
+// RUN: env OBELISK_TEST_IMMEDIATE_NET_RELEASE=1 %t.exe | FileCheck %s
 // A writer arrives only AFTER 500 Tier-1 clock activations. Deposits must
 // update the canonical planes; force must survive NBA writes; variable release
 // retains the forced value until the next assignment. Depositing X invalidates

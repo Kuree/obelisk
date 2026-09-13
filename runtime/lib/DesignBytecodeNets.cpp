@@ -1929,6 +1929,22 @@ obelisk_rt_v1_scheduler_resolve_initial_drivers(obelisk_rt_context *context) {
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
 }
 
+// A VPI mutation can arrive inside a native fragment, before a scheduler
+// handoff imports its clean driver stores. Net release must resolve those
+// current contributions (IEEE 1800-2023 10.6.2), not the previous runtime
+// snapshot. Preserve already dirty roots before importing the clean planes.
+static bool
+synchronizeNativeNetOverrideStateUnlocked(obelisk_rt_context *context) {
+  const auto *plan = context->nativeSchedulePlan;
+  if (!plan || !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) ||
+      context->nativeScheduleDeoptimized || !plan->state_bit_count)
+    return true;
+  return reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) &&
+         importNativeStatePlanesUnlocked(context, plan->state_value,
+                                         plan->state_unknown,
+                                         plan->state_bit_count);
+}
+
 obelisk_rt_status
 obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
                              uint64_t width, const uint8_t *value,
@@ -1943,6 +1959,8 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
     if (!loadValidatedImage(entry, context, image))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (!synchronizeNativeNetOverrideStateUnlocked(context))
+      return OBELISK_RT_INVALID_DESIGN;
     NetAliasCache *cache = getNetAliasCache(image, context);
     std::map<uint64_t, std::pair<bool, bool>> forcedRoots;
     for (uint64_t index = 0; index != width; ++index) {
@@ -2026,6 +2044,8 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
     if (!loadValidatedImage(entry, context, image))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (!synchronizeNativeNetOverrideStateUnlocked(context))
+      return OBELISK_RT_INVALID_DESIGN;
     NetAliasCache *cache = getNetAliasCache(image, context);
     std::vector<uint64_t> roots;
     for (uint64_t index = 0; index != width; ++index) {

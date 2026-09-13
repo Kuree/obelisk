@@ -5,6 +5,7 @@
 // RUN: %llvm_dist/bin/clang++ %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
 // RUN: FileCheck %s < %t.out
+// RUN: env OBELISK_TEST_IMMEDIATE_NET_RELEASE=1 %t.exe | FileCheck %s
 // Runtime companion to the guarded-store/net pass tests. Force Tier 2 in
 // the input IR: late deposits, force/release and X writes must remain correct
 // after a long clean compute-fragment interval, then recover normally.

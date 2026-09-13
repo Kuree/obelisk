@@ -1,5 +1,6 @@
 #include "obelisk/Runtime/Runtime.h"
 #include "vpi_user.h"
+#include <stdlib.h>
 
 static obelisk_rt_context *active;
 static unsigned checkpoints;
@@ -28,9 +29,42 @@ __wrap_obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
   return status;
 }
 
+static int checkImmediateNetRelease(void) {
+  vpiHandle net = vpi_handle_by_name("vpi_write.net", 0);
+  if (!net)
+    return -1;
+  s_vpi_value read = {0};
+  read.format = vpiIntVal;
+  vpi_get_value(net, &read);
+  int before = read.value.integer;
+  int status = before == 500 ? 0 : -1;
+  // Include an unchanged force, a changed force, and an X force. All releases
+  // happen before returning to the scheduler, with no intervening driver store.
+  for (int mode = 0; mode != 3; ++mode) {
+    s_vpi_vecval bits = {mode == 0   ? before
+                         : mode == 1 ? 123
+                                     : 0,
+                         mode == 2 ? -1 : 0};
+    s_vpi_value value = {0};
+    value.format = vpiVectorVal;
+    value.value.vector = &bits;
+    vpi_put_value(net, &value, 0, vpiForceFlag);
+    vpi_put_value(net, 0, 0, vpiReleaseFlag);
+    vpi_get_value(net, &read);
+    s_vpi_error_info error = {0};
+    if (vpi_chk_error(&error) || read.value.integer != before)
+      status = -1;
+  }
+  vpi_release_handle(net);
+  return status;
+}
+
 static int writeValue(int mode) {
   if (!active)
     return -1;
+  if (mode == 0 && getenv("OBELISK_TEST_IMMEDIATE_NET_RELEASE") &&
+      checkImmediateNetRelease() != 0)
+    return -4;
   vpiHandle handle =
       vpi_handle_by_name(mode >= 5 ? "vpi_write.net" : "vpi_write.q", 0);
   if (!handle)
