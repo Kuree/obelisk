@@ -6086,6 +6086,12 @@ TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
   generated[64].write_mask[0] = 1;
   generated[64].valid = 1;
   generated[64].exec_region = OBELISK_RT_REGION_NBA;
+  // Fixed-site Tier-1 stages retain constant valid/mask fields after their
+  // dirty bit is consumed. They must not create a phantom runtime barrier.
+  generated[0].valid = 1;
+  generated[0].write_mask[0] = 1;
+  generated[0].exec_region = OBELISK_RT_REGION_ACTIVE;
+  EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), OBELISK_RT_REGION_NBA);
   uint32_t changed = 0;
   ASSERT_EQ(obelisk_rt_v1_static_nba_commit_roots(
                 context, rootCount, OBELISK_RT_REGION_NBA, &changed),
@@ -6096,6 +6102,12 @@ TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
   EXPECT_EQ(dirtyRoots[1], 0u);
   EXPECT_EQ(dirtySummary[0], 0u);
   EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 1u);
+  EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), UINT32_MAX);
+  // A subsequent real stage must become visible again, including in the
+  // first bitmap leaf after the only pending second-leaf stage was drained.
+  dirtyRoots[0] = 1;
+  dirtySummary[0] = 1;
+  EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), OBELISK_RT_REGION_ACTIVE);
   obelisk_rt_v1_context_destroy(context);
 }
 

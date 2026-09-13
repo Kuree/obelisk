@@ -2590,6 +2590,15 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators)
     for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
          ++root) {
+      // Fixed-site Tier-1 accumulators retain their constant valid/mask
+      // fields after commit. For indexed plans the dirty bitmap, not those
+      // payload fields, owns pendingness across a runtime handoff.
+      const auto *plan = context->nativeSchedulePlan;
+      if (plan && plan->nba_dirty_roots && plan->nba_dirty_summary &&
+          (root / 64 >= plan->nba_dirty_word_count ||
+           (plan->nba_dirty_roots[root / 64] & (uint64_t{1} << (root % 64))) ==
+               0))
+        continue;
       const obelisk_rt_generated_nba_accumulator_256 *generated =
           context->nativeScheduleNBARoots[root].generated_accumulator;
       if (generated && hasGeneratedNBAStages(*generated))
