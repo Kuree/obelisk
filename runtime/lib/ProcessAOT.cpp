@@ -1666,6 +1666,20 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_LIFECYCLE;
   for (;;) {
     if (allowBytecode) {
+      // IEEE 1800-2023 4.5/4.9: a mixed-tier slot can execute native stores
+      // (including a coincident periodic clock) before a runtime observer or
+      // the final canonical export. Publish those planes before selecting
+      // the next action; otherwise that export restores pre-clock state and
+      // changes the edge seen on re-entry. Preserve intervening runtime/VPI
+      // writes by reconciling their dirty roots first. Only the cold hybrid
+      // drain pays this synchronization, never the generated Tier-1 loop.
+      const auto *plan = context->nativeSchedulePlan;
+      if (plan->state_bit_count != 0 &&
+          (!reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) ||
+           !importNativeStatePlanesUnlocked(context, plan->state_value,
+                                            plan->state_unknown,
+                                            plan->state_bit_count)))
+        return OBELISK_RT_LAYOUT_MISMATCH;
       // IEEE 1800-2017 31.9.1 transport sources may be published by the
       // generic finite-bootstrap prefix before static fanout is certified.
       // Rebuild the generated ready mask at this cold boundary so a runtime
