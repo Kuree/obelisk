@@ -8,6 +8,9 @@
 
 namespace obelisk::detail {
 
+void lowerWideNativeBitwiseIntegers(mlir::ModuleOp module,
+                                    const llvm::DataLayout &dataLayout);
+
 mlir::LogicalResult lowerPackedSimulationOperations(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     const NativeStateLayout &stateLayout, bool enableDirectStaticState,

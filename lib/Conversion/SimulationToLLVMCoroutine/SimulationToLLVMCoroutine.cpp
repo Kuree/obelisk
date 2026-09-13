@@ -5686,6 +5686,8 @@ public:
       return;
     }
     markTiming("post-conversion materialization");
+    detail::lowerWideNativeBitwiseIntegers(module, *parsed);
+    markTiming("wide bitwise legalization");
 
     // Keep the generated eval loop's hottest call boundaries on an I-cache
     // line regardless of unrelated runtime/string table growth. These bodies

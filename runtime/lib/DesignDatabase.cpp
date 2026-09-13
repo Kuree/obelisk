@@ -2020,7 +2020,7 @@ bool validateDatabaseImpl(const Database &database) {
     if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT) {
       // Unpacked storage may contain alignment and tail padding, notably
       // around string handles and real fields in covergroup options. Only
-      // packed structs require contiguous bits (IEEE 1800-2023 7.2.1/7.2.2).
+      // packed structs require contiguous bits (IEEE 1800-2023 7.2/7.2.1).
       bool packed = (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
       if (packed && sum != width)
         return false;
