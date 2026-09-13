@@ -144,6 +144,12 @@ class SlangRootASTNodeOp<string mnemonic>
 class SlangConstantSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins StrAttr:$constant_value)>;
 
+class SlangParameterSymbolASTNodeOp<string mnemonic>
+    : SlangSymbolASTNodeOp<mnemonic, [], (ins
+        StrAttr:$constant_value,
+        OptionalAttr<UnitAttr>:$is_local_param,
+        OptionalAttr<UnitAttr>:$has_explicit_range)>;
+
 class SlangDirectedSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins SlangArgumentDirection:$direction)>;
 

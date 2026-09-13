@@ -738,6 +738,8 @@ def ContinuousAssignmentObjects : VPIObjectSet<
   "ContinuousAssignmentObjects", [ContAssign, ContAssignBit]>;
 def ReadParameterObjects : VPIObjectSet<"ReadParameterObjects",
   [Parameter, TypeParameter]>;
+def ReadValueParameterObjects : VPIObjectSet<"ReadValueParameterObjects",
+  [Parameter]>;
 def IndexedPartSelectObjects : VPIObjectSet<"IndexedPartSelectObjects",
   [IndexedPartSelect]>;
 def ReadRegArrayObjects : VPIObjectSet<"ReadRegArrayObjects", [RegArray]>;
@@ -990,7 +992,9 @@ def ValidProperty : VPIProperty<"vpiValid", 64, IntegerProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
   RuntimeProperty>;
 def LocalParamProperty : VPIProperty<"vpiLocalParam", 70, BooleanProperty,
-  ReadParameterObjects, "37.28; 37.31; 37.85">;
+  ReadParameterObjects, "37.28; 37.31; 37.85", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty, ReadValueParameterObjects>;
 def ModPathHasIfNoneProperty : VPIProperty<"vpiModPathHasIfNone", 71,
   BooleanProperty, ReadModPathObjects, "37.39">;
 def IndexedPartSelectTypeProperty : VPIProperty<"vpiIndexedPartSelectType",

@@ -34,6 +34,8 @@ module attributes {
         debug "UVM_HDL_MAX_WIDTH" {
       immutable_value = #obelisk_sim.frozen_constant<
           value = [1536 : i32, 0 : i32], isSigned = true> : i32,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 70 : i32, value = true>]>,
       vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
           isFourState = false, range = [31, 0], children = [], childNames = []>
     } loc("compact_static.sv":8:9)
@@ -46,6 +48,53 @@ module attributes {
       vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
           isFourState = false, range = [31, 0], children = [], childNames = []>
     } loc("compact_static.sv":9:9)
+    obelisk_sim.vpi_object.anchor @descending id 9 type 41 in 0 parent @pkg
+        ordinal 2 hierarchy "pkg::DESCENDING" debug "DESCENDING" {
+      has_explicit_parameter_range,
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [42 : i6, 0 : i6], isSigned = false>
+          : !obelisk_sim.packed_array<9 : 4 x !obelisk_sim.logic<1>>,
+      vpi_properties = #obelisk_sim.vpi_properties<[
+        #obelisk_sim.vpi_property<selector = 70 : i32, value = true>]>,
+      vpi_type = #obelisk_sim.vpi_type<kind = packed_array, isSigned = false,
+          isFourState = true, range = [9, 4], children = [
+            #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+              isFourState = true, range = [0, 0], children = [],
+              childNames = []>], childNames = []>
+    } loc("compact_static.sv":10:9)
+    obelisk_sim.vpi_object.anchor @ascending id 10 type 41 in 0 parent @pkg
+        ordinal 3 hierarchy "pkg::ASCENDING" debug "ASCENDING" {
+      has_explicit_parameter_range,
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [42 : i6, 0 : i6], isSigned = false>
+          : !obelisk_sim.packed_array<4 : 9 x !obelisk_sim.logic<1>>,
+      vpi_type = #obelisk_sim.vpi_type<kind = packed_array, isSigned = false,
+          isFourState = true, range = [4, 9], children = [
+            #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+              isFourState = true, range = [0, 0], children = [],
+              childNames = []>], childNames = []>
+    } loc("compact_static.sv":11:9)
+    // Ambiguous global names promote otherwise compact parameters to the full
+    // static-object table. They exercise the same capability validation there
+    // without becoming package children or global lookup entries.
+    obelisk_sim.vpi_object.anchor @hidden_pkg id 11 type 600 in 0 ordinal 2
+        hierarchy "hidden" debug "hidden"
+    obelisk_sim.vpi_object.anchor @promoted_a id 12 type 41 in 0
+        parent @hidden_pkg ordinal 0 hierarchy "hidden::PROMOTED"
+        debug "PROMOTED" {
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [1536 : i32, 0 : i32], isSigned = true> : i32,
+      vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    }
+    obelisk_sim.vpi_object.anchor @promoted_b id 13 type 41 in 0
+        parent @hidden_pkg ordinal 1 hierarchy "hidden::PROMOTED"
+        debug "PROMOTED" {
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [1536 : i32, 0 : i32], isSigned = true> : i32,
+      vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    }
 
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "__root"
     obelisk_sim.func @root(%ctx: !obelisk_sim.context

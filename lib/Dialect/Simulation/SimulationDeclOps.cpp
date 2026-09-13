@@ -670,6 +670,12 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   if (hasVPIType != hasImmutableValue)
     return emitOpError(
         "immutable source type and value must be present together");
+  if (getHasExplicitParameterRangeAttr() && anchorKind != Kind::Parameter)
+    return emitOpError(
+        "explicit parameter range marker requires a parameter anchor");
+  if (getHasExplicitParameterRangeAttr() && !hasImmutableValue)
+    return emitOpError(
+        "explicit parameter range marker requires immutable type and value");
   if (hasImmutableValue) {
     if (anchorKind != Kind::Parameter)
       return emitOpError(
@@ -683,6 +689,10 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     auto emit = [&] { return emitOpError(); };
     if (failed(verifyVPITypeSemantics(emit, value.getType(), getVpiTypeAttr())))
       return failure();
+    if (getHasExplicitParameterRangeAttr() &&
+        getVpiTypeAttr().getKind() != VPITypeKind::PackedArray)
+      return emitOpError(
+          "explicit parameter range requires a packed-array semantic root");
   }
   if (anchorKind == Kind::InterconnectArray && !hasNetSubtype(*this, 16))
     return emitOpError("interconnect-array requires vpiInterconnect subtype");

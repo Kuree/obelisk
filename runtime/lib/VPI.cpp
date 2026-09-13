@@ -4138,6 +4138,23 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         obelisk::reflection::VPITraversalMode::Handle);
     obelisk_rt_design_info_v1 info{};
     if (edge && infoFor(handle, info)) {
+      if (sourceType == vpiParameter) {
+        if ((info.capabilities &
+             OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) == 0)
+          return nullptr;
+        obelisk_rt_design_cursor_v1 semanticCursor{};
+        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+        if (!semanticCursorFor(handle, semanticCursor) ||
+            !semanticTypeInfo(handle, semanticCursor, semanticInfo) ||
+            semanticInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+            (semanticInfo.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0)
+          return nullptr;
+        int64_t value = type == vpiLeftRange ? semanticInfo.range_left
+                                             : semanticInfo.range_right;
+        return makeSemanticObjectHandle(
+            handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
+            semanticCursor, type == vpiLeftRange ? 0 : 1, vpiConstant, value);
+      }
       if (handle->form == VPIObjectForm::Design && sourceType == vpiIODecl) {
         obelisk_rt_design_cursor_v1 semanticCursor{};
         obelisk_rt_design_semantic_type_info_v1 semanticInfo{};

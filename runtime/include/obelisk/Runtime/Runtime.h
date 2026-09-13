@@ -1550,6 +1550,10 @@ enum {
   // relations instead of its physical executable scope. These kinds cannot be
   // typespec records.
   OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
+  // The same record-kind-specific bit marks a value parameter that directly
+  // declares a packed range. Built-in and typedef-provided ranges do not set
+  // it, as required by IEEE 1800-2023 37.28 detail 5.
+  OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE = UINT32_C(1) << 7,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,

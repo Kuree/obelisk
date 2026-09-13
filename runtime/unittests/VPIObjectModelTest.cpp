@@ -2092,7 +2092,8 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     if (descriptor.property == vpiIsProtected ||
         descriptor.property == vpiDefFile ||
         descriptor.property == vpiDefLineNo ||
-        descriptor.property == vpiAlwaysType)
+        descriptor.property == vpiAlwaysType ||
+        descriptor.property == vpiLocalParam)
       expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiTopModule ||
          descriptor.property == vpiCellInstance) &&

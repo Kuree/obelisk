@@ -3503,6 +3503,53 @@ private:
                   builder.getStringAttr(formatConstant(*folded)));
     }
 
+    if constexpr (std::same_as<T, slang::ast::ParameterSymbol>) {
+      if (node.isLocalParam())
+        SET_OP_ATTR(IsLocalParam, builder.getUnitAttr());
+
+      // IEEE 1800-2023 37.28 distinguishes a directly declared packed range
+      // from the resolved range of a built-in or typedef type. Inspect only
+      // dimensions written on this declaration; resolved dimensions would
+      // incorrectly make `parameter int p` and typedef-provided ranges look
+      // explicit.
+      const slang::syntax::DataTypeSyntax *typeSyntax =
+          node.getDeclaredType()->getTypeSyntax();
+      bool hasExplicitRange = false;
+      if (typeSyntax) {
+        if (slang::syntax::IntegerTypeSyntax::isKind(typeSyntax->kind))
+          hasExplicitRange = !typeSyntax->as<slang::syntax::IntegerTypeSyntax>()
+                                  .dimensions.empty();
+        else if (typeSyntax->kind == slang::syntax::SyntaxKind::StructType ||
+                 typeSyntax->kind == slang::syntax::SyntaxKind::UnionType)
+          hasExplicitRange =
+              !typeSyntax->as<slang::syntax::StructUnionTypeSyntax>()
+                   .dimensions.empty();
+        else if (typeSyntax->kind == slang::syntax::SyntaxKind::EnumType)
+          hasExplicitRange = !typeSyntax->as<slang::syntax::EnumTypeSyntax>()
+                                  .dimensions.empty();
+        else if (typeSyntax->kind == slang::syntax::SyntaxKind::ImplicitType)
+          hasExplicitRange =
+              !typeSyntax->as<slang::syntax::ImplicitTypeSyntax>()
+                   .dimensions.empty();
+        else if (typeSyntax->kind == slang::syntax::SyntaxKind::NamedType) {
+          // Slang represents dimensions written after a named type as
+          // selectors on the terminal name (`T [7:0]` and `pkg::T [7:0]`).
+          // They are declaration-local even though the element type is an
+          // alias, so retain the outer range provenance.
+          const slang::syntax::NameSyntax *name =
+              typeSyntax->as<slang::syntax::NamedTypeSyntax>().name;
+          while (name->kind == slang::syntax::SyntaxKind::ScopedName)
+            name = name->as<slang::syntax::ScopedNameSyntax>().right;
+          if (name->kind == slang::syntax::SyntaxKind::IdentifierSelectName)
+            hasExplicitRange =
+                !name->as<slang::syntax::IdentifierSelectNameSyntax>()
+                     .selectors.empty();
+        }
+      }
+      if (hasExplicitRange)
+        SET_OP_ATTR(HasExplicitRange, builder.getUnitAttr());
+    }
+
     if constexpr (std::same_as<T, slang::ast::IntegerLiteral> ||
                   std::same_as<T, slang::ast::UnbasedUnsizedIntegerLiteral> ||
                   std::same_as<T, slang::ast::ParameterSymbol> ||
