@@ -2298,31 +2298,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     // drained. Initialization and transient deposits legitimately enter with
     // dirty roots and reconcile above; persistent force/assign state must keep
     // the model on the mask-aware scheduler until release.
-    std::unordered_set<uint32_t> generatedWritableStates;
-    generatedWritableStates.reserve(
-        context->nativeSchedulePlan->merged_fragment_count +
-        context->nativeScheduleNBARootCount);
-    std::unordered_set<uint32_t> generatedActors;
-    generatedActors.reserve(context->nativeSchedulePlan->merged_fragment_count);
-    for (uint64_t index = 0;
-         index != context->nativeSchedulePlan->merged_fragment_count; ++index) {
-      const obelisk_rt_native_merged_fragment &fragment =
-          context->nativeSchedulePlan->merged_fragments[index];
-      if (fragment.execute)
-        generatedActors.insert(fragment.actor_slot);
-    }
-    for (uint64_t index = 0; index != context->nativeScheduleActorRootCount;
-         ++index) {
-      const obelisk_rt_static_actor_root &root =
-          context->nativeScheduleActorRoots[index];
-      if ((root.flags & OBELISK_RT_STATIC_ROOT_WRITE) != 0 &&
-          generatedActors.find(root.actor_slot) != generatedActors.end())
-        generatedWritableStates.insert(root.static_state);
-    }
-    for (uint32_t index = 0; index != context->nativeScheduleNBARootCount;
-         ++index)
-      generatedWritableStates.insert(
-          context->nativeScheduleNBARoots[index].static_state);
+    const auto &generatedWritableStates =
+        context->nativePeriodicGeneratedWritableStates;
     auto generatedWritesState = [&](uint32_t staticState) {
       return generatedWritableStates.find(staticState) !=
              generatedWritableStates.end();
@@ -3483,6 +3460,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleActorRoots = nullptr;
   context->nativeScheduleActorRootCount = 0;
   context->nativeScheduleActorRootRanges.clear();
+  context->nativePeriodicGeneratedWritableStates.clear();
   context->nativeScheduleNBASiteIndex.clear();
   context->nativeScheduleActors.clear();
   context->nativeScheduleActorTokens.clear();

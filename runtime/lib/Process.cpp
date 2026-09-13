@@ -1578,6 +1578,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           range.first = index;
         range.second = index + 1;
       }
+      // Periodic re-entry is frequent for trace-heavy models. The ownership
+      // table is immutable, so build its write footprint once rather than
+      // allocating one hash node per actor/root at every cold checkpoint.
+      auto &generatedWrites = context->nativePeriodicGeneratedWritableStates;
+      generatedWrites.clear();
+      std::vector<uint8_t> generatedActors(plan->actor_capacity, 0);
+      for (uint64_t index = 0; index != mergedFragmentCount; ++index)
+        if (mergedFragments[index].execute)
+          generatedActors[mergedFragments[index].actor_slot] = 1;
+      for (uint64_t index = 0; index != actorRootCount; ++index) {
+        const auto &root = actorRoots[index];
+        if ((root.flags & OBELISK_RT_STATIC_ROOT_WRITE) != 0 &&
+            generatedActors[root.actor_slot])
+          generatedWrites.insert(root.static_state);
+      }
+      for (uint32_t index = 0; index != nbaRootCount; ++index)
+        generatedWrites.insert(nbaRoots[index].static_state);
       context->nativeScheduleNodes.clear();
       context->nativeScheduleActorNodes.clear();
       context->nativeScheduleFanoutNodes.clear();

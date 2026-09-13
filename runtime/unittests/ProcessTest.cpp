@@ -3570,6 +3570,73 @@ TEST(Scheduler, AOTPlanInstallBindRunAndExclusiveMutableState) {
   EXPECT_EQ(schedulerPromotionReadyCount, 0u);
 }
 
+TEST(Scheduler, PeriodicWriteFootprintTracksInstalledPlanOwnership) {
+  AOTTestState state;
+  uint64_t ingress = 0;
+  uint64_t active = 3;
+  uint8_t value = 0, unknown = 0;
+  constexpr uint32_t sparseNBAState = UINT32_C(0x10000000);
+  const obelisk_rt_native_clock_kernel clocks[] = {
+      {1, OBELISK_RT_WAIT_EDGE_POSEDGE, 0, 1, &ingress, 1, 0, &active},
+  };
+  obelisk_rt_native_merged_fragment merged[] = {
+      {0, 1, 0, 0, 0, 0, generatedCheckpointCallback},
+      {1, 1, 0, 1, 1, 0, nullptr},
+  };
+  const obelisk_rt_static_actor_root roots[] = {
+      {0, 1, OBELISK_RT_STATIC_ROOT_READ, 0},
+      {0, 2, OBELISK_RT_STATIC_ROOT_WRITE, 0},
+      {1, 3, OBELISK_RT_STATIC_ROOT_WRITE, 0},
+  };
+  const obelisk_rt_static_nba_root nba[] = {{2, sparseNBAState, 1, nullptr}};
+  auto plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.clock_kernels = clocks;
+  plan.clock_kernel_count = std::size(clocks);
+  plan.merged_fragments = merged;
+  plan.merged_fragment_count = std::size(merged);
+  plan.timeslot_coordinator = clockCoordinator;
+  plan.actor_roots = roots;
+  plan.actor_root_count = std::size(roots);
+  plan.nba_roots = nba;
+  plan.nba_root_count = std::size(nba);
+  plan.state_value = &value;
+  plan.state_unknown = &unknown;
+  plan.state_bit_count = 4;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 4;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  for (uint32_t id = 1; id <= 3; ++id)
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, id, id - 1, 1),
+              OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, sparseNBAState,
+                                                       3, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  // Include direct-owner writes and all NBA roots, not read-only dependencies
+  // or runtime-only writers. Sparse IDs must not require a huge dense bitmap.
+  EXPECT_EQ(context->nativePeriodicGeneratedWritableStates,
+            (std::unordered_set<uint32_t>{2, sparseNBAState}));
+  obelisk_rt_release_native_schedule_plan(context);
+  EXPECT_TRUE(context->nativePeriodicGeneratedWritableStates.empty());
+  // The image may be reused with new ownership only after release. Its cache
+  // belongs to this installation, never to the plan pointer or process-global
+  // mutable state address.
+  merged[0].execute = nullptr;
+  merged[1].execute = generatedCheckpointCallback;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  EXPECT_EQ(context->nativePeriodicGeneratedWritableStates,
+            (std::unordered_set<uint32_t>{3, sparseNBAState}));
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTCheckpointRunsOneRuntimeActionAndReentersNatively) {
   AOTTestState state;
   state.runHook = runCheckpointThenReenter;

@@ -2010,6 +2010,9 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleForcedDesignTask = 0;
   uint64_t nativePeriodicRuntimeDeadline = UINT64_MAX;
   std::vector<uint32_t> nativePeriodicClockActorSlots;
+  // Derived solely from immutable installed-plan tables. Live subscriptions
+  // and external overrides are still checked at every periodic re-entry.
+  std::unordered_set<uint32_t> nativePeriodicGeneratedWritableStates;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   std::unordered_set<uint64_t> nativePollCandidates;
   // Lazy min-heap of (wake time, process token). Stale entries are discarded
