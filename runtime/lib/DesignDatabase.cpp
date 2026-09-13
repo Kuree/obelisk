@@ -1,5 +1,6 @@
 //===- DesignDatabase.cpp - Checked DWARF-like design reflection ----------===//
 
+#include "ProcessPacking.h"
 #include "ProcessShared.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Reflection/DesignReflection.h"
@@ -6477,18 +6478,6 @@ uint64_t loadPackedState(const std::vector<uint64_t> &plane, uint64_t offset,
   if (shift != 0 && width > 64 - shift)
     result |= plane[word + 1] << (64 - shift);
   return result & packedMask(width);
-}
-
-uint64_t loadPackedBytes(const uint8_t *plane, uint64_t offset,
-                         uint64_t width) {
-  size_t firstByte = static_cast<size_t>(offset / 8);
-  unsigned shift = static_cast<unsigned>(offset % 8);
-  size_t byteCount = static_cast<size_t>((shift + width + 7) / 8);
-  unsigned __int128 bits = 0;
-  for (size_t byte = 0; byte != byteCount; ++byte)
-    bits |= static_cast<unsigned __int128>(plane[firstByte + byte])
-            << (byte * 8);
-  return static_cast<uint64_t>(bits >> shift) & packedMask(width);
 }
 
 void storePackedState(std::vector<uint64_t> &plane, uint64_t offset,

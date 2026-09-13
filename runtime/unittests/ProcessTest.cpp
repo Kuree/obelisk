@@ -6,6 +6,7 @@
 #include "../lib/DesignBytecodeExecution.h"
 #include "../lib/DesignBytecodeImage.h"
 #include "../lib/DesignBytecodeNets.h"
+#include "../lib/ProcessPacking.h"
 #include "../lib/ProcessShared.h"
 #include "../lib/ProcessSignals.h"
 #include "../lib/RuntimeInternal.h"
@@ -1189,6 +1190,39 @@ makeSchedulerInstance(SchedulerFixture &fixture) {
       obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
       OBELISK_RT_OK);
   return instance;
+}
+
+TEST(RuntimeInternals, SharedPackedByteAccessMatchesBitwiseReference) {
+  // Reflection and the scheduler must use the same helper definition. Cover
+  // its aligned 8/16/32/64-bit fast paths, unaligned nine-byte reads, and
+  // preservation of neighboring bits on stores.
+  std::mt19937_64 random(0x6279746573);
+  for (uint64_t offset = 0; offset != 16; ++offset)
+    for (uint64_t width = 1; width <= 64; ++width) {
+      SCOPED_TRACE(::testing::Message()
+                   << "offset=" << offset << " width=" << width);
+      std::vector<uint8_t> bytes((offset + width + 7) / 8);
+      for (uint8_t &byte : bytes)
+        byte = static_cast<uint8_t>(random());
+      uint64_t expected = 0;
+      for (uint64_t bit = 0; bit != width; ++bit)
+        expected |=
+            uint64_t{(bytes[(offset + bit) / 8] >> ((offset + bit) % 8)) & 1u}
+            << bit;
+      EXPECT_EQ(loadPackedBytes(bytes.data(), offset, width), expected);
+      std::vector<uint8_t> reference = bytes;
+      uint64_t next = random();
+      for (uint64_t bit = 0; bit != width; ++bit) {
+        uint8_t mask = uint8_t{1} << ((offset + bit) % 8);
+        uint8_t &byte = reference[(offset + bit) / 8];
+        byte = static_cast<uint8_t>((byte & ~mask) |
+                                    (((next >> bit) & 1u) ? mask : 0));
+      }
+      storePackedBytes(bytes.data(), offset, width, next);
+      EXPECT_EQ(bytes, reference);
+      EXPECT_EQ(loadPackedBytes(bytes.data(), offset, width),
+                next & packedWidthMask(width));
+    }
 }
 
 TEST(RuntimeInternals, ReusableByteBuffersAreSafeAcrossWorkers) {
