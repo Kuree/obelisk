@@ -98,6 +98,13 @@ def ObeliskSimMaterializeClockedControlPass
   ];
 }
 
+def ObeliskSimUnrollBoundedLoopsPass
+    : Pass<"obelisk-sim-unroll-bounded-loops", "obelisk::sim::SimFuncOp"> {
+  let summary = "Unroll small constant-trip, non-suspending CFG loops";
+  let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
 def ObeliskSimThreadSuspensionPass
     : Pass<"obelisk-sim-thread-suspension", "obelisk::sim::SimFuncOp"> {
   let summary = "Thread promoted SSA state through suspension continuations";

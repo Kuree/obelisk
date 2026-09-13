@@ -49,6 +49,7 @@ add_mlir_library(ObeliskToSimulation
   SemanticUtils.cpp
   SpecializeStaticStateNBA.cpp
   ThreadSuspension.cpp
+  UnrollBoundedLoops.cpp
   VerifyComputeGraph.cpp
 
   DEPENDS

@@ -348,6 +348,11 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // persistent compute graph.
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    if (optLevel > 0) {
+      functionManager.addPass(createObeliskSimUnrollBoundedLoopsPass());
+      functionManager.addPass(createCanonicalizerPass());
+      functionManager.addPass(createCSEPass());
+    }
     functionManager.addPass(createObeliskSimThreadSuspensionPass());
   }
 
