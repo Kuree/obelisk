@@ -6,6 +6,7 @@
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -18,6 +19,8 @@ constexpr StringLiteral continuousStoreAttrName =
     "obelisk_sim.continuous_store";
 constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
     "obelisk.native.bulk_copy_source_assume_clean";
+constexpr StringLiteral guardedRefStoreAttr =
+    "obelisk.native.guarded_ref_store";
 
 Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
                                 Location location) {
@@ -276,6 +279,7 @@ public:
                      bool experimentalTwoState)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState) {
+    setHasBoundedRewriteRecursion();
   }
 
   LogicalResult
@@ -302,6 +306,43 @@ public:
     std::optional<DirectStaticStateRange> directRange =
         resolveDirectStaticStateRange(adaptor.getReference().front(), *width,
                                       directLayout);
+    // Guard the entire procedural store, including its publication. The clean
+    // path can use exact static fanout without canonical reloads; a live writer
+    // or observer invalidates the global flag before entering the slow path.
+    // Continuous assignments must retain their contribution for a later
+    // force/release (IEEE 1800-2023 10.6.2), even when currently unforced.
+    if (directRange && directRange->guarded && !assumeClean && !continuous &&
+        !runtimePublication && !op->hasAttr(guardedRefStoreAttr)) {
+      Block *head = rewriter.getInsertionBlock();
+      Block *tail = rewriter.splitBlock(head, op->getIterator());
+      Region *region = head->getParent();
+      Block *fast = rewriter.createBlock(region, tail->getIterator());
+      Block *slow = rewriter.createBlock(region, tail->getIterator());
+      recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+      for (auto [block, clean] :
+           {std::pair{fast, true}, std::pair{slow, false}}) {
+        rewriter.setInsertionPointToEnd(block);
+        Operation *clone = rewriter.clone(*op);
+        clone->setAttr(guardedRefStoreAttr, rewriter.getUnitAttr());
+        if (clean)
+          clone->setAttr(assumeCleanSpecializationAttr, rewriter.getUnitAttr());
+        cf::BranchOp::create(rewriter, op.getLoc(), tail);
+      }
+      rewriter.setInsertionPointToEnd(head);
+      Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+      Value address =
+          LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                    "__obelisk_static_specialization_fast_v1");
+      Value flag = LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                        rewriter.getI32Type(), address, 4);
+      Value allowed = arith::CmpIOp::create(
+          rewriter, op.getLoc(), arith::CmpIPredicate::ne, flag,
+          llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), 0));
+      markLikelyTrue(
+          cf::CondBranchOp::create(rewriter, op.getLoc(), allowed, fast, slow));
+      rewriter.eraseOp(op);
+      return success();
+    }
     bool needsNotification = true;
     // Exact fanout proves that an absent root has no language-level waiter.
     // Direct roots are also immune to external writes (VPI-off/read), while a
