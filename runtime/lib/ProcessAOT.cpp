@@ -1632,6 +1632,11 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
     uint64_t previousProgress = context->schedulerSlotProgress;
     uint64_t previousTime = context->schedulerTime;
     bool previousFinals = context->schedulerRunningFinals;
+    // A late writer needs the outer canonical handoff, not a control-only
+    // scheduler step. Such a step can clear the write request without moving
+    // time (notably while a force remains active), which is not end-of-run.
+    if (context->nativeScheduleExternalWritePending)
+      return OBELISK_RT_TIER_UNAVAILABLE;
     obelisk_rt_status status = runStaticAOTControlStep(context);
     if (status == OBELISK_RT_TIER_UNAVAILABLE) {
       NativeScheduleStepScope step(context, UINT32_MAX, true);
@@ -2759,6 +2764,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
       previousFinals = context->schedulerRunningFinals;
       controlOnly = (context->nativeSchedulePlan->flags &
                      OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL) != 0;
+      if (context->nativeScheduleExternalWritePending)
+        return OBELISK_RT_TIER_UNAVAILABLE;
     }
     obelisk_rt_status status;
     bool genericControl = !controlOnly;
@@ -3003,6 +3010,31 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
       }
       transientStatus = runScheduler(context);
       reachedBoundary = boundaryScope.reached();
+      if (transientStatus == OBELISK_RT_OK && reachedBoundary &&
+          !context->nativeScheduleNodes.empty()) {
+        // The generic scheduler can advance and rearm framed actors during
+        // the handoff. Its wake times are authoritative; the old AOT heap can
+        // otherwise replay an expired wake or skip the recovered clock.
+        for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
+             ++slot) {
+          auto *actor = context->nativeScheduleActors[slot];
+          if (!actor) {
+            removeNativeAOTDeadlineUnlocked(context, slot);
+            continue;
+          }
+          size_t index = context->nativeScheduleActorIndices[slot];
+          if (index >= context->scheduledProcesses.size() ||
+              context->scheduledProcesses[index].instance != actor)
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          const auto &scheduled = context->scheduledProcesses[index];
+          if (scheduled.started && !scheduled.explicitlySuspended &&
+              scheduled.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+            setNativeAOTDeadlineUnlocked(context, slot, scheduled.wakeTime);
+          else
+            removeNativeAOTDeadlineUnlocked(context, slot);
+        }
+        transientStatus = refreshNativeAOTReadyPhaseUnlocked(context);
+      }
     }
     {
       ContextMutexLock lock(context);
