@@ -3,7 +3,9 @@
 // Contract with the driver module (emscripten MODULARIZE build of
 // tools/driver): a factory on self.createObeliskModule, an in-memory FS, and
 // callMain(argv). The driver writes a linked wasm simulation to the output
-// path, which this worker reads back and transfers to the page.
+// path, which this worker then runs itself. Keeping the simulation here leaves
+// the page responsive, and lets it stop a design that never calls $finish by
+// terminating the worker.
 
 let modulePromise = null;
 
@@ -40,8 +42,72 @@ function post(type, payload) {
   self.postMessage({ type, ...payload });
 }
 
+// A design can $display in a tight loop. The worker is synchronously inside
+// the simulation, so no timer can flush a buffer later: post the first few
+// writes of each window immediately, and coalesce the rest of a flood until
+// the next window or a size limit.
+const OUTPUT_WINDOW_MS = 50;
+const OUTPUT_MESSAGES_PER_WINDOW = 20;
+const OUTPUT_BATCH_CHARS = 64 * 1024;
+
+function createOutputBatcher() {
+  let stream = null;
+  let text = '';
+  let windowStart = performance.now();
+  let posted = 0;
+  const flush = () => {
+    if (!text) return;
+    post('output', { stream, text });
+    text = '';
+    posted++;
+  };
+  const write = (chunk, chunkStream) => {
+    if (chunkStream !== stream) {
+      flush();
+      stream = chunkStream;
+    }
+    text += chunk;
+    const now = performance.now();
+    if (now - windowStart >= OUTPUT_WINDOW_MS) {
+      windowStart = now;
+      posted = 0;
+    }
+    if (posted < OUTPUT_MESSAGES_PER_WINDOW || text.length >= OUTPUT_BATCH_CHARS) flush();
+  };
+  return { write, flush };
+}
+
+async function execute(binary, stage) {
+  const { runSimulation } = await import(new URL('./wasi.js', self.location.href).href);
+  const output = createOutputBatcher();
+  const files = [];
+  let simulatedTime = null;
+  let code = null;
+  let error;
+  const started = performance.now();
+  try {
+    code = await runSimulation(binary, output.write, {
+      onFile: (file) => files.push(file),
+      onSimulatedTime: (time) => { simulatedTime = time; },
+    });
+  } catch (caught) {
+    error = caught?.message ?? String(caught);
+  }
+  output.flush();
+  const buffers = [...new Set(files.map((file) => file.data.buffer))];
+  self.postMessage({
+    type: 'exited',
+    stage,
+    code,
+    ...(error !== undefined && { error }),
+    runMs: performance.now() - started,
+    simulatedTime,
+    files,
+  }, buffers);
+}
+
 async function compile({ source, args, stage, kind }) {
-  const mod = await loadDriver();
+  let mod = await loadDriver();
   const input = '/work/design.sv';
   // Text stages print IR; the Run stage produces a linked wasm module.
   const output = kind === 'binary' ? '/work/design.wasm' : '/work/design.out';
@@ -106,11 +172,14 @@ async function compile({ source, args, stage, kind }) {
     return;
   }
 
-  const buffer = binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength);
-  self.postMessage(
-    { type: 'compiled', ok: true, stage, kind, status, elapsedMs, binary: buffer },
-    [buffer],
-  );
+  post('compiled', {
+    ok: true, stage, kind, status, elapsedMs, byteLength: binary.byteLength,
+  });
+  // This worker never compiles again, so release the driver's heap before the
+  // simulation allocates its own.
+  mod = null;
+  modulePromise = null;
+  await execute(binary, stage);
 }
 
 self.onmessage = async (event) => {

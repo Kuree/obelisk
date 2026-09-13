@@ -2,7 +2,7 @@ import { registerSystemVerilog, SV_LANGUAGE_ID } from './sv-language.js';
 import { registerMlir, MLIR_LANGUAGE_ID } from './mlir-language.js';
 import { registerLlvm } from './llvm-language.js';
 import { parseSchedules, renderSchedules } from './schedule-view.js';
-import { runSimulation } from './wasi.js';
+import { CompilerSession } from './compiler-session.js';
 import { loadWaveform, saveWaveform } from './waveform-storage.js';
 import { EXAMPLES } from './examples.js';
 import { STAGES, DEFAULT_STAGE, findStage } from './stages.js';
@@ -37,13 +37,9 @@ let irEditor = null;
 let irModel = null;
 let irLanguage = MLIR_LANGUAGE_ID;
 let scheduleSourceHighlight = null;
-let worker = null;
-let workerReady = false;
-// A worker started to be ready for the *next* compile rather than to serve a
-// request that is already waiting. Its readiness must not touch the UI, which
-// still belongs to the run that just finished.
-let backgroundPreload = false;
-let pendingCompilation = null;
+const session = new CompilerSession();
+let job = null;
+let compilerUnavailable = false;
 let options = { ...DEFAULTS };
 let activeStage = DEFAULT_STAGE;
 let busy = false;
@@ -215,15 +211,13 @@ function compileStage(stageId) {
   clearConsole();
   setStatus(stage.kind === 'binary' ? 'compiling' : 'generating', 'busy');
   recording = { stage: stageId, chunks: [], status: {} };
-  pendingCompilation = {
+  job = session.run({
     type: 'compile',
     source: editor.getValue(),
     args: buildArgs({ ...options, stage: stageId }),
     stage: stageId,
     kind: stage.kind,
-  };
-  if (!worker) initWorker();
-  else if (workerReady) dispatchCompilation();
+  }, onMessage);
 }
 
 function invalidate() {
@@ -239,94 +233,46 @@ function run() {
   compileStage('run');
 }
 
-// A run is over: release the UI and start warming the worker the next compile
-// will use, so its module instantiation and toolchain install happen while the
-// user is reading results rather than after their next click.
+// Terminating the worker is the only way to end a design that never calls
+// $finish. A stopped result is not cached, so revisiting the stage compiles
+// again instead of replaying a partial log.
+function stop() {
+  job?.stop();
+}
+
 function finishRun() {
   busy = false;
+  job = null;
   setBusyLabel(false);
-  initWorker({ background: true });
 }
 
 function setBusyLabel(isBusy) {
-  ui.run.disabled = isBusy;
-  ui.runLabel.textContent = isBusy ? 'Working' : 'Run';
+  if (compilerUnavailable && !isBusy) return;
+  ui.run.disabled = false;
+  ui.runLabel.textContent = isBusy ? 'Stop' : 'Run';
 }
 
 /* ----------------------------------------------------------------- worker */
 
-function disposeWorker() {
-  worker?.terminate();
-  worker = null;
-  workerReady = false;
-}
-
-function dispatchCompilation() {
-  if (!workerReady || !pendingCompilation) return;
-  const request = pendingCompilation;
-  pendingCompilation = null;
-  worker.postMessage(request);
-}
-
-// Instantiating the module and installing the target archives costs a few
-// hundred milliseconds. Doing it while the page is idle keeps it off the next
-// compile's critical path. This only preloads: the worker still runs exactly
-// one compile, so the fresh-process boundary below is preserved.
-function initWorker({ background = false } = {}) {
-  disposeWorker();
-  backgroundPreload = background;
-  const freshWorker = new Worker('./compiler-worker.js');
-  worker = freshWorker;
-  freshWorker.onmessage = (event) => {
-    if (worker === freshWorker) onMessage(event.data);
-  };
-  freshWorker.onerror = (event) => {
-    if (worker !== freshWorker) return;
-    disposeWorker();
-    pendingCompilation = null;
-    busy = false;
-    ui.run.disabled = true;
-    ui.runLabel.textContent = 'Unavailable';
-    setStatus('compiler unavailable', 'err');
-    write(`\nThe compiler could not start: ${event.message}\n`, 'stderr');
-  };
-  freshWorker.postMessage({ type: 'preload' });
-}
-
 let diagnosticText = '';
+let compileMs = 0;
+let diagnosticCounts = { errors: 0, warnings: 0 };
+
+function warningNote(counts) {
+  return counts.warnings ? `${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} · ` : '';
+}
 
 async function onMessage(message) {
   switch (message.type) {
-    case 'ready':
-      workerReady = true;
-      if (pendingCompilation) {
-        backgroundPreload = false;
-        dispatchCompilation();
-      } else if (backgroundPreload) {
-        // Nothing is waiting on this worker, and the status line still reports
-        // the run that just finished.
-        backgroundPreload = false;
-      } else if (findStage(activeStage).kind === 'waveform') {
-        showWaveform();
-      } else {
-        setBusyLabel(false);
-        setStatus('ready');
-      }
-      break;
-
     case 'log':
       diagnosticText += message.text;
       record(message.text, message.stream === 'stderr' ? 'stderr' : '');
       break;
 
     case 'compiled': {
-      // LLVM, MLIR, Slang, and wasm LLD all carry process-global state. A
-      // command-line invocation gets a fresh process; mirror that boundary in
-      // the browser instead of calling main twice in one WebAssembly instance.
-      disposeWorker();
       const counts = applyDiagnostics(diagnosticText);
       diagnosticText = '';
-      const compileMs = Math.round(message.elapsedMs);
+      compileMs = Math.round(message.elapsedMs);
 
       if (!message.ok) {
         record(`\ncompilation failed (exit ${message.status})\n`, 'stderr');
@@ -339,8 +285,7 @@ async function onMessage(message) {
       if (message.kind === 'text') {
         if (message.text) record(message.text.replace(/\s*$/, '\n'), '');
         recording.language = findStage(message.stage).language;
-        const note = counts.warnings ? `${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} · ` : '';
-        finishRecording(`${note}${compileMs} ms`, 'ok');
+        finishRecording(`${warningNote(counts)}${compileMs} ms`, 'ok');
         const cached = results.get(message.stage);
         if (cached?.language && activeStage === message.stage) {
           const text = cached.chunks.map((chunk) => chunk.text).join('');
@@ -351,63 +296,71 @@ async function onMessage(message) {
         return;
       }
 
-      record(`compiled ${formatBytes(message.binary.byteLength)} in ${compileMs} ms\n\n`, 'note');
+      diagnosticCounts = counts;
+      record(`compiled ${formatBytes(message.byteLength)} in ${compileMs} ms\n\n`, 'note');
       setStatus('running', 'busy');
-      await execute(message.binary, compileMs, counts);
-      finishRun();
       break;
     }
 
+    case 'output':
+      record(message.text, message.stream === 'stderr' ? 'stderr' : '');
+      break;
+
+    case 'exited':
+      await finishSimulation(message);
+      finishRun();
+      break;
+
     case 'failed':
-      disposeWorker();
+      diagnosticText = '';
       record(`\n${message.message}\n`, 'stderr');
       finishRecording('failed', 'err');
+      finishRun();
+      break;
+
+    case 'stopped':
+      diagnosticText = '';
+      recording = null;
+      write('\nstopped\n', 'stderr');
+      setStatus('stopped', 'err');
       finishRun();
       break;
   }
 }
 
-async function execute(binary, compileMs, counts) {
-  const started = performance.now();
-  const files = [];
-  let simulatedTime = null;
-  try {
-    const code = await runSimulation(binary, (text, stream) => {
-      record(text, stream === 'stderr' ? 'stderr' : '');
-    }, {
-      onFile: (file) => files.push(file),
-      onSimulatedTime: (time) => { simulatedTime = time; },
-    });
-    const runMs = Math.round(performance.now() - started);
-    const waveform = files.find((file) => isVcd(file));
-    if (waveform) {
-      await storedWaveform;
-      latestWaveform = { ...waveform, createdAt: Date.now() };
-      let saved = true;
-      try {
-        await saveWaveform(latestWaveform);
-      } catch {
-        saved = false;
-      }
-      record(
-        `${saved ? 'saved' : 'captured'} ${displayFilename(waveform.name)} ` +
-        `(${formatBytes(waveform.data.byteLength)})${saved ? ' locally' : ''}\n`,
-        'note',
-      );
-    }
-    record(`\nexited with code ${code}\n`, code === 0 ? 'good' : 'stderr');
-    const note = counts.warnings ? `${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} · ` : '';
-    const simulated = simulatedTime
-      ? ` · simulated ${formatSimulatedTime(simulatedTime)}`
-      : '';
-    finishRecording(
-      `${note}compile ${compileMs} ms · run ${runMs} ms${simulated}`,
-      code === 0 ? 'ok' : 'err',
-    );
-  } catch (error) {
-    record(`\nsimulation aborted: ${error?.message ?? error}\n`, 'stderr');
+async function finishSimulation(result) {
+  const { code, error, simulatedTime, files } = result;
+  if (error !== undefined) {
+    record(`\nsimulation aborted: ${error}\n`, 'stderr');
     finishRecording('aborted', 'err');
+    return;
   }
+  const waveform = files.find((file) => isVcd(file));
+  if (waveform) {
+    await storedWaveform;
+    latestWaveform = { ...waveform, createdAt: Date.now() };
+    let saved = true;
+    try {
+      await saveWaveform(latestWaveform);
+    } catch {
+      saved = false;
+    }
+    record(
+      `${saved ? 'saved' : 'captured'} ${displayFilename(waveform.name)} ` +
+      `(${formatBytes(waveform.data.byteLength)})${saved ? ' locally' : ''}\n`,
+      'note',
+    );
+  }
+  record(`\nexited with code ${code}\n`, code === 0 ? 'good' : 'stderr');
+  const note = warningNote(diagnosticCounts);
+  const runMs = Math.round(result.runMs);
+  const simulated = simulatedTime
+    ? ` · simulated ${formatSimulatedTime(simulatedTime)}`
+    : '';
+  finishRecording(
+    `${note}compile ${compileMs} ms · run ${runMs} ms${simulated}`,
+    code === 0 ? 'ok' : 'err',
+  );
 }
 
 function isVcd(file) {
@@ -731,7 +684,7 @@ async function copy(text, button) {
 }
 
 function initChrome(initialSource) {
-  ui.run.addEventListener('click', run);
+  ui.run.addEventListener('click', () => (busy ? stop() : run()));
   ui.copyCommand.addEventListener('click', () =>
     copy(formatCommand({ ...options, stage: activeStage }), ui.copyCommand));
   ui.scheduleToggle.addEventListener('click', () => {
@@ -944,7 +897,20 @@ async function main() {
   }
 
   setStatus('loading compiler', 'busy');
-  initWorker();
+  try {
+    await session.preload();
+  } catch (error) {
+    compilerUnavailable = true;
+    ui.run.disabled = true;
+    ui.runLabel.textContent = 'Unavailable';
+    setStatus('compiler unavailable', 'err');
+    write(`\n${error.message}\n`, 'stderr');
+    return;
+  }
+  if (busy) return;
+  setBusyLabel(false);
+  if (findStage(activeStage).kind === 'waveform') showWaveform();
+  else setStatus('ready');
 }
 
 main();
