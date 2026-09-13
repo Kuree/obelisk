@@ -1359,7 +1359,7 @@ def judge_one(
                     return (desc.key, model.Outcome(model.PASS))
             return (desc.key,
                     dependency_failure(desc.key, model.RUN_FAIL,
-                                       output))
+                                       output + result.stderr))
         if result.ok and any(
                 line.strip() == PASSED_MARKER
                 for line in result.stdout.splitlines()):

@@ -515,5 +515,38 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertEqual(outcome.status, model.PASS)
 
 
+class GoldFailureDiagnosticTest(unittest.TestCase):
+    def test_runtime_stderr_survives_gold_mismatch_and_execution_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "test.v"
+            source.write_text("module top; endmodule\n", encoding="ascii")
+            gold = root / "test.gold"
+            gold.write_text("expected\n", encoding="ascii")
+            descriptor = ivtest.Descriptor(
+                key="diagnostic_regression", test_type="normal",
+                iverilog_args=[], source=source, gold=gold,
+                artifact_diffs=[], vpi_sources=[], vpi_compiler_args=[])
+            for ok, timed_out in [(True, False), (False, False), (False, True)]:
+                with (
+                    self.subTest(ok=ok, timed_out=timed_out),
+                    mock.patch.object(ivtest.runner, "build_vpi_inputs",
+                                      return_value=mock.Mock(ok=True, inputs=[])),
+                    mock.patch.object(ivtest.runner, "compile_design",
+                                      return_value=mock.Mock(
+                                          ok=True, stderr="compile warning\n",
+                                          failure_kind=None)),
+                    mock.patch.object(ivtest.runner, "execute",
+                                      return_value=mock.Mock(
+                                          ok=ok, timed_out=timed_out,
+                                          stdout="actual\n", stderr="ERROR detail\n")),
+                ):
+                    _, outcome = ivtest.judge_one(
+                        "/nonexistent/obelisk", root, descriptor, 10)
+                self.assertEqual(outcome.status, model.RUN_FAIL)
+                self.assertEqual(outcome.log,
+                                 "compile warning\nactual\nERROR detail\n")
+
+
 if __name__ == "__main__":
     unittest.main()
