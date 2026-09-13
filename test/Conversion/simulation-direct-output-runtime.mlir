@@ -20,6 +20,17 @@
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.read.exe > %t.read.out 2> %t.read.diagnostics
 // RUN: cmp %t.out %t.read.out
 // RUN: FileCheck %s --check-prefix=TIER < %t.read.diagnostics
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.full.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN < %t.full.llvm.mlir
+// RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.full.llvm.mlir
+// RUN: FileCheck %s --check-prefix=BARRIER < %t.full.llvm.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.full.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.full.o
+// RUN: %llvm_dist/bin/clang++ %t.full.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.full.exe
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.full.exe > %t.full.out 2> %t.full.diagnostics
+// RUN: cmp %t.out %t.full.out
+// RUN: FileCheck %s --check-prefix=TIER < %t.full.diagnostics
+// Writable capability alone must likewise preserve Tier 1: no writer or
+// callback is attached in this fixture. Actual mutation is a cold handoff.
 // Read-only VPI capability without live readers must retain the same Tier-1
 // loop, direct display, and NBA fast paths. The node/checkpoint counts must
 // stay bounded by startup/reset/finish, not grow with the 2501 displays.

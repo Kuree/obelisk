@@ -13,6 +13,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -205,6 +206,26 @@ void fuseWideManagedBitStores(ModuleOp module) {
 }
 
 } // namespace
+
+NativeStateLayout makeCleanEvalStateLayout(const NativeStateLayout &layout) {
+  NativeStateLayout clean = layout;
+  clean.directHandles.insert(clean.guardedHandles.begin(),
+                             clean.guardedHandles.end());
+  clean.guardedHandles.clear();
+  auto authorize = [&](const auto &descriptors) {
+    for (const auto &[descriptor, handle] : descriptors) {
+      (void)descriptor;
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (obelisk_rt_stable_handle_decode(handle, &decoded) &&
+          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+          decoded.offset == 0)
+        clean.directHandles.insert(decoded.id);
+    }
+  };
+  authorize(clean.nets);
+  authorize(clean.drivers);
+  return clean;
+}
 
 LogicalResult lowerPackedSimulationOperations(
     ModuleOp module, const llvm::DataLayout &dataLayout,
@@ -819,8 +840,12 @@ LogicalResult lowerPackedSimulationOperations(
   module.walk([](sim::SimFuncOp function) {
     function->removeAttr(nativeTwoStateBlockUnknownsAttr);
   });
+  NativeStateLayout cleanEvalLayout = makeCleanEvalStateLayout(stateLayout);
   auto populatePackedPatterns = [&](SimulationToStandardTypeConverter &c,
-                                    RewritePatternSet &patterns) {
+                                    RewritePatternSet &patterns,
+                                    bool cleanEval = false) {
+    const NativeStateLayout &selectedLayout =
+        cleanEval ? cleanEvalLayout : stateLayout;
     populateSimulationToStandardPatterns(c, patterns, nativeTwoStateOperations);
     populateSimulationPackedAggregateViewPatterns(c, patterns);
     populateSimulationToRuntimePatterns(c, patterns);
@@ -836,15 +861,17 @@ LogicalResult lowerPackedSimulationOperations(
     populateSchedulerToLLVMConversionPatterns(patterns, c);
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
-        enableDirectStaticState ? &stateLayout : nullptr, experimentalTwoState);
+        enableDirectStaticState ? &selectedLayout : nullptr,
+        experimentalTwoState);
     populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
                                              dataLayout);
     populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,
                                             stateLayout.bitCount);
-    populateDriverToLLVMConversionPatterns(patterns, c, stateLayout);
+    populateDriverToLLVMConversionPatterns(patterns, c, selectedLayout);
     populateNBAToLLVMConversionPatterns(
-        patterns, c, stateLayout.bitCount, staticNBAPlan, &stateLayout,
-        staticNBAPlan != nullptr, vpiAllowsWrite, experimentalTwoState);
+        patterns, c, stateLayout.bitCount, staticNBAPlan, &selectedLayout,
+        staticNBAPlan != nullptr, vpiAllowsWrite && !cleanEval,
+        experimentalTwoState);
   };
   RewritePatternSet packedPatterns(context);
   populatePackedPatterns(packedConverter, packedPatterns);
@@ -1000,7 +1027,9 @@ LogicalResult lowerPackedSimulationOperations(
   constexpr size_t functionsPerChunk = 64;
   module.walk([&](sim::SimFuncOp function) {
     if (functionChunks.empty() ||
-        functionChunks.back().size() == functionsPerChunk)
+        functionChunks.back().size() == functionsPerChunk ||
+        functionChunks.back().front()->hasAttr(cleanEvalBodyAttr) !=
+            function->hasAttr(cleanEvalBodyAttr))
       functionChunks.emplace_back();
     functionChunks.back().push_back(function);
   });
@@ -1009,7 +1038,9 @@ LogicalResult lowerPackedSimulationOperations(
             SimulationToStandardTypeConverter workerConverter;
             configurePackedConverter(workerConverter);
             RewritePatternSet workerPatterns(context);
-            populatePackedPatterns(workerConverter, workerPatterns);
+            populatePackedPatterns(
+                workerConverter, workerPatterns,
+                functions.front()->hasAttr(cleanEvalBodyAttr));
             FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
             ConversionTarget workerTarget(*context);
             configurePackedTarget(workerTarget, workerConverter);

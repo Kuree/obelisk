@@ -4461,9 +4461,12 @@ FailureOr<bool> makeNativeEvalPlan(
   nbaCommit.getBody().push_back(genericNBACommit);
   builder.setInsertionPointToStart(nbaCommitEntry);
 
+  // A generated eval plan enters only at a clean boundary. Its private NBA
+  // barrier may commit directly even when canonical actors remain guarded
+  // for writable VPI; runtime handoffs use runtimeNBACommit below.
   bool generateScalarCommits =
       cleanSuperstepEnabled && enableDirectState &&
-      !guardedSpecializationEnabled &&
+      (!guardedSpecializationEnabled || generatedEvalPlan) &&
       staticNBAPlan.generatedOffsets.size() == nbaRoots.size();
   SmallVector<SmallVector<uint32_t>> scalarRootsByWord(nbaDirtyWordCount);
   uint64_t planeBytes = (stateLayout.bitCount + 7) / 8 + sizeof(uint64_t);

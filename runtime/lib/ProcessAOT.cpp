@@ -2987,6 +2987,20 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
       NativeAOTContextScope aotScope(context);
       NativeAOTMutexScope mutexScope(context);
       NativeScheduleCleanBoundaryScope boundaryScope(context);
+      // Periodic handoff restores wakeTime in the AOT calendar; checkpoint
+      // arbitration can then reserve those entries for Tier 1. If a writer
+      // instead sends us into the fine scheduler, rebuild its delay index
+      // from those authoritative wake times before advancing time.
+      for (uint32_t slot : context->nativePeriodicClockActorSlots) {
+        const auto &scheduled =
+            context
+                ->scheduledProcesses[context->nativeScheduleActorIndices[slot]];
+        if (scheduled.instance &&
+            scheduled.suspendKind == OBELISK_RT_SUSPEND_DELAY) {
+          indexScheduledProcessDelayUnlocked(context, scheduled);
+          context->nativePollCandidates.insert(scheduled.token);
+        }
+      }
       transientStatus = runScheduler(context);
       reachedBoundary = boundaryScope.reached();
     }
@@ -3540,7 +3554,23 @@ void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
   if (context->nativeSchedulePlan->specialization_fast)
     *context->nativeSchedulePlan->specialization_fast = 0;
   invalidateNativeTwoStatePromotionUnlocked(context);
+  bool alreadyPending = context->nativeScheduleExternalWritePending;
   context->nativeScheduleExternalWritePending = true;
+  // Clean actors can wait solely through static fanout. Recreate their
+  // runtime subscriptions before the intervening write is published, so both
+  // that transition and subsequent clocks are visible during fine execution.
+  if (!alreadyPending)
+    for (ScheduledProcess &scheduled : context->scheduledProcesses) {
+      if (!scheduled.instance || !scheduled.started ||
+          !scheduled.signalSubscriptions.empty() ||
+          (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+           scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
+        continue;
+      if (!obelisk_rt_register_signal_wait_unlocked(
+              context, currentWait(scheduled), scheduled.signalSubscriptions,
+              scheduled.signalLatch, scheduled.token, false))
+        return;
+    }
 }
 
 void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,

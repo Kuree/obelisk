@@ -1040,6 +1040,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     detail::copyNativePartition(source, probe);
     probe->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
     probe->setAttr("obelisk.eval.path_known_predicate", builder.getUnitAttr());
+    if (source->hasAttr(detail::cleanEvalBodyAttr))
+      probe->setAttr(detail::cleanEvalBodyAttr, builder.getUnitAttr());
     SymbolTable::setSymbolVisibility(probe, SymbolTable::Visibility::Private);
 
     IRMapping mapping;
@@ -1710,6 +1712,75 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
       return failure();
   }
   return success();
+}
+
+// A writable interface does not authorize a writer to interleave with the
+// runtime-free evaluator. Clone its call closure so the boundary-checked clean
+// version can use direct planes without weakening canonical fallback bodies.
+void materializeCleanEvalBodies(sim::SimDesignOp design) {
+  SmallVector<std::pair<sim::SimFuncOp, sim::SimFuncOp>> roots;
+  SmallVector<sim::SimFuncOp> sources;
+  DenseSet<Operation *> seen;
+  uint64_t nextCodeUnit = 1;
+  for (auto declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+    nextCodeUnit = std::max(nextCodeUnit, declaration.getId() + 1);
+  for (auto actor : design.getBody().front().getOps<sim::SimFuncOp>()) {
+    auto body = actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
+    auto source = body ? design.lookupSymbol<sim::SimFuncOp>(body.getValue())
+                       : sim::SimFuncOp{};
+    if (!source || source.getEntryKind() == sim::EntryKind::Observer)
+      continue;
+    roots.emplace_back(actor, source);
+    if (seen.insert(source).second)
+      sources.push_back(source);
+  }
+  for (size_t index = 0; index != sources.size(); ++index) {
+    sim::SimFuncOp source = sources[index];
+    source.walk([&](sim::SimCallOp call) {
+      auto callee = design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+      if (callee && !callee.isExternal() && seen.insert(callee).second)
+        sources.push_back(callee);
+    });
+  }
+  DenseMap<Operation *, sim::SimFuncOp> clones;
+  OpBuilder builder(design.getContext());
+  SymbolTable symbols(design);
+  for (sim::SimFuncOp source : sources) {
+    auto clone = cast<sim::SimFuncOp>(source->clone());
+    clone.setSymName((source.getSymName() + ".__obelisk_clean").str());
+    clone->setAttr(detail::cleanEvalBodyAttr, builder.getUnitAttr());
+    clone->setAttr("code_unit_id", builder.getI64IntegerAttr(nextCodeUnit));
+    symbols.insert(clone, design.getBody().front().end());
+    builder.setInsertionPoint(clone);
+    uint64_t scope = 0;
+    for (auto declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+      if (declaration.getId() == source.getCodeUnitId()) {
+        scope = declaration.getScopeId();
+        break;
+      }
+    sim::SimCodeUnitDeclOp::create(
+        builder, source.getLoc(), nextCodeUnit++, scope,
+        sim::EntryKind::Function, builder.getStringAttr(clone.getSymName()),
+        builder.getStringAttr("boundary-guarded clean native eval body"),
+        builder.getUnitAttr());
+    clones[source] = clone;
+  }
+  for (sim::SimFuncOp source : sources)
+    clones.lookup(source).walk([&](sim::SimCallOp call) {
+      auto callee = design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+      if (auto clone = clones.lookup(callee))
+        call.setCallee(clone.getSymName());
+    });
+  for (auto [actor, source] : roots)
+    actor->setAttr(
+        "obelisk.eval.body",
+        FlatSymbolRefAttr::get(clones.lookup(source).getSymNameAttr()));
+  // The canonical copies are no longer generated-evaluator roots. Keeping
+  // their raw marker would pull guarded runtime loads back into the closure.
+  for (sim::SimFuncOp source : sources)
+    source->removeAttr("obelisk.eval.raw_captures");
 }
 
 FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
@@ -3110,8 +3181,25 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           staticNBAPlan.roots, *stateLayout)))
     return failure();
 
+  // Continuous variable assignments need retained values for force/release;
+  // until clean lowering records those planes, keep their canonical route.
+  bool hasContinuousStore = false;
+  module.walk([&](sim::SimRefStoreOp store) {
+    auto kind = store->getParentOfType<sim::SimFuncOp>().getEntryKind();
+    hasContinuousStore |= store->hasAttr("obelisk_sim.continuous_store") ||
+                          kind == sim::EntryKind::Continuous ||
+                          kind == sim::EntryKind::PortInput ||
+                          kind == sim::EntryKind::PortOutput;
+  });
+  bool cleanWritableEval = evalScheduler && vpi.allowsWrite() &&
+                           !hasLanguageOverride && !hasContinuousStore;
+  if (cleanWritableEval)
+    materializeCleanEvalBodies(metadataDesign);
+  auto evalStateLayout = cleanWritableEval
+                             ? detail::makeCleanEvalStateLayout(*stateLayout)
+                             : *stateLayout;
   if (failed(materializeEvalTwoStateVariants(module, metadataDesign,
-                                             *stateLayout, evalScheduler)))
+                                             evalStateLayout, evalScheduler)))
     return failure();
   markTiming("schedule ranks, roots, and two-state variants");
 
@@ -3216,8 +3304,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           module, metadataDesign, aotActorSlotsByCodeUnit, analyses,
           aotBytecodeContinuations, preLowerGeneratedRegionCodeUnits,
           runtimeCheckpointContinuations,
-          useAOT && cleanSuperstep && staticFanout &&
-              !guardedAOTSpecialization);
+          useAOT && cleanSuperstep && staticFanoutPlan.exact &&
+              (cleanWritableEval || !guardedAOTSpecialization));
   if (failed(directFragments))
     return failure();
   markTiming("direct fragment materialization");

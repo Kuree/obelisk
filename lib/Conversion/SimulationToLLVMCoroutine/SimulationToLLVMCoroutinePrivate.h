@@ -73,6 +73,11 @@ inline constexpr llvm::StringLiteral nativeTransferredReferencesAttr =
     "obelisk.native.transferred_references";
 inline constexpr llvm::StringLiteral assumeCleanSpecializationAttr =
     "obelisk.native.assume_clean_specialization";
+inline constexpr llvm::StringLiteral cleanEvalBodyAttr =
+    "obelisk.native.clean_eval_body";
+
+struct NativeStateLayout;
+NativeStateLayout makeCleanEvalStateLayout(const NativeStateLayout &layout);
 inline constexpr llvm::StringLiteral evalCheckpointActorName =
     "__obelisk_eval_checkpoint_actor_v1";
 inline constexpr llvm::StringLiteral evalCheckpointContinuationName =

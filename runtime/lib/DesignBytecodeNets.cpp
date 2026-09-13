@@ -1980,6 +1980,10 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
              bit(context->stateUnknown, destination), nextValue, nextUnknown});
         context->forceMask[destination / 64] |= uint64_t{1}
                                                 << (destination % 64);
+        // Every alias of a forced net must leave the clean native path, even
+        // when forcing the value already present produces no transition.
+        obelisk_rt_aot_external_write_range_unlocked(context, destination, 1,
+                                                     true);
       }
     }
     bool changed = false;
@@ -2032,14 +2036,17 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
     }
     std::sort(roots.begin(), roots.end());
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    std::vector<uint64_t> releasedBits;
     for (uint64_t root : roots) {
       auto members = cache->members.find(root);
       if (members == cache->members.end())
         return OBELISK_RT_INVALID_HANDLE;
       for (uint64_t destination : members->second)
-        if (destination / 64 < context->forceMask.size())
+        if (destination / 64 < context->forceMask.size()) {
           context->forceMask[destination / 64] &=
               ~(uint64_t{1} << (destination % 64));
+          releasedBits.push_back(destination);
+        }
     }
     bool changed = false;
     if (!resolveNetRoots(*cache, context, std::move(roots), changed,
@@ -2049,6 +2056,10 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
                  : context->schedulerStatus;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
+    // Resolve first: re-promotion must see the released driver's value, not
+    // the previous forced value. Clear all aliases before checking each root.
+    for (uint64_t destination : releasedBits)
+      obelisk_rt_aot_release_range_unlocked(context, destination, 1);
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
