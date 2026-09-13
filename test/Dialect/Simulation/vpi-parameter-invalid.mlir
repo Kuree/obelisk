@@ -74,3 +74,42 @@ module {
     }
   }
 }
+
+// -----
+
+module {
+  obelisk_sim.design @explicit_range_non_parameter {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{explicit parameter range marker requires a parameter anchor}}
+    obelisk_sim.vpi_object.anchor @event id 0 type 34 in 0 ordinal 0
+        hierarchy "event" debug "event" {has_explicit_parameter_range}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @explicit_range_without_value {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{explicit parameter range marker requires immutable type and value}}
+    obelisk_sim.vpi_object.anchor @p id 0 type 41 in 0 ordinal 0
+        hierarchy "p" debug "p" {has_explicit_parameter_range}
+  }
+}
+
+// -----
+
+module {
+  obelisk_sim.design @explicit_range_scalar_root {
+    obelisk_sim.scope.decl 0
+    // expected-error @+1 {{explicit parameter range requires a packed-array semantic root}}
+    obelisk_sim.vpi_object.anchor @p id 0 type 41 in 0 ordinal 0
+        hierarchy "p" debug "p" {
+      has_explicit_parameter_range,
+      immutable_value = #obelisk_sim.frozen_constant<
+          value = [1 : i32, 0 : i32], isSigned = true> : i32,
+      vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true,
+          isFourState = false, range = [31, 0], children = [], childNames = []>
+    }
+  }
+}

@@ -1527,6 +1527,10 @@ bool validateDatabaseImpl(const Database &database) {
          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
          (kind == OBELISK_RT_DESIGN_RECORD_NET &&
           intrinsicKind == static_cast<uint32_t>(VPIKind::InterconnectNet)));
+    bool explicitParameterRange =
+        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        intrinsicKind == static_cast<uint32_t>(VPIKind::Parameter) &&
+        (caps & OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0;
     bool mayOmitIntrinsic =
         (kind == OBELISK_RT_DESIGN_RECORD_SCOPE && offset == database.root) ||
         kind == OBELISK_RT_DESIGN_RECORD_DRIVER ||
@@ -1549,7 +1553,7 @@ bool validateDatabaseImpl(const Database &database) {
          (database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) == 0))
       return false;
     if ((caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 && !lexicalAnchor &&
-        kind != OBELISK_RT_DESIGN_RECORD_PORT) {
+        !explicitParameterRange && kind != OBELISK_RT_DESIGN_RECORD_PORT) {
       const auto *descriptor =
           obelisk::reflection::findVPIObjectKind(intrinsicKind);
       if (kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT || !descriptor ||
@@ -2542,6 +2546,49 @@ bool validateDatabaseImpl(const Database &database) {
       }
     }
   }
+
+  // A claimed directly declared parameter range must resolve to the exact
+  // packed-array semantic root whose endpoints answer vpiLeftRange and
+  // vpiRightRange. Validate the compact and promoted full-record forms here,
+  // after the root-binding and semantic graphs are known to be well formed.
+  auto hasValidExplicitParameterRange =
+      [&](obelisk::reflection::TableKind table, uint32_t index) {
+        uint32_t packedSource = 0;
+        uint32_t semanticRoot = 0;
+        if (!obelisk::reflection::tryPackTableIndex(table, index,
+                                                    packedSource) ||
+            !findSemanticRootBinding(database, packedSource, semanticRoot))
+          return false;
+        const uint8_t *semantic = database.data + database.semanticTypes +
+                                  uint64_t{semanticRoot} * kSemanticTypeSize;
+        uint32_t encoded = read32(semantic);
+        return (encoded & UINT32_C(0xff)) ==
+                   OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+               (encoded & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+      };
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{index} * kObjectSize;
+    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        recordVPIKind(object) ==
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::Parameter) &&
+        (read32(object + 4) & OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) !=
+            0 &&
+        !hasValidExplicitParameterRange(obelisk::reflection::TableKind::Object,
+                                        index))
+      return false;
+  }
+  for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
+    const uint8_t *object = database.data + database.staticObjects +
+                            uint64_t{index} * kStaticObjectSize;
+    if ((read16(object + 30) &
+         OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0 &&
+        !hasValidExplicitParameterRange(
+            obelisk::reflection::TableKind::StaticObject, index))
+      return false;
+  }
+
   for (uint32_t index = 0; index != database.semanticRootBindingCount;
        ++index) {
     const uint8_t *binding = database.data + database.semanticRootBindings +
@@ -2801,9 +2848,14 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t column = read32(object + 24);
     uint16_t vpiKind = read16(object + 28);
     uint16_t flags = read16(object + 30);
+    bool explicitParameterRange =
+        vpiKind == static_cast<uint32_t>(
+                       obelisk::reflection::VPIObjectKind::Parameter) &&
+        flags == OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
     if ((index != 0 && id <= previousStaticObjectID) ||
         (scopeIndex != UINT32_MAX && scopeIndex >= database.scopeCount) ||
-        flags != 0 || (sourceFile == 0 && (line != 0 || column != 0)) ||
+        (flags != 0 && !explicitParameterRange) ||
+        (sourceFile == 0 && (line != 0 || column != 0)) ||
         (sourceFile != 0 && (line == 0 || column == 0)))
       return false;
     previousStaticObjectID = id;
@@ -4617,13 +4669,14 @@ obelisk_rt_status designInfo(const Database &database,
     const uint8_t *record = database.data + cursor.offset;
     *outInfo = {};
     outInfo->kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    outInfo->capabilities = read16(record + 30);
     uint16_t exactKind = read16(record + 28);
     const auto *descriptor = obelisk::reflection::findVPIObjectKind(exactKind);
     if (read32(record + 16) != 0 && descriptor &&
         (descriptor->families &
          obelisk::reflection::vpiFamilyMask(
              obelisk::reflection::VPIObjectFamily::Typespec)) != 0)
-      outInfo->capabilities = OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC;
+      outInfo->capabilities |= OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC;
     outInfo->handle = {OBELISK_RT_DESCRIPTOR_INVALID, 0, read64(record)};
     uint32_t packedSource = 0;
     VPIFrozenValue frozen{};

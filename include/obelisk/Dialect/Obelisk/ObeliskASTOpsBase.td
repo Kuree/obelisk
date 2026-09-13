@@ -143,6 +143,12 @@ class ObeliskRootASTNodeOp<string mnemonic>
 class ObeliskConstantSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [], (ins StrAttr:$constant_value)>;
 
+class ObeliskParameterSymbolASTNodeOp<string mnemonic>
+    : ObeliskSymbolASTNodeOp<mnemonic, [], (ins
+        StrAttr:$constant_value,
+        OptionalAttr<UnitAttr>:$is_local_param,
+        OptionalAttr<UnitAttr>:$has_explicit_range)>;
+
 class ObeliskDirectedSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [],
         (ins ObeliskSVArgumentDirection:$direction)>;

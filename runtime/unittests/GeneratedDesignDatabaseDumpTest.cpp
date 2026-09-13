@@ -77,6 +77,12 @@ std::string hex(uint64_t value) {
   return std::string(result.rbegin(), result.rend());
 }
 
+void put16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value) {
+  ASSERT_LE(offset + 2, bytes.size());
+  for (unsigned index = 0; index != 2; ++index)
+    bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
+}
+
 void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
   ASSERT_LE(offset + 4, bytes.size());
   for (unsigned byte = 0; byte != 4; ++byte)
@@ -984,8 +990,8 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   ASSERT_NE(imageHeader.getReserved(), 0u);
   const SemanticDirectoryView imageDirectory(encoded->designDatabase.data() +
                                              imageHeader.getReserved());
-  EXPECT_EQ(imageDirectory.getFrozenValueCount(), 1u);
-  EXPECT_EQ(imageDirectory.getFrozenValueBindingCount(), 2u);
+  EXPECT_EQ(imageDirectory.getFrozenValueCount(), 2u);
+  EXPECT_EQ(imageDirectory.getFrozenValueBindingCount(), 6u);
   ASSERT_GE(encoded->bytecode.size(), 40u);
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
@@ -1028,14 +1034,20 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
 
   PLI_BYTE8 parameterAbsoluteName[] = "pkg::UVM_HDL_MAX_WIDTH";
   PLI_BYTE8 sameWidthName[] = "pkg::SAME_WIDTH";
+  PLI_BYTE8 descendingName[] = "pkg::DESCENDING";
+  PLI_BYTE8 ascendingName[] = "pkg::ASCENDING";
   PLI_BYTE8 parameterRelativeName[] = "UVM_HDL_MAX_WIDTH";
   vpiHandle parameter = vpi_handle_by_name(parameterAbsoluteName, nullptr);
   vpiHandle relativeParameter =
       vpi_handle_by_name(parameterRelativeName, package);
   vpiHandle sameWidth = vpi_handle_by_name(sameWidthName, nullptr);
+  vpiHandle descending = vpi_handle_by_name(descendingName, nullptr);
+  vpiHandle ascending = vpi_handle_by_name(ascendingName, nullptr);
   ASSERT_NE(parameter, nullptr);
   ASSERT_NE(relativeParameter, nullptr);
   ASSERT_NE(sameWidth, nullptr);
+  ASSERT_NE(descending, nullptr);
+  ASSERT_NE(ascending, nullptr);
   EXPECT_EQ(vpi_compare_objects(parameter, relativeParameter), 1);
   EXPECT_EQ(vpi_get(vpiType, parameter), vpiParameter);
   EXPECT_STREQ(vpi_get_str(vpiName, parameter), "UVM_HDL_MAX_WIDTH");
@@ -1046,6 +1058,36 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   EXPECT_EQ(vpi_get(vpiSigned, parameter), 1);
   EXPECT_EQ(vpi_get(vpiConstType, parameter), vpiIntConst);
   EXPECT_EQ(vpi_get(vpiConstantSelect, parameter), 1);
+  EXPECT_EQ(vpi_get(vpiLocalParam, parameter), 1);
+  EXPECT_EQ(vpi_get(vpiLocalParam, sameWidth), 0);
+  EXPECT_EQ(vpi_get(vpiLocalParam, descending), 1);
+  EXPECT_EQ(vpi_get(vpiLocalParam, ascending), 0);
+  EXPECT_EQ(vpi_handle(vpiLeftRange, parameter), nullptr);
+  EXPECT_EQ(vpi_handle(vpiRightRange, parameter), nullptr);
+  EXPECT_EQ(vpi_handle(vpiLeftRange, sameWidth), nullptr);
+  EXPECT_EQ(vpi_handle(vpiRightRange, sameWidth), nullptr);
+
+  auto expectParameterRange = [](vpiHandle object, int32_t leftExpected,
+                                 int32_t rightExpected) {
+    vpiHandle left = vpi_handle(vpiLeftRange, object);
+    vpiHandle right = vpi_handle(vpiRightRange, object);
+    ASSERT_NE(left, nullptr);
+    ASSERT_NE(right, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, left), vpiConstant);
+    EXPECT_EQ(vpi_get(vpiType, right), vpiConstant);
+    s_vpi_value endpoint{};
+    endpoint.format = vpiIntVal;
+    vpi_get_value(left, &endpoint);
+    EXPECT_EQ(endpoint.value.integer, leftExpected);
+    endpoint = {};
+    endpoint.format = vpiIntVal;
+    vpi_get_value(right, &endpoint);
+    EXPECT_EQ(endpoint.value.integer, rightExpected);
+    EXPECT_EQ(vpi_release_handle(right), 1);
+    EXPECT_EQ(vpi_release_handle(left), 1);
+  };
+  expectParameterRange(descending, 9, 4);
+  expectParameterRange(ascending, 4, 9);
 
   s_vpi_value parameterValue{};
   parameterValue.format = vpiIntVal;
@@ -1074,10 +1116,16 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   ASSERT_NE(parameters, nullptr);
   vpiHandle traversedParameter = vpi_scan(parameters);
   vpiHandle traversedSameWidth = vpi_scan(parameters);
+  vpiHandle traversedDescending = vpi_scan(parameters);
+  vpiHandle traversedAscending = vpi_scan(parameters);
   ASSERT_NE(traversedParameter, nullptr);
   ASSERT_NE(traversedSameWidth, nullptr);
+  ASSERT_NE(traversedDescending, nullptr);
+  ASSERT_NE(traversedAscending, nullptr);
   EXPECT_EQ(vpi_compare_objects(parameter, traversedParameter), 1);
   EXPECT_EQ(vpi_compare_objects(sameWidth, traversedSameWidth), 1);
+  EXPECT_EQ(vpi_compare_objects(descending, traversedDescending), 1);
+  EXPECT_EQ(vpi_compare_objects(ascending, traversedAscending), 1);
   EXPECT_EQ(vpi_scan(parameters), nullptr);
 
   vpiHandle clocking = vpi_handle_by_name(clockingName, top);
@@ -1128,10 +1176,14 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   EXPECT_EQ(vpi_release_handle(propertyScope), 1);
   EXPECT_EQ(vpi_release_handle(traversedParameter), 1);
   EXPECT_EQ(vpi_release_handle(traversedSameWidth), 1);
+  EXPECT_EQ(vpi_release_handle(traversedAscending), 1);
+  EXPECT_EQ(vpi_release_handle(traversedDescending), 1);
   EXPECT_EQ(vpi_release_handle(parameterTypespec), 1);
   EXPECT_EQ(vpi_release_handle(parameterScope), 1);
   EXPECT_EQ(vpi_release_handle(relativeParameter), 1);
   EXPECT_EQ(vpi_release_handle(sameWidth), 1);
+  EXPECT_EQ(vpi_release_handle(ascending), 1);
+  EXPECT_EQ(vpi_release_handle(descending), 1);
   EXPECT_EQ(vpi_release_handle(parameter), 1);
   EXPECT_EQ(vpi_release_handle(traversedSequence), 1);
   EXPECT_EQ(vpi_release_handle(traversedProperty), 1);
@@ -1179,11 +1231,13 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
   const uint64_t directoryOffset = header.getReserved();
   const SemanticDirectoryView directory(encoded->designDatabase.data() +
                                         directoryOffset);
-  ASSERT_EQ(directory.getFrozenValueCount(), 1u);
-  ASSERT_EQ(directory.getFrozenValueBindingCount(), 2u);
+  ASSERT_EQ(directory.getFrozenValueCount(), 2u);
+  ASSERT_EQ(directory.getFrozenValueBindingCount(), 6u);
   const uint64_t valueOffset = directory.getFrozenValueOffset();
   const uint64_t bindingOffset = directory.getFrozenValueBindingOffset();
   const uint64_t payloadOffset = directory.getFrozenValuePayloadOffset();
+  const uint64_t staticObjectOffset = directory.getStaticObjectOffset();
+  ASSERT_GT(directory.getStaticObjectCount(), 0u);
   const FrozenValueBindingView firstBinding(encoded->designDatabase.data() +
                                             bindingOffset);
 
@@ -1241,6 +1295,56 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
                    encoded->designDatabase.end());
   put64(malformed,
         directoryOffset + field::SemanticDirectoryFrozenValueBindingCount, 0);
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  // The first compact record is the package, so the parameter-only explicit
+  // range flag is invalid even though the bit itself is known.
+  put16(malformed, staticObjectOffset + field::StaticObjectFlags,
+        OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
+  expectRejected(malformed);
+
+  uint64_t parameterOffset = 0;
+  for (uint64_t index = 0; index != directory.getStaticObjectCount(); ++index) {
+    const uint64_t candidate =
+        staticObjectOffset + index * StaticObjectLayout.size;
+    StaticObjectView object(encoded->designDatabase.data() + candidate);
+    if (object.getVPIKind() == vpiParameter && object.getFlags() == 0) {
+      parameterOffset = candidate;
+      break;
+    }
+  }
+  ASSERT_NE(parameterOffset, 0u);
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  // A known explicit-range bit is still invalid on a scalar parameter root.
+  put16(malformed, parameterOffset + field::StaticObjectFlags,
+        OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
+  expectRejected(malformed);
+
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put16(malformed, parameterOffset + field::StaticObjectFlags, 1);
+  expectRejected(malformed);
+
+  uint64_t fullParameterOffset = 0;
+  for (uint64_t index = 0; index != header.getObjectCount(); ++index) {
+    const uint64_t candidate =
+        header.getObjectOffset() + index * ObjectLayout.size;
+    ObjectView object(encoded->designDatabase.data() + candidate);
+    if (unpackRecordKind(object.getKindAndVPIKind()) ==
+            RecordKind::StaticObject &&
+        unpackRecordKindPayload(object.getKindAndVPIKind()) == vpiParameter) {
+      fullParameterOffset = candidate;
+      break;
+    }
+  }
+  ASSERT_NE(fullParameterOffset, 0u);
+  malformed.assign(encoded->designDatabase.begin(),
+                   encoded->designDatabase.end());
+  put32(malformed, fullParameterOffset + field::ObjectCaps,
+        OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
   expectRejected(malformed);
 }
 

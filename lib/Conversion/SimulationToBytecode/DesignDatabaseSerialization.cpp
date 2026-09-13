@@ -190,6 +190,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t scope = 0;
     std::string name;
     uint32_t vpiKind = 0;
+    uint16_t flags = 0;
     Source source;
     Operation *identity = nullptr;
   };
@@ -568,13 +569,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
           (!findVPIValuePolicy(anchor.getVpiKind()) ||
            anchor.getImmutableValueAttr()) &&
           !indexed && !hasSemanticShape && !semanticIdentity;
+      uint16_t staticFlags =
+          anchor.getHasExplicitParameterRangeAttr()
+              ? static_cast<uint16_t>(
+                    OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE)
+              : 0;
       if (compact)
         staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
                                  std::move(name), anchor.getVpiKind(),
-                                 sourceFor(anchor), anchor});
+                                 staticFlags, sourceFor(anchor), anchor});
       else
         objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
-                           anchor.getVpiKind(), 0, *id,
+                           anchor.getVpiKind(), staticFlags, *id,
                            anchor.getEnclosingScopeId(), std::move(name),
                            Type{}, 0, sourceFor(anchor), true, anchor});
     } else if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(operation)) {
@@ -778,9 +784,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       continue;
     }
     objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, object.vpiKind,
-                       0, object.id, object.scope, std::move(object.name),
-                       Type{}, 0, std::move(object.source), true,
-                       object.identity});
+                       object.flags, object.id, object.scope,
+                       std::move(object.name), Type{}, 0,
+                       std::move(object.source), true, object.identity});
   }
   staticObjects = std::move(uniqueStaticObjects);
   llvm::sort(scopes, [](auto left, auto right) {
@@ -3764,7 +3770,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSourceLine(static_cast<uint32_t>(object.source.lineColumn >> 32));
     writer.setSourceColumn(static_cast<uint32_t>(object.source.lineColumn));
     writer.setVPIKind(static_cast<uint16_t>(object.vpiKind));
-    writer.setFlags(0);
+    writer.setFlags(object.flags);
   }
   for (auto [index, entry] : llvm::enumerate(types)) {
     TypeWriter writer(output.data() + typeOffset + index * TypeLayout.size);
