@@ -5142,9 +5142,39 @@ FailureOr<bool> makeNativeEvalPlan(
                              firstRoot, ValueRange{});
 
     Block *rootBlock = firstRoot;
+    Block *afterGroup = next;
+    // Keep dense roots in source order, but skip clean clusters with one
+    // mask test instead of visiting every root in a nonempty 64-bit word.
+    constexpr unsigned rootsPerGroup = 8;
 
     for (auto [position, rootIndex] :
          llvm::enumerate(scalarRootsByWord[word])) {
+      if (scalarRootsByWord[word].size() > rootsPerGroup &&
+          position % rootsPerGroup == 0) {
+        size_t groupEnd =
+            std::min(position + rootsPerGroup, scalarRootsByWord[word].size());
+        afterGroup =
+            groupEnd == scalarRootsByWord[word].size() ? next : new Block;
+        if (afterGroup != next)
+          nbaCommit.getBody().getBlocks().insert(Region::iterator(next),
+                                                 afterGroup);
+        Block *firstInGroup = new Block;
+        nbaCommit.getBody().getBlocks().insert(Region::iterator(afterGroup),
+                                               firstInGroup);
+        uint64_t groupMask = 0;
+        for (size_t index = position; index != groupEnd; ++index)
+          groupMask |= uint64_t{1} << (scalarRootsByWord[word][index] % 64);
+        builder.setInsertionPointToStart(rootBlock);
+        Value groupEmpty = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq,
+            arith::AndIOp::create(
+                builder, location, dirty,
+                llvmConstant(builder, location, i64, groupMask)),
+            llvmConstant(builder, location, i64, 0));
+        cf::CondBranchOp::create(builder, location, groupEmpty, afterGroup,
+                                 ValueRange{}, firstInGroup, ValueRange{});
+        rootBlock = firstInGroup;
+      }
       const obelisk_rt_static_nba_root &root = nbaRoots[rootIndex];
       uint64_t offset = staticNBAPlan.generatedOffsets[rootIndex];
       uint32_t fixedCommitRegion =
@@ -5158,10 +5188,12 @@ FailureOr<bool> makeNativeEvalPlan(
               ? staticNBAPlan.generatedFixedWriteMasks[rootIndex]
               : 0;
       StringRef accumulator = staticNBAPlan.generatedAccumulators[rootIndex];
-      Block *afterRoot =
-          position + 1 == scalarRootsByWord[word].size() ? next : new Block;
-      if (afterRoot != next)
-        nbaCommit.getBody().getBlocks().insert(Region::iterator(next),
+      Block *afterRoot = position + 1 == scalarRootsByWord[word].size() ||
+                                 (position + 1) % rootsPerGroup == 0
+                             ? afterGroup
+                             : new Block;
+      if (afterRoot != afterGroup)
+        nbaCommit.getBody().getBlocks().insert(Region::iterator(afterGroup),
                                                afterRoot);
       Block *commitRoot = new Block;
       nbaCommit.getBody().getBlocks().insert(Region::iterator(afterRoot),
