@@ -2555,7 +2555,10 @@ obelisk_rt_peek_unstarted_actor_region(const obelisk_rt_context *context,
 
 inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
                                                uint32_t phase) {
-  return obelisk_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
+  // Keep the steady-state empty inventory check inline. Region selection also
+  // compacts stale startup entries and is intentionally a much larger helper.
+  return !obelisk_rt_unstarted_actors(context, phase).empty() &&
+         obelisk_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
 }
 
 inline bool

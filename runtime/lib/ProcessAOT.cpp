@@ -556,7 +556,11 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
 
 namespace {
 
-obelisk_rt_status executeStaticNativeAOT(
+// This boundary is entered for every compute fragment. Inline it so the
+// generated-actions caller folds away continuation/action validation branches
+// and shares its action storage instead of paying a second call frame. The
+// lifecycle and error checks below still apply to both callers.
+__attribute__((always_inline)) inline obelisk_rt_status executeStaticNativeAOT(
     obelisk_rt_process_instance_v1 *instance, obelisk_rt_context *context,
     obelisk_rt_fragment_action_v1 &action, bool generatedActions) {
   action = {OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
@@ -665,7 +669,7 @@ obelisk_rt_status executeTrustedAOTNode(obelisk_rt_context *context,
       context->activeControls = std::move(scheduled.controls);
   }
 
-  obelisk_rt_fragment_action_v1 action{};
+  obelisk_rt_fragment_action_v1 action;
   obelisk_rt_status status =
       executeStaticNativeAOT(selected, context, action, true);
 
