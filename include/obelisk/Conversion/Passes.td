@@ -81,6 +81,23 @@ def ObeliskSimMaterializeClockedSamplesPass
   ];
 }
 
+def ObeliskSimMaterializeClockedControlPass
+    : Pass<"obelisk-sim-materialize-clocked-control",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Make singleton initial clock-control state explicit";
+  let description = [{
+    Coalesces same-edge waits in a statically spawned initial process into one
+    dispatch boundary. Scalar continuation operands and the resume phase live
+    in private design storage shared by native evaluation and coroutine fallback.
+    Startup side effects remain in the canonical process entry.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+}
+
 def ObeliskSimThreadSuspensionPass
     : Pass<"obelisk-sim-thread-suspension", "obelisk::sim::SimFuncOp"> {
   let summary = "Thread promoted SSA state through suspension continuations";

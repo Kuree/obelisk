@@ -3410,6 +3410,18 @@ FailureOr<bool> makeNativeEvalPlan(
                                     llvmConstant(builder, location, i64, 0));
         directReady =
             arith::OrIOp::create(builder, location, directReady, selected);
+        // The straight-line prefix can stop at a cold checkpoint before its
+        // last owner. Keep unconsumed direct owners in the same-slot ready
+        // set so the callback's coordinator can finish that edge. Each owner
+        // clears only its own bit after execution below; an SSA-only mask
+        // silently drops the suffix when control leaves run_until.
+        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  kernel.ingressName);
+        Value pending = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::OrIOp::create(builder, location, pending, selected), ingress,
+            8);
         hasIngress = arith::OrIOp::create(
             builder, location, hasIngress,
             arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,

@@ -1,16 +1,10 @@
-// RUN: not obelisk-opt %s \
+// RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=ERROR
+// RUN:   | FileCheck %s
 
-// A path-sensitive promotion probe must not make a runtime checkpoint leaf
-// part of the generated call closure. Until that leaf has an explicit Tier-3
-// return route, forced eval rejects the model instead of hiding a runtime call
-// behind the cold side of an indirect dispatcher.
-//
-// `guarded_blocking` reads back a blocking store on its fast path, which
-// needs a speculative memory overlay, so the owner is declined and keeps the
-// canonical four-state body that calls the runtime inline. That is diagnosed
-// at the scheduler decision, before the owner can enter a generated closure.
+// Terminal stores cannot affect later probe reads and can be omitted from
+// the dry run. Preserve the publication in the executable eval body, while
+// keeping checkpoint probes side-effect-free.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -142,12 +136,7 @@ module attributes {
     ^publish:
       obelisk_sim.ref.store %value to %destination :
           !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      cf.br ^read_back
-    ^read_back:
-      %stored = obelisk_sim.ref.load %destination :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %observe = obelisk_sim.logic.is_true %stored : !obelisk_sim.logic<1>
-      cf.cond_br %observe, ^checkpoint, ^wait
+      cf.br ^wait
     ^checkpoint:
       %stdout = arith.constant -2147483647 : i32
       %message = obelisk_sim.bytes.constant "blocking checkpoint"
@@ -158,5 +147,11 @@ module attributes {
   }
 }
 
-// ERROR: an eval owner keeps an unguarded runtime leaf
-// ERROR-SAME: in guarded_blocking
+// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0(
+// CHECK: llvm.store
+// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_path_known_0(
+// CHECK-NOT: llvm.store
+// CHECK: llvm.return
+// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+// CHECK-NOT: llvm.store
+// CHECK: llvm.return

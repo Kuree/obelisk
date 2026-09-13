@@ -224,10 +224,12 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       return success();
   }
   Block &sourceEntry = function.getBody().front();
+  bool clockedControl =
+      eventDrivenInitial && function->hasAttr(sim::metadata::clockedControl);
   SmallVector<Block *> preambleBlocks;
   llvm::SmallPtrSet<Block *, 8> preambleSeen;
   Block *preamble = &sourceEntry;
-  while (preamble != wait && preamble != activation) {
+  while (!clockedControl && preamble != wait && preamble != activation) {
     if (!preambleSeen.insert(preamble).second)
       return success();
     auto branch = dyn_cast<cf::BranchOp>(preamble->getTerminator());
@@ -322,6 +324,17 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
        llvm::zip_equal(sourceEntry.getArguments(), evalEntry.getArguments()))
     mapping.map(source, destination);
   builder.setInsertionPointToStart(&evalEntry);
+  if (clockedControl) {
+    // Startup can branch and perform cold services (plusargs, dump setup).
+    // Only rematerialize pure capture-derived entry values. Clock-control
+    // phase and counters have already been made canonical storage, so their
+    // contents must be loaded by the activation, never recomputed at entry.
+    for (Operation &operation : sourceEntry.without_terminator())
+      if (operation.getNumRegions() == 0 && isMemoryEffectFree(&operation) &&
+          llvm::all_of(operation.getOperands(),
+                       [&](Value value) { return mapping.contains(value); }))
+        builder.clone(operation, mapping);
+  }
   SmallVector<Value> activationEntryOperands;
   auto appendMappedValues = [&](ValueRange values,
                                 SmallVectorImpl<Value> &mappedValues) {
@@ -379,6 +392,26 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   if (activationBlocks.empty()) {
     abandon();
     return success();
+  }
+  if (clockedControl) {
+    // Reject any startup-produced value that was not explicitly lifted or
+    // safely rematerialized. Never leave an operand pointing into the actor.
+    for (Block *block : activationBlocks)
+      for (Operation &operation : *block) {
+        bool capturesStartup = false;
+        operation.walk([&](Operation *nested) {
+          for (Value operand : nested->getOperands()) {
+            Block *owner = operand.getParentBlock();
+            if (owner->getParent() == &function.getBody() &&
+                !seen.contains(owner) && !mapping.contains(operand))
+              capturesStartup = true;
+          }
+        });
+        if (capturesStartup) {
+          abandon();
+          return success();
+        }
+      }
   }
   for (Block *source : activationBlocks) {
     Block *destination = new Block;

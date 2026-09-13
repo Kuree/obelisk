@@ -886,6 +886,40 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         coldCheckpointBlocks.insert(operation->getBlock());
     });
 
+    // A dry run can discard terminal publications when no subsequent read
+    // can observe them. This covers explicit clock-control counters without
+    // requiring a speculative memory overlay. Deliberately treat every load
+    // as aliasing; a store/read cycle or a read on either successor rejects.
+    llvm::SmallPtrSet<Block *, 32> reachesRead;
+    SmallVector<Block *> readWorklist;
+    for (Block &block : source.getBody()) {
+      if (coldCheckpointBlocks.contains(&block))
+        continue;
+      if (llvm::any_of(block, [](Operation &op) {
+            return isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op);
+          }))
+        readWorklist.push_back(&block);
+    }
+    while (!readWorklist.empty()) {
+      Block *block = readWorklist.pop_back_val();
+      if (coldCheckpointBlocks.contains(block) ||
+          !reachesRead.insert(block).second)
+        continue;
+      for (Block *predecessor : block->getPredecessors())
+        readWorklist.push_back(predecessor);
+    }
+    llvm::SmallPtrSet<Operation *, 16> terminalStores;
+    source.walk([&](sim::SimRefStoreOp store) {
+      bool readsAfter = false;
+      for (Operation *next = store->getNextNode(); next;
+           next = next->getNextNode())
+        readsAfter |= isa<sim::SimRefLoadOp, sim::SimNetReadOp>(next);
+      for (Block *successor : store->getBlock()->getSuccessors())
+        readsAfter |= reachesRead.contains(successor);
+      if (!readsAfter)
+        terminalStores.insert(store.getOperation());
+    });
+
     bool supported = true;
     source.walk([&](Operation *operation) {
       if (!supported)
@@ -900,6 +934,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       if (coldCheckpointBlocks.contains(operation->getBlock()))
         return;
       if (isa<sim::SimCoveragePointHitOp>(operation))
+        return;
+      if (terminalStores.contains(operation))
         return;
       if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
         supported = false;
@@ -961,7 +997,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       for (Operation &operation : sourceBlock) {
         // Probes observe control flow without executing source statements.
         // Count a line only in the selected body or its cold callback.
-        if (!isa<sim::SimCoveragePointHitOp>(operation))
+        if (!isa<sim::SimCoveragePointHitOp>(operation) &&
+            !terminalStores.contains(&operation))
           builder.clone(operation, mapping);
       }
     }
@@ -1133,6 +1170,10 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           if (stateLoads.contains(result))
             blockLoads.push_back(result);
       for (Value loaded : blockLoads) {
+        // Integer control storage is intrinsically two-state; only packed
+        // language values have an unknown plane to inspect.
+        if (isa<IntegerType>(loaded.getType()))
+          continue;
         std::optional<unsigned> width =
             detail::nativeStateWidth(loaded.getType());
         // A load whose type has no native logic width cannot be probed for

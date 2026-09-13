@@ -351,6 +351,9 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createObeliskSimThreadSuspensionPass());
   }
 
+  if (optLevel > 0)
+    designManager.addPass(createObeliskSimMaterializeClockedControlPass());
+
   ObeliskSimBuildComputeGraphPassOptions graphOptions;
   graphOptions.workers = workers;
   graphOptions.vpi = vpiMode.str();
