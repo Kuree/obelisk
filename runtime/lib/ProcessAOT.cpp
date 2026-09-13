@@ -1566,8 +1566,24 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
         const obelisk_rt_native_schedule_node &selected =
             context->nativeScheduleNodes[lastNode];
         context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
+        const ScheduledProcess &scheduled =
+            context->scheduledProcesses
+                [context->nativeScheduleActorIndices[selected.actor_slot]];
+        bool bytecodeContinuation = std::binary_search(
+            scheduled.bytecodeContinuations.begin(),
+            scheduled.bytecodeContinuations.end(), selected.continuation);
+        // A clean Tier-1 environment does not imply that every framed
+        // continuation uses static fanout or has a native implementation.
+        // Persistent procedural clock waiters retain runtime subscriptions
+        // after bootstrap. Rearm them through the hybrid transaction; only
+        // the bytecode-only subset changes executor tier.
+        bool runtimeWait = !scheduled.signalSubscriptions.empty() ||
+                           !scheduled.waitGenerations.empty() ||
+                           scheduled.computedObserverWaitRegistered;
         obelisk_rt_status status =
-            executeTrustedAOTNode(context, selected.actor_slot);
+            bytecodeContinuation || runtimeWait
+                ? executeAOTNode(context, selected.actor_slot)
+                : executeTrustedAOTNode(context, selected.actor_slot);
         if (status != OBELISK_RT_OK)
           return status;
         passProgress = true;

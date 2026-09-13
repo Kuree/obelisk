@@ -351,7 +351,12 @@ proveDynamicEvalNBA(LLVM::CallOp call,
                   ? proofContext.periodicOwnerBits[fanoutIndex]
                   : fanout.merged_bit;
           bool exactPeriodic = isExactPeriodicIngress(fanout);
-          bool genericIngress = fanout.merged_bit == *proof.periodicRecord;
+          // Runtime routes do not own a merged model bit. Their default bit
+          // field can equal this record (especially record zero), but a
+          // separate procedural clock waiter is not ingress to this writer.
+          bool genericIngress =
+              fanoutRoute(fanout) != OBELISK_RT_FANOUT_RUNTIME &&
+              fanout.merged_bit == *proof.periodicRecord;
           bool periodicIngress =
               exactPeriodic && periodicOwner == *proof.periodicRecord;
           if (!genericIngress && !periodicIngress)
@@ -457,7 +462,12 @@ proveDynamicEvalNBA(LLVM::CallOp call,
                            proof.siteExecutesAtMostOnce;
   // The periodic fast loop owns the design-side NBA handoff only. Reactive
   // owners require the later Re-NBA phase, which remains runtime scheduled.
-  proof.periodicWideLatch = commonDynamicRoot && proof.uniqueSemanticRootSite &&
+  bool independentSites =
+      proof.uniqueSemanticRootSite ||
+      (root != staticNBAPlan.siteRoots.end() &&
+       root->second < staticNBAPlan.disjointDynamicLanes.size() &&
+       staticNBAPlan.disjointDynamicLanes[root->second]);
+  proof.periodicWideLatch = commonDynamicRoot && independentSites &&
                             proof.exclusivePeriodicIngress &&
                             proof.siteExecutesAtMostOnce &&
                             proof.commitRegion == OBELISK_RT_REGION_NBA &&
@@ -768,6 +778,8 @@ FailureOr<bool> makeNativeEvalPlan(
   constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
   constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
   constexpr StringLiteral nbaCommitName = "__obelisk_aot_static_nba_commit_v1";
+  constexpr StringLiteral runtimeNBACommitName =
+      "__obelisk_aot_runtime_nba_commit_v1";
   constexpr StringLiteral nbaKnownName = "__obelisk_eval_nba_known_v1";
   constexpr StringLiteral evalCoordinatorName =
       "__obelisk_eval_fast_coordinator_v1";
@@ -2493,6 +2505,52 @@ FailureOr<bool> makeNativeEvalPlan(
       if (handleSelect && handleSelect->use_empty())
         handleSelect->erase();
     }
+    // A fixed lane of a dynamic array element retains the inner encoded
+    // handle as the outer slice's base. Inline that pure constant-root offset
+    // calculation, including the signed 32-bit handle bounds. The outer NBA
+    // guard still rejects invalid array indices and a mismatched root tag.
+    module.walk([&](sim::SimFuncOp function) {
+      if (!isGeneratedEvalBody(function))
+        return;
+      SmallVector<LLVM::CallOp> offsets;
+      function.walk([&](LLVM::CallOp call) {
+        if (call.getCallee() &&
+            *call.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+            call.getArgOperands().size() == 2 && !call->use_empty())
+          offsets.push_back(call);
+      });
+      for (LLVM::CallOp call : offsets) {
+        auto root = constantU64(call.getArgOperands()[0]);
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (!root || !obelisk_rt_stable_handle_decode(*root, &decoded) ||
+            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+          continue;
+        OpBuilder offsetBuilder(call);
+        Location loc = call.getLoc();
+        auto constant = [&](int64_t value) {
+          return llvmConstant(offsetBuilder, loc, i64, value);
+        };
+        Value amount = call.getArgOperands()[1];
+        Value valid = arith::AndIOp::create(
+            offsetBuilder, loc,
+            arith::CmpIOp::create(offsetBuilder, loc, arith::CmpIPredicate::sge,
+                                  amount, constant(INT32_MIN - decoded.offset)),
+            arith::CmpIOp::create(offsetBuilder, loc, arith::CmpIPredicate::sle,
+                                  amount,
+                                  constant(INT32_MAX - decoded.offset)));
+        Value offset = arith::AddIOp::create(offsetBuilder, loc, amount,
+                                             constant(decoded.offset));
+        offset = arith::AndIOp::create(offsetBuilder, loc, offset,
+                                       constant(UINT32_MAX));
+        Value encoded = arith::OrIOp::create(
+            offsetBuilder, loc, offset,
+            constant(*root & UINT64_C(0xffffffff00000000)));
+        Value result = arith::SelectOp::create(offsetBuilder, loc, valid,
+                                               encoded, constant(-1));
+        call.getResult().replaceAllUsesWith(result);
+        call.erase();
+      }
+    });
     // Reference lowering can leave a short chain of now-dead validity selects
     // above a handle-offset call.  Peel it to a fixed point so the hot-closure
     // verifier sees neither the obsolete runtime call nor its guard plumbing.
@@ -2529,8 +2587,14 @@ FailureOr<bool> makeNativeEvalPlan(
         operation->erase();
     }
     llvm::SmallDenseSet<uint32_t, 8> dynamicRoots;
+    SmallVector<llvm::SmallDenseSet<uint64_t, 4>> dynamicOrigins(
+        staticNBAPlan.roots.size());
     for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
-      if (!dynamicRoots.insert(entry.rootIndex).second)
+      if ((!dynamicRoots.insert(entry.rootIndex).second &&
+           !staticNBAPlan.disjointDynamicLanes[entry.rootIndex]) ||
+          !dynamicOrigins[entry.rootIndex]
+               .insert(staticNBAPlan.siteSemanticOrigins.lookup(entry.site))
+               .second)
         return module.emitError("runtime-free eval has multiple ordered "
                                 "dynamic NBA sites for "
                                 "one root"),
@@ -2988,6 +3052,8 @@ FailureOr<bool> makeNativeEvalPlan(
     Block *handoff = new Block;
     Block *executeCheckpoint = new Block;
     Block *prepareFailed = new Block;
+    Block *prepareUnavailable = new Block;
+    Block *runFallbackNodes = new Block;
     Block *executePrepareCheckpoint = new Block;
     Block *returnFromHandoff = new Block;
     Block *failed = new Block;
@@ -3038,6 +3104,8 @@ FailureOr<bool> makeNativeEvalPlan(
     run.getBody().push_back(handoff);
     run.getBody().push_back(executeCheckpoint);
     run.getBody().push_back(prepareFailed);
+    run.getBody().push_back(prepareUnavailable);
+    run.getBody().push_back(runFallbackNodes);
     run.getBody().push_back(executePrepareCheckpoint);
     run.getBody().push_back(returnFromHandoff);
     run.getBody().push_back(failed);
@@ -4103,8 +4171,30 @@ FailureOr<bool> makeNativeEvalPlan(
         llvmConstant(builder, location, i32,
                      OBELISK_RT_AOT_GENERATED_CHECKPOINT));
     cf::CondBranchOp::create(builder, location, prepareIsCheckpoint,
-                             executePrepareCheckpoint, ValueRange{}, failed,
-                             ValueRange{prepareStatus});
+                             executePrepareCheckpoint, ValueRange{},
+                             prepareUnavailable, ValueRange{});
+
+    // An open waveform or persistent runtime clock consumer prevents whole
+    // clock-group ownership, not native fragment execution. Preparation has
+    // not detached periodic deadlines on failure; retain the installed plan
+    // and its canonical state while the Tier-2 node loop owns the calendar.
+    builder.setInsertionPointToStart(prepareUnavailable);
+    Value unavailable = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, prepareStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
+    cf::CondBranchOp::create(builder, location, unavailable, runFallbackNodes,
+                             ValueRange{}, failed, ValueRange{prepareStatus});
+    builder.setInsertionPointToStart(runFallbackNodes);
+    Value fallbackStatus =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context,
+                               "obelisk_rt_v1_scheduler_run_aot_nodes"),
+            ValueRange{
+                runEntry->getArgument(1), nodes,
+                llvmConstant(builder, location, i32, executableNodes.size())})
+            .getResult();
+    LLVM::ReturnOp::create(builder, location, fallbackStatus);
 
     builder.setInsertionPointToStart(executePrepareCheckpoint);
     Value prepareCheckpointActor = LLVM::LoadOp::create(
@@ -5343,6 +5433,30 @@ FailureOr<bool> makeNativeEvalPlan(
   LLVM::ReturnOp::create(builder, location,
                          llvmConstant(builder, location, i32, OBELISK_RT_OK));
 
+  // The generated coordinator consumes eval latches and publishes model
+  // ingress itself. Runtime-owned actors instead stage canonical accumulators
+  // (including wide roots with no generated accumulator). Their barrier must
+  // publish through the runtime, both during bootstrap and Tier-2 fallback.
+  // Reusing the pure eval barrier here can leave a pending runtime write
+  // unconsumed forever.
+  builder.setInsertionPointToEnd(module.getBody());
+  auto runtimeNBACommit = LLVM::LLVMFuncOp::create(
+      builder, location, runtimeNBACommitName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer},
+                                  false));
+  Block *runtimeCommitEntry = runtimeNBACommit.addEntryBlock(builder);
+  builder.setInsertionPointToStart(runtimeCommitEntry);
+  Value runtimeCommitStatus =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{i32},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_static_nba_commit_roots"),
+          ValueRange{runtimeCommitEntry->getArgument(1),
+                     llvmConstant(builder, location, i32, nbaRoots.size()),
+                     runtimeCommitEntry->getArgument(2),
+                     runtimeCommitEntry->getArgument(3)})
+          .getResult();
+  LLVM::ReturnOp::create(builder, location, runtimeCommitStatus);
+
   // A four-state owner does not necessarily stage an unknown NBA value.  A
   // common example is a checkpoint-capable monitor incrementing a known
   // cycle counter.  Before selecting the expensive four-state barrier, scan
@@ -5679,7 +5793,7 @@ FailureOr<bool> makeNativeEvalPlan(
         Value commitAddress =
             enableStaticNBA
                 ? LLVM::AddressOfOp::create(initializerBuilder, location,
-                                            pointer, nbaCommitName)
+                                            pointer, runtimeNBACommitName)
                       .getResult()
                 : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
                       .getResult();

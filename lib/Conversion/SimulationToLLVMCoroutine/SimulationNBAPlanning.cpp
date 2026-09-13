@@ -354,6 +354,82 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
         site.getId(), origin ? origin.getValue().getZExtValue() : site.getId());
   });
 
+  struct Lane {
+    uint64_t stride;
+    uint64_t low;
+    uint64_t width;
+  };
+  SmallVector<DenseMap<uint64_t, Lane>> lanes(plan.roots.size());
+  SmallVector<bool> conflictingLanes(plan.roots.size(), false);
+  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    auto function = enqueue->getParentOfType<sim::SimFuncOp>();
+    if (!function || !function->hasAttr("obelisk.eval.raw_captures"))
+      return;
+    auto site = enqueue.getSiteAttr();
+    auto mapped =
+        site ? plan.siteRoots.find(site.getId()) : plan.siteRoots.end();
+    if (mapped == plan.siteRoots.end())
+      return;
+    uint32_t rootIndex = mapped->second;
+    const auto &root = plan.roots[rootIndex];
+    if (root.bit_width <= 64)
+      return;
+    auto reject = [&] { conflictingLanes[rootIndex] = true; };
+    if (enqueue.getDelay() || site.getTiming())
+      return reject();
+    Value reference = enqueue.getDestination();
+    uint64_t low = 0;
+    if (auto extract = reference.getDefiningOp<sim::SimRefExtractOp>()) {
+      low = extract.getLowBit();
+      reference = extract.getInput();
+    }
+    auto element = reference.getDefiningOp<sim::SimRefArrayElementOp>();
+    if (!element)
+      return reject();
+    auto base = resolveStaticNBADestination(element.getInput(), stateLayout);
+    auto stride =
+        nativeStateWidth(element.getResult().getType().getElementType());
+    auto arrayWidth =
+        nativeStateWidth(element.getInput().getType().getElementType());
+    auto width = nativeStateWidth(enqueue.getValue().getType());
+    // Restrict this proof to complete, fixed-width arrays rooted at zero.
+    // Unknown/out-of-range indices remain guarded by normal handle lowering;
+    // partially clipped slices and runtime-selected lanes are not admitted.
+    if (!base || base->staticID != root.static_state || base->offset != 0 ||
+        !stride || !arrayWidth || *arrayWidth != root.bit_width || !width ||
+        *width == 0 || *width > 64 || low > *stride || *width > *stride - low)
+      return reject();
+    uint64_t origin = plan.siteSemanticOrigins.lookup(site.getId());
+    Lane lane{*stride, low, *width};
+    auto [previous, inserted] = lanes[rootIndex].try_emplace(origin, lane);
+    if (!inserted && (previous->second.stride != lane.stride ||
+                      previous->second.low != lane.low ||
+                      previous->second.width != lane.width))
+      conflictingLanes[rootIndex] = true;
+  });
+  plan.disjointDynamicLanes.assign(plan.roots.size(), false);
+  for (uint32_t root = 0; root != plan.roots.size(); ++root) {
+    if (conflictingLanes[root] || lanes[root].size() < 2)
+      continue;
+    bool complete = llvm::all_of(plan.sites, [&](const auto &site) {
+      return site.root != root ||
+             lanes[root].contains(plan.siteSemanticOrigins.lookup(site.site));
+    });
+    if (!complete)
+      continue;
+    bool disjoint = true;
+    for (const auto &left : lanes[root])
+      for (const auto &right : lanes[root]) {
+        if (left.first >= right.first)
+          continue;
+        const Lane &a = left.second;
+        const Lane &b = right.second;
+        disjoint &= a.stride == b.stride &&
+                    (a.low + a.width <= b.low || b.low + b.width <= a.low);
+      }
+    plan.disjointDynamicLanes[root] = disjoint;
+  }
+
   // Prove the subset for which a dirty bit is also a complete generated-stage
   // validity proof. Fixed part-selects retain a write mask; roots shared
   // between event regions keep the existing accumulator field checks.

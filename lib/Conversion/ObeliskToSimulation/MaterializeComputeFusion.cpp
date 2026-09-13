@@ -2998,6 +2998,13 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       design->getAttrOfType<ArrayAttr>(sim::metadata::staticBodyFusion);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
   bool evalScheduler = useEvalBodyFusion(design);
+  // Graph rebuilding renumbers the canonical actors as well as their eval
+  // clones. Preserve both sides before fusion changes traversal order;
+  // tagging only the clone makes one source NBA look like two distinct sites.
+  if (evalScheduler)
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      preserveEvalNBASiteOrigins(function);
   analysis::SimulationVPIAnalysis vpi =
       analysis::SimulationVPIAnalysis::compute(design);
   bool prepareTier1Promotion = evalScheduler && !vpi.allowsWrite();

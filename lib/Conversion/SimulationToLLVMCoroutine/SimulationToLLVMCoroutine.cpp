@@ -2841,7 +2841,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               staticNBAPlan.roots[root->second].bit_width <= 64)
             return;
           requiresRuntimeNBA |=
-              semanticOriginsByRoot[root->second].size() != 1 ||
+              (semanticOriginsByRoot[root->second].size() != 1 &&
+               !staticNBAPlan.disjointDynamicLanes[root->second]) ||
               !siteExecutesAtMostOnce(enqueue);
         });
       if (requiresRuntimeNBA)
@@ -4052,7 +4053,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   }
   Operation *tier2Handoff =
       prepare ? prepare.getOperation() : eventDrivenRun.getOperation();
-  bool clocklessEval = static_cast<bool>(eventDrivenRun);
+  // Periodic wrappers also contain a Tier-2 node-loop fallback. The presence
+  // of that fallback does not change their periodic promotion contract.
+  bool clocklessEval = !prepare && static_cast<bool>(eventDrivenRun);
 
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
