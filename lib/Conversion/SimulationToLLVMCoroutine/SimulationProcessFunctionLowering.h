@@ -16,6 +16,7 @@ struct PreparedPlainNativeProcess {
   std::string baseName;
   uint64_t stableID;
   const SimulationProcessFrameAnalysis *analysis;
+  bool unmanagedNative;
 };
 
 struct PreparedOrdinaryNativeFunction {

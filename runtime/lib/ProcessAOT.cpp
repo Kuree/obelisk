@@ -582,8 +582,21 @@ __attribute__((always_inline)) inline obelisk_rt_status executeStaticNativeAOT(
   instance->action = &action;
   instance->status = OBELISK_RT_OK;
   instance->lifecycle = OBELISK_RT_PROCESS_EXECUTING;
+  std::optional<ManagedExecutionScope> managedExecution;
   obelisk_rt_status status;
-  OBELISK_RT_TRY { status = instance->descriptor->native_execute(instance); }
+  OBELISK_RT_TRY {
+    if (instance->descriptor->flags & OBELISK_RT_PROCESS_UNMANAGED_NATIVE) {
+      status = instance->descriptor->native_execute(instance);
+    } else {
+      // Transient plusarg strings still need a live GC lane. Acquire it only
+      // for entries that may use managed state, and release it at the fragment
+      // boundary so an unrelated collector is not held behind the hot loop.
+      managedExecution.emplace(context);
+      status = managedExecution->getStatus();
+      if (status == OBELISK_RT_OK)
+        status = instance->descriptor->native_execute(instance);
+    }
+  }
   OBELISK_RT_CATCH(const std::bad_alloc &) {
     status = OBELISK_RT_OUT_OF_MEMORY;
   }
@@ -3189,7 +3202,13 @@ retryNativeSchedule:;
       if (!timedCheckpoint) {
         if (generatedBranchCheckpoint) {
           do {
-            status = checkpointCallback(context);
+            {
+              // Outlined cold leaves may also query transient managed values.
+              ManagedExecutionScope managedExecution(context);
+              status = managedExecution.getStatus();
+              if (status == OBELISK_RT_OK)
+                status = checkpointCallback(context);
+            }
             {
               ContextMutexLock lock(context);
               if (context->schedulerSlotProgress == UINT64_MAX) {

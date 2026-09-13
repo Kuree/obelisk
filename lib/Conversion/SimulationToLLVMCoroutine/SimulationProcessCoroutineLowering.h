@@ -14,6 +14,7 @@ struct PreparedSuspendableProcess {
   std::string baseName;
   uint64_t stableID;
   const SimulationProcessFrameAnalysis *analysis;
+  bool unmanagedNative;
 };
 
 mlir::FailureOr<PreparedSuspendableProcess>

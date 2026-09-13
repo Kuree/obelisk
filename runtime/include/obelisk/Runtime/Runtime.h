@@ -2211,6 +2211,10 @@ enum {
   OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT = 2
 };
 
+// Compiler certificate: this native entry and its callees do not access the
+// managed heap. Unmarked entries retain the ordinary managed execution scope.
+#define OBELISK_RT_PROCESS_UNMANAGED_NATIVE UINT32_C(1)
+
 typedef struct obelisk_rt_process_descriptor_v1 {
   obelisk_rt_handle_v1 handle;
   uint32_t version;

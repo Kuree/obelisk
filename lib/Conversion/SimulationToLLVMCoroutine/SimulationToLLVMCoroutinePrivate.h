@@ -407,10 +407,12 @@ mlir::LogicalResult serializeRuntimeWait(
     mlir::OpBuilder &builder,
     mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
 uint64_t stableProcessID(llvm::StringRef name);
+bool isUnmanagedNativeProcess(sim::SimFuncOp function);
 mlir::LogicalResult
 makeProcessDescriptor(mlir::ModuleOp module, mlir::Location location,
                       llvm::StringRef baseName, uint64_t stableID,
-                      const SimulationProcessFrameAnalysis &analysis);
+                      const SimulationProcessFrameAnalysis &analysis,
+                      bool unmanagedNative = false);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,

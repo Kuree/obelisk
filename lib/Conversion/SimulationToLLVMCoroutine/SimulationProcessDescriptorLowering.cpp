@@ -7,6 +7,7 @@
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/CallInterfaces.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -18,10 +19,32 @@ uint64_t stableProcessID(StringRef name) {
   return obelisk_stable_hash(name.data(), name.size());
 }
 
-LogicalResult
-makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
-                      uint64_t stableID,
-                      const SimulationProcessFrameAnalysis &analysis) {
+bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
+  auto scalar = [](Type type) {
+    if (auto ref = dyn_cast<sim::RefType>(type))
+      type = ref.getElementType();
+    return isa<IntegerType, FloatType, sim::LogicType, sim::ContextType,
+               sim::ProcessType, sim::TimeType, sim::BytesType>(type);
+  };
+  // Deliberately conservative: calls and non-scalar values need the ordinary
+  // scope, even if a future interprocedural analysis could prove otherwise.
+  return !function
+              .walk([&](Operation *operation) {
+                if (operation == function.getOperation())
+                  return WalkResult::advance();
+                if (isa<CallOpInterface, sim::SimGCSafepointOp,
+                        sim::SimDPICallOp>(operation) ||
+                    !llvm::all_of(operation->getOperandTypes(), scalar) ||
+                    !llvm::all_of(operation->getResultTypes(), scalar))
+                  return WalkResult::interrupt();
+                return WalkResult::advance();
+              })
+              .wasInterrupted();
+}
+
+LogicalResult makeProcessDescriptor(
+    ModuleOp module, Location location, StringRef baseName, uint64_t stableID,
+    const SimulationProcessFrameAnalysis &analysis, bool unmanagedNative) {
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
@@ -149,6 +172,12 @@ makeProcessDescriptor(ModuleOp module, Location location, StringRef baseName,
         descriptor = insertValue(
             builder, location, descriptor,
             llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 1);
+        if (unmanagedNative && !bytecodeOnly)
+          descriptor =
+              insertValue(builder, location, descriptor,
+                          llvmConstant(builder, location, i32,
+                                       OBELISK_RT_PROCESS_UNMANAGED_NATIVE),
+                          2);
         uint32_t availableTiers =
             bytecodeOnly
                 ? OBELISK_RT_TIER_MASK_BYTECODE

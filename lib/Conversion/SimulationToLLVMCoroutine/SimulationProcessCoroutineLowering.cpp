@@ -615,6 +615,7 @@ prepareSuspendableProcess(sim::SimFuncOp function,
       builder.getArrayAttr({builder.getStringAttr("presplitcoroutine")}));
   copyNativePartition(function, ramp);
   addFrameAttributes(ramp, analysis, builder);
+  bool unmanagedNative = isUnmanagedNativeProcess(function);
   ramp.getBody().takeBody(function.getBody());
   function.erase();
 
@@ -622,7 +623,8 @@ prepareSuspendableProcess(sim::SimFuncOp function,
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
   return PreparedSuspendableProcess{
-      module, ramp, location, std::move(baseName), stableID, &analysis};
+      module, ramp, location, std::move(baseName), stableID, &analysis,
+      unmanagedNative};
 }
 
 LogicalResult
@@ -990,7 +992,7 @@ finishPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     return failure();
   return makeProcessDescriptor(process.module, process.location,
                                process.baseName, process.stableID,
-                               *process.analysis);
+                               *process.analysis, process.unmanagedNative);
 }
 
 LogicalResult

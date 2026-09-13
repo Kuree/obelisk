@@ -168,13 +168,15 @@ preparePlainNativeProcess(sim::SimFuncOp function,
                     static_cast<uint32_t>(function.getEntryKind())));
   body->setAttr("obelisk.native_scratch_size", builder.getI64IntegerAttr(0));
   copyNativePartition(function, body);
+  bool unmanagedNative = isUnmanagedNativeProcess(function);
   body.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : body.getBody())
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
   return PreparedPlainNativeProcess{
-      module, body, location, std::move(baseName), stableID, &analysis};
+      module, body, location, std::move(baseName), stableID, &analysis,
+      unmanagedNative};
 }
 
 LogicalResult
@@ -222,7 +224,7 @@ finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
     return failure();
   return makeProcessDescriptor(process.module, process.location,
                                process.baseName, process.stableID,
-                               *process.analysis);
+                               *process.analysis, process.unmanagedNative);
 }
 
 LogicalResult
