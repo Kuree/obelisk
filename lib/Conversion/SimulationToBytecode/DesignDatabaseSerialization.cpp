@@ -38,6 +38,8 @@ constexpr uint32_t kVirtualBindingLimit = UINT32_C(1) << 30;
 using namespace obelisk::reflection;
 static_assert(RelationLayout.size == 16);
 static_assert(SemanticRootBindingLayout.size == 8);
+static_assert(FrozenValueLayout.size == 32);
+static_assert(FrozenValueBindingLayout.size == 8);
 static_assert(DefinitionLayout.size == 32);
 static_assert(DefinitionBindingLayout.size == 16);
 static_assert(DefinitionMemberLayout.size == 20);
@@ -214,6 +216,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t payload = 0;
     std::string stringPayload;
   };
+  struct FrozenValueRecord {
+    uint32_t kindAndFlags = 0;
+    uint64_t bitWidth = 0;
+    uint64_t payloadOffset = 0;
+    uint64_t payloadSize = 0;
+  };
+  struct FrozenValueBindingRecord {
+    uint32_t sourceIndexAndTable = 0;
+    uint32_t value = 0;
+  };
   struct DefinitionRecord {
     sim::SimVPIDefinitionDeclOp declaration;
     Source source;
@@ -306,6 +318,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
   SmallVector<FixedPropertyRecord> fixedProperties;
+  SmallVector<FrozenValueRecord> frozenValues;
+  SmallVector<FrozenValueBindingRecord> frozenValueBindings;
+  SmallVector<uint8_t> frozenValuePayload;
   SmallVector<DefinitionRecord> definitions;
   SmallVector<DefinitionBindingRecord> definitionBindings;
   SmallVector<DefinitionMemberRecord> definitionMembers;
@@ -550,8 +565,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       bool compact =
           hasVPIObjectRepresentation(anchor.getVpiKind(),
                                      VPIObjectRepresentation::StaticImage) &&
-          !findVPIValuePolicy(anchor.getVpiKind()) && !indexed &&
-          !hasSemanticShape && !semanticIdentity;
+          (!findVPIValuePolicy(anchor.getVpiKind()) ||
+           anchor.getImmutableValueAttr()) &&
+          !indexed && !hasSemanticShape && !semanticIdentity;
       if (compact)
         staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
                                  std::move(name), anchor.getVpiKind(),
@@ -2678,8 +2694,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return netIdentity.getVpiTypeAttr();
     if (auto port = dyn_cast<sim::SimPortDeclOp>(identity))
       return port.getVpiTypeAttr();
-    if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(identity))
+    if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(identity)) {
+      if (sim::VPITypeSemanticsAttr semantic = anchor.getVpiTypeAttr())
+        return semantic;
       return semanticArrayShape(anchor);
+    }
     if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(identity)) {
       sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
       ArrayAttr aliases = semantic.getTypedefAliases();
@@ -2935,6 +2954,98 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     if (semanticTypeError)
       return {};
+  }
+
+  // Freeze immutable object values only after anchor identities have their
+  // final physical table/index. Values are hash-consed separately from sparse
+  // source bindings so later definition specializations can reuse this pool.
+  // Packed planes are emitted bytewise so the image is host-endian independent.
+  if (includeStatements) {
+    auto appendPlane = [](SmallVectorImpl<uint8_t> &payload,
+                          const llvm::APInt &plane, uint64_t bytes) {
+      for (uint64_t byte = 0; byte != bytes; ++byte) {
+        unsigned firstBit = static_cast<unsigned>(byte * 8);
+        unsigned bits = std::min<unsigned>(8, plane.getBitWidth() - firstBit);
+        payload.push_back(
+            static_cast<uint8_t>(plane.extractBitsAsZExtValue(bits, firstBit)));
+      }
+    };
+    llvm::StringMap<uint32_t> frozenValueIndices;
+    for (sim::SimVPIObjectAnchorOp anchor : anchors) {
+      sim::FrozenConstantAttr frozen = anchor.getImmutableValueAttr();
+      if (!frozen)
+        continue;
+      auto reference = anchorRefs.find(anchor);
+      if (reference == anchorRefs.end()) {
+        anchor.emitOpError("immutable VPI value source was not serialized");
+        return {};
+      }
+      uint32_t packedSource = 0;
+      if (!tryPackTableIndex(reference->second.table, reference->second.index,
+                             packedSource)) {
+        anchor.emitOpError("immutable VPI value source cannot be packed");
+        return {};
+      }
+      auto planes = dyn_cast<ArrayAttr>(frozen.getValue());
+      std::optional<unsigned> width = sim::getPackedWidth(frozen.getType());
+      if (!planes || planes.size() != 2 || !width || *width == 0) {
+        anchor.emitOpError("immutable VPI value is not a fixed packed value");
+        return {};
+      }
+      const llvm::APInt &value = cast<IntegerAttr>(planes[0]).getValue();
+      const llvm::APInt &unknown = cast<IntegerAttr>(planes[1]).getValue();
+      uint64_t planeBytes = (uint64_t{*width} + 7) / 8;
+      if (planeBytes > UINT64_MAX / 2 ||
+          frozenValuePayload.size() > UINT64_MAX - planeBytes * 2) {
+        anchor.emitOpError("immutable VPI value payload exceeds image limits");
+        return {};
+      }
+      uint32_t kindAndFlags =
+          static_cast<uint32_t>(FrozenValueKind::Packed) |
+          (frozen.getIsSigned() ? frozenValueSigned : 0) |
+          (containsLogic(frozen.getType()) ? frozenValueFourState : 0);
+      SmallVector<uint8_t> payload;
+      payload.reserve(static_cast<size_t>(planeBytes * 2));
+      appendPlane(payload, value, planeBytes);
+      appendPlane(payload, unknown, planeBytes);
+
+      // StringMap owns arbitrary byte keys, including NULs. Prefixing the
+      // canonical payload with fixed little-endian metadata makes equality
+      // exact rather than relying on a hash collision policy.
+      std::string key;
+      key.reserve(12 + payload.size());
+      for (unsigned byte = 0; byte != 4; ++byte)
+        key.push_back(static_cast<char>(kindAndFlags >> (byte * 8)));
+      for (unsigned byte = 0; byte != 8; ++byte)
+        key.push_back(static_cast<char>(uint64_t{*width} >> (byte * 8)));
+      key.append(reinterpret_cast<const char *>(payload.data()),
+                 payload.size());
+      auto [entry, inserted] = frozenValueIndices.try_emplace(
+          key, static_cast<uint32_t>(frozenValues.size()));
+      if (inserted) {
+        FrozenValueRecord record;
+        record.kindAndFlags = kindAndFlags;
+        record.bitWidth = *width;
+        record.payloadOffset = frozenValuePayload.size();
+        record.payloadSize = payload.size();
+        frozenValues.push_back(record);
+        llvm::append_range(frozenValuePayload, payload);
+      }
+      frozenValueBindings.push_back({packedSource, entry->second});
+    }
+    llvm::sort(frozenValueBindings, [](const FrozenValueBindingRecord &left,
+                                       const FrozenValueBindingRecord &right) {
+      return left.sourceIndexAndTable < right.sourceIndexAndTable;
+    });
+    if (std::adjacent_find(
+            frozenValueBindings.begin(), frozenValueBindings.end(),
+            [](const FrozenValueBindingRecord &left,
+               const FrozenValueBindingRecord &right) {
+              return left.sourceIndexAndTable == right.sourceIndexAndTable;
+            }) != frozenValueBindings.end()) {
+      design.emitOpError("duplicate immutable VPI value binding");
+      return {};
+    }
   }
 
   // Resolve immutable property ownership only after the physical tables have
@@ -3510,10 +3621,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
       definitionMemberInstanceRelationTargetOffset +
       definitionMemberInstanceRelationTargets.size() *
           DefinitionMemberInstanceRelationTargetLayout.size;
-  uint64_t stringOffset =
+  uint64_t frozenValueOffset =
       definitionMemberInstanceRelationInverseOffset +
       definitionMemberInstanceRelationInverses.size() *
           DefinitionMemberInstanceRelationInverseLayout.size;
+  uint64_t frozenValueBindingOffset =
+      frozenValueOffset + frozenValues.size() * FrozenValueLayout.size;
+  uint64_t frozenValuePayloadOffset =
+      frozenValueBindingOffset +
+      frozenValueBindings.size() * FrozenValueBindingLayout.size;
+  uint64_t stringOffset = frozenValuePayloadOffset + frozenValuePayload.size();
   uint64_t indexOffset = 0;
   output.resize(stringOffset, 0);
 
@@ -3806,6 +3923,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionMemberInstanceRelationInverseOffset);
     writer.setDefinitionMemberInstanceRelationInverseCount(
         definitionMemberInstanceRelationInverses.size());
+    writer.setFrozenValueOffset(frozenValueOffset);
+    writer.setFrozenValueCount(frozenValues.size());
+    writer.setFrozenValueBindingOffset(frozenValueBindingOffset);
+    writer.setFrozenValueBindingCount(frozenValueBindings.size());
+    writer.setFrozenValuePayloadOffset(frozenValuePayloadOffset);
+    writer.setFrozenValuePayloadSize(frozenValuePayload.size());
   }
   for (auto [index, entry] : llvm::enumerate(semanticTypes)) {
     SemanticTypeWriter writer(output.data() + semanticTypeOffset +
@@ -3995,6 +4118,22 @@ SmallVector<uint8_t> serializeDesignDatabase(
         index * DefinitionMemberInstanceRelationInverseLayout.size);
     writer.setTarget(inverse.target);
   }
+  for (auto [index, frozen] : llvm::enumerate(frozenValues)) {
+    FrozenValueWriter writer(output.data() + frozenValueOffset +
+                             index * FrozenValueLayout.size);
+    writer.setKindAndFlags(frozen.kindAndFlags);
+    writer.setReserved(0);
+    writer.setBitWidth(frozen.bitWidth);
+    writer.setPayloadOffset(frozen.payloadOffset);
+    writer.setPayloadSize(frozen.payloadSize);
+  }
+  for (auto [index, binding] : llvm::enumerate(frozenValueBindings)) {
+    FrozenValueBindingWriter writer(output.data() + frozenValueBindingOffset +
+                                    index * FrozenValueBindingLayout.size);
+    writer.setSourceIndexAndTable(binding.sourceIndexAndTable);
+    writer.setValue(binding.value);
+  }
+  llvm::copy(frozenValuePayload, output.begin() + frozenValuePayloadOffset);
   for (auto [index, entry] : llvm::enumerate(relationIndices)) {
     RelationIndexWriter writer(output.data() + relationIndexOffset +
                                index * RelationIndexLayout.size);

@@ -52,6 +52,10 @@ constexpr uint64_t kRelationIndexMemberSize =
     obelisk::reflection::RelationIndexMemberLayout.size;
 constexpr uint64_t kFixedPropertySize =
     obelisk::reflection::FixedPropertyLayout.size;
+constexpr uint64_t kFrozenValueSize =
+    obelisk::reflection::FrozenValueLayout.size;
+constexpr uint64_t kFrozenValueBindingSize =
+    obelisk::reflection::FrozenValueBindingLayout.size;
 constexpr uint64_t kResolvedNetRunSize =
     obelisk::reflection::ResolvedNetRunLayout.size;
 constexpr uint64_t kNetDelayRunSize =
@@ -258,6 +262,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t definitionMemberInstanceRelationTargetCount = 0;
   uint64_t definitionMemberInstanceRelationInverseOffset = 0;
   uint64_t definitionMemberInstanceRelationInverseCount = 0;
+  uint64_t frozenValueOffset = 0, frozenValueCount = 0;
+  uint64_t frozenValueBindingOffset = 0, frozenValueBindingCount = 0;
+  uint64_t frozenValuePayloadOffset = 0, frozenValuePayloadSize = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
                     obelisk::reflection::SemanticDirectoryLayout.size,
@@ -308,6 +315,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     definitionMemberInstanceRelationTargetCount = read64(directory + 328);
     definitionMemberInstanceRelationInverseOffset = read64(directory + 336);
     definitionMemberInstanceRelationInverseCount = read64(directory + 344);
+    frozenValueOffset = read64(directory + 352);
+    frozenValueCount = read64(directory + 360);
+    frozenValueBindingOffset = read64(directory + 368);
+    frozenValueBindingCount = read64(directory + 376);
+    frozenValuePayloadOffset = read64(directory + 384);
+    frozenValuePayloadSize = read64(directory + 392);
   }
   database = {data,
               execution->design_database_size,
@@ -373,6 +386,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               definitionMemberInstanceRelationTargetCount,
               definitionMemberInstanceRelationInverseOffset,
               definitionMemberInstanceRelationInverseCount,
+              frozenValueOffset,
+              frozenValueCount,
+              frozenValueBindingOffset,
+              frozenValueBindingCount,
+              frozenValuePayloadOffset,
+              frozenValuePayloadSize,
               execution->state_bit_count};
   if (semanticDirectory != 0) {
     struct Section {
@@ -435,6 +454,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         {database.definitionMemberInstanceRelationInverses,
          database.definitionMemberInstanceRelationInverseCount,
          kDefinitionMemberInstanceRelationInverseSize},
+        {database.frozenValues, database.frozenValueCount, kFrozenValueSize},
+        {database.frozenValueBindings, database.frozenValueBindingCount,
+         kFrozenValueBindingSize},
+        {database.frozenValuePayload, database.frozenValuePayloadSize, 1},
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
@@ -475,7 +498,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.definitionMemberEndpointCount != 0 ||
         database.definitionMemberInstanceRelationCount != 0 ||
         database.definitionMemberInstanceRelationTargetCount != 0 ||
-        database.definitionMemberInstanceRelationInverseCount != 0)) ||
+        database.definitionMemberInstanceRelationInverseCount != 0 ||
+        database.frozenValueCount != 0 ||
+        database.frozenValueBindingCount != 0 ||
+        database.frozenValuePayloadSize != 0)) ||
       !validRange(database.scopes, database.scopeCount, kScopeSize,
                   database.size) ||
       !validRange(database.objects, database.objectCount, kObjectSize,
@@ -547,6 +573,13 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   database.definitionMemberInstanceRelationInverseCount,
                   kDefinitionMemberInstanceRelationInverseSize,
                   database.size) ||
+      !validRange(database.frozenValues, database.frozenValueCount,
+                  kFrozenValueSize, database.size) ||
+      !validRange(database.frozenValueBindings,
+                  database.frozenValueBindingCount, kFrozenValueBindingSize,
+                  database.size) ||
+      !validRange(database.frozenValuePayload, database.frozenValuePayloadSize,
+                  1, database.size) ||
       database.scopes < kHeaderSize || database.objects < kHeaderSize ||
       database.types < kHeaderSize || database.strings < kHeaderSize ||
       database.index < kHeaderSize || database.statements < kHeaderSize ||
@@ -606,6 +639,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       ((database.definitionMemberInstanceRelationInverseCount != 0 ||
         database.definitionMemberInstanceRelationInverses != 0) &&
        database.definitionMemberInstanceRelationInverses < kHeaderSize) ||
+      ((database.frozenValueCount != 0 || database.frozenValues != 0) &&
+       database.frozenValues < kHeaderSize) ||
+      ((database.frozenValueBindingCount != 0 ||
+        database.frozenValueBindings != 0) &&
+       database.frozenValueBindings < kHeaderSize) ||
+      ((database.frozenValuePayloadSize != 0 ||
+        database.frozenValuePayload != 0) &&
+       database.frozenValuePayload < kHeaderSize) ||
       (semanticDirectory != 0 && semanticDirectory < kHeaderSize) ||
       database.size >= kVirtualForwardRelationTag || database.stringSize == 0 ||
       database.scopeCount > kVirtualScopeMask ||
@@ -638,6 +679,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.definitionMemberInstanceRelationTargetCount >=
           kVirtualInstanceRelationTargetFlag ||
       database.definitionMemberInstanceRelationInverseCount > UINT32_MAX ||
+      database.frozenValueCount > UINT32_MAX ||
+      database.frozenValueBindingCount > UINT32_MAX ||
       database.indexCount > database.scopeCount + database.objectCount +
                                 database.staticObjectCount ||
       !rangesDisjoint(database.scopes, database.scopeCount, kScopeSize,
@@ -864,6 +907,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       {database.definitionMemberInstanceRelationInverses,
        database.definitionMemberInstanceRelationInverseCount,
        kDefinitionMemberInstanceRelationInverseSize},
+      {database.frozenValues, database.frozenValueCount, kFrozenValueSize},
+      {database.frozenValueBindings, database.frozenValueBindingCount,
+       kFrozenValueBindingSize},
+      {database.frozenValuePayload, database.frozenValuePayloadSize, 1},
   };
   for (size_t left = 0; left != std::size(sections); ++left)
     for (size_t right = left + 1; right != std::size(sections); ++right)
@@ -1219,6 +1266,38 @@ bool findSemanticRootBinding(const Database &database, uint32_t packedObject,
   if (read32(binding) != packedObject)
     return false;
   semanticType = read32(binding + 4);
+  return true;
+}
+
+bool findFrozenValue(const Database &database, uint32_t packedObject,
+                     VPIFrozenValue &value) {
+  uint64_t low = 0;
+  uint64_t high = database.frozenValueBindingCount;
+  while (low != high) {
+    uint64_t middle = low + (high - low) / 2;
+    const uint8_t *binding = database.data + database.frozenValueBindings +
+                             middle * kFrozenValueBindingSize;
+    if (read32(binding) < packedObject)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.frozenValueBindingCount)
+    return false;
+  const uint8_t *binding = database.data + database.frozenValueBindings +
+                           low * kFrozenValueBindingSize;
+  if (read32(binding) != packedObject)
+    return false;
+  uint32_t valueIndex = read32(binding + 4);
+  if (valueIndex >= database.frozenValueCount)
+    return false;
+  const uint8_t *record = database.data + database.frozenValues +
+                          uint64_t{valueIndex} * kFrozenValueSize;
+  value.kindAndFlags = read32(record);
+  value.bitWidth = read64(record + 8);
+  value.payload =
+      database.data + database.frozenValuePayload + read64(record + 16);
+  value.payloadSize = read64(record + 24);
   return true;
 }
 
@@ -2484,6 +2563,120 @@ bool validateDatabaseImpl(const Database &database) {
     if (rootKind != objectReferenceVPIKind(database, objectOffset))
       return false;
   }
+
+  // Validate the hash-consed immutable value pool once. Query-time lookup is
+  // then one binary search over sparse source bindings and one indexed load.
+  std::vector<uint8_t> frozenValueReferenced(database.frozenValueCount, 0);
+  std::unordered_map<uint64_t, std::vector<uint32_t>> frozenValueKeys;
+  uint64_t nextFrozenPayload = 0;
+  for (uint64_t index = 0; index != database.frozenValueCount; ++index) {
+    const uint8_t *record =
+        database.data + database.frozenValues + index * kFrozenValueSize;
+    uint32_t kindAndFlags = read32(record);
+    uint32_t reserved = read32(record + 4);
+    uint64_t bitWidth = read64(record + 8);
+    uint64_t payloadOffset = read64(record + 16);
+    uint64_t payloadSize = read64(record + 24);
+    if (reserved != 0 ||
+        (kindAndFlags & obelisk::reflection::frozenValueKindMask) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::FrozenValueKind::Packed) ||
+        (kindAndFlags & ~(obelisk::reflection::frozenValueKindMask |
+                          obelisk::reflection::frozenValueSigned |
+                          obelisk::reflection::frozenValueFourState)) != 0 ||
+        bitWidth == 0 || bitWidth > UINT64_MAX - 7)
+      return false;
+    uint64_t planeBytes = (bitWidth + 7) / 8;
+    if (planeBytes > UINT64_MAX / 2 || payloadSize != planeBytes * 2 ||
+        payloadOffset != nextFrozenPayload ||
+        !validRange(payloadOffset, payloadSize, 1,
+                    database.frozenValuePayloadSize))
+      return false;
+    nextFrozenPayload += payloadSize;
+    const uint8_t *payload =
+        database.data + database.frozenValuePayload + payloadOffset;
+    bool anyUnknown = false;
+    for (uint64_t byte = 0; byte != planeBytes; ++byte)
+      anyUnknown |= payload[planeBytes + byte] != 0;
+    bool fourState =
+        (kindAndFlags & obelisk::reflection::frozenValueFourState) != 0;
+    if (anyUnknown && !fourState)
+      return false;
+    unsigned tail = static_cast<unsigned>(bitWidth % 8);
+    if (tail != 0) {
+      uint8_t paddingMask = static_cast<uint8_t>(~((uint16_t{1} << tail) - 1));
+      if ((payload[planeBytes - 1] & paddingMask) != 0 ||
+          (payload[payloadSize - 1] & paddingMask) != 0)
+        return false;
+    }
+    uint64_t key = nameHash(payload, payloadSize) ^
+                   (uint64_t{kindAndFlags} << 32) ^ bitWidth;
+    std::vector<uint32_t> &bucket = frozenValueKeys[key];
+    for (uint32_t candidate : bucket) {
+      const uint8_t *other = database.data + database.frozenValues +
+                             uint64_t{candidate} * kFrozenValueSize;
+      if (read32(other) == kindAndFlags && read64(other + 8) == bitWidth &&
+          read64(other + 24) == payloadSize &&
+          std::memcmp(database.data + database.frozenValuePayload +
+                          read64(other + 16),
+                      payload, payloadSize) == 0)
+        return false;
+    }
+    bucket.push_back(static_cast<uint32_t>(index));
+  }
+  if (nextFrozenPayload != database.frozenValuePayloadSize)
+    return false;
+  uint32_t previousFrozenSource = 0;
+  for (uint64_t index = 0; index != database.frozenValueBindingCount; ++index) {
+    const uint8_t *binding = database.data + database.frozenValueBindings +
+                             index * kFrozenValueBindingSize;
+    uint32_t packedSource = read32(binding);
+    uint32_t valueIndex = read32(binding + 4);
+    uint64_t objectOffset = 0;
+    if (packedSource == UINT32_MAX ||
+        (index != 0 && packedSource <= previousFrozenSource) ||
+        !packedObjectReferenceOffset(database, packedSource, objectOffset) ||
+        objectReferenceVPIKind(database, objectOffset) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::Parameter) ||
+        valueIndex >= database.frozenValueCount)
+      return false;
+    previousFrozenSource = packedSource;
+    frozenValueReferenced[valueIndex] = 1;
+    const uint8_t *record = database.data + database.frozenValues +
+                            uint64_t{valueIndex} * kFrozenValueSize;
+    uint32_t kindAndFlags = read32(record);
+    uint32_t semanticRoot = 0;
+    if (!findSemanticRootBinding(database, packedSource, semanticRoot))
+      return false;
+    const uint8_t *semantic = database.data + database.semanticTypes +
+                              uint64_t{semanticRoot} * kSemanticTypeSize;
+    uint32_t semanticFlags = read32(semantic);
+    uint64_t semanticWidth = 0;
+    if (!semanticBitWidth(database, semanticRoot, semanticWidth) ||
+        semanticWidth != read64(record + 8) ||
+        ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0) !=
+            ((kindAndFlags & obelisk::reflection::frozenValueSigned) != 0) ||
+        ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0) !=
+            ((kindAndFlags & obelisk::reflection::frozenValueFourState) != 0))
+      return false;
+  }
+  if (std::find(frozenValueReferenced.begin(), frozenValueReferenced.end(),
+                uint8_t{0}) != frozenValueReferenced.end())
+    return false;
+  for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
+    const uint8_t *object = database.data + database.staticObjects +
+                            uint64_t{index} * kStaticObjectSize;
+    if (!obelisk::reflection::findVPIValuePolicy(read16(object + 28)))
+      continue;
+    uint32_t packedSource = 0;
+    VPIFrozenValue value{};
+    if (!obelisk::reflection::tryPackTableIndex(
+            obelisk::reflection::TableKind::StaticObject, index,
+            packedSource) ||
+        !findFrozenValue(database, packedSource, value))
+      return false;
+  }
   std::vector<uint8_t> parentState(database.statementCount, 0);
   std::vector<uint8_t> siteMasks(database.statementCount, 0);
   uint64_t previousStatementID = 0;
@@ -2617,12 +2810,7 @@ bool validateDatabaseImpl(const Database &database) {
     const auto *kind = obelisk::reflection::findVPIObjectKind(vpiKind);
     if (!kind ||
         !obelisk::reflection::hasVPIObjectRepresentation(
-            vpiKind,
-            obelisk::reflection::VPIObjectRepresentation::StaticImage) ||
-        // Value-bearing objects require a type and either an immutable value
-        // snapshot or an evaluation binding. Keep them in the full object
-        // representation until the compact value side table is present.
-        obelisk::reflection::findVPIValuePolicy(vpiKind))
+            vpiKind, obelisk::reflection::VPIObjectRepresentation::StaticImage))
       return false;
     std::string_view text;
     if ((sourceFile != 0 && !getRelativeString(sourceFile, text)) ||
@@ -4166,6 +4354,12 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
              right.definitionMemberInstanceRelationInverses &&
          left.definitionMemberInstanceRelationInverseCount ==
              right.definitionMemberInstanceRelationInverseCount &&
+         left.frozenValues == right.frozenValues &&
+         left.frozenValueCount == right.frozenValueCount &&
+         left.frozenValueBindings == right.frozenValueBindings &&
+         left.frozenValueBindingCount == right.frozenValueBindingCount &&
+         left.frozenValuePayload == right.frozenValuePayload &&
+         left.frozenValuePayloadSize == right.frozenValuePayloadSize &&
          left.stateBitCount == right.stateBitCount &&
          left.validated == right.validated;
 }
@@ -4431,6 +4625,11 @@ obelisk_rt_status designInfo(const Database &database,
              obelisk::reflection::VPIObjectFamily::Typespec)) != 0)
       outInfo->capabilities = OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC;
     outInfo->handle = {OBELISK_RT_DESCRIPTOR_INVALID, 0, read64(record)};
+    uint32_t packedSource = 0;
+    VPIFrozenValue frozen{};
+    if (packedObjectReferenceForCursor(database, cursor.offset, packedSource) &&
+        findFrozenValue(database, packedSource, frozen))
+      outInfo->bit_width = frozen.bitWidth;
     return OBELISK_RT_OK;
   }
   const uint8_t *record;
@@ -5892,6 +6091,22 @@ obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
   const Database *database = cachedDatabase(context);
   return database
              ? designVPIFixedProperty(*database, cursor, selector, outValue)
+             : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
+                                   obelisk_rt_design_cursor_v1 cursor,
+                                   VPIFrozenValue *outValue) noexcept {
+  if (!outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  uint32_t packedSource = 0;
+  if (!database ||
+      !packedObjectReferenceForCursor(*database, cursor.offset, packedSource))
+    return OBELISK_RT_INVALID_HANDLE;
+  return findFrozenValue(*database, packedSource, *outValue)
+             ? OBELISK_RT_OK
              : OBELISK_RT_INVALID_HANDLE;
 }
 

@@ -612,6 +612,7 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::Switch:
   case Kind::Udp:
   case Kind::NamedEvent:
+  case Kind::Parameter:
     break;
   default:
     return emitOpError("kind cannot be a persistent lexical source anchor");
@@ -664,6 +665,25 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
       (!getBackingAttr() ||
        getBackingAttr().getKind() != VPIObjectBackingKind::Net))
     return emitOpError("interconnect-net anchor requires a net backing");
+  const bool hasVPIType = static_cast<bool>(getVpiTypeAttr());
+  const bool hasImmutableValue = static_cast<bool>(getImmutableValueAttr());
+  if (hasVPIType != hasImmutableValue)
+    return emitOpError(
+        "immutable source type and value must be present together");
+  if (hasImmutableValue) {
+    if (anchorKind != Kind::Parameter)
+      return emitOpError(
+          "immutable value is currently supported only on parameters");
+    FrozenConstantAttr value = getImmutableValueAttr();
+    if (!getPackedScalarType(value.getType()))
+      return emitOpError("immutable parameter requires a fixed packed value");
+    if (value.getIsSigned() != getVpiTypeAttr().getIsSigned())
+      return emitOpError(
+          "immutable parameter value and VPI type signedness must agree");
+    auto emit = [&] { return emitOpError(); };
+    if (failed(verifyVPITypeSemantics(emit, value.getType(), getVpiTypeAttr())))
+      return failure();
+  }
   if (anchorKind == Kind::InterconnectArray && !hasNetSubtype(*this, 16))
     return emitOpError("interconnect-array requires vpiInterconnect subtype");
   DenseI64ArrayAttr rangesAttr = getIndexRangesAttr();

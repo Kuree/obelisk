@@ -365,7 +365,9 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     carries its coordinates within the immediate parent. Optional
     `index_dimension_flags` contains one 0/1 unpacked/packed flag per range.
     `primitive_input_count` preserves the IEEE 37.33 vpiSize value for scalar
-    primitive anchors.
+    primitive anchors. `vpi_type` and `immutable_value` preserve the exact
+    source type and elaborated value of static-only objects such as parameters;
+    they remain reflection metadata and never allocate simulation state.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$inventory_id,
                        I32Attr:$vpi_kind, I64Attr:$enclosing_scope_id,
@@ -378,7 +380,9 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
                        OptionalAttr<DenseI64ArrayAttr>:$index_dimension_flags,
                        OptionalAttr<DenseI64ArrayAttr>:$sparse_indices,
                        OptionalAttr<DenseI64ArrayAttr>:$member_indices,
-                       OptionalAttr<I64Attr>:$primitive_input_count);
+                       OptionalAttr<I64Attr>:$primitive_input_count,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
   let assemblyFormat = [{
     $sym_name `id` $inventory_id `type` $vpi_kind
     `in` $enclosing_scope_id (`parent` $parent^)?

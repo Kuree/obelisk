@@ -996,7 +996,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
              semantic::SVClassTypeOp, semantic::SVSubroutineSymbolOp,
              semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
              semantic::SVClockingBlockSymbolOp, semantic::SVVariableSymbolOp,
-             semantic::SVInstanceArraySymbolOp,
+             semantic::SVParameterSymbolOp, semantic::SVInstanceArraySymbolOp,
              semantic::SVGenerateBlockArraySymbolOp,
              semantic::SVPrimitiveInstanceSymbolOp,
              semantic::SVGenerateBlockSymbolOp,
@@ -1011,6 +1011,27 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp>(
             operation))
       return VPIKind::Package;
+    if (auto parameter = dyn_cast<semantic::SVParameterSymbolOp>(operation)) {
+      // Package and compilation-unit parameters are one elaborated immutable
+      // declaration. Instance parameters require definition/specialization
+      // sharing and are intentionally emitted by a later producer rather than
+      // duplicated per elaborated body. This first production slice supports
+      // every fixed packed value, including arbitrary-width four-state data.
+      Operation *owner = parameter->getParentOp();
+      while (
+          owner &&
+          !isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
+               semantic::SVClassTypeOp, semantic::SVInstanceBodySymbolOp>(
+              owner))
+        owner = owner->getParentOp();
+      if (!isa_and_nonnull<semantic::SVCompilationUnitSymbolOp,
+                           semantic::SVPackageSymbolOp>(owner))
+        return std::nullopt;
+      FailureOr<Type> normalized = getNormalizedSemanticType(parameter);
+      if (failed(normalized) || !sim::getPackedScalarType(*normalized))
+        return std::nullopt;
+      return VPIKind::Parameter;
+    }
     if (isa<semantic::SVClassTypeOp>(operation))
       return VPIKind::ClassDefn;
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation))
@@ -1375,12 +1396,33 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         found != sparseArrayIndices.end())
       sparseIndices = builder.getDenseI64ArrayAttr(found->second);
     IntegerAttr primitiveInputCount;
+    sim::VPITypeSemanticsAttr anchorVPIType;
+    sim::FrozenConstantAttr immutableValue;
     if (isa<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
       SmallVector<Operation *> terminals = getChildren(source);
       uint64_t count = llvm::count_if(terminals, [](Operation *terminal) {
         return !isa<semantic::SVAssignmentExpressionOp>(terminal);
       });
       primitiveInputCount = builder.getI64IntegerAttr(count);
+    }
+    if (isa<semantic::SVParameterSymbolOp>(source)) {
+      auto semanticType = source->getAttrOfType<TypeAttr>("semantic_type");
+      FailureOr<sim::VPITypeSemanticsAttr> converted =
+          semanticType
+              ? makeVPITypeSemantics(semanticType.getValue(),
+                                     getSemanticLocation(source), {}, source)
+              : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+      FailureOr<sim::FrozenConstantAttr> frozen =
+          freezeSemanticConstant(source);
+      if (failed(converted) || failed(frozen)) {
+        if (!semanticType)
+          emitError(getSemanticLocation(source))
+              << "VPI parameter is missing semantic type metadata";
+        invalid = true;
+        continue;
+      }
+      anchorVPIType = *converted;
+      immutableValue = *frozen;
     }
     sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
         builder, getSemanticLocation(source),
@@ -1393,7 +1435,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         backing, indexRanges, DenseI64ArrayAttr{}, sparseIndices,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
-        primitiveInputCount);
+        primitiveInputCount, anchorVPIType, immutableValue);
     anchorDeclarations[source] = anchor;
     if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
             source))
@@ -1690,7 +1732,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder.getStringAttr(getDebugName(source)), UnitAttr{},
           sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
           DenseI64ArrayAttr{}, builder.getDenseI64ArrayAttr(indices),
-          IntegerAttr{});
+          IntegerAttr{}, sim::VPITypeSemanticsAttr{},
+          sim::FrozenConstantAttr{});
       if (sim::VPIPropertySetAttr properties =
               identityProperties(source, VPIKind::NamedEvent))
         member->setAttr("vpi_properties", properties);
@@ -2561,7 +2604,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               builder.getStringAttr(getDebugName(op)), UnitAttr{},
               sim::VPIObjectBackingAttr{}, builder.getDenseI64ArrayAttr(bounds),
               builder.getDenseI64ArrayAttr(packed), DenseI64ArrayAttr{},
-              DenseI64ArrayAttr{}, IntegerAttr{});
+              DenseI64ArrayAttr{}, IntegerAttr{}, sim::VPITypeSemanticsAttr{},
+              sim::FrozenConstantAttr{});
           anchor->setAttr("vpi_properties",
                           netProperties(cast<semantic::SVNetSymbolOp>(op)));
           return anchor;
@@ -2661,7 +2705,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               nextAnchorOrdinal[root.getOperation()]++, leafPath,
               builder.getStringAttr(getDebugName(op)), UnitAttr{}, backing,
               DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
-              builder.getDenseI64ArrayAttr(indices), IntegerAttr{});
+              builder.getDenseI64ArrayAttr(indices), IntegerAttr{},
+              sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{});
         }
         return;
       }
@@ -2906,7 +2951,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           static_cast<uint32_t>(VPIKind::InterconnectNet), scopeId,
           lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++, hierarchy,
           debug, UnitAttr{}, backing, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
-          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{});
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
+          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{});
       anchor->setAttr("vpi_properties", netProperties(net));
     }
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
