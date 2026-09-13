@@ -2605,13 +2605,20 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // Resolved nets and driver contributions occupy the same canonical native
   // planes as storage.  With no external writer their fixed handles are
   // always safe to address directly; publication and resolution still flow
-  // through the ordinary scheduler boundaries.
+  // through the ordinary scheduler boundaries. Writable VPI retains guarded
+  // net accesses when there are no language observers/overrides. Driver
+  // contributions need a whole-resolution clean guard, not a per-root guard:
+  // a forced net must retain subsequent unforced driver updates for release.
   bool hasLanguageOverride = false;
+  bool hasLanguageObserver = false;
   module.walk([&](Operation *operation) {
     hasLanguageOverride |= isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
                                sim::SimReleaseOverrideOp>(operation);
+    if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+      hasLanguageObserver |=
+          function.getEntryKind() == sim::EntryKind::Observer;
   });
-  if (!vpi.allowsWrite() && !hasLanguageOverride) {
+  if (!hasLanguageOverride && (!vpi.allowsWrite() || !hasLanguageObserver)) {
     auto authorizeFixedHandles = [&](const auto &descriptors) {
       for (const auto &[descriptor, handle] : descriptors) {
         (void)descriptor;
@@ -2619,11 +2626,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         if (obelisk_rt_stable_handle_decode(handle, &decoded) &&
             decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
             decoded.offset == 0)
-          stateLayout->directHandles.insert(decoded.id);
+          (vpi.allowsWrite() ? stateLayout->guardedHandles
+                             : stateLayout->directHandles)
+              .insert(decoded.id);
       }
     };
     authorizeFixedHandles(stateLayout->nets);
-    authorizeFixedHandles(stateLayout->drivers);
+    if (!vpi.allowsWrite())
+      authorizeFixedHandles(stateLayout->drivers);
   }
   if (staticSuperstep &&
       (!metadataDesign || staticSuperstep.getSourceGraph() !=

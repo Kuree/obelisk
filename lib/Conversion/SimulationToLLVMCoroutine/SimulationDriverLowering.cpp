@@ -7,6 +7,7 @@
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -19,6 +20,10 @@ using namespace mlir;
 
 namespace obelisk::detail {
 namespace {
+
+constexpr StringLiteral guardedBulkDriveAttr =
+    "obelisk.native.guarded_bulk_drive";
+constexpr StringLiteral cleanBulkDriveAttr = "obelisk.native.clean_bulk_drive";
 
 uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
   return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
@@ -57,13 +62,13 @@ struct DriverLookupIndex {
 };
 
 std::optional<SmallVector<const NativeStateLayout::Net *, 2>>
-getBulkConnectedDriverNets(const NativeStateLayout &layout,
-                           const NativeStateLayout::Driver &driver,
-                           unsigned width, const NetByID &netByID,
-                           const DriversByNet &driversByNet) {
-  if (width < bulkConnectedDriverMinWidth || layout.hasPassSwitch ||
-      driver.drivenLow != 0 || driver.drivenWidth != width ||
-      driver.width != width || driver.strength0 != sim::Strength::Strong ||
+getBulkConnectedDriverNets(
+    const NativeStateLayout &layout, const NativeStateLayout::Driver &driver,
+    unsigned width, const NetByID &netByID, const DriversByNet &driversByNet,
+    unsigned minimumWidth = bulkConnectedDriverMinWidth) {
+  if (width < minimumWidth || layout.hasPassSwitch || driver.drivenLow != 0 ||
+      driver.drivenWidth != width || driver.width != width ||
+      driver.strength0 != sim::Strength::Strong ||
       driver.strength1 != sim::Strength::Strong ||
       !layout.directHandles.contains(driver.handleID) ||
       layout.guardedHandles.contains(driver.handleID))
@@ -136,10 +141,11 @@ getBulkConnectedDriverNets(const NativeStateLayout &layout,
 const NativeStateLayout::Net *getBulkCapturedIsolatedDriverNet(
     const NativeStateLayout &layout, const NativeStateLayout::Driver &driver,
     unsigned width, const NetByID &netByID, const DriversByNet &driversByNet,
-    const ConnectedNets &connectedNets) {
-  if (width < bulkConnectedDriverMinWidth || layout.hasPassSwitch ||
-      driver.drivenLow != 0 || driver.drivenWidth != width ||
-      driver.width != width || driver.strength0 != sim::Strength::Strong ||
+    const ConnectedNets &connectedNets,
+    unsigned minimumWidth = bulkConnectedDriverMinWidth) {
+  if (width < minimumWidth || layout.hasPassSwitch || driver.drivenLow != 0 ||
+      driver.drivenWidth != width || driver.width != width ||
+      driver.strength0 != sim::Strength::Strong ||
       driver.strength1 != sim::Strength::Strong ||
       !layout.directHandles.contains(driver.handleID) ||
       layout.guardedHandles.contains(driver.handleID) ||
@@ -386,12 +392,23 @@ public:
 
   DriverDriveConversion(const TypeConverter &converter, MLIRContext *context,
                         const NativeStateLayout &layout,
-                        std::shared_ptr<const DriverLookupIndex> index)
-      : Base(converter, context), layout(layout), index(std::move(index)) {}
+                        std::shared_ptr<const DriverLookupIndex> index,
+                        std::shared_ptr<const NativeStateLayout> cleanLayout,
+                        std::shared_ptr<const DriverLookupIndex> cleanIndex)
+      : Base(converter, context), layout(layout), index(std::move(index)),
+        cleanLayout(std::move(cleanLayout)), cleanIndex(std::move(cleanIndex)) {
+    // Guard materialization creates two marked drives, each lowered once.
+    this->setHasBoundedRewriteRecursion();
+  }
 
   LogicalResult
   matchAndRewrite(DriveOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    bool clean = op->hasAttr(cleanBulkDriveAttr);
+    if (clean && !cleanLayout)
+      return failure();
+    const NativeStateLayout &layout = clean ? *cleanLayout : this->layout;
+    const auto &index = clean ? cleanIndex : this->index;
     if (adaptor.getDriver().size() != 1 || adaptor.getValue().empty())
       return failure();
     Type sourceType = op.getValue().getType();
@@ -399,6 +416,74 @@ public:
     std::optional<unsigned> sourceWidth = nativeStateWidth(sourceType);
     if (!sourceWidth)
       return failure();
+    if constexpr (!std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
+      // A single clean-boundary guard covers the driver contribution AND all
+      // resolved aliases. A per-driver root guard is insufficient: forcing a
+      // net leaves its driver unforced, but release needs the retained driver
+      // contribution in canonical storage.
+      if (cleanLayout && !op->hasAttr(guardedBulkDriveAttr) &&
+          !op->hasAttr("obelisk_sim.defer_net_resolution") &&
+          !op->hasAttr("obelisk_sim.user_net_raw_drive")) {
+        auto id =
+            op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
+        auto found = id ? cleanIndex->driverByID.find(id.getUInt())
+                        : cleanIndex->driverByID.end();
+        std::optional<uint64_t> handle =
+            resolveCFGConstantInteger(adaptor.getDriver().front());
+        obelisk_rt_stable_handle_v1 decoded{};
+        bool candidate = found != cleanIndex->driverByID.end() && handle &&
+                         obelisk_rt_stable_handle_decode(*handle, &decoded) &&
+                         decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+                         decoded.id == found->second->handleID &&
+                         decoded.offset == 0;
+        if (candidate) {
+          const auto &driver = *found->second;
+          candidate = getBulkCapturedIsolatedDriverNet(
+                          *cleanLayout, driver, *sourceWidth,
+                          cleanIndex->netByID, cleanIndex->driversByNet,
+                          cleanIndex->connectedNets, 1) != nullptr ||
+                      getBulkConnectedDriverNets(
+                          *cleanLayout, driver, *sourceWidth,
+                          cleanIndex->netByID, cleanIndex->driversByNet, 1)
+                          .has_value();
+        }
+        if (candidate) {
+          Block *head = rewriter.getInsertionBlock();
+          Block *tail = rewriter.splitBlock(head, op->getIterator());
+          Region *region = head->getParent();
+          Block *fast = rewriter.createBlock(region, tail->getIterator());
+          Block *slow = rewriter.createBlock(region, tail->getIterator());
+          SmallVector<Value> results;
+          for (Type type : op->getResultTypes())
+            results.push_back(tail->addArgument(type, op.getLoc()));
+          recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+          for (auto [block, useClean] :
+               {std::pair{fast, true}, std::pair{slow, false}}) {
+            rewriter.setInsertionPointToEnd(block);
+            Operation *clone = rewriter.clone(*op);
+            clone->setAttr(guardedBulkDriveAttr, rewriter.getUnitAttr());
+            if (useClean)
+              clone->setAttr(cleanBulkDriveAttr, rewriter.getUnitAttr());
+            cf::BranchOp::create(rewriter, op.getLoc(), tail,
+                                 clone->getResults());
+          }
+          rewriter.setInsertionPointToEnd(head);
+          Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+          Value address = LLVM::AddressOfOp::create(
+              rewriter, op.getLoc(), pointer,
+              "__obelisk_static_specialization_fast_v1");
+          Value flag = LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                            rewriter.getI32Type(), address, 4);
+          Value allowed = arith::CmpIOp::create(
+              rewriter, op.getLoc(), arith::CmpIPredicate::ne, flag,
+              llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), 0));
+          markLikelyTrue(cf::CondBranchOp::create(rewriter, op.getLoc(),
+                                                  allowed, fast, slow));
+          rewriter.replaceOp(op, results);
+          return success();
+        }
+      }
+    }
     auto getDriver = [&](IntegerAttr id) -> const NativeStateLayout::Driver * {
       if (!id)
         return nullptr;
@@ -637,15 +722,16 @@ public:
     // into millions of scalar loads, selects, and stores.
     SmallVector<const NativeStateLayout::Net *, 2> bulkNets;
     if (index && exactDriver)
-      if (auto connected =
-              getBulkConnectedDriverNets(layout, *exactDriver, *sourceWidth,
-                                         index->netByID, index->driversByNet))
+      if (auto connected = getBulkConnectedDriverNets(
+              layout, *exactDriver, *sourceWidth, index->netByID,
+              index->driversByNet, clean ? 1 : bulkConnectedDriverMinWidth))
         bulkNets = std::move(*connected);
     if (bulkNets.empty() && index && exactDriver)
       if (const NativeStateLayout::Net *isolated =
               getBulkCapturedIsolatedDriverNet(
                   layout, *exactDriver, *sourceWidth, index->netByID,
-                  index->driversByNet, index->connectedNets))
+                  index->driversByNet, index->connectedNets,
+                  clean ? 1 : bulkConnectedDriverMinWidth))
         bulkNets.push_back(isolated);
     if (bulkNets.empty() && op->hasAttr("obelisk.native.whole_driver")) {
       auto driverID =
@@ -1110,6 +1196,8 @@ public:
 private:
   const NativeStateLayout &layout;
   std::shared_ptr<const DriverLookupIndex> index;
+  std::shared_ptr<const NativeStateLayout> cleanLayout;
+  std::shared_ptr<const DriverLookupIndex> cleanIndex;
 };
 
 } // namespace
@@ -1185,10 +1273,19 @@ void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,
       });
   if (hasBulkCandidate)
     index = std::make_shared<DriverLookupIndex>(layout);
+  std::shared_ptr<const NativeStateLayout> cleanLayout;
+  std::shared_ptr<const DriverLookupIndex> cleanIndex;
+  if (llvm::any_of(layout.netLayouts, [&](const auto &net) {
+        return layout.guardedHandles.contains(net.handleID);
+      })) {
+    cleanLayout =
+        std::make_shared<NativeStateLayout>(makeCleanEvalStateLayout(layout));
+    cleanIndex = std::make_shared<DriverLookupIndex>(*cleanLayout);
+  }
   patterns.add<DriverDriveConversion<sim::SimDriverDriveOp>,
                DriverDriveConversion<sim::SimDriverDriveDelayedNetOp>,
                DriverDriveConversion<sim::SimDriverDriveChangedOp>>(
-      converter, patterns.getContext(), layout, index);
+      converter, patterns.getContext(), layout, index, cleanLayout, cleanIndex);
 }
 
 } // namespace obelisk::detail
