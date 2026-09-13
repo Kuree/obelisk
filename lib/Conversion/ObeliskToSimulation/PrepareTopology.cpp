@@ -1132,6 +1132,11 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
       isAutomatic = subroutine.getDefaultLifetime() ==
                     semantic::SVVariableLifetime::Automatic;
+    // Named event anchors preserve the declaration lifetime even when no
+    // activation frame currently exists.
+    if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source))
+      isAutomatic = variable.getLifetime() ==
+                    semantic::SVVariableLifetime::Automatic;
     if (sourceKind == VPIKind::Module) {
       addBoolean(7, top);                     // vpiTopModule
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
@@ -1676,7 +1681,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         hierarchy += "[" + std::to_string(index) + "]";
       std::string symbolName =
           "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
-      sim::SimVPIObjectAnchorOp::create(
+      sim::SimVPIObjectAnchorOp member = sim::SimVPIObjectAnchorOp::create(
           builder, getSemanticLocation(source), symbolName,
           nextSyntheticInventoryId++,
           static_cast<uint32_t>(VPIKind::NamedEvent), scopes.lookup(source),
@@ -1686,6 +1691,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
           DenseI64ArrayAttr{}, builder.getDenseI64ArrayAttr(indices),
           IntegerAttr{});
+      if (sim::VPIPropertySetAttr properties =
+              identityProperties(source, VPIKind::NamedEvent))
+        member->setAttr("vpi_properties", properties);
     }
   }
   auto ownerAnchorFor = [&](Operation *member) -> FlatSymbolRefAttr {

@@ -1409,6 +1409,14 @@ bool isTypespecVPIKind(uint32_t type) {
               obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
 }
 
+bool isVariableVPIKind(uint32_t type) {
+  const auto *descriptor = obelisk::reflection::findVPIObjectKind(type);
+  return descriptor &&
+         (descriptor->families &
+          obelisk::reflection::vpiFamilyMask(
+              obelisk::reflection::VPIObjectFamily::Variable)) != 0;
+}
+
 bool isSemanticObjectForm(VPIObjectForm form) {
   return form == VPIObjectForm::Typespec ||
          form == VPIObjectForm::TypespecMember ||
@@ -4823,6 +4831,20 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // are introduced.
   if (property == vpiHasActual)
     return !handle->classDefinitionOrigin;
+  // Class methods are always automatic. Variable objects derive their
+  // declaration lifetime from allocation provenance because the same exact
+  // VPI kind may denote persistent storage, an automatic frame local, or a
+  // dynamic class property. Named-event declarations and arrays are handled
+  // by the fixed-image dispatch above so lexical queries remain valid without
+  // a live frame.
+  if (property == vpiAutomatic) {
+    const uint32_t objectType =
+        static_cast<uint32_t>(vpiTypeForHandle(handle));
+    if (objectType == vpiClassDefn || objectType == vpiClassTypespec)
+      return 1;
+    if (isVariableVPIKind(objectType))
+      return handle->allocationScheme == vpiOtherScheme ? 0 : 1;
+  }
   // propertyFor() already rejected protected sources. The applicable legacy
   // scope property has the canonical false value in every other case.
   if (property == vpiProtected)

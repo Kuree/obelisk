@@ -238,7 +238,8 @@ def StaticProcessObjects : VPIObjectSet<"StaticProcessObjects",
 def TaskFunctionDeclObjects : VPIObjectSet<"TaskFunctionDeclObjects",
   [Task, Function]>;
 def AutomaticImageObjects : VPIObjectSet<"AutomaticImageObjects",
-  [Package, Module, Interface, Program, Task, Function]>;
+  [Package, Module, Interface, Program, Task, Function, NamedEvent,
+   NamedEventArray]>;
 def TaskFunctionCallObjects : VPIObjectSet<"TaskFunctionCallObjects",
   [FuncCall, TaskCall, SysFuncCall, SysTaskCall, MethodFuncCall,
    MethodTaskCall]>;
