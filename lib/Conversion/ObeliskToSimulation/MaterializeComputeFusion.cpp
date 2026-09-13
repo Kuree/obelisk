@@ -187,17 +187,22 @@ bool isTypedSuspend(Operation *operation) {
 /// is the experiment's Verilator-shaped executable body, not a production
 /// profitability decision.
 LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
-                                            sim::SimFuncOp function) {
+                                            sim::SimFuncOp function,
+                                            const DenseSet<uint64_t> &controlTargets,
+                                            bool foreignControl) {
   if (function.isExternal() || function->hasAttr("obelisk.eval.body") ||
       function->hasAttr("obelisk.eval.borrowed_captures"))
     return success();
   bool portMethod = function.getEntryKind() == sim::EntryKind::PortInput ||
                     function.getEntryKind() == sim::EntryKind::PortOutput;
   bool eventDrivenInitial = function.getEntryKind() == sim::EntryKind::Initial;
+  bool combinationalProcedure =
+      function.getEntryKind() == sim::EntryKind::AlwaysComb ||
+      function.getEntryKind() == sim::EntryKind::AlwaysLatch;
   bool generatedRegionBody = function->hasAttr(sim::metadata::nativeRegionBody);
   if (!isSupportedEntryKind(function.getEntryKind()) &&
       function.getEntryKind() != sim::EntryKind::Continuous && !portMethod &&
-      !eventDrivenInitial && !generatedRegionBody)
+      !eventDrivenInitial && !generatedRegionBody && !combinationalProcedure)
     return success();
   Block *wait = nullptr;
   unsigned suspensionCount = 0;
@@ -370,7 +375,8 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     }
   }
   bool cloneTerminalWait =
-      function.getEntryKind() == sim::EntryKind::Continuous || portMethod;
+      function.getEntryKind() == sim::EntryKind::Continuous || portMethod ||
+      combinationalProcedure;
   SmallVector<Block *> activationBlocks;
   SmallVector<Block *> pending{activation};
   llvm::SmallPtrSet<Block *, 32> seen;
@@ -549,6 +555,26 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   if (!supported) {
     abandon();
     return success();
+  }
+  // The canonical actor keeps its named-block activations for runtime
+  // execution. In a zero-time eval body, an enter/leave-only activation is
+  // unobservable when no language disable names it and no foreign code can
+  // target it. Do not bring these scheduler calls into the closed evaluator.
+  // Boundaries, escaping tokens, and targeted scopes retain their identity.
+  if (!foreignControl) {
+    SmallVector<sim::SimControlEnterOp> unusedControls;
+    evalBody.walk([&](sim::SimControlEnterOp enter) {
+      if (!controlTargets.contains(enter.getTargetId()) &&
+          llvm::all_of(enter.getControl().getUsers(), [](Operation *user) {
+            return isa<sim::SimControlLeaveOp>(user);
+          }))
+        unusedControls.push_back(enter);
+    });
+    for (sim::SimControlEnterOp enter : unusedControls) {
+      for (Operation *leave : llvm::make_early_inc_range(enter.getControl().getUsers()))
+        leave->erase();
+      enter.erase();
+    }
   }
   preserveEvalNBASiteOrigins(evalBody);
   function->setAttr("obelisk.eval.body",
@@ -3017,6 +3043,16 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
 void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  DenseSet<uint64_t> controlTargets;
+  bool foreignControl = false;
+  design.walk([&](Operation *operation) {
+    if (auto disable = dyn_cast<sim::SimControlDisableOp>(operation))
+      controlTargets.insert(disable.getTargetId());
+    foreignControl |= isa<sim::SimDPICallOp>(operation);
+    // Export capability is not a foreign call. An external invocation enters
+    // at a runtime boundary, where canonical actors retain these scopes; it
+    // cannot interleave with a closed zero-time evaluator activation.
+  });
   bool forgedDiscardableStore = false;
   design.walk([&](sim::SimRefStoreOp store) {
     forgedDiscardableStore |=
@@ -3068,7 +3104,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
          design.getBody().front().getOps<sim::SimFuncOp>())
       actors.push_back(function);
     for (sim::SimFuncOp function : actors)
-      if (failed(materializeStandaloneEvalBody(design, function))) {
+      if (failed(materializeStandaloneEvalBody(design, function, controlTargets,
+                                               foreignControl))) {
         if (prepareDormantTier1)
           finalizeDormantTier1Stores(design);
         signalPassFailure();
@@ -3142,7 +3179,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       // Eligibility is entirely structural. Symbol spelling is an identity
       // and debugging concern; generated bodies must not depend on the
       // frontend's current `unit_N` naming convention.
-      if (failed(materializeStandaloneEvalBody(design, function))) {
+      if (failed(materializeStandaloneEvalBody(design, function, controlTargets,
+                                               foreignControl))) {
         if (prepareDormantTier1)
           finalizeDormantTier1Stores(design);
         signalPassFailure();
