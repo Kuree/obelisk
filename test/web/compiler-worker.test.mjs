@@ -1,3 +1,6 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -211,7 +214,7 @@ const module = {
 };
 
 globalThis.self = {
-  location: { href: new URL('./compiler-worker.js', import.meta.url).href },
+  location: { href: new URL('../../web/compiler-worker.js', import.meta.url).href },
   postMessage(message, transfer = []) {
     messages.push(message);
     transfers.push(transfer);
@@ -230,14 +233,14 @@ globalThis.self = {
         assert.equal(options.noInitialRun, true);
         assert.equal(options.thisProgram, '/bin/obelisk');
         assert.equal(options.locateFile('obelisk.wasm'),
-          new URL('./obelisk.wasm', import.meta.url).href);
+          new URL('../../web/obelisk.wasm', import.meta.url).href);
         return module;
       };
     }
   },
 };
 
-const source = await readFile(new URL('./compiler-worker.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../web/compiler-worker.js', import.meta.url), 'utf8');
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 assert.equal(typeof self.onmessage, 'function');
 

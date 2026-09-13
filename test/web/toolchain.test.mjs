@@ -1,6 +1,9 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-await import('./toolchain.js');
+await import('../../web/toolchain.js');
 
 assert.equal(typeof globalThis.installObeliskToolchain, 'function');
 

@@ -1,6 +1,6 @@
 // Compiles and runs every example design the page offers, through the real
-// browser artifacts. Run from the assembled site as:
-//   node site/examples-test.mjs [-O0|-O3]
+// browser artifacts. Run from the repo as:
+//   OBELISK_WEB_SITE=site node test/web/examples-test.mjs [-O0|-O3]
 //
 // The smoke test proves one small design works end to end; this proves the
 // designs a visitor can actually click do, which is a much wider slice of the
@@ -8,15 +8,19 @@
 
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { runSimulation } from './wasi.js';
-import { EXAMPLES } from './examples.js';
-import './toolchain.js';
+// The site is the assembled Pages directory: web/ plus the wasm compiler and
+// its toolchain archives. Defaults to ./site, where the wasm CI job builds it.
+const directory = `${resolve(process.env.OBELISK_WEB_SITE ?? 'site')}/`;
+const site = pathToFileURL(directory);
+const { runSimulation } = await import(new URL('wasi.js', site));
+const { EXAMPLES } = await import(new URL('examples.js', site));
+await import(new URL('toolchain.js', site));
 
-const directory = fileURLToPath(new URL('.', import.meta.url));
 const require = createRequire(import.meta.url);
-const createObeliskModule = require('./obelisk.js');
+const createObeliskModule = require(`${directory}obelisk.js`);
 const optimization = process.argv[2] ?? '-O3';
 
 let failures = 0;

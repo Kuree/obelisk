@@ -1,6 +1,9 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-import { runSimulation, Wasi, WasiExit } from './wasi.js';
+import { runSimulation, Wasi, WasiExit } from '../../web/wasi.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

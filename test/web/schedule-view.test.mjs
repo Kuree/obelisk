@@ -1,9 +1,12 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 // The site is intentionally package-free, so load its browser module through
 // a data URL instead of requiring a package.json solely for this test.
-const source = await readFile(new URL('./schedule-view.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../web/schedule-view.js', import.meta.url), 'utf8');
 const { parseSchedules, renderSchedules } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 );

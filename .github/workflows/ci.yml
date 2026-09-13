@@ -274,14 +274,15 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" bash -c '
             set -euo pipefail
-            for test in web/*.test.mjs; do node "$test"; done
+            for test in test/web/*.test.mjs; do node "$test"; done
           '
 
       - name: Run browser-toolchain smoke test
         run: |
           docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
-            sh -c 'OBELISK_COVERAGE_OUTPUT_DIR=/src/build-wasm/coverage-smoke \
-                   node site/smoke-test.mjs'
+            sh -c 'OBELISK_WEB_SITE=site \
+                   OBELISK_COVERAGE_OUTPUT_DIR=/src/build-wasm/coverage-smoke \
+                   node test/web/smoke-test.mjs'
 
       - name: Validate wasm coverage snapshots with host tool
         run: |
@@ -304,16 +305,10 @@ jobs:
       # slice of the language and of the runtime ABI.
       - name: Run every example design
         run: |
-          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
-            node site/examples-test.mjs -O3
-          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
-            node site/examples-test.mjs -O0
-
-      - name: Remove test runners from Pages artifact
-        run: |
-          docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" \
-            sh -c 'rm -f site/*.test.mjs site/smoke-test.mjs \
-              site/examples-test.mjs'
+          docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
+            "$WASM_IMAGE" node test/web/examples-test.mjs -O3
+          docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
+            "$WASM_IMAGE" node test/web/examples-test.mjs -O0
 
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'

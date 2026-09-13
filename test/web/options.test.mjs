@@ -1,11 +1,14 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-import { EXAMPLES } from './examples.js';
+import { EXAMPLES } from '../../web/examples.js';
 import {
   DEFAULTS, INPUT_FILE, buildArgs, formatCommand, loadState, saveState,
   splitFlags, toPermalink,
-} from './options.js';
-import { DEFAULT_STAGE, STAGES, findStage } from './stages.js';
+} from '../../web/options.js';
+import { DEFAULT_STAGE, STAGES, findStage } from '../../web/stages.js';
 
 assert.deepEqual(splitFlags(`-DFOO='a b' plain "two words" x=y`), [
   '-DFOO=a b', 'plain', 'two words', 'x=y',

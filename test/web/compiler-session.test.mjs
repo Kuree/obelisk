@@ -1,6 +1,9 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-import { CompilerSession } from './compiler-session.js';
+import { CompilerSession } from '../../web/compiler-session.js';
 
 class FakeWorker {
   constructor(url) {
@@ -200,6 +203,6 @@ new CompilerSession({
     return new FakeWorker(url);
   },
 }).preload();
-assert.equal(String(defaultUrl), new URL('./compiler-worker.js', import.meta.url).href);
+assert.equal(String(defaultUrl), new URL('../../web/compiler-worker.js', import.meta.url).href);
 
 console.log('web compiler session worker lifecycle OK');

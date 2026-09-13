@@ -141,8 +141,8 @@ obelisk_configure_driver(obelisk)
 
 if(EMSCRIPTEN)
   # compiler-worker.js loads the compiler as a reusable factory and invokes it
-  # repeatedly. Keep Node available as well so web/smoke-test.mjs exercises
-  # exactly the same artifact outside a browser.
+  # repeatedly. Keep Node available as well so test/web/smoke-test.mjs
+  # exercises exactly the same artifact outside a browser.
   target_link_options(obelisk PRIVATE
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createObeliskModule"

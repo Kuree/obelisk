@@ -1,6 +1,9 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-import { PROTOCOL, createEmbedService } from './embed.js';
+import { PROTOCOL, createEmbedService } from '../../web/embed.js';
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 

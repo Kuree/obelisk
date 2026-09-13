@@ -1,8 +1,11 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-import { LLVM_LANGUAGE_ID, registerLlvm } from './llvm-language.js';
-import { MLIR_LANGUAGE_ID, registerMlir } from './mlir-language.js';
-import { SV_LANGUAGE_ID, registerSystemVerilog } from './sv-language.js';
+import { LLVM_LANGUAGE_ID, registerLlvm } from '../../web/llvm-language.js';
+import { MLIR_LANGUAGE_ID, registerMlir } from '../../web/mlir-language.js';
+import { SV_LANGUAGE_ID, registerSystemVerilog } from '../../web/sv-language.js';
 
 function capture(register) {
   const result = { registrations: [], providers: new Map(), configurations: new Map() };

@@ -1,16 +1,20 @@
 // End-to-end smoke test for the generated web artifacts. Run from the repo as:
-//   node web/smoke-test.mjs
+//   OBELISK_WEB_SITE=site node test/web/smoke-test.mjs
 
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { runSimulation } from './wasi.js';
-import './toolchain.js';
+// The site is the assembled Pages directory: web/ plus the wasm compiler and
+// its toolchain archives. Defaults to ./site, where the wasm CI job builds it.
+const directory = `${resolve(process.env.OBELISK_WEB_SITE ?? 'site')}/`;
+const site = pathToFileURL(directory);
+const { runSimulation } = await import(new URL('wasi.js', site));
+await import(new URL('toolchain.js', site));
 
-const directory = fileURLToPath(new URL('.', import.meta.url));
 const require = createRequire(import.meta.url);
-const createObeliskModule = require('./obelisk.js');
+const createObeliskModule = require(`${directory}obelisk.js`);
 const logs = [];
 let phase = 'loading the compiler';
 

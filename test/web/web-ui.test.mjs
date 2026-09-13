@@ -1,7 +1,10 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 
-const web = new URL('./', import.meta.url);
+const web = new URL('../../web/', import.meta.url);
 const read = (name) => readFile(new URL(name, web), 'utf8');
 const [app, html, style, surfer] = await Promise.all([
   read('app.js'), read('index.html'), read('style.css'), read('surfer.html'),

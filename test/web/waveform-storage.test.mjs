@@ -1,6 +1,9 @@
+// REQUIRES: node
+// RUN: %node --experimental-default-type=module %s
+
 import assert from 'node:assert/strict';
 
-import { loadWaveform, saveWaveform } from './waveform-storage.js';
+import { loadWaveform, saveWaveform } from '../../web/waveform-storage.js';
 
 const records = new Map();
 let storeCreated = false;
