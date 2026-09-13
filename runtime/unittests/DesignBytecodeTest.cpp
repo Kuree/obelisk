@@ -15158,6 +15158,37 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
             OBELISK_RT_INVALID_DESIGN);
 }
 
+TEST(DesignDatabase, UnpackedStructPaddingStillChecksFieldBounds) {
+  Fixture fixture;
+  fixture.database = makeAggregateDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.state_bit_count = 128;
+  constexpr uint64_t object = 240, structure = 336, field = 416;
+  put32(fixture.database, structure + 4,
+        OBELISK_RT_DESIGN_TYPE_STRUCT |
+            (OBELISK_RT_DESIGN_TYPE_FOUR_STATE << 8));
+  put64(fixture.database, object + 56, 128);
+  put64(fixture.database, structure + 8, 128);
+  put64(fixture.database, structure + 16, 127);
+  // A 65-bit field in 128-bit unpacked storage may have leading/tail padding.
+  for (uint64_t offset : {0u, 32u, 63u, 64u}) {
+    put64(fixture.database, field + 64, offset);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+              offset <= 63 ? OBELISK_RT_OK : OBELISK_RT_INVALID_DESIGN);
+  }
+  // The same gap is still forbidden for packed structs.
+  put32(fixture.database, structure + 4,
+        OBELISK_RT_DESIGN_TYPE_STRUCT |
+            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+             << 8));
+  put64(fixture.database, field + 64, 0);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
+            OBELISK_RT_INVALID_DESIGN);
+}
+
 TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   Fixture sourceMetadata;
   constexpr uint64_t scopeOffset = 176;

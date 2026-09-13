@@ -2002,7 +2002,8 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       sum += fieldWidth;
       maximum = std::max(maximum, fieldWidth);
-      if ((flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0) {
+      if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
+          (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0) {
         uint64_t tagBits = read64(record + 56);
         if (kind == OBELISK_RT_DESIGN_TYPE_UNION && tagBits > width)
           return false;
@@ -2017,19 +2018,21 @@ bool validateDatabaseImpl(const Database &database) {
     if (((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) != fourState)
       return false;
     if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT) {
-      if (sum != width)
+      // Unpacked storage may contain alignment and tail padding, notably
+      // around string handles and real fields in covergroup options. Only
+      // packed structs require contiguous bits (IEEE 1800-2023 7.2.1/7.2.2).
+      bool packed = (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+      if (packed && sum != width)
         return false;
-      if ((flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0) {
-        std::sort(packedRanges.begin(), packedRanges.end());
-        uint64_t cursor = 0;
-        for (auto [begin, end] : packedRanges) {
-          if (begin != cursor)
-            return false;
-          cursor = end;
-        }
-        if (cursor != width)
+      std::sort(packedRanges.begin(), packedRanges.end());
+      uint64_t cursor = 0;
+      for (auto [begin, end] : packedRanges) {
+        if (begin < cursor || (packed && begin != cursor))
           return false;
+        cursor = end;
       }
+      if (packed && cursor != width)
+        return false;
     } else {
       uint64_t tagBits = read64(record + 56);
       if (maximum > UINT64_MAX - tagBits || maximum + tagBits != width)
