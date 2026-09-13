@@ -1,16 +1,14 @@
-// RUN: not obelisk-opt %s \
+// RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=ERROR
+// RUN:   | FileCheck %s
 
 // A path-sensitive promotion probe must not make a runtime checkpoint leaf
-// part of the generated call closure. Until that leaf has an explicit Tier-3
-// return route, forced eval rejects the model instead of hiding a runtime call
-// behind the cold side of an indirect dispatcher.
+// part of the generated call closure. Cold leaves retain explicit Tier-3
+// return routes rather than hidden runtime calls in a generated predicate.
 //
 // `guarded_blocking` reads back a blocking store on its fast path, which
-// needs a speculative memory overlay, so the owner is declined and keeps the
-// canonical four-state body that calls the runtime inline. That is diagnosed
-// at the scheduler decision, before the owner can enter a generated closure.
+// needs a private SSA overlay. Both predicates are read-only after promotion,
+// and the model remains eligible for generated evaluation.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -158,5 +156,12 @@ module attributes {
   }
 }
 
-// ERROR: an eval owner keeps an unguarded runtime leaf
-// ERROR-SAME: in guarded_blocking
+// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_path_known
+// CHECK-NOT: llvm.store
+// CHECK-NOT: llvm.call
+// CHECK: {{^  \}$}}
+// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_checkpoint_path
+// CHECK-NOT: llvm.store
+// CHECK-NOT: llvm.call
+// CHECK: {{^  \}$}}

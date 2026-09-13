@@ -1,10 +1,9 @@
 // RUN: %python %S/Inputs/check-native-termination.py %s %t obelisk-opt %llvm_dist/bin %native_support
 
-// This fixture is compiled for each scheduler and each explicit termination
-// operation. The helper checks exit status, the final actor's exact state, and
-// generated scheduler selection. Neither the pending NBA nor another active
-// iteration may execute after termination. The first 499 activations avoid
-// the cold termination branch.
+// A checkpoint predicate must track exact-cell blocking writes across a CFG
+// join, including the path that skips the extra writes. It must not publish
+// speculative changes or execute the cold leaf twice. The shared runner checks
+// final=500 and bounded runtime work in forced eval for finish/fatal/stop.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -59,8 +58,16 @@ module attributes {
       %one = arith.constant 1 : i32
       %next = arith.addi %old, %one : i32
       obelisk_sim.ref.store %next to %count : i32, !obelisk_sim.ref<i32>
-      // This read must see the preceding blocking store in both checkpoint
-      // predicates. The probe models it without publishing a real increment.
+      %odd = arith.trunci %old : i32 to i1
+      cf.cond_br %odd, ^observe, ^adjust
+    ^adjust:
+      %bumped = arith.addi %next, %one : i32
+      obelisk_sim.ref.store %bumped to %count : i32, !obelisk_sim.ref<i32>
+      %temporary = obelisk_sim.ref.load %count : !obelisk_sim.ref<i32> -> i32
+      %restored = arith.subi %temporary, %one : i32
+      obelisk_sim.ref.store %restored to %count : i32, !obelisk_sim.ref<i32>
+      cf.br ^observe
+    ^observe:
       %observed = obelisk_sim.ref.load %count : !obelisk_sim.ref<i32> -> i32
       %limit = arith.constant 500 : i32
       %done = arith.cmpi eq, %observed, %limit : i32

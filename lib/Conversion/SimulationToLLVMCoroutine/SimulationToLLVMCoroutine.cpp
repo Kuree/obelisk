@@ -50,6 +50,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Mem2Reg.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -941,6 +942,15 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
   auto materializePathKnownProbe =
       [&](sim::SimFuncOp source, StringRef name, uint64_t codeUnit,
           bool trackKnownState = true) -> FailureOr<sim::SimFuncOp> {
+    auto traceRejection = [&](StringRef reason, Operation *operation = nullptr) {
+      if (!module->hasAttr("obelisk.debug.native_timing"))
+        return;
+      llvm::errs() << "obelisk eval probe rejected: " << source.getSymName()
+                   << ": " << reason;
+      if (operation)
+        llvm::errs() << " (" << operation->getName() << ")";
+      llvm::errs() << "\n";
+    };
     llvm::SmallPtrSet<Block *, 4> coldCheckpointBlocks;
     source.walk([&](Operation *operation) {
       if (isDirectOutput(operation))
@@ -950,6 +960,13 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
               sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(operation))
         coldCheckpointBlocks.insert(operation->getBlock());
     });
+    if (coldCheckpointBlocks.contains(&source.getBody().front())) {
+      // No speculative state is needed when the activation immediately
+      // checkpoints. In particular, do not create entry shadow cells that
+      // would be destroyed while replacing this entire block below.
+      source->setAttr("obelisk.eval.checkpoint_only", builder.getUnitAttr());
+      return sim::SimFuncOp{};
+    }
 
     // A dry run can discard publications that no subsequent read can observe.
     // Resolve exact physical ranges, not just descriptor names: distinct
@@ -1037,6 +1054,78 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         terminalStores.insert(store.getOperation());
     });
 
+    // For exact captured cells, model blocking writes in private SSA state.
+    // The real activation still publishes every store; only its dry run uses
+    // this overlay. Partial overlap, dynamic aliases, and type-punning are
+    // deliberately excluded. Promotion below must eliminate all shadow
+    // allocations before the predicate is admitted to the native closure.
+    struct ProbeCell {
+      ProbeRange range;
+      Value reference;
+      Type type;
+    };
+    SmallVector<ProbeCell> cells;
+    auto overlaps = [](ProbeRange lhs, ProbeRange rhs) {
+      return lhs.first <= rhs.first ? lhs.second > rhs.first - lhs.first
+                                    : rhs.second > lhs.first - rhs.first;
+    };
+    source.walk([&](sim::SimRefStoreOp store) {
+      if (coldCheckpointBlocks.contains(store->getBlock()) ||
+          terminalStores.contains(store.getOperation()))
+        return;
+      auto argument = dyn_cast<BlockArgument>(store.getReference());
+      auto storage =
+          store.getReference().getDefiningOp<sim::SimContextStorageOp>();
+      auto context = storage ? dyn_cast<BlockArgument>(storage.getContext())
+                             : BlockArgument{};
+      auto written = rangeFor(store.getReference());
+      bool entryAvailable =
+          (argument && argument.getOwner() == &source.getBody().front()) ||
+          (context && context.getOwner() == &source.getBody().front());
+      if (!entryAvailable || !written ||
+          !sim::getPackedWidth(store.getValue().getType()))
+        return;
+      bool exact = true;
+      source.walk([&](Operation *operation) {
+        if (!exact || coldCheckpointBlocks.contains(operation->getBlock()))
+          return;
+        Value reference;
+        Type valueType;
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
+          reference = load.getReference();
+          valueType = load.getResult().getType();
+        } else if (auto other = dyn_cast<sim::SimRefStoreOp>(operation)) {
+          reference = other.getReference();
+          valueType = other.getValue().getType();
+        } else if (auto read = dyn_cast<sim::SimNetReadOp>(operation)) {
+          reference = read.getNet();
+          valueType = read.getResult().getType();
+        } else {
+          return;
+        }
+        auto range = rangeFor(reference);
+        if (!range ||
+            (overlaps(*written, *range) &&
+             (*range != *written || valueType != store.getValue().getType() ||
+              !isa<sim::RefType>(reference.getType()))))
+          exact = false;
+      });
+      if (exact && llvm::none_of(cells, [&](const ProbeCell &cell) {
+            return cell.range == *written;
+          }))
+        cells.push_back(
+            {*written, store.getReference(), store.getValue().getType()});
+    });
+    auto cellFor = [&](Value reference) -> std::optional<unsigned> {
+      auto range = rangeFor(reference);
+      if (!range)
+        return std::nullopt;
+      for (auto [index, cell] : llvm::enumerate(cells))
+        if (cell.range == *range)
+          return index;
+      return std::nullopt;
+    };
+
     bool supported = true;
     source.walk([&](Operation *operation) {
       if (!supported)
@@ -1054,13 +1143,18 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       if (terminalStores.contains(operation))
         return;
+      if (auto store = dyn_cast<sim::SimRefStoreOp>(operation);
+          store && cellFor(store.getReference()))
+        return;
       if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
+        traceRejection("runtime net read", operation);
         supported = false;
         return;
       }
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
               sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
               operation)) {
+        traceRejection("publication may be observed by a later read", operation);
         supported = false;
         return;
       }
@@ -1071,6 +1165,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
               sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
         return;
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation)) {
+        traceRejection("unsupported effect", operation);
         supported = false;
       }
     });
@@ -1111,14 +1206,42 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         mapping.map(argument, probeBlock->addArgument(argument.getType(),
                                                       argument.getLoc()));
     }
+    builder.setInsertionPointToStart(&probeEntry);
+    SmallVector<sim::SimRefAllocOp> shadowCells;
+    SmallVector<sim::SimRefLoadOp> shadowInitializers;
+    for (const ProbeCell &cell : cells) {
+      // Fixed captures may already have been replaced by context lookups.
+      // Recreate this pure handle lookup before the speculative initial load.
+      if (auto storage = cell.reference.getDefiningOp<sim::SimContextStorageOp>())
+        builder.clone(*storage.getOperation(), mapping);
+      auto initial = sim::SimRefLoadOp::create(
+          builder, source.getLoc(), cell.type, mapping.lookup(cell.reference));
+      shadowInitializers.push_back(initial);
+      shadowCells.push_back(sim::SimRefAllocOp::create(
+          builder, source.getLoc(),
+          sim::RefType::get(module.getContext(), cell.type),
+          initial.getResult()));
+    }
     for (Block &sourceBlock : source.getBody()) {
       builder.setInsertionPointToEnd(mapping.lookup(&sourceBlock));
       for (Operation &operation : sourceBlock) {
         // Probes observe control flow without executing source statements.
         // Count a line only in the selected body or its cold callback.
-        if (!isa<sim::SimCoveragePointHitOp>(operation) &&
-            !isDirectOutput(&operation) && !terminalStores.contains(&operation))
-          builder.clone(operation, mapping);
+        if (isa<sim::SimCoveragePointHitOp>(operation) ||
+            isDirectOutput(&operation) || terminalStores.contains(&operation))
+          continue;
+        Operation *clone = builder.clone(operation, mapping);
+        if (coldCheckpointBlocks.contains(&sourceBlock))
+          continue;
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
+          if (auto cell = cellFor(load.getReference()))
+            cast<sim::SimRefLoadOp>(clone).getReferenceMutable().assign(
+                shadowCells[*cell].getResult());
+        } else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
+          if (auto cell = cellFor(store.getReference()))
+            cast<sim::SimRefStoreOp>(clone).getReferenceMutable().assign(
+                shadowCells[*cell].getResult());
+        }
       }
     }
 
@@ -1176,6 +1299,26 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       sim::SimReturnOp::create(builder, location, checkpoint);
     }
 
+    if (!shadowCells.empty()) {
+      SmallVector<PromotableAllocationOpInterface> allocations;
+      for (auto cell : shadowCells)
+        allocations.push_back(
+            cast<PromotableAllocationOpInterface>(cell.getOperation()));
+      DominanceInfo dominance(probe);
+      mlir::DataLayout probeLayout = mlir::DataLayout::closest(probe);
+      if (failed(tryToPromoteMemorySlots(allocations, builder, probeLayout,
+                                         dominance))) {
+        traceRejection("shadow cell promotion failed");
+        probe.erase();
+        return sim::SimFuncOp{};
+      }
+      // A cell overwritten on every path does not read canonical state at
+      // all. Do not let its unused initial value poison the known-state proof.
+      for (auto initial : shadowInitializers)
+        if (initial.getResult().use_empty())
+          initial.erase();
+    }
+
     // Validate the executable dry-run overlay, not the unpruned source body.
     // A checkpoint block is replaced above by a constant Tier-3 return, so
     // operations used only to prepare that cold leaf (for example the
@@ -1203,6 +1346,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         probeSupported = false;
     });
     if (!probeSupported) {
+      traceRejection("unsupported pruned predicate");
       probe.erase();
       return sim::SimFuncOp{};
     }
@@ -1220,6 +1364,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         hasGeneratedExit = true;
     });
     if (!hasGeneratedExit) {
+      traceRejection("all exits are checkpoints");
       // Resume the canonical actor for this activation. Unlike restarting an
       // outlined body, that preserves the selected edge and any NBA prefix.
       source->setAttr("obelisk.eval.checkpoint_only", builder.getUnitAttr());
@@ -1300,6 +1445,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         // design: decline the owner so it keeps its canonical four-state
         // route instead of failing an otherwise legal compilation.
         if (!width || !detail::containsLogic(loaded.getType())) {
+          traceRejection("load has no native logic width", loaded.getDefiningOp());
           probe.erase();
           return sim::SimFuncOp{};
         }
