@@ -50,9 +50,8 @@ bool isTransientPlusargString(Value value) {
   if (!isa<sim::StringType>(value.getType()) || value.use_empty())
     return false;
   Operation *definition = value.getDefiningOp();
-  if (!definition ||
-      !isa<sim::SimStringLiteralOp, sim::SimPlusargValueOp,
-           sim::SimPlusargScanOp>(definition))
+  if (!definition || !isa<sim::SimStringLiteralOp, sim::SimPlusargValueOp,
+                          sim::SimPlusargScanOp>(definition))
     return false;
   return llvm::all_of(value.getUsers(), [&](Operation *user) {
     return user->getBlock() == definition->getBlock() &&
@@ -929,17 +928,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                      [](Type type) { return isa<FloatType>(type); }) ||
         llvm::any_of(operation->getResultTypes(),
                      [](Type type) { return isa<FloatType>(type); });
-    if (isa<sim::SimStopOp, sim::SimFatalOp>(operation)) {
-      // Termination is scheduler-global control, not a local bytecode
-      // boundary. A hybrid plan can execute an excluded actor through the
-      // generic scheduler, but termination can return from the coordinator
-      // before the generic region barrier drains updates queued by that
-      // actor. Keep the complete design under the generic scheduler so
-      // termination observes the same ordered region state as the process
-      // that requested it.
-      rejectPlan("fatal or stop control requires generic ordering");
-    } else if (isa<sim::SimProcessControlOp, sim::SimProgramExitOp>(
-                   operation)) {
+    // IEEE 1800-2023 20.10 makes $fatal an implicit $finish. Both native
+    // coordinators honor the shared finish request, including final actors;
+    // generated eval routes the taken termination leaf through its existing
+    // checkpoint transaction. An untaken fatal/stop must not disable the
+    // entire native schedule. Batch-mode $stop uses the same runtime policy.
+    if (isa<sim::SimProcessControlOp, sim::SimProgramExitOp>(operation)) {
       // A process object can dynamically name any native or bytecode actor,
       // including an ancestor of the current activation. Keep the complete
       // scheduler under runtime ownership until generated AOT plans have a
@@ -1087,8 +1081,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       excludeBytecodeActor(operation);
     }
     auto needsManagedState = [](Value value) {
-      return isManagedType(value.getType()) &&
-             !isTransientPlusargString(value);
+      return isManagedType(value.getType()) && !isTransientPlusargString(value);
     };
     if (llvm::any_of(operation->getOperands(), needsManagedState) ||
         llvm::any_of(operation->getResults(), needsManagedState)) {

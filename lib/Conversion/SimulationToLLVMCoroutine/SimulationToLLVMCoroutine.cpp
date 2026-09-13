@@ -4276,6 +4276,13 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   LLVM::GlobalOp::create(builder, module.getLoc(), i8, false,
                          LLVM::Linkage::Internal, routePromotionDirtyName,
                          builder.getI8IntegerAttr(1), 1);
+  auto terminationRequested = module.lookupSymbol<LLVM::LLVMFuncOp>(
+      "obelisk_rt_v1_scheduler_termination_requested");
+  if (!terminationRequested)
+    terminationRequested = LLVM::LLVMFuncOp::create(
+        builder, module.getLoc(),
+        "obelisk_rt_v1_scheduler_termination_requested",
+        LLVM::LLVMFunctionType::get(builder.getI32Type(), {pointer}));
   for (Route &route : routes) {
     if (route.pathKnownProbe) {
       auto probeType = route.pathKnownProbe.getFunctionType();
@@ -4418,6 +4425,24 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           bodyStatus,
           detail::llvmConstant(builder, route.fourState.getLoc(),
                                builder.getI32Type(), OBELISK_RT_OK));
+      // A taken $finish/$fatal (or batch-mode $stop) has already ended the
+      // active phase. Re-entering the generated same-slot coordinator here
+      // can execute another ready activation before its post-body termination
+      // check, or commit an NBA that the generic finish transaction discards.
+      // Synchronize the planes and let the runtime enter final procedures.
+      // This query is confined to the cold callback, not the generated loop.
+      Value terminating =
+          LLVM::CallOp::create(builder, route.fourState.getLoc(),
+                               terminationRequested,
+                               ValueRange{callbackEntry->getArgument(0)})
+              .getResult();
+      Value continuing = LLVM::ICmpOp::create(
+          builder, route.fourState.getLoc(), LLVM::ICmpPredicate::eq,
+          terminating,
+          detail::llvmConstant(builder, route.fourState.getLoc(),
+                               builder.getI32Type(), 0));
+      bodyOK = LLVM::AndOp::create(builder, route.fourState.getLoc(), bodyOK,
+                                   continuing);
       LLVM::CondBrOp::create(builder, route.fourState.getLoc(), bodyOK, resume,
                              ValueRange{}, returnBodyStatus,
                              ValueRange{bodyStatus});
@@ -4482,22 +4507,26 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       // its canonical image, otherwise that export restores pre-checkpoint
       // values (and the next activation repeats the same checkpoint forever).
       auto syncCheckpointState = [&] {
-        auto stateBits = module->getAttrOfType<IntegerAttr>(
-            "obelisk.execution.state_bits");
+        auto stateBits =
+            module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
         detail::getOrDeclareLLVMFunction(
             module, "obelisk_rt_v1_native_state_sync", builder.getI32Type(),
             {pointer, pointer, pointer, builder.getI64Type()});
         return LLVM::CallOp::create(
-            builder, route.fourState.getLoc(), TypeRange{builder.getI32Type()},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_sync"),
-            ValueRange{
-                callbackEntry->getArgument(0),
-                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
-                                          pointer, "__obelisk_state_value"),
-                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
-                                          pointer, "__obelisk_state_unknown"),
-                detail::llvmConstant(builder, route.fourState.getLoc(),
-                                     builder.getI64Type(), stateBits.getUInt())})
+                   builder, route.fourState.getLoc(),
+                   TypeRange{builder.getI32Type()},
+                   SymbolRefAttr::get(context,
+                                      "obelisk_rt_v1_native_state_sync"),
+                   ValueRange{callbackEntry->getArgument(0),
+                              LLVM::AddressOfOp::create(
+                                  builder, route.fourState.getLoc(), pointer,
+                                  "__obelisk_state_value"),
+                              LLVM::AddressOfOp::create(
+                                  builder, route.fourState.getLoc(), pointer,
+                                  "__obelisk_state_unknown"),
+                              detail::llvmConstant(
+                                  builder, route.fourState.getLoc(),
+                                  builder.getI64Type(), stateBits.getUInt())})
             .getResult();
       };
       Value syncStatus = syncCheckpointState();
@@ -4506,10 +4535,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           returnResumeStatus->getArgument(0),
           detail::llvmConstant(builder, route.fourState.getLoc(),
                                builder.getI32Type(), OBELISK_RT_OK));
-      LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
-                             LLVM::SelectOp::create(
-                                 builder, route.fourState.getLoc(), resumeOK,
-                                 syncStatus, returnResumeStatus->getArgument(0)));
+      LLVM::ReturnOp::create(
+          builder, route.fourState.getLoc(),
+          LLVM::SelectOp::create(builder, route.fourState.getLoc(), resumeOK,
+                                 syncStatus,
+                                 returnResumeStatus->getArgument(0)));
       builder.setInsertionPointToStart(returnBodyStatus);
       (void)syncCheckpointState();
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),

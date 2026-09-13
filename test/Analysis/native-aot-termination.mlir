@@ -5,18 +5,16 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=LOWERING
 
-// Stop and fatal are global scheduler-control boundaries. Even when enough
-// other actors make a partial native schedule cost-effective, Auto must use
-// the generic scheduler so the terminating actor cannot bypass region commits.
+// Stop/fatal share the native scheduler's finish transaction. Merely having a
+// termination operation must not force unrelated actors onto the generic path.
 
-// ANALYSIS: native-aot eligible=false fully=false selected=false
-// ANALYSIS-NEXT: reason fatal or stop control requires generic ordering
-// ANALYSIS-NOT: actor
+// ANALYSIS: native-aot eligible=true fully=true selected=true
+// ANALYSIS-NOT: reason
+// ANALYSIS: actor 5 @stop
 
-// LOWERING-NOT: __obelisk_aot_schedule_plan_v1
+// LOWERING: __obelisk_aot_schedule_plan_v1
 // LOWERING-LABEL: llvm.func @main
-// LOWERING: llvm.call @obelisk_rt_v1_scheduler_run(
-// LOWERING-NOT: llvm.call @obelisk_rt_v1_scheduler_run_aot(
+// LOWERING: llvm.call @obelisk_rt_v1_scheduler_run_aot(
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

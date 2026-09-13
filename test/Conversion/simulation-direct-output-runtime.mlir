@@ -54,7 +54,8 @@
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 // TIER-NOT: obelisk-periodic-reject
 // TIER: aot_node_executions=4
-// TIER-SAME: aot_fallbacks=1
+// A terminating checkpoint returns to finals without re-entering the model.
+// TIER-SAME: aot_fallbacks=0
 // TIER-SAME: aot_checkpoints=2 aot_terminal_checkpoints=1
 // TICKS-COUNT-2501: tick 10xz
 // TICKS-NOT: tick
