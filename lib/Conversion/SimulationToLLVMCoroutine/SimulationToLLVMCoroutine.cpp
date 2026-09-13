@@ -951,10 +951,54 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         coldCheckpointBlocks.insert(operation->getBlock());
     });
 
-    // A dry run can discard terminal publications when no subsequent read
-    // can observe them. This covers explicit clock-control counters without
-    // requiring a speculative memory overlay. Deliberately treat every load
-    // as aliasing; a store/read cycle or a read on either successor rejects.
+    // A dry run can discard publications that no subsequent read can observe.
+    // Resolve exact physical ranges, not just descriptor names: distinct
+    // captures can alias the same storage. Unknown/dynamic references remain
+    // conservatively aliasing. No speculative state overlay is needed when
+    // all reads are disjoint, or when the publication is terminal.
+    auto provenance = analysis::deriveDescriptorProvenance(source);
+    using ProbeRange = std::pair<uint64_t, uint64_t>;
+    DenseMap<Value, std::optional<ProbeRange>> probeRanges;
+    auto rangeFor = [&](Value reference) -> std::optional<ProbeRange> {
+      auto [cached, inserted] = probeRanges.try_emplace(reference, std::nullopt);
+      if (!inserted)
+        return cached->second;
+      auto found = provenance.find(reference);
+      if (found == provenance.end() || !found->second.descriptor ||
+          found->second.dynamic)
+        return std::nullopt;
+      const auto &origin = found->second;
+      const auto *handles =
+          origin.resource == sim::ComputeResourceKind::Storage
+              ? &stateLayout.storage
+          : origin.resource == sim::ComputeResourceKind::Net ? &stateLayout.nets
+                                                            : nullptr;
+      if (!handles)
+        return std::nullopt;
+      auto handle = handles->find(*origin.descriptor);
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (handle == handles->end() ||
+          !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
+        return std::nullopt;
+      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &entry) {
+        return entry.handleID == decoded.id;
+      });
+      uint64_t width = origin.width ? origin.width : origin.rootWidth;
+      if (!width || bound == stateLayout.bounds.end() ||
+          origin.low > bound->width || width > bound->width - origin.low)
+        return std::nullopt;
+      return cached->second = ProbeRange{bound->offset + origin.low, width};
+    };
+    SmallVector<std::optional<ProbeRange>> readRanges;
+    source.walk([&](Operation *operation) {
+      if (coldCheckpointBlocks.contains(operation->getBlock()))
+        return;
+      if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+        readRanges.push_back(rangeFor(load.getReference()));
+      else if (auto read = dyn_cast<sim::SimNetReadOp>(operation))
+        readRanges.push_back(rangeFor(read.getNet()));
+    });
     llvm::SmallPtrSet<Block *, 32> reachesRead;
     SmallVector<Block *> readWorklist;
     for (Block &block : source.getBody()) {
@@ -975,13 +1019,21 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     }
     llvm::SmallPtrSet<Operation *, 16> terminalStores;
     source.walk([&](sim::SimRefStoreOp store) {
+      auto written = rangeFor(store.getReference());
+      bool independent = written && llvm::all_of(readRanges, [&](auto read) {
+        if (!read)
+          return false;
+        return written->first <= read->first
+                   ? written->second <= read->first - written->first
+                   : read->second <= written->first - read->first;
+      });
       bool readsAfter = false;
       for (Operation *next = store->getNextNode(); next;
            next = next->getNextNode())
         readsAfter |= isa<sim::SimRefLoadOp, sim::SimNetReadOp>(next);
       for (Block *successor : store->getBlock()->getSuccessors())
         readsAfter |= reachesRead.contains(successor);
-      if (!readsAfter)
+      if (!readsAfter || independent)
         terminalStores.insert(store.getOperation());
     });
 
