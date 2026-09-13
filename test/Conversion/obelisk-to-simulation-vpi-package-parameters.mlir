@@ -1,4 +1,12 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s
+// RUN: obelisk-opt %s --obelisk-sim-prepare --mlir-disable-threading -o %t.serial
+// RUN: obelisk-opt %s --obelisk-sim-prepare --mlir-disable-threading=false -o %t.parallel
+// RUN: diff %t.serial %t.parallel
+// RUN: FileCheck %s < %t.parallel
+// RUN: obelisk-opt %s --obelisk-sim-prepare --mlir-disable-threading=false -o %t.repeat
+// RUN: diff %t.parallel %t.repeat
+// Parallel payload preparation must preserve exact wide four-state constants,
+// parameter metadata, symbol numbering, and source-order VPI traversal.
 
 module {
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",

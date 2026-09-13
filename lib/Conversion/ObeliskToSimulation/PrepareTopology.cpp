@@ -12,6 +12,8 @@
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
+#include "mlir/IR/Threading.h"
+
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -1125,6 +1127,40 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> anchorSymbols;
   llvm::DenseMap<Operation *, uint64_t> anchorInventoryIds;
   llvm::DenseMap<Operation *, sim::SimVPIObjectAnchorOp> anchorDeclarations;
+  // Parameter payloads read only the frozen semantic inventory and construct
+  // immutable attributes. Keep this work off the serial declaration path:
+  // workers own separate result slots and never mutate IR or symbol tables.
+  // The source-ordered loop below still assigns every VPI ordinal and symbol.
+  struct ParameterPayload {
+    sim::VPITypeSemanticsAttr type;
+    sim::FrozenConstantAttr value;
+  };
+  SmallVector<ParameterPayload> parameterPayloads(anchorSources.size());
+  SmallVector<size_t> parameterIndices;
+  for (auto [index, source] : llvm::enumerate(anchorSources))
+    if (isa<semantic::SVParameterSymbolOp>(source))
+      parameterIndices.push_back(index);
+  if (failed(failableParallelForEach(
+          module.getContext(), parameterIndices, [&](size_t index) {
+            Operation *source = anchorSources[index];
+            auto semanticType = source->getAttrOfType<TypeAttr>("semantic_type");
+            if (!semanticType) {
+              emitError(getSemanticLocation(source))
+                  << "VPI parameter is missing semantic type metadata";
+              return failure();
+            }
+            FailureOr<sim::VPITypeSemanticsAttr> converted =
+                makeVPITypeSemantics(semanticType.getValue(),
+                                     getSemanticLocation(source), {}, source);
+            FailureOr<sim::FrozenConstantAttr> frozen =
+                freezeSemanticConstant(source);
+            if (failed(converted) || failed(frozen))
+              return failure();
+            parameterPayloads[index] = {*converted, *frozen};
+            return success();
+          })))
+    return failure();
+
   for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
     std::string symbolName =
         "__obelisk_vpi_anchor_" + std::to_string(inventoryId);
@@ -1425,23 +1461,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       primitiveInputCount = builder.getI64IntegerAttr(count);
     }
     if (auto parameter = dyn_cast<semantic::SVParameterSymbolOp>(source)) {
-      auto semanticType = source->getAttrOfType<TypeAttr>("semantic_type");
-      FailureOr<sim::VPITypeSemanticsAttr> converted =
-          semanticType
-              ? makeVPITypeSemantics(semanticType.getValue(),
-                                     getSemanticLocation(source), {}, source)
-              : FailureOr<sim::VPITypeSemanticsAttr>(failure());
-      FailureOr<sim::FrozenConstantAttr> frozen =
-          freezeSemanticConstant(source);
-      if (failed(converted) || failed(frozen)) {
-        if (!semanticType)
-          emitError(getSemanticLocation(source))
-              << "VPI parameter is missing semantic type metadata";
-        invalid = true;
-        continue;
-      }
-      anchorVPIType = *converted;
-      immutableValue = *frozen;
+      anchorVPIType = parameterPayloads[inventoryId].type;
+      immutableValue = parameterPayloads[inventoryId].value;
       if (parameter.getHasExplicitRangeAttr())
         hasExplicitParameterRange = builder.getUnitAttr();
     }
