@@ -1965,6 +1965,10 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
         if (callee->starts_with("obelisk_rt_")) {
           if (*callee == prioritySignalQuery ||
               *callee == strengthResolveQuery || *callee == coveragePointHit ||
+              // A value helper's post-call termination poll only reads the
+              // context's finish latch. It cannot execute actors, publish
+              // state, advance time or request termination itself.
+              *callee == "obelisk_rt_v1_scheduler_termination_requested" ||
               *callee == "obelisk_rt_v1_eval_display" ||
               // Cold allocation of private generated NBA storage. This never
               // executes actors, changes design state or re-enters scheduling.
