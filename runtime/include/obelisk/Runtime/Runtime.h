@@ -3344,6 +3344,37 @@ typedef void (*obelisk_rt_native_promotion_invalidate_range)(
 typedef obelisk_rt_status (*obelisk_rt_native_checkpoint_callback)(
     obelisk_rt_context *context);
 
+// Immutable compiler-verified reverse index. Entries are sorted by begin and
+// carry the maximum end of their prefix. Certificate IDs index idempotent
+// proof-state actions; all fields have target-independent widths.
+typedef struct obelisk_rt_native_promotion_dependency {
+  uint64_t begin;
+  uint64_t end;
+  uint64_t prefix_end;
+  uint64_t certificate;
+} obelisk_rt_native_promotion_dependency;
+
+// Cold proof-state actions. A kernel clears its latch and sets its pending
+// bit; an independently routed body restores its four-state entry pointer.
+// route_slot points at a generated function-pointer global. The runtime copies
+// the fallback representation without calling it or aliasing its function type.
+typedef struct obelisk_rt_native_promotion_certificate {
+  uint8_t *latch;
+  uint64_t *pending_word;
+  uint64_t pending_mask;
+  void *route_slot;
+  obelisk_rt_native_promotion_invalidate fallback;
+} obelisk_rt_native_promotion_certificate;
+
+// Internal generated-code helper over compiler-verified immutable tables.
+// It never advances time, executes actors, or accesses canonical design state.
+void obelisk_rt_v1_native_promotion_invalidate_ranges(
+    const obelisk_rt_native_promotion_dependency *dependencies,
+    uint64_t dependency_count,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate invalidate_aggregate,
+    uint64_t bit_offset, uint64_t bit_width);
+
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
   uint64_t graph_layout_checksum;

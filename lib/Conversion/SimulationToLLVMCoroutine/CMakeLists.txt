@@ -5,6 +5,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationAOTMaterializationLegacy.cpp
   SimulationAOTEvalAnalysis.cpp
   SimulationAOTPlanning.cpp
+  SimulationPromotionRangeIndex.cpp
   SimulationControlLowering.cpp
   SimulationDPILowering.cpp
   SimulationDPIThunkLowering.cpp

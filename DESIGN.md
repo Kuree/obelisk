@@ -571,9 +571,16 @@ Indexed X/Z deposits and range-scoped external writes use that hook when
 available; unknown or unrepresentable footprints retain the mandatory global
 invalidator. Scheduling disturbance and proof invalidation are separate
 operations, and a known write does not invalidate an unrelated unknown lane.
-Compiler-generated plans currently leave the range hook empty: emitting the
-reverse dependency index and connecting generated stores/NBA commits remain
-necessary before this contract provides durable component-level specialization.
+Generated eval plans bind the hook to an immutable reverse dependency index
+built from the existing kernel and local-route proof ranges. Ranges are merged
+only within the same certificate, sorted by physical position, and verified
+against canonical state bounds and dense certificate identities. Lookup uses
+binary search and prefix-end pruning; a cold table of proof-state actions
+clears only overlapping kernel latches and route pointers. Aggregate entry
+shortcuts are recomputed without clearing unrelated certificates. Dynamic
+path probes remain activation-local. Generated stores and NBA commits still
+need complete scoped invalidation before the recurring global NBA resets and
+all-route promotion scans can be removed.
 
 The required disturbance policy is local: VPI-driven clocks, including cocotb
 clocks without an internal oscillator, enter Tier 1 through their indexed clock

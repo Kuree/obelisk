@@ -19,6 +19,7 @@
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
 #include "obelisk/Runtime/ClockKernelReadySet.h"
+#include "obelisk/Runtime/PromotionRangeIndex.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -210,6 +211,29 @@ void invalidateNativeStaticSpecializationFastUnlocked(
   if (!plan || !plan->specialization_fast)
     return;
   *plan->specialization_fast = 0;
+}
+
+extern "C" void obelisk_rt_v1_native_promotion_invalidate_ranges(
+    const obelisk_rt_native_promotion_dependency *dependencies,
+    uint64_t dependencyCount,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate invalidateAggregate,
+    uint64_t bitOffset, uint64_t bitWidth) {
+  bool affected = false;
+  visitPromotionRangeDependencies(
+      dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
+        const auto &certificate = certificates[id];
+        if (certificate.latch)
+          *certificate.latch = 0;
+        if (certificate.pending_word)
+          *certificate.pending_word |= certificate.pending_mask;
+        if (certificate.route_slot)
+          std::memcpy(certificate.route_slot, &certificate.fallback,
+                      sizeof(certificate.fallback));
+        affected = true;
+      });
+  if (affected)
+    invalidateAggregate();
 }
 
 void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {

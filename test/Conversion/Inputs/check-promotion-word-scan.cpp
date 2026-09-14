@@ -6,7 +6,13 @@
 extern "C" {
 extern uint8_t __obelisk_state_unknown[];
 extern void *__obelisk_eval_function_route_v1_0;
+extern void *__obelisk_eval_function_route_v1_1;
+extern uint8_t __obelisk_eval_kernel_promotion_latched_v1[];
+extern uint64_t __obelisk_eval_promotion_pending_mask_v1[];
+bool __obelisk_eval_kernel_promotion_ready_v1_0();
+bool __obelisk_eval_kernel_promotion_ready_v1_1();
 void __obelisk_eval_route_promotion_scan_v1();
+void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
 }
 
 static bool certified(unsigned bit) {
@@ -15,12 +21,35 @@ static bool certified(unsigned bit) {
 }
 
 int main() {
-  constexpr unsigned bits = 368;
+  constexpr unsigned bits = 408;
   constexpr unsigned bytes = bits / 8;
   std::memset(__obelisk_state_unknown, 0, bytes);
   __obelisk_eval_route_promotion_scan_v1();
   void *known = __obelisk_eval_function_route_v1_0;
-  assert(known);
+  void *otherKnown = __obelisk_eval_function_route_v1_1;
+  assert(known && otherKnown);
+  // Exercise the emitted reverse index through its real runtime helper.
+  // Every certified bit invalidates this route, while holes and partial-byte
+  // neighbors preserve it. Invalidation must never alter canonical X/Z state.
+  for (unsigned bit = 0; bit != bits; ++bit) {
+    __obelisk_eval_route_promotion_scan_v1();
+    assert(__obelisk_eval_function_route_v1_0 == known);
+    assert(__obelisk_eval_function_route_v1_1 == otherKnown);
+    assert(__obelisk_eval_kernel_promotion_ready_v1_0());
+    assert(__obelisk_eval_kernel_promotion_ready_v1_1());
+    assert(__obelisk_eval_promotion_pending_mask_v1[0] == 0);
+    __obelisk_eval_promotion_invalidate_range_v1(bit, 1);
+    assert((__obelisk_eval_function_route_v1_0 != known) == certified(bit));
+    bool otherAffected = bit >= 376;
+    assert((__obelisk_eval_function_route_v1_1 != otherKnown) == otherAffected);
+    assert(__obelisk_eval_kernel_promotion_latched_v1[0] == !otherAffected);
+    assert(__obelisk_eval_kernel_promotion_latched_v1[1] == !certified(bit));
+    assert(__obelisk_eval_promotion_pending_mask_v1[0] ==
+           (unsigned(otherAffected) | (unsigned(certified(bit)) << 1)));
+    for (unsigned byte = 0; byte != bytes; ++byte)
+      assert(__obelisk_state_unknown[byte] == 0);
+  }
+  __obelisk_eval_route_promotion_scan_v1();
   auto check = [&] {
     bool expectedKnown = true;
     for (unsigned bit = 0; bit != bits; ++bit)

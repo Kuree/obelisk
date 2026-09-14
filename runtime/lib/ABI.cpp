@@ -640,6 +640,20 @@ ABI_OFFSET(obelisk_rt_static_actor_root, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_static_actor_root, static_state, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, flags, 8);
 ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
+ABI_SIZE_ALIGN(obelisk_rt_native_promotion_dependency, 32, 8);
+ABI_OFFSET(obelisk_rt_native_promotion_dependency, begin, 0);
+ABI_OFFSET(obelisk_rt_native_promotion_dependency, end, 8);
+ABI_OFFSET(obelisk_rt_native_promotion_dependency, prefix_end, 16);
+ABI_OFFSET(obelisk_rt_native_promotion_dependency, certificate, 24);
+ABI_SIZE_ALIGN(obelisk_rt_native_promotion_certificate, ABI_PTR(40, 24), 8);
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, latch, 0);
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, pending_word,
+           ABI_PTR(8, 4));
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, pending_mask,
+           ABI_PTR(16, 8));
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, route_slot,
+           ABI_PTR(24, 16));
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, fallback, ABI_PTR(32, 20));
 ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, ABI_PTR(264, 200), 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
@@ -1436,6 +1450,11 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_add_planned,
 ABI_FUNCTION(obelisk_rt_v1_scheduler_prime,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_process_instance_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_native_promotion_invalidate_ranges,
+             void (*)(const obelisk_rt_native_promotion_dependency *, uint64_t,
+                      const obelisk_rt_native_promotion_certificate *,
+                      obelisk_rt_native_promotion_invalidate, uint64_t,
+                      uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_install_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_native_schedule_plan *));

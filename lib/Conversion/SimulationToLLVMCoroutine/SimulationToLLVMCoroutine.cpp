@@ -5208,6 +5208,13 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
                                   route.globalName),
         8);
+    if (!route.pathKnownProbe && !route.ranges.empty())
+      global->setAttr(
+          "obelisk.eval.route_proof_dependencies",
+          builder.getDictionaryAttr(
+              {builder.getNamedAttr("ranges", route.ranges),
+               builder.getNamedAttr(
+                   "fallback", FlatSymbolRefAttr::get(context, fallback))}));
     if (prepare) {
       builder.setInsertionPointAfter(prepare);
       Location location = route.twoState.getLoc();
@@ -6106,6 +6113,10 @@ public:
       return;
     }
     if (failed(materializeEvalFunctionRoutes(module))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(detail::materializeNativePromotionRangeIndex(module))) {
       signalPassFailure();
       return;
     }

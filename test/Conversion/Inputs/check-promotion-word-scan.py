@@ -7,9 +7,12 @@ import sys
 source, prefix, translate, llvm_bin, support = sys.argv[1:]
 llvm_bin, support = Path(llvm_bin), Path(support)
 text = Path(source).read_text()
-# Export only the two private inspection points and keep the original model
+# Export the private proof-state inspection points and keep the original model
 # main available under another name. The scanner itself remains unchanged.
-for symbol in ("__obelisk_state_unknown", "__obelisk_eval_function_route_v1_0"):
+for symbol in ("__obelisk_state_unknown", "__obelisk_eval_function_route_v1_0",
+               "__obelisk_eval_function_route_v1_1",
+               "__obelisk_eval_kernel_promotion_latched_v1",
+               "__obelisk_eval_promotion_pending_mask_v1"):
     old = "llvm.mlir.global internal @" + symbol + "("
     assert text.count(old) == 1, symbol
     text = text.replace(old, "llvm.mlir.global @" + symbol + "(")

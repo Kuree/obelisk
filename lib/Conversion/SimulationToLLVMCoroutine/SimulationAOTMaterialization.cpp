@@ -1055,6 +1055,27 @@ FailureOr<bool> makeNativeEvalPlan(
         ArrayRef<int64_t>{word});
   LLVM::ReturnOp::create(builder, location, pendingInitial);
 
+  // Preserve the revision-verified physical proof ranges for the final LLVM
+  // reverse index. These describe value-domain certificates, not new owners.
+  SmallVector<Attribute> promotionDependencies;
+  for (auto [index, executor] : llvm::enumerate(mergedTwoStateExecutors)) {
+    if (executor.empty() || mergedPromotionRanges[index].empty())
+      continue;
+    SmallVector<int64_t> encoded;
+    for (const auto &range : mergedPromotionRanges[index]) {
+      encoded.push_back(range.bitOffset);
+      encoded.push_back(range.bitWidth);
+    }
+    promotionDependencies.push_back(builder.getDictionaryAttr(
+        {builder.getNamedAttr("latch", builder.getI64IntegerAttr(index)),
+         builder.getNamedAttr("pending_bit", builder.getI64IntegerAttr(
+                                                 mergedFragments[index].bit)),
+         builder.getNamedAttr("ranges",
+                              builder.getDenseI64ArrayAttr(encoded))}));
+  }
+  promotionKernelLatched->setAttr("obelisk.eval.kernel_proof_dependencies",
+                                  builder.getArrayAttr(promotionDependencies));
+
   // Scan an outlined owner's exact canonical closure independently. A
   // dormant X-valued instance therefore cannot keep unrelated clock owners
   // on their four-state route.
@@ -6028,6 +6049,10 @@ FailureOr<bool> makeNativeEvalPlan(
   builder.setInsertionPointToStart(wordCursor);
   cf::BranchOp::create(builder, location, knownTrue);
 
+  constexpr StringLiteral invalidateRangeName =
+      "__obelisk_eval_promotion_invalidate_range_v1";
+  getOrDeclareLLVMFunction(module, invalidateRangeName,
+                           LLVM::LLVMVoidType::get(context), {i64, i64});
   auto planType = getNativeSchedulePlanLLVMType(context);
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
@@ -6272,9 +6297,14 @@ FailureOr<bool> makeNativeEvalPlan(
                             NativeSchedulePlanField::PromotionInvalidate);
         Value promotionQueryAddress = LLVM::AddressOfOp::create(
             initializerBuilder, location, pointer, promotionQueryName);
+        value = insertValue(initializerBuilder, location, value,
+                            promotionQueryAddress,
+                            NativeSchedulePlanField::PromotionReady);
         return insertValue(initializerBuilder, location, value,
-                           promotionQueryAddress,
-                           NativeSchedulePlanField::PromotionReady);
+                           LLVM::AddressOfOp::create(initializerBuilder,
+                                                     location, pointer,
+                                                     invalidateRangeName),
+                           NativeSchedulePlanField::PromotionInvalidateRange);
       });
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
                            {pointer, pointer});

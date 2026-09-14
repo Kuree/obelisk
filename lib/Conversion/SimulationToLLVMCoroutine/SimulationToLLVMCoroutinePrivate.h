@@ -175,6 +175,8 @@ enum class NativeSchedulePlanField : int64_t {
   Count,
 };
 
+mlir::LogicalResult materializeNativePromotionRangeIndex(mlir::ModuleOp module);
+
 mlir::LLVM::LLVMStructType
 getNativeSchedulePlanLLVMType(mlir::MLIRContext *context);
 uint64_t getNativeSchedulePlanSize(const llvm::DataLayout &dataLayout);
