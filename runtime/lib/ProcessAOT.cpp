@@ -251,25 +251,6 @@ void refreshNativeStaticSpecializationFastUnlocked(
           : 0;
 }
 
-bool nativeAOTActorDirty(const obelisk_rt_context *context,
-                         uint32_t actorSlot) {
-  if (context->nativeScheduleTransientDirtyRoots.empty() &&
-      context->nativeSchedulePersistentDirtyRoots.empty())
-    return true;
-  if (actorSlot >= context->nativeScheduleActorRootRanges.size())
-    return true;
-  auto [begin, end] = context->nativeScheduleActorRootRanges[actorSlot];
-  bool described = begin != end;
-  for (uint64_t index = begin; index != end; ++index) {
-    const obelisk_rt_static_actor_root &dependency =
-        context->nativeScheduleActorRoots[index];
-    if (nativeStaticRootDirty(context, dependency.static_state))
-      return true;
-  }
-  // Plans without dependency metadata retain the conservative handover.
-  return !described;
-}
-
 uint32_t findNativeAOTNodeUnlocked(const obelisk_rt_context *context,
                                    uint32_t actorSlot, uint32_t continuation) {
   if (actorSlot >= context->nativeScheduleActorNodes.size())
@@ -1413,6 +1394,11 @@ obelisk_rt_status runTrustedAOTNodesUnlocked(obelisk_rt_context *context) {
   uint32_t nodeCursor = 0;
   bool passProgress = false;
   for (;;) {
+    // Timed foreign work participates in the common calendar. This changes
+    // the driver only: indexed clocks still invoke their Tier-1 coordinator,
+    // and compiled actors retain their executor and value-domain proofs.
+    if (context->nextVPITimeCallback)
+      return runScheduler(context, {/*nativePlan=*/true});
     if constexpr (RunClockCoordinator) {
       if (context->nativeScheduleClockIngressPending) {
         obelisk_rt_native_timeslot_coordinator coordinator =
@@ -1594,7 +1580,9 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return OBELISK_RT_INVALID_LIFECYCLE;
-  if (allowBytecode)
+  if (allowBytecode ||
+      (context->nextVPITimeCallback &&
+       *context->nextVPITimeCallback <= context->schedulerTime))
     return runScheduler(context, {/*nativePlan=*/true,
                                   /*currentSlotOnly=*/true});
   for (;;) {
@@ -2237,6 +2225,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       if (candidate > context->schedulerTime)
         nextRuntimeDeadline = std::min(nextRuntimeDeadline, candidate);
     };
+    if (context->nextVPITimeCallback)
+      considerDeadline(*context->nextVPITimeCallback);
     for (size_t index = 0; index != context->scheduledProcesses.size();
          ++index) {
       if (std::find(claimedProcessIndices.begin(), claimedProcessIndices.end(),

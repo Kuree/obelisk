@@ -33,6 +33,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -201,6 +202,9 @@ struct VPICallback {
   PLI_INT32 reason = 0;
   PLI_INT32 (*routine)(p_cb_data) = nullptr;
   PLI_BYTE8 *userData = nullptr;
+  s_vpi_time time{};
+  long double ticksPerUnit = 1.0L;
+  uint64_t dueTime = 0;
 };
 
 struct VPISystemTf {
@@ -231,6 +235,7 @@ struct VPIState {
   uint64_t runtimeObserverCallbacks = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
   std::vector<uint64_t> callbackOrder;
+  std::set<std::pair<uint64_t, uint64_t>> timeCallbacks;
   std::unordered_map<uint64_t, VPISystemTf> systemTfs;
   std::vector<uint64_t> systemTfOrder;
   // IEEE temporary results are invalidated by the next routine call of the
@@ -655,7 +660,6 @@ bool observesRunningState(PLI_INT32 reason) {
   case cbReadWriteSynch:
   case cbReadOnlySynch:
   case cbNextSimTime:
-  case cbAfterDelay:
   case cbAtStartOfSimTime:
   case cbNBASynch:
   case cbAtEndOfSimTime:
@@ -663,6 +667,13 @@ bool observesRunningState(PLI_INT32 reason) {
   default:
     return false;
   }
+}
+
+void refreshTimeCallbackDeadline(VPIState *state) {
+  state->context->nextVPITimeCallback =
+      state->timeCallbacks.empty()
+          ? std::nullopt
+          : std::optional<uint64_t>(state->timeCallbacks.begin()->first);
 }
 
 void acquireObservationDemand(VPIState *state, PLI_INT32 reason) {
@@ -716,19 +727,15 @@ obelisk_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
   return status;
 }
 
-PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
-  if (!state || !handle || handle->owner != state ||
-      handle->kind != VPIHandleKind::Callback) {
-    setError(state, "invalid VPI callback handle");
-    return 0;
-  }
-  auto found = state->callbacks.find(handle->cursor.offset);
-  if (found == state->callbacks.end()) {
-    setError(state, "VPI callback was already removed");
-    return 0;
-  }
-  const uint64_t id = handle->cursor.offset;
+void eraseCallback(VPIState *state, uint64_t id) {
+  auto found = state->callbacks.find(id);
+  if (found == state->callbacks.end())
+    return;
   const PLI_INT32 reason = found->second.reason;
+  if (reason == cbAfterDelay) {
+    state->timeCallbacks.erase({found->second.dueTime, id});
+    refreshTimeCallbackDeadline(state);
+  }
   state->callbacks.erase(found);
   state->callbackOrder.erase(
       std::remove(state->callbackOrder.begin(), state->callbackOrder.end(), id),
@@ -743,6 +750,19 @@ PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
       ++entry;
   }
   releaseObservationDemand(state, reason);
+}
+
+PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
+  if (!state || !handle || handle->owner != state ||
+      handle->kind != VPIHandleKind::Callback) {
+    setError(state, "invalid VPI callback handle");
+    return 0;
+  }
+  if (state->callbacks.find(handle->cursor.offset) == state->callbacks.end()) {
+    setError(state, "VPI callback was already removed");
+    return 0;
+  }
+  eraseCallback(state, handle->cursor.offset);
   return 1;
 }
 
@@ -3608,6 +3628,56 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
 
 } // namespace
 
+obelisk_rt_status
+obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context) {
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state || state != currentState() || context->vpiTimeCallbackActive)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  // IEEE 1800-2023 38.36.2: cbAfterDelay runs before execution events at
+  // the selected time. This is boundary work owned by the common driver,
+  // including timers registered by another timer and canceled peers.
+  while (!state->timeCallbacks.empty() &&
+         state->timeCallbacks.begin()->first <= context->schedulerTime) {
+    if (context->schedulerSlotProgress == UINT64_MAX)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    ++context->schedulerSlotProgress;
+    uint64_t id = state->timeCallbacks.begin()->second;
+    VPICallback callback = state->callbacks.at(id);
+    state->timeCallbacks.erase(state->timeCallbacks.begin());
+    refreshTimeCallbackDeadline(state);
+    s_vpi_time time{};
+    time.type = callback.time.type;
+    if (time.type == vpiSimTime) {
+      time.high = static_cast<PLI_UINT32>(context->schedulerTime >> 32);
+      time.low = static_cast<PLI_UINT32>(context->schedulerTime);
+    } else {
+      time.real =
+          static_cast<double>(context->schedulerTime / callback.ticksPerUnit);
+    }
+    s_cb_data invocation{};
+    invocation.reason = callback.reason;
+    invocation.cb_rtn = callback.routine;
+    invocation.user_data = callback.userData;
+    invocation.time = &time;
+    ++state->callbackDepth;
+    context->vpiTimeCallbackActive = true;
+    obelisk_rt_status status = OBELISK_RT_OK;
+    OBELISK_RT_TRY { (void)callback.routine(&invocation); }
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "VPI callback raised an exception", vpiInternal);
+      status = OBELISK_RT_FATAL;
+    }
+    context->vpiTimeCallbackActive = false;
+    --state->callbackDepth;
+    // The callback may remove itself, release its handle, or cancel a peer.
+    eraseCallback(state, id);
+    if (status != OBELISK_RT_OK || context->destroyPending ||
+        context->schedulerFinishRequested)
+      return status;
+  }
+  return OBELISK_RT_OK;
+}
+
 extern "C" OBELISK_VPI_EXPORT const obelisk_rt_vpi_object_model_v1 *
 obelisk_rt_v1_vpi_object_model(void) {
   static const obelisk_rt_vpi_object_model_v1 model{
@@ -3766,6 +3836,7 @@ obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
     obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
   }
   context->vpiState = nullptr;
+  context->nextVPITimeCallback.reset();
   clearActiveState(state);
   delete state;
 }
@@ -4317,8 +4388,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         }
         if ((state->phase == VPIPhase::StartSimulation ||
              state->phase == VPIPhase::Running) &&
-            obelisk_rt_current_time_queue_pending_unlocked(state->context))
+            (state->context->vpiTimeCallbackActive ||
+             obelisk_rt_current_time_queue_pending_unlocked(state->context)))
           times.insert(times.begin(), state->context->schedulerTime);
+        for (const auto &[time, id] : state->timeCallbacks)
+          times.push_back(time);
+        std::sort(times.begin(), times.end());
+        times.erase(std::unique(times.begin(), times.end()), times.end());
       }
       if (times.empty())
         return nullptr;
@@ -6244,38 +6320,101 @@ vpi_register_cb(p_cb_data callbackData) {
     setError(state, "VPI callback registration requires data and a routine");
     return nullptr;
   }
-  if (!isLifecycleReason(callbackData->reason)) {
+  const bool timer = callbackData->reason == cbAfterDelay;
+  if (!isLifecycleReason(callbackData->reason) && !timer) {
     if (state->phase == VPIPhase::StartupRestricted)
       state->unsupportedStartup = true;
     setError(state, "VPI callback reason is not implemented");
     return nullptr;
   }
-  // IEEE 1800-2017 38.36.3 only requires reason, cb_rtn, and optionally
-  // user_data for action callbacks. The remaining caller fields are ignored.
+  ContextMutexLock lock(state->context);
+  VPICallback callback{};
+  callback.reason = callbackData->reason;
+  callback.routine = callbackData->cb_rtn;
+  callback.userData = callbackData->user_data;
+  if (timer) {
+    if (state->phase == VPIPhase::EndSimulation ||
+        state->phase == VPIPhase::Ended) {
+      setError(state, "VPI timer cannot be registered after simulation ends");
+      return nullptr;
+    }
+    // IEEE 1800-2023 38.36.2 requires an explicit time format; copy it
+    // before returning so stack registration records never escape.
+    if (!callbackData->time ||
+        (callbackData->time->type != vpiSimTime &&
+         callbackData->time->type != vpiScaledRealTime)) {
+      setError(state, "VPI timer requires simulation or scaled real time");
+      return nullptr;
+    }
+    callback.time = *callbackData->time;
+    uint64_t delay = 0;
+    if (callback.time.type == vpiSimTime) {
+      delay = (uint64_t{callback.time.high} << 32) | callback.time.low;
+    } else {
+      int32_t precision = 0;
+      if (!globalTimeExponent(state, precision))
+        return nullptr;
+      int32_t unit = precision;
+      if (callbackData->obj) {
+        __vpiHandle *object = validate(callbackData->obj);
+        if (!object)
+          return nullptr;
+        DpiScopeHandle *scope = timeScopeFor(object);
+        if (!scope) {
+          setError(state, "VPI timer object timescale is unavailable");
+          return nullptr;
+        }
+        unit = scope->timeUnit;
+      }
+      callback.ticksPerUnit =
+          std::pow(10.0L, static_cast<long double>(unit) - precision);
+      long double ticks =
+          std::round(callback.time.real * callback.ticksPerUnit);
+      // Comparing against 2^64 avoids an overflowing conversion on targets
+      // where long double has only double precision (including wasm32).
+      if (!std::isfinite(ticks) || callback.time.real < 0 || ticks < 0 ||
+          ticks >= std::ldexp(1.0L, 64)) {
+        setError(state, "VPI timer delay is outside simulation time range");
+        return nullptr;
+      }
+      delay = static_cast<uint64_t>(ticks);
+    }
+    if (delay > UINT64_MAX - state->context->schedulerTime) {
+      setError(state, "VPI timer deadline overflows simulation time");
+      return nullptr;
+    }
+    callback.dueTime = state->context->schedulerTime + delay;
+  }
+  // Lifecycle callbacks ignore obj, time, value and index (38.36.3).
   OBELISK_RT_TRY {
     if (state->nextCallbackId == std::numeric_limits<uint64_t>::max()) {
       setError(state, "VPI callback identifier space is exhausted", vpiSystem);
       return nullptr;
     }
     const uint64_t id = state->nextCallbackId++;
-    VPICallback callback{id, callbackData->reason, callbackData->cb_rtn,
-                         callbackData->user_data};
+    callback.id = id;
     auto inserted = state->callbacks.try_emplace(id, callback);
     if (!inserted.second) {
       setError(state, "VPI callback identifier collision", vpiInternal);
       return nullptr;
     }
-    OBELISK_RT_TRY { state->callbackOrder.push_back(id); }
+    OBELISK_RT_TRY {
+      state->callbackOrder.push_back(id);
+      if (timer)
+        state->timeCallbacks.emplace(callback.dueTime, id);
+    }
     OBELISK_RT_CATCH_ALL {
-      state->callbacks.erase(id);
+      eraseCallback(state, id);
       OBELISK_RT_RETHROW;
     }
     vpiHandle result = makeCallbackHandle(state, id);
     if (!result) {
-      state->callbacks.erase(id);
-      state->callbackOrder.pop_back();
-    } else
+      eraseCallback(state, id);
+    } else {
+      if (timer)
+        refreshTimeCallbackDeadline(state);
       acquireObservationDemand(state, callbackData->reason);
+    }
     return result;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) {
@@ -6315,6 +6454,10 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
   destination->reason = callback->reason;
   destination->cb_rtn = callback->routine;
   destination->user_data = callback->userData;
+  if (callback->reason == cbAfterDelay) {
+    handle->owner->timeScratch = callback->time;
+    destination->time = &handle->owner->timeScratch;
+  }
 }
 
 extern "C" OBELISK_VPI_EXPORT void

@@ -554,9 +554,27 @@ boundaries. The same policy applies independently of two-state/four-state
 selection. The executable external-clock regression drives 1,000 rising edges
 through VPI with no HDL oscillator and checks constant startup-only fragment
 dispatch at O0/O3, no fallback, and agreement with a separately encoded
-required-bytecode image. Callback-driven time advancement and full integration
-of group-level partial routing remain required; preserving compiled fragments
-alone does not prove that unaffected groups stay in Tier 1.
+required-bytecode image. The same regression also schedules those edges using
+VPI `cbAfterDelay` callbacks, checks exact callback times, and verifies that a
+clock deposit does not execute HDL before the callback returns.
+
+Timed VPI callbacks contribute ordered deadlines to the shared calendar.
+`cbAfterDelay` runs after Preponed sampling and before execution events
+(IEEE 1800-2023 38.36.2). Callback records own copied time data, capture the
+object's scaling, support cancellation and zero-delay rearming, and expire
+after one invocation. Future timers do not create live observation demand or
+invalidate value-domain proofs. The context caches only the earliest deadline;
+callback storage is allocated with VPI state, and dormant VPI takes the same
+empty-deadline branch as VPI off. Periodic preparation includes foreign
+deadlines, then returns to the common driver at those boundaries. A regression
+checks time-zero observation before initialization and three observations
+separated by thousands of generated clock edges, with startup-only fragment
+dispatch at O0/O3 and required-bytecode output agreement.
+
+Full cocotb support still requires other VPI callbacks, including value-change
+and read/write synchronization, and control operations. Full integration of
+group-level partial routing also remains required; preserving compiled
+fragments alone does not prove that unaffected groups stay in Tier 1.
 
 This is an incremental replacement. Trusted clean worklists and generated
 periodic loops still have separate control paths; native/runtime plane

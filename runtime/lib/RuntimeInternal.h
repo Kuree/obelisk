@@ -2335,9 +2335,18 @@ struct obelisk_rt_context {
   RecursiveWatchGroupState *recursiveWatchGroups = nullptr;
   ClassBitstreamState *classBitstreamState = nullptr;
 
+  // A cached boundary deadline costs the same test with VPI off or dormant.
+  // The ordered callback records remain in the lazily allocated VPI state.
+  std::optional<uint64_t> nextVPITimeCallback;
+  bool vpiTimeCallbackActive = false;
+
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
+
+// Execute due Pre-Active foreign work; never advance time or drain actors.
+obelisk_rt_status
+obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context);
 
 inline ReplaceableEventFeatureState *
 obelisk_rt_replaceable_events(obelisk_rt_context *context) {

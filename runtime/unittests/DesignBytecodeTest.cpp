@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -11277,6 +11278,169 @@ TEST(VPI, ValueResultStorageOutlivesHandlesAndIsSharedAcrossQueries) {
     EXPECT_EQ(secondValue.value.vector[index].aval, saved[index].aval);
     EXPECT_EQ(secondValue.value.vector[index].bval, saved[index].bval);
   }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+struct VPITimerProbe {
+  std::vector<uint64_t> times;
+  std::vector<double> scaledTimes;
+  vpiHandle self = nullptr;
+  vpiHandle peer = nullptr;
+  bool rearm = false;
+};
+
+PLI_INT32 timerProbeCallback(p_cb_data data) {
+  auto &probe = *reinterpret_cast<VPITimerProbe *>(data->user_data);
+  EXPECT_EQ(data->reason, cbAfterDelay);
+  EXPECT_NE(data->time, nullptr);
+  EXPECT_EQ(data->value, nullptr);
+  s_vpi_time now{};
+  now.type = vpiSimTime;
+  vpi_get_time(nullptr, &now);
+  probe.times.push_back((uint64_t{now.high} << 32) | now.low);
+  if (data->time->type == vpiSimTime) {
+    EXPECT_EQ(data->time->high, now.high);
+    EXPECT_EQ(data->time->low, now.low);
+  } else {
+    probe.scaledTimes.push_back(data->time->real);
+  }
+  if (probe.peer) {
+    EXPECT_EQ(vpi_remove_cb(probe.peer), 1);
+    probe.peer = nullptr;
+  }
+  if (probe.self) {
+    EXPECT_EQ(vpi_remove_cb(probe.self), 1);
+    probe.self = nullptr;
+  }
+  if (probe.rearm) {
+    probe.rearm = false;
+    s_vpi_time delay{};
+    delay.type = vpiSimTime;
+    s_cb_data callback{};
+    callback.reason = cbAfterDelay;
+    callback.cb_rtn = timerProbeCallback;
+    callback.time = &delay;
+    callback.user_data = data->user_data;
+    probe.self = vpi_register_cb(&callback);
+    EXPECT_NE(probe.self, nullptr);
+  }
+  return 17; // Callback return values do not terminate simulation.
+}
+
+TEST(VPI, TimersShareCalendarAndSupportCancellationAndRearming) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  VPITimerProbe early, late, canceled;
+  auto add = [&](VPITimerProbe &probe, uint32_t delay) {
+    s_vpi_time time{};
+    time.type = vpiSimTime;
+    time.low = delay;
+    s_cb_data callback{};
+    callback.reason = cbAfterDelay;
+    callback.cb_rtn = timerProbeCallback;
+    callback.time = &time;
+    callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+    return vpi_register_cb(&callback);
+  };
+  // Deliberately register in a different order from deadline order.
+  vpiHandle lateHandle = add(late, 29);
+  ASSERT_NE(lateHandle, nullptr);
+  early.self = add(early, 7);
+  ASSERT_NE(early.self, nullptr);
+  early.peer = add(canceled, 7);
+  ASSERT_NE(early.peer, nullptr);
+  early.rearm = true;
+  s_cb_data copied{};
+  vpi_get_cb_info(early.self, &copied);
+  ASSERT_NE(copied.time, nullptr);
+  EXPECT_EQ(copied.time->low, 7u);
+  EXPECT_EQ(context->nextVPITimeCallback, 7u);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  // Releasing the handle does not cancel a pending callback.
+  EXPECT_EQ(vpi_release_handle(lateHandle), 1);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(early.times, std::vector<uint64_t>({7, 7}));
+  EXPECT_EQ(late.times, std::vector<uint64_t>({29}));
+  EXPECT_TRUE(canceled.times.empty());
+  EXPECT_EQ(context->schedulerTime, 29u);
+  EXPECT_FALSE(context->nextVPITimeCallback);
+  EXPECT_FALSE(context->vpiTimeCallbackActive);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(late.times.size(), 1u);
+  ASSERT_NE(add(canceled, 10), nullptr);
+  obelisk_rt_v1_vpi_shutdown(context);
+  EXPECT_FALSE(context->nextVPITimeCallback);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, TimersValidateDelayAndCopyScaledObjectTime) {
+  Fixture fixture;
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, "$root", 5, -12, -12, 0},
+      {1, 0, "top", 3, -9, -12, 0},
+  };
+  fixture.execution.dpi_scopes = scopes;
+  fixture.execution.dpi_scope_count = std::size(scopes);
+  fixture.execution.dpi_time_precision = -12;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  VPITimerProbe probe;
+  s_cb_data callback{};
+  callback.reason = cbAfterDelay;
+  callback.cb_rtn = timerProbeCallback;
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+  EXPECT_EQ(vpi_register_cb(&callback), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  s_vpi_time delay{};
+  delay.type = vpiSuppressTime;
+  callback.time = &delay;
+  EXPECT_EQ(vpi_register_cb(&callback), nullptr);
+  delay.type = vpiScaledRealTime;
+  for (double invalid : {-1.0, std::numeric_limits<double>::infinity(),
+                         std::numeric_limits<double>::quiet_NaN(), 1e30}) {
+    delay.real = invalid;
+    EXPECT_EQ(vpi_register_cb(&callback), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  }
+  char top[] = "top";
+  callback.obj = vpi_handle_by_name(top, nullptr);
+  ASSERT_NE(callback.obj, nullptr);
+  delay.real = 1.25; // ns -> 1250 global ps ticks.
+  ASSERT_NE(vpi_register_cb(&callback), nullptr);
+  EXPECT_EQ(context->nextVPITimeCallback, 1250u);
+  // The time scale is captured independently of the registration and handle.
+  EXPECT_EQ(vpi_release_handle(callback.obj), 1);
+  callback = {};
+  delay = {};
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(probe.times, std::vector<uint64_t>({1250}));
+  EXPECT_EQ(probe.scaledTimes, std::vector<double>({1.25}));
+
+  context->schedulerTime = UINT64_MAX - 1;
+  delay.type = vpiSimTime;
+  delay.low = 2;
+  callback.reason = cbAfterDelay;
+  callback.cb_rtn = timerProbeCallback;
+  callback.time = &delay;
+  callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
+  EXPECT_EQ(vpi_register_cb(&callback), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  delay.low = 1;
+  ASSERT_NE(vpi_register_cb(&callback), nullptr);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(probe.times.back(), UINT64_MAX);
   obelisk_rt_v1_context_destroy(context);
 }
 

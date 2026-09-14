@@ -1800,7 +1800,8 @@ obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
       // returns; recursively entering run_until here can replay that actor or
       // spin on its still-active handoff. This also preserves statement order
       // for multiple writes in one VPI callback.
-      if (context->nativeScheduleRunning || context->activeNativeProcess)
+      if (context->nativeScheduleRunning || context->activeNativeProcess ||
+          context->vpiTimeCallbackActive)
         return OBELISK_RT_OK;
       run = plan->run;
       coordinator = plan->timeslot_coordinator;
@@ -2809,6 +2810,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (status != OBELISK_RT_OK)
           return status;
       }
+      if (!context->schedulerRunningFinals &&
+          !context->schedulerFinishRequested &&
+          !context->vpiTimeCallbackActive && context->nextVPITimeCallback &&
+          *context->nextVPITimeCallback <= context->schedulerTime) {
+        obelisk_rt_status status =
+            obelisk_rt_vpi_dispatch_time_callbacks_unlocked(context);
+        if (status != OBELISK_RT_OK)
+          return status;
+        continue;
+      }
       // No selected index survives across loop iterations. Reentrant scheduler
       // calls during an evaluator do have an outer selected index, so defer
       // compaction until both execution engines are quiescent.
@@ -2887,16 +2898,22 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         obelisk_rt_status status = refreshNativeAOTReadyPhaseUnlocked(context);
         if (status != OBELISK_RT_OK)
           return status;
-        if (context->nativeScheduleClockIngressPending) {
-          auto coordinator = plan->timeslot_coordinator;
-          if (!coordinator)
-            return OBELISK_RT_INVALID_LIFECYCLE;
-          context->nativeScheduleClockIngressPending = false;
-          status = coordinator(plan->mutable_state, context);
-          if (status != OBELISK_RT_OK)
-            return status;
-          continue;
-        }
+      }
+      if (context->nativeScheduleClockIngressPending &&
+          !context->vpiTimeCallbackActive && !context->schedulerRunningFinals) {
+        const auto *plan = context->nativeSchedulePlan;
+        if (!plan)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        auto coordinator = plan->timeslot_coordinator;
+        if (!coordinator)
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        context->nativeScheduleClockIngressPending = false;
+        NativeAOTContextScope aotScope(context);
+        NativeAOTMutexScope mutexScope(context);
+        obelisk_rt_status status = coordinator(plan->mutable_state, context);
+        if (status != OBELISK_RT_OK)
+          return status;
+        continue;
       }
     }
     uint32_t nativeRegion = UINT32_MAX;
@@ -4686,6 +4703,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               (!nextTime || candidate < *nextTime))
             nextTime = candidate;
         };
+        if (context->nextVPITimeCallback)
+          considerTime(*context->nextVPITimeCallback);
         if (std::optional<uint64_t> wakeTime =
                 nextScheduledProcessDelayUnlocked(context))
           considerTime(*wakeTime);
