@@ -674,6 +674,12 @@ when symbols cannot change; it does not cache scheduling or knownness proofs
 across IR revisions. Opt-in compiler timing separates route materialization,
 proof publication, and call-closure verification from backend code generation.
 
+Native actor entry ordering uses the rank captured from the semantic schedule,
+shared with the actor's spawn helper. Packed signature conversion can replace
+entry blocks, so their post-conversion addresses cannot identify entries in an
+earlier block analysis. Reusing such addresses would make scheduling depend on
+compiler allocation history instead of the certified activation order.
+
 Native lowering validates that plan against the native state layout and emits
 the following helper ABI. These helpers are not yet reachable from the
 installed AOT run function; until that integration is complete, auto uses the

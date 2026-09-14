@@ -4250,8 +4250,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return left.first < right.first;
     });
     if (schedule.actorSlot) {
+      // Packed signature conversion may replace the entry block. Its old
+      // pointer is not a stable schedule identity: a new block can reuse that
+      // address and accidentally inherit another actor's rank. Use the same
+      // captured actor-entry rank as the spawn helper.
       rankedAOTNodes.emplace_back(
-          scheduleRanks->getBlockRank(&function.getBody().front()).value_or(0),
+          schedule.initialRank,
           *schedule.actorSlot, 0, UINT32_MAX);
       for (const ProcessSuspension &suspension : entry.second->getSuspensions())
         rankedAOTNodes.emplace_back(
