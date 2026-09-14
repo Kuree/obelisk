@@ -3355,15 +3355,21 @@ FailureOr<bool> makeNativeEvalPlan(
           llvmConstant(builder, location, builder.getI8Type(), 0),
           llvmConstant(builder, location, i64, (stateLayout.bitCount + 7) / 8),
           /*isVolatile=*/false);
-    Value preparedTerminationAddress =
-        loadAt(builder, location, control, 8, pointer, 0);
+    // Pointer fields have target-dependent offsets (0/4/8 on wasm32,
+    // 0/8/16 on x86_64). Use the same struct type as the out-parameter alloca.
+    Value preparedTerminationAddress = LLVM::LoadOp::create(
+        builder, location, pointer,
+        fieldGEP(builder, location, control, controlType, 1), 0);
     // The runtime is not re-entered while this generated transaction runs, so
     // its control addresses and deadline are immutable until handoff. Capture
     // them once outside the hot loop; direct bodies have no runtime escape
     // through which a new timed callback could be installed.
-    Value preparedTimeAddress =
-        loadAt(builder, location, control, 0, pointer, 0);
-    Value preparedDeadline = loadAt(builder, location, control, 16, i64, 8);
+    Value preparedTimeAddress = LLVM::LoadOp::create(
+        builder, location, pointer,
+        fieldGEP(builder, location, control, controlType, 0), 0);
+    Value preparedDeadline = LLVM::LoadOp::create(
+        builder, location, i64,
+        fieldGEP(builder, location, control, controlType, 2), 8);
     Value terminationSlot = LLVM::AddressOfOp::create(
         builder, location, pointer, periodicTerminationName);
     LLVM::StoreOp::create(builder, location, preparedTerminationAddress,

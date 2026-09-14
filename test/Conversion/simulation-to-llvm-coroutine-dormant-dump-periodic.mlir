@@ -1,6 +1,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' -o %t.planned.mlir
 // RUN: obelisk-opt %t.planned.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
+// RUN: %python %S/Inputs/check-periodic-control-layout.py %t.planned.mlir %t obelisk-opt FileCheck %s
 
 // Optional dump operations remain cold checkpoints. Their mere presence must
 // not remove the periodic Tier-1 plan; the runtime rejects it when dumping
@@ -128,6 +129,15 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// CHECK: %[[CONTROL:.*]] = llvm.alloca {{.*}} x !llvm.struct<(ptr, ptr, i64)>
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot({{.*}}, %[[CONTROL]])
+// Pointer-sized control fields must use typed struct indices, not the host's
+// byte offsets. The extra RUN exercises this exact path with wasm32 layout.
+// CHECK: %[[TERMINATION:.*]] = llvm.getelementptr %[[CONTROL]][0, 1] : (!llvm.ptr) -> !llvm.ptr, !llvm.struct<(ptr, ptr, i64)>
+// CHECK-NEXT: %[[TERMINATION_PTR:.*]] = llvm.load %[[TERMINATION]] : !llvm.ptr -> !llvm.ptr
+// CHECK: %[[TIME:.*]] = llvm.getelementptr %[[CONTROL]][0, 0] : (!llvm.ptr) -> !llvm.ptr, !llvm.struct<(ptr, ptr, i64)>
+// CHECK-NEXT: llvm.load %[[TIME]] : !llvm.ptr -> !llvm.ptr
+// CHECK: %[[DEADLINE:.*]] = llvm.getelementptr %[[CONTROL]][0, 2] : (!llvm.ptr) -> !llvm.ptr, !llvm.struct<(ptr, ptr, i64)>
+// CHECK-NEXT: llvm.load %[[DEADLINE]] {{.*}} : !llvm.ptr -> i64
+// CHECK: llvm.load %[[TERMINATION_PTR]] {{.*}} : !llvm.ptr -> i32
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_handoff_periodic_aot
-
