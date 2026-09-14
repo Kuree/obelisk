@@ -3940,6 +3940,122 @@ TEST(Scheduler, SharedDriverReactivatesPlanAfterEachSameSlotNBA) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, AOTNodeAdapterHonorsRequiredBytecode) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  // This unit test uses the compact process image below. Production required
+  // images carry this policy in the separately encoded design descriptor.
+  execution.flags = OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+  AOTTestState state;
+  auto plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+               OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+               OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+               OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  SchedulerFixture fixture(100);
+  fixture.descriptor.execution = &execution;
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 0);
+  std::array<obelisk_rt_bytecode_entry_v1, 2> entries{{{0, 0}, {1, 0}}};
+  obelisk_rt_bytecode_v1 bytecode{
+      code.data(), code.size(), entries.data(),
+      2,           0,           fixture.layout.frame_size};
+  fixture.descriptor.available_tiers |= OBELISK_RT_TIER_MASK_BYTECODE;
+  fixture.descriptor.bytecode = &bytecode;
+  schedulerOrder.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  const obelisk_rt_native_schedule_node nodes[] = {{0, 0, UINT32_MAX}};
+  {
+    NativeAOTContextScope active(context);
+    NativeAOTMutexScope locked(context);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, 1),
+              OBELISK_RT_OK);
+  }
+  EXPECT_TRUE(schedulerOrder.empty()); // A native call would append 100.
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 1u);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ScopedDisturbanceRetainsCompiledExecutors) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 2;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  for (uint32_t root = 1; root <= 2; ++root)
+    ASSERT_EQ(
+        obelisk_rt_v1_native_state_register_static(context, root, root - 1, 1),
+        OBELISK_RT_OK);
+  AOTTestState state;
+  uint32_t fast = 0;
+  auto plan = makeAOTPlan(state);
+  const obelisk_rt_static_actor_root roots[] = {
+      {0, 1, OBELISK_RT_STATIC_ROOT_READ, 0},
+      {1, 2, OBELISK_RT_STATIC_ROOT_READ, 0}};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+               OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION;
+  plan.specialization_fast = &fast;
+  plan.actor_roots = roots;
+  plan.actor_root_count = std::size(roots);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  SchedulerFixture first(100), second(101);
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 0);
+  std::array<obelisk_rt_bytecode_entry_v1, 2> entries{{{0, 0}, {1, 0}}};
+  obelisk_rt_bytecode_v1 bytecode{
+      code.data(), code.size(), entries.data(), 2, 0, first.layout.frame_size};
+  schedulerOrder.clear();
+  for (auto *fixture : {&first, &second}) {
+    fixture->descriptor.execution = &execution;
+    fixture->descriptor.available_tiers |= OBELISK_RT_TIER_MASK_BYTECODE;
+    fixture->descriptor.bytecode = &bytecode;
+    fixture->descriptor
+        .native_execute = [](obelisk_rt_process_instance_v1 *instance) {
+      uint32_t root = instance->descriptor->handle.id - 99;
+      auto direct = obelisk_rt_v1_static_specialization_guard(
+          instance->context, root - 1, root, OBELISK_RT_STATIC_ROOT_READ);
+      schedulerOrder.push_back(root * 10 + direct);
+      instance->native_handle = instance;
+      *instance->action = {
+          OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+      return OBELISK_RT_OK;
+    };
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(*fixture), 0,
+                  fixture->descriptor.handle.id - 100, 0, nullptr, nullptr, 0,
+                  nullptr, 0),
+              OBELISK_RT_OK);
+  }
+  obelisk_rt_aot_external_write_handle_unlocked(
+      context, obelisk_rt_v1_native_state_static_handle(1), 0, 1, false);
+  EXPECT_TRUE(context->nativeScheduleExternalWritePending);
+  const obelisk_rt_native_schedule_node nodes[] = {{0, 0, UINT32_MAX},
+                                                   {1, 0, UINT32_MAX}};
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, 2),
+            OBELISK_RT_OK);
+  // Both fragments remain compiled. Only the affected root loses direct
+  // access; the unrelated fragment retains its indexed fast route.
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{10, 21}));
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 2u);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  EXPECT_FALSE(context->nativeScheduleExternalWritePending);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedCheckpointValidatesAndConsumesExactContinuation) {
   AOTTestState state;
   state.runHook = runGeneratedCheckpoint;
@@ -5282,6 +5398,17 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
 
   SchedulerFixture fixture(5);
   fixture.descriptor.execution = &execution;
+  // Bytecode is available, but only the native resume records execution.
+  // Availability must not be confused with REQUIRE_BYTECODE policy.
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 0);
+  std::array<obelisk_rt_bytecode_entry_v1, 2> entries{{{0, 0}, {1, 0}}};
+  obelisk_rt_bytecode_v1 bytecode{
+      code.data(), code.size(), entries.data(),
+      2,           0,           fixture.layout.frame_size};
+  fixture.descriptor.available_tiers |= OBELISK_RT_TIER_MASK_BYTECODE;
+  fixture.descriptor.bytecode = &bytecode;
   uint64_t root = obelisk_rt_canonical_state_handle_unlocked(context, 0, 1);
   ASSERT_NE(root, UINT64_MAX);
   schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
@@ -5295,11 +5422,6 @@ TEST(Scheduler, IndexedExternalDepositResumesFourStateAOTWithoutBytecode) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   EXPECT_EQ(schedulerResumeCount, 0u);
 
-  // Model a design which has a bytecode deoptimization tier without having to
-  // embed an otherwise unused bytecode image in this scheduler unit test. The
-  // exact indexed deposit must not interpret this capability bit as an active
-  // request to stabilize through bytecode.
-  execution.flags = OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
   context->stateValue[0] = 1;
   ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, root, 0, 1));
   uint8_t changed = 1;

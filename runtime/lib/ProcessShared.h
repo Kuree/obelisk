@@ -223,8 +223,6 @@ void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
 //===----------------------------------------------------------------------===//
 
 bool nativeAOTActorDirty(const obelisk_rt_context *context, uint32_t actorSlot);
-bool nativeAOTNeedsSpecializationHandoverUnlocked(
-    const obelisk_rt_context *context, uint32_t actorSlot);
 bool markNativeAOTActorReadyUnlocked(obelisk_rt_context *context,
                                      uint32_t actorSlot);
 void clearNativeAOTNodeReadyUnlocked(obelisk_rt_context *context,

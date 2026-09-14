@@ -538,6 +538,26 @@ barrier selector, including generated accumulators and their dirty hierarchy.
 DPI task reentry temporarily releases the suspended caller's executor-selection
 restrictions and restores them on return while retaining the context's queues.
 
+The general AOT node entrypoint also delegates to that driver, including time
+advancement. Native ready publications from an executing actor are preserved
+when it returns to the same wait; external clock callbacks consume their
+ingress before reentry. Disturbances no longer select bytecode merely because
+the static-specialization guard is false: mapped compiled fragments retain
+their range-guarded state accesses, while explicitly bytecode continuations and
+required-bytecode policy select the interpreter.
+
+The required disturbance policy is local: VPI-driven clocks, including cocotb
+clocks without an internal oscillator, enter Tier 1 through their indexed clock
+boundary. A change at a compute boundary sends affected work to Tier 2 while
+unrelated groups remain in Tier 1. Tier 3 handles work outside mapped compute
+boundaries. The same policy applies independently of two-state/four-state
+selection. The executable external-clock regression drives 1,000 rising edges
+through VPI with no HDL oscillator and checks constant startup-only fragment
+dispatch at O0/O3, no fallback, and agreement with a separately encoded
+required-bytecode image. Callback-driven time advancement and full integration
+of group-level partial routing remain required; preserving compiled fragments
+alone does not prove that unaffected groups stay in Tier 1.
+
 This is an incremental replacement. Trusted clean worklists and generated
 periodic loops still have separate control paths; native/runtime plane
 materialization still occurs at mixed boundaries. Their removal, shared

@@ -1807,6 +1807,11 @@ obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
       mutableState = plan->mutable_state;
       for (uint64_t index = 0; index != plan->merged_fragment_count; ++index)
         hasDirectFragments |= plan->merged_fragments[index].execute != nullptr;
+      // The metadata-only entry consumes this ingress now. Clear before the
+      // callback so reentry cannot replay it, while a new publication made
+      // by the callback remains pending for the enclosing shared driver.
+      if (!hasDirectFragments)
+        context->nativeScheduleClockIngressPending = false;
     }
     // Generated coordinators call scheduler services and therefore acquire
     // the context mutex themselves.  Never retain it across this boundary.

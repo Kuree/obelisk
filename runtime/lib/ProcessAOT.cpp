@@ -270,16 +270,6 @@ bool nativeAOTActorDirty(const obelisk_rt_context *context,
   return !described;
 }
 
-bool nativeAOTNeedsSpecializationHandoverUnlocked(
-    const obelisk_rt_context *context, uint32_t actorSlot) {
-  bool dirtyActor = context->nativeScheduleDirtyRootsPresent &&
-                    nativeAOTActorDirty(context, actorSlot);
-  bool slowNBA = context->staticNBASlowRootsPresent;
-  bool globalHandover = !context->nativeScheduleDirtyRootsPresent || slowNBA ||
-                        !nativeStaticSpecializationEnvironmentClean(context);
-  return dirtyActor || globalHandover;
-}
-
 uint32_t findNativeAOTNodeUnlocked(const obelisk_rt_context *context,
                                    uint32_t actorSlot, uint32_t continuation) {
   if (actorSlot >= context->nativeScheduleActorNodes.size())
@@ -886,40 +876,25 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     generatedActions =
         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS) != 0;
-    bool guardedSpecialization = plan->specialization_fast != nullptr;
-    bool specializationFast =
-        !guardedSpecialization || *plan->specialization_fast != 0;
-    // A generated native fragment with a clean specialization guard and no
-    // bytecode-only continuation is the common static-schedule case. Avoid
-    // searching continuation metadata or dirty-root dependencies for it; the
-    // run-level guard has already established the same exclusion held by this
-    // mutex for the complete AOT invocation.
-    bool cleanGeneratedNative = generatedActions && specializationFast &&
-                                scheduled.bytecodeContinuations.empty();
-    if (!cleanGeneratedNative) {
-      bool bytecodeFragment = std::binary_search(
-          scheduled.bytecodeContinuations.begin(),
-          scheduled.bytecodeContinuations.end(), selected->continuation);
-      bool nativeRootBootstrap =
-          actorSlot == 0 && selected->continuation == 0 &&
-          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO) != 0;
-      // The native fused body is the clean version. Root-local VPI dirtiness
-      // hands only intersecting actors to bytecode; a global reason such as an
-      // observer, conditional waiter, or generic NBA hands over every actor
-      // for the remainder of the affected slot.
-      bool specializationHandover =
-          guardedSpecialization && !specializationFast &&
-          nativeAOTNeedsSpecializationHandoverUnlocked(context, actorSlot);
-      bool needsBytecode =
-          !nativeRootBootstrap && (bytecodeFragment || specializationHandover);
-      if (needsBytecode) {
-        if ((selected->descriptor->available_tiers &
-             OBELISK_RT_TIER_MASK_BYTECODE) == 0)
-          return OBELISK_RT_TIER_UNAVAILABLE;
-        tier = OBELISK_RT_TIER_BYTECODE;
-        if (specializationHandover && context->signalDiagnosticsEnabled)
-          ++context->signalDiagnostics.aotStateSlowPaths;
-      }
+    bool requireBytecode =
+        context->execution && (context->execution->flags &
+                               OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+    bool bytecodeFragment = std::binary_search(
+        scheduled.bytecodeContinuations.begin(),
+        scheduled.bytecodeContinuations.end(), selected->continuation);
+    bool nativeRootBootstrap =
+        actorSlot == 0 && selected->continuation == 0 &&
+        (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO) != 0;
+    // An external disturbance invalidates a scheduling/value shortcut, not
+    // the compiled executor. Native fragments retain range-guarded state
+    // access and NBA publication; only an unmapped continuation or explicit
+    // required-bytecode policy selects Tier 3. Unaffected fragments retain
+    // their native execution and indexed publication routes.
+    if (requireBytecode || (bytecodeFragment && !nativeRootBootstrap)) {
+      if ((selected->descriptor->available_tiers &
+           OBELISK_RT_TIER_MASK_BYTECODE) == 0)
+        return OBELISK_RT_TIER_UNAVAILABLE;
+      tier = OBELISK_RT_TIER_BYTECODE;
     }
 
     bool resuming =
@@ -1342,6 +1317,17 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       return OBELISK_RT_INVALID_ARGUMENT;
     }
 
+    // A generated transition can queue the very wait that this activation
+    // resuspends on. Preserve that distinct publication in the shared wait
+    // state before the driver reconstructs readiness. A different returned
+    // continuation does not inherit the old node's publication.
+    if (!destroy && (scheduled.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+                     scheduled.suspendKind == OBELISK_RT_SUSPEND_EDGE)) {
+      uint32_t node =
+          findNativeAOTNodeUnlocked(context, actorSlot, selected->continuation);
+      if (node != UINT32_MAX && context->nativeScheduleReadyNodes.test(node))
+        scheduled.signalTriggered = true;
+    }
     if (!destroy && !requestFallback &&
         action.kind == OBELISK_RT_FRAGMENT_SUSPEND &&
         action.suspend_kind == OBELISK_RT_SUSPEND_DELAY) {
@@ -2387,6 +2373,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
       return status;
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     trustedSuperstep =
+        (!context->execution || (context->execution->flags &
+                                 OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) == 0) &&
         (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
                         OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 &&
         activeNativeAOTContext == context &&
@@ -2404,184 +2392,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_run_aot_nodes(
                                : runTrustedAOTNodesUnlocked<false>(context);
   }
 
-  uint32_t nodeCursor = 0;
-  bool passProgress = false;
-  for (;;) {
-    uint32_t selectedNode = UINT32_MAX;
-    bool readyBeforeCursor = false;
-    bool schedulerOrderedBootstrap = false;
-    {
-      ContextMutexLock lock(context);
-      schedulerOrderedBootstrap = obelisk_rt_unstarted_actor_pending(
-          context, context->schedulerRunningFinals ? 1u : 0u);
-      if (schedulerOrderedBootstrap) {
-        using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
-        SchedulerKey selectedKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
-        for (uint32_t wordIndex = 0;
-             wordIndex < context->nativeScheduleReadyNodes.wordCount();
-             ++wordIndex) {
-          uint64_t word = context->nativeScheduleReadyNodes.word(wordIndex);
-          while (word != 0) {
-            uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(word));
-            uint32_t candidate = wordIndex * 64 + bit;
-            word &= word - 1;
-            if (candidate >= context->nativeScheduleNodes.size())
-              return OBELISK_RT_INVALID_CONTINUATION;
-            const auto &node = context->nativeScheduleNodes[candidate];
-            if (node.actor_slot >= context->nativeScheduleActorIndices.size())
-              return OBELISK_RT_INVALID_CONTINUATION;
-            size_t processIndex =
-                context->nativeScheduleActorIndices[node.actor_slot];
-            if (processIndex >= context->scheduledProcesses.size())
-              return OBELISK_RT_INVALID_LIFECYCLE;
-            const ScheduledProcess &scheduled =
-                context->scheduledProcesses[processIndex];
-            SchedulerKey key{scheduled.urgent ? 0 : scheduled.queuedRegion,
-                             scheduled.urgent ? 0 : scheduled.scheduleRank,
-                             scheduled.insertionSequence};
-            if (key < selectedKey ||
-                (key == selectedKey && candidate < selectedNode)) {
-              selectedNode = candidate;
-              selectedKey = key;
-            }
-          }
-        }
-      } else if (context->nativeScheduleReadyNodes.wordCount() == 1) {
-        uint64_t ready = context->nativeScheduleReadyNodes.word(0);
-        uint64_t afterMask =
-            nodeCursor >= 64 ? uint64_t{0} : UINT64_MAX << nodeCursor;
-        uint64_t after = ready & afterMask;
-        if (after != 0)
-          selectedNode = static_cast<uint32_t>(__builtin_ctzll(after));
-        else
-          readyBeforeCursor = (ready & ~afterMask) != 0;
-      } else {
-        selectedNode =
-            context->nativeScheduleReadyNodes.findAtOrAfter(nodeCursor);
-        // A lower-order ready node matters only after this pass exhausts the
-        // suffix at or above nodeCursor. Do not rescan the already-visited
-        // prefix for every selected fragment in a coarse graph pass.
-        if (selectedNode == UINT32_MAX)
-          readyBeforeCursor =
-              context->nativeScheduleReadyNodes.findFirst() != UINT32_MAX;
-      }
-      if (selectedNode != UINT32_MAX) {
-        const obelisk_rt_native_schedule_node &node =
-            context->nativeScheduleNodes[selectedNode];
-        if (node.actor_slot >= context->nativeScheduleActors.size() ||
-            !context->nativeScheduleActors[node.actor_slot] ||
-            context->nativeScheduleActors[node.actor_slot]->continuation !=
-                node.continuation)
-          return OBELISK_RT_INVALID_CONTINUATION;
-        clearNativeAOTNodeReadyUnlocked(context, selectedNode);
-      }
-    }
-    if (selectedNode != UINT32_MAX) {
-      uint32_t lastNode = selectedNode;
-      bool restartBeforeCursor = false;
-      for (;;) {
-        const obelisk_rt_native_schedule_node &selected =
-            context->nativeScheduleNodes[lastNode];
-        {
-          ContextMutexLock lock(context);
-          context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
-        }
-        obelisk_rt_status status = executeAOTNode(context, selected.actor_slot);
-        if (status != OBELISK_RT_OK)
-          return status;
-        passProgress = true;
-
-        uint32_t nextNode = lastNode + 1;
-        bool fuseNext = false;
-        {
-          ContextMutexLock lock(context);
-          restartBeforeCursor =
-              context->nativeScheduleMinimumActivatedNode < nextNode;
-          if (!schedulerOrderedBootstrap && !restartBeforeCursor &&
-              selected.fusion_group != UINT32_MAX &&
-              nextNode < context->nativeScheduleNodes.size() &&
-              (!context->nativeSchedulePlan->specialization_fast ||
-               *context->nativeSchedulePlan->specialization_fast != 0)) {
-            const obelisk_rt_native_schedule_node &next =
-                context->nativeScheduleNodes[nextNode];
-            fuseNext =
-                next.fusion_group == selected.fusion_group &&
-                context->nativeScheduleReadyNodes.test(nextNode) &&
-                next.actor_slot < context->nativeScheduleActors.size() &&
-                context->nativeScheduleActors[next.actor_slot] &&
-                context->nativeScheduleActors[next.actor_slot]->continuation ==
-                    next.continuation;
-            if (fuseNext)
-              clearNativeAOTNodeReadyUnlocked(context, nextNode);
-          }
-        }
-        if (!fuseNext)
-          break;
-        lastNode = nextNode;
-      }
-      nodeCursor =
-          schedulerOrderedBootstrap || restartBeforeCursor ? 0 : lastNode + 1;
-      continue;
-    }
-    if (passProgress) {
-      ContextMutexLock lock(context);
-      ++context->signalDiagnostics.aotRegionPasses;
-    }
-    if (readyBeforeCursor) {
-      nodeCursor = 0;
-      passProgress = false;
-      continue;
-    }
-
-    uint64_t previousProgress;
-    uint64_t previousTime;
-    bool previousFinals;
-    bool controlOnly;
-    {
-      ContextMutexLock lock(context);
-      previousProgress = context->schedulerSlotProgress;
-      previousTime = context->schedulerTime;
-      previousFinals = context->schedulerRunningFinals;
-      controlOnly = (context->nativeSchedulePlan->flags &
-                     OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL) != 0;
-      if (context->nativeScheduleExternalWritePending)
-        return OBELISK_RT_TIER_UNAVAILABLE;
-    }
-    obelisk_rt_status status;
-    bool genericControl = !controlOnly;
-    if (controlOnly) {
-      status = runStaticAOTControlStep(context);
-      if (status == OBELISK_RT_TIER_UNAVAILABLE) {
-        genericControl = true;
-        NativeScheduleStepScope step(context, UINT32_MAX, true);
-        status = runScheduler(context);
-      }
-    } else {
-      // The generic scheduler owns hybrid time/region control, but actor
-      // execution must return through executeAOTNode so state-plane handoff
-      // and continuation validation remain atomic.
-      NativeScheduleStepScope step(context, UINT32_MAX, true);
-      status = runScheduler(context);
-    }
-    bool controlProgress;
-    {
-      ContextMutexLock lock(context);
-      if (genericControl && !markDueNativeAOTDeadlinesUnlocked(context))
-        return OBELISK_RT_INVALID_CONTINUATION;
-      if (context->schedulerRunningFinals != previousFinals) {
-        obelisk_rt_status refresh = refreshNativeAOTReadyPhaseUnlocked(context);
-        if (refresh != OBELISK_RT_OK)
-          return refresh;
-      }
-      controlProgress = context->schedulerSlotProgress != previousProgress ||
-                        context->schedulerTime != previousTime ||
-                        context->schedulerRunningFinals != previousFinals;
-    }
-    if (status != OBELISK_RT_OK || !controlProgress)
-      return status;
-    nodeCursor = 0;
-    passProgress = false;
-  }
+  // Executor policy does not own a second region/calendar loop. The shared
+  // driver arbitrates plan nodes together with runtime processes and updates.
+  NativeAOTContextScope aotScope(context);
+  NativeAOTMutexScope mutexScope(context);
+  return runScheduler(context, {/*nativePlan=*/true});
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
