@@ -896,6 +896,15 @@ static obelisk_rt_status schedulerInertialPath(
     auto currentBit = [&](bool unknownBit, uint64_t bit) {
       uint64_t absolute = (boundedStatic ? nativeState->bitOffset : 0) +
                           static_cast<uint64_t>(offset) + bit;
+      if constexpr (Storage) {
+        // Procedural path updates operate on the caller's destination plane.
+        // Coroutine-only native execution can have allocated canonical
+        // vectors without an authoritative canonical image. Reading those
+        // vectors here loses immediate writes and their transition notices.
+        // Bytecode passes its canonical plane directly through the same ABI.
+        const uint8_t *plane = unknownBit ? unknownPlane : valuePlane;
+        return plane && absolute < planeBitCount && byteBit(plane, absolute);
+      }
       const std::vector<uint64_t> &plane =
           unknownBit ? context->stateUnknown : context->stateValue;
       if (absolute / 64 < plane.size())

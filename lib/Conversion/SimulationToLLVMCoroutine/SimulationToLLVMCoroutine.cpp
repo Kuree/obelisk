@@ -483,7 +483,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
                 sim::SimProgramExitOp, sim::SimErrorOp,
                 sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp>(operation))
+                sim::SimDisplayOp, sim::SimSampledReadOp,
+                sim::SimSampledHistoryOp>(operation))
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
@@ -512,7 +513,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
                 sim::SimProgramExitOp, sim::SimErrorOp,
                 sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp>(operation)) {
+                sim::SimDisplayOp, sim::SimSampledReadOp,
+                sim::SimSampledHistoryOp>(operation)) {
           // These operations are cold checkpoint exits.  They do not create
           // or consume persistent four-state data in the generated body, so
           // the surrounding module-instance logic can still have a two-state
@@ -961,7 +963,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
               sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(operation))
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+              sim::SimSampledReadOp, sim::SimSampledHistoryOp>(operation))
         coldCheckpointBlocks.insert(operation->getBlock());
     });
     if (coldCheckpointBlocks.contains(&source.getBody().front())) {
@@ -1363,8 +1366,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
               sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp>(
-              operation)) {
+              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+              sim::SimSampledReadOp, sim::SimSampledHistoryOp>(operation)) {
         Block *block = operation->getBlock();
         checkpoints.try_emplace(block, operation->getLoc());
       }

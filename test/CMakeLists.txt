@@ -372,6 +372,8 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-translate
   obelisk-sim-standard-api-test
   obelisk-design-database-dump-test
+  obelisk-coverage-fixture
+  obelisk-cov
   ${_obelisk_driver_test_dependencies}
   ${OBELISK_RUNTIME_UNIT_TARGETS}
 )

@@ -7310,6 +7310,38 @@ TEST(Scheduler, CanonicalNBAKeepsBoundNativeStateMirrorCoherent) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, ProceduralPathsUseNativeDestinationBeforeCanonicalBinding) {
+  for (auto [oldValue, oldUnknown, nextValue] :
+       {std::tuple<uint8_t, uint8_t, uint8_t>{1, 0, 0}, {0, 1, 0}, {1, 1, 1}}) {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    execution.version = OBELISK_RT_VERSION;
+    execution.state_bit_count = 1;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+              OBELISK_RT_OK);
+    // Canonical storage exists, but only the coroutine's plane is current.
+    // Deliberately make the stale image equal to the requested target.
+    context->stateValue[0] = nextValue;
+    context->stateUnknown[0] = 0;
+    context->signalDiagnosticsEnabled = true;
+    uint8_t nativeValue = oldValue, nativeUnknown = oldUnknown;
+    uint8_t known = 0, write = 1, inactive = 0;
+    uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_inertial_path_storage(
+                  context, &nativeValue, &nativeUnknown, 1, handle, 1, 17, 0, 0,
+                  1, 0, 4, 4, 4, &nextValue, &known, &write, &inactive,
+                  &inactive, &inactive, &inactive),
+              OBELISK_RT_OK);
+    EXPECT_EQ(nativeValue, nextValue);
+    EXPECT_EQ(nativeUnknown, 0);
+    EXPECT_EQ(context->signalDiagnostics.publications, 1u);
+    EXPECT_TRUE(context->scheduledInertialPathNBAs.empty());
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(Scheduler, InertialGateDriversUsePerBitTransitionDelays) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
@@ -8784,6 +8816,43 @@ TEST(Scheduler, AOTObserverPlaneAuthorityIsExplicitNotDepthDerived) {
   EXPECT_EQ(state.canonicalObserverLoad, UINT8_C(0x3c));
   EXPECT_EQ(context->observerDepth, 0u);
   EXPECT_FALSE(context->observerForcesCanonicalPlane);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     ObserverBookkeepingWritesUpdateCanonicalAndNativePlanes) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  context->observerForcesCanonicalPlane = true;
+  uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+  uint8_t nativeValue = 0, nativeUnknown = 0, changed = 0;
+  uint8_t value = 0xa5, unknown = 0x18;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, &nativeValue, 8, handle, 8, 0, &value, &changed),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context, &nativeUnknown, 8, handle, 8, 1, &unknown, &changed),
+            OBELISK_RT_OK);
+  EXPECT_EQ(nativeValue, value);
+  EXPECT_EQ(nativeUnknown, unknown);
+  EXPECT_EQ(context->stateValue[0], value);
+  EXPECT_EQ(context->stateUnknown[0], unknown);
+  uint8_t read = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, &nativeValue, 8,
+                                                  handle, 8, 0, 0, &read),
+            OBELISK_RT_OK);
+  EXPECT_EQ(read, value);
+  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, &nativeUnknown, 8,
+                                                  handle, 8, 1, 0, &read),
+            OBELISK_RT_OK);
+  EXPECT_EQ(read, unknown);
+  context->observerForcesCanonicalPlane = false;
   obelisk_rt_v1_context_destroy(context);
 }
 

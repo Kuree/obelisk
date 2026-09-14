@@ -91,7 +91,7 @@ endmodule
 // Each outlined owner has an independent promotion latch.  The generated
 // scanner is a local masked-plane check and has no runtime edge.
 // LLVM-DAG: @__obelisk_eval_kernel_promotion_latched_v1 = internal {{.*}}global [7 x i8] zeroinitializer
-// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1 = internal {{.*}}global i64 127
+// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global i64 127
 // LLVM-DAG: @__obelisk_eval_periodic_entry_promotion_latched_v1 = internal {{.*}}global i{{1|8}} {{false|0}}
 // LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_ready_v1_0
 // LLVM-NOT: call {{.*}}@obelisk_rt_
@@ -104,7 +104,7 @@ endmodule
 // selected pending owners clear their own bit in the hybrid coordinator.
 // LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_periodic_promotion_ready_v1
 // LLVM: load i{{1|8}}, ptr @__obelisk_eval_periodic_promotion_scanned_v1
-// LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1
+// LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
 // LLVM: icmp eq i64
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
 // LLVM: ret i1
@@ -117,7 +117,7 @@ endmodule
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_promotion_latched_v1
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
 // LLVM: call void @llvm.memset{{.*}}@__obelisk_eval_kernel_promotion_latched_v1
-// LLVM: store i64 127, ptr @__obelisk_eval_promotion_pending_mask_v1
+// LLVM: store i64 127, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_fast_nba_latched_v1
 // LLVM: ret void
 
@@ -125,7 +125,7 @@ endmodule
 // locally and contains no runtime edge on its normal Tier-1/Tier-2 path.
 // LLVM-LABEL: define {{.*}}i32 @__obelisk_eval_steady_two_state_coordinator_v1
 // LLVM-NOT: call {{.*}}@obelisk_rt_
-// LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1
+// LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
 // The transient/guarded coordinator deliberately keeps a mutable owner edge.
 // LLVM: call void %{{.*}}(ptr %{{.*}})
 // LLVM: or i64

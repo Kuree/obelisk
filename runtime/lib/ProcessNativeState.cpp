@@ -939,10 +939,13 @@ static obelisk_rt_status nativeStateStorePlane(
       return rangeStatus;
     }
     // Writes mirror canonical state only after it has an authoritative image.
+    // A native observer uses canonical reads, so its bookkeeping writes must
+    // follow the same authority rule even without a bytecode image/binding.
     bool canonical = context->execution &&
                      context->execution->state_bit_count == globalBitCount &&
                      (executionHasBytecodeState(context) ||
-                      hasBoundNativeStatePlanes(context, globalBitCount));
+                      hasBoundNativeStatePlanes(context, globalBitCount) ||
+                      context->observerForcesCanonicalPlane);
     std::vector<uint64_t> *canonicalPlane = nullptr;
     if (canonical) {
       canonicalPlane =
