@@ -1987,6 +1987,9 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               // context's finish latch. It cannot execute actors, publish
               // state, advance time or request termination itself.
               *callee == "obelisk_rt_v1_scheduler_termination_requested" ||
+              // Generated run_until updates the canonical scheduler time
+              // before dispatch. This query only reads that same timestamp.
+              *callee == "obelisk_rt_v1_scheduler_time" ||
               *callee == "obelisk_rt_v1_eval_display" ||
               // Cold allocation of private generated NBA storage. This never
               // executes actors, changes design state or re-enters scheduling.

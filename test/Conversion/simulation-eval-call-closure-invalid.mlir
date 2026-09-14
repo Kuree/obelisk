@@ -37,6 +37,7 @@ module attributes {
 // -----
 
 // Reading the finish latch after a value helper is not scheduler re-entry.
+// Neither is reading the canonical timestamp maintained by generated dispatch.
 // Requesting finish, in contrast, must still take an explicit cold route.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -44,11 +45,17 @@ module attributes {
   obelisk.eval.generated
 } {
   llvm.func @obelisk_rt_v1_scheduler_termination_requested(!llvm.ptr) -> i32
+  llvm.func @obelisk_rt_v1_scheduler_time(!llvm.ptr) -> i64
   llvm.func @__obelisk_eval_helper_poll(%ctx: !llvm.ptr) -> i32
       attributes {obelisk.eval.call_closure_root} {
     %requested = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%ctx)
         : (!llvm.ptr) -> i32
     llvm.return %requested : i32
+  }
+  llvm.func @__obelisk_eval_helper_time(%ctx: !llvm.ptr) -> i64
+      attributes {obelisk.eval.call_closure_root} {
+    %now = llvm.call @obelisk_rt_v1_scheduler_time(%ctx) : (!llvm.ptr) -> i64
+    llvm.return %now : i64
   }
 }
 

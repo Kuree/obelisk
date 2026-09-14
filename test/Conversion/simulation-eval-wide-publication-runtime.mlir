@@ -15,12 +15,13 @@
 // PLAN-LABEL: llvm.func @report(
 // PLAN: llvm.call @obelisk_rt_v1_display(
 // PLAN-LABEL: llvm.func @report.__obelisk_eval_private_
+// PLAN: llvm.call @obelisk_rt_v1_scheduler_time(
 // PLAN: llvm.call @obelisk_rt_v1_eval_display(
 // PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
 // CHECK: 10000000000000000 1 0
 // CHECK-NEXT: 0ffffffffffffffff 1 1
-// DIAG: copy 1
-// DIAG-NEXT: copy 0
+// DIAG: copy 1 at 2
+// DIAG-NEXT: copy 0 at 4
 // DIAG-NOT: copy
 !wide = !obelisk_sim.logic<65>
 !wref = !obelisk_sim.ref<!wide>
@@ -126,9 +127,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       obelisk_sim.return
     }
     obelisk_sim.func private @report(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i1 {obelisk_sim.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
-      %format = obelisk_sim.bytes.constant "copy %b"
+      %format = obelisk_sim.bytes.constant "copy %b at %0d"
       %stderr = arith.constant -2147483646 : i32
-      obelisk_sim.display %ctx to %stderr(%format, %value) newline = true radix = 10 flags = [0, 0] {scope = "report"} : !obelisk_sim.bytes, i1
+      %now = obelisk_sim.time.now %ctx
+      obelisk_sim.display %ctx to %stderr(%format, %value, %now) newline = true radix = 10 flags = [0, 0, 0] {scope = "report"} : !obelisk_sim.bytes, i1, i64
       obelisk_sim.return %value : i1
     }
   }

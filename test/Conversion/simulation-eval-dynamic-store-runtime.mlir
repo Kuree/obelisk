@@ -12,6 +12,7 @@
 // CHECK: 00000000000000000000000000000001 1
 // CHECK-NEXT: x0000000000000000000000000000001 0
 // CHECK-NEXT: x0000000000000000000000000000001 0
+// CHECK-NEXT: x0000000000000000000000000000001 0
 !wide = !obelisk_sim.logic<32>
 !wref = !obelisk_sim.ref<!wide>
 !ref = !obelisk_sim.ref<i1>
@@ -21,7 +22,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.storage.decl 0 in 0 : i1 design
     obelisk_sim.storage.decl 1 in 0 : !wide design
     obelisk_sim.storage.decl 2 in 0 : i1 design
-    obelisk_sim.storage.decl 3 in 0 : i32 design
+    obelisk_sim.storage.decl 3 in 0 : !wide design
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     obelisk_sim.code_unit.decl 2 in 0 always hierarchy "clock"
     obelisk_sim.code_unit.decl 3 in 0 always hierarchy "publish"
@@ -31,18 +32,18 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %clk = obelisk_sim.context.storage %ctx[0] : !ref
       %data = obelisk_sim.context.storage %ctx[1] : !wref
       %change = obelisk_sim.context.storage %ctx[2] : !ref
-      %index = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<i32>
+      %index = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<!wide>
       %zero = arith.constant false
       %zeros = obelisk_sim.logic.constant 0 : i32, 0 : i32 : !wide
       obelisk_sim.ref.store %zero to %clk : i1, !ref
       obelisk_sim.ref.store %zeros to %data : !wide, !wref
       obelisk_sim.ref.store %zero to %change : i1, !ref
-      %minusOne = arith.constant -1 : i32
-      obelisk_sim.ref.store %minusOne to %index : i32, !obelisk_sim.ref<i32>
+      %minusOne = obelisk_sim.logic.constant -1 : i32, 0 : i32 : !wide
+      obelisk_sim.ref.store %minusOne to %index : !wide, !obelisk_sim.ref<!wide>
       %a = obelisk_sim.spawn @clock(%ctx, %clk) : !obelisk_sim.context, !ref -> !obelisk_sim.process
       %b = obelisk_sim.spawn @publish(%ctx, %clk, %data) : !obelisk_sim.context, !ref, !wref -> !obelisk_sim.process
       %c = obelisk_sim.spawn @change(%ctx, %data, %change) : !obelisk_sim.context, !wref, !ref -> !obelisk_sim.process
-      %e = obelisk_sim.spawn @check(%ctx, %data, %change, %index) : !obelisk_sim.context, !wref, !ref, !obelisk_sim.ref<i32> -> !obelisk_sim.process
+      %e = obelisk_sim.spawn @check(%ctx, %data, %change, %index) : !obelisk_sim.context, !wref, !ref, !obelisk_sim.ref<!wide> -> !obelisk_sim.process
       obelisk_sim.return
     }
     obelisk_sim.func @clock(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %clk: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
@@ -62,9 +63,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     ^wait:
       obelisk_sim.suspend.change %clk to ^write {site = #obelisk_sim.continuation<id = 2>} : !ref
     ^write:
-      %index = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<i32>
-      %low = obelisk_sim.ref.load %index : !obelisk_sim.ref<i32> -> i32
-      %slice = obelisk_sim.ref.dyn_extract %data from %low : (!wref, i32) -> !obelisk_sim.ref<!obelisk_sim.logic<2>>
+      %index = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<!wide>
+      %low = obelisk_sim.ref.load %index : !obelisk_sim.ref<!wide> -> !wide
+      %slice = obelisk_sim.ref.dyn_extract %data from %low : (!wref, !wide) -> !obelisk_sim.ref<!obelisk_sim.logic<2>>
       %payload = obelisk_sim.logic.constant 2 : i2, 1 : i2 : !obelisk_sim.logic<2>
       obelisk_sim.ref.store %payload to %slice : !obelisk_sim.logic<2>, !obelisk_sim.ref<!obelisk_sim.logic<2>>
       cf.br ^wait
@@ -80,7 +81,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       obelisk_sim.ref.store %next to %flag : i1, !ref
       cf.br ^wait
     }
-    obelisk_sim.func @check(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !wref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %change: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}, %index: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
+    obelisk_sim.func @check(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !wref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %change: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}, %index: !obelisk_sim.ref<!wide> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
       %format = obelisk_sim.bytes.constant "%032b %b"
       %stdout = arith.constant 1 : i32
       %delay = obelisk_sim.time.constant 3
@@ -89,21 +90,28 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %v0 = obelisk_sim.ref.load %data : !wref -> !wide
       %c0 = obelisk_sim.ref.load %change : !ref -> i1
       obelisk_sim.display %ctx to %stdout(%format, %v0, %c0) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, !wide, i1
-      %highIndex = arith.constant 31 : i32
-      obelisk_sim.ref.store %highIndex to %index : i32, !obelisk_sim.ref<i32>
+      %highIndex = obelisk_sim.logic.constant 31 : i32, 0 : i32 : !wide
+      obelisk_sim.ref.store %highIndex to %index : !wide, !obelisk_sim.ref<!wide>
       %two = obelisk_sim.time.constant 2
       obelisk_sim.suspend.delay %two to ^second {site = #obelisk_sim.continuation<id = 6>, timing = #obelisk_sim.timing_site<id = 2, kind = calendar>}
     ^second:
       %v1 = obelisk_sim.ref.load %data : !wref -> !wide
       %c1 = obelisk_sim.ref.load %change : !ref -> i1
       obelisk_sim.display %ctx to %stdout(%format, %v1, %c1) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, !wide, i1
-      %invalidIndex = arith.constant 32 : i32
-      obelisk_sim.ref.store %invalidIndex to %index : i32, !obelisk_sim.ref<i32>
+      %invalidIndex = obelisk_sim.logic.constant 32 : i32, 0 : i32 : !wide
+      obelisk_sim.ref.store %invalidIndex to %index : !wide, !obelisk_sim.ref<!wide>
       obelisk_sim.suspend.delay %two to ^third {site = #obelisk_sim.continuation<id = 7>, timing = #obelisk_sim.timing_site<id = 3, kind = calendar>}
     ^third:
       %v2 = obelisk_sim.ref.load %data : !wref -> !wide
       %c2 = obelisk_sim.ref.load %change : !ref -> i1
       obelisk_sim.display %ctx to %stdout(%format, %v2, %c2) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, !wide, i1
+      %unknownIndex = obelisk_sim.logic.constant 0 : i32, 1 : i32 : !wide
+      obelisk_sim.ref.store %unknownIndex to %index : !wide, !obelisk_sim.ref<!wide>
+      obelisk_sim.suspend.delay %two to ^fourth {site = #obelisk_sim.continuation<id = 8>, timing = #obelisk_sim.timing_site<id = 4, kind = calendar>}
+    ^fourth:
+      %v3 = obelisk_sim.ref.load %data : !wref -> !wide
+      %c3 = obelisk_sim.ref.load %change : !ref -> i1
+      obelisk_sim.display %ctx to %stdout(%format, %v3, %c3) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, !wide, i1
       %status = arith.constant 0 : i32
       obelisk_sim.finish %ctx, %status
       obelisk_sim.return
