@@ -118,7 +118,7 @@ struct ResolvedNativeEvalPlan {
   llvm::SmallVector<uint32_t> periodicOwnerBits;
   /// For each merged owner, exact Tier-2 owner bits consumed by execution of
   /// that complete Tier-1 coordinator.
-  llvm::SmallVector<uint64_t> ownerSubsumptionMasks;
+  llvm::SmallVector<llvm::APInt> ownerSubsumptionMasks;
   llvm::SmallVector<unsigned> periodicClosureRecords;
   llvm::SmallVector<unsigned> periodicEntryRecords;
   uint32_t nbaTaintWordCount = 0;
@@ -135,7 +135,7 @@ struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<std::string> fourStateExecutors;
   mlir::ArrayRef<std::string> twoStateExecutors;
   mlir::ArrayRef<std::string> promotionReadyFunctions;
-  mlir::ArrayRef<uint64_t> ownerSubsumptionMasks;
+  mlir::ArrayRef<llvm::APInt> ownerSubsumptionMasks;
   mlir::ArrayRef<llvm::SmallVector<uint64_t>> nbaTaintMasks;
   const llvm::BitVector &nbaTaintedOwners;
   uint32_t nbaTaintWordCount = 0;
@@ -147,11 +147,11 @@ struct NativeEvalCoordinatorPlan {
 struct NativeEvalCoordinatorOptions {
   bool promoted = false;
   bool hybrid = false;
-  uint64_t allowedOwnerMask = UINT64_MAX;
+  std::optional<llvm::APInt> allowedOwnerMask;
   /// Pending bits that require a return to the hybrid coordinator. Owners
   /// with an intrinsic path dispatcher may remain pending for the stronger
   /// whole-closure certificate without blocking owner-local steady routing.
-  uint64_t pendingGuardMask = UINT64_MAX;
+  std::optional<llvm::APInt> pendingGuardMask;
   bool trustedTwoState = false;
   bool guardPendingOwners = false;
   bool observePathFallback = false;

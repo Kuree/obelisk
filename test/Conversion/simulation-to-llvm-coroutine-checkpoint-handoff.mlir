@@ -132,9 +132,9 @@ module attributes {
 // a safe steady route and must not bounce the owner through Tier 2 every slot.
 // CHECK-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1
 // CHECK: %[[PENDING_ADDR:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// CHECK: %[[PENDING:.*]] = llvm.load %[[PENDING_ADDR]]
-// CHECK: %[[ALLOWED_MASK:.*]] = llvm.mlir.constant(-2 : i64)
-// CHECK: %[[GUARD_MASK:.*]] = llvm.mlir.constant(-2 : i64)
+// CHECK-DAG: %[[PENDING:.*]] = llvm.load %[[PENDING_ADDR]]
+// CHECK-DAG: %[[ALLOWED_MASK:.*]] = llvm.mlir.constant(-2 : i64)
+// CHECK-DAG: %[[GUARD_MASK:.*]] = llvm.mlir.constant(-2 : i64)
 // CHECK: %[[ROUTE_PENDING:.*]] = llvm.and %[[PENDING]], %[[GUARD_MASK]]
 // CHECK: llvm.or %[[ROUTE_PENDING]], %[[ALLOWED_MASK]]
 // Once the stronger certificate succeeds, the guard-free coordinator keeps a

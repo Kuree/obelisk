@@ -1,6 +1,7 @@
 //===- SimulationAOTCoordinatorMaterialization.cpp ----------------------===//
 
 #include "SimulationAOTPlanning.h"
+#include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -47,13 +48,15 @@ LogicalResult materializeNativeEvalCoordinator(
   ArrayRef<std::string> mergedTwoStateExecutors = plan.twoStateExecutors;
   ArrayRef<std::string> promotionKernelReadyNames =
       plan.promotionReadyFunctions;
-  ArrayRef<uint64_t> ownerSubsumptionMasks = plan.ownerSubsumptionMasks;
+  ArrayRef<APInt> ownerSubsumptionMasks = plan.ownerSubsumptionMasks;
   uint32_t nbaTaintWordCount = plan.nbaTaintWordCount;
   bool prioritySignalHandoff = plan.prioritySignalHandoff;
   bool promotedCoordinator = options.promoted;
   bool hybridCoordinator = options.hybrid;
-  uint64_t allowedOwnerMask = options.allowedOwnerMask;
-  uint64_t pendingGuardMask = options.pendingGuardMask;
+  unsigned ownerCount = std::max<size_t>(64, mergedFragments.size());
+  APInt allOwners = APInt::getAllOnes(ownerCount);
+  APInt allowedOwnerMask = options.allowedOwnerMask.value_or(allOwners);
+  APInt pendingGuardMask = options.pendingGuardMask.value_or(allOwners);
   bool trustedTwoState = options.trustedTwoState;
   bool guardPendingOwners = options.guardPendingOwners;
   bool observePathFallback = options.observePathFallback;
@@ -89,7 +92,6 @@ LogicalResult materializeNativeEvalCoordinator(
   };
 
   if (clockKernels.empty() || mergedFragments.empty() ||
-      mergedFragments.size() > 64 ||
       executors.size() != mergedFragments.size() ||
       ownerSubsumptionMasks.size() != mergedFragments.size())
     return success();
@@ -174,44 +176,32 @@ LogicalResult materializeNativeEvalCoordinator(
   // executing: a pending selection returns to the hybrid caller, and accepted
   // direct bodies contain no runtime handoff. Hoist the mask load out of the
   // local dirty-mask fixpoint instead of reloading it for every ready owner.
-  Value guardedPromotionPending;
-  Value guardedUnsafeOwnerMask;
+  SmallVector<Value> guardedUnsafeOwnerMasks;
   if (guardPendingOwners) {
-    guardedPromotionPending = LLVM::LoadOp::create(
-        builder, location, i64,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  promotionPendingMaskName),
-        8);
-    guardedUnsafeOwnerMask = arith::OrIOp::create(
-        builder, location,
-        arith::AndIOp::create(
-            builder, location, guardedPromotionPending,
-            llvmConstant(builder, location, i64, pendingGuardMask)),
-        llvmConstant(builder, location, i64, ~allowedOwnerMask));
+    Value pending = LLVM::AddressOfOp::create(builder, location, pointer,
+                                              promotionPendingMaskName);
+    for (unsigned word = 0; word != allOwners.getNumWords(); ++word)
+      guardedUnsafeOwnerMasks.push_back(arith::OrIOp::create(
+          builder, location,
+          arith::AndIOp::create(
+              builder, location,
+              loadOwnerWord(builder, location, pending, word),
+              llvmConstant(builder, location, i64,
+                           ownerMaskWord(pendingGuardMask, word))),
+          llvmConstant(builder, location, i64,
+                       ~ownerMaskWord(allowedOwnerMask, word))));
   }
+  auto ingressAddress = [&] {
+    return LLVM::AddressOfOp::create(builder, location, pointer,
+                                     clockKernels.front().ingressName)
+        .getResult();
+  };
   auto combinedIngress = [&] {
-    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              clockKernels.front().ingressName);
-    return LLVM::LoadOp::create(builder, location, i64, ingress, 8).getResult();
+    return maskedOwnerWords(builder, location, ingressAddress(), allOwners);
   };
-  auto clearIngressMask = [&](Value mask) {
-    Value inverse =
-        arith::XOrIOp::create(builder, location, mask,
-                              llvmConstant(builder, location, i64, UINT64_MAX));
-    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              clockKernels.front().ingressName);
-    Value queued = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-    LLVM::StoreOp::create(
-        builder, location,
-        arith::AndIOp::create(builder, location, queued, inverse), ingress, 8);
-  };
-  auto publishIngressMask = [&](Value mask) {
-    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              clockKernels.front().ingressName);
-    Value queued = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-    LLVM::StoreOp::create(builder, location,
-                          arith::OrIOp::create(builder, location, queued, mask),
-                          ingress, 8);
+  auto clearIngressMask = [&](const APInt &mask, Value condition = Value{}) {
+    updateOwnerMask(builder, location, ingressAddress(), mask,
+                    /*clear=*/true, condition);
   };
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
@@ -238,86 +228,73 @@ LogicalResult materializeNativeEvalCoordinator(
   }
 
   builder.setInsertionPointToStart(scanReady);
-  Value ready = combinedIngress();
-  bool hasSubsumption = false;
+  SmallVector<Value> ready;
+  for (unsigned word = 0; word != allOwners.getNumWords(); ++word)
+    ready.push_back(loadOwnerWord(builder, location, ingressAddress(), word));
+  llvm::BitVector changedWords(ready.size());
   for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
-    uint64_t subsumed = ownerSubsumptionMasks[recordIndex];
-    if (record.bit >= 64 || subsumed == 0 ||
-        (allowedOwnerMask & (uint64_t{1} << record.bit)) == 0)
+    const APInt &subsumed = ownerSubsumptionMasks[recordIndex];
+    if (subsumed.isZero() || !allowedOwnerMask[record.bit])
       continue;
-    hasSubsumption = true;
-    Value coordinatorMask =
-        llvmConstant(builder, location, i64, uint64_t{1} << record.bit);
     Value coordinatorPending = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne,
-        arith::AndIOp::create(builder, location, ready, coordinatorMask),
+        arith::AndIOp::create(builder, location, ready[record.bit / 64],
+                              llvmConstant(builder, location, i64,
+                                           uint64_t{1} << (record.bit % 64))),
         llvmConstant(builder, location, i64, 0));
-    Value withoutMembers =
-        arith::AndIOp::create(builder, location, ready,
-                              llvmConstant(builder, location, i64, ~subsumed));
-    ready = arith::SelectOp::create(builder, location, coordinatorPending,
-                                    withoutMembers, ready);
+    for (unsigned word = 0; word != ready.size(); ++word) {
+      uint64_t members = ownerMaskWord(subsumed, word);
+      if (!members)
+        continue;
+      changedWords.set(word);
+      Value withoutMembers =
+          arith::AndIOp::create(builder, location, ready[word],
+                                llvmConstant(builder, location, i64, ~members));
+      ready[word] = arith::SelectOp::create(
+          builder, location, coordinatorPending, withoutMembers, ready[word]);
+    }
   }
-  if (hasSubsumption) {
-    Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              clockKernels.front().ingressName);
-    LLVM::StoreOp::create(builder, location, ready, ingress, 8);
+  for (int word : changedWords.set_bits())
+    LLVM::StoreOp::create(
+        builder, location, ready[word],
+        ownerWordAddress(builder, location, ingressAddress(), word), 8);
+  // Select the globally lowest owner across words. Never truncate an owner ID
+  // to its position in a leaf; backward publications must precede the NBA
+  // barrier.
+  Value selectedWord = llvmConstant(builder, location, i64, ready.size() - 1);
+  Value selectedReady = ready.back();
+  for (unsigned word = ready.size() - 1; word-- != 0;) {
+    Value nonempty = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, ready[word],
+        llvmConstant(builder, location, i64, 0));
+    selectedWord = arith::SelectOp::create(
+        builder, location, nonempty, llvmConstant(builder, location, i64, word),
+        selectedWord);
+    selectedReady = arith::SelectOp::create(builder, location, nonempty,
+                                            ready[word], selectedReady);
   }
-  Value empty =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq, ready,
-                            llvmConstant(builder, location, i64, 0));
+  Value empty = arith::CmpIOp::create(builder, location,
+                                      arith::CmpIPredicate::eq, selectedReady,
+                                      llvmConstant(builder, location, i64, 0));
   Block *select = new Block;
   fastCoordinator.getBody().push_back(select);
   cf::CondBranchOp::create(builder, location, empty, commit, ValueRange{},
                            select, ValueRange{});
-
   builder.setInsertionPointToStart(select);
-  Value bit =
-      LLVM::CountTrailingZerosOp::create(builder, location, i64, ready, true);
-  Value selectedMask = arith::ShLIOp::create(
-      builder, location, llvmConstant(builder, location, i64, 1), bit);
-  Value promotionPending;
-  if (hybridCoordinator)
-    promotionPending = LLVM::LoadOp::create(
-        builder, location, i64,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  promotionPendingMaskName),
-        8);
+  Value localBit = LLVM::CountTrailingZerosOp::create(builder, location, i64,
+                                                      selectedReady, true);
+  Value bit = arith::AddIOp::create(
+      builder, location, localBit,
+      arith::MulIOp::create(builder, location, selectedWord,
+                            llvmConstant(builder, location, i64, 64)));
   Block *switchBlock = select;
-  if (guardPendingOwners) {
-    // Preserve the global ready-bit order while draining the maximal native
-    // prefix.  An uncovered owner later in the set must not force already
-    // ordered, covered owners back through the hybrid coordinator.
-    Value unsafeSelected = arith::AndIOp::create(
-        builder, location, selectedMask, guardedUnsafeOwnerMask);
-    Value selectedIsUnsafe = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, unsafeSelected,
-        llvmConstant(builder, location, i64, 0));
-    switchBlock = new Block;
-    fastCoordinator.getBody().push_back(switchBlock);
-    cf::CondBranchOp::create(builder, location, selectedIsUnsafe, guardRejected,
-                             ValueRange{}, switchBlock, ValueRange{});
-    builder.setInsertionPointToStart(switchBlock);
-  }
-  Value selectedPromotionPending;
-  // The trusted steady coordinator has already crossed its quiescent
-  // promotion boundary.  Its path-guarded executors perform their own exact
-  // CFG check, while every other executor is directly two-state.  Only the
-  // transitional hybrid coordinator needs per-owner promotion scans here.
-  if (hybridCoordinator) {
-    selectedPromotionPending = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne,
-        arith::AndIOp::create(builder, location, promotionPending,
-                              selectedMask),
-        llvmConstant(builder, location, i64, 0));
-  }
   SmallVector<APInt> cases;
   SmallVector<Block *> destinations;
   SmallVector<ValueRange> destinationOperands;
   for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
-    if (record.bit >= 64 || executors[recordIndex].empty())
+    if (executors[recordIndex].empty())
       continue;
-    if ((allowedOwnerMask & (uint64_t{1} << record.bit)) == 0)
+    if (!allowedOwnerMask[record.bit])
       continue;
     Block *execute = new Block;
     fastCoordinator.getBody().push_back(execute);
@@ -325,6 +302,33 @@ LogicalResult materializeNativeEvalCoordinator(
     destinations.push_back(execute);
     destinationOperands.push_back(ValueRange{});
     builder.setInsertionPointToStart(execute);
+    Value ownerBit =
+        llvmConstant(builder, location, i64, uint64_t{1} << (record.bit % 64));
+    if (guardPendingOwners) {
+      Value unsafeSelected =
+          arith::AndIOp::create(builder, location, ownerBit,
+                                guardedUnsafeOwnerMasks[record.bit / 64]);
+      Value selectedIsUnsafe = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, unsafeSelected,
+          llvmConstant(builder, location, i64, 0));
+      Block *accepted = new Block;
+      fastCoordinator.getBody().push_back(accepted);
+      cf::CondBranchOp::create(builder, location, selectedIsUnsafe,
+                               guardRejected, ValueRange{}, accepted,
+                               ValueRange{});
+      builder.setInsertionPointToStart(accepted);
+    }
+    Value selectedPromotionPending;
+    if (hybridCoordinator) {
+      Value pending = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                promotionPendingMaskName);
+      selectedPromotionPending = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(
+              builder, location, ownerBit,
+              loadOwnerWord(builder, location, pending, record.bit / 64)),
+          llvmConstant(builder, location, i64, 0));
+    }
     if ((promotedCoordinator || hybridCoordinator) &&
         mergedTwoStateExecutors[recordIndex].empty()) {
       LLVM::StoreOp::create(
@@ -347,11 +351,11 @@ LogicalResult materializeNativeEvalCoordinator(
     // transition published by the activation then remains queued and drives
     // another local fixpoint iteration. Non-convergence owners retain the
     // clock-kernel rule below, which suppresses their implicit self fanout.
-    uint64_t subsumedOwnerMask = ownerSubsumptionMasks[recordIndex];
+    const APInt &subsumedOwnerMask = ownerSubsumptionMasks[recordIndex];
+    APInt consumed = subsumedOwnerMask;
+    consumed.setBit(record.bit);
     if (convergenceOwner)
-      clearIngressMask(
-          llvmConstant(builder, location, i64,
-                       (uint64_t{1} << record.bit) | subsumedOwnerMask));
+      clearIngressMask(consumed);
     Value executeStatus;
     if (hybridCoordinator && !mergedTwoStateExecutors[recordIndex].empty() &&
         !promotionKernelReadyNames[recordIndex].empty()) {
@@ -413,21 +417,17 @@ LogicalResult materializeNativeEvalCoordinator(
                           .getResult();
     }
     if (!convergenceOwner)
-      clearIngressMask(
-          llvmConstant(builder, location, i64,
-                       (uint64_t{1} << record.bit) | subsumedOwnerMask));
+      clearIngressMask(consumed);
     else if (subsumedOwnerMask != 0) {
-      Value queuedMembers = arith::AndIOp::create(
-          builder, location, combinedIngress(),
-          llvmConstant(builder, location, i64, subsumedOwnerMask));
+      Value queuedMembers = maskedOwnerWords(
+          builder, location, ingressAddress(), subsumedOwnerMask);
       Value membersPending = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne, queuedMembers,
           llvmConstant(builder, location, i64, 0));
-      clearIngressMask(llvmConstant(builder, location, i64, subsumedOwnerMask));
-      publishIngressMask(arith::SelectOp::create(
-          builder, location, membersPending,
-          llvmConstant(builder, location, i64, uint64_t{1} << record.bit),
-          llvmConstant(builder, location, i64, 0)));
+      clearIngressMask(subsumedOwnerMask);
+      updateOwnerMask(builder, location, ingressAddress(),
+                      APInt::getOneBitSet(ownerCount, record.bit),
+                      /*clear=*/false, membersPending);
     }
     Value executeOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, executeStatus,

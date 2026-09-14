@@ -305,7 +305,9 @@ resolveNativeEvalPlan(ModuleOp module,
       ownerFragments[recordIndex] = std::move(ownedFragments);
     }
 
-    result.ownerSubsumptionMasks.assign(result.mergedFragments.size(), 0);
+    result.ownerSubsumptionMasks.assign(
+        result.mergedFragments.size(),
+        llvm::APInt(std::max<size_t>(64, result.mergedFragments.size()), 0));
     std::optional<std::tuple<uint32_t, unsigned, unsigned>> overlap;
     for (unsigned first = 0; first != result.mergedFragments.size(); ++first) {
       if (ownerFragments[first].empty())
@@ -337,9 +339,8 @@ resolveNativeEvalPlan(ModuleOp module,
           overlap = std::tuple{*shared, first, second};
           break;
         }
-        if (result.mergedFragments[exact].bit < 64)
-          result.ownerSubsumptionMasks[coordinator] |=
-              uint64_t{1} << result.mergedFragments[exact].bit;
+        result.ownerSubsumptionMasks[coordinator].setBit(
+            result.mergedFragments[exact].bit);
       }
       if (overlap)
         break;
@@ -409,11 +410,11 @@ resolveNativeEvalPlan(ModuleOp module,
     for (unsigned owner : closureSnapshot) {
       if (owner >= result.ownerSubsumptionMasks.size())
         continue;
-      uint64_t members = result.ownerSubsumptionMasks[owner];
-      while (members != 0) {
-        unsigned bit = llvm::countr_zero(members);
+      llvm::APInt members = result.ownerSubsumptionMasks[owner];
+      while (!members.isZero()) {
+        unsigned bit = members.countr_zero();
         closure.insert(bit);
-        members &= members - 1;
+        members.clearBit(bit);
       }
     }
     result.periodicClosureRecords.assign(closure.begin(), closure.end());
@@ -421,7 +422,9 @@ resolveNativeEvalPlan(ModuleOp module,
   }
 
   if (result.ownerSubsumptionMasks.empty())
-    result.ownerSubsumptionMasks.assign(result.mergedFragments.size(), 0);
+    result.ownerSubsumptionMasks.assign(
+        result.mergedFragments.size(),
+        llvm::APInt(std::max<size_t>(64, result.mergedFragments.size()), 0));
 
   // Project graph-level NBA reachability onto exclusive generated owners.
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;

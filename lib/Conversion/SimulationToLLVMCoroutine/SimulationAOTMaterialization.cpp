@@ -1,6 +1,7 @@
 //===- SimulationAOTMaterialization.cpp - Native AOT LLVM plan --------===//
 
 #include "SimulationAOTPlanning.h"
+#include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Conversion/SimulationRuntime.h"
@@ -293,13 +294,14 @@ proveDynamicEvalNBA(LLVM::CallOp call,
             proofContext.directFragments.size()) {
       const NativeDirectFragment &direct =
           proofContext.directFragments[identity.getUInt()];
-      auto record = llvm::find_if(
-          proofContext.periodicEntryRecords, [&](unsigned candidate) {
-            return candidate < proofContext.mergedExecutors.size() &&
-                   proofContext.mergedExecutors[candidate] == direct.wrapper;
-          });
-      if (record != proofContext.periodicEntryRecords.end())
-        proof.periodicRecord = *record;
+      // The periodic entry may be the complete instance coordinator, while
+      // this body retains an exact owner for disturbance/fallback ingress.
+      // Resolve that exact identity too. The fanout proof below still requires
+      // every ingress to be an unmodified periodic clock; being nested in a
+      // periodic coordinator alone is not an at-most-once certificate.
+      auto record = llvm::find(proofContext.mergedExecutors, direct.wrapper);
+      if (record != proofContext.mergedExecutors.end())
+        proof.periodicRecord = record - proofContext.mergedExecutors.begin();
     }
 
   auto periodicLocalBit = [&](uint32_t staticState,
@@ -680,7 +682,7 @@ FailureOr<bool> makeNativeEvalPlan(
       std::move(resolved->mergedPromotionRanges);
   SmallVector<uint32_t> periodicOwnerBits =
       std::move(resolved->periodicOwnerBits);
-  SmallVector<uint64_t> ownerSubsumptionMasks =
+  SmallVector<APInt> ownerSubsumptionMasks =
       std::move(resolved->ownerSubsumptionMasks);
   SmallVector<unsigned> periodicClosureRecords =
       std::move(resolved->periodicClosureRecords);
@@ -839,10 +841,12 @@ FailureOr<bool> makeNativeEvalPlan(
   constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
   SmallVector<std::string> promotionKernelReadyNames(mergedFragments.size());
   bool periodicPromotionComplete = false;
-  uint64_t periodicPromotionMask = 0;
-  uint64_t pathGuardedOwnerMask = 0;
+  unsigned ownerCount = std::max<size_t>(64, mergedFragments.size());
+  APInt allOwners = APInt::getAllOnes(ownerCount);
+  APInt periodicPromotionMask(ownerCount, 0);
+  APInt pathGuardedOwnerMask(ownerCount, 0);
   bool periodicEntryPromotionComplete = false;
-  uint64_t periodicEntryPromotionMask = 0;
+  APInt periodicEntryPromotionMask(ownerCount, 0);
 
   builder.setInsertionPointToStart(module.getBody());
   auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
@@ -926,25 +930,36 @@ FailureOr<bool> makeNativeEvalPlan(
       builder, location,
       LLVM::ZeroOp::create(builder, location, kernelLatchType));
 
-  uint64_t initialPromotionPendingMask = 0;
+  APInt initialPromotionPendingMask(ownerCount, 0);
   for (auto [index, executor] : llvm::enumerate(mergedTwoStateExecutors))
-    if (!executor.empty() && mergedFragments[index].bit < 64)
-      initialPromotionPendingMask |= uint64_t{1} << mergedFragments[index].bit;
+    if (!executor.empty())
+      initialPromotionPendingMask.setBit(mergedFragments[index].bit);
   builder.setInsertionPointToStart(module.getBody());
+  Type pendingMaskType =
+      LLVM::LLVMArrayType::get(i64, initialPromotionPendingMask.getNumWords());
   auto promotionPendingMask = LLVM::GlobalOp::create(
-      builder, location, i64, false, LLVM::Linkage::Internal,
-      promotionPendingMaskName,
-      builder.getI64IntegerAttr(initialPromotionPendingMask), 8);
+      builder, location, pendingMaskType, false, LLVM::Linkage::Internal,
+      promotionPendingMaskName, Attribute{}, 8);
+  Block *pendingInitializer = new Block;
+  promotionPendingMask.getInitializerRegion().push_back(pendingInitializer);
+  builder.setInsertionPointToStart(pendingInitializer);
+  Value pendingInitial =
+      LLVM::ZeroOp::create(builder, location, pendingMaskType);
+  for (unsigned word = 0; word != initialPromotionPendingMask.getNumWords();
+       ++word)
+    pendingInitial = LLVM::InsertValueOp::create(
+        builder, location, pendingInitial,
+        llvmConstant(builder, location, i64,
+                     ownerMaskWord(initialPromotionPendingMask, word)),
+        ArrayRef<int64_t>{word});
+  LLVM::ReturnOp::create(builder, location, pendingInitial);
 
   // Scan an outlined owner's exact canonical closure independently. A
   // dormant X-valued instance therefore cannot keep unrelated clock owners
   // on their four-state route.
   for (auto [index, twoStateExecutor] :
        llvm::enumerate(mergedTwoStateExecutors)) {
-    // The current generated dispatcher and promotion ABI use one ready
-    // word. Owners outside that word remain on the runtime/fallback route;
-    // never form a C++ shift for them while emitting the compact hot path.
-    if (twoStateExecutor.empty() || mergedFragments[index].bit >= 64)
+    if (twoStateExecutor.empty())
       continue;
     std::string readyName =
         (Twine("__obelisk_eval_kernel_promotion_ready_v1_") + Twine(index))
@@ -1025,14 +1040,17 @@ FailureOr<bool> makeNativeEvalPlan(
         builder, location,
         llvmConstant(builder, location, builder.getI8Type(), 1), latchAddress,
         1);
-    Value pendingAddress = LLVM::AddressOfOp::create(
-        builder, location, pointer, promotionPendingMask.getSymName());
+    Value pendingAddress = ownerWordAddress(
+        builder, location,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionPendingMask.getSymName()),
+        mergedFragments[index].bit / 64);
     Value pending =
         LLVM::LoadOp::create(builder, location, i64, pendingAddress, 8);
     Value clearedPending = arith::AndIOp::create(
         builder, location, pending,
         llvmConstant(builder, location, i64,
-                     ~(uint64_t{1} << mergedFragments[index].bit)));
+                     ~(uint64_t{1} << (mergedFragments[index].bit % 64))));
     LLVM::StoreOp::create(builder, location, clearedPending, pendingAddress, 8);
     LLVM::ReturnOp::create(
         builder, location,
@@ -1054,7 +1072,6 @@ FailureOr<bool> makeNativeEvalPlan(
   periodicPromotionMask = 0;
   for (unsigned recordIndex : periodicClosureRecords) {
     if (recordIndex >= mergedFragments.size() ||
-        mergedFragments[recordIndex].bit >= 64 ||
         mergedTwoStateExecutors[recordIndex].empty() ||
         promotionKernelReadyNames[recordIndex].empty()) {
       periodicPromotionComplete = false;
@@ -1068,23 +1085,21 @@ FailureOr<bool> makeNativeEvalPlan(
       // scan may contribute to the guard-free whole-closure certificate.
       if (!executor->hasAttr(sim::metadata::evalPathGuardedKnownPreserving))
         periodicPromotionComplete = false;
-      pathGuardedOwnerMask |= uint64_t{1} << mergedFragments[recordIndex].bit;
-      periodicPromotionMask |= uint64_t{1} << mergedFragments[recordIndex].bit;
+      pathGuardedOwnerMask.setBit(mergedFragments[recordIndex].bit);
+      periodicPromotionMask.setBit(mergedFragments[recordIndex].bit);
       continue;
     }
-    periodicPromotionMask |= uint64_t{1} << mergedFragments[recordIndex].bit;
+    periodicPromotionMask.setBit(mergedFragments[recordIndex].bit);
   }
   periodicEntryPromotionComplete = !periodicEntryRecords.empty();
   for (unsigned recordIndex : periodicEntryRecords) {
     if (recordIndex >= mergedFragments.size() ||
-        mergedFragments[recordIndex].bit >= 64 ||
         mergedTwoStateExecutors[recordIndex].empty() ||
         promotionKernelReadyNames[recordIndex].empty()) {
       periodicEntryPromotionComplete = false;
       break;
     }
-    periodicEntryPromotionMask |= uint64_t{1}
-                                  << mergedFragments[recordIndex].bit;
+    periodicEntryPromotionMask.setBit(mergedFragments[recordIndex].bit);
   }
   builder.setInsertionPointToEnd(module.getBody());
   auto periodicPromotionReady = LLVM::LLVMFuncOp::create(
@@ -1155,19 +1170,13 @@ FailureOr<bool> makeNativeEvalPlan(
                                      periodicPromotionComplete);
   Value periodicEntryKnown = llvmConstant(
       builder, location, builder.getI1Type(), periodicEntryPromotionComplete);
-  Value periodicPending;
-  if (periodicPromotionComplete || periodicEntryPromotionComplete)
-    periodicPending = LLVM::LoadOp::create(
-        builder, location, i64,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  promotionPendingMask.getSymName()),
-        8);
+  Value periodicPending = LLVM::AddressOfOp::create(
+      builder, location, pointer, promotionPendingMask.getSymName());
   if (periodicPromotionComplete) {
     Value noPeriodicPending = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq,
-        arith::AndIOp::create(
-            builder, location, periodicPending,
-            llvmConstant(builder, location, i64, periodicPromotionMask)),
+        maskedOwnerWords(builder, location, periodicPending,
+                         periodicPromotionMask),
         llvmConstant(builder, location, i64, 0));
     periodicKnown = arith::AndIOp::create(builder, location, periodicKnown,
                                           noPeriodicPending);
@@ -1175,10 +1184,8 @@ FailureOr<bool> makeNativeEvalPlan(
   if (periodicEntryPromotionComplete) {
     Value noEntryPending = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq,
-        arith::AndIOp::create(
-            builder, location, periodicPending,
-            llvmConstant(builder, location, i64,
-                         periodicEntryPromotionMask & ~pathGuardedOwnerMask)),
+        maskedOwnerWords(builder, location, periodicPending,
+                         periodicEntryPromotionMask & ~pathGuardedOwnerMask),
         llvmConstant(builder, location, i64, 0));
     periodicEntryKnown = arith::AndIOp::create(
         builder, location, periodicEntryKnown, noEntryPending);
@@ -1279,11 +1286,11 @@ FailureOr<bool> makeNativeEvalPlan(
       llvmConstant(builder, location, builder.getI1Type(), 1));
 
   builder.setInsertionPointToStart(scan);
-  Value pending = LLVM::LoadOp::create(
-      builder, location, i64,
+  Value pending = maskedOwnerWords(
+      builder, location,
       LLVM::AddressOfOp::create(builder, location, pointer,
                                 promotionPendingMask.getSymName()),
-      8);
+      allOwners);
   Value known =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                             pending, llvmConstant(builder, location, i64, 0));
@@ -1338,12 +1345,10 @@ FailureOr<bool> makeNativeEvalPlan(
       llvmConstant(builder, location, builder.getI8Type(), 0),
       llvmConstant(builder, location, i64, mergedFragments.size()),
       /*isVolatile=*/false);
-  LLVM::StoreOp::create(
-      builder, location,
-      llvmConstant(builder, location, i64, initialPromotionPendingMask),
-      LLVM::AddressOfOp::create(builder, location, pointer,
-                                promotionPendingMask.getSymName()),
-      8);
+  storeOwnerMask(builder, location,
+                 LLVM::AddressOfOp::create(builder, location, pointer,
+                                           promotionPendingMask.getSymName()),
+                 initialPromotionPendingMask);
   LLVM::StoreOp::create(builder, location,
                         llvmConstant(builder, location, builder.getI8Type(), 0),
                         LLVM::AddressOfOp::create(builder, location, pointer,
@@ -1619,7 +1624,7 @@ FailureOr<bool> makeNativeEvalPlan(
       if (direct.fusionGroup != UINT32_MAX)
         fusionMembers[direct.fusionGroup].push_back(index);
     }
-    llvm::StringMap<uint64_t> activeOwnerBits;
+    llvm::StringMap<APInt> activeOwnerBits;
     DenseMap<std::pair<uint64_t, uint32_t>, std::pair<uint32_t, uint32_t>>
         physicalSourceOwners;
     DenseMap<uint64_t, std::pair<uint32_t, uint32_t>> uniqueCodeUnitOwners;
@@ -1627,11 +1632,8 @@ FailureOr<bool> makeNativeEvalPlan(
     auto mapActiveBody = [&](StringRef name, uint32_t bit) -> LogicalResult {
       if (name.empty())
         return success();
-      if (bit >= 64)
-        return module.emitError("generated eval body owner exceeds direct "
-                                "ingress width: ")
-               << name;
-      activeOwnerBits[name] |= uint64_t{1} << bit;
+      activeOwnerBits.try_emplace(name, ownerCount, 0)
+          .first->second.setBit(bit);
       return success();
     };
     for (auto [recordIndex, executor] : llvm::enumerate(mergedExecutors)) {
@@ -1673,7 +1675,7 @@ FailureOr<bool> makeNativeEvalPlan(
     struct GeneratedTransition {
       LLVM::CallOp call;
       bool periodicTwoState = false;
-      uint64_t activeOwnerMask = 0;
+      APInt activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
     };
     SmallVector<GeneratedTransition> transitions;
@@ -1681,8 +1683,9 @@ FailureOr<bool> makeNativeEvalPlan(
       bool periodicTwoState =
           function->hasAttr("obelisk.eval.selected_two_state");
       auto activeOwner = activeOwnerBits.find(function.getSymName());
-      uint64_t activeOwnerMask =
-          activeOwner == activeOwnerBits.end() ? 0 : activeOwner->second;
+      APInt activeOwnerMask = activeOwner == activeOwnerBits.end()
+                                  ? APInt(ownerCount, 0)
+                                  : activeOwner->second;
       function.walk([&](LLVM::CallOp call) {
         if (!call.getCallee() ||
             *call.getCallee() != "obelisk_rt_v1_scheduler_static_transition")
@@ -1715,7 +1718,7 @@ FailureOr<bool> makeNativeEvalPlan(
     for (const GeneratedTransition &transition : transitions) {
       LLVM::CallOp call = transition.call;
       bool periodicTwoState = transition.periodicTwoState;
-      uint64_t activeOwnerMask = transition.activeOwnerMask;
+      const APInt &activeOwnerMask = transition.activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner =
           transition.physicalSourceOwner;
       ValueRange arguments = call.getArgOperands();
@@ -1769,7 +1772,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                 static_cast<unsigned>(entry.merged_bit)))
           continue;
         if (fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
-            entry.kernel >= clockKernels.size() || entry.merged_bit >= 64)
+            entry.kernel >= clockKernels.size())
           continue;
         if ((entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
           if (physicalSourceOwner) {
@@ -1779,9 +1782,7 @@ FailureOr<bool> makeNativeEvalPlan(
           } else if (activeOwnerMask == 0) {
             needsActiveSelfCheck = true;
             continue;
-          } else if (entry.merged_bit < 64 &&
-                     (activeOwnerMask & (uint64_t{1} << entry.merged_bit)) !=
-                         0) {
+          } else if (activeOwnerMask[entry.merged_bit]) {
             continue;
           }
         }
@@ -2827,7 +2828,6 @@ FailureOr<bool> makeNativeEvalPlan(
   builder.setInsertionPointToStart(runEntry);
   bool generatedEvalPlan =
       !clockKernels.empty() && !mergedFragments.empty() &&
-      mergedFragments.size() <= 64 &&
       mergedExecutors.size() == mergedFragments.size() &&
       mergedTwoStateExecutors.size() == mergedFragments.size() &&
       llvm::none_of(mergedExecutors,
@@ -2905,12 +2905,14 @@ FailureOr<bool> makeNativeEvalPlan(
     // groups remain distinct and merely OR into that shared model mask, so a
     // fragment reached by coincident clocks executes once before the common
     // NBA barrier.
-    SmallVector<SmallVector<std::pair<uint64_t, uint64_t>>> clockMasks(
-        periodicClocks.size(), SmallVector<std::pair<uint64_t, uint64_t>>(
-                                   clockKernels.size(), {0, 0}));
-    SmallVector<SmallVector<std::pair<uint64_t, uint64_t>>> clockDirectMasks(
-        periodicClocks.size(), SmallVector<std::pair<uint64_t, uint64_t>>(
-                                   clockKernels.size(), {0, 0}));
+    SmallVector<SmallVector<std::pair<APInt, APInt>>> clockMasks(
+        periodicClocks.size(),
+        SmallVector<std::pair<APInt, APInt>>(
+            clockKernels.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)}));
+    SmallVector<SmallVector<std::pair<APInt, APInt>>> clockDirectMasks(
+        periodicClocks.size(),
+        SmallVector<std::pair<APInt, APInt>>(
+            clockKernels.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)}));
     auto canDispatchClockOwnerDirectly = [&](uint32_t bit) {
       auto record = llvm::find_if(mergedFragments, [&](const auto &candidate) {
         return candidate.bit == bit;
@@ -2965,7 +2967,7 @@ FailureOr<bool> makeNativeEvalPlan(
       for (auto [fanoutIndex, fanout] : llvm::enumerate(fanoutEntries)) {
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
             !clockTouchesFanout(clock, fanout) ||
-            fanout.kernel >= clockKernels.size() || fanout.merged_bit >= 64)
+            fanout.kernel >= clockKernels.size())
           continue;
         if (llvm::any_of(
                 periodicAliases, [&](const NativePeriodicAlias &alias) {
@@ -2978,9 +2980,7 @@ FailureOr<bool> makeNativeEvalPlan(
         uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
                              ? fanout.merged_bit
                              : periodicOwnerBits[fanoutIndex];
-        if (owner >= 64)
-          continue;
-        uint64_t bit = uint64_t{1} << owner;
+        APInt bit = APInt::getOneBitSet(ownerCount, owner);
         auto &masks = canDispatchClockOwnerDirectly(owner)
                           ? clockDirectMasks[clockIndex][fanout.kernel]
                           : clockMasks[clockIndex][fanout.kernel];
@@ -3017,14 +3017,12 @@ FailureOr<bool> makeNativeEvalPlan(
              fanout.continuation == alias.forwardingContinuation) ||
             fanout.static_state != alias.targetStaticState ||
             !periodicBitTouchesFanout(targetLocalBit, fanout) ||
-            fanout.kernel >= clockKernels.size() || fanout.merged_bit >= 64)
+            fanout.kernel >= clockKernels.size())
           continue;
         uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
                              ? fanout.merged_bit
                              : periodicOwnerBits[fanoutIndex];
-        if (owner >= 64)
-          continue;
-        uint64_t bit = uint64_t{1} << owner;
+        APInt bit = APInt::getOneBitSet(ownerCount, owner);
         auto &masks = canDispatchClockOwnerDirectly(owner)
                           ? clockDirectMasks[clockIndex][fanout.kernel]
                           : clockMasks[clockIndex][fanout.kernel];
@@ -3101,14 +3099,13 @@ FailureOr<bool> makeNativeEvalPlan(
     run.getBody().push_back(step);
     run.getBody().push_back(dispatchStep);
     run.getBody().push_back(executeStep);
-    uint64_t directOwnerMask = 0;
+    APInt directOwnerMask(ownerCount, 0);
     for (const auto &clock : clockDirectMasks)
       for (const auto &[rising, falling] : clock)
         directOwnerMask |= rising | falling;
     SmallVector<unsigned> directOwnerRecords;
     for (auto [index, record] : llvm::enumerate(mergedFragments))
-      if (record.bit < 64 &&
-          (directOwnerMask & (uint64_t{1} << record.bit)) != 0)
+      if (directOwnerMask[record.bit])
         directOwnerRecords.push_back(static_cast<unsigned>(index));
     auto directOwnerNeedsStatusCheck = [&](unsigned recordIndex) {
       auto mayTerminate = [&](StringRef symbol) {
@@ -3194,27 +3191,20 @@ FailureOr<bool> makeNativeEvalPlan(
     // activation can run during bootstrap. Seed exactly those combinational
     // owners once; clocked and ordinary always-process bodies were already
     // evaluated by the generic time-zero drain and must not be replayed.
-    uint64_t initialMask = 0;
+    APInt initialMask(ownerCount, 0);
     for (auto [index, executor] : llvm::enumerate(mergedExecutors)) {
       auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
         return candidate.wrapper == executor &&
                candidate.actorSlot == mergedFragments[index].actor_slot &&
                candidate.continuation == mergedFragments[index].continuation;
       });
-      if (mergedFragments[index].bit < 64 && direct != directFragments.end() &&
-          direct->initialActivation)
-        initialMask |= uint64_t{1} << mergedFragments[index].bit;
+      if (direct != directFragments.end() && direct->initialActivation)
+        initialMask.setBit(mergedFragments[index].bit);
     }
     if (initialMask != 0) {
       Value ingress = LLVM::AddressOfOp::create(
           builder, location, pointer, clockKernels.front().ingressName);
-      Value pending = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-      LLVM::StoreOp::create(
-          builder, location,
-          arith::OrIOp::create(
-              builder, location, pending,
-              llvmConstant(builder, location, i64, initialMask)),
-          ingress, 8);
+      updateOwnerMask(builder, location, ingress, initialMask);
       // Re-establish combinational quiescence before the first generated
       // clock edge. The runtime cold prefix may end immediately after a
       // clocked reset continuation; deferring these level-sensitive owners
@@ -3261,7 +3251,8 @@ FailureOr<bool> makeNativeEvalPlan(
     LLVM::StoreOp::create(builder, location, step->getArgument(0),
                           preparedTimeAddress, 8);
     Value hasIngress = llvmConstant(builder, location, builder.getI1Type(), 0);
-    Value directReady = llvmConstant(builder, location, i64, 0);
+    SmallVector<Value> directReady(allOwners.getNumWords(),
+                                   llvmConstant(builder, location, i64, 0));
     Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
                                                  "__obelisk_state_value");
     auto recordClockCoverage = [&](const NativePeriodicClock &clock,
@@ -3411,60 +3402,61 @@ FailureOr<bool> makeNativeEvalPlan(
       }
 
       for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
-        auto [riseMask, fallMask] = clockMasks[clockIndex][kernelIndex];
-        if (riseMask == 0 && fallMask == 0)
-          continue;
-        Value edgeMask = arith::SelectOp::create(
-            builder, location, oldSet,
-            llvmConstant(builder, location, i64, fallMask),
-            llvmConstant(builder, location, i64, riseMask));
-        Value selected =
-            arith::SelectOp::create(builder, location, due, edgeMask,
-                                    llvmConstant(builder, location, i64, 0));
-        hasIngress = arith::OrIOp::create(
-            builder, location, hasIngress,
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                  selected,
-                                  llvmConstant(builder, location, i64, 0)));
-        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  kernel.ingressName);
-        Value pending =
-            LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-        LLVM::StoreOp::create(
-            builder, location,
-            arith::OrIOp::create(builder, location, pending, selected), ingress,
-            8);
+        const auto &[riseOwners, fallOwners] =
+            clockMasks[clockIndex][kernelIndex];
+        for (unsigned word = 0; word != allOwners.getNumWords(); ++word) {
+          uint64_t riseMask = ownerMaskWord(riseOwners, word);
+          uint64_t fallMask = ownerMaskWord(fallOwners, word);
+          if (riseMask == 0 && fallMask == 0)
+            continue;
+          Value edgeMask = arith::SelectOp::create(
+              builder, location, oldSet,
+              llvmConstant(builder, location, i64, fallMask),
+              llvmConstant(builder, location, i64, riseMask));
+          Value selected =
+              arith::SelectOp::create(builder, location, due, edgeMask,
+                                      llvmConstant(builder, location, i64, 0));
+          hasIngress = arith::OrIOp::create(
+              builder, location, hasIngress,
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                    selected,
+                                    llvmConstant(builder, location, i64, 0)));
+          Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                    kernel.ingressName);
+          updateOwnerWord(builder, location, ingress, word, selected);
+        }
       }
       for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
-        auto [riseMask, fallMask] = clockDirectMasks[clockIndex][kernelIndex];
-        if (riseMask == 0 && fallMask == 0)
-          continue;
-        Value edgeMask = arith::SelectOp::create(
-            builder, location, oldSet,
-            llvmConstant(builder, location, i64, fallMask),
-            llvmConstant(builder, location, i64, riseMask));
-        Value selected =
-            arith::SelectOp::create(builder, location, due, edgeMask,
-                                    llvmConstant(builder, location, i64, 0));
-        directReady =
-            arith::OrIOp::create(builder, location, directReady, selected);
-        // The straight-line prefix can stop at a cold checkpoint before its
-        // last owner. Keep unconsumed direct owners in the same-slot ready
-        // set so the callback's coordinator can finish that edge. Each owner
-        // clears only its own bit after execution below; an SSA-only mask
-        // silently drops the suffix when control leaves run_until.
-        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  kernel.ingressName);
-        Value pending = LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-        LLVM::StoreOp::create(
-            builder, location,
-            arith::OrIOp::create(builder, location, pending, selected), ingress,
-            8);
-        hasIngress = arith::OrIOp::create(
-            builder, location, hasIngress,
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                  selected,
-                                  llvmConstant(builder, location, i64, 0)));
+        const auto &[riseOwners, fallOwners] =
+            clockDirectMasks[clockIndex][kernelIndex];
+        for (unsigned word = 0; word != allOwners.getNumWords(); ++word) {
+          uint64_t riseMask = ownerMaskWord(riseOwners, word);
+          uint64_t fallMask = ownerMaskWord(fallOwners, word);
+          if (riseMask == 0 && fallMask == 0)
+            continue;
+          Value edgeMask = arith::SelectOp::create(
+              builder, location, oldSet,
+              llvmConstant(builder, location, i64, fallMask),
+              llvmConstant(builder, location, i64, riseMask));
+          Value selected =
+              arith::SelectOp::create(builder, location, due, edgeMask,
+                                      llvmConstant(builder, location, i64, 0));
+          directReady[word] = arith::OrIOp::create(builder, location,
+                                                   directReady[word], selected);
+          // The straight-line prefix can stop at a cold checkpoint before its
+          // last owner. Keep unconsumed direct owners in the same-slot ready
+          // set so the callback's coordinator can finish that edge. Each owner
+          // clears only its own bit after execution below; an SSA-only mask
+          // silently drops the suffix when control leaves run_until.
+          Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                    kernel.ingressName);
+          updateOwnerWord(builder, location, ingress, word, selected);
+          hasIngress = arith::OrIOp::create(
+              builder, location, hasIngress,
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                    selected,
+                                    llvmConstant(builder, location, i64, 0)));
+        }
       }
     }
     // A cold checkpoint can return with the clock high. Its next edge is
@@ -3558,7 +3550,7 @@ FailureOr<bool> makeNativeEvalPlan(
     // publications they produce. A bitset keeps coincident-clock dispatch
     // compact while ensuring a shared owner executes exactly once.
     auto directOwnerConsumedMask = [&](unsigned recordIndex) {
-      return (uint64_t{1} << mergedFragments[recordIndex].bit) |
+      return APInt::getOneBitSet(ownerCount, mergedFragments[recordIndex].bit) |
              ownerSubsumptionMasks[recordIndex];
     };
     if (canCompressSilentFall && !directOwnerRecords.empty()) {
@@ -3574,12 +3566,10 @@ FailureOr<bool> makeNativeEvalPlan(
       run.getBody().push_back(executeDirectHybrid);
       run.getBody().push_back(executeDirectTwoState);
       run.getBody().push_back(afterDirectSequence);
-      uint64_t directPromotionMask = 0;
+      APInt directPromotionMask(ownerCount, 0);
       for (unsigned recordIndex : directOwnerRecords)
-        if (!mergedTwoStateExecutors[recordIndex].empty() &&
-            mergedFragments[recordIndex].bit < 64)
-          directPromotionMask |= uint64_t{1}
-                                 << mergedFragments[recordIndex].bit;
+        if (!mergedTwoStateExecutors[recordIndex].empty())
+          directPromotionMask.setBit(mergedFragments[recordIndex].bit);
       // Select the steady variant before touching any transient promotion or
       // four-state bookkeeping. This keeps the post-promotion hot CFG
       // straight-line while preserving independent per-instance promotion
@@ -3589,17 +3579,12 @@ FailureOr<bool> makeNativeEvalPlan(
                                prepareDirectHybrid, ValueRange{});
       builder.setInsertionPointToStart(prepareDirectHybrid);
       resetStepFourStateTracking();
-      Value directPending = LLVM::LoadOp::create(
-          builder, location, i64,
-          LLVM::AddressOfOp::create(builder, location, pointer,
-                                    promotionPendingMaskName),
-          8);
+      Value directPending = LLVM::AddressOfOp::create(
+          builder, location, pointer, promotionPendingMaskName);
       Value directOwnersPromoted = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq,
-          arith::AndIOp::create(
-              builder, location, directPending,
-              llvmConstant(builder, location, i64,
-                           directPromotionMask & ~pathGuardedOwnerMask)),
+          maskedOwnerWords(builder, location, directPending,
+                           directPromotionMask & ~pathGuardedOwnerMask),
           llvmConstant(builder, location, i64, 0));
       cf::CondBranchOp::create(builder, location, directOwnersPromoted,
                                executeDirectTwoState, ValueRange{},
@@ -3610,18 +3595,11 @@ FailureOr<bool> makeNativeEvalPlan(
         // the whole initial mask after the sequence would erase that
         // required retrigger.  Clear only the owner just executed, exactly
         // where the bitset coordinator would consume it.
-        uint64_t inverse = ~directOwnerConsumedMask(recordIndex);
+        APInt consumed = directOwnerConsumedMask(recordIndex);
         for (const NativeEvalClockKernel &kernel : clockKernels) {
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
-          Value queued =
-              LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-          LLVM::StoreOp::create(
-              builder, location,
-              arith::AndIOp::create(
-                  builder, location, queued,
-                  llvmConstant(builder, location, i64, inverse)),
-              ingress, 8);
+          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true);
         }
       };
       builder.setInsertionPointToStart(executeDirectTwoState);
@@ -3760,9 +3738,10 @@ FailureOr<bool> makeNativeEvalPlan(
         const auto &record = mergedFragments[recordIndex];
         Value selected = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ne,
-            arith::AndIOp::create(builder, location, directReady,
-                                  llvmConstant(builder, location, i64,
-                                               uint64_t{1} << record.bit)),
+            arith::AndIOp::create(
+                builder, location, directReady[record.bit / 64],
+                llvmConstant(builder, location, i64,
+                             uint64_t{1} << (record.bit % 64))),
             llvmConstant(builder, location, i64, 0));
         Block *executeDirect = new Block;
         Block *nextDirect = new Block;
@@ -3858,18 +3837,11 @@ FailureOr<bool> makeNativeEvalPlan(
         // implicit combinational sensitivity cannot retrigger its currently
         // executing logical owner, and fused bodies commonly publish one of
         // their own roots.
-        uint64_t inverse = ~directOwnerConsumedMask(recordIndex);
+        APInt consumed = directOwnerConsumedMask(recordIndex);
         for (const NativeEvalClockKernel &kernel : clockKernels) {
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
-          Value queued =
-              LLVM::LoadOp::create(builder, location, i64, ingress, 8);
-          LLVM::StoreOp::create(
-              builder, location,
-              arith::AndIOp::create(
-                  builder, location, queued,
-                  llvmConstant(builder, location, i64, inverse)),
-              ingress, 8);
+          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true);
         }
         cf::BranchOp::create(builder, location, nextDirect);
         builder.setInsertionPointToStart(nextDirect);
@@ -4322,9 +4294,10 @@ FailureOr<bool> makeNativeEvalPlan(
   auto makeFastCoordinator =
       [&](StringRef functionName, ArrayRef<std::string> executors,
           bool promotedCoordinator, bool hybridCoordinator = false,
-          uint64_t allowedOwnerMask = UINT64_MAX,
-          uint64_t pendingGuardMask = UINT64_MAX, bool trustedTwoState = false,
-          bool guardPendingOwners = false, bool observePathFallback = false) {
+          std::optional<APInt> allowedOwnerMask = std::nullopt,
+          std::optional<APInt> pendingGuardMask = std::nullopt,
+          bool trustedTwoState = false, bool guardPendingOwners = false,
+          bool observePathFallback = false) {
         return materializeNativeEvalCoordinator(
             module, coordinatorPlan, functionName, executors,
             {/*promoted=*/promotedCoordinator,
@@ -4344,8 +4317,8 @@ FailureOr<bool> makeNativeEvalPlan(
       failed(makeFastCoordinator(evalTwoStateCoordinatorName, twoStateExecutors,
                                  /*promotedCoordinator=*/true,
                                  /*hybridCoordinator=*/false,
-                                 /*allowedOwnerMask=*/UINT64_MAX,
-                                 /*pendingGuardMask=*/UINT64_MAX,
+                                 /*allowedOwnerMask=*/std::nullopt,
+                                 /*pendingGuardMask=*/std::nullopt,
                                  /*trustedTwoState=*/false,
                                  /*guardPendingOwners=*/false,
                                  /*observePathFallback=*/
@@ -4366,7 +4339,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                   /*promotedCoordinator=*/true,
                                   /*hybridCoordinator=*/false,
                                   /*allowedOwnerMask=*/periodicPromotionMask,
-                                  /*pendingGuardMask=*/UINT64_MAX,
+                                  /*pendingGuardMask=*/std::nullopt,
                                   /*trustedTwoState=*/true,
                                   /*guardPendingOwners=*/false,
                                   // A promoted path-guarded owner uses its
@@ -4452,7 +4425,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                               kernel.ingressName);
     postNBAReady = arith::OrIOp::create(
         builder, location, postNBAReady,
-        LLVM::LoadOp::create(builder, location, i64, ingress, 8));
+        maskedOwnerWords(builder, location, ingress, allOwners));
     break;
   }
   Value postNBAEmpty = arith::CmpIOp::create(

@@ -8,13 +8,14 @@ barrier, including a second activation after the ready set became empty.
 import sys
 
 count = int(sys.argv[1])
+eval_mode = "--eval" in sys.argv[2:]
 assert count >= 65
 out = sys.stdout.write
 out(f'''!bit = !obelisk_sim.logic<1>
 !clockref = !obelisk_sim.ref<!bit>
 !data = !obelisk_sim.logic<{count}>
 !dataref = !obelisk_sim.ref<!data>
-module attributes {{llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = 2 : i32}} {{
+module attributes {{llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = {3 if eval_mode else 2} : i32}} {{
   obelisk_sim.design @multiword {{
     obelisk_sim.scope.decl 0 hierarchy "multiword"
     obelisk_sim.storage.decl 0 in 0 : !bit design
@@ -62,7 +63,7 @@ for i in range(count):
       %target = obelisk_sim.ref.extract %data from {i} : !dataref -> !clockref
       obelisk_sim.nba.enqueue %value to %target : (!bit, !clockref) -> ()
 ''')
-    if i == count - 1:
+    if i == count - 1 and not eval_mode:
         # A late Active actor must still see the OLD value of every bit.
         # A premature NBA barrier between ready words exposes a partial value.
         out(f'''      %old = obelisk_sim.ref.load %data : !dataref -> !data

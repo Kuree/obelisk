@@ -4072,12 +4072,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       }
       executors.insert(direct->wrapper);
     }
-    // The first serial coordinator represents ingress in one machine word.
-    // Wider generated ready sets remain a future ABI-compatible extension.
-    if (executors.empty() || executors.size() > 64) {
+    if (executors.empty()) {
       if (detailedTiming)
         llvm::errs() << "generated eval coordinator capacity rejected: owners="
-                     << executors.size() << " capacity=64\n";
+                     << executors.size() << '\n';
       evalScheduler = false;
     }
   }
