@@ -2470,10 +2470,14 @@ FailureOr<bool> makeNativeEvalPlan(
       // may survive here only in the retained cold callback copy. Route
       // materialization fractures checkpoint paths afterwards, and the closed
       // call-graph verifier rejects any runtime load still reachable hot.
+      // Helper selection also precedes that fracture: a selected ordinary
+      // helper may be reachable only from a cold successor of its caller.
       // Predicates themselves never get this deferral.
       const bool deferColdReference =
           owner && !owner->hasAttr("obelisk.eval.path_known_predicate") &&
-          (owner->hasAttr(sim::metadata::evalPathGuardedTwoState) ||
+          ((!owner->hasAttr("obelisk.eval.raw_captures") &&
+            owner->hasAttr("obelisk.eval.selected_two_state")) ||
+           owner->hasAttr(sim::metadata::evalPathGuardedTwoState) ||
            (owner->hasAttr("obelisk.eval.inherited_two_state_checkpoint") &&
             owner->hasAttr(sim::metadata::evalTwoStateVariant)));
       auto offsetCall = handle.getDefiningOp<LLVM::CallOp>();

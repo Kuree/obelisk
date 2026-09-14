@@ -21,6 +21,7 @@ module attributes {
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     obelisk_sim.code_unit.decl 2 in 0 always hierarchy "clock"
     obelisk_sim.code_unit.decl 3 in 0 always hierarchy "work"
+    obelisk_sim.code_unit.decl 4 in 0 function hierarchy "temporary_helper"
     obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %clock = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
@@ -75,7 +76,16 @@ module attributes {
       %slice = obelisk_sim.ref.extract %local from 4 : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %part = obelisk_sim.ref.load %slice : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.ref.store %part to %dst : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %helper_value = obelisk_sim.call @temporary_helper(%ctx) : (!obelisk_sim.context) -> !obelisk_sim.logic<16>
+      obelisk_sim.ref.store %helper_value to %data : !obelisk_sim.logic<16>, !obelisk_sim.ref<!obelisk_sim.logic<16>>
       cf.br ^wait
+    }
+    obelisk_sim.func private @temporary_helper(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> !obelisk_sim.logic<16>
+        attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
+      %default = obelisk_sim.logic.constant 0 : i16, 0 : i16 : !obelisk_sim.logic<16>
+      %local = obelisk_sim.ref.alloc %default : !obelisk_sim.logic<16> -> !obelisk_sim.ref<!obelisk_sim.logic<16>>
+      %value = obelisk_sim.ref.load %local : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.logic<16>
+      obelisk_sim.return %value : !obelisk_sim.logic<16>
     }
   }
 }
