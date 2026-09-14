@@ -1439,6 +1439,95 @@ struct ConstantDynamicInsert final : OpRewritePattern<DynamicOp> {
   }
 };
 
+// Expose fixed packed-local accesses to ordinary mem2reg. A sliced reference
+// otherwise keeps an entire automatic allocation alive even when no reference
+// escapes the function. Preserve whole-value dependencies for overlapping
+// slices; destructuring them into independent slots would be unsound.
+struct PromotePackedLocalView final : OpRewritePattern<SimRefExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimRefExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    auto allocation = op.getInput().getDefiningOp<SimRefAllocOp>();
+    if (!allocation || allocation.getPromotableSlots().empty())
+      return failure();
+    Type rootType = allocation.getResult().getType().getElementType();
+    Type partType = op.getResult().getType().getElementType();
+    auto rootScalar =
+        dyn_cast_or_null<LogicType>(getPackedScalarType(rootType));
+    auto partScalar =
+        dyn_cast_or_null<LogicType>(getPackedScalarType(partType));
+    if (!rootScalar || !partScalar || op.getLowBit() > rootScalar.getWidth() ||
+        partScalar.getWidth() > rootScalar.getWidth() - op.getLowBit())
+      return failure();
+    // No NBA, event control, ref argument, spawn, return, force or other
+    // reference escape may observe these read/modify/write intermediates.
+    SmallVector<Value> pending{allocation.getResult()};
+    llvm::SmallDenseSet<Value, 8> visited;
+    while (!pending.empty()) {
+      Value reference = pending.pop_back_val();
+      if (!visited.insert(reference).second)
+        continue;
+      for (Operation *user : reference.getUsers()) {
+        if (user->getParentOp() != allocation->getParentOp())
+          return failure();
+        if (auto view = dyn_cast<SimRefExtractOp>(user)) {
+          pending.push_back(view.getResult());
+          continue;
+        }
+        if (auto load = dyn_cast<SimRefLoadOp>(user)) {
+          if (load.getReference() == reference)
+            continue;
+        }
+        if (auto store = dyn_cast<SimRefStoreOp>(user)) {
+          if (store.getReference() == reference)
+            continue;
+        }
+        return failure();
+      }
+    }
+    if (!llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+          return isa<SimRefLoadOp, SimRefStoreOp>(user);
+        }))
+      return failure(); // Nested views are flattened by the adjacent pattern.
+    SmallVector<Operation *> users(op.getResult().getUsers());
+    for (Operation *user : users) {
+      rewriter.setInsertionPoint(user);
+      Value current = SimRefLoadOp::create(rewriter, user->getLoc(), rootType,
+                                           allocation.getResult());
+      if (rootType != rootScalar)
+        current = SimPackedFlattenOp::create(rewriter, user->getLoc(),
+                                             rootScalar, current);
+      if (auto load = dyn_cast<SimRefLoadOp>(user)) {
+        Value part = SimLogicExtractOp::create(
+            rewriter, load.getLoc(), partScalar, current, op.getLowBitAttr());
+        if (partType != partScalar)
+          part = SimPackedUnflattenOp::create(rewriter, load.getLoc(), partType,
+                                              part);
+        rewriter.replaceOp(load, part);
+      } else {
+        auto store = cast<SimRefStoreOp>(user);
+        Value part = store.getValue();
+        if (partType != partScalar)
+          part = SimPackedFlattenOp::create(rewriter, store.getLoc(),
+                                            partScalar, part);
+        Value merged =
+            SimLogicInsertOp::create(rewriter, store.getLoc(), rootScalar,
+                                     current, part, op.getLowBitAttr());
+        if (rootType != rootScalar)
+          merged = SimPackedUnflattenOp::create(rewriter, store.getLoc(),
+                                                rootType, merged);
+        auto replacement = SimRefStoreOp::create(
+            rewriter, store.getLoc(), merged, allocation.getResult());
+        replacement->setAttrs(store->getAttrs());
+        rewriter.eraseOp(store);
+      }
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct RemoveOverwrittenInsert final : OpRewritePattern<SimLogicInsertOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -2177,7 +2266,8 @@ void SimLogicInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimRefExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
-  results.add<SimplifyStaticExtract<SimRefExtractOp>>(context);
+  results.add<SimplifyStaticExtract<SimRefExtractOp>, PromotePackedLocalView>(
+      context);
 }
 
 void SimNetExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
