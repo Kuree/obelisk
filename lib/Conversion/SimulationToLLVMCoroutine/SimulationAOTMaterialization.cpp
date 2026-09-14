@@ -424,6 +424,8 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       locallyExecutesAtMostOnce(call.getOperation(), enclosing);
 
   auto fixedHandle = constantU64(arguments[5]);
+  if (!fixedHandle)
+    fixedHandle = resolveCFGConstantInteger(arguments[5]);
   obelisk_rt_stable_handle_v1 fixedDestination{};
   bool fixedRoot =
       fixedHandle && root != staticNBAPlan.siteRoots.end() &&
@@ -480,8 +482,8 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   bool independentSites =
       proof.uniqueSemanticRootSite ||
       (root != staticNBAPlan.siteRoots.end() &&
-       root->second < staticNBAPlan.disjointDynamicLanes.size() &&
-       staticNBAPlan.disjointDynamicLanes[root->second]);
+       root->second < staticNBAPlan.independentSiteWrites.size() &&
+       staticNBAPlan.independentSiteWrites[root->second]);
   proof.periodicWideLatch = commonDynamicRoot && independentSites &&
                             proof.exclusivePeriodicIngress &&
                             proof.siteExecutesAtMostOnce &&
@@ -2013,7 +2015,12 @@ FailureOr<bool> makeNativeEvalPlan(
                 : LLVM::ZExtOp::create(nbaBuilder, call.getLoc(), i64, staged)
                       .getResult();
         Value stagedUnknown64 = llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
-        if (!twoState) {
+        // A locally promoted executor can still contain four-state literals
+        // or values unrelated to its promoted inputs. The NBA ABI, not the
+        // enclosing function's domain, determines whether this value carries
+        // an unknown plane. ImmediateNBAConversion supplies null only for a
+        // genuinely two-state value.
+        if (!arguments[8].getDefiningOp<LLVM::ZeroOp>()) {
           Value stagedUnknown = LLVM::LoadOp::create(
               nbaBuilder, call.getLoc(), valueType, arguments[8], 1);
           stagedUnknown64 =
@@ -2622,7 +2629,7 @@ FailureOr<bool> makeNativeEvalPlan(
         staticNBAPlan.roots.size());
     for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
       if ((!dynamicRoots.insert(entry.rootIndex).second &&
-           !staticNBAPlan.disjointDynamicLanes[entry.rootIndex]) ||
+           !staticNBAPlan.independentSiteWrites[entry.rootIndex]) ||
           !dynamicOrigins[entry.rootIndex]
                .insert(staticNBAPlan.siteSemanticOrigins.lookup(entry.site))
                .second)
@@ -4679,8 +4686,11 @@ FailureOr<bool> makeNativeEvalPlan(
       auto commitAlignedPlane = [&](Value plane, StringRef stagedName,
                                     Value oldField) {
         Value address = planeAddress(plane);
-        Value old =
+        auto old =
             LLVM::LoadOp::create(builder, location, alignedType, address, 1);
+        if (plane == stateUnknown)
+          old->setAttr("obelisk.eval.preserve_nba_unknown",
+                       builder.getUnitAttr());
         LLVM::StoreOp::create(
             builder, location,
             resizeNativeInteger(builder, location, old, cast<IntegerType>(i64)),
@@ -4691,10 +4701,13 @@ FailureOr<bool> makeNativeEvalPlan(
             8);
         Value staged =
             resizeNativeInteger(builder, location, staged64, alignedType);
-        LLVM::StoreOp::create(
+        auto store = LLVM::StoreOp::create(
             builder, location,
             arith::SelectOp::create(builder, location, active, staged, old),
             address, 1);
+        if (plane == stateUnknown)
+          store->setAttr("obelisk.eval.preserve_nba_unknown",
+                         builder.getUnitAttr());
       };
       commitAlignedPlane(stateValue, entry.valueName, oldFieldValue);
       if (!forcedTwoStateEval)
@@ -4776,8 +4789,10 @@ FailureOr<bool> makeNativeEvalPlan(
                           valueAddress, 1);
     if (!forcedTwoStateEval) {
       Value unknownAddress = planeAddress(stateUnknown);
-      Value oldUnknown = LLVM::LoadOp::create(builder, location, windowType,
-                                              unknownAddress, 1);
+      auto oldUnknown = LLVM::LoadOp::create(builder, location, windowType,
+                                             unknownAddress, 1);
+      oldUnknown->setAttr("obelisk.eval.preserve_nba_unknown",
+                          builder.getUnitAttr());
       Value oldSelectedUnknown = arith::AndIOp::create(
           builder, location,
           arith::ShRUIOp::create(builder, location, oldUnknown, windowShift),
@@ -4814,10 +4829,13 @@ FailureOr<bool> makeNativeEvalPlan(
                                                       oldUnknown,
                                                       stagedUnknown),
                                 shiftedMask));
-      LLVM::StoreOp::create(builder, location,
-                            arith::SelectOp::create(builder, location, active,
-                                                    mergedUnknown, oldUnknown),
-                            unknownAddress, 1);
+      auto store = LLVM::StoreOp::create(
+          builder, location,
+          arith::SelectOp::create(builder, location, active, mergedUnknown,
+                                  oldUnknown),
+          unknownAddress, 1);
+      store->setAttr("obelisk.eval.preserve_nba_unknown",
+                     builder.getUnitAttr());
     } else
       LLVM::StoreOp::create(builder, location,
                             llvmConstant(builder, location, i64, 0),

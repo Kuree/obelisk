@@ -4,46 +4,42 @@
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: %python %S/Inputs/check-fixed-nba-lanes.py %s obelisk-opt
+// RUN: %python %S/Inputs/check-exclusive-nba-paths.py %s obelisk-opt %llvm_dist %native_support
 
-// Three fixed packed words share a 96-bit root. Distinct source
-// sites must not disable Eval when their exact physical slices are disjoint.
-// Each keeps its own pending slot; samples straddle the first clock edge.
-// PLAN-COUNT-3: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// Two 34-bit words have alternative writes in exclusive CFG arms.
+// Verify non-byte-aligned / cross-word slots and four-state publication. On
+// the second edge only the OTHER two slots are valid; stale first-edge values
+// must not be replayed over them. This is a pass-level executable MLIR test.
+// PLAN-COUNT-4: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// CHECK: 000000000000000000000000
-// CHECK-NEXT: 000000110000002200000033
+// CHECK: 000000011 000000022
+// CHECK-NEXT: 00000005X 000000000
 
-!word = !obelisk_sim.logic<32>
-!words = !obelisk_sim.packed_array<2 : 0 x !word>
+!word = !obelisk_sim.logic<34>
+!words = !obelisk_sim.unpacked_array<0 : 1 x !word>
 !clockref = !obelisk_sim.ref<!obelisk_sim.logic<1>>
 !dataref = !obelisk_sim.ref<!words>
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = 3 : i32} {
-  obelisk_sim.design @fixed_words {
-    obelisk_sim.scope.decl 0 hierarchy "fixed_words"
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "fixed_words.root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "fixed_words.clock"
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "fixed_words.update"
-    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "fixed_words.check"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design hierarchy "fixed_words.clk"
-    obelisk_sim.storage.decl 1 in 0 : !words design hierarchy "fixed_words.data"
-
+  obelisk_sim.design @exclusive_words {
+    obelisk_sim.scope.decl 0 hierarchy "exclusive_words"
+    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "exclusive_words.root"
+    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "exclusive_words.clock"
+    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "exclusive_words.update"
+    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "exclusive_words.check"
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design hierarchy "exclusive_words.clk"
+    obelisk_sim.storage.decl 1 in 0 : !words design hierarchy "exclusive_words.data"
     obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %clk = obelisk_sim.context.storage %ctx[0] : !clockref
       %data = obelisk_sim.context.storage %ctx[1] : !dataref
       %zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 : !obelisk_sim.logic<1>
       obelisk_sim.ref.store %zero to %clk : !obelisk_sim.logic<1>, !clockref
-      %zero96 = obelisk_sim.logic.constant 0 : i96, 0 : i96 : !obelisk_sim.logic<96>
-      %packed = obelisk_sim.packed.unflatten %zero96 : (!obelisk_sim.logic<96>) -> !words
-      obelisk_sim.ref.store %packed to %data : !words, !dataref
       %a = obelisk_sim.spawn @clock(%ctx, %clk) : !obelisk_sim.context, !clockref -> !obelisk_sim.process
       %b = obelisk_sim.spawn @update(%ctx, %clk, %data) : !obelisk_sim.context, !clockref, !dataref -> !obelisk_sim.process
       %c = obelisk_sim.spawn @check(%ctx, %data) : !obelisk_sim.context, !dataref -> !obelisk_sim.process
       obelisk_sim.return
     }
-
     obelisk_sim.func @clock(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %clk: !clockref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
       cf.br ^wait
     ^wait:
@@ -55,7 +51,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       obelisk_sim.ref.store %new to %clk : !obelisk_sim.logic<1>, !clockref
       cf.br ^wait
     }
-
     obelisk_sim.func @update(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %clk: !clockref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %data: !dataref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
@@ -63,31 +58,39 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     ^update:
       %a = obelisk_sim.ref.subelement %data[[0]] : !dataref -> !obelisk_sim.ref<!word>
       %b = obelisk_sim.ref.subelement %data[[1]] : !dataref -> !obelisk_sim.ref<!word>
-      %c = obelisk_sim.ref.subelement %data[[2]] : !dataref -> !obelisk_sim.ref<!word>
-      %x = obelisk_sim.logic.constant 17 : i32, 0 : i32 : !word
-      %y = obelisk_sim.logic.constant 34 : i32, 0 : i32 : !word
-      %z = obelisk_sim.logic.constant 51 : i32, 0 : i32 : !word
+      %clock = obelisk_sim.ref.load %clk : !clockref -> !obelisk_sim.logic<1>
+      %take = obelisk_sim.logic.is_true %clock : !obelisk_sim.logic<1>
+      cf.cond_br %take, ^first, ^second
+    ^first:
+      %x = obelisk_sim.logic.constant 17 : i34, 0 : i34 : !word
+      %y = obelisk_sim.logic.constant 34 : i34, 0 : i34 : !word
       obelisk_sim.nba.enqueue %x to %a : (!word, !obelisk_sim.ref<!word>) -> ()
       obelisk_sim.nba.enqueue %y to %b : (!word, !obelisk_sim.ref<!word>) -> ()
-      obelisk_sim.nba.enqueue %z to %c : (!word, !obelisk_sim.ref<!word>) -> ()
-      cf.br ^wait
+      cf.br ^wait // first arm exits
+    ^second:
+      %z = obelisk_sim.logic.constant 85 : i34, 15 : i34 : !word
+      %zero = obelisk_sim.logic.constant 0 : i34, 0 : i34 : !word
+      obelisk_sim.nba.enqueue %z to %a : (!word, !obelisk_sim.ref<!word>) -> ()
+      obelisk_sim.nba.enqueue %zero to %b : (!word, !obelisk_sim.ref<!word>) -> ()
+      cf.br ^wait // second arm exits
     }
-
     obelisk_sim.func @check(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !dataref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^before
-    ^before:
-      %first = obelisk_sim.ref.load %data : !dataref -> !words
-      %firstBits = obelisk_sim.packed.flatten %first : (!words) -> !obelisk_sim.logic<96>
-      %format = obelisk_sim.bytes.constant "%024h"
+      %delay = obelisk_sim.time.constant 3
+      obelisk_sim.suspend.delay %delay to ^first
+    ^first:
+      %a = obelisk_sim.ref.subelement %data[[0]] : !dataref -> !obelisk_sim.ref<!word>
+      %b = obelisk_sim.ref.subelement %data[[1]] : !dataref -> !obelisk_sim.ref<!word>
+      %x = obelisk_sim.ref.load %a : !obelisk_sim.ref<!word> -> !word
+      %y = obelisk_sim.ref.load %b : !obelisk_sim.ref<!word> -> !word
+      %format = obelisk_sim.bytes.constant "%09h %09h"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%format, %firstBits) newline = true radix = 10 flags = [0, 0] : !obelisk_sim.bytes, !obelisk_sim.logic<96>
+      obelisk_sim.display %ctx to %stdout(%format, %x, %y) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, !word, !word
       %two = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %two to ^after
-    ^after:
-      %last = obelisk_sim.ref.load %data : !dataref -> !words
-      %lastBits = obelisk_sim.packed.flatten %last : (!words) -> !obelisk_sim.logic<96>
-      obelisk_sim.display %ctx to %stdout(%format, %lastBits) newline = true radix = 10 flags = [0, 0] : !obelisk_sim.bytes, !obelisk_sim.logic<96>
+      obelisk_sim.suspend.delay %two to ^second
+    ^second:
+      %z = obelisk_sim.ref.load %a : !obelisk_sim.ref<!word> -> !word
+      %w = obelisk_sim.ref.load %b : !obelisk_sim.ref<!word> -> !word
+      obelisk_sim.display %ctx to %stdout(%format, %z, %w) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, !word, !word
       %status = arith.constant 0 : i32
       obelisk_sim.finish %ctx, %status
       obelisk_sim.return

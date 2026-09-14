@@ -3338,7 +3338,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             return;
           bool overlappingSites =
               semanticOriginsByRoot[root->second].size() != 1 &&
-              !staticNBAPlan.disjointDynamicLanes[root->second];
+              !staticNBAPlan.independentSiteWrites[root->second];
           bool repeatedSite = !siteExecutesAtMostOnce(enqueue);
           requiresRuntimeNBA |= overlappingSites || repeatedSite;
           if (detailedTiming && (overlappingSites || repeatedSite))
@@ -4074,8 +4074,12 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     }
     // The first serial coordinator represents ingress in one machine word.
     // Wider generated ready sets remain a future ABI-compatible extension.
-    if (executors.empty() || executors.size() > 64)
+    if (executors.empty() || executors.size() > 64) {
+      if (detailedTiming)
+        llvm::errs() << "generated eval coordinator capacity rejected: owners="
+                     << executors.size() << " capacity=64\n";
       evalScheduler = false;
+    }
   }
 
   if (evalScheduler) {
@@ -5708,6 +5712,13 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
     return false;
   };
   fastClone.walk([&](Operation *operation) {
+    // Fixed-root promotion evidence says nothing about a per-site latch's
+    // selected destination. It can overwrite previously unknown bits, even
+    // when its new value is known and the fixed dirty bitmap is empty. Keep
+    // both planes for these publications until a separate destination proof
+    // exists; preserving only the value would leave stale canonical X bits.
+    if (operation->hasAttr("obelisk.eval.preserve_nba_unknown"))
+      return;
     if (auto load = dyn_cast<LLVM::LoadOp>(operation);
         load && isUnknownPlaneAddress(load.getAddr()))
       canonicalUnknownLoads.push_back(load);
@@ -5724,6 +5735,10 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   }
   for (LLVM::StoreOp store : canonicalUnknownStores)
     store.erase();
+  for (LLVM::LLVMFuncOp function : {source, clone, fastClone})
+    function.walk([](Operation *operation) {
+      operation->removeAttr("obelisk.eval.preserve_nba_unknown");
+    });
 
   // Specialization is carried entirely by call-site intent.  Validate and
   // consume the phase-local markers so a renamed or newly outlined

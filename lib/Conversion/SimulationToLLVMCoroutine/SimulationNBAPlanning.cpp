@@ -360,6 +360,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     uint64_t width;
   };
   SmallVector<DenseMap<uint64_t, Lane>> lanes(plan.roots.size());
+  DenseMap<uint64_t, SmallVector<sim::SimNBAEnqueueOp>> originEnqueues;
   SmallVector<bool> conflictingLanes(plan.roots.size(), false);
   module.walk([&](sim::SimNBAEnqueueOp enqueue) {
     auto function = enqueue->getParentOfType<sim::SimFuncOp>();
@@ -380,6 +381,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     Value reference = enqueue.getDestination();
     auto width = nativeStateWidth(enqueue.getValue().getType());
     uint64_t origin = plan.siteSemanticOrigins.lookup(site.getId());
+    originEnqueues[origin].push_back(enqueue);
     auto recordLane = [&](Lane lane) {
       auto [previous, inserted] = lanes[rootIndex].try_emplace(origin, lane);
       if (!inserted && (previous->second.stride != lane.stride ||
@@ -419,7 +421,39 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
       return reject();
     recordLane({*stride, low, *width});
   });
-  plan.disjointDynamicLanes.assign(plan.roots.size(), false);
+  // Overlapping slots are also independent if their statements cannot both
+  // execute. Require one occurrence of each origin in the same outlined
+  // activation and no CFG path in either direction. Helpers, separate owners,
+  // compiler copies, nested regions and repeated sites remain conservative.
+  // The later periodic-ingress and at-most-once proofs still apply: this only
+  // proves mutual exclusion within one activation (LRM 4.6 and 10.4.2).
+  auto mutuallyExclusive = [&](uint64_t left, uint64_t right) {
+    ArrayRef<sim::SimNBAEnqueueOp> a = originEnqueues[left];
+    ArrayRef<sim::SimNBAEnqueueOp> b = originEnqueues[right];
+    if (a.size() != 1 || b.size() != 1)
+      return false;
+    auto function = a.front()->getParentOfType<sim::SimFuncOp>();
+    if (!function || function != b.front()->getParentOfType<sim::SimFuncOp>() ||
+        a.front()->getParentRegion() != &function.getBody() ||
+        b.front()->getParentRegion() != &function.getBody())
+      return false;
+    auto reaches = [](Block *from, Block *to) {
+      SmallVector<Block *> pending{from};
+      llvm::SmallPtrSet<Block *, 16> seen;
+      while (!pending.empty()) {
+        Block *current = pending.pop_back_val();
+        if (current == to)
+          return true;
+        if (!seen.insert(current).second)
+          continue;
+        llvm::append_range(pending, current->getSuccessors());
+      }
+      return false;
+    };
+    return !reaches(a.front()->getBlock(), b.front()->getBlock()) &&
+           !reaches(b.front()->getBlock(), a.front()->getBlock());
+  };
+  plan.independentSiteWrites.assign(plan.roots.size(), false);
   for (uint32_t root = 0; root != plan.roots.size(); ++root) {
     if (conflictingLanes[root] || lanes[root].size() < 2)
       continue;
@@ -436,10 +470,11 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
           continue;
         const Lane &a = left.second;
         const Lane &b = right.second;
-        disjoint &= a.stride == b.stride &&
-                    (a.low + a.width <= b.low || b.low + b.width <= a.low);
+        disjoint &= (a.stride == b.stride &&
+                     (a.low + a.width <= b.low || b.low + b.width <= a.low)) ||
+                    mutuallyExclusive(left.first, right.first);
       }
-    plan.disjointDynamicLanes[root] = disjoint;
+    plan.independentSiteWrites[root] = disjoint;
   }
 
   // Prove the subset for which a dirty bit is also a complete generated-stage

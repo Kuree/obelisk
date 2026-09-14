@@ -31,11 +31,11 @@ struct NativeStaticNBAPlan {
   // source semantic site so mutually exclusive compiler clones do not look
   // like independently ordered NBA statements.
   llvm::DenseMap<uint64_t, uint64_t> siteSemanticOrigins;
-  // Distinct semantic sites select disjoint fixed root slices or fixed lanes
-  // of dynamically selected array elements.
-  // Independent indices cannot alias these lanes. Each site still needs its
+  // Distinct semantic sites select disjoint fixed root slices / array lanes,
+  // or lie on mutually exclusive paths of the same outlined activation.
+  // Independent indices cannot alias disjoint lanes. Each site still needs its
   // own once-per-periodic-activation proof and its own generated latch.
-  llvm::SmallVector<bool> disjointDynamicLanes;
+  llvm::SmallVector<bool> independentSiteWrites;
   llvm::SmallVector<std::string> generatedAccumulators;
   // Canonical state-plane bit offset for each root. This is revision-coupled
   // lowering metadata, not a second state allocation.
