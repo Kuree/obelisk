@@ -481,8 +481,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         if (isDirectOutput(operation))
           return;
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimProgramExitOp, sim::SimErrorOp,
-                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+                sim::SimProgramExitOp, sim::SimErrorOp, sim::SimStatusCheckOp,
                 sim::SimDisplayOp, sim::SimSampledReadOp,
                 sim::SimSampledHistoryOp>(operation))
           coldCheckpointBlocks.insert(operation->getBlock());
@@ -511,8 +510,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           return;
         }
         if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimProgramExitOp, sim::SimErrorOp,
-                sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
+                sim::SimProgramExitOp, sim::SimErrorOp, sim::SimStatusCheckOp,
                 sim::SimDisplayOp, sim::SimSampledReadOp,
                 sim::SimSampledHistoryOp>(operation)) {
           // These operations are cold checkpoint exits.  They do not create
@@ -945,6 +943,36 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return obelisk_rt_stable_handle_decode(entry.second, &decoded) &&
                stateLayout.directHandles.contains(decoded.id);
       });
+  // A dry-run predicate may evaluate a value helper only when its complete
+  // body is context-free. In particular, an empty effect summary alone is
+  // insufficient: reject state reads, foreign calls, allocation and recursive
+  // cycles. Such calls need neither a state overlay nor a runtime checkpoint.
+  DenseMap<Operation *, bool> pureValueHelpers;
+  auto isPureValueHelper = [&](auto &&self, sim::SimFuncOp function) -> bool {
+    if (!function || function.isExternal())
+      return false;
+    auto [cached, inserted] =
+        pureValueHelpers.try_emplace(function.getOperation(), false);
+    if (!inserted)
+      return cached->second;
+    bool pure = function
+                    .walk([&](Operation *operation) {
+                      if (operation == function.getOperation() ||
+                          isa<sim::SimReturnOp>(operation))
+                        return WalkResult::advance();
+                      if (auto call = dyn_cast<sim::SimCallOp>(operation))
+                        return self(self, design.lookupSymbol<sim::SimFuncOp>(
+                                              call.getCallee()))
+                                   ? WalkResult::advance()
+                                   : WalkResult::interrupt();
+                      return isMemoryEffectFree(operation)
+                                 ? WalkResult::advance()
+                                 : WalkResult::interrupt();
+                    })
+                    .wasInterrupted() == false;
+    pureValueHelpers[function.getOperation()] = pure;
+    return pure;
+  };
   auto materializePathKnownProbe =
       [&](sim::SimFuncOp source, StringRef name, uint64_t codeUnit,
           bool trackKnownState = true) -> FailureOr<sim::SimFuncOp> {
@@ -963,8 +991,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
               sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-              sim::SimSampledReadOp, sim::SimSampledHistoryOp>(operation))
+              sim::SimStatusCheckOp, sim::SimSampledReadOp,
+              sim::SimSampledHistoryOp>(operation))
         coldCheckpointBlocks.insert(operation->getBlock());
     });
     if (coldCheckpointBlocks.contains(&source.getBody().front())) {
@@ -1216,6 +1244,12 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
               sim::SimProgramExitOp, sim::SimTerminationRequestedOp,
               sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
         return;
+      if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
+        if (isPureValueHelper(
+                isPureValueHelper,
+                design.lookupSymbol<sim::SimFuncOp>(call.getCallee())))
+          return;
+      }
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation)) {
         traceRejection("unsupported effect", operation);
         supported = false;
@@ -1366,8 +1400,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     probe.walk([&](Operation *operation) {
       if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
               sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
-              sim::SimSampledReadOp, sim::SimSampledHistoryOp>(operation)) {
+              sim::SimStatusCheckOp, sim::SimSampledReadOp,
+              sim::SimSampledHistoryOp>(operation)) {
         Block *block = operation->getBlock();
         checkpoints.try_emplace(block, operation->getLoc());
       }
@@ -1456,8 +1490,15 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       }
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
-              sim::SimNBAEnqueueOp, cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimNBAEnqueueOp, sim::SimTerminationRequestedOp,
+              cf::BranchOp, cf::CondBranchOp>(operation))
         return;
+      if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
+        if (isPureValueHelper(
+                isPureValueHelper,
+                design.lookupSymbol<sim::SimFuncOp>(call.getCallee())))
+          return;
+      }
       if (isa<sim::SimCallOp>(operation) || !isMemoryEffectFree(operation))
         probeSupported = false;
     });
@@ -4676,6 +4717,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           if (std::optional<StringRef> callee = call.getCallee();
               callee && callee->starts_with("obelisk_rt_") &&
               *callee != "obelisk_rt_v1_coverage_point_hit" &&
+              *callee != "obelisk_rt_v1_scheduler_termination_requested" &&
+              *callee != "obelisk_rt_v1_scheduler_time" &&
               *callee != "obelisk_rt_v1_eval_display")
             checkpointBlocks.try_emplace(call->getBlock(), call.getOperation());
         });
