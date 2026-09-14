@@ -262,6 +262,7 @@ struct AOTTestState {
   using RunHook = obelisk_rt_status (*)(AOTTestState *, obelisk_rt_context *);
 
   std::array<obelisk_rt_process_instance_v1 *, 2> actors{};
+  std::vector<obelisk_rt_native_schedule_node> testNodes;
   bool requestFallback = false;
   bool corruptSnapshot = false;
   uint32_t observedSpecializationFast = UINT32_MAX;
@@ -492,8 +493,11 @@ obelisk_rt_status aotRunOneNodeThenFallback(void *opaque,
   return status == OBELISK_RT_OK ? OBELISK_RT_TIER_UNAVAILABLE : status;
 }
 
-obelisk_rt_status runGroupedStaticActivationNodes(AOTTestState *,
+obelisk_rt_status runGroupedStaticActivationNodes(AOTTestState *state,
                                                   obelisk_rt_context *context) {
+  if (!state->testNodes.empty())
+    return obelisk_rt_v1_scheduler_run_aot_nodes(
+        context, state->testNodes.data(), state->testNodes.size());
   constexpr obelisk_rt_native_schedule_node nodes[] = {
       {0, 0, UINT32_MAX},
       {1, 0, UINT32_MAX},
@@ -780,12 +784,18 @@ groupedStaticActivationExecute(obelisk_rt_process_instance_v1 *instance) {
   if (instance->continuation != 0) {
     schedulerOrder.push_back(id);
     if (id == 90) {
-      const uint64_t nodes[] = {uint64_t{1} << 3};
+      std::vector<uint64_t> nodes(
+          instance->context->nativeScheduleReadyNodes.wordCount());
+      const auto &inventory = instance->context->nativeScheduleNodes;
+      for (uint32_t node = 0; node < inventory.size(); ++node)
+        if (inventory[node].actor_slot == 1 &&
+            inventory[node].continuation == 1)
+          nodes[node / 64] |= uint64_t{1} << (node % 64);
       // The second publication must leave one ready bit and one resume.
-      obelisk_rt_v1_scheduler_activate_static_nodes(instance->context, nodes,
-                                                    std::size(nodes));
-      obelisk_rt_v1_scheduler_activate_static_nodes(instance->context, nodes,
-                                                    std::size(nodes));
+      obelisk_rt_v1_scheduler_activate_static_nodes(instance->context,
+                                                    nodes.data(), nodes.size());
+      obelisk_rt_v1_scheduler_activate_static_nodes(instance->context,
+                                                    nodes.data(), nodes.size());
     } else {
       ++schedulerResumeCount;
     }
@@ -3308,8 +3318,7 @@ TEST(Scheduler, AOTStaticTransitionCanSuppressTheExecutingWait) {
       obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
       OBELISK_RT_OK);
   EXPECT_EQ(schedulerSelfTriggerCount, 1u);
-  EXPECT_TRUE(context->nativeScheduleReadyNodes.empty() ||
-              context->nativeScheduleReadyNodes.front() == 0);
+  EXPECT_EQ(context->nativeScheduleReadyNodes.findFirst(), UINT32_MAX);
   schedulerSelfTriggerStaticState = 0;
   obelisk_rt_v1_context_destroy(context);
 }
@@ -3358,7 +3367,7 @@ TEST(Scheduler, AOTDirectFragmentRetainsSelfRetrigger) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
   ASSERT_EQ(context->scheduledProcesses.size(), 1u);
   EXPECT_TRUE(context->scheduledProcesses.front().signalTriggered);
-  EXPECT_NE(context->nativeScheduleReadyNodes.front() & (uint64_t{1} << 1), 0u);
+  EXPECT_TRUE(context->nativeScheduleReadyNodes.test(1));
   schedulerSelfTriggerStaticState = 0;
   obelisk_rt_v1_context_destroy(context);
 }
@@ -4080,6 +4089,71 @@ TEST(Scheduler, AOTGroupedStaticActivationSuppressesDuplicateWake) {
   EXPECT_EQ(state.actors[1], nullptr);
   obelisk_rt_v1_context_destroy(context);
 }
+
+class SchedulerReadySet : public testing::TestWithParam<uint32_t> {};
+
+TEST_P(SchedulerReadySet, SparseCrossWordActivationAndDuplicateSuppression) {
+  for (bool backward : {false, true}) {
+    SCOPED_TRACE(backward);
+    AOTTestState state;
+    state.runHook = runGroupedStaticActivationNodes;
+    uint32_t count = GetParam();
+    // Unreached continuations space the two live actors across word and
+    // summary boundaries without thousands of unrelated actor executions.
+    for (uint32_t node = 0; node < count; ++node)
+      state.testNodes.push_back({0, node + 2, UINT32_MAX});
+    state.testNodes[1] = {0, 0, UINT32_MAX};
+    state.testNodes[2] = {1, 0, UINT32_MAX};
+    state.testNodes[backward ? count - 1 : 0] = {0, 1, UINT32_MAX};
+    state.testNodes[backward ? 0 : count - 1] = {1, 1, UINT32_MAX};
+    auto plan = makeAOTPlan(state);
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                 OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+                 OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+                 OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+                 OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+    obelisk_rt_execution_descriptor_v1 execution{};
+    execution.version = OBELISK_RT_VERSION;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
+    SchedulerFixture source(90), target(91);
+    std::vector<uint32_t> continuations;
+    for (uint32_t continuation = 0; continuation < count + 2; ++continuation)
+      continuations.push_back(continuation);
+    source.layout.continuation_count = continuations.size();
+    source.layout.continuations = continuations.data();
+    source.layout.checksum = checksum(source.layout);
+    for (auto *fixture : {&source, &target}) {
+      fixture->descriptor.execution = &execution;
+      fixture->descriptor.native_execute = groupedStaticActivationExecute;
+    }
+    schedulerOrder.clear();
+    schedulerResumeCount = 0;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(source), 0, 0, 0, nullptr,
+                  nullptr, 0, nullptr, 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(target), 0, 1, 0, nullptr,
+                  nullptr, 0, nullptr, 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+    EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{90, 91}));
+    EXPECT_EQ(schedulerResumeCount, 1u);
+    EXPECT_EQ(context->signalDiagnostics.aotFanoutEntries, 1u);
+    EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 4u);
+    EXPECT_EQ(context->nativeScheduleReadyNodes.findFirst(), UINT32_MAX);
+    EXPECT_EQ(context->nativeScheduleReadyNodes.capacity(), count);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Boundaries, SchedulerReadySet,
+                         testing::Values(4u, 64u, 65u, 128u, 129u, 2048u, 2049u,
+                                         4097u));
 
 TEST(Scheduler, AOTCleanSuperstepSnapshotsContinuationRankForHandover) {
   AOTTestState state;

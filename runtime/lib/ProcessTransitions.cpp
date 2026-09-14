@@ -1632,14 +1632,14 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
     scheduled.signalTriggered = true;
     uint32_t node = entry->compute_node;
     if (node >= context->nativeScheduleNodes.size() ||
-        node / 64 >= context->nativeScheduleReadyNodes.size() ||
+        node >= context->nativeScheduleReadyNodes.capacity() ||
         context->nativeScheduleNodes[node].actor_slot != slot ||
         context->nativeScheduleNodes[node].continuation !=
             entry->continuation) {
       context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
       return true;
     }
-    context->nativeScheduleReadyNodes[node / 64] |= uint64_t{1} << (node % 64);
+    context->nativeScheduleReadyNodes.set(node);
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
@@ -2302,11 +2302,11 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
     scheduled.signalTriggered = true;
     uint32_t node = entry->compute_node;
     if (node >= context->nativeScheduleNodes.size() ||
-        node / 64 >= context->nativeScheduleReadyNodes.size()) {
+        node >= context->nativeScheduleReadyNodes.capacity()) {
       context->schedulerStatus = OBELISK_RT_INVALID_CONTINUATION;
       return;
     }
-    context->nativeScheduleReadyNodes[node / 64] |= uint64_t{1} << (node % 64);
+    context->nativeScheduleReadyNodes.set(node);
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
@@ -2321,7 +2321,7 @@ obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
   if (!context || !nodeWords)
     return;
   if (!context->nativeSchedulePlan ||
-      wordCount != context->nativeScheduleReadyNodes.size()) {
+      wordCount != context->nativeScheduleReadyNodes.wordCount()) {
     context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
     return;
   }
@@ -2337,7 +2337,7 @@ obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
       (context->nativeSchedulePlan->flags &
        (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
         OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) == 0 ||
-      context->nativeScheduleReadyNodes.empty()) {
+      context->nativeScheduleReadyNodes.wordCount() == 0) {
     context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
     return;
   }
@@ -2378,7 +2378,7 @@ obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
            scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
         continue;
       scheduled.signalTriggered = true;
-      context->nativeScheduleReadyNodes[word] |= uint64_t{1} << bit;
+      context->nativeScheduleReadyNodes.set(node);
       context->nativeScheduleMinimumActivatedNode =
           std::min(context->nativeScheduleMinimumActivatedNode, node);
       ++context->signalDiagnostics.aotFanoutEntries;

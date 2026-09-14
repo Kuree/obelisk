@@ -8,6 +8,7 @@
 #include "ExceptionSupport.h"
 #include "StrengthFormat.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
+#include "obelisk/Runtime/ReadySet.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -1961,7 +1962,7 @@ struct obelisk_rt_context {
   std::vector<obelisk_rt_native_schedule_node> nativeScheduleNodes;
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>>
       nativeScheduleActorNodes;
-  std::vector<uint64_t> nativeScheduleReadyNodes;
+  obelisk::runtime::CursorReadySet nativeScheduleReadyNodes;
   std::vector<uint32_t> nativeScheduleFanoutNodes;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleFanoutRanges;
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;

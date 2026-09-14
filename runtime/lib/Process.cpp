@@ -1615,7 +1615,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       context->nativeScheduleActorNodes.clear();
       context->nativeScheduleFanoutNodes.clear();
       context->nativeScheduleFanoutRanges.clear();
-      context->nativeScheduleReadyNodes.clear();
+      context->nativeScheduleReadyNodes.resize(0);
       context->nativeScheduleDeadlines.assign(plan->actor_capacity, UINT64_MAX);
       context->nativeScheduleDeadlineHeap.clear();
       context->nativeScheduleDeadlineHeap.reserve(plan->actor_capacity);

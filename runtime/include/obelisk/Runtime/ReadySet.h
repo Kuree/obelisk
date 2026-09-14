@@ -12,6 +12,17 @@
 #include <utility>
 #include <vector>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define OBELISK_READYSET_NOINLINE __attribute__((noinline))
+#define OBELISK_READYSET_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define OBELISK_READYSET_NOINLINE __declspec(noinline)
+#define OBELISK_READYSET_INLINE __forceinline
+#else
+#define OBELISK_READYSET_NOINLINE
+#define OBELISK_READYSET_INLINE inline
+#endif
+
 namespace obelisk::runtime {
 
 /// Physical word layout shared by runtime storage and generated LLVM code.
@@ -76,18 +87,18 @@ public:
     return bit < layout.capacity &&
            (storage[bit / 64] & (uint64_t{1} << (bit & 63))) != 0;
   }
-  bool set(uint32_t bit) {
+  OBELISK_READYSET_INLINE bool set(uint32_t bit) {
     if (bit >= layout.capacity)
       return false;
     uint32_t index = bit / 64;
     uint64_t old = storage[index];
     uint64_t next = old | (uint64_t{1} << (bit & 63));
     storage[index] = next;
-    if (old == 0)
+    if ((layout.hasCache() || layout.hasSummaries()) && old == 0)
       activateWord(index);
     return old != next;
   }
-  bool reset(uint32_t bit) {
+  OBELISK_READYSET_INLINE bool reset(uint32_t bit) {
     if (bit >= layout.capacity)
       return false;
     uint32_t index = bit / 64;
@@ -108,7 +119,7 @@ public:
     if (old == next)
       return false;
     storage[index] = next;
-    if (old == 0)
+    if ((layout.hasCache() || layout.hasSummaries()) && old == 0)
       activateWord(index);
     return true;
   }
@@ -151,7 +162,7 @@ public:
     return first < layout.counts[0] ? first * 64 + trailingZeros(storage[first])
                                     : ReadySetLayout::noBit;
   }
-  uint32_t findAtOrAfter(uint32_t bit) const {
+  OBELISK_READYSET_INLINE uint32_t findAtOrAfter(uint32_t bit) const {
     // This must not advance the minimum cache: a cursor-based pass can leave
     // lower-order owners pending for its next iteration.
     if (bit >= layout.capacity)
@@ -217,6 +228,16 @@ private:
     return static_cast<unsigned>(__builtin_ctzll(word));
   }
   void updateSummaries(uint32_t child, bool nonempty) {
+    // Keep the hierarchy loop out of flat-set callers. Otherwise LTO outlines
+    // the entire activation helper and makes every leaf update cross an ABI
+    // boundary. Pass storage/layout explicitly so no temporary view escapes.
+    if (layout.hasSummaries())
+      updateSummaryWords(storage, layout, child, nonempty);
+  }
+  static OBELISK_READYSET_NOINLINE void updateSummaryWords(uint64_t *storage,
+                                                           const Layout &layout,
+                                                           uint32_t child,
+                                                           bool nonempty) {
     for (unsigned level = 1; level < layout.levels; ++level) {
       uint32_t index = child / 64;
       uint64_t mask = uint64_t{1} << (child & 63);
@@ -265,7 +286,11 @@ public:
   using Layout = BasicReadySetLayout<CacheMinimum>;
   using View = BasicReadySetView<CacheMinimum>;
   explicit BasicReadySet(uint32_t capacity = 0) { resize(capacity); }
-  BasicReadySet(const BasicReadySet &) = default;
+  BasicReadySet(const BasicReadySet &other)
+      : layout(other.layout), inlineWord(other.inlineWord),
+        storage(other.storage) {
+    resetStoragePointer();
+  }
   // Leave moved-from sets empty and usable without a mandatory resize.
   BasicReadySet(BasicReadySet &&other) noexcept { swap(other); }
   BasicReadySet &operator=(BasicReadySet other) noexcept {
@@ -276,6 +301,8 @@ public:
     std::swap(layout, other.layout);
     std::swap(inlineWord, other.inlineWord);
     storage.swap(other.storage);
+    resetStoragePointer();
+    other.resetStoragePointer();
   }
   /// Discard membership and prepare capacity; never called on the hot path.
   void resize(uint32_t capacity) {
@@ -288,6 +315,7 @@ public:
     else
       storage.clear();
     layout = next;
+    resetStoragePointer();
     view().clear();
   }
   uint32_t capacity() const { return layout.capacity; }
@@ -295,8 +323,8 @@ public:
   const Layout &getLayout() const { return layout; }
   uint64_t word(uint32_t index) const { return view().word(index); }
   bool test(uint32_t bit) const { return view().test(bit); }
-  bool set(uint32_t bit) { return view().set(bit); }
-  bool reset(uint32_t bit) { return view().reset(bit); }
+  OBELISK_READYSET_INLINE bool set(uint32_t bit) { return view().set(bit); }
+  OBELISK_READYSET_INLINE bool reset(uint32_t bit) { return view().reset(bit); }
   bool setWord(uint32_t index, uint64_t mask) {
     return view().setWord(index, mask);
   }
@@ -304,25 +332,25 @@ public:
     return view().clearWord(index, mask);
   }
   uint32_t findFirst() { return view().findFirst(); }
-  uint32_t findAtOrAfter(uint32_t bit) const {
+  OBELISK_READYSET_INLINE uint32_t findAtOrAfter(uint32_t bit) const {
     return view().findAtOrAfter(bit);
   }
   uint32_t popFirst() { return view().popFirst(); }
   void clear() { view().clear(); }
 
 private:
-  View view() {
-    return {layout.counts[0] > 1 ? storage.data() : &inlineWord, layout};
+  void resetStoragePointer() {
+    words = layout.counts[0] > 1 ? storage.data() : &inlineWord;
   }
+  View view() { return {words, layout}; }
   // Read-only operations on the view do not mutate its storage.
-  View view() const {
-    return {const_cast<uint64_t *>(layout.counts[0] > 1 ? storage.data()
-                                                        : &inlineWord),
-            layout};
-  }
+  View view() const { return {words, layout}; }
   Layout layout;
   uint64_t inlineWord = 0;
   std::vector<uint64_t> storage;
+  // Like an inline-capacity vector, carry a direct leaf pointer so dispatch
+  // does not select inline versus heap storage on every membership operation.
+  uint64_t *words = &inlineWord;
 };
 
 using ReadySet = BasicReadySet<true>;
@@ -332,5 +360,8 @@ using ReadySet = BasicReadySet<true>;
 using CursorReadySet = BasicReadySet<false>;
 
 } // namespace obelisk::runtime
+
+#undef OBELISK_READYSET_NOINLINE
+#undef OBELISK_READYSET_INLINE
 
 #endif // OBELISK_RUNTIME_READYSET_H
