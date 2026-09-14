@@ -12,6 +12,7 @@
 #include "ProcessContext.h"
 #include "ProcessObservers.h"
 #include "ProcessPacking.h"
+#include "ProcessSchedulerScope.h"
 #include "ProcessShared.h"
 #include "ProcessSignals.h"
 #include "ProcessValidation.h"
@@ -1383,64 +1384,6 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
   return requestFallback ? OBELISK_RT_TIER_UNAVAILABLE : OBELISK_RT_OK;
 }
 
-class NativeScheduleStepScope {
-public:
-  NativeScheduleStepScope(obelisk_rt_context *context, uint32_t actorSlot,
-                          bool controlOnly, bool processFilterActive = false,
-                          uint64_t processToken = 0)
-      : context(context) {
-    ContextMutexLock lock(context);
-    context->nativeScheduleForcedSlot = actorSlot;
-    context->nativeScheduleSingleStep = true;
-    context->nativeScheduleForcedExecuted = false;
-    context->nativeScheduleControlOnly = controlOnly;
-    context->nativeScheduleProcessFilterActive = processFilterActive;
-    context->nativeScheduleForcedProcessToken = processToken;
-  }
-
-  NativeScheduleStepScope(const NativeScheduleStepScope &) = delete;
-  NativeScheduleStepScope &operator=(const NativeScheduleStepScope &) = delete;
-
-  ~NativeScheduleStepScope() {
-    ContextMutexLock lock(context);
-    context->nativeScheduleForcedSlot = UINT32_MAX;
-    context->nativeScheduleSingleStep = false;
-    context->nativeScheduleForcedExecuted = false;
-    context->nativeScheduleControlOnly = false;
-    context->nativeScheduleProcessFilterActive = false;
-    context->nativeScheduleForcedProcessToken = 0;
-  }
-
-  bool executed() const {
-    ContextMutexLock lock(context);
-    return context->nativeScheduleForcedExecuted;
-  }
-
-private:
-  obelisk_rt_context *context;
-};
-
-class NativeScheduleDesignTaskScope {
-public:
-  NativeScheduleDesignTaskScope(obelisk_rt_context *context, uint64_t task)
-      : context(context) {
-    ContextMutexLock lock(context);
-    obelisk_rt_set_design_task_filter_unlocked(context, true, task);
-  }
-
-  NativeScheduleDesignTaskScope(const NativeScheduleDesignTaskScope &) = delete;
-  NativeScheduleDesignTaskScope &
-  operator=(const NativeScheduleDesignTaskScope &) = delete;
-
-  ~NativeScheduleDesignTaskScope() {
-    ContextMutexLock lock(context);
-    obelisk_rt_set_design_task_filter_unlocked(context, false, 0);
-  }
-
-private:
-  obelisk_rt_context *context;
-};
-
 // Lets the fine scheduler own as many event slots as an asynchronous
 // intervention requires, but returns as soon as force/assign and dirty-root
 // state are reconciled at a quiescent boundary. This is a transient Tier-2/3
@@ -2145,11 +2088,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         return OBELISK_RT_INVALID_CONTINUATION;
       obelisk_rt_dump_slot_unlocked(context);
       context->schedulerTime = nextTime;
-      status = runPreponedHooks(context);
+      status = enterSchedulerTimeSlotUnlocked(context);
       if (status != OBELISK_RT_OK)
         return status;
-      context->schedulerPreponedTime = nextTime;
-      context->schedulerSlotProgress = 0;
 
       struct MissingActivation {
         uint32_t node;
@@ -3218,17 +3159,7 @@ retryNativeSchedule:;
         else {
           obelisk_rt_dump_slot_unlocked(context);
           context->schedulerTime = deadline;
-          status = runPreponedHooks(context);
-          if (status == OBELISK_RT_OK) {
-            context->schedulerPreponedTime = deadline;
-            context->schedulerSlotProgress = 0;
-            if (context->staticNBASlowRootsPresent) {
-              std::fill(context->staticNBASlowRoots.begin(),
-                        context->staticNBASlowRoots.end(), uint8_t{0});
-              context->staticNBASlowRootsPresent = false;
-            }
-            refreshNativeStaticSpecializationFastUnlocked(context);
-          }
+          status = enterSchedulerTimeSlotUnlocked(context);
         }
       }
       if (status != OBELISK_RT_OK)

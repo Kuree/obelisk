@@ -8,6 +8,7 @@
 #include "../lib/DesignBytecodeImage.h"
 #include "../lib/DesignBytecodeNets.h"
 #include "../lib/ProcessPacking.h"
+#include "../lib/ProcessSchedulerScope.h"
 #include "../lib/ProcessShared.h"
 #include "../lib/ProcessSignals.h"
 #include "../lib/RuntimeInternal.h"
@@ -6540,6 +6541,115 @@ TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, SlotEntryPreservesProgressAndSamplesAcrossTierBoundaries) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->preponedObserverPresent = true;
+  context->schedulerTime = 37;
+  context->schedulerSlotProgress = 9;
+  context->staticNBASlowRoots = {1};
+  context->staticNBASlowRootsPresent = true;
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerPreponedTime, 37u);
+  EXPECT_EQ(context->schedulerSlotProgress, 0u);
+  EXPECT_FALSE(context->staticNBASlowRootsPresent);
+  const auto eventID = OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT;
+  ASSERT_EQ(context->events.count(eventID), 1u);
+  uint64_t generation = context->events.at(eventID).generation;
+  context->schedulerSlotProgress = 4;
+  context->staticNBASlowRoots[0] = 1;
+  context->staticNBASlowRootsPresent = true;
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->events.at(eventID).generation, generation);
+  EXPECT_EQ(context->schedulerSlotProgress, 4u);
+  EXPECT_TRUE(context->staticNBASlowRootsPresent);
+  ++context->schedulerTime;
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->events.at(eventID).generation, generation + 1);
+  EXPECT_EQ(context->schedulerSlotProgress, 0u);
+  EXPECT_FALSE(context->staticNBASlowRootsPresent);
+  EXPECT_EQ(context->staticNBASlowRoots[0], 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ReentrantExecutorSelectionRestoresSuspendedCaller) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->schedulerTime = 37;
+  context->nextSchedulerSequence = 81;
+  context->activeExecRegion = OBELISK_RT_REGION_REACTIVE;
+  {
+    NativeScheduleStepScope caller(context, 5, false, true, 19);
+    context->nativeScheduleForcedExecuted = true;
+    {
+      NativeScheduleStepScope callback(context, UINT32_MAX, true);
+      EXPECT_FALSE(callback.executed());
+      EXPECT_EQ(context->nativeScheduleForcedSlot, UINT32_MAX);
+      EXPECT_TRUE(context->nativeScheduleControlOnly);
+      EXPECT_FALSE(context->nativeScheduleProcessFilterActive);
+      {
+        NativeScheduleStepScope nested(context, 8, false, true, 23);
+        context->nativeScheduleForcedExecuted = true;
+        EXPECT_TRUE(nested.executed());
+      }
+      // Completion belongs to the selected executor, not to its caller.
+      EXPECT_FALSE(callback.executed());
+      EXPECT_TRUE(context->nativeScheduleSingleStep);
+      EXPECT_TRUE(context->nativeScheduleControlOnly);
+    }
+    EXPECT_TRUE(caller.executed());
+    EXPECT_EQ(context->nativeScheduleForcedSlot, 5u);
+    EXPECT_TRUE(context->nativeScheduleSingleStep);
+    EXPECT_FALSE(context->nativeScheduleControlOnly);
+    EXPECT_TRUE(context->nativeScheduleProcessFilterActive);
+    EXPECT_EQ(context->nativeScheduleForcedProcessToken, 19u);
+  }
+  EXPECT_EQ(context->nativeScheduleForcedSlot, UINT32_MAX);
+  EXPECT_FALSE(context->nativeScheduleSingleStep);
+  EXPECT_FALSE(context->nativeScheduleForcedExecuted);
+  EXPECT_FALSE(context->nativeScheduleControlOnly);
+  EXPECT_FALSE(context->nativeScheduleProcessFilterActive);
+  EXPECT_EQ(context->nativeScheduleForcedProcessToken, 0u);
+  EXPECT_EQ(context->schedulerTime, 37u);
+  EXPECT_EQ(context->nextSchedulerSequence, 81u);
+  EXPECT_EQ(context->activeExecRegion, OBELISK_RT_REGION_REACTIVE);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, DPIExportTemporarilyReleasesOuterExecutorSelection) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture exported(7);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerWaitDelay = 3;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  ScheduledDesignEvent later;
+  later.stableID = 1;
+  later.dueTime = 99;
+  later.execRegion = OBELISK_RT_REGION_NBA;
+  context->scheduledDesignEvents.push_back(later);
+  {
+    NativeScheduleStepScope caller(context, 5, true, true, 19);
+    context->nativeScheduleForcedExecuted = true;
+    EXPECT_EQ(obelisk_rt_v1_dpi_export_task_run(
+                  context, makeSchedulerInstance(exported)),
+              OBELISK_RT_OK);
+    EXPECT_EQ(schedulerResumeCount, 1u);
+    EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{7}));
+    EXPECT_EQ(context->schedulerTime, 3u);
+    EXPECT_TRUE(caller.executed());
+    EXPECT_EQ(context->nativeScheduleForcedSlot, 5u);
+    EXPECT_TRUE(context->nativeScheduleSingleStep);
+    EXPECT_TRUE(context->nativeScheduleControlOnly);
+    EXPECT_TRUE(context->nativeScheduleProcessFilterActive);
+    EXPECT_EQ(context->nativeScheduleForcedProcessToken, 19u);
+    ASSERT_EQ(context->scheduledDesignEvents.size(), 1u);
+    EXPECT_EQ(context->scheduledDesignEvents.front().dueTime, 99u);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
   // Cross both the leaf and summary boundaries; include stale generated
   // payloads, runtime stages, empty pages, and all iterative region choices.
@@ -6580,7 +6690,7 @@ TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
       auto &runtime = context->staticNBAAccumulators[root];
       runtime.valid = false;
       runtime.execRegion = regions[random() % std::size(regions)];
-      if (trial == 0 || random() % 1024 != 0)
+      if (trial == 0 || (root != rootCount - 1 && random() % 1024 != 0))
         continue;
       dirty[root / 64] |= uint64_t{1} << (root % 64);
       summary[root / 4096] |= uint64_t{1} << ((root / 64) % 64);

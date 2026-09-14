@@ -5,6 +5,7 @@
 #include "ProcessContext.h"
 #include "ProcessObservers.h"
 #include "ProcessPacking.h"
+#include "ProcessSchedulerScope.h"
 #include "ProcessShared.h"
 #include "ProcessSignals.h"
 #include "ProcessValidation.h"
@@ -2418,6 +2419,27 @@ obelisk_rt_status runPreponedHooks(obelisk_rt_context *context) {
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
+obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context) {
+  if (context->schedulerPreponedTime == context->schedulerTime)
+    return OBELISK_RT_OK;
+  // IEEE 1800-2023 4.4-4.5, 16.5.1: sample before executable regions and
+  // retain that sample through all Active/NBA iterations and tier changes.
+  obelisk_rt_status status = runPreponedHooks(context);
+  if (status != OBELISK_RT_OK) {
+    context->schedulerStatus = status;
+    return status;
+  }
+  context->schedulerPreponedTime = context->schedulerTime;
+  context->schedulerSlotProgress = 0;
+  if (context->staticNBASlowRootsPresent) {
+    std::fill(context->staticNBASlowRoots.begin(),
+              context->staticNBASlowRoots.end(), uint8_t{0});
+    context->staticNBASlowRootsPresent = false;
+  }
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
                                           bool allowTimeAdvance,
                                           bool allowRuntimeTasks) {
@@ -2488,20 +2510,7 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
       context->schedulerTime = context->nativeScheduleDeadlines[slot];
       if (!markDueNativeAOTDeadlinesUnlocked(context))
         return OBELISK_RT_INVALID_CONTINUATION;
-      obelisk_rt_status status = runPreponedHooks(context);
-      if (status != OBELISK_RT_OK) {
-        context->schedulerStatus = status;
-        return status;
-      }
-      context->schedulerPreponedTime = context->schedulerTime;
-      context->schedulerSlotProgress = 0;
-      if (context->staticNBASlowRootsPresent) {
-        std::fill(context->staticNBASlowRoots.begin(),
-                  context->staticNBASlowRoots.end(), uint8_t{0});
-        context->staticNBASlowRootsPresent = false;
-      }
-      refreshNativeStaticSpecializationFastUnlocked(context);
-      return OBELISK_RT_OK;
+      return enterSchedulerTimeSlotUnlocked(context);
     }
     bool hasFinal = false;
     for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
@@ -2786,19 +2795,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (context->schedulerStatus != OBELISK_RT_OK)
         return context->schedulerStatus;
       if (context->schedulerPreponedTime != context->schedulerTime) {
-        obelisk_rt_status status = runPreponedHooks(context);
-        if (status != OBELISK_RT_OK) {
-          context->schedulerStatus = status;
+        obelisk_rt_status status = enterSchedulerTimeSlotUnlocked(context);
+        if (status != OBELISK_RT_OK)
           return status;
-        }
-        context->schedulerPreponedTime = context->schedulerTime;
-        context->schedulerSlotProgress = 0;
-        if (context->staticNBASlowRootsPresent) {
-          std::fill(context->staticNBASlowRoots.begin(),
-                    context->staticNBASlowRoots.end(), uint8_t{0});
-          context->staticNBASlowRootsPresent = false;
-        }
-        refreshNativeStaticSpecializationFastUnlocked(context);
       }
       // No selected index survives across loop iterations. Reentrant scheduler
       // calls during an evaluator do have an outer selected index, so defer
@@ -5193,7 +5192,6 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
     bool escapePending = context->controlEscapePending;
     obelisk_rt_random_state_v1 *random = context->activeRandom;
     uint64_t programOwner = context->activeProgramOwner;
-    bool singleStep = context->nativeScheduleSingleStep;
     uint64_t dpiLogical = context->activeDpiExportTaskLogical;
     bool dpiDisabled = context->activeDpiExportTaskDisabled;
     bool nativeWasExplicitlySuspended = false;
@@ -5215,7 +5213,6 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
       context->controlEscapePending = escapePending;
       context->activeRandom = random;
       context->activeProgramOwner = programOwner;
-      context->nativeScheduleSingleStep = singleStep;
       context->activeDpiExportTaskLogical = dpiLogical;
       context->activeDpiExportTaskDisabled = dpiDisabled;
       if (nativeWasScheduled)
@@ -5250,11 +5247,14 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
     context->activeRandom = nullptr;
     context->activeProgramOwner = 0;
     context->activeControls.clear();
-    context->nativeScheduleSingleStep = true;
     context->activeDpiExportTaskLogical = logical;
     context->activeDpiExportTaskDisabled = false;
   }
 
+  // Suspend the caller's executor restriction as well as its activation.
+  // The exported task runs in the same queue/time universe and restores the
+  // exact outer selection when it returns, including through an error path.
+  NativeScheduleStepScope exportSelection(context, UINT32_MAX, false);
   for (;;) {
     obelisk_rt_process_state state = OBELISK_RT_PROCESS_WAITING;
     obelisk_rt_status status =

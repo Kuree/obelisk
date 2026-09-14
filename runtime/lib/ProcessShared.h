@@ -167,6 +167,9 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
                               const obelisk_rt_fragment_action_v1 &action);
 obelisk_rt_status runScheduler(obelisk_rt_context *context);
 obelisk_rt_status runPreponedHooks(obelisk_rt_context *context);
+// Initialize the current slot once, regardless of which executor entered it.
+// Reentry in the same slot preserves its sampled state and progress cursor.
+obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context);
 obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
                                           bool allowTimeAdvance = true,
                                           bool allowRuntimeTasks = false);
