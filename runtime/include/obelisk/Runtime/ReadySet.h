@@ -18,7 +18,7 @@ namespace obelisk::runtime {
 /// Leaves are authoritative. The cached word is a lower bound on the first
 /// nonempty leaf; summaries contain exactly one bit per nonempty child word.
 /// There is no allocation or capacity change during activation or dispatch.
-struct ReadySetLayout {
+template <bool CacheMinimum> struct BasicReadySetLayout {
   static constexpr uint32_t noBit = UINT32_MAX;
   // A short cached scan wins for moderate sets; summaries bound sparse scans
   // for larger universes. This threshold changes cost, never set semantics.
@@ -31,7 +31,7 @@ struct ReadySetLayout {
   std::array<uint32_t, maxLevels> counts{};
   uint32_t storageWords = 0;
 
-  explicit ReadySetLayout(uint32_t bits = 0) : capacity(bits) {
+  explicit BasicReadySetLayout(uint32_t bits = 0) : capacity(bits) {
     counts[0] = (uint64_t{bits} + 63) / 64;
     storageWords = counts[0];
     if (hasCache())
@@ -46,7 +46,7 @@ struct ReadySetLayout {
       }
   }
 
-  bool hasCache() const { return counts[0] > 1; }
+  bool hasCache() const { return CacheMinimum && counts[0] > 1; }
   bool hasSummaries() const { return levels > 1; }
   uint32_t cacheOffset() const { return counts[0]; }
   uint64_t lastWordMask() const {
@@ -54,15 +54,19 @@ struct ReadySetLayout {
   }
 };
 
+using ReadySetLayout = BasicReadySetLayout<true>;
+using CursorReadySetLayout = BasicReadySetLayout<false>;
+
 /// Mutable view over caller-owned storage in ReadySetLayout format. Neither
 /// the storage nor the layout may move while this view is in use. Mutation is
 /// serialized by the scheduler; parallel producers need per-worker sets and
 /// a merge at the scheduler boundary, not unsynchronized writes to this view.
-class ReadySetView {
+template <bool CacheMinimum> class BasicReadySetView {
 public:
-  ReadySetView(uint64_t *storage, const ReadySetLayout &layout)
+  using Layout = BasicReadySetLayout<CacheMinimum>;
+  BasicReadySetView(uint64_t *storage, const Layout &layout)
       : storage(storage), layout(layout) {}
-  ReadySetView(uint64_t *, ReadySetLayout &&) = delete;
+  BasicReadySetView(uint64_t *, Layout &&) = delete;
 
   uint64_t word(uint32_t index) const {
     assert(index < layout.counts[0]);
@@ -123,6 +127,8 @@ public:
     return true;
   }
   uint32_t findFirst() {
+    if constexpr (!CacheMinimum)
+      return findAtOrAfter(0);
     if (layout.counts[0] == 0)
       return ReadySetLayout::noBit;
     if (!layout.hasCache())
@@ -187,16 +193,15 @@ public:
     if (layout.counts[0] == 0)
       return;
     storage[layout.counts[0] - 1] &= layout.lastWordMask();
-    if (!layout.hasCache())
+    if (!layout.hasCache() && !layout.hasSummaries())
       return;
     std::fill(storage + layout.counts[0], storage + layout.storageWords, 0);
-    storage[layout.cacheOffset()] = layout.counts[0];
+    if (layout.hasCache())
+      storage[layout.cacheOffset()] = layout.counts[0];
     for (uint32_t index = 0; index < layout.counts[0]; ++index) {
       if (!storage[index])
         continue;
-      storage[layout.cacheOffset()] =
-          std::min(storage[layout.cacheOffset()], uint64_t{index});
-      updateSummaries(index, true);
+      activateWord(index);
     }
   }
 
@@ -247,33 +252,38 @@ private:
   }
 
   uint64_t *storage;
-  const ReadySetLayout &layout;
+  const Layout &layout;
 };
+
+using ReadySetView = BasicReadySetView<true>;
+using CursorReadySetView = BasicReadySetView<false>;
 
 /// Runtime owner. Small sets use an inline word; generated code uses the same
 /// layout with statically allocated words and does not instantiate this class.
-class ReadySet {
+template <bool CacheMinimum> class BasicReadySet {
 public:
-  explicit ReadySet(uint32_t capacity = 0) { resize(capacity); }
-  ReadySet(const ReadySet &) = default;
+  using Layout = BasicReadySetLayout<CacheMinimum>;
+  using View = BasicReadySetView<CacheMinimum>;
+  explicit BasicReadySet(uint32_t capacity = 0) { resize(capacity); }
+  BasicReadySet(const BasicReadySet &) = default;
   // Leave moved-from sets empty and usable without a mandatory resize.
-  ReadySet(ReadySet &&other) noexcept { swap(other); }
-  ReadySet &operator=(ReadySet other) noexcept {
+  BasicReadySet(BasicReadySet &&other) noexcept { swap(other); }
+  BasicReadySet &operator=(BasicReadySet other) noexcept {
     swap(other);
     return *this;
   }
-  void swap(ReadySet &other) noexcept {
+  void swap(BasicReadySet &other) noexcept {
     std::swap(layout, other.layout);
     std::swap(inlineWord, other.inlineWord);
     storage.swap(other.storage);
   }
   /// Discard membership and prepare capacity; never called on the hot path.
   void resize(uint32_t capacity) {
-    ReadySetLayout next(capacity);
+    Layout next(capacity);
     // Allocate before changing the layout so allocation failure leaves the
     // existing set valid. uint64_t initialization cannot throw after
     // allocation.
-    if (next.hasCache())
+    if (next.counts[0] > 1)
       storage.assign(next.storageWords, 0);
     else
       storage.clear();
@@ -282,7 +292,7 @@ public:
   }
   uint32_t capacity() const { return layout.capacity; }
   uint32_t wordCount() const { return layout.counts[0]; }
-  const ReadySetLayout &getLayout() const { return layout; }
+  const Layout &getLayout() const { return layout; }
   uint64_t word(uint32_t index) const { return view().word(index); }
   bool test(uint32_t bit) const { return view().test(bit); }
   bool set(uint32_t bit) { return view().set(bit); }
@@ -301,19 +311,25 @@ public:
   void clear() { view().clear(); }
 
 private:
-  ReadySetView view() {
-    return {layout.hasCache() ? storage.data() : &inlineWord, layout};
+  View view() {
+    return {layout.counts[0] > 1 ? storage.data() : &inlineWord, layout};
   }
   // Read-only operations on the view do not mutate its storage.
-  ReadySetView view() const {
-    return {const_cast<uint64_t *>(layout.hasCache() ? storage.data()
-                                                     : &inlineWord),
+  View view() const {
+    return {const_cast<uint64_t *>(layout.counts[0] > 1 ? storage.data()
+                                                        : &inlineWord),
             layout};
   }
-  ReadySetLayout layout;
+  Layout layout;
   uint64_t inlineWord = 0;
   std::vector<uint64_t> storage;
 };
+
+using ReadySet = BasicReadySet<true>;
+// Forward graph passes carry their own cursor and ask for the global minimum
+// only on wraparound. Do not maintain an unused minimum cache on every wakeup;
+// retain the same leaf representation and hierarchical sparse-scan bound.
+using CursorReadySet = BasicReadySet<false>;
 
 } // namespace obelisk::runtime
 

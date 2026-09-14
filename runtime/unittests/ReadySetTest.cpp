@@ -8,6 +8,9 @@
 #include <set>
 #include <utility>
 
+using obelisk::runtime::CursorReadySet;
+using obelisk::runtime::CursorReadySetLayout;
+using obelisk::runtime::CursorReadySetView;
 using obelisk::runtime::ReadySet;
 using obelisk::runtime::ReadySetLayout;
 using obelisk::runtime::ReadySetView;
@@ -142,6 +145,72 @@ TEST_P(ReadySetCapacity, RebuildFromAuthoritativeLeaves) {
     ready.rebuild();
     EXPECT_EQ(ready.findFirst(), (layout.counts[0] - 1) * 64);
   }
+}
+
+TEST_P(ReadySetCapacity, CursorPolicyPreservesMembershipAndRebuild) {
+  uint32_t n = GetParam();
+  ReadySet minimum(n);
+  CursorReadySet cursor(n);
+  EXPECT_FALSE(cursor.getLayout().hasCache());
+  EXPECT_EQ(cursor.getLayout().hasSummaries(),
+            minimum.getLayout().hasSummaries());
+  EXPECT_EQ(cursor.getLayout().storageWords + (n > 64 ? 1 : 0),
+            minimum.getLayout().storageWords);
+  std::mt19937 random(37);
+  for (unsigned step = 0; step < 10000; ++step) {
+    uint32_t bit = n ? random() % n : 0;
+    switch (random() % 6) {
+    case 0:
+      EXPECT_EQ(cursor.set(bit), minimum.set(bit));
+      break;
+    case 1:
+      EXPECT_EQ(cursor.reset(bit), minimum.reset(bit));
+      break;
+    case 2:
+      ASSERT_EQ(cursor.popFirst(), minimum.popFirst());
+      break;
+    case 3: {
+      uint64_t mask = (uint64_t{random()} << 32) | random();
+      EXPECT_EQ(cursor.setWord(bit / 64, mask),
+                minimum.setWord(bit / 64, mask));
+      break;
+    }
+    case 4: {
+      uint64_t mask = (uint64_t{random()} << 32) | random();
+      EXPECT_EQ(cursor.clearWord(bit / 64, mask),
+                minimum.clearWord(bit / 64, mask));
+      break;
+    }
+    case 5:
+      if (step % 97 == 0) {
+        cursor.clear();
+        minimum.clear();
+      }
+      break;
+    }
+    ASSERT_EQ(cursor.findAtOrAfter(bit), minimum.findAtOrAfter(bit));
+    ASSERT_EQ(cursor.findFirst(), minimum.findFirst());
+    EXPECT_EQ(cursor.test(bit), minimum.test(bit));
+  }
+  CursorReadySetLayout layout(n);
+  std::vector<uint64_t> storage(layout.storageWords, UINT64_MAX);
+  for (uint32_t word = 0; word < cursor.wordCount(); ++word) {
+    EXPECT_EQ(cursor.word(word), minimum.word(word));
+    storage[word] = cursor.word(word);
+  }
+  CursorReadySetView rebuilt(storage.data(), layout);
+  rebuilt.rebuild();
+  while (minimum.findFirst() != none)
+    ASSERT_EQ(rebuilt.popFirst(), minimum.popFirst());
+  EXPECT_EQ(rebuilt.popFirst(), none);
+  auto copy = cursor;
+  auto moved = std::move(copy);
+  EXPECT_EQ(copy.findFirst(), none);
+  EXPECT_EQ(moved.findFirst(), cursor.findFirst());
+  cursor.resize(65);
+  EXPECT_EQ(cursor.findFirst(), none);
+  cursor.set(64);
+  EXPECT_EQ(cursor.popFirst(), 64u);
 }
 
 TEST(ReadySet, CopyAndMoveRetainIndependentStorage) {
