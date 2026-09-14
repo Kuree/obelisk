@@ -1640,6 +1640,9 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
       return true;
     }
     context->nativeScheduleReadyNodes.set(node);
+    context->nativePollCandidates.insert(scheduled.token);
+    if (++context->schedulerSelectionGeneration == 0)
+      context->schedulerSelectionGeneration = 1;
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
@@ -2307,6 +2310,9 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
       return;
     }
     context->nativeScheduleReadyNodes.set(node);
+    context->nativePollCandidates.insert(scheduled.token);
+    if (++context->schedulerSelectionGeneration == 0)
+      context->schedulerSelectionGeneration = 1;
     context->nativeScheduleMinimumActivatedNode =
         std::min(context->nativeScheduleMinimumActivatedNode, node);
   }
@@ -2379,6 +2385,9 @@ obelisk_rt_v1_scheduler_activate_static_nodes(obelisk_rt_context *context,
         continue;
       scheduled.signalTriggered = true;
       context->nativeScheduleReadyNodes.set(node);
+      context->nativePollCandidates.insert(scheduled.token);
+      if (++context->schedulerSelectionGeneration == 0)
+        context->schedulerSelectionGeneration = 1;
       context->nativeScheduleMinimumActivatedNode =
           std::min(context->nativeScheduleMinimumActivatedNode, node);
       ++context->signalDiagnostics.aotFanoutEntries;

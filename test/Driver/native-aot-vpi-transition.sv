@@ -76,7 +76,10 @@ endmodule
 
 // READONLY: vpi-startup-read={{0|41}}
 // READONLY: seed=41 total=82
-// READONLY: scheduler_iterations=0
+// Startup and fragment arbitration now use the shared loop. Read demand still
+// preserves direct fanout and guarded native state with no slow accesses.
+// READONLY: scheduler_iterations=18
+// READONLY-SAME: aot_node_executions=10
 // READONLY-SAME: aot_fanout_entries={{[1-9][0-9]*}}
 // READONLY-SAME: aot_state_fast_paths={{[1-9][0-9]*}}
 // READONLY-SAME: aot_state_slow_paths=0
@@ -84,7 +87,8 @@ endmodule
 
 // READMODE: vpi-startup-read={{0|41}}
 // READMODE: seed=41 total=82
-// READMODE: scheduler_iterations=0
+// READMODE: scheduler_iterations=18
+// READMODE-SAME: aot_node_executions=10
 // READMODE-SAME: aot_fanout_entries={{[1-9][0-9]*}}
 // READMODE-SAME: aot_state_slow_paths=0
 // READMODE-SAME: aot_fallbacks=0

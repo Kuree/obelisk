@@ -26,4 +26,4 @@ endmodule
 
 // CHECK: active
 // CHECK-NEXT: inactive nba_value=0
-// DIAG: aot_fallbacks=1
+// DIAG: aot_fallbacks=0

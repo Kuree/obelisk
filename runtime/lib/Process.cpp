@@ -456,16 +456,9 @@ static bool indexedSignalBlocked(const ScheduledProcess &process) {
     return false;
   bool signalSuspend = process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
                        process.suspendKind == OBELISK_RT_SUSPEND_EDGE;
-  if (signalSuspend) {
-    const obelisk_rt_wait_record_v1 *wait = currentWait(process);
-    if (wait && (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
-                 wait->flags == OBELISK_RT_WAIT_EDGE_IFF ||
-                 obelisk_rt_is_clock_occurrence_wait_flags(wait->flags)))
-      return true;
-  }
-  return !process.signalSubscriptions.empty() && process.signalLatch &&
-         !process.signalLatch->triggered &&
-         (signalSuspend || process.suspendKind == OBELISK_RT_SUSPEND_OBSERVER);
+  return (signalSuspend ||
+          process.suspendKind == OBELISK_RT_SUSPEND_OBSERVER) &&
+         (!process.signalLatch || !process.signalLatch->triggered);
 }
 
 // Slot-final timing coordinators sort after every ordinary executable region
@@ -2446,97 +2439,6 @@ obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context) {
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
-                                          bool allowTimeAdvance,
-                                          bool allowRuntimeTasks) {
-  ContextMutexLock lock(context);
-  if (!context->nativeSchedulePlan ||
-      (context->nativeSchedulePlan->flags &
-       OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL) == 0)
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  if (context->schedulerStatus != OBELISK_RT_OK)
-    return context->schedulerStatus;
-  if (context->schedulerFinishRequested) {
-    for (uint32_t root = 0; root != context->staticNBAAccumulators.size();
-         ++root) {
-      StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[root];
-      std::fill(accumulator.writeMask.begin(), accumulator.writeMask.end(),
-                uint64_t{0});
-      accumulator.valid = false;
-      accumulator.sequence = 0;
-      if (context->nativeScheduleNBARoots[root].generated_accumulator)
-        *context->nativeScheduleNBARoots[root].generated_accumulator = {};
-    }
-    context->staticNBAAccumulatorsPending = false;
-    context->schedulerRunningFinals = true;
-  }
-  if (!context->scheduledManagedNBAs.empty() ||
-      !context->scheduledDesignNBAs.empty() ||
-      !context->scheduledDesignEvents.empty() ||
-      (obelisk_rt_replaceable_events(context) &&
-       !obelisk_rt_replaceable_events(context)->calendar.empty()) ||
-      !context->scheduledPassSwitchEvents.empty() ||
-      !context->scheduledInertialPathNBAs.empty() ||
-      (!allowRuntimeTasks && !context->scheduledDesignTasks.empty()) ||
-      context->nativeScheduleExternalWritePending)
-    return OBELISK_RT_TIER_UNAVAILABLE;
-
-  // IEEE 1800-2023 4.4-4.5: execution policy does not select a different
-  // region policy. Generated and descriptor-driven work consult the same
-  // pending-update inventory, including Active reactivation after NBA.
-  uint32_t barrierRegion = nextDueNBABarrierRegionUnlocked(context);
-  if (barrierRegion != UINT32_MAX) {
-    if (!canCommitInlineNativeNBABarrierUnlocked(context, barrierRegion))
-      return OBELISK_RT_TIER_UNAVAILABLE;
-    bool changed = false;
-    obelisk_rt_status status =
-        commitStaticNBAAccumulatorsUnlocked(context, barrierRegion, changed);
-    if (status != OBELISK_RT_OK)
-      return status;
-    status =
-        commitInlineNativeNBABarrierUnlocked(context, barrierRegion, changed);
-    if (status != OBELISK_RT_OK)
-      return status;
-    if (changed && ++context->schedulerEpoch == 0)
-      context->schedulerEpoch = 1;
-    if (context->schedulerSlotProgress == UINT64_MAX) {
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-      return context->schedulerStatus;
-    }
-    ++context->schedulerSlotProgress;
-    return OBELISK_RT_OK;
-  }
-
-  if (!context->schedulerRunningFinals) {
-    if (!allowTimeAdvance)
-      return OBELISK_RT_OK;
-    if (!context->nativeScheduleDeadlineHeap.empty()) {
-      uint32_t slot = context->nativeScheduleDeadlineHeap.front();
-      obelisk_rt_dump_slot_unlocked(context);
-      context->schedulerTime = context->nativeScheduleDeadlines[slot];
-      if (!markDueNativeAOTDeadlinesUnlocked(context))
-        return OBELISK_RT_INVALID_CONTINUATION;
-      return enterSchedulerTimeSlotUnlocked(context);
-    }
-    bool hasFinal = false;
-    for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
-         ++slot) {
-      if (!context->nativeScheduleActors[slot])
-        continue;
-      size_t index = context->nativeScheduleActorIndices[slot];
-      if (index >= context->scheduledProcesses.size())
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      const ScheduledProcess &candidate = context->scheduledProcesses[index];
-      hasFinal |= candidate.instance && candidate.phase == 1;
-    }
-    if (hasFinal) {
-      context->schedulerRunningFinals = true;
-      return OBELISK_RT_OK;
-    }
-  }
-  return context->schedulerFinishStatus;
-}
-
 uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
                                          bool includeGenerated) {
   uint32_t barrierRegion = UINT32_MAX;
@@ -2721,7 +2623,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   // A signal publication commonly makes a large cohort ready at once. The
   // generic scheduler used to rescan the remaining unordered candidate set
   // after every member, making one edge cost N + (N-1) + ... readiness tests.
-  // Cache signal-ready batches (plus a freshly spawned urgent child) in exact
+  // Cache startup and signal-ready batches in exact
   // scheduler-key order. Any other readiness source or selection-generation
   // change falls back to the fully general scan below.
   struct CachedNativeReady {
@@ -2786,6 +2688,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   uint64_t cachedNativeReadyGeneration = 0;
   uint64_t cachedNativeReadyTime = 0;
   bool cachedNativeReadyFinals = false;
+  uint32_t cachedUnstartedRegion = UINT32_MAX;
   size_t cachedNativeReadyProcessCount = 0;
   uint64_t cachedNativeReadyLastToken = 0;
   size_t cachedNativeUrgentCount = 0;
@@ -2796,6 +2699,70 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     cachedNativeReadyValid = false;
     cachedNativeUrgentCount = 0;
   };
+  auto readmitNativeCandidate = [&](const ScheduledProcess &scheduled,
+                                    size_t selectedIndex, bool wasCached) {
+    // The selected token was popped from the heap before execution and is
+    // therefore absent from both cached containers. A task call, caller
+    // return, continue action, or suspend can requeue that same token
+    // without changing the process vector or signal generation. Re-admit
+    // its finalized state once; mutations outside that narrow shape force
+    // an exact rebuild on the next iteration.
+    if (wasCached && context->nativePollCandidates.count(scheduled.token)) {
+      bool exactProcessCount =
+          context->scheduledProcesses.size() == cachedNativeReadyProcessCount;
+      bool cacheShapeStable =
+          cachedNativeReadyValid &&
+          cachedNativeReadyGeneration ==
+              context->schedulerSelectionGeneration &&
+          cachedNativeReadyTime == context->schedulerTime &&
+          cachedNativeReadyFinals == context->schedulerRunningFinals &&
+          exactProcessCount &&
+          (cachedNativeReadyProcessCount == 0 ||
+           context->scheduledProcesses[cachedNativeReadyProcessCount - 1]
+                   .token == cachedNativeReadyLastToken);
+      if (!cacheShapeStable) {
+        clearCachedNativeReady();
+      } else if (!scheduled.explicitlySuspended &&
+                 scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE) {
+        // Urgent distances are relative to the cursor at cache creation.
+        // A requeued urgent token uses the post-selection cursor, so it is
+        // comparable only after every old-cursor urgent entry is gone.
+        if (scheduled.urgent && cachedNativeUrgentCount != 0) {
+          clearCachedNativeReady();
+        } else {
+          bool signalResume =
+              scheduled.signalTriggered ||
+              (scheduled.signalLatch && scheduled.signalLatch->triggered);
+          CachedNativeReady ready;
+          ready.token = scheduled.token;
+          ready.urgent = scheduled.urgent;
+          size_t processCount = context->scheduledProcesses.size();
+          ready.urgentDistance =
+              processCount == 0 ? 0
+                                : (selectedIndex + processCount -
+                                   context->schedulerCursor % processCount) %
+                                      processCount;
+          ready.region = schedulerOrderingRegion(scheduled, signalResume);
+          if (scheduled.prioritySignal && signalResume) {
+            ready.rank = 0;
+            ready.insertionSequence = 0;
+          } else {
+            ready.rank = scheduled.scheduleRank;
+            ready.insertionSequence = scheduled.insertionSequence;
+          }
+          pushCachedNativeReady(ready);
+          cachedNativeUrgentCount += ready.urgent;
+        }
+      } else {
+        cachedNativeSlowCandidates.push_back(scheduled.token);
+      }
+    }
+  };
+  // Generated execution can leave the descriptor candidate index dormant.
+  // Rebuild once at this real boundary, then maintain it on publications and
+  // returned actions rather than rescanning every actor after every action.
+  if (options.nativePlan)
+    rebuildNativeSchedulerIndexUnlocked(context);
   for (;;) {
     {
       ContextMutexLock lock(context);
@@ -2895,9 +2862,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                               plan->state_unknown,
                                               plan->state_bit_count)))
           return OBELISK_RT_LAYOUT_MISMATCH;
-        obelisk_rt_status status = refreshNativeAOTReadyPhaseUnlocked(context);
-        if (status != OBELISK_RT_OK)
-          return status;
       }
       if (context->nativeScheduleClockIngressPending &&
           !context->vpiTimeCallbackActive && !context->schedulerRunningFinals) {
@@ -3045,33 +3009,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   currentWait(context->scheduledProcesses[index])))
             considerNativeReady(*ready, index);
         }
-      } else if (options.nativePlan) {
-        // Native-plan readiness supplies candidates to the same arbitration
-        // as descriptor processes and bytecode tasks. It does not select or
-        // drain an execution region of its own.
-        clearCachedNativeReady();
-        for (uint64_t token : context->nativePollCandidates) {
-          auto entry = context->scheduledProcessIndices.find(token);
-          if (entry != context->scheduledProcessIndices.end() &&
-              entry->second < context->scheduledProcesses.size() &&
-              context->scheduledProcesses[entry->second].aotActorSlot ==
-                  UINT32_MAX)
-            considerNativeToken(token);
-        }
-        for (uint32_t word = 0;
-             word < context->nativeScheduleReadyNodes.wordCount(); ++word) {
-          uint64_t bits = context->nativeScheduleReadyNodes.word(word);
-          while (bits != 0) {
-            uint32_t node = word * 64 + __builtin_ctzll(bits);
-            bits &= bits - 1;
-            if (node >= context->nativeScheduleNodes.size())
-              return OBELISK_RT_INVALID_CONTINUATION;
-            uint32_t slot = context->nativeScheduleNodes[node].actor_slot;
-            if (slot >= context->nativeScheduleActorTokens.size())
-              return OBELISK_RT_INVALID_CONTINUATION;
-            considerNativeToken(context->nativeScheduleActorTokens[slot]);
-          }
-        }
       } else {
         bool cacheShapeValid =
             cachedNativeReadyValid &&
@@ -3079,6 +3016,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 context->schedulerSelectionGeneration &&
             cachedNativeReadyTime == context->schedulerTime &&
             cachedNativeReadyFinals == context->schedulerRunningFinals &&
+            cachedUnstartedRegion == unstartedActorRegion &&
             nativeScanProcessCount >= cachedNativeReadyProcessCount &&
             (cachedNativeReadyProcessCount == 0 ||
              context->scheduledProcesses[cachedNativeReadyProcessCount - 1]
@@ -3147,11 +3085,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (ready)
                 considerNativeReady(*ready, index);
               auto indexed = context->scheduledProcessIndices.find(token);
-              bool urgentStartup =
+              bool startup =
                   ready && indexed != context->scheduledProcessIndices.end() &&
-                  ready->urgent &&
                   !context->scheduledProcesses[indexed->second].started;
-              if (ready && (signalResume || urgentStartup))
+              if (ready && (signalResume || startup))
                 batch.push_back(*ready);
               else
                 cachedNativeSlowCandidates.push_back(token);
@@ -3206,6 +3143,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   context->schedulerSelectionGeneration;
               cachedNativeReadyTime = context->schedulerTime;
               cachedNativeReadyFinals = context->schedulerRunningFinals;
+              cachedUnstartedRegion = unstartedActorRegion;
               cachedNativeReadyProcessCount = nativeScanProcessCount;
               cachedNativeReadyLastToken =
                   nativeScanProcessCount == 0
@@ -3442,32 +3380,6 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       if (selected) {
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
-        if (options.nativePlan && candidate.aotActorSlot != UINT32_MAX) {
-          // The executor owns its frame/action ABI. Selection, updates, and
-          // subsequent reactivation remain in this loop (1800-2023 4.5).
-          uint32_t slot = candidate.aotActorSlot;
-          uint32_t node = findNativeAOTNodeUnlocked(
-              context, slot, candidate.instance->continuation);
-          if (node == UINT32_MAX)
-            return OBELISK_RT_INVALID_CONTINUATION;
-          context->schedulerCursor = (selectedIndex + 1) % processCount;
-          clearNativeAOTNodeReadyUnlocked(context, node);
-          context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
-          if (context->nativeScheduleForcedSlot != UINT32_MAX)
-            context->nativeScheduleForcedExecuted = true;
-          obelisk_rt_status status =
-              executeNativeAOTNodeUnlocked(context, slot);
-          if (status != OBELISK_RT_OK)
-            return status;
-          if (context->nativeScheduleSingleStep)
-            return OBELISK_RT_OK;
-          continue;
-        }
-        if (cachedNativeSelection &&
-            candidate.token != cachedNativeSelection->token)
-          clearCachedNativeReady();
-        selectedResuming = candidate.started &&
-                           candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
         if (candidate.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
           bool acquired = false;
           obelisk_rt_status status = obelisk_rt_semaphore_wait_acquire(
@@ -3481,6 +3393,45 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (!acquired)
             continue;
         }
+        if (cachedNativeSelection &&
+            candidate.token != cachedNativeSelection->token)
+          clearCachedNativeReady();
+        if (options.nativePlan && candidate.aotActorSlot != UINT32_MAX) {
+          // The executor owns its frame/action ABI. Selection, updates, and
+          // subsequent reactivation remain in this loop (1800-2023 4.5).
+          uint32_t slot = candidate.aotActorSlot;
+          uint64_t selectedToken = candidate.token;
+          uint32_t node = findNativeAOTNodeUnlocked(
+              context, slot, candidate.instance->continuation);
+          if (node == UINT32_MAX)
+            return OBELISK_RT_INVALID_CONTINUATION;
+          context->schedulerCursor = (selectedIndex + 1) % processCount;
+          clearNativeAOTNodeReadyUnlocked(context, node);
+          context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
+          if (context->nativeScheduleForcedSlot != UINT32_MAX)
+            context->nativeScheduleForcedExecuted = true;
+          obelisk_rt_status status =
+              executeNativeAOTNodeUnlocked(context, slot);
+          if (status != OBELISK_RT_OK)
+            return status;
+          auto indexed = context->scheduledProcessIndices.find(selectedToken);
+          if (indexed != context->scheduledProcessIndices.end() &&
+              indexed->second < context->scheduledProcesses.size()) {
+            const ScheduledProcess &resumed =
+                context->scheduledProcesses[indexed->second];
+            if (resumed.instance && !indexedSignalBlocked(resumed))
+              context->nativePollCandidates.insert(resumed.token);
+            else
+              context->nativePollCandidates.erase(resumed.token);
+            readmitNativeCandidate(resumed, indexed->second,
+                                   cachedNativeSelection.has_value());
+          }
+          if (context->nativeScheduleSingleStep)
+            return OBELISK_RT_OK;
+          continue;
+        }
+        selectedResuming = candidate.started &&
+                           candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
         context->schedulerCursor = (selectedIndex + 1) % processCount;
         if (candidate.aotActorSlot != UINT32_MAX) {
           uint32_t node =
@@ -5017,63 +4968,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         context->nativePollCandidates.insert(scheduled.token);
       else
         context->nativePollCandidates.erase(scheduled.token);
-      // The selected token was popped from the heap before execution and is
-      // therefore absent from both cached containers. A task call, caller
-      // return, continue action, or suspend can requeue that same token
-      // without changing the process vector or signal generation. Re-admit
-      // its finalized state once; mutations outside that narrow shape force
-      // an exact rebuild on the next iteration.
-      if (cachedNativeSelection &&
-          context->nativePollCandidates.count(scheduled.token)) {
-        bool exactProcessCount =
-            context->scheduledProcesses.size() == cachedNativeReadyProcessCount;
-        bool cacheShapeStable =
-            cachedNativeReadyValid &&
-            cachedNativeReadyGeneration ==
-                context->schedulerSelectionGeneration &&
-            cachedNativeReadyTime == context->schedulerTime &&
-            cachedNativeReadyFinals == context->schedulerRunningFinals &&
-            exactProcessCount &&
-            (cachedNativeReadyProcessCount == 0 ||
-             context->scheduledProcesses[cachedNativeReadyProcessCount - 1]
-                     .token == cachedNativeReadyLastToken);
-        if (!cacheShapeStable) {
-          clearCachedNativeReady();
-        } else if (!scheduled.explicitlySuspended &&
-                   scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE) {
-          // Urgent distances are relative to the cursor at cache creation.
-          // A requeued urgent token uses the post-selection cursor, so it is
-          // comparable only after every old-cursor urgent entry is gone.
-          if (scheduled.urgent && cachedNativeUrgentCount != 0) {
-            clearCachedNativeReady();
-          } else {
-            bool signalResume =
-                scheduled.signalTriggered ||
-                (scheduled.signalLatch && scheduled.signalLatch->triggered);
-            CachedNativeReady ready;
-            ready.token = scheduled.token;
-            ready.urgent = scheduled.urgent;
-            size_t processCount = context->scheduledProcesses.size();
-            ready.urgentDistance =
-                processCount == 0 ? 0
-                                  : (selectedIndex + processCount -
-                                     context->schedulerCursor % processCount) %
-                                        processCount;
-            ready.region = schedulerOrderingRegion(scheduled, signalResume);
-            if (scheduled.prioritySignal && signalResume) {
-              ready.rank = 0;
-              ready.insertionSequence = 0;
-            } else {
-              ready.rank = scheduled.scheduleRank;
-              ready.insertionSequence = scheduled.insertionSequence;
-            }
-            pushCachedNativeReady(ready);
-            cachedNativeUrgentCount += ready.urgent;
-          }
-        } else {
-          cachedNativeSlowCandidates.push_back(scheduled.token);
-        }
-      }
+      readmitNativeCandidate(scheduled, selectedIndex,
+                             cachedNativeSelection.has_value());
     }
     if (destroy) {
       status = obelisk_rt_v1_process_instance_destroy(selected);

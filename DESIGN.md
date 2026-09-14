@@ -524,7 +524,7 @@ intermediate stores (IEEE 1800-2023 4.3–4.7). Whole-group execution requires
 those additional proofs before removing fine-fragment boundaries.
 
 The first runtime integration routes mixed native/bytecode current-slot drains
-through `runScheduler` with an installed-plan executor policy. Plan ready bits,
+through `runScheduler` with an installed-plan executor policy. Static publications,
 ordinary processes, and design tasks enter the same region/rank/sequence
 arbitration. The selected plan node executes through its existing fragment
 action ABI, and the driver resumes arbitration after publications and NBA
@@ -538,13 +538,32 @@ barrier selector, including generated accumulators and their dirty hierarchy.
 DPI task reentry temporarily releases the suspended caller's executor-selection
 restrictions and restores them on return while retaining the context's queues.
 
-The general AOT node entrypoint also delegates to that driver, including time
-advancement. Native ready publications from an executing actor are preserved
+AOT node runs delegate to that driver, including time advancement and periodic
+bootstrap restricted to the current slot. The separate trusted
+worklist loop, bootstrap arbitration loop, trusted fragment action adopter,
+and their static-only calendar/NBA control helper have been removed. Static
+publications update the shared candidate index and invalidate its ordered
+ready cache. The driver rebuilds a dormant index once on entry, then consumes
+startup and signal-ready cohorts in scheduler-key order. Actors suspended on
+unchanged signals leave the poll set; runtime waits remain individually
+pollable. Changes to the earliest startup region invalidate the cache so a
+completed startup cohort cannot hide same-region signal resumptions. Native
+ready publications from an executing actor are preserved
 when it returns to the same wait; external clock callbacks consume their
 ingress before reentry. Disturbances no longer select bytecode merely because
 the static-specialization guard is false: mapped compiled fragments retain
 their range-guarded state accesses, while explicitly bytecode continuations and
 required-bytecode policy select the interpreter.
+
+When the common driver executes a compiled node, zero-delay, named-event and
+other runtime waits update that actor's continuation and readiness without
+deoptimizing the plan. Inactive/Re-Inactive still precede the corresponding
+NBA barrier, and semaphore acquisition happens before selecting either
+executor. A generated single-node entry retains its boundary status contract
+until its caller is also replaced. Live continuation coverage is validated
+before installing any ready bits, so an incomplete node inventory cannot
+partially publish ownership. Task-call frame routing still needs integration
+before all boundary-triggered whole-plan fallbacks can be removed.
 
 The required disturbance policy is local: VPI-driven clocks, including cocotb
 clocks without an internal oscillator, enter Tier 1 through their indexed clock
@@ -576,8 +595,8 @@ and read/write synchronization, and control operations. Full integration of
 group-level partial routing also remains required; preserving compiled
 fragments alone does not prove that unaffected groups stay in Tier 1.
 
-This is an incremental replacement. Trusted clean worklists and generated
-periodic loops still have separate control paths; native/runtime plane
+This is an incremental replacement. Generated periodic loops still have
+separate control paths; native/runtime plane
 materialization still occurs at mixed boundaries. Their removal, shared
 authoritative storage, direct whole-group SSA computation, and the performance
 acceptance gates remain outstanding. Existing public scheduler entrypoints

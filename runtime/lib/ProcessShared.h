@@ -181,9 +181,6 @@ obelisk_rt_status runPreponedHooks(obelisk_rt_context *context);
 // Initialize the current slot once, regardless of which executor entered it.
 // Reentry in the same slot preserves its sampled state and progress cursor.
 obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context);
-obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
-                                          bool allowTimeAdvance = true,
-                                          bool allowRuntimeTasks = false);
 bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
                              const obelisk_rt_wait_record_v1 *wait);
 uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
@@ -266,11 +263,6 @@ commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
 obelisk_rt_status
 resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
                                       uint32_t barrierRegion);
-bool canCommitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
-                                             uint32_t barrierRegion);
-obelisk_rt_status
-commitInlineNativeNBABarrierUnlocked(obelisk_rt_context *context,
-                                     uint32_t barrierRegion, bool &changed);
 obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
     obelisk_rt_context *context, uint32_t rootIndex, uint32_t execRegion);
 
