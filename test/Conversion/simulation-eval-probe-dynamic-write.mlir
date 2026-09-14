@@ -1,9 +1,8 @@
-// RUN: %python %S/Inputs/check-eval-probe-store-alias.py %s %t obelisk-opt
+// RUN: %python %S/Inputs/check-eval-probe-dynamic-store-alias.py %s %t obelisk-opt
 
-// A dry-run checkpoint predicate may discard the low-byte store only when
-// its subsequent read addresses the disjoint high byte. The helper also
-// instantiates same-byte and partially overlapping reads; those require a
-// private whole-root overlay instead of dropping the low-byte publication.
+// A dynamic write may be omitted from a predicate if its entire root is
+// disjoint from every later read. An overlapping read must keep runtime
+// ownership: a may-write bound is not an exact slice for SSA forwarding.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -13,6 +12,8 @@ module attributes {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i1 design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<16> design
+    obelisk_sim.storage.decl 2 in 0 : i32 design
+    obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.logic<16> design
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     obelisk_sim.code_unit.decl 2 in 0 always hierarchy "clock"
     obelisk_sim.code_unit.decl 3 in 0 always hierarchy "work"
@@ -48,10 +49,13 @@ module attributes {
     ^wait:
       obelisk_sim.suspend.change %clock to ^body : !obelisk_sim.ref<i1>
     ^body:
-      %dst = obelisk_sim.ref.extract %data from 0 : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %index = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<i32>
+      %low = obelisk_sim.ref.load %index : !obelisk_sim.ref<i32> -> i32
+      %dst = obelisk_sim.ref.dyn_extract %data from %low : (!obelisk_sim.ref<!obelisk_sim.logic<16>>, i32) -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %seven = obelisk_sim.logic.constant 7 : i8, 0 : i8 : !obelisk_sim.logic<8>
       obelisk_sim.ref.store %seven to %dst : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      %src = obelisk_sim.ref.extract %data from 8 : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %other = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<!obelisk_sim.logic<16>>
+      %src = obelisk_sim.ref.extract %other from 0 : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %read = obelisk_sim.ref.load %src : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       %bad = obelisk_sim.logic.compare case_eq %read, %seven : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> i1
       cf.cond_br %bad, ^cold, ^wait

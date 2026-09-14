@@ -1060,7 +1060,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     source.walk([&](sim::SimRefStoreOp store) {
       if (!hotProbeBlocks.contains(store->getBlock()))
         return;
-      auto written = rangeFor(store.getReference());
+      auto written = rangeFor(store.getReference(), true);
       bool independent = written && llvm::all_of(readRanges, [&](auto read) {
         if (!read)
           return false;
@@ -1080,7 +1080,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
 
     // For exact captured cells, model blocking writes in private SSA state.
     // The real activation still publishes every store; only its dry run uses
-    // this overlay. Partial overlap, dynamic aliases, and type-punning are
+    // this overlay. Fixed slices wholly contained in a cell use packed
+    // insert/extract operations; dynamic aliases and mixed state domains are
     // deliberately excluded. Promotion below must eliminate all shadow
     // allocations before the predicate is admitted to the native closure.
     struct ProbeCell {
@@ -1093,21 +1094,39 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       return lhs.first <= rhs.first ? lhs.second > rhs.first - lhs.first
                                     : rhs.second > lhs.first - rhs.first;
     };
+    auto contains = [](ProbeRange outer, ProbeRange inner) {
+      return inner.first >= outer.first &&
+             inner.first - outer.first <= outer.second &&
+             inner.second <= outer.second - (inner.first - outer.first);
+    };
     source.walk([&](sim::SimRefStoreOp store) {
       if (!hotProbeBlocks.contains(store->getBlock()) ||
           terminalStores.contains(store.getOperation()))
         return;
-      auto argument = dyn_cast<BlockArgument>(store.getReference());
-      auto storage =
-          store.getReference().getDefiningOp<sim::SimContextStorageOp>();
+      Value reference = store.getReference();
+      for (unsigned depth = 0; depth != 16; ++depth) {
+        if (auto slice = reference.getDefiningOp<sim::SimRefExtractOp>())
+          reference = slice.getInput();
+        else if (auto field =
+                     reference.getDefiningOp<sim::SimRefSubelementOp>())
+          reference = field.getInput();
+        else
+          break;
+      }
+      auto argument = dyn_cast<BlockArgument>(reference);
+      auto storage = reference.getDefiningOp<sim::SimContextStorageOp>();
       auto context = storage ? dyn_cast<BlockArgument>(storage.getContext())
                              : BlockArgument{};
-      auto written = rangeFor(store.getReference());
+      auto written = rangeFor(reference);
+      Type cellType = cast<sim::RefType>(reference.getType()).getElementType();
       bool entryAvailable =
           (argument && argument.getOwner() == &source.getBody().front()) ||
           (context && context.getOwner() == &source.getBody().front());
-      if (!entryAvailable || !written ||
-          !sim::getPackedWidth(store.getValue().getType()))
+      if (!entryAvailable || !written || !rangeFor(store.getReference()) ||
+          !sim::getPackedWidth(cellType) ||
+          llvm::any_of(cells, [&](const ProbeCell &cell) {
+            return cell.range == *written;
+          }))
         return;
       bool exact = true;
       source.walk([&](Operation *operation) {
@@ -1130,24 +1149,24 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         }
         auto accessed = rangeFor(reference, true);
         auto range = rangeFor(reference);
-        if (!accessed || (overlaps(*written, *accessed) &&
-                          (!range || *range != *written ||
-                           valueType != store.getValue().getType() ||
-                           !isa<sim::RefType>(reference.getType()))))
+        Type scalar = sim::getPackedScalarType(valueType);
+        Type cellScalar = sim::getPackedScalarType(cellType);
+        if (!accessed ||
+            (overlaps(*written, *accessed) &&
+             (!range || !contains(*written, *range) || !scalar ||
+              isa<sim::LogicType>(scalar) != isa<sim::LogicType>(cellScalar) ||
+              !isa<sim::RefType>(reference.getType()))))
           exact = false;
       });
-      if (exact && llvm::none_of(cells, [&](const ProbeCell &cell) {
-            return cell.range == *written;
-          }))
-        cells.push_back(
-            {*written, store.getReference(), store.getValue().getType()});
+      if (exact)
+        cells.push_back({*written, reference, cellType});
     });
     auto cellFor = [&](Value reference) -> std::optional<unsigned> {
       auto range = rangeFor(reference);
       if (!range)
         return std::nullopt;
       for (auto [index, cell] : llvm::enumerate(cells))
-        if (cell.range == *range)
+        if (contains(cell.range, *range))
           return index;
       return std::nullopt;
     };
@@ -1180,7 +1199,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp,
               sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
               operation)) {
-        traceRejection("publication may be observed by a later read", operation);
+        traceRejection("publication may be observed by a later read",
+                       operation);
         supported = false;
         return;
       }
@@ -1238,7 +1258,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     for (const ProbeCell &cell : cells) {
       // Fixed captures may already have been replaced by context lookups.
       // Recreate this pure handle lookup before the speculative initial load.
-      if (auto storage = cell.reference.getDefiningOp<sim::SimContextStorageOp>())
+      if (auto storage =
+              cell.reference.getDefiningOp<sim::SimContextStorageOp>())
         builder.clone(*storage.getOperation(), mapping);
       auto initial = sim::SimRefLoadOp::create(
           builder, source.getLoc(), cell.type, mapping.lookup(cell.reference));
@@ -1248,6 +1269,17 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
           sim::RefType::get(module.getContext(), cell.type),
           initial.getResult()));
     }
+    auto flatten = [&](Value value, Location location) -> Value {
+      Type scalar = sim::getPackedScalarType(value.getType());
+      if (scalar == value.getType())
+        return value;
+      return sim::SimPackedFlattenOp::create(builder, location, scalar, value);
+    };
+    auto unflatten = [&](Value value, Type type, Location location) -> Value {
+      if (type == value.getType())
+        return value;
+      return sim::SimPackedUnflattenOp::create(builder, location, type, value);
+    };
     for (Block &sourceBlock : source.getBody()) {
       builder.setInsertionPointToEnd(mapping.lookup(&sourceBlock));
       for (Operation &operation : sourceBlock) {
@@ -1256,18 +1288,70 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         if (isa<sim::SimCoveragePointHitOp>(operation) ||
             isDirectOutput(&operation) || terminalStores.contains(&operation))
           continue;
-        Operation *clone = builder.clone(operation, mapping);
-        if (!hotProbeBlocks.contains(&sourceBlock))
-          continue;
-        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
-          if (auto cell = cellFor(load.getReference()))
-            cast<sim::SimRefLoadOp>(clone).getReferenceMutable().assign(
-                shadowCells[*cell].getResult());
-        } else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
-          if (auto cell = cellFor(store.getReference()))
-            cast<sim::SimRefStoreOp>(clone).getReferenceMutable().assign(
-                shadowCells[*cell].getResult());
+        Location location = operation.getLoc();
+        if (hotProbeBlocks.contains(&sourceBlock)) {
+          if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
+            if (auto index = cellFor(load.getReference())) {
+              const ProbeCell &cell = cells[*index];
+              ProbeRange range = *rangeFor(load.getReference());
+              Value value =
+                  sim::SimRefLoadOp::create(builder, location, cell.type,
+                                            shadowCells[*index].getResult());
+              if (range != cell.range || load.getType() != cell.type) {
+                value = flatten(value, location);
+                Type scalar = sim::getPackedScalarType(load.getType());
+                if (range != cell.range) {
+                  uint64_t low = range.first - cell.range.first;
+                  if (isa<sim::LogicType>(scalar))
+                    value = sim::SimLogicExtractOp::create(
+                        builder, location, scalar, value,
+                        builder.getI64IntegerAttr(low));
+                  else {
+                    Value offset = arith::ConstantIntOp::create(
+                        builder, location, low, 64);
+                    value = sim::SimBitsDynExtractOp::create(
+                        builder, location, scalar, value, offset);
+                  }
+                }
+                value = unflatten(value, load.getType(), location);
+              }
+              mapping.map(load.getResult(), value);
+              continue;
+            }
+          } else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
+            if (auto index = cellFor(store.getReference())) {
+              const ProbeCell &cell = cells[*index];
+              ProbeRange range = *rangeFor(store.getReference());
+              Value value = mapping.lookup(store.getValue());
+              if (range != cell.range || value.getType() != cell.type) {
+                value = flatten(value, location);
+                if (range != cell.range) {
+                  Value previous = sim::SimRefLoadOp::create(
+                      builder, location, cell.type,
+                      shadowCells[*index].getResult());
+                  previous = flatten(previous, location);
+                  uint64_t low = range.first - cell.range.first;
+                  if (isa<sim::LogicType>(previous.getType()))
+                    value = sim::SimLogicInsertOp::create(
+                        builder, location, previous.getType(), previous, value,
+                        builder.getI64IntegerAttr(low));
+                  else {
+                    Value offset = arith::ConstantIntOp::create(
+                        builder, location, low, 64);
+                    value = sim::SimBitsDynInsertOp::create(
+                        builder, location, previous.getType(), previous, value,
+                        offset);
+                  }
+                }
+                value = unflatten(value, cell.type, location);
+              }
+              sim::SimRefStoreOp::create(builder, location, value,
+                                         shadowCells[*index].getResult());
+              continue;
+            }
+          }
         }
+        builder.clone(operation, mapping);
       }
     }
 
