@@ -2,7 +2,7 @@
 //   OBELISK_WEB_SITE=site node test/web/smoke-test.mjs
 
 import { createRequire } from 'node:module';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -198,16 +198,6 @@ endmodule
       loadedFiles.find((file) => file.name === 'coverage-loaded.obcov'),
       `${optimization} loaded`,
     );
-    const outputDirectory = process.env.OBELISK_COVERAGE_OUTPUT_DIR;
-    if (outputDirectory) {
-      await mkdir(outputDirectory, { recursive: true });
-      const loadedSnapshot = loadedFiles.find(
-        (file) => file.name === 'coverage-loaded.obcov',
-      );
-      const suffix = optimization.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
-      await writeFile(`${outputDirectory}/coverage${suffix}.obcov`,
-                      loadedSnapshot.data);
-    }
   }
   console.log('wasm-web-ok (native and bytecode O0/O3 coverage round trip)');
 } catch (error) {
