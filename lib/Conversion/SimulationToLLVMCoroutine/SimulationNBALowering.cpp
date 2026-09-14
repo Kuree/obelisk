@@ -1030,7 +1030,13 @@ public:
              [](Value value) { return isa<IntegerType>(value.getType()); }) ||
          (*width <= 64 && adaptor.getValue().size() == 1 &&
           isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())));
-    if (packedStaticStage) {
+    // Wide Eval sites need the per-site ordering/ingress preflight in AOT
+    // materialization. Preserve their site identity in the static NBA ABI;
+    // the ordinary actor still uses the existing accumulator/claim route.
+    bool wideEvalSite = packedStaticStage && function &&
+                        function->hasAttr("obelisk.eval.raw_captures") &&
+                        staticPlan->roots[staticRoot->second].bit_width > 64;
+    if (packedStaticStage && !wideEvalSite) {
       bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
       StringRef generatedAccumulator =
           staticRoot->second < staticPlan->generatedAccumulators.size()

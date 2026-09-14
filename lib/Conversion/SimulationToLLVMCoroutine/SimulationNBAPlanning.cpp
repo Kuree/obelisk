@@ -378,6 +378,25 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     if (enqueue.getDelay() || site.getTiming())
       return reject();
     Value reference = enqueue.getDestination();
+    auto width = nativeStateWidth(enqueue.getValue().getType());
+    uint64_t origin = plan.siteSemanticOrigins.lookup(site.getId());
+    auto recordLane = [&](Lane lane) {
+      auto [previous, inserted] = lanes[rootIndex].try_emplace(origin, lane);
+      if (!inserted && (previous->second.stride != lane.stride ||
+                       previous->second.low != lane.low ||
+                       previous->second.width != lane.width))
+        reject();
+    };
+    // A fixed subelement is a lane in a single root-sized element. This
+    // proves disjoint packed words as well as unpacked array elements without
+    // assuming that distinct descriptors or source expressions cannot alias.
+    if (auto fixed = resolveStaticNBADestination(reference, stateLayout)) {
+      if (fixed->staticID != root.static_state || !width || *width == 0 ||
+          *width > 64 || fixed->offset > root.bit_width ||
+          *width > root.bit_width - fixed->offset)
+        return reject();
+      return recordLane({root.bit_width, fixed->offset, *width});
+    }
     uint64_t low = 0;
     if (auto extract = reference.getDefiningOp<sim::SimRefExtractOp>()) {
       low = extract.getLowBit();
@@ -391,7 +410,6 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
         nativeStateWidth(element.getResult().getType().getElementType());
     auto arrayWidth =
         nativeStateWidth(element.getInput().getType().getElementType());
-    auto width = nativeStateWidth(enqueue.getValue().getType());
     // Restrict this proof to complete, fixed-width arrays rooted at zero.
     // Unknown/out-of-range indices remain guarded by normal handle lowering;
     // partially clipped slices and runtime-selected lanes are not admitted.
@@ -399,13 +417,7 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
         !stride || !arrayWidth || *arrayWidth != root.bit_width || !width ||
         *width == 0 || *width > 64 || low > *stride || *width > *stride - low)
       return reject();
-    uint64_t origin = plan.siteSemanticOrigins.lookup(site.getId());
-    Lane lane{*stride, low, *width};
-    auto [previous, inserted] = lanes[rootIndex].try_emplace(origin, lane);
-    if (!inserted && (previous->second.stride != lane.stride ||
-                      previous->second.low != lane.low ||
-                      previous->second.width != lane.width))
-      conflictingLanes[rootIndex] = true;
+    recordLane({*stride, low, *width});
   });
   plan.disjointDynamicLanes.assign(plan.roots.size(), false);
   for (uint32_t root = 0; root != plan.roots.size(); ++root) {

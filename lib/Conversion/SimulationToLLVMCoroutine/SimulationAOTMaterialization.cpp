@@ -423,15 +423,30 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       matchingSiteCalls == 1 && enclosingExecutesAtMostOnce &&
       locallyExecutesAtMostOnce(call.getOperation(), enclosing);
 
+  auto fixedHandle = constantU64(arguments[5]);
+  obelisk_rt_stable_handle_v1 fixedDestination{};
+  bool fixedRoot =
+      fixedHandle && root != staticNBAPlan.siteRoots.end() &&
+      root->second < staticNBAPlan.roots.size() &&
+      obelisk_rt_stable_handle_decode(*fixedHandle, &fixedDestination) &&
+      fixedDestination.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+      fixedDestination.id == staticNBAPlan.roots[root->second].static_state &&
+      fixedDestination.offset >= 0 && width &&
+      static_cast<uint64_t>(fixedDestination.offset) <=
+          staticNBAPlan.roots[root->second].bit_width &&
+      *width <= staticNBAPlan.roots[root->second].bit_width -
+                    static_cast<uint64_t>(fixedDestination.offset);
+  bool dynamicRoot =
+      offsetCall && offsetCall.getCallee() &&
+      *offsetCall.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+      offsetCall.getArgOperands().size() == 2;
   bool commonDynamicRoot =
       site && width && *width != 0 && *width <= 64 &&
       root != staticNBAPlan.siteRoots.end() &&
       root->second < staticNBAPlan.roots.size() &&
       *width <= staticNBAPlan.roots[root->second].bit_width &&
-      root->second < staticNBAPlan.generatedOffsets.size() && offsetCall &&
-      offsetCall.getCallee() &&
-      *offsetCall.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
-      offsetCall.getArgOperands().size() == 2 &&
+      root->second < staticNBAPlan.generatedOffsets.size() &&
+      (fixedRoot || dynamicRoot) &&
       (staticNBAPlan.generatedOffsets[root->second] & 7) == 0 &&
       proof.commitRegion != UINT32_MAX;
   bool directAccumulatorCandidate =
@@ -1986,7 +2001,9 @@ FailureOr<bool> makeNativeEvalPlan(
         bool periodicWideLatch = proof->second.periodicWideLatch;
         handleOffsetToErase = offsetCall;
         OpBuilder nbaBuilder(call);
-        Value dynamicBit = offsetCall.getArgOperands()[1];
+        Value dynamicBit =
+            offsetCall ? offsetCall.getArgOperands()[1]
+                       : llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
         IntegerType valueType = IntegerType::get(context, *width);
         Value staged = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
                                             valueType, arguments[7], 1);
@@ -2012,7 +2029,8 @@ FailureOr<bool> makeNativeEvalPlan(
         // root.  A one-entry per-site latch loses all but the final execution,
         // contrary to IEEE 1800-2017 4.6 and 10.4.2.
         uint64_t rootWidth = staticNBAPlan.roots[root->second].bit_width;
-        Value encodedBase = offsetCall.getArgOperands()[0];
+        Value encodedBase =
+            offsetCall ? offsetCall.getArgOperands()[0] : arguments[5];
         uint64_t expectedPrefix =
             OBELISK_RT_STABLE_HANDLE_STATIC_TAG |
             (uint64_t{staticNBAPlan.roots[root->second].static_state} << 32);

@@ -3336,10 +3336,19 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               root->second >= staticNBAPlan.roots.size() ||
               staticNBAPlan.roots[root->second].bit_width <= 64)
             return;
-          requiresRuntimeNBA |=
-              (semanticOriginsByRoot[root->second].size() != 1 &&
-               !staticNBAPlan.disjointDynamicLanes[root->second]) ||
-              !siteExecutesAtMostOnce(enqueue);
+          bool overlappingSites =
+              semanticOriginsByRoot[root->second].size() != 1 &&
+              !staticNBAPlan.disjointDynamicLanes[root->second];
+          bool repeatedSite = !siteExecutesAtMostOnce(enqueue);
+          requiresRuntimeNBA |= overlappingSites || repeatedSite;
+          if (detailedTiming && (overlappingSites || repeatedSite))
+            llvm::errs() << "eval NBA proof rejected: function="
+                         << function.getSymName() << " callee="
+                         << current.getSymName() << " site=" << site.getId()
+                         << " root=" << root->second << " width="
+                         << staticNBAPlan.roots[root->second].bit_width
+                         << " overlapping=" << overlappingSites
+                         << " repeated=" << repeatedSite << "\n";
         });
       if (requiresRuntimeNBA)
         function->setAttr(evalRuntimeNBARequiredAttr,
