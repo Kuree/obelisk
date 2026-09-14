@@ -165,7 +165,18 @@ obelisk_rt_status
 adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
                               ScheduledProcess &scheduled,
                               const obelisk_rt_fragment_action_v1 &action);
-obelisk_rt_status runScheduler(obelisk_rt_context *context);
+struct SchedulerRunOptions {
+  // Select installed compiled executors for plan-owned actors. Other actors
+  // and design tasks still execute under the same region arbitration.
+  bool nativePlan = false;
+  // A generated boundary may retain future clock deadlines. This restricts
+  // time advancement, not which runnable regions the shared loop drains.
+  bool currentSlotOnly = false;
+};
+obelisk_rt_status runScheduler(obelisk_rt_context *context,
+                               SchedulerRunOptions options = {});
+obelisk_rt_status executeNativeAOTNodeUnlocked(obelisk_rt_context *context,
+                                               uint32_t actorSlot);
 obelisk_rt_status runPreponedHooks(obelisk_rt_context *context);
 // Initialize the current slot once, regardless of which executor entered it.
 // Reentry in the same slot preserves its sampled state and progress cursor.

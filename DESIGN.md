@@ -515,6 +515,44 @@ Tier 2 is a generated local
 dirty-mask convergence algorithm, and Tier 3 is the existing bytecode boundary
 for dynamic or unsupported control.
 
+The replacement target is one event loop owning time, region arbitration,
+ordered updates, and suspended identities across all three tiers. Selecting a
+tier selects an executor; it must not start another time/region scheduler.
+Scheduling certification and two-state certification are independent: an
+acyclic graph alone does not prove activation coalescing or unobservable
+intermediate stores (IEEE 1800-2023 4.3–4.7). Whole-group execution requires
+those additional proofs before removing fine-fragment boundaries.
+
+The first runtime integration routes mixed native/bytecode current-slot drains
+through `runScheduler` with an installed-plan executor policy. Plan ready bits,
+ordinary processes, and design tasks enter the same region/rank/sequence
+arbitration. The selected plan node executes through its existing fragment
+action ABI, and the driver resumes arbitration after publications and NBA
+commits. A current-slot restriction prevents calendar advancement without
+suppressing later regions or repeated Active/NBA iteration. Slot entry is
+idempotent across executor boundaries, so Preponed sampling and slot progress
+are not restarted. A generated checkpoint enters its slot before recording
+progress or executing its callback, so a later drain cannot erase completed
+callback work. Static and descriptor-driven control use the same due-NBA
+barrier selector, including generated accumulators and their dirty hierarchy.
+DPI task reentry temporarily releases the suspended caller's executor-selection
+restrictions and restores them on return while retaining the context's queues.
+
+This is an incremental replacement. Trusted clean worklists and generated
+periodic loops still have separate control paths; native/runtime plane
+materialization still occurs at mixed boundaries. Their removal, shared
+authoritative storage, direct whole-group SSA computation, and the performance
+acceptance gates remain outstanding. Existing public scheduler entrypoints
+will become adapters to the common loop as those paths are replaced.
+
+Replacement acceptance requires at least 10× Ibex execution speedup over the
+preserved `7d0058c1` harness, no repeatable PicoRV regression, dormant-VPI parity,
+and at most 25% growth in matched median compilation time and peak memory.
+Correctness gates include separately encoded required-bytecode execution,
+native/wasm32 layouts, and the full regression suite. Baseline hashes, commands,
+and interleaved measurements are preserved under `tmp/bench/`; these gates have
+not yet been met, and improved executor counts alone do not satisfy them.
+
 Native lowering validates that plan against the native state layout and emits
 the following helper ABI. These helpers are not yet reachable from the
 installed AOT run function; until that integration is complete, auto uses the
@@ -533,6 +571,14 @@ is empty. The direct Tier-1 wrapper calls this helper without any
 one word: SCCs or owner ready bits beyond 64 stay on the fine native/runtime
 owner and receive an explicit fallback marker in lowered IR instead of being
 silently truncated.
+
+Read-only observation demand now invalidates scheduling/visibility shortcuts
+without invalidating a cached knownness proof by itself. Actual mutations still
+take the existing invalidation hooks. Durable range-scoped certificates and
+activation-local guards remain to be integrated across every mutation path;
+the current global invalidation machinery must remain until that coverage is
+proved. In particular, a known NBA payload cannot justify skipping the
+destination's unknown-bit clearing or its X/Z-to-known transition.
 
 Constant-calendar periodic clocks are recognized structurally as a pure
 one-bit fixed-state toggle recurrence. The plan records stable actor and

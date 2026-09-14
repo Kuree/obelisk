@@ -15,7 +15,9 @@
 // PLAN-DAG: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
 // Both long, writer-free intervals must use Tier 1. Runtime work stays
 // bounded by the seven actual mutations, including recovery after release.
-// TIERS: scheduler_iterations=18
+// The shared loop now counts plan-node and barrier iterations as well as
+// descriptor execution. The count remains independent of the long intervals.
+// TIERS: scheduler_iterations=39
 // TIERS-SAME: aot_node_executions=17
 // CHECK: before 0 000001f4
 // CHECK-NEXT: after 0 00000029

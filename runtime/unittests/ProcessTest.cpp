@@ -452,6 +452,10 @@ obelisk_rt_status runGeneratedCheckpoint(AOTTestState *state,
   ++state->runCalls;
   if (state->runCalls != 1)
     return OBELISK_RT_OK;
+  // Model run_until reaching a new slot without runtime slot entry. Callback
+  // progress must survive the subsequent current-slot drain.
+  context->schedulerTime = 17;
+  context->schedulerSlotProgress = 0;
   invalidGeneratedCheckpointStatus =
       obelisk_rt_v1_scheduler_queue_aot_checkpoint(context, 0, 2,
                                                    generatedCheckpointCallback);
@@ -3788,6 +3792,154 @@ TEST(Scheduler, AOTCheckpointRunsOneRuntimeActionAndReentersNatively) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, SharedDriverArbitratesPlanAndDescriptorContinuations) {
+  AOTTestState state;
+  auto plan = makeAOTPlan(state);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  SchedulerFixture native(1), interpreted(2), descriptor(3);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  std::vector<uint8_t> code;
+  appendInstruction(code, OBELISK_RT_BC_CONST, OBELISK_RT_BC_TYPE_U64, 0, 0, 0,
+                    0);
+  appendInstruction(code, OBELISK_RT_BC_SUSPEND, OBELISK_RT_BC_TYPE_NONE, 0,
+                    OBELISK_RT_SUSPEND_DELAY, 0, 1);
+  appendInstruction(code, OBELISK_RT_BC_TERMINATE, OBELISK_RT_BC_TYPE_NONE, 0,
+                    0, 0, 0);
+  std::array<obelisk_rt_bytecode_entry_v1, 2> entries{{{0, 0}, {1, 2}}};
+  obelisk_rt_bytecode_v1 bytecode{};
+  bytecode.code = code.data();
+  bytecode.code_size = code.size();
+  bytecode.entries = entries.data();
+  bytecode.entry_count = entries.size();
+  bytecode.register_count = 1;
+  bytecode.register_offset = interpreted.layout.frame_size;
+  interpreted.descriptor.available_tiers |= OBELISK_RT_TIER_MASK_BYTECODE;
+  interpreted.descriptor.bytecode = &bytecode;
+  auto *nativeInstance = makeSchedulerInstance(native);
+  auto *bytecodeInstance = makeSchedulerInstance(interpreted);
+  auto *wait =
+      reinterpret_cast<obelisk_rt_wait_record_v1 *>(bytecodeInstance->frame);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 17, 0};
+  uint32_t bytecodeEntry = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context, nativeInstance, 0, 0, 3,
+                                            nullptr, nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context, bytecodeInstance, 0, 1, 2,
+                                            nullptr, nullptr, 0, &bytecodeEntry,
+                                            1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                context, makeSchedulerInstance(descriptor), 0, 1),
+            OBELISK_RT_OK);
+  // Deliberately scramble node layout: scheduler rank governs execution.
+  const obelisk_rt_native_schedule_node nodes[] = {{1, 1, UINT32_MAX},
+                                                   {0, 0, UINT32_MAX},
+                                                   {0, 1, UINT32_MAX},
+                                                   {1, 0, UINT32_MAX}};
+  ASSERT_EQ(initializeNativeAOTNodesUnlocked(context, nodes, std::size(nodes)),
+            OBELISK_RT_OK);
+  uint8_t futurePlane = 0, replacement = 9;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &futurePlane, nullptr, 8, 0, 8,
+                                        99, &replacement, nullptr),
+            OBELISK_RT_OK);
+  {
+    NativeAOTContextScope active(context);
+    NativeAOTMutexScope locked(context);
+    ASSERT_EQ(runScheduler(context, {true, true}), OBELISK_RT_OK);
+    EXPECT_EQ(context->schedulerTime, 0u);
+    EXPECT_EQ(nativeInstance->continuation, 1u);
+    EXPECT_EQ(bytecodeInstance->continuation, 1u);
+    EXPECT_EQ(bytecodeInstance->tier, OBELISK_RT_TIER_BYTECODE);
+    EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 2u);
+    EXPECT_EQ(futurePlane, 0u);
+    EXPECT_EQ(context->scheduledNBAs.size(), 1u);
+    EXPECT_TRUE(schedulerOrder.empty());
+    ASSERT_EQ(runScheduler(context, {true, false}), OBELISK_RT_OK);
+  }
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{3, 2, 1}));
+  EXPECT_EQ(schedulerResumeCount, 3u);
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 4u);
+  EXPECT_EQ(context->schedulerTime, 99u);
+  EXPECT_EQ(futurePlane, 9u);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, SharedDriverReactivatesPlanAfterEachSameSlotNBA) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 8;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  AOTTestState state;
+  auto plan = makeAOTPlan(state, 1);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  SchedulerFixture fixture(5);
+  fixture.descriptor.execution = &execution;
+  fixture.descriptor.native_execute =
+      [](obelisk_rt_process_instance_v1 *instance) {
+        if (instance->continuation == 0)
+          return schedulerExecute(instance);
+        auto *context = instance->context;
+        uint8_t value = context->stateValue[0];
+        schedulerOrder.push_back(value);
+        EXPECT_EQ(context->stateUnknown[0] & 255, 0u);
+        if (value == 3)
+          return schedulerExecute(instance);
+        uint8_t next = value + 1;
+        auto status = obelisk_rt_v1_scheduler_nba(
+            context, &nbaDummyPlane, nullptr, 8, schedulerWaitHandle, 8, 0,
+            &next, nullptr);
+        *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                             OBELISK_RT_SUSPEND_CHANGE,
+                             1,
+                             OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                             0,
+                             48};
+        return status;
+      };
+  schedulerWaitKind = OBELISK_RT_SUSPEND_CHANGE;
+  schedulerWaitHandle = obelisk_rt_v1_native_state_static_handle(1);
+  schedulerWaitWidth = 8;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_CHANGE;
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  nbaDummyPlane = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add_aot(context, makeSchedulerInstance(fixture),
+                                      0, 0, 0, nullptr, nullptr, 0, nullptr, 0),
+      OBELISK_RT_OK);
+  const obelisk_rt_native_schedule_node nodes[] = {{0, 0, UINT32_MAX},
+                                                   {0, 1, UINT32_MAX}};
+  ASSERT_EQ(initializeNativeAOTNodesUnlocked(context, nodes, std::size(nodes)),
+            OBELISK_RT_OK);
+  uint8_t first = 1;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &nbaDummyPlane, nullptr, 8,
+                                        schedulerWaitHandle, 8, 0, &first,
+                                        nullptr),
+            OBELISK_RT_OK);
+  {
+    NativeAOTContextScope active(context);
+    NativeAOTMutexScope locked(context);
+    ASSERT_EQ(runScheduler(context, {true, true}), OBELISK_RT_OK);
+  }
+  // Three separate NBA transitions, each followed by Active reactivation;
+  // the final entry records source-process termination exactly once.
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{1, 2, 3, 5}));
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(context->schedulerTime, 0u);
+  EXPECT_EQ(context->signalDiagnostics.aotNodeExecutions, 4u);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedCheckpointValidatesAndConsumesExactContinuation) {
   AOTTestState state;
   state.runHook = runGeneratedCheckpoint;
@@ -3820,6 +3972,9 @@ TEST(Scheduler, GeneratedCheckpointValidatesAndConsumesExactContinuation) {
   EXPECT_EQ(validGeneratedCheckpointStatus, OBELISK_RT_OK);
   EXPECT_EQ(generatedCheckpointCallbackCount, 2u);
   EXPECT_EQ(state.runCalls, 2u);
+  EXPECT_EQ(context->schedulerPreponedTime, 17u);
+  EXPECT_EQ(context->schedulerSlotProgress, 2u);
+  EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_EQ(context->nativeScheduleCheckpointActorSlot, UINT32_MAX);
   EXPECT_EQ(context->nativeScheduleCheckpointContinuation, 0u);
   EXPECT_EQ(context->nativeScheduleCheckpointCallback, nullptr);

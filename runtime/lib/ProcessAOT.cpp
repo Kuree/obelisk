@@ -1608,31 +1608,10 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return OBELISK_RT_INVALID_LIFECYCLE;
+  if (allowBytecode)
+    return runScheduler(context, {/*nativePlan=*/true,
+                                  /*currentSlotOnly=*/true});
   for (;;) {
-    if (allowBytecode) {
-      // IEEE 1800-2023 4.5/4.9: a mixed-tier slot can execute native stores
-      // (including a coincident periodic clock) before a runtime observer or
-      // the final canonical export. Publish those planes before selecting
-      // the next action; otherwise that export restores pre-clock state and
-      // changes the edge seen on re-entry. Preserve intervening runtime/VPI
-      // writes by reconciling their dirty roots first. Only the cold hybrid
-      // drain pays this synchronization, never the generated Tier-1 loop.
-      const auto *plan = context->nativeSchedulePlan;
-      if (plan->state_bit_count != 0 &&
-          (!reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) ||
-           !importNativeStatePlanesUnlocked(context, plan->state_value,
-                                            plan->state_unknown,
-                                            plan->state_bit_count)))
-        return OBELISK_RT_LAYOUT_MISMATCH;
-      // IEEE 1800-2017 31.9.1 transport sources may be published by the
-      // generic finite-bootstrap prefix before static fanout is certified.
-      // Rebuild the generated ready mask at this cold boundary so a runtime
-      // subscription that woke a checkpointed writer enters the same-slot
-      // AOT arbitration. The trusted hot drain never pays this actor scan.
-      obelisk_rt_status status = refreshNativeAOTReadyPhaseUnlocked(context);
-      if (status != OBELISK_RT_OK)
-        return status;
-    }
     if (context->nativeScheduleClockIngressPending) {
       auto coordinator = context->nativeSchedulePlan->timeslot_coordinator;
       if (!coordinator)
@@ -1647,9 +1626,6 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
 
     using SchedulerKey = std::tuple<uint32_t, uint32_t, uint64_t>;
     uint32_t selectedNode = UINT32_MAX;
-    uint32_t nodeRegion = UINT32_MAX;
-    uint32_t nodeRank = UINT32_MAX;
-    uint64_t nodeInsertionSequence = UINT64_MAX;
     SchedulerKey selectedNodeKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
     // Ready-node IDs are layout artifacts, not scheduler priority. Bootstrap
     // can have multiple entry actors ready across Active and Reactive regions,
@@ -1690,131 +1666,19 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
       }
     }
     if (selectedNode != UINT32_MAX) {
-      nodeRegion = std::get<0>(selectedNodeKey);
-      nodeRank = std::get<1>(selectedNodeKey);
-      nodeInsertionSequence = std::get<2>(selectedNodeKey);
-    }
-
-    SchedulerKey nodeKey{nodeRegion, nodeRank, nodeInsertionSequence};
-    SchedulerKey runtimeProcessKey{UINT32_MAX, UINT32_MAX, UINT64_MAX};
-    uint64_t runtimeProcessToken = 0;
-    size_t urgentDistance = SIZE_MAX;
-    size_t processCount = context->scheduledProcesses.size();
-    for (size_t index = 0; index != processCount; ++index) {
-      const ScheduledProcess &candidate = context->scheduledProcesses[index];
-      if (!candidate.instance || candidate.aotActorSlot != UINT32_MAX ||
-          context->nativePollCandidates.find(candidate.token) ==
-              context->nativePollCandidates.end() ||
-          candidate.phase != (context->schedulerRunningFinals ? 1u : 0u) ||
-          !nativeProcessReady(*context, candidate, false))
-        continue;
-      if (candidate.urgent) {
-        size_t distance = processCount == 0
-                              ? 0
-                              : (index + processCount -
-                                 context->schedulerCursor % processCount) %
-                                    processCount;
-        if (distance < urgentDistance) {
-          urgentDistance = distance;
-          runtimeProcessKey = SchedulerKey{0, 0, 0};
-          runtimeProcessToken = candidate.token;
-        }
-        continue;
-      }
-      if (urgentDistance != SIZE_MAX)
-        continue;
-      bool prioritySignalResume =
-          candidate.prioritySignal &&
-          (candidate.signalTriggered ||
-           (candidate.signalLatch && candidate.signalLatch->triggered));
-      SchedulerKey key{candidate.queuedRegion,
-                       prioritySignalResume ? 0 : candidate.scheduleRank,
-                       prioritySignalResume ? 0 : candidate.insertionSequence};
-      if (key < runtimeProcessKey) {
-        runtimeProcessKey = key;
-        runtimeProcessToken = candidate.token;
-      }
-    }
-    uint32_t barrierRegion = context->schedulerRunningFinals
-                                 ? UINT32_MAX
-                                 : nextDueNBABarrierRegionUnlocked(
-                                       context, /*includeGenerated=*/false);
-    SchedulerKey barrierKey =
-        barrierRegion == UINT32_MAX
-            ? SchedulerKey{UINT32_MAX, UINT32_MAX, UINT64_MAX}
-            : SchedulerKey{barrierRegion, 0, 0};
-    SchedulerKey runtimeKey = std::min(runtimeProcessKey, barrierKey);
-    SchedulerKey runtimeUpperBound = std::min(nodeKey, runtimeKey);
-
-    if (allowBytecode) {
-      // At a runtime checkpoint, arbitrate one design task only when its
-      // scheduler key precedes both the next generated native node and any
-      // same-slot generic process or NBA/control barrier.
-      bool designProgress = false;
-      obelisk_rt_status status = obelisk_rt_run_one_design_task(
-          context, std::get<0>(runtimeUpperBound),
-          std::get<1>(runtimeUpperBound), std::get<2>(runtimeUpperBound),
-          &designProgress);
-      if (status != OBELISK_RT_OK)
-        return status;
-      if (designProgress) {
-        if (context->schedulerSlotProgress == UINT64_MAX) {
-          context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-          return context->schedulerStatus;
-        }
-        ++context->schedulerSlotProgress;
-        continue;
-      }
-    }
-
-    if (allowBytecode && runtimeKey < nodeKey) {
-      // Execute exactly one same-slot runtime action. Filtering the process
-      // inventory preserves direct ownership of generated actors, while the
-      // generic scheduler still applies its normal ordering between the
-      // selected non-AOT process and all due NBA/event barriers. Because
-      // runtimeKey is known runnable at schedulerTime, this single step cannot
-      // advance the calendar.
-      uint64_t previousTime = context->schedulerTime;
-      if (runtimeProcessToken == 0 &&
-          (context->nativeSchedulePlan->flags &
-           OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL) != 0) {
-        obelisk_rt_status status =
-            runStaticAOTControlStep(context, false, true);
-        if (status == OBELISK_RT_OK)
-          continue;
-        if (status != OBELISK_RT_TIER_UNAVAILABLE)
-          return status;
-      }
-      NativeScheduleStepScope step(context, UINT32_MAX, false,
-                                   /*processFilterActive=*/true,
-                                   runtimeProcessToken);
-      obelisk_rt_status status = runScheduler(context);
-      if (status != OBELISK_RT_OK)
-        return status;
-      if (context->schedulerTime != previousTime)
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      continue;
-    }
-
-    if (selectedNode != UINT32_MAX) {
       const obelisk_rt_native_schedule_node &node =
           context->nativeScheduleNodes[selectedNode];
       clearNativeAOTNodeReadyUnlocked(context, selectedNode);
       context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
       obelisk_rt_status status =
-          allowBytecode ? executeAOTNode(context, node.actor_slot)
-                        : executeTrustedAOTNode(context, node.actor_slot);
+          executeTrustedAOTNode(context, node.actor_slot);
       if (status != OBELISK_RT_OK)
         return status;
       continue;
     }
 
-    if (allowBytecode)
-      return OBELISK_RT_OK;
-
     uint64_t progress = context->schedulerSlotProgress;
-    obelisk_rt_status status =
-        runStaticAOTControlStep(context, false, allowBytecode);
+    obelisk_rt_status status = runStaticAOTControlStep(context, false);
     if (status != OBELISK_RT_OK)
       return status;
     if (context->schedulerSlotProgress == progress)
@@ -1823,6 +1687,11 @@ drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
 }
 
 } // namespace
+
+obelisk_rt_status executeNativeAOTNodeUnlocked(obelisk_rt_context *context,
+                                               uint32_t actorSlot) {
+  return executeAOTNode(context, actorSlot);
+}
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_node *nodes,
@@ -3066,6 +2935,13 @@ retryNativeSchedule:;
                                             plan->state_unknown,
                                             plan->state_bit_count)))
         return OBELISK_RT_LAYOUT_MISMATCH;
+      // The generated loop may have advanced time without entering runtime
+      // control. Initialize the slot before recording progress or executing
+      // its callback: a later mixed drain must not reset completed work and
+      // mistake a successful checkpoint for a stalled continuation.
+      status = enterSchedulerTimeSlotUnlocked(context);
+      if (status != OBELISK_RT_OK)
+        return status;
       // run_until has already advanced schedulerTime to the checkpoint. Make
       // framed AOT continuations due at that exact time visible before the
       // one-step runtime action. Without this refresh an unsupported timed

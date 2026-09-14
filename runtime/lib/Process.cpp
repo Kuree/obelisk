@@ -2694,9 +2694,14 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status runScheduler(obelisk_rt_context *context) {
+obelisk_rt_status runScheduler(obelisk_rt_context *context,
+                               SchedulerRunOptions options) {
   if (!context)
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (options.nativePlan &&
+      (!context->nativeSchedulePlan || activeNativeAOTContext != context ||
+       lockedNativeAOTContext != context))
+    return OBELISK_RT_INVALID_LIFECYCLE;
   constexpr uint64_t maxSlotProgress = UINT64_MAX;
   auto recordSlotProgress = [&]() -> obelisk_rt_status {
     ContextMutexLock lock(context);
@@ -2863,6 +2868,31 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (context->schedulerFinalsAborted)
           return context->schedulerFinishStatus;
       }
+      if (options.nativePlan) {
+        // Retain the existing boundary materialization until native and
+        // descriptor accesses share one authoritative plane. Executor choice
+        // does not give the adapter a separate queue or region cursor.
+        const auto *plan = context->nativeSchedulePlan;
+        if (plan->state_bit_count != 0 &&
+            (!reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) ||
+             !importNativeStatePlanesUnlocked(context, plan->state_value,
+                                              plan->state_unknown,
+                                              plan->state_bit_count)))
+          return OBELISK_RT_LAYOUT_MISMATCH;
+        obelisk_rt_status status = refreshNativeAOTReadyPhaseUnlocked(context);
+        if (status != OBELISK_RT_OK)
+          return status;
+        if (context->nativeScheduleClockIngressPending) {
+          auto coordinator = plan->timeslot_coordinator;
+          if (!coordinator)
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          context->nativeScheduleClockIngressPending = false;
+          status = coordinator(plan->mutable_state, context);
+          if (status != OBELISK_RT_OK)
+            return status;
+          continue;
+        }
+      }
     }
     uint32_t nativeRegion = UINT32_MAX;
     uint32_t nativeRank = UINT32_MAX;
@@ -2904,8 +2934,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         if (!candidate.instance ||
             candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
           return std::nullopt;
-        bool runnable =
-            nativeProcessReady(*context, candidate, forcedNativeNode);
+        bool runnable = nativeProcessReady(
+            *context, candidate,
+            forcedNativeNode ||
+                (options.nativePlan && candidate.aotActorSlot != UINT32_MAX));
         signalResume =
             candidate.signalTriggered ||
             (candidate.signalLatch && candidate.signalLatch->triggered);
@@ -2990,6 +3022,33 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
               obelisk_rt_is_slot_final_clock_occurrence_wait(
                   currentWait(context->scheduledProcesses[index])))
             considerNativeReady(*ready, index);
+        }
+      } else if (options.nativePlan) {
+        // Native-plan readiness supplies candidates to the same arbitration
+        // as descriptor processes and bytecode tasks. It does not select or
+        // drain an execution region of its own.
+        clearCachedNativeReady();
+        for (uint64_t token : context->nativePollCandidates) {
+          auto entry = context->scheduledProcessIndices.find(token);
+          if (entry != context->scheduledProcessIndices.end() &&
+              entry->second < context->scheduledProcesses.size() &&
+              context->scheduledProcesses[entry->second].aotActorSlot ==
+                  UINT32_MAX)
+            considerNativeToken(token);
+        }
+        for (uint32_t word = 0;
+             word < context->nativeScheduleReadyNodes.wordCount(); ++word) {
+          uint64_t bits = context->nativeScheduleReadyNodes.word(word);
+          while (bits != 0) {
+            uint32_t node = word * 64 + __builtin_ctzll(bits);
+            bits &= bits - 1;
+            if (node >= context->nativeScheduleNodes.size())
+              return OBELISK_RT_INVALID_CONTINUATION;
+            uint32_t slot = context->nativeScheduleNodes[node].actor_slot;
+            if (slot >= context->nativeScheduleActorTokens.size())
+              return OBELISK_RT_INVALID_CONTINUATION;
+            considerNativeToken(context->nativeScheduleActorTokens[slot]);
+          }
         }
       } else {
         bool cacheShapeValid =
@@ -3288,7 +3347,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
             candidate.instance && candidate.token == nativeCandidateToken &&
             candidate.phase == (context->schedulerRunningFinals ? 1u : 0u) &&
             nativeProcessReady(*context, candidate,
-                               context->nativeScheduleForcedSlot != UINT32_MAX);
+                               context->nativeScheduleForcedSlot !=
+                                       UINT32_MAX ||
+                                   (options.nativePlan &&
+                                    candidate.aotActorSlot != UINT32_MAX));
         bool signalResume =
             candidate.signalTriggered ||
             (candidate.signalLatch && candidate.signalLatch->triggered);
@@ -3321,7 +3383,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
           if (!candidate.instance ||
               candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
             continue;
-          bool runnable = nativeProcessReady(*context, candidate, false);
+          bool runnable = nativeProcessReady(
+              *context, candidate,
+              options.nativePlan && candidate.aotActorSlot != UINT32_MAX);
           if (!runnable)
             continue;
           if (candidate.urgent) {
@@ -3356,6 +3420,27 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
       if (selected) {
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
+        if (options.nativePlan && candidate.aotActorSlot != UINT32_MAX) {
+          // The executor owns its frame/action ABI. Selection, updates, and
+          // subsequent reactivation remain in this loop (1800-2023 4.5).
+          uint32_t slot = candidate.aotActorSlot;
+          uint32_t node = findNativeAOTNodeUnlocked(
+              context, slot, candidate.instance->continuation);
+          if (node == UINT32_MAX)
+            return OBELISK_RT_INVALID_CONTINUATION;
+          context->schedulerCursor = (selectedIndex + 1) % processCount;
+          clearNativeAOTNodeReadyUnlocked(context, node);
+          context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
+          if (context->nativeScheduleForcedSlot != UINT32_MAX)
+            context->nativeScheduleForcedExecuted = true;
+          obelisk_rt_status status =
+              executeNativeAOTNodeUnlocked(context, slot);
+          if (status != OBELISK_RT_OK)
+            return status;
+          if (context->nativeScheduleSingleStep)
+            return OBELISK_RT_OK;
+          continue;
+        }
         if (cachedNativeSelection &&
             candidate.token != cachedNativeSelection->token)
           clearCachedNativeReady();
@@ -4588,7 +4673,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context) {
         // selected by its caller. If no earlier design task or NBA exists,
         // return without consuming the next calendar entry so that caller
         // can execute that node directly.
-        if (context->nativeScheduleControlOnly)
+        if (context->nativeScheduleControlOnly || options.currentSlotOnly)
           return context->schedulerFinishStatus;
         std::optional<uint64_t> nextTime;
         auto considerTime = [&](uint64_t candidate) {
