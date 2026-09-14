@@ -2,6 +2,7 @@
 //---------------------===//
 
 #include "obelisk/Runtime/ReadySet.h"
+#include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "gtest/gtest.h"
 
 #include <random>
@@ -19,6 +20,42 @@ namespace {
 constexpr uint32_t none = ReadySetLayout::noBit;
 
 class ReadySetCapacity : public testing::TestWithParam<uint32_t> {};
+
+TEST_P(ReadySetCapacity, ClockKernelPublicationMaintainsGeneratedIndex) {
+  if (!GetParam())
+    return;
+  uint32_t words = (uint64_t{GetParam()} + 63) / 64;
+  const ReadySetLayout layout =
+      obelisk::runtime::clockKernelReadySetLayout(words);
+  std::vector<uint64_t> indexed(layout.storageWords);
+  ReadySetView ready(indexed.data(), layout);
+  ready.clear();
+  obelisk_rt_native_clock_kernel kernel{};
+  kernel.ingress_mask = indexed.data();
+  kernel.ingress_word_count = words;
+  kernel.reserved = obelisk::runtime::indexedClockKernelReadySet;
+  // Generated consumption and native publication alternate, including a
+  // backwards wakeup and publication after the cached empty sentinel.
+  uint32_t last = GetParam() - 1;
+  for (unsigned iteration = 0; iteration != 3; ++iteration) {
+    obelisk::runtime::publishClockKernelReady(kernel, last);
+    obelisk::runtime::publishClockKernelReady(kernel, last);
+    EXPECT_EQ(ready.findFirst(), last);
+    obelisk::runtime::publishClockKernelReady(kernel, 0);
+    EXPECT_EQ(ready.popFirst(), 0u);
+    if (last)
+      EXPECT_EQ(ready.popFirst(), last);
+    EXPECT_EQ(ready.findFirst(), none);
+  }
+  // Old ABI clients still provide only leaves; no cache/summary may be touched.
+  std::vector<uint64_t> raw(words + 1);
+  raw.back() = 0xabcde;
+  kernel.ingress_mask = raw.data();
+  kernel.reserved = 0;
+  obelisk::runtime::publishClockKernelReady(kernel, last);
+  EXPECT_EQ(raw[last / 64], uint64_t{1} << (last % 64));
+  EXPECT_EQ(raw.back(), 0xabcdeu);
+}
 
 TEST_P(ReadySetCapacity, EmptyBoundsAndInlineLayout) {
   uint32_t n = GetParam();

@@ -9,6 +9,7 @@ import sys
 
 count = int(sys.argv[1])
 eval_mode = "--eval" in sys.argv[2:]
+forwarded = "--forwarded" in sys.argv[2:]
 assert count >= 65
 out = sys.stdout.write
 out(f'''!bit = !obelisk_sim.logic<1>
@@ -26,6 +27,10 @@ module attributes {{llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", 
 ''')
 for i in range(count):
     out(f'    obelisk_sim.code_unit.decl {i + 4} in 0 always hierarchy "multiword.writer{i}"\n')
+if forwarded:
+    out(f'''    obelisk_sim.storage.decl 2 in 0 : !bit design
+    obelisk_sim.code_unit.decl {count + 4} in 0 always hierarchy "multiword.forward"
+''')
 out(f'''
     obelisk_sim.func @root(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}}) attributes {{entry_kind = 0 : i32, code_unit_id = 1 : i64}} {{
       %clk = obelisk_sim.context.storage %ctx[0] : !clockref
@@ -37,7 +42,12 @@ out(f'''
       %clock = obelisk_sim.spawn @clock(%ctx, %clk) : !obelisk_sim.context, !clockref -> !obelisk_sim.process
 ''')
 for i in range(count):
-    out(f'      %writer{i} = obelisk_sim.spawn @writer{i}(%ctx, %clk, %data) : !obelisk_sim.context, !clockref, !dataref -> !obelisk_sim.process\n')
+    if i == 0 and forwarded:
+        out('''      %forwarded = obelisk_sim.context.storage %ctx[2] : !clockref
+      %forward = obelisk_sim.spawn @forward(%ctx, %clk, %forwarded) : !obelisk_sim.context, !clockref, !clockref -> !obelisk_sim.process
+''')
+    clock_arg = "%forwarded" if forwarded else "%clk"
+    out(f'      %writer{i} = obelisk_sim.spawn @writer{i}(%ctx, {clock_arg}, %data) : !obelisk_sim.context, !clockref, !dataref -> !obelisk_sim.process\n')
 out('''      %check = obelisk_sim.spawn @check(%ctx, %data) : !obelisk_sim.context, !dataref -> !obelisk_sim.process
       obelisk_sim.return
     }
@@ -53,8 +63,19 @@ out('''      %check = obelisk_sim.spawn @check(%ctx, %data) : !obelisk_sim.conte
       cf.br ^wait
     }
 ''')
+if forwarded:
+    out(f'''    obelisk_sim.func @forward(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}}, %clk: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}}, %target: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}}) attributes {{entry_kind = 3 : i32, code_unit_id = {count + 4} : i64}} {{
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.change %clk to ^copy {{site = #obelisk_sim.continuation<id = {count + 5}>}} : !clockref
+    ^copy:
+      %value = obelisk_sim.ref.load %clk : !clockref -> !bit
+      obelisk_sim.ref.store %value to %target : !bit, !clockref
+      cf.br ^wait
+    }}
+''')
 for i in range(count):
-    out(f'''    obelisk_sim.func @writer{i}(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}}, %clk: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}}, %data: !dataref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}}) attributes {{entry_kind = 3 : i32, code_unit_id = {i + 4} : i64}} {{
+    out(f'''    obelisk_sim.func @writer{i}(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}}, %clk: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = {2 if forwarded else 0} : i64}}, %data: !dataref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}}) attributes {{entry_kind = 3 : i32, code_unit_id = {i + 4} : i64}} {{
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %clk to ^update {{site = #obelisk_sim.continuation<id = {i + 2}>}} : !clockref

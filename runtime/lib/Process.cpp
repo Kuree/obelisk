@@ -10,6 +10,7 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
+#include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -1458,7 +1459,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         kernel.low_bit > UINT64_MAX - kernel.bit_width ||
         kernel.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
         kernel.edge > OBELISK_RT_WAIT_EDGE_BOTH || !kernel.ingress_mask ||
-        kernel.ingress_word_count == 0 || kernel.reserved != 0 ||
+        kernel.ingress_word_count == 0 ||
+        kernel.ingress_word_count > (uint64_t{UINT32_MAX} + 63) / 64 ||
+        (kernel.reserved & ~obelisk::runtime::indexedClockKernelReadySet) !=
+            0 ||
         (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0) &&
          !kernel.active_mask))
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -1767,10 +1771,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_activate_clock_kernel(
     uint32_t word = mergedBit / 64;
     if (word >= record.ingress_word_count)
       return OBELISK_RT_INVALID_ARGUMENT;
-    // The scheduler mutex makes this a serial OR today.  The ABI deliberately
-    // exposes leaf words so a later lane implementation can make the same
-    // operation atomic without changing stable merged-bit identities.
-    record.ingress_mask[word] |= uint64_t{1} << (mergedBit % 64);
+    // The scheduler mutex serializes both leaf and derived-index updates.
+    // Parallel producers must merge private sets at this boundary.
+    obelisk::runtime::publishClockKernelReady(record, mergedBit);
     context->nativeScheduleClockIngressPending = true;
     return OBELISK_RT_OK;
   }

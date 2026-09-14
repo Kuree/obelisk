@@ -843,6 +843,7 @@ FailureOr<bool> makeNativeEvalPlan(
   bool periodicPromotionComplete = false;
   unsigned ownerCount = std::max<size_t>(64, mergedFragments.size());
   APInt allOwners = APInt::getAllOnes(ownerCount);
+  const runtime::ReadySetLayout readyLayout(ownerCount);
   APInt periodicPromotionMask(ownerCount, 0);
   APInt pathGuardedOwnerMask(ownerCount, 0);
   bool periodicEntryPromotionComplete = false;
@@ -1579,7 +1580,7 @@ FailureOr<bool> makeNativeEvalPlan(
   llvm::SmallDenseSet<StringRef, 4> emittedIngress;
   for (const NativeEvalClockKernel &kernel : clockKernels) {
     uint32_t words = ingressWordCount(kernel);
-    Type ingressType = LLVM::LLVMArrayType::get(i64, words);
+    Type ingressType = LLVM::LLVMArrayType::get(i64, readyLayout.storageWords);
     if (emittedIngress.insert(kernel.ingressName).second) {
       auto ingress = LLVM::GlobalOp::create(builder, location, ingressType,
                                             false, LLVM::Linkage::Internal,
@@ -1591,7 +1592,8 @@ FailureOr<bool> makeNativeEvalPlan(
           initializerBuilder, location,
           LLVM::ZeroOp::create(initializerBuilder, location, ingressType));
     }
-    auto active = LLVM::GlobalOp::create(builder, location, ingressType, false,
+    Type activeType = LLVM::LLVMArrayType::get(i64, words);
+    auto active = LLVM::GlobalOp::create(builder, location, activeType, false,
                                          LLVM::Linkage::Internal,
                                          kernel.activeName, Attribute{}, 8);
     Block *activeInitializer = new Block;
@@ -1599,7 +1601,7 @@ FailureOr<bool> makeNativeEvalPlan(
     OpBuilder activeBuilder = OpBuilder::atBlockBegin(activeInitializer);
     LLVM::ReturnOp::create(
         activeBuilder, location,
-        LLVM::ZeroOp::create(activeBuilder, location, ingressType));
+        LLVM::ZeroOp::create(activeBuilder, location, activeType));
   }
 
   // The eval scheduler is a closed generated call graph. Replace scalar
@@ -1885,21 +1887,13 @@ FailureOr<bool> makeNativeEvalPlan(
         Value ingress =
             LLVM::AddressOfOp::create(transitionBuilder, call.getLoc(), pointer,
                                       clockKernels.front().ingressName);
-        Value address =
-            byteGEP(transitionBuilder, call.getLoc(), ingress,
-                    uint64_t{publication.bit / 64} * sizeof(uint64_t));
-        Value previous = LLVM::LoadOp::create(transitionBuilder, call.getLoc(),
-                                              i64, address, 8);
         Value selected = arith::SelectOp::create(
             transitionBuilder, call.getLoc(), triggered,
             llvmConstant(transitionBuilder, call.getLoc(), i64,
                          uint64_t{1} << (publication.bit % 64)),
             llvmConstant(transitionBuilder, call.getLoc(), i64, 0));
-        LLVM::StoreOp::create(transitionBuilder, call.getLoc(),
-                              arith::OrIOp::create(transitionBuilder,
-                                                   call.getLoc(), previous,
-                                                   selected),
-                              address, 8);
+        updateEvalReadyWord(transitionBuilder, call.getLoc(), ingress,
+                            readyLayout, publication.bit / 64, selected);
       }
       if (!hasRuntimeOwnedObserver)
         call.erase();
@@ -2677,6 +2671,13 @@ FailureOr<bool> makeNativeEvalPlan(
                                 llvmConstant(initializerBuilder, location, i32,
                                              ingressWordCount(kernel)),
                                 5);
+            value = insertValue(
+                initializerBuilder, location, value,
+                llvmConstant(initializerBuilder, location, i32,
+                             readyLayout.hasCache()
+                                 ? runtime::indexedClockKernelReadySet
+                                 : 0),
+                6);
             value = insertValue(initializerBuilder, location, value,
                                 LLVM::AddressOfOp::create(initializerBuilder,
                                                           location, pointer,
@@ -3204,7 +3205,8 @@ FailureOr<bool> makeNativeEvalPlan(
     if (initialMask != 0) {
       Value ingress = LLVM::AddressOfOp::create(
           builder, location, pointer, clockKernels.front().ingressName);
-      updateOwnerMask(builder, location, ingress, initialMask);
+      updateOwnerMask(builder, location, ingress, initialMask,
+                      /*clear=*/false, {}, &readyLayout);
       // Re-establish combinational quiescence before the first generated
       // clock edge. The runtime cold prefix may end immediately after a
       // clocked reset continuation; deferring these level-sensitive owners
@@ -3423,7 +3425,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                     llvmConstant(builder, location, i64, 0)));
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
-          updateOwnerWord(builder, location, ingress, word, selected);
+          updateEvalReadyWord(builder, location, ingress, readyLayout, word,
+                              selected);
         }
       }
       for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
@@ -3450,7 +3453,8 @@ FailureOr<bool> makeNativeEvalPlan(
           // silently drops the suffix when control leaves run_until.
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
-          updateOwnerWord(builder, location, ingress, word, selected);
+          updateEvalReadyWord(builder, location, ingress, readyLayout, word,
+                              selected);
           hasIngress = arith::OrIOp::create(
               builder, location, hasIngress,
               arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
@@ -3599,7 +3603,8 @@ FailureOr<bool> makeNativeEvalPlan(
         for (const NativeEvalClockKernel &kernel : clockKernels) {
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
-          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true);
+          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true,
+                          {}, &readyLayout);
         }
       };
       builder.setInsertionPointToStart(executeDirectTwoState);
@@ -3841,7 +3846,8 @@ FailureOr<bool> makeNativeEvalPlan(
         for (const NativeEvalClockKernel &kernel : clockKernels) {
           Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                                     kernel.ingressName);
-          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true);
+          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true,
+                          {}, &readyLayout);
         }
         cf::BranchOp::create(builder, location, nextDirect);
         builder.setInsertionPointToStart(nextDirect);
@@ -5496,13 +5502,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                        uint64_t{word} * sizeof(uint64_t)),
                                8);
       Value selected = activated;
-      Value address = byteGEP(builder, location, ingress,
-                              uint64_t{word} * sizeof(uint64_t));
-      Value previous = LLVM::LoadOp::create(builder, location, i64, address, 8);
-      LLVM::StoreOp::create(
-          builder, location,
-          arith::OrIOp::create(builder, location, previous, selected), address,
-          8);
+      updateEvalReadyWord(builder, location, ingress, readyLayout, word,
+                          selected);
       any = arith::OrIOp::create(
           builder, location, any,
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,

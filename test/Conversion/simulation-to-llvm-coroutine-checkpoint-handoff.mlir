@@ -127,6 +127,8 @@ module attributes {
 // CHECK: %[[UNKNOWN_BYTE1:.*]] = llvm.load
 // CHECK: %[[RANGE_MASK1:.*]] = llvm.mlir.constant(1 : i8)
 // CHECK: llvm.and %[[UNKNOWN_BYTE1]], %[[RANGE_MASK1]]
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | %python %S/Inputs/check-guarded-eval-default.py
+
 // A guarded owner has a separate full-closure certificate. While that
 // stronger certificate remains pending, its exact path dispatcher is already
 // a safe steady route and must not bounce the owner through Tier 2 every slot.

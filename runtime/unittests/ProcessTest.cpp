@@ -1,5 +1,6 @@
 //===- ProcessTest.cpp - Shared process instance ABI tests ---------------===//
 
+#include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -3844,6 +3845,62 @@ TEST(Scheduler, AOTTimedCheckpointCommitsSameSlotNBAAndReentersNatively) {
   EXPECT_TRUE(context->scheduledNBAs.empty());
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, IndexedClockKernelIngressMaintainsReadySetAcrossReentry) {
+  for (uint32_t capacity : {65u, 129u, 2049u, 4097u}) {
+    SCOPED_TRACE(capacity);
+    uint32_t words = (capacity + 63) / 64;
+    const auto layout = obelisk::runtime::clockKernelReadySetLayout(words);
+    std::vector<uint64_t> ingress(layout.storageWords);
+    obelisk::runtime::ReadySetView ready(ingress.data(), layout);
+    ready.clear();
+    AOTTestState state;
+    obelisk_rt_native_clock_kernel clock{
+        1,
+        OBELISK_RT_WAIT_EDGE_POSEDGE,
+        0,
+        1,
+        ingress.data(),
+        words,
+        obelisk::runtime::indexedClockKernelReadySet};
+    obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+    plan.clock_kernels = &clock;
+    plan.clock_kernel_count = 1;
+    obelisk_rt_native_merged_fragment merged{0, 0, 0, capacity - 1, 0, 0};
+    plan.merged_fragments = &merged;
+    plan.merged_fragment_count = 1;
+    plan.timeslot_coordinator = clockCoordinator;
+    obelisk_rt_execution_descriptor_v1 execution{};
+    execution.version = OBELISK_RT_VERSION;
+    execution.state_bit_count = 1;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+              OBELISK_RT_OK);
+    clock.reserved =
+        2; // Unknown index layout must be rejected, not read as leaves.
+    EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_INVALID_ARGUMENT);
+    clock.reserved = obelisk::runtime::indexedClockKernelReadySet;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
+    for (unsigned iteration = 0; iteration != 3; ++iteration) {
+      ASSERT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0,
+                                                              capacity - 1),
+                OBELISK_RT_OK);
+      EXPECT_EQ(ready.findFirst(), capacity - 1);
+      ASSERT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0, 0),
+                OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_scheduler_activate_clock_kernel(context, 0, 0),
+                OBELISK_RT_OK);
+      EXPECT_EQ(ready.popFirst(), 0u);
+      EXPECT_EQ(ready.popFirst(), capacity - 1);
+      EXPECT_EQ(ready.findFirst(), UINT32_MAX);
+    }
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(Scheduler, AOTClockKernelIngressSuppressesDuplicateBits) {

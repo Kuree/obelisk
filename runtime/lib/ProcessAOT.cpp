@@ -17,6 +17,7 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
+#include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -2202,8 +2203,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
                 context->nativeSchedulePlan->clock_kernels[entry.kernel];
             if (entry.merged_bit / 64 >= kernel.ingress_word_count)
               return OBELISK_RT_INVALID_CONTINUATION;
-            kernel.ingress_mask[entry.merged_bit / 64] |=
-                uint64_t{1} << (entry.merged_bit % 64);
+            obelisk::runtime::publishClockKernelReady(kernel, entry.merged_bit);
             context->nativeScheduleClockIngressPending = true;
             return OBELISK_RT_OK;
           }

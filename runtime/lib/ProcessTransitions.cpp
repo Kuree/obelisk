@@ -16,6 +16,7 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
+#include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -1623,8 +1624,7 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
         }
         obelisk_rt_native_clock_kernel kernel =
             context->nativeSchedulePlan->clock_kernels[entry->kernel];
-        kernel.ingress_mask[entry->merged_bit / 64] |=
-            uint64_t{1} << (entry->merged_bit % 64);
+        obelisk::runtime::publishClockKernelReady(kernel, entry->merged_bit);
         context->nativeScheduleClockIngressPending = true;
         continue;
       }

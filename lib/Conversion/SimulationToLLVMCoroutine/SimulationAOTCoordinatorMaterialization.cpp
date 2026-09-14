@@ -55,6 +55,7 @@ LogicalResult materializeNativeEvalCoordinator(
   bool hybridCoordinator = options.hybrid;
   unsigned ownerCount = std::max<size_t>(64, mergedFragments.size());
   APInt allOwners = APInt::getAllOnes(ownerCount);
+  const runtime::ReadySetLayout readyLayout(ownerCount);
   APInt allowedOwnerMask = options.allowedOwnerMask.value_or(allOwners);
   APInt pendingGuardMask = options.pendingGuardMask.value_or(allOwners);
   bool trustedTwoState = options.trustedTwoState;
@@ -201,7 +202,7 @@ LogicalResult materializeNativeEvalCoordinator(
   };
   auto clearIngressMask = [&](const APInt &mask, Value condition = Value{}) {
     updateOwnerMask(builder, location, ingressAddress(), mask,
-                    /*clear=*/true, condition);
+                    /*clear=*/true, condition, &readyLayout);
   };
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
@@ -228,50 +229,43 @@ LogicalResult materializeNativeEvalCoordinator(
   }
 
   builder.setInsertionPointToStart(scanReady);
-  SmallVector<Value> ready;
-  for (unsigned word = 0; word != allOwners.getNumWords(); ++word)
-    ready.push_back(loadOwnerWord(builder, location, ingressAddress(), word));
-  llvm::BitVector changedWords(ready.size());
-  for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
-    const APInt &subsumed = ownerSubsumptionMasks[recordIndex];
-    if (subsumed.isZero() || !allowedOwnerMask[record.bit])
-      continue;
-    Value coordinatorPending = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne,
-        arith::AndIOp::create(builder, location, ready[record.bit / 64],
-                              llvmConstant(builder, location, i64,
-                                           uint64_t{1} << (record.bit % 64))),
-        llvmConstant(builder, location, i64, 0));
-    for (unsigned word = 0; word != ready.size(); ++word) {
-      uint64_t members = ownerMaskWord(subsumed, word);
-      if (!members)
+  Value selectedWord, selectedReady;
+  if (!readyLayout.hasCache()) {
+    SmallVector<Value> ready;
+    for (unsigned word = 0; word != allOwners.getNumWords(); ++word)
+      ready.push_back(loadOwnerWord(builder, location, ingressAddress(), word));
+    llvm::BitVector changedWords(ready.size());
+    for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
+      const APInt &subsumed = ownerSubsumptionMasks[recordIndex];
+      if (subsumed.isZero() || !allowedOwnerMask[record.bit])
         continue;
-      changedWords.set(word);
-      Value withoutMembers =
-          arith::AndIOp::create(builder, location, ready[word],
-                                llvmConstant(builder, location, i64, ~members));
-      ready[word] = arith::SelectOp::create(
-          builder, location, coordinatorPending, withoutMembers, ready[word]);
+      Value coordinatorPending = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(builder, location, ready[record.bit / 64],
+                                llvmConstant(builder, location, i64,
+                                             uint64_t{1} << (record.bit % 64))),
+          llvmConstant(builder, location, i64, 0));
+      for (unsigned word = 0; word != ready.size(); ++word) {
+        uint64_t members = ownerMaskWord(subsumed, word);
+        if (!members)
+          continue;
+        changedWords.set(word);
+        Value withoutMembers = arith::AndIOp::create(
+            builder, location, ready[word],
+            llvmConstant(builder, location, i64, ~members));
+        ready[word] = arith::SelectOp::create(
+            builder, location, coordinatorPending, withoutMembers, ready[word]);
+      }
     }
-  }
-  for (int word : changedWords.set_bits())
-    LLVM::StoreOp::create(
-        builder, location, ready[word],
-        ownerWordAddress(builder, location, ingressAddress(), word), 8);
-  // Select the globally lowest owner across words. Never truncate an owner ID
-  // to its position in a leaf; backward publications must precede the NBA
-  // barrier.
-  Value selectedWord = llvmConstant(builder, location, i64, ready.size() - 1);
-  Value selectedReady = ready.back();
-  for (unsigned word = ready.size() - 1; word-- != 0;) {
-    Value nonempty = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, ready[word],
-        llvmConstant(builder, location, i64, 0));
-    selectedWord = arith::SelectOp::create(
-        builder, location, nonempty, llvmConstant(builder, location, i64, word),
-        selectedWord);
-    selectedReady = arith::SelectOp::create(builder, location, nonempty,
-                                            ready[word], selectedReady);
+    for (int word : changedWords.set_bits())
+      LLVM::StoreOp::create(
+          builder, location, ready[word],
+          ownerWordAddress(builder, location, ingressAddress(), word), 8);
+    selectedWord = llvmConstant(builder, location, i64, 0);
+    selectedReady = ready.front();
+  } else {
+    std::tie(selectedWord, selectedReady) =
+        findEvalReadyWord(builder, location, ingressAddress(), readyLayout);
   }
   Value empty = arith::CmpIOp::create(builder, location,
                                       arith::CmpIPredicate::eq, selectedReady,
@@ -302,6 +296,34 @@ LogicalResult materializeNativeEvalCoordinator(
     destinations.push_back(execute);
     destinationOperands.push_back(ValueRange{});
     builder.setInsertionPointToStart(execute);
+    if (readyLayout.hasCache()) {
+      APInt superseding(ownerCount, 0);
+      for (auto [parent, parentRecord] : llvm::enumerate(mergedFragments))
+        if (allowedOwnerMask[parentRecord.bit] &&
+            ownerSubsumptionMasks[parent][record.bit])
+          superseding.setBit(parentRecord.bit);
+      if (!superseding.isZero()) {
+        // Normalize only the selected exact owner. Eagerly walking every
+        // subsumption relation at every dispatch is quadratic in a large
+        // clock group. Do not jump straight to its parent: unrelated lower
+        // ready owners must retain their deterministic priority.
+        Value parents =
+            maskedOwnerWords(builder, location, ingressAddress(), superseding);
+        Value covered = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, parents,
+            llvmConstant(builder, location, i64, 0));
+        Block *skip = new Block;
+        Block *uncovered = new Block;
+        fastCoordinator.getBody().push_back(skip);
+        fastCoordinator.getBody().push_back(uncovered);
+        cf::CondBranchOp::create(builder, location, covered, skip, ValueRange{},
+                                 uncovered, ValueRange{});
+        builder.setInsertionPointToStart(skip);
+        clearIngressMask(APInt::getOneBitSet(ownerCount, record.bit));
+        cf::BranchOp::create(builder, location, dispatch);
+        builder.setInsertionPointToStart(uncovered);
+      }
+    }
     Value ownerBit =
         llvmConstant(builder, location, i64, uint64_t{1} << (record.bit % 64));
     if (guardPendingOwners) {
@@ -427,7 +449,7 @@ LogicalResult materializeNativeEvalCoordinator(
       clearIngressMask(subsumedOwnerMask);
       updateOwnerMask(builder, location, ingressAddress(),
                       APInt::getOneBitSet(ownerCount, record.bit),
-                      /*clear=*/false, membersPending);
+                      /*clear=*/false, membersPending, &readyLayout);
     }
     Value executeOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, executeStatus,
@@ -496,8 +518,9 @@ LogicalResult materializeNativeEvalCoordinator(
                              dispatch, ValueRange{});
   }
   builder.setInsertionPointToEnd(switchBlock);
-  LLVM::SwitchOp::create(builder, location, bit, stopped, ValueRange{}, cases,
-                         destinations, destinationOperands,
+  LLVM::SwitchOp::create(builder, location, bit,
+                         guardPendingOwners ? guardRejected : stopped,
+                         ValueRange{}, cases, destinations, destinationOperands,
                          ArrayRef<int32_t>{});
 
   builder.setInsertionPointToStart(commit);
