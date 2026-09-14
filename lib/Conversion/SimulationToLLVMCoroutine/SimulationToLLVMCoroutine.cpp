@@ -4670,16 +4670,57 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   OpBuilder builder(context);
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i8 = builder.getI8Type();
+  Type i64 = builder.getI64Type();
+  constexpr StringLiteral routePromotionPendingName =
+      "__obelisk_eval_route_promotion_pending_v1";
   constexpr StringLiteral routePromotionDirtyName =
       "__obelisk_eval_route_promotion_dirty_v1";
   constexpr StringLiteral routePromotionScanName =
       "__obelisk_eval_route_promotion_scan_v1";
   constexpr StringLiteral routePromotionBoundaryName =
       "__obelisk_eval_route_promotion_boundary_v1";
+  const uint64_t routeWordCount = (routes.size() + 63) / 64;
+  const bool needsRouteSummary = routeWordCount > 1;
   builder.setInsertionPointToStart(module.getBody());
-  LLVM::GlobalOp::create(builder, module.getLoc(), i8, false,
-                         LLVM::Linkage::Internal, routePromotionDirtyName,
-                         builder.getI8IntegerAttr(1), 1);
+  // One pending word is already its own nonempty summary. Avoid a redundant
+  // dirty flag and calls to an empty scanner for small proof sets.
+  if (needsRouteSummary)
+    LLVM::GlobalOp::create(builder, module.getLoc(), i8, false,
+                           LLVM::Linkage::Internal, routePromotionDirtyName,
+                           builder.getI8IntegerAttr(1), 1);
+  SmallVector<uint64_t> initialRoutePending(routeWordCount, 0);
+  for (auto [index, route] : llvm::enumerate(routes))
+    if (!route.pathKnownProbe &&
+        (!route.ranges.empty() || route.independentEntry))
+      initialRoutePending[index / 64] |= uint64_t{1} << (index % 64);
+  auto pendingType = LLVM::LLVMArrayType::get(i64, routeWordCount);
+  auto routePending = LLVM::GlobalOp::create(
+      builder, module.getLoc(), pendingType, false, LLVM::Linkage::Internal,
+      routePromotionPendingName, Attribute{}, 8);
+  Block *pendingInitializer = new Block;
+  routePending.getInitializerRegion().push_back(pendingInitializer);
+  builder.setInsertionPointToStart(pendingInitializer);
+  Value initialPending =
+      LLVM::ZeroOp::create(builder, module.getLoc(), pendingType);
+  for (auto [word, mask] : llvm::enumerate(initialRoutePending))
+    initialPending = LLVM::InsertValueOp::create(
+        builder, module.getLoc(), initialPending,
+        detail::llvmConstant(builder, module.getLoc(), i64, mask),
+        ArrayRef<int64_t>{static_cast<int64_t>(word)});
+  LLVM::ReturnOp::create(builder, module.getLoc(), initialPending);
+  auto resetRoutePending = [&](Location location) {
+    for (auto [word, mask] : llvm::enumerate(initialRoutePending))
+      LLVM::StoreOp::create(
+          builder, location, detail::llvmConstant(builder, location, i64, mask),
+          detail::byteGEP(builder, location,
+                          LLVM::AddressOfOp::create(builder, location, pointer,
+                                                    routePromotionPendingName),
+                          word * sizeof(uint64_t)),
+          8);
+  };
+  builder.setInsertionPoint(tier2Handoff);
+  resetRoutePending(module.getLoc());
+  builder.setInsertionPointToStart(module.getBody());
   auto terminationRequested = module.lookupSymbol<LLVM::LLVMFuncOp>(
       "obelisk_rt_v1_scheduler_termination_requested");
   if (!terminationRequested)
@@ -4687,7 +4728,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         builder, module.getLoc(),
         "obelisk_rt_v1_scheduler_termination_requested",
         LLVM::LLVMFunctionType::get(builder.getI32Type(), {pointer}));
-  for (Route &route : routes) {
+  for (auto [routeIndex, route] : llvm::enumerate(routes)) {
     if (route.pathKnownProbe) {
       auto probeType = route.pathKnownProbe.getFunctionType();
       auto bodyType = route.fourState.getFunctionType();
@@ -5116,23 +5157,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                 LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
                                           pointer, fallback.getSymName()),
                 1);
-          if (auto latched = module.lookupSymbol<LLVM::GlobalOp>(
-                  "__obelisk_eval_fast_nba_latched_v1"))
-            LLVM::StoreOp::create(
-                builder, route.fourState.getLoc(),
-                detail::llvmConstant(builder, route.fourState.getLoc(), i8, 0),
-                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
-                                          pointer, latched.getSymName()),
-                1);
-          if (auto fastRoots = module.lookupSymbol<LLVM::GlobalOp>(
-                  "__obelisk_eval_fast_nba_roots_v1"))
-            LLVM::StoreOp::create(
-                builder, route.fourState.getLoc(),
-                LLVM::ZeroOp::create(builder, route.fourState.getLoc(),
-                                     fastRoots.getGlobalType()),
-                LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
-                                          pointer, fastRoots.getSymName()),
-                8);
+          // Domain changes are published at actual canonical stores.
+          // Staging a four-state payload cannot revoke destination proofs.
         }
         LLVM::CallOp call = LLVM::CallOp::create(
             builder, route.twoState.getLoc(), callee, arguments);
@@ -5163,23 +5189,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
             LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
                                       pointer, fallback.getSymName()),
             1);
-      if (auto latched = module.lookupSymbol<LLVM::GlobalOp>(
-              "__obelisk_eval_fast_nba_latched_v1"))
-        LLVM::StoreOp::create(
-            builder, route.fourState.getLoc(),
-            detail::llvmConstant(builder, route.fourState.getLoc(), i8, 0),
-            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
-                                      pointer, latched.getSymName()),
-            1);
-      if (auto fastRoots = module.lookupSymbol<LLVM::GlobalOp>(
-              "__obelisk_eval_fast_nba_roots_v1"))
-        LLVM::StoreOp::create(
-            builder, route.fourState.getLoc(),
-            LLVM::ZeroOp::create(builder, route.fourState.getLoc(),
-                                 fastRoots.getGlobalType()),
-            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
-                                      pointer, fastRoots.getSymName()),
-            8);
+      // Domain changes are published at actual canonical stores.
+      // Staging a four-state payload cannot revoke destination proofs.
       SmallVector<Value> arguments(entry->getArguments());
       LLVM::CallOp call = LLVM::CallOp::create(
           builder, route.fourState.getLoc(), route.fourState, arguments);
@@ -5218,6 +5229,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           "obelisk.eval.route_proof_dependencies",
           builder.getDictionaryAttr(
               {builder.getNamedAttr("ranges", route.ranges),
+               builder.getNamedAttr("pending_bit",
+                                    builder.getI64IntegerAttr(routeIndex)),
                builder.getNamedAttr(
                    "fallback", FlatSymbolRefAttr::get(context, fallback))}));
     if (prepare) {
@@ -5294,62 +5307,108 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                            builder.getStringAttr("cold")}));
   Block *routeScanEntry = routePromotionScan.addEntryBlock(builder);
   builder.setInsertionPointToStart(routeScanEntry);
-  LLVM::StoreOp::create(builder, module.getLoc(),
-                        detail::llvmConstant(builder, module.getLoc(), i8, 0),
-                        LLVM::AddressOfOp::create(builder, module.getLoc(),
-                                                  pointer,
-                                                  routePromotionDirtyName),
-                        1);
-  for (Route &route : routes) {
-    if (route.pathKnownProbe ||
-        (route.ranges.empty() && !route.independentEntry))
-      continue;
-    Location location = route.twoState.getLoc();
-    Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              "__obelisk_state_unknown");
-    Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
-    ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
-    for (size_t index = 0; index != encoded.size(); index += 2) {
-      uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
-      uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
-      uint64_t firstByte = bitOffset / 8;
-      uint64_t lastBit = bitOffset + bitWidth;
-      uint64_t lastByte = (lastBit + 7) / 8;
-      for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
-        uint8_t mask = UINT8_MAX;
-        if (byte == firstByte && bitOffset % 8 != 0)
-          mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
-        if (byte + 1 == lastByte && lastBit % 8 != 0)
-          mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
-        Value bits = LLVM::LoadOp::create(
-            builder, location, i8,
-            detail::byteGEP(builder, location, unknown, byte), 1);
-        if (mask != UINT8_MAX)
-          bits = LLVM::AndOp::create(
-              builder, location, bits,
-              detail::llvmConstant(builder, location, i8, mask));
-        anyUnknown = LLVM::OrOp::create(builder, location, anyUnknown, bits);
+  if (needsRouteSummary)
+    LLVM::StoreOp::create(builder, module.getLoc(),
+                          detail::llvmConstant(builder, module.getLoc(), i8, 0),
+                          LLVM::AddressOfOp::create(builder, module.getLoc(),
+                                                    pointer,
+                                                    routePromotionDirtyName),
+                          1);
+  for (uint64_t word = 0; word != routeWordCount; ++word) {
+    Location location = module.getLoc();
+    Value address =
+        detail::byteGEP(builder, location,
+                        LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  routePromotionPendingName),
+                        word * sizeof(uint64_t));
+    Value pending = LLVM::LoadOp::create(builder, location, i64, address, 8);
+    Block *inspect = new Block, *nextWord = new Block;
+    routePromotionScan.getBody().push_back(inspect);
+    routePromotionScan.getBody().push_back(nextWord);
+    LLVM::CondBrOp::create(
+        builder, location,
+        LLVM::ICmpOp::create(builder, location, LLVM::ICmpPredicate::ne,
+                             pending,
+                             detail::llvmConstant(builder, location, i64, 0)),
+        inspect, nextWord);
+    builder.setInsertionPointToStart(inspect);
+    // No actor, observer, or foreign call runs during a proof scan. Consume
+    // this word once; newly invalidated proofs are queued at actual mutations.
+    LLVM::StoreOp::create(builder, location,
+                          detail::llvmConstant(builder, location, i64, 0),
+                          address, 8);
+    uint64_t end = std::min<uint64_t>(routes.size(), (word + 1) * 64);
+    for (uint64_t index = word * 64; index != end; ++index) {
+      Route &route = routes[index];
+      if (route.pathKnownProbe ||
+          (route.ranges.empty() && !route.independentEntry))
+        continue;
+      Block *scan = new Block, *nextRoute = new Block;
+      routePromotionScan.getBody().push_back(scan);
+      routePromotionScan.getBody().push_back(nextRoute);
+      Value selectedBit = LLVM::AndOp::create(
+          builder, location, pending,
+          detail::llvmConstant(builder, location, i64,
+                               uint64_t{1} << (index % 64)));
+      LLVM::CondBrOp::create(
+          builder, location,
+          LLVM::ICmpOp::create(builder, location, LLVM::ICmpPredicate::ne,
+                               selectedBit,
+                               detail::llvmConstant(builder, location, i64, 0)),
+          scan, nextRoute);
+      builder.setInsertionPointToStart(scan);
+      Location location = route.twoState.getLoc();
+      Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                "__obelisk_state_unknown");
+      Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
+      ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
+      for (size_t index = 0; index != encoded.size(); index += 2) {
+        uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
+        uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
+        uint64_t firstByte = bitOffset / 8;
+        uint64_t lastBit = bitOffset + bitWidth;
+        uint64_t lastByte = (lastBit + 7) / 8;
+        for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
+          uint8_t mask = UINT8_MAX;
+          if (byte == firstByte && bitOffset % 8 != 0)
+            mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
+          if (byte + 1 == lastByte && lastBit % 8 != 0)
+            mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
+          Value bits = LLVM::LoadOp::create(
+              builder, location, i8,
+              detail::byteGEP(builder, location, unknown, byte), 1);
+          if (mask != UINT8_MAX)
+            bits = LLVM::AndOp::create(
+                builder, location, bits,
+                detail::llvmConstant(builder, location, i8, mask));
+          anyUnknown = LLVM::OrOp::create(builder, location, anyUnknown, bits);
+        }
       }
+      Value known =
+          encoded.empty()
+              ? detail::llvmConstant(builder, location, builder.getI1Type(),
+                                     true)
+              : LLVM::ICmpOp::create(
+                    builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
+                    detail::llvmConstant(builder, location, i8, 0));
+      StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
+                           : route.fourStateFallback
+                               ? route.fourStateFallback.getSymName()
+                               : route.fourState.getSymName();
+      Value selected = LLVM::SelectOp::create(
+          builder, location, known,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    route.twoState.getSymName()),
+          LLVM::AddressOfOp::create(builder, location, pointer, fallback));
+      LLVM::StoreOp::create(builder, location, selected,
+                            LLVM::AddressOfOp::create(
+                                builder, location, pointer, route.globalName),
+                            8);
+      LLVM::BrOp::create(builder, location, ValueRange{}, nextRoute);
+      builder.setInsertionPointToStart(nextRoute);
     }
-    Value known =
-        encoded.empty()
-            ? detail::llvmConstant(builder, location, builder.getI1Type(), true)
-            : LLVM::ICmpOp::create(
-                  builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
-                  detail::llvmConstant(builder, location, i8, 0));
-    StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
-                         : route.fourStateFallback
-                             ? route.fourStateFallback.getSymName()
-                             : route.fourState.getSymName();
-    Value selected = LLVM::SelectOp::create(
-        builder, location, known,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  route.twoState.getSymName()),
-        LLVM::AddressOfOp::create(builder, location, pointer, fallback));
-    LLVM::StoreOp::create(
-        builder, location, selected,
-        LLVM::AddressOfOp::create(builder, location, pointer, route.globalName),
-        8);
+    LLVM::BrOp::create(builder, location, ValueRange{}, nextWord);
+    builder.setInsertionPointToStart(nextWord);
   }
   LLVM::ReturnOp::create(builder, module.getLoc(), ValueRange{});
 
@@ -5371,14 +5430,16 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       builder, module.getLoc(), LLVM::ICmpPredicate::eq,
       boundaryEntry->getArgument(0),
       detail::llvmConstant(builder, module.getLoc(), i32, OBELISK_RT_OK));
+  Type summaryType = needsRouteSummary ? i8 : i64;
+  StringRef summaryName =
+      needsRouteSummary ? routePromotionDirtyName : routePromotionPendingName;
   Value dirty = LLVM::LoadOp::create(
-      builder, module.getLoc(), i8,
-      LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
-                                routePromotionDirtyName),
-      1);
+      builder, module.getLoc(), summaryType,
+      LLVM::AddressOfOp::create(builder, module.getLoc(), pointer, summaryName),
+      needsRouteSummary ? 1 : 8);
   Value isDirty = LLVM::ICmpOp::create(
       builder, module.getLoc(), LLVM::ICmpPredicate::ne, dirty,
-      detail::llvmConstant(builder, module.getLoc(), i8, 0));
+      detail::llvmConstant(builder, module.getLoc(), summaryType, 0));
   LLVM::CondBrOp::create(
       builder, module.getLoc(),
       LLVM::AndOp::create(builder, module.getLoc(), statusOK, isDirty),
@@ -5448,12 +5509,14 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         [&](LLVM::ReturnOp returnOp) { returns.push_back(returnOp); });
     for (LLVM::ReturnOp returnOp : returns) {
       builder.setInsertionPoint(returnOp);
-      LLVM::StoreOp::create(
-          builder, returnOp.getLoc(),
-          detail::llvmConstant(builder, returnOp.getLoc(), i8, 1),
-          LLVM::AddressOfOp::create(builder, returnOp.getLoc(), pointer,
-                                    routePromotionDirtyName),
-          1);
+      resetRoutePending(returnOp.getLoc());
+      if (needsRouteSummary)
+        LLVM::StoreOp::create(
+            builder, returnOp.getLoc(),
+            detail::llvmConstant(builder, returnOp.getLoc(), i8, 1),
+            LLVM::AddressOfOp::create(builder, returnOp.getLoc(), pointer,
+                                      routePromotionDirtyName),
+            1);
       for (Route &route : routes) {
         StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
                              : route.fourStateFallback
@@ -5470,13 +5533,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     }
   }
 
-  // The first quiescent check runs before synchronous reset has necessarily
-  // established the owner's known-state invariant.  When the generated
-  // periodic prefix later latches, recheck each route's own closure before
-  // selecting its two-state body.  The model-wide latch is only a scan trigger:
-  // it is not evidence that every independently routed instance is known.
-  // Empty helper contracts continue to inherit their caller's four-state ABI
-  // rather than being promoted without an entry precondition.
+  // A whole-model proof may fail while independent routes are already
+  // promotable. At this quiescent query, consume the same pending local
+  // proofs used by other boundaries; a global latch is not their evidence.
   if (LLVM::LLVMFuncOp promotion = module.lookupSymbol<LLVM::LLVMFuncOp>(
           "__obelisk_eval_promotion_ready_v1")) {
     SmallVector<LLVM::ReturnOp> promotionReturns;
@@ -5488,60 +5547,10 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     });
     for (LLVM::ReturnOp returnOp : promotionReturns) {
       builder.setInsertionPoint(returnOp);
-      Value ready = returnOp.getOperand(0);
-      for (Route &route : routes) {
-        if (route.pathKnownProbe)
-          continue;
-        if (route.ranges.size() == 0 && !route.independentEntry)
-          continue;
-        Location location = returnOp.getLoc();
-        Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  "__obelisk_state_unknown");
-        Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
-        ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
-        for (size_t index = 0; index != encoded.size(); index += 2) {
-          uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
-          uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
-          uint64_t firstByte = bitOffset / 8;
-          uint64_t lastBit = bitOffset + bitWidth;
-          uint64_t lastByte = (lastBit + 7) / 8;
-          for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
-            uint8_t mask = UINT8_MAX;
-            if (byte == firstByte && bitOffset % 8 != 0)
-              mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
-            if (byte + 1 == lastByte && lastBit % 8 != 0)
-              mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
-            Value bits = LLVM::LoadOp::create(
-                builder, location, i8,
-                detail::byteGEP(builder, location, unknown, byte), 1);
-            if (mask != UINT8_MAX)
-              bits = LLVM::AndOp::create(
-                  builder, location, bits,
-                  detail::llvmConstant(builder, location, i8, mask));
-            anyUnknown =
-                LLVM::OrOp::create(builder, location, anyUnknown, bits);
-          }
-        }
-        Value locallyKnown =
-            encoded.empty()
-                ? detail::llvmConstant(builder, location, builder.getI1Type(),
-                                       route.independentEntry)
-                : LLVM::ICmpOp::create(
-                      builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
-                      detail::llvmConstant(builder, location, i8, 0));
-        Value promote =
-            LLVM::AndOp::create(builder, location, ready, locallyKnown);
-        Value address = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  route.globalName);
-        Value existing =
-            LLVM::LoadOp::create(builder, location, pointer, address, 8);
-        Value selected = LLVM::SelectOp::create(
-            builder, location, promote,
-            LLVM::AddressOfOp::create(builder, location, pointer,
-                                      route.twoState.getSymName()),
-            existing);
-        LLVM::StoreOp::create(builder, location, selected, address, 8);
-      }
+      LLVM::CallOp::create(
+          builder, returnOp.getLoc(), routePromotionBoundary,
+          ValueRange{detail::llvmConstant(builder, returnOp.getLoc(), i32,
+                                          OBELISK_RT_OK)});
     }
   }
 

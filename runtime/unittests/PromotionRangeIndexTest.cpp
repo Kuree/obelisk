@@ -102,13 +102,13 @@ TEST(PromotionRangeIndex, RuntimeUpdatesOnlyDependentProofState) {
 
 TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
   uint8_t failedKernel = 0, validKernel = 1;
-  uint64_t pending = 0;
+  uint64_t pending = 0, routePending = 0;
   uint64_t knownRoots[] = {6, uint64_t{1} << 63};
   auto route = promotedRoute;
   obelisk_rt_native_promotion_certificate certificates[] = {
       {&failedKernel, &pending, 1, nullptr, nullptr},
       {&validKernel, &pending, 2, nullptr, nullptr},
-      {nullptr, nullptr, 0, &route, fourStateRoute},
+      {nullptr, &routePending, 4, &route, fourStateRoute},
       {nullptr, &knownRoots[0], 2, nullptr, nullptr},
       {nullptr, &knownRoots[1], uint64_t{1} << 63, nullptr, nullptr}};
   std::vector<obelisk_rt_native_promotion_dependency> entries{
@@ -146,6 +146,20 @@ TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
                                                    invalidateAggregate, 129, 1);
   EXPECT_EQ(knownRoots[0], 4u);
   EXPECT_EQ(knownRoots[1], 0u);
+  EXPECT_EQ(routePending, 0u);
+  obelisk_rt_v1_native_promotion_invalidate_ranges(
+      entries.data(), entries.size(), certificates, invalidateAggregate, 5, 1);
+  EXPECT_EQ(route, fourStateRoute);
+  EXPECT_EQ(routePending, 4u);
+  routePending = 0; // A failed scan consumes its pending bit.
+  obelisk_rt_v1_native_promotion_recheck_ranges(
+      entries.data(), entries.size(), certificates, invalidateAggregate, 5, 1);
+  EXPECT_EQ(routePending, 4u);
+  route = promotedRoute;
+  routePending = 0;
+  obelisk_rt_v1_native_promotion_recheck_ranges(
+      entries.data(), entries.size(), certificates, invalidateAggregate, 5, 1);
+  EXPECT_EQ(routePending, 0u);
 }
 
 } // namespace

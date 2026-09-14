@@ -4782,8 +4782,10 @@ TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
   plan.state_unknown = unknown.data();
   plan.state_bit_count = 16;
   static std::vector<std::pair<uint64_t, uint64_t>> invalidated;
+  static std::vector<std::pair<uint64_t, uint64_t>> rechecked;
   static std::array<bool, 3> certificates;
   invalidated.clear();
+  rechecked.clear();
   certificates.fill(true);
   plan.promotion_invalidate = schedulerInvalidatePromotion;
   plan.promotion_invalidate_range = [](uint64_t offset, uint64_t width) {
@@ -4792,6 +4794,9 @@ TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
     for (size_t index = 0; index != certificates.size(); ++index)
       if (offset < starts[index] + 4 && starts[index] < offset + width)
         certificates[index] = false;
+  };
+  plan.promotion_recheck_range = [](uint64_t offset, uint64_t width) {
+    rechecked.emplace_back(offset, width);
   };
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
@@ -4816,15 +4821,19 @@ TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
   EXPECT_EQ(unknown[0], uint8_t{8});
 
   // A known write to another lane does not invalidate knownness because an
-  // unrelated lane still contains X. Nor does X-to-known require demotion.
+  // unrelated lane still contains X. Recovery queues a failed proof without
+  // demoting positive certificates or prematurely setting a failed one true.
   uint64_t other = obelisk_rt_canonical_state_handle_unlocked(context, 8, 1);
   context->stateValue[0] = uint64_t{1} << 8;
   ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, other, 8, 1));
   EXPECT_EQ(invalidated.size(), 1u);
+  EXPECT_TRUE(rechecked.empty());
   EXPECT_EQ(unknown[0], uint8_t{8});
   context->stateUnknown[0] = 0;
   ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, handle, 3, 1));
   EXPECT_EQ(invalidated.size(), 1u);
+  EXPECT_EQ(rechecked, (std::vector<std::pair<uint64_t, uint64_t>>{{3, 1}}));
+  EXPECT_EQ(certificates, (std::array<bool, 3>{false, true, true}));
   EXPECT_EQ(unknown[0], uint8_t{0});
 
   // Force/assign scheduling disturbance is separate from the proof footprint.
@@ -4855,9 +4864,69 @@ TEST(Scheduler, ScopedPromotionHookRequiresUnknownFootprintFallback) {
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
             OBELISK_RT_INVALID_ARGUMENT);
+  plan.promotion_invalidate_range = nullptr;
+  plan.promotion_recheck_range = [](uint64_t, uint64_t) {};
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
   plan.promotion_invalidate = schedulerInvalidatePromotion;
   EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, KnownnessPublicationMatchesScalarBitTransitions) {
+  static std::array<uint8_t, 128> notifications;
+  obelisk_rt_native_schedule_plan plan{};
+  plan.state_bit_count = notifications.size();
+  plan.promotion_invalidate = schedulerInvalidatePromotion;
+  plan.promotion_invalidate_range = [](uint64_t offset, uint64_t width) {
+    ASSERT_GT(width, 0u);
+    ASSERT_LE(offset + width, notifications.size());
+    for (uint64_t bit = offset; bit != offset + width; ++bit) {
+      EXPECT_EQ(notifications[bit], 0u);
+      notifications[bit] = 1;
+    }
+  };
+  plan.promotion_recheck_range = [](uint64_t offset, uint64_t width) {
+    ASSERT_GT(width, 0u);
+    ASSERT_LE(offset + width, notifications.size());
+    for (uint64_t bit = offset; bit != offset + width; ++bit) {
+      EXPECT_EQ(notifications[bit], 0u);
+      notifications[bit] = 2;
+    }
+  };
+  schedulerPromotionInvalidationCount = 0;
+  uint64_t random = 0x941da377ab192403;
+  auto next = [&] {
+    random ^= random << 13;
+    random ^= random >> 7;
+    random ^= random << 17;
+    return random;
+  };
+  for (unsigned trial = 0; trial != 260; ++trial) {
+    uint64_t before = trial < 2 ? (trial ? UINT64_MAX : 0) : next();
+    uint64_t after = trial < 2 ? ~before : next();
+    unsigned width = trial < 2 ? 64 : trial % 65;
+    notifications.fill(0);
+    publishNativeKnownnessChangeUnlocked(&plan, 13, width, before, after);
+    for (unsigned bit = 0; bit != notifications.size(); ++bit) {
+      unsigned expected = 0;
+      if (bit >= 13 && bit < 13 + width) {
+        bool oldUnknown = (before >> (bit - 13)) & 1;
+        bool newUnknown = (after >> (bit - 13)) & 1;
+        if (oldUnknown != newUnknown)
+          expected = newUnknown ? 1 : 2;
+      }
+      EXPECT_EQ(notifications[bit], expected) << trial << ":" << bit;
+    }
+  }
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
+  // Reject unrepresentable widths before evaluating any shift or end offset.
+  publishNativeKnownnessChangeUnlocked(&plan, 0, 65, 0, 1);
+  publishNativeKnownnessChangeUnlocked(&plan, UINT64_MAX, 2, 0, 1);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 2u);
+  plan.promotion_recheck_range = nullptr;
+  publishNativeKnownnessChangeUnlocked(&plan, 0, 64, UINT64_MAX, 0);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 3u);
 }
 
 TEST(Scheduler, AOTSpecializationFastFlagIsScopedAndInvalidated) {

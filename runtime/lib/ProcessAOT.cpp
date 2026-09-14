@@ -223,16 +223,17 @@ extern "C" void obelisk_rt_v1_native_promotion_invalidate_ranges(
   visitPromotionRangeDependencies(
       dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
         const auto &certificate = certificates[id];
-        if (certificate.latch) {
-          *certificate.latch = 0;
+        if (certificate.latch || certificate.route_slot) {
+          if (certificate.latch)
+            *certificate.latch = 0;
           if (certificate.word)
             *certificate.word |= certificate.mask;
+          if (certificate.route_slot)
+            std::memcpy(certificate.route_slot, &certificate.fallback,
+                        sizeof(certificate.fallback));
         } else if (certificate.word) {
           *certificate.word &= ~certificate.mask;
         }
-        if (certificate.route_slot)
-          std::memcpy(certificate.route_slot, &certificate.fallback,
-                      sizeof(certificate.fallback));
         affected = true;
       });
   if (affected)
@@ -249,7 +250,13 @@ extern "C" void obelisk_rt_v1_native_promotion_recheck_ranges(
   visitPromotionRangeDependencies(
       dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
         const auto &certificate = certificates[id];
-        if (certificate.latch && !*certificate.latch && certificate.word)
+        bool failed = certificate.latch && !*certificate.latch;
+        if (certificate.route_slot) {
+          obelisk_rt_native_promotion_invalidate selected;
+          std::memcpy(&selected, certificate.route_slot, sizeof(selected));
+          failed = selected == certificate.fallback;
+        }
+        if (failed && certificate.word)
           *certificate.word |= certificate.mask;
         affected = true;
       });
@@ -277,6 +284,44 @@ void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
   }
   // An unknown/unrepresentable footprint cannot support a scoped proof.
   invalidateNativeTwoStatePromotionUnlocked(context);
+}
+
+void publishNativeKnownnessChangeUnlocked(
+    const obelisk_rt_native_schedule_plan *plan, uint64_t bitOffset,
+    uint64_t bitWidth, uint64_t oldUnknown, uint64_t newUnknown) {
+  if (!plan || bitWidth == 0)
+    return;
+  if (bitWidth > 64 || bitOffset > plan->state_bit_count ||
+      bitWidth > plan->state_bit_count - bitOffset) {
+    if (plan->promotion_invalidate)
+      plan->promotion_invalidate();
+    return;
+  }
+  uint64_t changed = (oldUnknown ^ newUnknown) & packedWidthMask(bitWidth);
+  if (!changed)
+    return;
+  uint64_t lost = changed & newUnknown;
+  uint64_t recovered = changed & oldUnknown;
+  if ((lost && !plan->promotion_invalidate_range) ||
+      (recovered && !plan->promotion_recheck_range)) {
+    if (plan->promotion_invalidate)
+      plan->promotion_invalidate();
+    return;
+  }
+  auto publish = [&](uint64_t mask,
+                     obelisk_rt_native_promotion_invalidate_range hook) {
+    while (mask) {
+      unsigned first = static_cast<unsigned>(__builtin_ctzll(mask));
+      uint64_t inverted = ~(mask >> first);
+      unsigned width =
+          inverted ? static_cast<unsigned>(__builtin_ctzll(inverted)) : 64;
+      hook(bitOffset + first, width);
+      // Unsigned wrap also handles a run through bit 63 or a full word.
+      mask &= mask + (uint64_t{1} << first);
+    }
+  };
+  publish(lost, plan->promotion_invalidate_range);
+  publish(recovered, plan->promotion_recheck_range);
 }
 
 void obelisk_rt_aot_observation_demand_changed_unlocked(
@@ -2880,12 +2925,6 @@ bool obelisk_rt_aot_external_deposit_unlocked(obelisk_rt_context *context,
       });
   if (!synchronized)
     return false;
-  for (uint64_t bit = bitOffset; bit != bitEnd; ++bit)
-    if (byteBit(plan->state_unknown, bit)) {
-      invalidateNativeTwoStatePromotionRangeUnlocked(context, bitOffset,
-                                                     bitWidth);
-      break;
-    }
   return true;
 }
 

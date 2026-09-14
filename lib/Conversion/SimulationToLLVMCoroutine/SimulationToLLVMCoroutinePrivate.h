@@ -172,6 +172,7 @@ enum class NativeSchedulePlanField : int64_t {
   PromotionInvalidate,
   PromotionReady,
   PromotionInvalidateRange,
+  PromotionRecheckRange,
   Count,
 };
 

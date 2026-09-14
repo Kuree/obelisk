@@ -196,13 +196,20 @@ bool reconcileNativeRootToPlanesUnlocked(
   if (!state || state->bitOffset > plan->state_bit_count ||
       state->bitWidth > plan->state_bit_count - state->bitOffset)
     return false;
-  for (uint64_t local = 0; local != state->bitWidth; ++local) {
+  for (uint64_t local = 0; local < state->bitWidth; local += 64) {
     uint64_t absolute = state->bitOffset + local;
-    uint64_t mask = uint64_t{1} << (absolute % 64);
-    setByteBit(plan->state_value, absolute,
-               (context->stateValue[absolute / 64] & mask) != 0);
-    setByteBit(plan->state_unknown, absolute,
-               (context->stateUnknown[absolute / 64] & mask) != 0);
+    uint64_t width = std::min<uint64_t>(64, state->bitWidth - local);
+    uint64_t oldUnknown = loadPackedBytes(plan->state_unknown, absolute, width);
+    uint64_t newUnknown =
+        loadPackedBits(context->stateUnknown, absolute, width);
+    storePackedBytes(plan->state_value, absolute, width,
+                     loadPackedBits(context->stateValue, absolute, width));
+    storePackedBytes(plan->state_unknown, absolute, width, newUnknown);
+    // Notify only actual canonical changes, before any dependent execution.
+    // IEEE 1800-2023 6.8/9.4.2: recovery is a real X/Z-to-known transition;
+    // it must also make a cached failed proof eligible for rechecking.
+    publishNativeKnownnessChangeUnlocked(plan, absolute, width, oldUnknown,
+                                         newUnknown);
   }
   return true;
 }

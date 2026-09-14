@@ -32,7 +32,7 @@ LLVM::LLVMStructType getNativeSchedulePlanLLVMType(MLIRContext *context) {
       i64,     pointer, pointer, pointer, pointer, i32,     i32,     pointer,
       i64,     pointer, i64,     pointer, i64,     pointer, pointer, pointer,
       i32,     i32,     pointer, i32,     i32,     pointer, i32,     i32,
-      pointer, i64,     pointer, pointer, pointer, pointer};
+      pointer, i64,     pointer, pointer, pointer, pointer, pointer};
   assert(fields.size() == static_cast<size_t>(NativeSchedulePlanField::Count));
   return LLVM::LLVMStructType::getLiteral(context, fields);
 }
@@ -47,7 +47,7 @@ uint64_t getNativeSchedulePlanSize(const llvm::DataLayout &dataLayout) {
       i64,     pointer, pointer, pointer, pointer, i32,     i32,     pointer,
       i64,     pointer, i64,     pointer, i64,     pointer, pointer, pointer,
       i32,     i32,     pointer, i32,     i32,     pointer, i32,     i32,
-      pointer, i64,     pointer, pointer, pointer, pointer};
+      pointer, i64,     pointer, pointer, pointer, pointer, pointer};
   auto *type = llvm::StructType::get(context, fields);
   return dataLayout.getTypeAllocSize(type).getFixedValue();
 }

@@ -6081,6 +6081,10 @@ FailureOr<bool> makeNativeEvalPlan(
       "__obelisk_eval_promotion_invalidate_range_v1";
   getOrDeclareLLVMFunction(module, invalidateRangeName,
                            LLVM::LLVMVoidType::get(context), {i64, i64});
+  constexpr StringLiteral recheckRangeName =
+      "__obelisk_eval_promotion_recheck_range_v1";
+  getOrDeclareLLVMFunction(module, recheckRangeName,
+                           LLVM::LLVMVoidType::get(context), {i64, i64});
   auto planType = getNativeSchedulePlanLLVMType(context);
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
@@ -6328,11 +6332,16 @@ FailureOr<bool> makeNativeEvalPlan(
         value = insertValue(initializerBuilder, location, value,
                             promotionQueryAddress,
                             NativeSchedulePlanField::PromotionReady);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        LLVM::AddressOfOp::create(initializerBuilder, location,
+                                                  pointer, invalidateRangeName),
+                        NativeSchedulePlanField::PromotionInvalidateRange);
         return insertValue(initializerBuilder, location, value,
                            LLVM::AddressOfOp::create(initializerBuilder,
                                                      location, pointer,
-                                                     invalidateRangeName),
-                           NativeSchedulePlanField::PromotionInvalidateRange);
+                                                     recheckRangeName),
+                           NativeSchedulePlanField::PromotionRecheckRange);
       });
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
                            {pointer, pointer});

@@ -125,6 +125,9 @@ void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context);
 void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
                                                     uint64_t bitOffset,
                                                     uint64_t bitWidth);
+void publishNativeKnownnessChangeUnlocked(
+    const obelisk_rt_native_schedule_plan *plan, uint64_t bitOffset,
+    uint64_t bitWidth, uint64_t oldUnknown, uint64_t newUnknown);
 void refreshNativeStaticSpecializationFastUnlocked(obelisk_rt_context *context);
 bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,

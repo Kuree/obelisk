@@ -600,7 +600,26 @@ without clearing positive certificates. Partial recovery cannot certify an
 entire NBA destination. Proven two-state compute bodies have no unknown-plane stores
 and acquire no publication calls. Generated NBA commits use these publications
 instead of blanket promotion resets or unconditional route-scan requests.
-Runtime mutation paths still need complete scoped coverage; conservative
+Route rechecks consume a pending bitmap indexed by the same verified
+certificates. A single pending word is its own nonempty summary; larger
+sets retain a summary flag so clean boundaries need only one load. Empty words
+skip every route in that word; within a touched word only pending routes scan
+canonical unknown bits. A failed scan remains
+cached until a relevant mutation requests another check. Whole-model promotion
+queries use this same boundary mechanism, allowing independent routes to
+promote even while the whole-model proof fails. Executable two-route and
+65-route regressions check failed-proof caching, exact partial invalidation,
+recovery, and preservation of pending work at unsuccessful boundaries.
+The internal native plan also exposes a range recovery hook. Reconciliation
+of indexed VPI deposits and dirty roots publishes actual unknown-mask deltas:
+loss invalidates exact changed ranges, while recovery queues failed proofs.
+Known clock toggles do neither. Both hooks use target-derived layout (native
+plan size 272 bytes; wasm32 size 208 bytes) and cannot execute observers or
+actors. Runtime commit paths that bypass reconciliation still need coverage.
+Pure generated four-state route wrappers retain NBA staging provenance without
+clearing destination certificates on entry. Actual committed changes revoke
+those proofs before dependent work. Foreign/checkpoint callbacks and other
+runtime mutation paths still need complete scoped coverage; conservative
 runtime and Tier-3 invalidation remain until those paths are covered.
 
 The required disturbance policy is local: VPI-driven clocks, including cocotb
@@ -643,6 +662,9 @@ will become adapters to the common loop as those paths are replaced.
 Replacement acceptance requires at least 10× Ibex execution speedup over the
 preserved `7d0058c1` harness, no repeatable PicoRV regression, dormant-VPI parity,
 and at most 25% growth in matched median compilation time and peak memory.
+Compilation must also close the absolute gap to a matched Verilator build;
+remaining within that relative limit does not make a roughly 75-second Ibex
+compile acceptable against the reported sub-10-second Verilator reference.
 Correctness gates include separately encoded required-bytecode execution,
 native/wasm32 layouts, and the full regression suite. Baseline hashes, commands,
 and interleaved measurements are preserved under `tmp/bench/`; these gates have

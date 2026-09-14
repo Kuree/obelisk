@@ -38,6 +38,8 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   constexpr StringLiteral nbaAttr = "obelisk.eval.nba_proof_dependencies";
   auto pending = module.lookupSymbol<LLVM::GlobalOp>(
       "__obelisk_eval_promotion_pending_mask_v1");
+  auto routePending = module.lookupSymbol<LLVM::GlobalOp>(
+      "__obelisk_eval_route_promotion_pending_v1");
   for (auto global : module.getOps<LLVM::GlobalOp>()) {
     if (auto kernels = global->getAttrOfType<ArrayAttr>(kernelAttr)) {
       auto latchType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
@@ -87,14 +89,22 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
     if (auto route = global->getAttrOfType<DictionaryAttr>(routeAttr)) {
       auto fallback = route.getAs<FlatSymbolRefAttr>("fallback");
       auto ranges = route.getAs<DenseI64ArrayAttr>("ranges");
+      auto pendingBit = route.getAs<IntegerAttr>("pending_bit");
+      auto pendingType =
+          routePending
+              ? dyn_cast<LLVM::LLVMArrayType>(routePending.getGlobalType())
+              : LLVM::LLVMArrayType{};
       if (!global.getSymName().starts_with(
               "__obelisk_eval_function_route_v1_") ||
-          !fallback || !ranges ||
+          !fallback || !ranges || !pendingBit || !pendingType ||
+          !pendingType.getElementType().isInteger(64) ||
+          pendingBit.getUInt() / 64 >= pendingType.getNumElements() ||
           !isa<LLVM::LLVMPointerType>(global.getGlobalType()) ||
           !module.lookupSymbol<LLVM::LLVMFuncOp>(fallback.getValue()))
         return global.emitError(
             "route proof index has invalid fallback storage");
-      certificates.push_back({global, fallback, 0, 0, ranges});
+      certificates.push_back(
+          {global, fallback, 0, pendingBit.getUInt(), ranges});
       global->removeAttr(routeAttr);
     }
   }
@@ -132,8 +142,17 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   hook->setAttr("passthrough",
                 builder.getArrayAttr({builder.getStringAttr("cold"),
                                       builder.getStringAttr("noinline")}));
+  auto recheck = getOrDeclareLLVMFunction(
+      module, "__obelisk_eval_promotion_recheck_range_v1", voidType,
+      {i64, i64});
+  if (!recheck.empty())
+    return recheck.emitError("range recheck was materialized twice");
+  recheck->setAttr("passthrough", hook->getAttr("passthrough"));
+  Block *recheckEntry = recheck.addEntryBlock(builder);
   if (entries.empty()) {
     builder.setInsertionPointToStart(entry);
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+    builder.setInsertionPointToStart(recheckEntry);
     LLVM::ReturnOp::create(builder, location, ValueRange{});
     return success();
   }
@@ -197,6 +216,14 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
                                                  ArrayRef<int64_t>{field});
           };
           if (certificate.fallback) {
+            insert(byteGEP(b, location,
+                           LLVM::AddressOfOp::create(b, location, pointer,
+                                                     routePending.getSymName()),
+                           (certificate.pendingBit / 64) * sizeof(uint64_t)),
+                   1);
+            insert(llvmConstant(b, location, i64,
+                                uint64_t{1} << (certificate.pendingBit % 64)),
+                   2);
             insert(address, 3);
             insert(LLVM::AddressOfOp::create(b, location, pointer,
                                              certificate.fallback.getValue()),
@@ -266,11 +293,6 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
                                                                          : 0),
           LLVM::AddressOfOp::create(builder, location, pointer, name));
   LLVM::ReturnOp::create(builder, location, ValueRange{});
-  auto recheck = getOrDeclareLLVMFunction(
-      module, "__obelisk_eval_promotion_recheck_range_v1", voidType,
-      {i64, i64});
-  recheck->setAttr("passthrough", hook->getAttr("passthrough"));
-  Block *recheckEntry = recheck.addEntryBlock(builder);
   builder.setInsertionPointToStart(recheckEntry);
   auto recheckLookup = getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_native_promotion_recheck_ranges", voidType,

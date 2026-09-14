@@ -1369,7 +1369,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
       !clockKernelTableValid || !nbaCommitValid || !nbaDirtyRootsValid ||
       !specializationFastValid ||
-      (plan->promotion_invalidate_range && !plan->promotion_invalidate) ||
+      ((plan->promotion_invalidate_range || plan->promotion_recheck_range) &&
+       !plan->promotion_invalidate) ||
       !cleanSuperstepValid || !staticEvalIslandValid || !evalSchedulerValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |

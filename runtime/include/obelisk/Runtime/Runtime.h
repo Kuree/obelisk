@@ -3356,8 +3356,9 @@ typedef struct obelisk_rt_native_promotion_dependency {
 
 // Cold proof-state actions. A kernel has a latch and ORs mask into its pending
 // word on invalidation. An NBA-root certificate has only word/mask and clears
-// that knownness bit. A routed body has only route_slot/fallback and restores
-// its four-state entry pointer. These roles are compiler-verified and disjoint.
+// that knownness bit. A routed body has route_slot/fallback, restores its
+// four-state entry pointer and ORs mask into its pending word. These roles
+// are compiler-verified and disjoint.
 // route_slot points at a generated function-pointer global. The runtime copies
 // the fallback representation without calling it or aliasing its function type.
 typedef struct obelisk_rt_native_promotion_certificate {
@@ -3441,6 +3442,10 @@ typedef struct obelisk_rt_native_schedule_plan {
   // preserving unrelated certificates. Scheduling disturbance is tracked
   // separately. Unknown footprints still use promotion_invalidate above.
   obelisk_rt_native_promotion_invalidate_range promotion_invalidate_range;
+  // Optional knownness recovery notification. Queue failed dependent proofs
+  // for a safe-boundary recheck without revoking positive certificates.
+  // Like invalidation, this hook cannot execute actors or observers.
+  obelisk_rt_native_promotion_invalidate_range promotion_recheck_range;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
