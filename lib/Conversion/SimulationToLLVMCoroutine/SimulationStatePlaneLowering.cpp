@@ -82,13 +82,15 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
     LLVM::StoreOp::create(builder, location, value, storage, 1);
     return storage;
   };
-  LLVM::CallOp::create(
+  auto transition = LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(builder.getContext(),
                          "obelisk_rt_v1_scheduler_signal_transition"),
       ValueRange{context, handle, llvmConstant(builder, location, i64, width),
                  save(oldValue), save(oldUnknown), save(newValue),
                  save(newUnknown)});
+  if (sourceOwner)
+    transition->setAttr(sim::metadata::evalSourceOwner, sourceOwner);
 }
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,

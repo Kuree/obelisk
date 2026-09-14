@@ -503,6 +503,68 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   return proof;
 }
 
+// Wide port/storage copies use the generic snapshot ABI during state lowering.
+// On a clean, fully owned generated route, publish its machine-word slices
+// through the same exact fanout logic as narrow stores. All state bytes have
+// already been written; no actor executes between these publications.
+static void normalizeGeneratedWideTransitions(
+    ModuleOp module, const llvm::DataLayout &dataLayout,
+    const NativeStateLayout &layout, const NativeStaticFanoutPlan &fanout) {
+  NativeStateLayout clean = makeCleanEvalStateLayout(layout);
+  SmallVector<LLVM::CallOp> calls;
+  for (auto function : collectGeneratedEvalCallClosure(module))
+    function.walk([&](LLVM::CallOp call) {
+      if (call.getCallee() &&
+          *call.getCallee() == "obelisk_rt_v1_scheduler_signal_transition")
+        calls.push_back(call);
+    });
+  for (LLVM::CallOp call : calls) {
+    ValueRange args = call.getArgOperands();
+    if (args.size() != 7)
+      continue;
+    auto width = constantU64(args[2]);
+    if (!width || *width <= 64 || *width > UINT_MAX)
+      continue;
+    auto range = resolveDirectStaticStateRange(args[1], *width, &clean);
+    if (!range || fanout.runtimeTransitionStates.contains(range->staticID))
+      continue;
+    OpBuilder builder(call);
+    auto i64 = builder.getI64Type();
+    for (uint64_t low = 0; low < *width; low += 64) {
+      unsigned bits = std::min<uint64_t>(64, *width - low);
+      uint64_t byteOffset = dataLayout.isLittleEndian()
+                                ? low / 8
+                                : (*width + 7) / 8 - low / 8 - (bits + 7) / 8;
+      auto load = [&](Value snapshot) -> Value {
+        if (snapshot.getDefiningOp<LLVM::ZeroOp>())
+          return llvmConstant(builder, call.getLoc(), i64, 0);
+        Value value = LLVM::LoadOp::create(
+            builder, call.getLoc(), builder.getIntegerType(bits),
+            byteGEP(builder, call.getLoc(), snapshot, byteOffset), 1);
+        return bits == 64
+                   ? value
+                   : LLVM::ZExtOp::create(builder, call.getLoc(), i64, value)
+                         .getResult();
+      };
+      auto publication = LLVM::CallOp::create(
+          builder, call.getLoc(), TypeRange{},
+          SymbolRefAttr::get(module.getContext(),
+                             "obelisk_rt_v1_scheduler_static_transition"),
+          ValueRange{args[0],
+                     llvmConstant(builder, call.getLoc(), builder.getI32Type(),
+                                  range->staticID),
+                     llvmConstant(builder, call.getLoc(), i64,
+                                  range->localOffset + low),
+                     llvmConstant(builder, call.getLoc(), i64, bits),
+                     load(args[3]), load(args[4]), load(args[5]),
+                     load(args[6])});
+      if (auto owner = call->getAttr(sim::metadata::evalSourceOwner))
+        publication->setAttr(sim::metadata::evalSourceOwner, owner);
+    }
+    call.erase();
+  }
+}
+
 FailureOr<bool> makeNativeEvalPlan(
     ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
     ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
@@ -542,6 +604,10 @@ FailureOr<bool> makeNativeEvalPlan(
   SmallVector<GeneratedTransitionRange> generatedTransitionRanges;
   llvm::DenseMap<Operation *, DynamicEvalNBAProof> dynamicNBAProofs;
   if (!resolved->clockKernels.empty()) {
+    // Normalize before the ingress/NBA proof so wide clock disturbances are
+    // visible to the same range analysis as ordinary narrow publications.
+    normalizeGeneratedWideTransitions(module, dataLayout, stateLayout,
+                                      staticFanoutPlan);
     FailureOr<SmallVector<GeneratedTransitionRange>> transitionRanges =
         collectGeneratedTransitionRanges(module, directFragments);
     if (failed(transitionRanges))
