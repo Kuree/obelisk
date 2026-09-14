@@ -21,12 +21,24 @@ uint64_t stableProcessID(StringRef name) {
 
 bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
   auto scalar = [](Type type) {
-    if (auto ref = dyn_cast<sim::RefType>(type))
+    if (auto ref = dyn_cast<sim::RefType>(type)) {
       type = ref.getElementType();
+      // A fixed array reference is an address, not an aggregate value or a
+      // managed allocation. Scalar element accesses need no GC lane. Keep
+      // whole-array values, arrays of handles, and actual calls conservative.
+      for (unsigned depth = 0; depth != 16; ++depth) {
+        auto array = dyn_cast<sim::UnpackedArrayType>(type);
+        if (!array)
+          break;
+        type = array.getElementType();
+      }
+    }
     if (auto net = dyn_cast<sim::NetType>(type))
       type = net.getElementType();
+    if (auto driver = dyn_cast<sim::DriverType>(type))
+      type = driver.getElementType();
     return isa<IntegerType, FloatType, sim::LogicType, sim::ContextType,
-               sim::ProcessType, sim::TimeType, sim::BytesType,
+               sim::ProcessType, sim::TimeType, sim::BytesType, sim::ControlType,
                sim::PackedArrayType, sim::PackedStructType,
                sim::PackedUnionType>(type);
   };

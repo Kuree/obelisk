@@ -11,6 +11,8 @@
 // Block-local plusarg strings are native-AOT eligible but still need a live
 // managed lane. Exercise both a plain startup actor and a resumed coroutine;
 // the root itself never creates a string that could accidentally supply one.
+// Fixed unpacked array references, packed driver handles, and named-block
+// tokens must not acquire a managed scope, unlike the plusarg strings below.
 // PLAN: __obelisk_aot_schedule_plan_v1
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot
 // PLAIN-LABEL: llvm.mlir.global external constant @initial.__obelisk_process_descriptor()
@@ -35,6 +37,9 @@ module attributes {
   obelisk_sim.design @plusargs {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>> design
+    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> design
+    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<4> design
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "initial"
     obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "resumed"
@@ -51,9 +56,17 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %dst: !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %scope = obelisk_sim.control.enter 42
       %bits = obelisk_sim.logic.constant 5 : i4, 0 : i4 : !obelisk_sim.logic<4>
       %value = obelisk_sim.packed.unflatten %bits : (!obelisk_sim.logic<4>) -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %value to %dst : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
+      %array = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>>
+      %element = obelisk_sim.ref.subelement %array[[2]] : !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>> -> !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
+      obelisk_sim.ref.store %value to %element : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
+      %observed = obelisk_sim.ref.load %element : !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
+      obelisk_sim.ref.store %observed to %dst : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
+      %driver = obelisk_sim.context.driver %ctx[0] : !obelisk_sim.driver<!obelisk_sim.logic<4>>
+      obelisk_sim.driver.drive %driver = %bits : !obelisk_sim.driver<!obelisk_sim.logic<4>>, !obelisk_sim.logic<4>
+      obelisk_sim.control.leave %scope
       obelisk_sim.return
     }
     obelisk_sim.func @initial(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
