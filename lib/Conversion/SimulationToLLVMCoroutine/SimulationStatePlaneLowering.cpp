@@ -611,6 +611,106 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
   return changed;
 }
 
+bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
+                                  Location location, Value handle, Value value,
+                                  Value unknown,
+                                  const NativeStateLayout *layout,
+                                  bool assumeClean, bool continuous,
+                                  bool twoState, Attribute sourceOwner) {
+  auto inputType = dyn_cast<IntegerType>(value.getType());
+  if (!inputType || !layout || !layout->transitionHandlesExact)
+    return false;
+  auto range =
+      resolveDirectDynamicStateRange(handle, inputType.getWidth(), layout);
+  if (!range || range->rootWidth > 64 ||
+      (range->guarded && (continuous || !assumeClean)))
+    return false;
+  // One machine-word root permits an exact read/modify/write without a
+  // runtime handle lookup. Invalid selects are no-ops; overhanging selects
+  // update only their in-range bits (LRM 11.5.1).
+  auto i64 = rewriter.getI64Type();
+  auto rootType = rewriter.getIntegerType(range->rootWidth);
+  Value zero = llvmConstant(rewriter, location, i64, 0);
+  Value offset = range->bitOffset;
+  Value aboveBegin = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::sgt, offset,
+      llvmConstant(rewriter, location, i64, -int64_t(inputType.getWidth())));
+  Value belowEnd = arith::CmpIOp::create(
+      rewriter, location, arith::CmpIPredicate::slt, offset,
+      llvmConstant(rewriter, location, i64, range->rootWidth));
+  Value valid = arith::AndIOp::create(
+      rewriter, location, range->valid,
+      arith::AndIOp::create(rewriter, location, aboveBegin, belowEnd));
+  // Sanitize before either shift, not merely before the final select.
+  Value safe = arith::SelectOp::create(rewriter, location, valid, offset, zero);
+  Value negative = arith::CmpIOp::create(rewriter, location,
+                                         arith::CmpIPredicate::slt, safe, zero);
+  Value right = arith::SelectOp::create(
+      rewriter, location, negative,
+      arith::SubIOp::create(rewriter, location, zero, safe), zero);
+  Value left =
+      arith::SelectOp::create(rewriter, location, negative, zero, safe);
+  Value mask = llvmConstant(rewriter, location, i64,
+                            inputType.getWidth() == 64
+                                ? UINT64_MAX
+                                : (uint64_t{1} << inputType.getWidth()) - 1);
+  mask = arith::ShRUIOp::create(rewriter, location, mask, right);
+  mask = arith::ShLIOp::create(rewriter, location, mask, left);
+  mask = arith::SelectOp::create(rewriter, location, valid, mask, zero);
+  auto extend = [&](Value input) -> Value {
+    if (!input)
+      return zero;
+    return input.getType() == i64
+               ? input
+               : LLVM::ZExtOp::create(rewriter, location, i64, input)
+                     .getResult();
+  };
+  auto load = [&](StringRef plane) -> Value {
+    return extractDirectPackedPlane(
+        rewriter, location,
+        loadDirectPackedPlane(rewriter, location, plane, range->rootOffset,
+                              range->rootWidth),
+        rootType);
+  };
+  auto merge = [&](Value old, Value input) -> Value {
+    Value positioned =
+        arith::ShRUIOp::create(rewriter, location, extend(input), right);
+    positioned = arith::ShLIOp::create(rewriter, location, positioned, left);
+    Value previous = extend(old);
+    Value merged = arith::XOrIOp::create(
+        rewriter, location, previous,
+        arith::AndIOp::create(
+            rewriter, location, mask,
+            arith::XOrIOp::create(rewriter, location, previous, positioned)));
+    return rootType == i64
+               ? merged
+               : LLVM::TruncOp::create(rewriter, location, rootType, merged)
+                     .getResult();
+  };
+  Value oldValue = load("__obelisk_state_value");
+  Value newValue = merge(oldValue, value);
+  Value oldUnknown = twoState ? llvmConstant(rewriter, location, rootType, 0)
+                              : load("__obelisk_state_unknown");
+  Value newUnknown = twoState ? oldUnknown : merge(oldUnknown, unknown);
+  storeDirectPackedPlane(rewriter, location, newValue, "__obelisk_state_value",
+                         range->rootOffset, false);
+  if (!twoState)
+    storeDirectPackedPlane(rewriter, location, newUnknown,
+                           "__obelisk_state_unknown", range->rootOffset, false);
+  if (layout->transitionHandles.contains(range->staticID)) {
+    Value rootHandle =
+        llvmConstant(rewriter, location, i64,
+                     obelisk_rt_stable_handle_encode(
+                         OBELISK_RT_STABLE_HANDLE_STATIC, range->staticID, 0));
+    notifySignal(rewriter, location, rootHandle, range->rootWidth, oldValue,
+                 oldUnknown, newValue, newUnknown,
+                 DirectStaticStateRange{range->rootOffset, 0, range->staticID,
+                                        range->guarded},
+                 sourceOwner);
+  }
+  return true;
+}
+
 } // namespace detail
 
 } // namespace obelisk

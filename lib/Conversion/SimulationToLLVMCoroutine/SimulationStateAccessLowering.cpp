@@ -360,6 +360,15 @@ public:
     if (isa<FloatType>(valueType))
       storedValue =
           arith::BitcastOp::create(rewriter, op.getLoc(), plane, storedValue);
+    if (!directRange && !runtimePublication && containsLogic(valueType) &&
+        emitDirectDynamicPackedStore(
+            rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
+            adaptor.getValue().size() == 2 ? adaptor.getValue()[1] : Value{},
+            directLayout, assumeClean, continuous, twoState,
+            op->getAttr(sim::metadata::evalSourceOwner))) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     if (!needsNotification) {
       (void)storeStatePlane(
           rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,

@@ -124,6 +124,13 @@ struct DirectStaticStateRange {
   bool guarded;
 };
 
+bool emitDirectDynamicPackedStore(mlir::ConversionPatternRewriter &rewriter,
+                                  mlir::Location location, mlir::Value handle,
+                                  mlir::Value value, mlir::Value unknown,
+                                  const NativeStateLayout *layout,
+                                  bool assumeClean, bool continuous,
+                                  bool twoState, mlir::Attribute sourceOwner);
+
 /// Compiler-side field indices for obelisk_rt_native_schedule_plan. Keep all
 /// LLVM literal construction and aggregate access tied to one named layout.
 enum class NativeSchedulePlanField : int64_t {
