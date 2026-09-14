@@ -2453,59 +2453,10 @@ obelisk_rt_status runStaticAOTControlStep(obelisk_rt_context *context,
       context->nativeScheduleExternalWritePending)
     return OBELISK_RT_TIER_UNAVAILABLE;
 
-  uint32_t barrierRegion = UINT32_MAX;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-  bool indexedNBA = plan->nba_dirty_roots && plan->nba_dirty_summary;
-  auto inspectNBARoot = [&](uint32_t root) {
-    if (root < context->staticNBAAccumulators.size()) {
-      const StaticNBAAccumulator &accumulator =
-          context->staticNBAAccumulators[root];
-      if (accumulator.valid)
-        barrierRegion = std::min(barrierRegion, accumulator.execRegion);
-    }
-    if (root < context->nativeScheduleNBARootCount) {
-      const obelisk_rt_generated_nba_accumulator_256 *generated =
-          context->nativeScheduleNBARoots[root].generated_accumulator;
-      if (generated && hasGeneratedNBAStages(*generated))
-        barrierRegion = std::min(barrierRegion, generated->exec_region);
-    }
-  };
-  if (indexedNBA) {
-    // The generated staging path maintains a two-level ordered bitmap. Walk
-    // only nonempty 64-root leaf pages when selecting the next NBA barrier;
-    // the same index is consumed by commitStaticNBARootRangeUnlocked below.
-    // This keeps sparse fixed-site NBA traffic proportional to dirty roots
-    // without changing graph order or the bytecode handoff representation.
-    for (uint32_t summaryIndex = 0;
-         summaryIndex != plan->nba_dirty_summary_word_count; ++summaryIndex) {
-      uint64_t summary = plan->nba_dirty_summary[summaryIndex];
-      while (summary != 0) {
-        uint32_t summaryBit = static_cast<uint32_t>(__builtin_ctzll(summary));
-        uint32_t leafIndex = summaryIndex * 64 + summaryBit;
-        if (leafIndex >= plan->nba_dirty_word_count)
-          break;
-        uint64_t roots = plan->nba_dirty_roots[leafIndex];
-        while (roots != 0) {
-          uint32_t rootBit = static_cast<uint32_t>(__builtin_ctzll(roots));
-          inspectNBARoot(leafIndex * 64 + rootBit);
-          roots &= roots - 1;
-        }
-        summary &= summary - 1;
-      }
-    }
-  } else {
-    if (context->staticNBAAccumulatorsPending)
-      for (uint32_t root = 0; root != context->staticNBAAccumulators.size();
-           ++root)
-        inspectNBARoot(root);
-    if (context->nativeScheduleHasGeneratedNBAAccumulators)
-      for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
-           ++root)
-        inspectNBARoot(root);
-  }
-  for (const ScheduledNBA &update : context->scheduledNBAs)
-    if (!update.cancelled && update.dueTime <= context->schedulerTime)
-      barrierRegion = std::min(barrierRegion, update.execRegion);
+  // IEEE 1800-2023 4.4-4.5: execution policy does not select a different
+  // region policy. Generated and descriptor-driven work consult the same
+  // pending-update inventory, including Active reactivation after NBA.
+  uint32_t barrierRegion = nextDueNBABarrierRegionUnlocked(context);
   if (barrierRegion != UINT32_MAX) {
     if (!canCommitInlineNativeNBABarrierUnlocked(context, barrierRegion))
       return OBELISK_RT_TIER_UNAVAILABLE;
@@ -2601,28 +2552,9 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
                              static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
-  if (context->staticNBAAccumulatorsPending)
-    for (const StaticNBAAccumulator &accumulator :
-         context->staticNBAAccumulators)
-      if (accumulator.valid)
-        barrierRegion = std::min(barrierRegion, accumulator.execRegion);
-  if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators)
-    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
-         ++root) {
-      // Fixed-site Tier-1 accumulators retain their constant valid/mask
-      // fields after commit. For indexed plans the dirty bitmap, not those
-      // payload fields, owns pendingness across a runtime handoff.
-      const auto *plan = context->nativeSchedulePlan;
-      if (plan && plan->nba_dirty_roots && plan->nba_dirty_summary &&
-          (root / 64 >= plan->nba_dirty_word_count ||
-           (plan->nba_dirty_roots[root / 64] & (uint64_t{1} << (root % 64))) ==
-               0))
-        continue;
-      const obelisk_rt_generated_nba_accumulator_256 *generated =
-          context->nativeScheduleNBARoots[root].generated_accumulator;
-      if (generated && hasGeneratedNBAStages(*generated))
-        barrierRegion = std::min(barrierRegion, generated->exec_region);
-    }
+  barrierRegion = std::min(
+      barrierRegion, nextDueNativeNBABarrierRegionUnlocked(context,
+                                                          includeGenerated));
   return barrierRegion;
 }
 

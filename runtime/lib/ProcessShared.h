@@ -236,6 +236,11 @@ bool nativeClockOccurrencePrimaryReadsGeneratedState(
 // Non-blocking assignment staging and commit (ProcessNBA.cpp)
 //===----------------------------------------------------------------------===//
 
+// Shared native pending-update selection for every execution policy. With an
+// installed dirty index, retained generated payloads are not pending work.
+uint32_t nextDueNativeNBABarrierRegionUnlocked(
+    const obelisk_rt_context *context, bool includeGenerated);
+
 bool hasGeneratedNBAStages(
     const obelisk_rt_generated_nba_accumulator_256 &generated);
 void markStaticNBAAccumulatorPending(obelisk_rt_context *context,

@@ -62,6 +62,61 @@ bool hasGeneratedNBAStages(
   return generated.valid != 0;
 }
 
+uint32_t nextDueNativeNBABarrierRegionUnlocked(
+    const obelisk_rt_context *context, bool includeGenerated) {
+  uint32_t region = UINT32_MAX;
+  auto inspectRoot = [&](uint32_t root) {
+    if (root < context->staticNBAAccumulators.size()) {
+      const StaticNBAAccumulator &accumulator =
+          context->staticNBAAccumulators[root];
+      if (accumulator.valid)
+        region = std::min(region, accumulator.execRegion);
+    }
+    if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators &&
+        root < context->nativeScheduleNBARootCount) {
+      const auto *generated =
+          context->nativeScheduleNBARoots[root].generated_accumulator;
+      if (generated && hasGeneratedNBAStages(*generated))
+        region = std::min(region, generated->exec_region);
+    }
+  };
+  const auto *plan = context->nativeSchedulePlan;
+  if (plan && plan->nba_dirty_roots && plan->nba_dirty_summary) {
+    // Both runtime staging and generated staging maintain this hierarchy.
+    // A consumed fixed-site payload may retain valid/mask fields; only its
+    // dirty bit makes it pending (IEEE 1800-2023 10.4.2). Traverse nonempty
+    // pages rather than scanning all roots at every executor boundary.
+    for (uint32_t page = 0; page < plan->nba_dirty_summary_word_count; ++page) {
+      uint64_t summary = plan->nba_dirty_summary[page];
+      while (summary != 0) {
+        uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(summary));
+        summary &= summary - 1;
+        uint64_t leaf = uint64_t{page} * 64 + bit;
+        if (leaf >= plan->nba_dirty_word_count)
+          break;
+        uint64_t roots = plan->nba_dirty_roots[leaf];
+        while (roots != 0) {
+          uint32_t rootBit = static_cast<uint32_t>(__builtin_ctzll(roots));
+          roots &= roots - 1;
+          uint64_t root = leaf * 64 + rootBit;
+          if (root >= plan->nba_root_count)
+            break;
+          inspectRoot(static_cast<uint32_t>(root));
+        }
+      }
+    }
+  } else {
+    size_t count = context->staticNBAAccumulatorsPending
+                       ? context->staticNBAAccumulators.size()
+                       : 0;
+    if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators)
+      count = std::max(count, size_t{context->nativeScheduleNBARootCount});
+    for (size_t root = 0; root < count; ++root)
+      inspectRoot(static_cast<uint32_t>(root));
+  }
+  return region;
+}
+
 static bool validInertialStatePlanesUnlocked(const obelisk_rt_context *context,
                                              const uint8_t *valuePlane,
                                              const uint8_t * /*unknownPlane*/,

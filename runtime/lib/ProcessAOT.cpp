@@ -225,10 +225,10 @@ void obelisk_rt_aot_observation_demand_changed_unlocked(
   context->vpiObservationDemand = active;
   if (!active)
     return;
-  // Observation changes routing, not canonical state.  Invalidate generated
-  // assumptions without manufacturing an external write or a dirty root.
+  // IEEE 1800-2023 38.34/38.36: read-only observation changes visibility
+  // boundaries, not the value domain. Writes from a callback go through the
+  // mutation hooks; attaching a reader alone must preserve knownness proofs.
   invalidateNativeStaticSpecializationFastUnlocked(context);
-  invalidateNativeTwoStatePromotionUnlocked(context);
   context->nativeScheduleGuardedFanoutActive = false;
   context->nativeStaticEvalIslandCertified = false;
 }

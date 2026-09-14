@@ -4552,7 +4552,7 @@ TEST(Scheduler, VPIObservationDemandIsAColdReversibleAOTHandoff) {
   EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
   EXPECT_FALSE(nativeAOTTransientBoundaryClean(context));
   EXPECT_EQ(specializationFast, 0u);
-  EXPECT_EQ(schedulerPromotionInvalidationCount, 1u);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
   EXPECT_FALSE(context->nativeScheduleExternalWritePending);
   EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
@@ -4572,7 +4572,7 @@ TEST(Scheduler, VPIObservationDemandIsAColdReversibleAOTHandoff) {
   EXPECT_TRUE(nativeStaticSpecializationEnvironmentClean(context));
   EXPECT_TRUE(nativeAOTTransientBoundaryClean(context));
   EXPECT_EQ(specializationFast, 1u);
-  EXPECT_EQ(schedulerPromotionInvalidationCount, 1u);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   context->nativeScheduleRunning = false;
   obelisk_rt_v1_context_destroy(context);
@@ -6537,6 +6537,79 @@ TEST(Scheduler, GeneratedNBADirtyHierarchySkipsEmptyLeafPages) {
   dirtyRoots[0] = 1;
   dirtySummary[0] = 1;
   EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), OBELISK_RT_REGION_ACTIVE);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
+  // Cross both the leaf and summary boundaries; include stale generated
+  // payloads, runtime stages, empty pages, and all iterative region choices.
+  constexpr uint32_t rootCount = 4103;
+  constexpr uint32_t regions[] = {OBELISK_RT_REGION_ACTIVE,
+                                 OBELISK_RT_REGION_NBA,
+                                 OBELISK_RT_REGION_REACTIVE,
+                                 OBELISK_RT_REGION_RE_NBA};
+  std::vector<obelisk_rt_generated_nba_accumulator_256> generated(rootCount);
+  std::vector<obelisk_rt_static_nba_root> roots(rootCount);
+  std::vector<uint64_t> dirty((rootCount + 63) / 64);
+  std::vector<uint64_t> summary((dirty.size() + 63) / 64);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.nba_roots = roots.data();
+  plan.nba_root_count = rootCount;
+  plan.nba_dirty_roots = dirty.data();
+  plan.nba_dirty_word_count = dirty.size();
+  plan.nba_dirty_summary = summary.data();
+  plan.nba_dirty_summary_word_count = summary.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->nativeSchedulePlan = &plan;
+  context->nativeScheduleNBARoots = roots.data();
+  context->nativeScheduleNBARootCount = rootCount;
+  context->nativeScheduleHasGeneratedNBAAccumulators = true;
+  context->staticNBAAccumulators.resize(rootCount);
+  std::mt19937 random(0x18002023);
+  for (unsigned trial = 0; trial != 100; ++trial) {
+    std::fill(dirty.begin(), dirty.end(), 0);
+    std::fill(summary.begin(), summary.end(), 0);
+    context->staticNBAAccumulatorsPending = false;
+    uint32_t expectedGenerated = UINT32_MAX;
+    uint32_t expectedRuntime = UINT32_MAX;
+    for (uint32_t root = 0; root != rootCount; ++root) {
+      roots[root].generated_accumulator = &generated[root];
+      generated[root].valid = random() % 2;
+      generated[root].exec_region = regions[random() % std::size(regions)];
+      auto &runtime = context->staticNBAAccumulators[root];
+      runtime.valid = false;
+      runtime.execRegion = regions[random() % std::size(regions)];
+      if (trial == 0 || random() % 1024 != 0)
+        continue;
+      dirty[root / 64] |= uint64_t{1} << (root % 64);
+      summary[root / 4096] |= uint64_t{1} << ((root / 64) % 64);
+      if (random() % 2) {
+        markStaticNBAAccumulatorPending(context, root, runtime);
+        expectedRuntime = std::min(expectedRuntime, runtime.execRegion);
+      }
+      if (generated[root].valid)
+        expectedGenerated =
+            std::min(expectedGenerated, generated[root].exec_region);
+    }
+    SCOPED_TRACE(trial);
+    EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context, false), expectedRuntime);
+    EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context),
+              std::min(expectedGenerated, expectedRuntime));
+    // The unindexed policy sees only live payloads. Removing stale payloads
+    // must yield the same answer without altering the runtime stages.
+    for (uint32_t root = 0; root != rootCount; ++root)
+      if ((dirty[root / 64] & (uint64_t{1} << (root % 64))) == 0)
+        generated[root].valid = 0;
+    plan.nba_dirty_roots = nullptr;
+    plan.nba_dirty_summary = nullptr;
+    EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context, false), expectedRuntime);
+    EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context),
+              std::min(expectedGenerated, expectedRuntime));
+    plan.nba_dirty_roots = dirty.data();
+    plan.nba_dirty_summary = summary.data();
+  }
+  context->nativeSchedulePlan = nullptr;
   obelisk_rt_v1_context_destroy(context);
 }
 
