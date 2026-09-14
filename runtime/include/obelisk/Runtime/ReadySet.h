@@ -73,12 +73,26 @@ public:
            (storage[bit / 64] & (uint64_t{1} << (bit & 63))) != 0;
   }
   bool set(uint32_t bit) {
-    return bit < layout.capacity &&
-           setWord(bit / 64, uint64_t{1} << (bit & 63));
+    if (bit >= layout.capacity)
+      return false;
+    uint32_t index = bit / 64;
+    uint64_t old = storage[index];
+    uint64_t next = old | (uint64_t{1} << (bit & 63));
+    storage[index] = next;
+    if (old == 0)
+      activateWord(index);
+    return old != next;
   }
   bool reset(uint32_t bit) {
-    return bit < layout.capacity &&
-           clearWord(bit / 64, uint64_t{1} << (bit & 63));
+    if (bit >= layout.capacity)
+      return false;
+    uint32_t index = bit / 64;
+    uint64_t old = storage[index];
+    uint64_t next = old & ~(uint64_t{1} << (bit & 63));
+    storage[index] = next;
+    if (layout.hasSummaries() && old && !next)
+      updateSummaries(index, false);
+    return old != next;
   }
   bool setWord(uint32_t index, uint64_t mask) {
     if (index >= layout.counts[0])
@@ -90,11 +104,8 @@ public:
     if (old == next)
       return false;
     storage[index] = next;
-    if (layout.hasCache())
-      storage[layout.cacheOffset()] =
-          std::min(storage[layout.cacheOffset()], uint64_t{index});
     if (old == 0)
-      updateSummaries(index, true);
+      activateWord(index);
     return true;
   }
   bool clearWord(uint32_t index, uint64_t mask) {
@@ -137,7 +148,26 @@ public:
   uint32_t findAtOrAfter(uint32_t bit) const {
     // This must not advance the minimum cache: a cursor-based pass can leave
     // lower-order owners pending for its next iteration.
-    return bit < layout.capacity ? findInLevel(0, bit) : ReadySetLayout::noBit;
+    if (bit >= layout.capacity)
+      return ReadySetLayout::noBit;
+    uint32_t index = bit / 64;
+    uint64_t remaining = storage[index] & (UINT64_MAX << (bit & 63));
+    if (remaining)
+      return index * 64 + trailingZeros(remaining);
+    // Keep the common leaf hit and short flat scan nonrecursive/inlinable.
+    // Only sparse hierarchical misses need the recursive summary search.
+    if (layout.hasSummaries()) {
+      index = findInLevel(1, index + 1);
+      if (index == ReadySetLayout::noBit)
+        return index;
+    } else {
+      do {
+        ++index;
+      } while (index < layout.counts[0] && !storage[index]);
+      if (index == layout.counts[0])
+        return ReadySetLayout::noBit;
+    }
+    return index * 64 + trailingZeros(storage[index]);
   }
   uint32_t popFirst() {
     uint32_t bit = findFirst();
@@ -171,6 +201,12 @@ public:
   }
 
 private:
+  void activateWord(uint32_t index) {
+    if (layout.hasCache())
+      storage[layout.cacheOffset()] =
+          std::min(storage[layout.cacheOffset()], uint64_t{index});
+    updateSummaries(index, true);
+  }
   static unsigned trailingZeros(uint64_t word) {
     assert(word != 0);
     return static_cast<unsigned>(__builtin_ctzll(word));
