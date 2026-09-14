@@ -51,7 +51,7 @@ endmodule
 // HELP-DAG: --std=<1800-2017|1800-2023>
 
 // VERSION: obelisk version
-// VERSION: slang version
+// VERSION: slang version {{[0-9]+\.[0-9]+\.0\+0$}}
 
 // FILELIST-DAG: slang.symbol.instance attributes {{.*}}hierarchical_name = "driver_top.helper"
 // FILELIST-DAG: slang.symbol.instance attributes {{.*}}hierarchical_name = "driver_top"

@@ -451,7 +451,27 @@ set(SLANG_INCLUDE_PYLIB OFF CACHE BOOL "" FORCE)
 set(SLANG_INCLUDE_INSTALL OFF CACHE BOOL "" FORCE)
 set(SLANG_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
+# slang derives its version from `git describe`, which walks up from the
+# extracted source into Obelisk's checkout: Obelisk tags garble or break the
+# version and every Obelisk commit reruns CMake. Pre-empt slang's gitversion
+# module (by its include guard) to report what a release tarball built outside
+# any repository reports. The check below fails configure if a slang bump stops
+# honoring the override.
+set(__get_git_version YES)
+function(get_git_version _patch _prerelease _hash)
+  set(${_patch} 0 PARENT_SCOPE)
+  set(${_prerelease} "" PARENT_SCOPE)
+  set(${_hash} 0 PARENT_SCOPE)
+endfunction()
+set(SLANG_VERSION_PRERELEASE "" CACHE STRING "" FORCE)
 FetchContent_MakeAvailable(obelisk_slang)
+get_directory_property(_obelisk_slang_version_hash
+  DIRECTORY "${obelisk_slang_SOURCE_DIR}" DEFINITION SLANG_VERSION_HASH)
+if(NOT _obelisk_slang_version_hash STREQUAL "0")
+  message(FATAL_ERROR
+    "slang no longer uses Obelisk's get_git_version override (hash "
+    "'${_obelisk_slang_version_hash}'); update it for slang's gitversion module")
+endif()
 set(OBELISK_SLANG_SOURCE_DIR "${obelisk_slang_SOURCE_DIR}")
 set(OBELISK_SLANG_INCLUDE_DIR "${OBELISK_SLANG_SOURCE_DIR}/include")
 message(STATUS
