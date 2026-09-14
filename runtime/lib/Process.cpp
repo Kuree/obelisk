@@ -1368,8 +1368,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
       !clockKernelTableValid || !nbaCommitValid || !nbaDirtyRootsValid ||
-      !specializationFastValid || !cleanSuperstepValid ||
-      !staticEvalIslandValid || !evalSchedulerValid ||
+      !specializationFastValid ||
+      (plan->promotion_invalidate_range && !plan->promotion_invalidate) ||
+      !cleanSuperstepValid || !staticEvalIslandValid || !evalSchedulerValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |

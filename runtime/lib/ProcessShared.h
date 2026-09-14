@@ -122,6 +122,9 @@ void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
 void invalidateNativeStaticSpecializationFastUnlocked(
     obelisk_rt_context *context);
 void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context);
+void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
+                                                    uint64_t bitOffset,
+                                                    uint64_t bitWidth);
 void refreshNativeStaticSpecializationFastUnlocked(obelisk_rt_context *context);
 bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,

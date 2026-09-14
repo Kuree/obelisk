@@ -565,6 +565,16 @@ before installing any ready bits, so an incomplete node inventory cannot
 partially publish ownership. Task-call frame routing still needs integration
 before all boundary-triggered whole-plan fallbacks can be removed.
 
+The internal native-plan ABI now has an optional exact canonical-range
+invalidation hook, with target-derived layout shared by native and wasm32.
+Indexed X/Z deposits and range-scoped external writes use that hook when
+available; unknown or unrepresentable footprints retain the mandatory global
+invalidator. Scheduling disturbance and proof invalidation are separate
+operations, and a known write does not invalidate an unrelated unknown lane.
+Compiler-generated plans currently leave the range hook empty: emitting the
+reverse dependency index and connecting generated stores/NBA commits remain
+necessary before this contract provides durable component-level specialization.
+
 The required disturbance policy is local: VPI-driven clocks, including cocotb
 clocks without an internal oscillator, enter Tier 1 through their indexed clock
 boundary. A change at a compute boundary sends affected work to Tier 2 while

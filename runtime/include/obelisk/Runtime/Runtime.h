@@ -3339,6 +3339,8 @@ typedef obelisk_rt_status (*obelisk_rt_native_timeslot_coordinator)(
     void *mutable_state, obelisk_rt_context *context);
 typedef void (*obelisk_rt_native_promotion_invalidate)(void);
 typedef uint32_t (*obelisk_rt_native_promotion_ready)(void);
+typedef void (*obelisk_rt_native_promotion_invalidate_range)(
+    uint64_t bit_offset, uint64_t bit_width);
 typedef obelisk_rt_status (*obelisk_rt_native_checkpoint_callback)(
     obelisk_rt_context *context);
 
@@ -3392,6 +3394,11 @@ typedef struct obelisk_rt_native_schedule_plan {
   // after the candidate closure's canonical unknown plane is clear, allowing
   // the runtime to hand control directly to the two-state Tier-1 route.
   obelisk_rt_native_promotion_ready promotion_ready;
+  // Optional exact canonical-range proof invalidation. It must invalidate
+  // every dependent value-domain certificate before specialized work resumes,
+  // preserving unrelated certificates. Scheduling disturbance is tracked
+  // separately. Unknown footprints still use promotion_invalidate above.
+  obelisk_rt_native_promotion_invalidate_range promotion_invalidate_range;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after

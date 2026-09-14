@@ -640,7 +640,7 @@ ABI_OFFSET(obelisk_rt_static_actor_root, actor_slot, 0);
 ABI_OFFSET(obelisk_rt_static_actor_root, static_state, 4);
 ABI_OFFSET(obelisk_rt_static_actor_root, flags, 8);
 ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, ABI_PTR(256, 200), 8);
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, ABI_PTR(264, 200), 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -692,6 +692,8 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, timeslot_coordinator,
 ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_invalidate,
            ABI_PTR(240, 188));
 ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_ready, ABI_PTR(248, 192));
+ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_invalidate_range,
+           ABI_PTR(256, 196));
 
 static_assert(OBELISK_RT_VERSION == 1);
 static_assert(OBELISK_RT_BYTECODE_INSTRUCTION_SIZE == 16);

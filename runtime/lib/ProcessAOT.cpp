@@ -219,6 +219,21 @@ void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {
     plan->promotion_invalidate();
 }
 
+void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
+                                                    uint64_t bitOffset,
+                                                    uint64_t bitWidth) {
+  const auto *plan = context ? context->nativeSchedulePlan : nullptr;
+  if (!plan || bitWidth == 0)
+    return;
+  if (plan->promotion_invalidate_range && bitOffset <= plan->state_bit_count &&
+      bitWidth <= plan->state_bit_count - bitOffset) {
+    plan->promotion_invalidate_range(bitOffset, bitWidth);
+    return;
+  }
+  // An unknown/unrepresentable footprint cannot support a scoped proof.
+  invalidateNativeTwoStatePromotionUnlocked(context);
+}
+
 void obelisk_rt_aot_observation_demand_changed_unlocked(
     obelisk_rt_context *context, bool active) {
   if (!context || context->vpiObservationDemand == active)
@@ -2681,13 +2696,12 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleCheckpointCallback = nullptr;
 }
 
-void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
+static void disturbNativeScheduleUnlocked(obelisk_rt_context *context) {
   if (!context || !context->nativeSchedulePlan ||
       context->nativeScheduleDeoptimized)
     return;
   if (context->nativeSchedulePlan->specialization_fast)
     *context->nativeSchedulePlan->specialization_fast = 0;
-  invalidateNativeTwoStatePromotionUnlocked(context);
   bool alreadyPending = context->nativeScheduleExternalWritePending;
   context->nativeScheduleExternalWritePending = true;
   // Clean actors can wait solely through static fanout. Recreate their
@@ -2707,6 +2721,14 @@ void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
     }
 }
 
+void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
+  if (!context || !context->nativeSchedulePlan ||
+      context->nativeScheduleDeoptimized)
+    return;
+  invalidateNativeTwoStatePromotionUnlocked(context);
+  disturbNativeScheduleUnlocked(context);
+}
+
 void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   uint64_t bitOffset,
                                                   uint64_t bitWidth,
@@ -2720,7 +2742,8 @@ void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
             static_cast<__int128>(state.bitOffset) + state.bitWidth) {
       markNativeDirtyRootUnlocked(context, id, persistent);
     }
-  obelisk_rt_aot_external_write_unlocked(context);
+  invalidateNativeTwoStatePromotionRangeUnlocked(context, bitOffset, bitWidth);
+  disturbNativeScheduleUnlocked(context);
 }
 
 void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
@@ -2760,7 +2783,8 @@ void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
     if (index == 0 || ranges[index - 1].prefixEnd <= bitOffset)
       break;
   }
-  obelisk_rt_aot_external_write_unlocked(context);
+  invalidateNativeTwoStatePromotionRangeUnlocked(context, bitOffset, bitWidth);
+  disturbNativeScheduleUnlocked(context);
 }
 
 bool obelisk_rt_aot_external_deposit_unlocked(obelisk_rt_context *context,
@@ -2813,7 +2837,8 @@ bool obelisk_rt_aot_external_deposit_unlocked(obelisk_rt_context *context,
     return false;
   for (uint64_t bit = bitOffset; bit != bitEnd; ++bit)
     if (byteBit(plan->state_unknown, bit)) {
-      invalidateNativeTwoStatePromotionUnlocked(context);
+      invalidateNativeTwoStatePromotionRangeUnlocked(context, bitOffset,
+                                                     bitWidth);
       break;
     }
   return true;

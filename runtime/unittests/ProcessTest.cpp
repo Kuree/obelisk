@@ -4773,6 +4773,93 @@ TEST(Scheduler, ExternalDepositTouchesOnlyIntersectingStaticRoots) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
+  AOTTestState state;
+  std::array<uint8_t, 2> value{}, unknown{};
+  auto plan = makeAOTPlan(state);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.state_value = value.data();
+  plan.state_unknown = unknown.data();
+  plan.state_bit_count = 16;
+  static std::vector<std::pair<uint64_t, uint64_t>> invalidated;
+  static std::array<bool, 3> certificates;
+  invalidated.clear();
+  certificates.fill(true);
+  plan.promotion_invalidate = schedulerInvalidatePromotion;
+  plan.promotion_invalidate_range = [](uint64_t offset, uint64_t width) {
+    invalidated.emplace_back(offset, width);
+    constexpr uint64_t starts[] = {0, 4, 12};
+    for (size_t index = 0; index != certificates.size(); ++index)
+      if (offset < starts[index] + 4 && starts[index] < offset + width)
+        certificates[index] = false;
+  };
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 16;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 16),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  schedulerPromotionInvalidationCount = 0;
+  uint64_t handle = obelisk_rt_canonical_state_handle_unlocked(context, 3, 1);
+
+  // Indexed X deposits invalidate their canonical packed range before a
+  // dependent executor can run. Unrelated certificates remain valid.
+  context->stateUnknown[0] = uint64_t{1} << 3;
+  ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, handle, 3, 1));
+  EXPECT_EQ(invalidated, (std::vector<std::pair<uint64_t, uint64_t>>{{3, 1}}));
+  EXPECT_EQ(certificates, (std::array<bool, 3>{false, true, true}));
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
+  EXPECT_FALSE(context->nativeScheduleExternalWritePending);
+  EXPECT_EQ(unknown[0], uint8_t{8});
+
+  // A known write to another lane does not invalidate knownness because an
+  // unrelated lane still contains X. Nor does X-to-known require demotion.
+  uint64_t other = obelisk_rt_canonical_state_handle_unlocked(context, 8, 1);
+  context->stateValue[0] = uint64_t{1} << 8;
+  ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, other, 8, 1));
+  EXPECT_EQ(invalidated.size(), 1u);
+  EXPECT_EQ(unknown[0], uint8_t{8});
+  context->stateUnknown[0] = 0;
+  ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, handle, 3, 1));
+  EXPECT_EQ(invalidated.size(), 1u);
+  EXPECT_EQ(unknown[0], uint8_t{0});
+
+  // Force/assign scheduling disturbance is separate from the proof footprint.
+  obelisk_rt_aot_external_write_handle_unlocked(context, other, 8, 1, true);
+  EXPECT_TRUE(context->nativeScheduleExternalWritePending);
+  EXPECT_EQ(invalidated.back(), (std::pair<uint64_t, uint64_t>{8, 1}));
+  EXPECT_EQ(certificates, (std::array<bool, 3>{false, true, true}));
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
+  obelisk_rt_aot_external_write_range_unlocked(context, 4, 1, false);
+  EXPECT_EQ(certificates, (std::array<bool, 3>{false, false, true}));
+
+  // Empty writes do nothing; malformed and unknown footprints retain the
+  // mandatory conservative invalidator even when a scoped hook is installed.
+  invalidateNativeTwoStatePromotionRangeUnlocked(context, UINT64_MAX, 0);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
+  invalidateNativeTwoStatePromotionRangeUnlocked(context, UINT64_MAX, 2);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 1u);
+  obelisk_rt_aot_external_write_unlocked(context);
+  EXPECT_EQ(schedulerPromotionInvalidationCount, 2u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ScopedPromotionHookRequiresUnknownFootprintFallback) {
+  AOTTestState state;
+  auto plan = makeAOTPlan(state);
+  plan.promotion_invalidate_range = [](uint64_t, uint64_t) {};
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  plan.promotion_invalidate = schedulerInvalidatePromotion;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTSpecializationFastFlagIsScopedAndInvalidated) {
   AOTTestState state;
   uint32_t specializationFast = UINT32_MAX;

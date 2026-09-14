@@ -171,6 +171,7 @@ enum class NativeSchedulePlanField : int64_t {
   TimeslotCoordinator,
   PromotionInvalidate,
   PromotionReady,
+  PromotionInvalidateRange,
   Count,
 };
 
