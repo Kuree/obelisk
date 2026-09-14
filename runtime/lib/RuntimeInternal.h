@@ -8,6 +8,7 @@
 #include "ExceptionSupport.h"
 #include "StrengthFormat.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
+#include "obelisk/Runtime/EvalNBAQueue.h"
 #include "obelisk/Runtime/ReadySet.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -1943,6 +1944,7 @@ struct obelisk_rt_context {
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
+  std::vector<obelisk::runtime::EvalNBAQueue *> nativeEvalNBAQueues;
   uint8_t *nativeStateValue = nullptr;
   uint8_t *nativeStateUnknown = nullptr;
   uint64_t nativeStateBitCount = 0;
@@ -2815,6 +2817,7 @@ void setLastError(obelisk_rt_context *context, std::string message);
 void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 void obelisk_rt_release_native_schedule_plan(
     obelisk_rt_context *context) noexcept;
+void obelisk_rt_release_eval_nba_queues(obelisk_rt_context *context) noexcept;
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context);
 void obelisk_rt_aot_observation_demand_changed_unlocked(
     obelisk_rt_context *context, bool active);

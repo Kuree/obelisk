@@ -3847,6 +3847,54 @@ TEST(Scheduler, AOTTimedCheckpointCommitsSameSlotNBAAndReentersNatively) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, GeneratedNBAQueueGrowsWithoutLosingOrderOrUnknowns) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk::runtime::EvalNBAQueue queue;
+  for (uint32_t i = 0; i != 513; ++i) {
+    ASSERT_EQ(obelisk_rt_v1_eval_nba_reserve(context, &queue), OBELISK_RT_OK);
+    queue.data[queue.size++] = {i % 3, i * 7u, i, ~uint64_t{i}};
+  }
+  EXPECT_GE(queue.capacity, 513u);
+  for (uint32_t i = 0; i != queue.size; ++i) {
+    EXPECT_EQ(queue.data[i].site, i % 3);
+    EXPECT_EQ(queue.data[i].offset, i * 7u);
+    EXPECT_EQ(queue.data[i].value, i);
+    EXPECT_EQ(queue.data[i].unknown, ~uint64_t{i});
+  }
+  auto *storage = queue.data;
+  queue.size = 0; // A barrier consumes the sequence, not the allocation.
+  ASSERT_EQ(obelisk_rt_v1_eval_nba_reserve(context, &queue), OBELISK_RT_OK);
+  EXPECT_EQ(queue.data, storage);
+  queue.data[queue.size++] = {99, 0, 0, UINT64_MAX};
+  EXPECT_EQ(queue.data[0].site, 99u);
+  queue.error = OBELISK_RT_OUT_OF_MEMORY;
+  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(queue.data, nullptr);
+  EXPECT_EQ(queue.capacity, 0u);
+  EXPECT_EQ(queue.size, 0u);
+  EXPECT_EQ(queue.error, OBELISK_RT_OK);
+}
+
+TEST(Scheduler, GeneratedNBAQueueRejectsMalformedOrExhaustedDescriptors) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk::runtime::EvalNBAQueue queue;
+  EXPECT_EQ(obelisk_rt_v1_eval_nba_reserve(nullptr, &queue),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_eval_nba_reserve(context, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  queue.size = 1;
+  EXPECT_EQ(obelisk_rt_v1_eval_nba_reserve(context, &queue),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk::runtime::EvalNBARecord sentinel{};
+  queue = {&sentinel, UINT32_MAX, UINT32_MAX};
+  EXPECT_EQ(obelisk_rt_v1_eval_nba_reserve(context, &queue),
+            OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_TRUE(context->nativeEvalNBAQueues.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, IndexedClockKernelIngressMaintainsReadySetAcrossReentry) {
   for (uint32_t capacity : {65u, 129u, 2049u, 4097u}) {
     SCOPED_TRACE(capacity);

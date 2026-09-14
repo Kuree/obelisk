@@ -3471,6 +3471,8 @@ retryNativeSchedule:;
 
 void obelisk_rt_release_native_schedule_plan(
     obelisk_rt_context *context) noexcept {
+  if (context)
+    obelisk_rt_release_eval_nba_queues(context);
   if (!context || !context->nativeSchedulePlan)
     return;
   OBELISK_RT_TRY {

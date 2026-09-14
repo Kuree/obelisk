@@ -6,15 +6,12 @@
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
-// The copied clock is not certified periodic. Its wide NBA owners must retain
-// runtime ordering. Replacing only their wrappers with runtime checkpoints is
-// NOT sufficient: the handoff can lose the other ready writers in this slot.
-// Preserve the conservative route until that complete transaction is supported.
+// The copied clock is not certified periodic. Its wide NBA owners use ordered
+// generated staging, not one-entry latches or actor checkpoints. All 65 writes
+// survive queue growth and subsequent reuse after the first NBA barrier.
 // PLAN-NOT: .ordered_nba_checkpoint
-// PLAN-NOT: llvm.func @__obelisk_eval_fast_coordinator_v1
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// PLAN-NOT: llvm.func @__obelisk_eval_fast_coordinator_v1
+// PLAN: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
+// PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
 // CHECK: 00000000000000000
 // CHECK-NEXT: 1ffffffffffffffff
 // CHECK-NEXT: 00000000000000000

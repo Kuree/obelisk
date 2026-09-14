@@ -142,6 +142,7 @@ struct NativeEvalCoordinatorPlan {
   bool prioritySignalHandoff = false;
   /// Dynamic slots are staged independently of the fixed-root dirty bitmap.
   mlir::ArrayRef<std::string> dynamicNBAValidNames;
+  bool hasOrderedNBA = false;
 };
 
 struct NativeEvalCoordinatorOptions {

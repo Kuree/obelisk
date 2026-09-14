@@ -2080,6 +2080,49 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_clocking_driver_nba(
                       UINT64_MAX, true, clockingOutput);
 }
 
+extern "C" obelisk_rt_status
+obelisk_rt_v1_eval_nba_reserve(obelisk_rt_context *context,
+                               obelisk::runtime::EvalNBAQueue *queue) {
+  using obelisk::runtime::EvalNBARecord;
+  if (!context || !queue || queue->size > queue->capacity ||
+      (queue->data == nullptr) != (queue->capacity == 0))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (queue->size < queue->capacity)
+    return OBELISK_RT_OK;
+  uint64_t limit =
+      std::min<uint64_t>(UINT32_MAX, SIZE_MAX / sizeof(EvalNBARecord));
+  if (queue->size >= limit)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  OBELISK_RT_TRY {
+    // Register before allocation so every successful allocation has a cleanup
+    // owner, including when a later grow fails. The descriptor is compiler-
+    // owned and remains alive until its native plan is released.
+    if (std::find(context->nativeEvalNBAQueues.begin(),
+                  context->nativeEvalNBAQueues.end(),
+                  queue) == context->nativeEvalNBAQueues.end())
+      context->nativeEvalNBAQueues.push_back(queue);
+    uint32_t capacity = static_cast<uint32_t>(
+        std::min(limit, std::max(uint64_t{32}, uint64_t{queue->capacity} * 2)));
+    void *grown =
+        std::realloc(queue->data, size_t{capacity} * sizeof(EvalNBARecord));
+    if (!grown)
+      return OBELISK_RT_OUT_OF_MEMORY;
+    queue->data = static_cast<EvalNBARecord *>(grown);
+    queue->capacity = capacity;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+void obelisk_rt_release_eval_nba_queues(obelisk_rt_context *context) noexcept {
+  for (auto *queue : context->nativeEvalNBAQueues) {
+    std::free(queue->data);
+    *queue = {};
+  }
+  context->nativeEvalNBAQueues.clear();
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_static_nba(
     obelisk_rt_context *context, uint64_t site, uint8_t *valuePlane,
     uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t bitOffset,

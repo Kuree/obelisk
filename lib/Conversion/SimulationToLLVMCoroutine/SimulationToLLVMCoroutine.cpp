@@ -1965,7 +1965,10 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
         if (callee->starts_with("obelisk_rt_")) {
           if (*callee == prioritySignalQuery ||
               *callee == strengthResolveQuery || *callee == coveragePointHit ||
-              *callee == "obelisk_rt_v1_eval_display")
+              *callee == "obelisk_rt_v1_eval_display" ||
+              // Cold allocation of private generated NBA storage. This never
+              // executes actors, changes design state or re-enters scheduling.
+              *callee == "obelisk_rt_v1_eval_nba_reserve")
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();

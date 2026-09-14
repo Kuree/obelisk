@@ -1,6 +1,7 @@
 //===- SimulationAOTCoordinatorMaterialization.cpp ----------------------===//
 
 #include "SimulationAOTPlanning.h"
+#include "SimulationEvalNBAQueue.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
@@ -206,6 +207,18 @@ LogicalResult materializeNativeEvalCoordinator(
   };
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
+  if (plan.hasOrderedNBA) {
+    Value status = LLVM::LoadOp::create(
+        builder, location, i32, evalNBAQueueField(builder, location, 3), 4);
+    Value ok = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, status,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    Block *proceed = new Block;
+    fastCoordinator.getBody().push_back(proceed);
+    cf::CondBranchOp::create(builder, location, ok, proceed, ValueRange{},
+                             complete, ValueRange{status});
+    builder.setInsertionPointToStart(proceed);
+  }
   Block *scanReady = new Block;
   fastCoordinator.getBody().push_back(scanReady);
   if (prioritySignalHandoff) {
@@ -549,6 +562,11 @@ LogicalResult materializeNativeEvalCoordinator(
         builder, location, pendingNBA,
         arith::ExtUIOp::create(builder, location, i64, valid));
   }
+  if (plan.hasOrderedNBA)
+    pendingNBA = arith::OrIOp::create(
+        builder, location, pendingNBA,
+        arith::ExtUIOp::create(builder, location, i64,
+                               evalNBAQueueSize(builder, location)));
   Value noNBA = arith::CmpIOp::create(builder, location,
                                       arith::CmpIPredicate::eq, pendingNBA,
                                       llvmConstant(builder, location, i64, 0));
