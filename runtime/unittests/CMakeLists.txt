@@ -33,6 +33,7 @@ add_executable(ObeliskRuntimeTests
   DPIOpenArrayTest.cpp
   RandSolveTest.cpp
   RandSolveWideTest.cpp
+  ReadySetTest.cpp
   RuntimeControlTest.cpp
   RuntimeTest.cpp
   VCDTest.cpp
