@@ -2465,21 +2465,22 @@ FailureOr<bool> makeNativeEvalPlan(
                  failure();
         }
       }
+      auto owner = call->getParentOfType<sim::SimFuncOp>();
+      // Local references, including slices with a handle-offset operation,
+      // may survive here only in the retained cold callback copy. Route
+      // materialization fractures checkpoint paths afterwards, and the closed
+      // call-graph verifier rejects any runtime load still reachable hot.
+      // Predicates themselves never get this deferral.
+      const bool deferColdReference =
+          owner && !owner->hasAttr("obelisk.eval.path_known_predicate") &&
+          (owner->hasAttr(sim::metadata::evalPathGuardedTwoState) ||
+           (owner->hasAttr("obelisk.eval.inherited_two_state_checkpoint") &&
+            owner->hasAttr(sim::metadata::evalTwoStateVariant)));
       auto offsetCall = handle.getDefiningOp<LLVM::CallOp>();
       if (!offsetCall || !offsetCall.getCallee() ||
           *offsetCall.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
           offsetCall.getArgOperands().size() != 2) {
-        auto owner = call->getParentOfType<sim::SimFuncOp>();
-        // Local temporary loads behind a proven checkpoint are runtime
-        // work, not dynamic packed-root loads. Preserve them for the cold
-        // callback copy; route materialization fractures the generated
-        // bodies and prunes their unreachable successors afterwards. The
-        // independently checked predicates must still be runtime-free.
-        if (owner &&
-            !owner->hasAttr("obelisk.eval.path_known_predicate") &&
-            (owner->hasAttr(sim::metadata::evalPathGuardedTwoState) ||
-             (owner->hasAttr("obelisk.eval.inherited_two_state_checkpoint") &&
-              owner->hasAttr(sim::metadata::evalTwoStateVariant))))
+        if (deferColdReference)
           continue;
         return call.emitError(
                    "dynamic state load has no fixed-root handle offset"),
@@ -2492,10 +2493,13 @@ FailureOr<bool> makeNativeEvalPlan(
           !obelisk_rt_stable_handle_decode(*encodedRoot, &decoded) ||
           decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
           (!stateLayout.directHandles.contains(decoded.id) &&
-           !stateLayout.guardedHandles.contains(decoded.id)))
+           !stateLayout.guardedHandles.contains(decoded.id))) {
+        if (deferColdReference)
+          continue;
         return call.emitError(
                    "dynamic state load root is not direct-state certified"),
                failure();
+      }
       auto bound = llvm::find_if(
           stateLayout.bounds, [&](const NativeStateLayout::Bound &candidate) {
             return candidate.handleID == decoded.id;

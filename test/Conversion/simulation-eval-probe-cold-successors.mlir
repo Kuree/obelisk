@@ -3,6 +3,8 @@
 
 // Operations reachable only after a cold checkpoint are not part of its
 // dry-run predicate. A local temporary there cannot alias the hot publication.
+// Its sliced read also has a native_handle_offset, but is still an automatic
+// reference, not a dynamic selection from a statically certified design root.
 // CHECK: module attributes {{.*}}obelisk.eval.generated
 // CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
 module attributes {
@@ -70,6 +72,9 @@ module attributes {
       %local = obelisk_sim.ref.alloc %default : !obelisk_sim.logic<16> -> !obelisk_sim.ref<!obelisk_sim.logic<16>>
       %temporary = obelisk_sim.ref.load %local : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.logic<16>
       obelisk_sim.ref.store %temporary to %data : !obelisk_sim.logic<16>, !obelisk_sim.ref<!obelisk_sim.logic<16>>
+      %slice = obelisk_sim.ref.extract %local from 4 : !obelisk_sim.ref<!obelisk_sim.logic<16>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+      %part = obelisk_sim.ref.load %slice : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
+      obelisk_sim.ref.store %part to %dst : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
       cf.br ^wait
     }
   }
