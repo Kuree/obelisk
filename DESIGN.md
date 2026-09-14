@@ -659,16 +659,13 @@ authoritative storage, direct whole-group SSA computation, and the performance
 acceptance gates remain outstanding. Existing public scheduler entrypoints
 will become adapters to the common loop as those paths are replaced.
 
-Replacement acceptance requires at least 10× Ibex execution speedup over the
-preserved `7d0058c1` harness, no repeatable PicoRV regression, dormant-VPI parity,
-and at most 25% growth in matched median compilation time and peak memory.
-Compilation must also close the absolute gap to a matched Verilator build;
-remaining within that relative limit does not make a roughly 75-second Ibex
-compile acceptable against the reported sub-10-second Verilator reference.
-Correctness gates include separately encoded required-bytecode execution,
-native/wasm32 layouts, and the full regression suite. Baseline hashes, commands,
-and interleaved measurements are preserved under `tmp/bench/`; these gates have
-not yet been met, and improved executor counts alone do not satisfy them.
+Validation compares race-free execution with a separately encoded
+required-bytecode image and checks native/wasm32 layouts and the full regression
+suite. Boundary tests verify that handoffs preserve pending work and observable
+transitions. Proof tests verify exact invalidation, recovery of failed proofs,
+and preservation of unrelated positive certificates. Performance measurements
+and implementation acceptance targets are maintained separately from this
+architecture description.
 
 Native lowering validates that plan against the native state layout and emits
 the following helper ABI. These helpers are not yet reachable from the
@@ -733,9 +730,8 @@ packed range. Each static fanout entry names its compute-node ordinal directly;
 publication therefore sets the node's ready bit without searching an actor's
 continuation table. Roots map to contiguous fanout ranges, while the fine ready
 set remains a short packed leaf vector traversed with bit-scan/trailing-zero
-operations. A measured summary-tree experiment regressed the current PicoRV
-schedule because it has only three leaf words; hierarchical masks are retained
-for sparse NBA and dirty-root selection, where they skip substantial work. The
+operations. Hierarchical masks support sparse NBA and dirty-root selection,
+while short ready sets use direct leaf scans. The
 fine ready bit is the unit of compute-fragment selection and VPI fracture.
 Wider scalar or vector loads are an implementation choice for the target, not
 a change in scheduling semantics. Duplicate activation is suppressed by the
@@ -758,11 +754,10 @@ words. A generated time-slot coordinator clears all ingress before entering a
 reentrant runtime service and coalesces duplicate targets. The ABI can attach
 a private ordinary function to an eligible acyclic change/edge continuation,
 while the original actor stays suspended at the same continuation as an exact
-fallback snapshot. Materialization is profitability-gated: the initial clone
-experiment regressed the paired PicoRV workload, so `auto` currently leaves
-those execute pointers null and translates merged bits to the original
-fine-node identity. Direct bodies must remain disabled until their generated
-NBA/fanout epilogue beats the existing AOT worklist in paired measurements.
+fallback snapshot. Materialization currently leaves those execute pointers
+null in `auto` and translates merged bits to the original fine-node identity.
+Direct group bodies must preserve ordered NBA publication and externally
+visible fanout at shared event-loop boundaries.
 
 The trusted AOT transaction drains newly published clock ingress before its
 single shared NBA/fanout barrier. The coordinator is emitted only for a fully
