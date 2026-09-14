@@ -2037,7 +2037,12 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               *callee == "obelisk_rt_v1_eval_display" ||
               // Cold allocation of private generated NBA storage. This never
               // executes actors, changes design state or re-enters scheduling.
-              *callee == "obelisk_rt_v1_eval_nba_reserve")
+              *callee == "obelisk_rt_v1_eval_nba_reserve" ||
+              // Exact proof-state publication over compiler-verified tables.
+              // The helper cannot allocate, execute actors, access canonical
+              // state, advance time, or re-enter the scheduler.
+              *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
+              *callee == "obelisk_rt_v1_native_promotion_recheck_ranges")
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
@@ -5273,25 +5278,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     }
   }
 
-  // Canonical and four-state NBA barriers are the generated synchronous
-  // boundaries that can establish a new known invariant. Mark their route
-  // closure dirty once; the successful coordinator return below performs the
-  // scan after the combined NBA barrier and post-NBA fanout have quiesced.
-  SmallVector<LLVM::CallOp> transitionNBACalls;
-  module.walk([&](LLVM::CallOp call) {
-    if (call->hasAttr("obelisk.eval.use_canonical_two_state_nba") ||
-        call->hasAttr("obelisk.eval.keep_four_state_nba"))
-      transitionNBACalls.push_back(call);
-  });
-  for (LLVM::CallOp call : transitionNBACalls) {
-    builder.setInsertionPointAfter(call);
-    LLVM::StoreOp::create(builder, call.getLoc(),
-                          detail::llvmConstant(builder, call.getLoc(), i8, 1),
-                          LLVM::AddressOfOp::create(builder, call.getLoc(),
-                                                    pointer,
-                                                    routePromotionDirtyName),
-                          1);
-  }
+  // Actual canonical unknown-plane changes request a boundary scan through
+  // the reverse proof index. Merely committing an NBA does not disturb any
+  // certificate: payloads and untouched X/Z bits are not new evidence.
 
   // Keep the potentially large masked scan out of line. Its tiny boundary
   // wrapper is inlined into generated coordinators, so a clean clock pays no
@@ -6129,6 +6118,10 @@ public:
       return;
     }
     if (failed(materializeNativeDPIExportThunks(module))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(detail::materializeNativePromotionWrites(module))) {
       signalPassFailure();
       return;
     }

@@ -572,15 +572,36 @@ available; unknown or unrepresentable footprints retain the mandatory global
 invalidator. Scheduling disturbance and proof invalidation are separate
 operations, and a known write does not invalidate an unrelated unknown lane.
 Generated eval plans bind the hook to an immutable reverse dependency index
-built from the existing kernel and local-route proof ranges. Ranges are merged
-only within the same certificate, sorted by physical position, and verified
+built from the existing kernel, local-route, and NBA-destination proof ranges.
+Ranges are merged only within the same certificate, sorted by physical
+position, and verified
 against canonical state bounds and dense certificate identities. Lookup uses
 binary search and prefix-end pruning; a cold table of proof-state actions
-clears only overlapping kernel latches and route pointers. Aggregate entry
-shortcuts are recomputed without clearing unrelated certificates. Dynamic
-path probes remain activation-local. Generated stores and NBA commits still
-need complete scoped invalidation before the recurring global NBA resets and
-all-route promotion scans can be removed.
+clears only overlapping kernel latches, route pointers, and NBA-root bits.
+Aggregate entry shortcuts are recomputed without clearing unrelated certificates. Dynamic
+path probes remain activation-local.
+
+After two-state cloning, direct canonical unknown-plane stores publish their
+actual changed bits to that index. This covers generated blocking stores and
+fixed, partial, and selected dynamic NBA commits; future payload staging does
+not invalidate proofs. Sparse masks are visited as exact contiguous runs, so
+unchanged X bits and known-to-known writes do not disturb unrelated proofs.
+Stores with a constant byte range disjoint from the verified certificate
+coverage need no publication or guard. A generated dynamic NBA commit can
+also prove disjointness from its clipped destination-root range; its canonical
+unknown-plane store remains intact. NBA-root certificates cover only fixed
+roots consumed by the value-only barrier. Other stores retain exact checks; an
+unknown dynamic address never qualifies from a guessed footprint.
+The zero-mask check is emitted directly in the body: native partitioning cannot
+turn it into an out-of-line call on every unchanged store. The stored canonical
+value and X/Z transition remain intact. Newly unknown bits invalidate affected
+certificates immediately; recovery requests a recheck at the next safe boundary
+without clearing positive certificates. Partial recovery cannot certify an
+entire NBA destination. Proven two-state compute bodies have no unknown-plane stores
+and acquire no publication calls. Generated NBA commits use these publications
+instead of blanket promotion resets or unconditional route-scan requests.
+Runtime mutation paths still need complete scoped coverage; conservative
+runtime and Tier-3 invalidation remain until those paths are covered.
 
 The required disturbance policy is local: VPI-driven clocks, including cocotb
 clocks without an internal oscillator, enter Tier 1 through their indexed clock

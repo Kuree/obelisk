@@ -100,4 +100,52 @@ TEST(PromotionRangeIndex, RuntimeUpdatesOnlyDependentProofState) {
   EXPECT_EQ(aggregateInvalidations, 2u);
 }
 
+TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
+  uint8_t failedKernel = 0, validKernel = 1;
+  uint64_t pending = 0;
+  uint64_t knownRoots[] = {6, uint64_t{1} << 63};
+  auto route = promotedRoute;
+  obelisk_rt_native_promotion_certificate certificates[] = {
+      {&failedKernel, &pending, 1, nullptr, nullptr},
+      {&validKernel, &pending, 2, nullptr, nullptr},
+      {nullptr, nullptr, 0, &route, fourStateRoute},
+      {nullptr, &knownRoots[0], 2, nullptr, nullptr},
+      {nullptr, &knownRoots[1], uint64_t{1} << 63, nullptr, nullptr}};
+  std::vector<obelisk_rt_native_promotion_dependency> entries{
+      {0, 4, 0, 0}, {4, 8, 0, 1}, {4, 8, 0, 2}, {0, 4, 0, 3}, {128, 132, 0, 4}};
+  ASSERT_TRUE(buildPromotionRangeIndex(entries, 160, 5));
+  aggregateInvalidations = 0;
+  // The kernel was already unpromoted, but this NBA root was independently
+  // known. It must lose its certificate before a value-only commit is used.
+  obelisk_rt_v1_native_promotion_invalidate_ranges(
+      entries.data(), entries.size(), certificates, invalidateAggregate, 1, 1);
+  EXPECT_EQ(failedKernel, 0);
+  EXPECT_EQ(validKernel, 1);
+  EXPECT_EQ(pending, 1u);
+  EXPECT_EQ(knownRoots[0], 4u);
+  EXPECT_EQ(knownRoots[1], uint64_t{1} << 63);
+  EXPECT_EQ(route, promotedRoute);
+  EXPECT_EQ(aggregateInvalidations, 1u);
+
+  // A gain requests rechecking; it cannot prove an entire root known, nor
+  // invalidate an already valid route/kernel/root touched by a wider range.
+  obelisk_rt_v1_native_promotion_recheck_ranges(
+      entries.data(), entries.size(), certificates, invalidateAggregate, 0, 8);
+  EXPECT_EQ(failedKernel, 0);
+  EXPECT_EQ(validKernel, 1);
+  EXPECT_EQ(pending, 1u);
+  EXPECT_EQ(knownRoots[0], 4u);
+  EXPECT_EQ(route, promotedRoute);
+  EXPECT_EQ(aggregateInvalidations, 2u);
+  obelisk_rt_v1_native_promotion_recheck_ranges(entries.data(), entries.size(),
+                                                certificates,
+                                                invalidateAggregate, 8, 120);
+  EXPECT_EQ(aggregateInvalidations, 2u);
+  obelisk_rt_v1_native_promotion_invalidate_ranges(entries.data(),
+                                                   entries.size(), certificates,
+                                                   invalidateAggregate, 129, 1);
+  EXPECT_EQ(knownRoots[0], 4u);
+  EXPECT_EQ(knownRoots[1], 0u);
+}
+
 } // namespace

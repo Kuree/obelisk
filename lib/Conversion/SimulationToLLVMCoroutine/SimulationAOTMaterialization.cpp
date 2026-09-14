@@ -4645,9 +4645,10 @@ FailureOr<bool> makeNativeEvalPlan(
   cf::CondBranchOp::create(builder, location, commitOK, afterCommit,
                            ValueRange{}, complete, ValueRange{});
   builder.setInsertionPointToStart(afterCommit);
-  LLVM::CallOp::create(builder, location, TypeRange{},
-                       SymbolRefAttr::get(context, promotionInvalidateName),
-                       ValueRange{});
+  // Generated commits publish actual unknown-plane deltas before fanout.
+  // Their exact kernel, route, and destination certificates replace the
+  // blanket reset here; an unchanged X or a recovering root cannot erase
+  // unrelated two-state work (IEEE 1800-2023 6.8 and 10.4.2).
   Value postNBAReady = llvmConstant(builder, location, i64, 0);
   for (const NativeEvalClockKernel &kernel : clockKernels) {
     Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
@@ -4724,6 +4725,25 @@ FailureOr<bool> makeNativeEvalPlan(
         scalarRootsByWord[rootIndex / 64].push_back(
             static_cast<uint32_t>(rootIndex));
     }
+  if (nbaTaintWordCount != 0) {
+    // Only fixed roots consumed by the value-only barrier have a persistent
+    // destination certificate. Dynamic destinations retain canonical unknown
+    // stores; their selected lanes are not certified by this root bitmap.
+    SmallVector<Attribute> rootDependencies;
+    for (ArrayRef<uint32_t> roots : scalarRootsByWord)
+      for (uint32_t index : roots)
+        rootDependencies.push_back(builder.getDictionaryAttr(
+            {builder.getNamedAttr("bit", builder.getI64IntegerAttr(index)),
+             builder.getNamedAttr(
+                 "ranges",
+                 builder.getDenseI64ArrayAttr(
+                     {static_cast<int64_t>(
+                          staticNBAPlan.generatedOffsets[index]),
+                      static_cast<int64_t>(nbaRoots[index].bit_width)}))}));
+    module.lookupSymbol<LLVM::GlobalOp>(evalFastNBARootsName)
+        ->setAttr("obelisk.eval.nba_proof_dependencies",
+                  builder.getArrayAttr(rootDependencies));
+  }
   bool generateGroupedFanout =
       llvm::any_of(scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
         return llvm::any_of(roots, [&](uint32_t rootIndex) {
@@ -4887,6 +4907,9 @@ FailureOr<bool> makeNativeEvalPlan(
     };
     Value dynamicBit = loadStaged(entry.offsetName);
     uint64_t rootWidth = staticNBAPlan.roots[entry.rootIndex].bit_width;
+    auto publicationRange = builder.getDenseI64ArrayAttr(
+        {static_cast<int64_t>(staticNBAPlan.generatedOffsets[entry.rootIndex]),
+         static_cast<int64_t>(rootWidth)});
     Value zero64 = llvmConstant(builder, location, i64, 0);
     Value rootWidthValue = llvmConstant(builder, location, i64, rootWidth);
     Value lowerBound = llvmConstant(builder, location, i64,
@@ -4987,9 +5010,11 @@ FailureOr<bool> makeNativeEvalPlan(
             builder, location,
             arith::SelectOp::create(builder, location, active, staged, old),
             address, 1);
-        if (plane == stateUnknown)
+        if (plane == stateUnknown) {
           store->setAttr("obelisk.eval.preserve_nba_unknown",
                          builder.getUnitAttr());
+          store->setAttr("obelisk.eval.unknown_write_range", publicationRange);
+        }
       };
       commitAlignedPlane(stateValue, entry.valueName, oldFieldValue);
       if (!forcedTwoStateEval)
@@ -5111,6 +5136,9 @@ FailureOr<bool> makeNativeEvalPlan(
           unknownAddress, 1);
       store->setAttr("obelisk.eval.preserve_nba_unknown",
                      builder.getUnitAttr());
+      // The clipped mask preserves every bit outside this canonical root,
+      // including neighbors in the byte-rounded load/store window.
+      store->setAttr("obelisk.eval.unknown_write_range", publicationRange);
     } else
       LLVM::StoreOp::create(builder, location,
                             llvmConstant(builder, location, i64, 0),

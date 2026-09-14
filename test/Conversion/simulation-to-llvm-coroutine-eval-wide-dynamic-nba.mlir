@@ -3,7 +3,10 @@
 // RUN:   -o %t.planned.mlir
 // RUN: obelisk-opt %t.planned.mlir \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s
+// RUN:   -o %t.llvm.mlir
+// RUN: FileCheck %s < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PROOF < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=STAGE < %t.llvm.mlir
 
 // Feed preplanned Simulation IR to only the coroutine conversion pass.  A
 // provably once-per-periodic-activation dynamic NBA into a wide root uses the
@@ -118,3 +121,27 @@ module attributes {
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
 // CHECK-NOT: llvm.call @malloc
 // CHECK: llvm.return
+
+// A known payload still has to clear its selected unknown destination. This
+// wide dynamic-only root has no cached value-domain certificate: all three
+// commits preserve their canonical stores, but its verified clipped footprint
+// is disjoint from the index and needs no proof-publication guards.
+// PROOF-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
+// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// PROOF: llvm.mlir.addressof @__obelisk_state_unknown
+// PROOF: llvm.store
+// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// PROOF-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_v1(
+// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// PROOF: llvm.mlir.addressof @__obelisk_state_unknown
+// PROOF: llvm.store
+// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// PROOF-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_fast_v1(
+// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// PROOF: llvm.mlir.addressof @__obelisk_state_unknown
+// PROOF: llvm.store
+// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// PROOF: llvm.func
+// STAGE-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// STAGE-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// STAGE: llvm.return

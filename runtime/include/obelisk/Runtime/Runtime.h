@@ -3354,14 +3354,16 @@ typedef struct obelisk_rt_native_promotion_dependency {
   uint64_t certificate;
 } obelisk_rt_native_promotion_dependency;
 
-// Cold proof-state actions. A kernel clears its latch and sets its pending
-// bit; an independently routed body restores its four-state entry pointer.
+// Cold proof-state actions. A kernel has a latch and ORs mask into its pending
+// word on invalidation. An NBA-root certificate has only word/mask and clears
+// that knownness bit. A routed body has only route_slot/fallback and restores
+// its four-state entry pointer. These roles are compiler-verified and disjoint.
 // route_slot points at a generated function-pointer global. The runtime copies
 // the fallback representation without calling it or aliasing its function type.
 typedef struct obelisk_rt_native_promotion_certificate {
   uint8_t *latch;
-  uint64_t *pending_word;
-  uint64_t pending_mask;
+  uint64_t *word;
+  uint64_t mask;
   void *route_slot;
   obelisk_rt_native_promotion_invalidate fallback;
 } obelisk_rt_native_promotion_certificate;
@@ -3374,6 +3376,15 @@ void obelisk_rt_v1_native_promotion_invalidate_ranges(
     const obelisk_rt_native_promotion_certificate *certificates,
     obelisk_rt_native_promotion_invalidate invalidate_aggregate,
     uint64_t bit_offset, uint64_t bit_width);
+
+// Monotonic X/Z-to-known recovery requests rechecking affected failed proofs;
+// it never clears a valid kernel, route, or NBA-root certificate.
+void obelisk_rt_v1_native_promotion_recheck_ranges(
+    const obelisk_rt_native_promotion_dependency *dependencies,
+    uint64_t dependency_count,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate request_recheck, uint64_t bit_offset,
+    uint64_t bit_width);
 
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;

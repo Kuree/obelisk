@@ -223,10 +223,13 @@ extern "C" void obelisk_rt_v1_native_promotion_invalidate_ranges(
   visitPromotionRangeDependencies(
       dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
         const auto &certificate = certificates[id];
-        if (certificate.latch)
+        if (certificate.latch) {
           *certificate.latch = 0;
-        if (certificate.pending_word)
-          *certificate.pending_word |= certificate.pending_mask;
+          if (certificate.word)
+            *certificate.word |= certificate.mask;
+        } else if (certificate.word) {
+          *certificate.word &= ~certificate.mask;
+        }
         if (certificate.route_slot)
           std::memcpy(certificate.route_slot, &certificate.fallback,
                       sizeof(certificate.fallback));
@@ -234,6 +237,24 @@ extern "C" void obelisk_rt_v1_native_promotion_invalidate_ranges(
       });
   if (affected)
     invalidateAggregate();
+}
+
+extern "C" void obelisk_rt_v1_native_promotion_recheck_ranges(
+    const obelisk_rt_native_promotion_dependency *dependencies,
+    uint64_t dependencyCount,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate requestRecheck, uint64_t bitOffset,
+    uint64_t bitWidth) {
+  bool affected = false;
+  visitPromotionRangeDependencies(
+      dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
+        const auto &certificate = certificates[id];
+        if (certificate.latch && !*certificate.latch && certificate.word)
+          *certificate.word |= certificate.mask;
+        affected = true;
+      });
+  if (affected)
+    requestRecheck();
 }
 
 void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {

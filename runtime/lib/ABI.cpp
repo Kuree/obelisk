@@ -647,10 +647,8 @@ ABI_OFFSET(obelisk_rt_native_promotion_dependency, prefix_end, 16);
 ABI_OFFSET(obelisk_rt_native_promotion_dependency, certificate, 24);
 ABI_SIZE_ALIGN(obelisk_rt_native_promotion_certificate, ABI_PTR(40, 24), 8);
 ABI_OFFSET(obelisk_rt_native_promotion_certificate, latch, 0);
-ABI_OFFSET(obelisk_rt_native_promotion_certificate, pending_word,
-           ABI_PTR(8, 4));
-ABI_OFFSET(obelisk_rt_native_promotion_certificate, pending_mask,
-           ABI_PTR(16, 8));
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, word, ABI_PTR(8, 4));
+ABI_OFFSET(obelisk_rt_native_promotion_certificate, mask, ABI_PTR(16, 8));
 ABI_OFFSET(obelisk_rt_native_promotion_certificate, route_slot,
            ABI_PTR(24, 16));
 ABI_OFFSET(obelisk_rt_native_promotion_certificate, fallback, ABI_PTR(32, 20));
@@ -1451,6 +1449,11 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_prime,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_process_instance_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_native_promotion_invalidate_ranges,
+             void (*)(const obelisk_rt_native_promotion_dependency *, uint64_t,
+                      const obelisk_rt_native_promotion_certificate *,
+                      obelisk_rt_native_promotion_invalidate, uint64_t,
+                      uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_native_promotion_recheck_ranges,
              void (*)(const obelisk_rt_native_promotion_dependency *, uint64_t,
                       const obelisk_rt_native_promotion_certificate *,
                       obelisk_rt_native_promotion_invalidate, uint64_t,
