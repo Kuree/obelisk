@@ -84,11 +84,14 @@ constexpr StringLiteral directOutputAttr = "obelisk.eval.direct_output";
 
 // A private generated activation may print snapshots without scheduling a
 // process or consulting canonical design state. Keep dynamic formats, managed
-// values, file channels and strength queries on the ordinary checkpoint route.
+// values, user file channels and strength queries on the checkpoint route.
 bool isDirectOutput(sim::SimDisplayOp display) {
   auto descriptor =
       display.getDescriptor().getDefiningOp<arith::ConstantIntOp>();
-  if (!descriptor || descriptor.value() != 1 || !display.getScopeAttr())
+  if (!descriptor ||
+      (uint32_t(descriptor.value()) != 1 &&
+       uint32_t(descriptor.value()) != 0x80000002u) ||
+      !display.getScopeAttr())
     return false;
   constexpr uint32_t allowed =
       OBELISK_RT_OUTPUT_ITEM_SIGNED | OBELISK_RT_OUTPUT_ITEM_OMITTED |
@@ -127,8 +130,8 @@ bool isDirectOutput(sim::SimDisplayOp display) {
 }
 
 bool isDirectOutput(Operation *operation) {
-  return isa<sim::SimDisplayOp>(operation) &&
-         operation->hasAttr(directOutputAttr);
+  auto display = dyn_cast<sim::SimDisplayOp>(operation);
+  return display && isDirectOutput(display);
 }
 
 class ExpandIntegerPower final : public OpRewritePattern<math::IPowIOp> {
@@ -1835,7 +1838,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // transition when it is lowered.  Transition materialization rewrites
       // that publication to Eval ingress, so keep shared coroutine helpers
       // out of the rewrite closure for all source kinds, not just variables.
-      if (isa<sim::SimRefStoreOp, sim::SimNetWriteOp, sim::SimDriverDriveOp,
+      if (isDirectOutput(operation) ||
+          isa<sim::SimRefStoreOp, sim::SimNetWriteOp, sim::SimDriverDriveOp,
               sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp>(
               operation))
         privateHelperSet.insert(helper.getOperation());
@@ -1911,6 +1915,20 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     redirectPrivateHelpers(root);
   for (sim::SimFuncOp helper : privateHelpers)
     redirectPrivateHelpers(helper);
+
+  // Classify helpers without marking their shared canonical definitions.
+  // Only private generated copies may bypass monitor bookkeeping and format
+  // their supplied snapshots directly, including diagnostics on stderr.
+  auto markDirectOutput = [&](sim::SimFuncOp function) {
+    function.walk([&](sim::SimDisplayOp display) {
+      if (isDirectOutput(display))
+        display->setAttr(directOutputAttr, builder.getUnitAttr());
+    });
+  };
+  for (sim::SimFuncOp helper : privateHelpers)
+    markDirectOutput(helper);
+  for (sim::SimFuncOp variant : variants)
+    markDirectOutput(variant);
 
   // Promotion tagged private helper stores before activation cloning. Consume
   // that proof only in the eval-specialized helper graphs; canonical helpers

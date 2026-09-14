@@ -2,7 +2,7 @@
 
 // Net snapshots with ordinary formats do not carry net handles into the
 // direct output ABI. Literal v and escaped %%v are not strength queries.
-// Real strength queries and non-stdout channels retain the runtime ABI.
+// Real strength queries and user-file channels retain the runtime ABI.
 // CHECK-LABEL: llvm.func @safe.__obelisk_eval_body
 // CHECK-NOT: llvm.call @obelisk_rt_v1_display(
 // CHECK: llvm.call @obelisk_rt_v1_eval_display(

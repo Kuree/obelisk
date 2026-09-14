@@ -1913,6 +1913,21 @@ TEST_F(RuntimeTest, EvalDisplayUsesSnapshotsWithoutMonitorOrSchedulerEffects) {
   EXPECT_FALSE(context->schedulerFinishRequested);
 }
 
+TEST_F(RuntimeTest, EvalDisplayWritesDiagnosticSnapshotsToStandardError) {
+  std::string diagnostic = "unique case warning";
+  obelisk_rt_arg_v1 item = stringArg(diagnostic, OBELISK_RT_ARG_FORMAT_STRING);
+  context->monitorEnabled = false;
+  context->monitorReport = "unchanged";
+  testing::internal::CaptureStderr();
+  EXPECT_EQ(obelisk_rt_v1_eval_display(context, 0x80000002u, 1,
+                                       OBELISK_RT_RADIX_DECIMAL, &item, 1,
+                                       nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), diagnostic + "\n");
+  EXPECT_EQ(context->monitorReport, "unchanged");
+  EXPECT_FALSE(context->schedulerFinishRequested);
+}
+
 TEST_F(RuntimeTest, EvalDisplayRejectsRuntimeOwnedArgumentsAndChannels) {
   EXPECT_EQ(obelisk_rt_v1_eval_display(context, 2, 0, OBELISK_RT_RADIX_DECIMAL,
                                        nullptr, 0, nullptr),

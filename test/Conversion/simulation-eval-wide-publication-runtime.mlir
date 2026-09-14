@@ -2,15 +2,26 @@
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O2>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
+// RUN: %t.exe --execution-tier=native 2> %t.native.err | FileCheck %s
+// RUN: FileCheck %s --check-prefix=DIAG < %t.native.err
+// RUN: %t.exe --execution-tier=bytecode 2> %t.bytecode.err | FileCheck %s
+// RUN: FileCheck %s --check-prefix=DIAG < %t.bytecode.err
 
 // A 65-bit blocking copy must publish both words without leaving generated
 // evaluation. A high-word-only change wakes change observers, not vector
 // posedge observers: vector edges use only the LSB (LRM 9.4.2).
+// Shared helpers retain monitor-aware runtime output; only their private
+// generated copies may use snapshot output. Warnings are not dropped.
+// PLAN-LABEL: llvm.func @report(
+// PLAN: llvm.call @obelisk_rt_v1_display(
+// PLAN-LABEL: llvm.func @report.__obelisk_eval_private_
+// PLAN: llvm.call @obelisk_rt_v1_eval_display(
 // PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
 // CHECK: 10000000000000000 1 0
 // CHECK-NEXT: 0ffffffffffffffff 1 1
+// DIAG: copy 1
+// DIAG-NEXT: copy 0
+// DIAG-NOT: copy
 !wide = !obelisk_sim.logic<65>
 !wref = !obelisk_sim.ref<!wide>
 !ref = !obelisk_sim.ref<i1>
@@ -27,6 +38,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.code_unit.decl 4 in 0 always hierarchy "change"
     obelisk_sim.code_unit.decl 5 in 0 always hierarchy "posedge"
     obelisk_sim.code_unit.decl 6 in 0 initial hierarchy "check"
+    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "report"
     obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %clk = obelisk_sim.context.storage %ctx[0] : !ref
       %data = obelisk_sim.context.storage %ctx[1] : !wref
@@ -63,7 +75,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       obelisk_sim.suspend.change %clk to ^write {site = #obelisk_sim.continuation<id = 2>} : !ref
     ^write:
       %value = obelisk_sim.ref.load %clk : !ref -> i1
-      cf.cond_br %value, ^high, ^low
+      %reported = obelisk_sim.call @report(%ctx, %value) : (!obelisk_sim.context, i1) -> i1
+      cf.cond_br %reported, ^high, ^low
     ^high:
       %h = obelisk_sim.logic.constant 18446744073709551616 : i65, 0 : i65 : !wide
       obelisk_sim.ref.store %h to %data : !wide, !wref
@@ -111,6 +124,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %status = arith.constant 0 : i32
       obelisk_sim.finish %ctx, %status
       obelisk_sim.return
+    }
+    obelisk_sim.func private @report(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i1 {obelisk_sim.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
+      %format = obelisk_sim.bytes.constant "copy %b"
+      %stderr = arith.constant -2147483646 : i32
+      obelisk_sim.display %ctx to %stderr(%format, %value) newline = true radix = 10 flags = [0, 0] {scope = "report"} : !obelisk_sim.bytes, i1
+      obelisk_sim.return %value : i1
     }
   }
 }

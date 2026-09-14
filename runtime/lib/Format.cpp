@@ -1318,7 +1318,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_eval_display(
     obelisk_rt_context *context, uint32_t descriptor, uint32_t appendNewline,
     obelisk_rt_radix defaultRadix, const obelisk_rt_arg_v1 *items,
     uint64_t itemCount, const obelisk_rt_format_env_v1 *environment) {
-  if (!context || descriptor != 1 || (itemCount != 0 && !items))
+  if (!context || (descriptor != 1 && descriptor != 0x80000002u) ||
+      (itemCount != 0 && !items))
     return OBELISK_RT_INVALID_ARGUMENT;
   for (uint64_t i = 0; i != itemCount; ++i)
     if (items[i].kind != OBELISK_RT_ARG_LOGIC &&
