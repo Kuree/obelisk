@@ -667,6 +667,13 @@ and preservation of unrelated positive certificates. Performance measurements
 and implementation acceptance targets are maintained separately from this
 architecture description.
 
+The generated call-closure verifier builds a local symbol index and visits each
+reachable function once. Direct calls and the certified target sets of indirect
+calls receive the same boundary checks. The index lives only for verification,
+when symbols cannot change; it does not cache scheduling or knownness proofs
+across IR revisions. Opt-in compiler timing separates route materialization,
+proof publication, and call-closure verification from backend code generation.
+
 Native lowering validates that plan against the native state layout and emits
 the following helper ABI. These helpers are not yet reachable from the
 installed AOT run function; until that integration is complete, auto uses the

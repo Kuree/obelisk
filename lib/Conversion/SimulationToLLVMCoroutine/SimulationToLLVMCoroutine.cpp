@@ -1992,6 +1992,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
 LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   if (!module->hasAttr("obelisk.eval.generated"))
     return success();
+  // Verification does not mutate symbols. Build the index once instead of
+  // scanning the module for each edge in the generated call closure.
+  SymbolTable symbols(module);
   constexpr StringLiteral allowedCalleesAttr = "obelisk.eval.allowed_callees";
   // This query only reads the scheduler's priority-handoff latch.  Generated
   // coordinators use it to leave the hot closure before a Reactive
@@ -2074,7 +2077,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
           return WalkResult::interrupt();
         }
         LLVM::LLVMFuncOp callee =
-            module.lookupSymbol<LLVM::LLVMFuncOp>(target.getValue());
+            symbols.lookup<LLVM::LLVMFuncOp>(target.getValue());
         if (!callee) {
           if (!target.getValue().starts_with("llvm.")) {
             call.emitError("generated eval hot closure calls unresolved "
@@ -4262,6 +4265,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             makeProcessSpawnHelper(module, function, *entry.second, schedule)))
       return failure();
   }
+  markTiming("process activation and spawn helpers");
   if (useAOT) {
     // The production eval coordinator folds Tier-2 convergence ownership into
     // its ready-mask fixed point. Do not emit a second, disconnected schedule
@@ -4327,6 +4331,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     }
   }
+  markTiming("native schedule plan materialization");
   if (failed(makeSchedulerMain(module, *stateLayout, useAOT, evalScheduler)))
     return failure();
   markTiming("process helpers and scheduler main");
@@ -6110,18 +6115,22 @@ public:
       signalPassFailure();
       return;
     }
+    markTiming("conversion cast reconciliation");
     if (failed(materializeEvalFunctionRoutes(module))) {
       signalPassFailure();
       return;
     }
+    markTiming("eval function route materialization");
     if (failed(detail::materializeNativePromotionRangeIndex(module))) {
       signalPassFailure();
       return;
     }
+    markTiming("promotion range index materialization");
     if (failed(materializeEvalTwoStateNBACommit(module))) {
       signalPassFailure();
       return;
     }
+    markTiming("two-state NBA commit materialization");
     if (failed(materializeNativeObserverThunks(module))) {
       signalPassFailure();
       return;
@@ -6130,14 +6139,17 @@ public:
       signalPassFailure();
       return;
     }
+    markTiming("observer and DPI thunk materialization");
     if (failed(detail::materializeNativePromotionWrites(module))) {
       signalPassFailure();
       return;
     }
+    markTiming("promotion write materialization");
     if (failed(verifyGeneratedEvalCallClosures(module))) {
       signalPassFailure();
       return;
     }
+    markTiming("eval call closure verification");
     if (failed(detail::finalizeNativePartitionManifest(module))) {
       signalPassFailure();
       return;
