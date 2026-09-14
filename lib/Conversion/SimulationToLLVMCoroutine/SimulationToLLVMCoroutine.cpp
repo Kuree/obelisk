@@ -51,6 +51,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Mem2Reg.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -967,6 +968,18 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       source->setAttr("obelisk.eval.checkpoint_only", builder.getUnitAttr());
       return sim::SimFuncOp{};
     }
+    // A checkpoint returns to the runtime at the beginning of its block.
+    // Its original successors are not probe paths unless another hot edge
+    // reaches them. Do not let their local temporaries poison alias proofs.
+    llvm::SmallPtrSet<Block *, 32> hotProbeBlocks;
+    SmallVector<Block *> hotPending{&source.getBody().front()};
+    while (!hotPending.empty()) {
+      Block *block = hotPending.pop_back_val();
+      if (coldCheckpointBlocks.contains(block) ||
+          !hotProbeBlocks.insert(block).second)
+        continue;
+      llvm::append_range(hotPending, block->getSuccessors());
+    }
 
     // A dry run can discard publications that no subsequent read can observe.
     // Resolve exact physical ranges, not just descriptor names: distinct
@@ -976,20 +989,24 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     auto provenance = analysis::deriveDescriptorProvenance(source);
     using ProbeRange = std::pair<uint64_t, uint64_t>;
     DenseMap<Value, std::optional<ProbeRange>> probeRanges;
-    auto rangeFor = [&](Value reference) -> std::optional<ProbeRange> {
-      auto [cached, inserted] = probeRanges.try_emplace(reference, std::nullopt);
+    DenseMap<Value, std::optional<ProbeRange>> boundedProbeRanges;
+    auto rangeFor = [&](Value reference,
+                        bool boundDynamic =
+                            false) -> std::optional<ProbeRange> {
+      auto &cache = boundDynamic ? boundedProbeRanges : probeRanges;
+      auto [cached, inserted] = cache.try_emplace(reference, std::nullopt);
       if (!inserted)
         return cached->second;
       auto found = provenance.find(reference);
       if (found == provenance.end() || !found->second.descriptor ||
-          found->second.dynamic)
+          (found->second.dynamic && !boundDynamic))
         return std::nullopt;
       const auto &origin = found->second;
-      const auto *handles =
-          origin.resource == sim::ComputeResourceKind::Storage
-              ? &stateLayout.storage
-          : origin.resource == sim::ComputeResourceKind::Net ? &stateLayout.nets
-                                                            : nullptr;
+      const auto *handles = origin.resource == sim::ComputeResourceKind::Storage
+                                ? &stateLayout.storage
+                            : origin.resource == sim::ComputeResourceKind::Net
+                                ? &stateLayout.nets
+                                : nullptr;
       if (!handles)
         return std::nullopt;
       auto handle = handles->find(*origin.descriptor);
@@ -1001,6 +1018,11 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &entry) {
         return entry.handleID == decoded.id;
       });
+      // An unknown selection within a fixed root cannot alias another root.
+      // Use the entire physical allocation only for a may-access bound; it
+      // must never be mistaken for an exact cell when forwarding writes.
+      if (origin.dynamic && bound != stateLayout.bounds.end())
+        return cached->second = ProbeRange{bound->offset, bound->width};
       uint64_t width = origin.width ? origin.width : origin.rootWidth;
       if (!width || bound == stateLayout.bounds.end() ||
           origin.low > bound->width || width > bound->width - origin.low)
@@ -1009,17 +1031,17 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     };
     SmallVector<std::optional<ProbeRange>> readRanges;
     source.walk([&](Operation *operation) {
-      if (coldCheckpointBlocks.contains(operation->getBlock()))
+      if (!hotProbeBlocks.contains(operation->getBlock()))
         return;
       if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
-        readRanges.push_back(rangeFor(load.getReference()));
+        readRanges.push_back(rangeFor(load.getReference(), true));
       else if (auto read = dyn_cast<sim::SimNetReadOp>(operation))
-        readRanges.push_back(rangeFor(read.getNet()));
+        readRanges.push_back(rangeFor(read.getNet(), true));
     });
     llvm::SmallPtrSet<Block *, 32> reachesRead;
     SmallVector<Block *> readWorklist;
     for (Block &block : source.getBody()) {
-      if (coldCheckpointBlocks.contains(&block))
+      if (!hotProbeBlocks.contains(&block))
         continue;
       if (llvm::any_of(block, [](Operation &op) {
             return isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op);
@@ -1028,7 +1050,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     }
     while (!readWorklist.empty()) {
       Block *block = readWorklist.pop_back_val();
-      if (coldCheckpointBlocks.contains(block) ||
+      if (!hotProbeBlocks.contains(block) ||
           !reachesRead.insert(block).second)
         continue;
       for (Block *predecessor : block->getPredecessors())
@@ -1036,6 +1058,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
     }
     llvm::SmallPtrSet<Operation *, 16> terminalStores;
     source.walk([&](sim::SimRefStoreOp store) {
+      if (!hotProbeBlocks.contains(store->getBlock()))
+        return;
       auto written = rangeFor(store.getReference());
       bool independent = written && llvm::all_of(readRanges, [&](auto read) {
         if (!read)
@@ -1070,7 +1094,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                                     : rhs.second > lhs.first - rhs.first;
     };
     source.walk([&](sim::SimRefStoreOp store) {
-      if (coldCheckpointBlocks.contains(store->getBlock()) ||
+      if (!hotProbeBlocks.contains(store->getBlock()) ||
           terminalStores.contains(store.getOperation()))
         return;
       auto argument = dyn_cast<BlockArgument>(store.getReference());
@@ -1087,7 +1111,8 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         return;
       bool exact = true;
       source.walk([&](Operation *operation) {
-        if (!exact || coldCheckpointBlocks.contains(operation->getBlock()))
+        if (!exact || !hotProbeBlocks.contains(operation->getBlock()) ||
+            terminalStores.contains(operation))
           return;
         Value reference;
         Type valueType;
@@ -1103,11 +1128,12 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
         } else {
           return;
         }
+        auto accessed = rangeFor(reference, true);
         auto range = rangeFor(reference);
-        if (!range ||
-            (overlaps(*written, *range) &&
-             (*range != *written || valueType != store.getValue().getType() ||
-              !isa<sim::RefType>(reference.getType()))))
+        if (!accessed || (overlaps(*written, *accessed) &&
+                          (!range || *range != *written ||
+                           valueType != store.getValue().getType() ||
+                           !isa<sim::RefType>(reference.getType()))))
           exact = false;
       });
       if (exact && llvm::none_of(cells, [&](const ProbeCell &cell) {
@@ -1137,7 +1163,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
       // the original block exactly once, including scheduler reads and state
       // publications, so those operations neither require a dry-run overlay
       // nor belong to the generated evaluator's call closure.
-      if (coldCheckpointBlocks.contains(operation->getBlock()))
+      if (!hotProbeBlocks.contains(operation->getBlock()))
         return;
       if (isa<sim::SimCoveragePointHitOp>(operation))
         return;
@@ -1231,7 +1257,7 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
             isDirectOutput(&operation) || terminalStores.contains(&operation))
           continue;
         Operation *clone = builder.clone(operation, mapping);
-        if (coldCheckpointBlocks.contains(&sourceBlock))
+        if (!hotProbeBlocks.contains(&sourceBlock))
           continue;
         if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
           if (auto cell = cellFor(load.getReference()))
@@ -4554,6 +4580,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                    builder.getI32Type(),
                                    OBELISK_RT_INVALID_DESIGN));
         }
+        IRRewriter rewriter(context);
+        (void)eraseUnreachableBlocks(rewriter, function.getBody());
         return success();
       };
       if (failed(fractureCheckpoints(route.twoState)) ||

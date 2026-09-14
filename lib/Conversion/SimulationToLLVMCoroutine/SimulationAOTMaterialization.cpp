@@ -2329,10 +2329,23 @@ FailureOr<bool> makeNativeEvalPlan(
       auto offsetCall = handle.getDefiningOp<LLVM::CallOp>();
       if (!offsetCall || !offsetCall.getCallee() ||
           *offsetCall.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
-          offsetCall.getArgOperands().size() != 2)
+          offsetCall.getArgOperands().size() != 2) {
+        auto owner = call->getParentOfType<sim::SimFuncOp>();
+        // Local temporary loads behind a proven checkpoint are runtime
+        // work, not dynamic packed-root loads. Preserve them for the cold
+        // callback copy; route materialization fractures the generated
+        // bodies and prunes their unreachable successors afterwards. The
+        // independently checked predicates must still be runtime-free.
+        if (owner &&
+            !owner->hasAttr("obelisk.eval.path_known_predicate") &&
+            (owner->hasAttr(sim::metadata::evalPathGuardedTwoState) ||
+             (owner->hasAttr("obelisk.eval.inherited_two_state_checkpoint") &&
+              owner->hasAttr(sim::metadata::evalTwoStateVariant))))
+          continue;
         return call.emitError(
                    "dynamic state load has no fixed-root handle offset"),
                failure();
+      }
       std::optional<uint64_t> encodedRoot =
           constantU64(offsetCall.getArgOperands()[0]);
       obelisk_rt_stable_handle_v1 decoded{};

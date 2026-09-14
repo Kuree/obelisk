@@ -71,6 +71,11 @@ module attributes {
       %observed = obelisk_sim.ref.load %count : !obelisk_sim.ref<i32> -> i32
       %limit = arith.constant 500 : i32
       %done = arith.cmpi eq, %observed, %limit : i32
+      // This terminal partial write overlaps the promoted count cell, but no
+      // later probe read can observe it. Keep it in the real activation only.
+      %upper = obelisk_sim.ref.extract %count from 16 : !obelisk_sim.ref<i32> -> !obelisk_sim.ref<i16>
+      %zero16 = arith.constant 0 : i16
+      obelisk_sim.ref.store %zero16 to %upper : i16, !obelisk_sim.ref<i16>
       cf.cond_br %done, ^terminate, ^wait
     ^terminate:
       %nba = arith.constant 999 : i32
