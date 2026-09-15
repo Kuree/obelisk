@@ -540,7 +540,7 @@ refreshNativeAOTReadyPhaseUnlocked(obelisk_rt_context *context) {
       return OBELISK_RT_INVALID_LIFECYCLE;
     if (scheduled.phase != (context->schedulerRunningFinals ? 1u : 0u))
       continue;
-    if (nativeProcessReady(*context, scheduled, true) &&
+    if (nativeProcessReady(*context, scheduled) &&
         !markNativeAOTActorReadyUnlocked(context, slot))
       return OBELISK_RT_INVALID_CONTINUATION;
   }

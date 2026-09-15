@@ -15,7 +15,8 @@ void publishAction(mlir::OpBuilder &builder, mlir::Location location,
                    mlir::Value payload, uint64_t auxiliary);
 mlir::LogicalResult makeNativeWrappers(mlir::ModuleOp module,
                                        mlir::LLVM::LLVMFuncOp ramp,
-                                       llvm::StringRef baseName);
+                                       llvm::StringRef baseName,
+                                       bool directActivation = false);
 mlir::LogicalResult
 makePlainNativeWrappers(mlir::ModuleOp module, mlir::func::FuncOp body,
                         llvm::StringRef baseName,

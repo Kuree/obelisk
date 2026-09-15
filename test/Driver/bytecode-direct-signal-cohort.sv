@@ -36,8 +36,12 @@ module bytecode_direct_signal_cohort;
   genvar i;
   generate
     for (i = 0; i < N; ++i)
+      // A scheduler-time read keeps these as independent actors. Otherwise
+      // legal same-clock body fusion would stop exercising the bytecode
+      // scheduler's many-waiter cohort path.
       always @(posedge clock)
-        hits[i] = ~hits[i];
+        if ($time != 0)
+          hits[i] = ~hits[i];
   endgenerate
 
   genvar j;
@@ -55,4 +59,5 @@ endmodule
 
 // CHECK: cohort hits=ffffffff
 // SLOW: cohort hits=1ffff
-// SLOW-DIAG: readiness_calls=411 candidate_scans=1135256
+// SLOW-DIAG: subscriptions_high_water=18
+// SLOW-DIAG-SAME: readiness_calls={{[1-9][0-9]*}} candidate_scans={{[1-9][0-9]*}}

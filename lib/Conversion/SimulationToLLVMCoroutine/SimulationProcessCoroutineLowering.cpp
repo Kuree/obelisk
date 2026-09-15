@@ -93,6 +93,7 @@ struct RampBlocks {
   Block *terminate;
   Block *cleanup;
   DenseMap<Block *, Block *> shims;
+  bool directActivation = false;
 };
 
 Block *makeCoroutineReturnBlock(Region &region, Location location,
@@ -512,6 +513,15 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TASK_CALL,
                   OBELISK_RT_SUSPEND_NONE, continuationID,
                   OBELISK_RT_FRAGMENT_FLAGS_NONE, activation, 0);
+    // The task owns the next activation, not the caller's native stack.
+    // Continuation operands have already been stored in the canonical frame.
+    // Returning here lets the common driver execute/suspend the task and later
+    // reenter just this caller at its saved continuation (1800-2023 13.3).
+    if (blocks.directActivation) {
+      cf::BranchOp::create(builder, location, blocks.suspendReturn);
+      builder.eraseOp(operation);
+      return success();
+    }
     Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
     Value save = LLVM::CoroSaveOp::create(
         builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
@@ -556,6 +566,16 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
                 continuationID,
                 OBELISK_RT_ACTION_FRAME_WAIT_RECORD | actionFlags,
                 llvmConstant(builder, location, i64, waitOffset), waitSize);
+
+  // A certified group ends at this semantic boundary. Its live continuation
+  // values and wait record are already in the canonical frame; returning the
+  // action lets the shared event loop arbitrate tasks and NBA work without a
+  // second coroutine frame or a saved native resume address.
+  if (blocks.directActivation) {
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+    builder.eraseOp(operation);
+    return success();
+  }
 
   Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
   Value save = LLVM::CoroSaveOp::create(
@@ -605,17 +625,51 @@ prepareSuspendableProcess(sim::SimFuncOp function,
   uint64_t stableID = function.getCodeUnitId().value_or(
       stableProcessID(baseName) &
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
-  std::string rampName = baseName + ".__obelisk_coro_ramp";
+  bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
+  bool taskCaller = false;
+  function.walk([&](sim::SimTaskCallOp) { taskCaller = true; });
+  // Closed evaluators already have a direct group executor. Preserve their
+  // fragment fallback; ordinary activation entries are needed by groups that
+  // execute under descriptor scheduling without that evaluator.
+  bool directActivation =
+      unmanagedNative && !function->hasAttr("obelisk.eval.body") &&
+      (taskCaller ||
+       (function->hasAttr(sim::metadata::nativeRegionBody) &&
+        function->hasAttr(sim::metadata::evalReconstructsContinuationArgs) &&
+        analysis.getSuspensions().size() == 1));
+  if (directActivation)
+    function.walk([&](Operation *operation) {
+      if (!sim::isSuspensionOp(operation))
+        return;
+      if (!isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+               sim::SimSuspendAnyOp, sim::SimSuspendDelayOp,
+               sim::SimTaskCallOp>(operation)) {
+        directActivation = false;
+        return;
+      }
+      // Raw addresses may point into a native activation's stack. Until an
+      // escape proof establishes their lifetime, keep the coroutine frame.
+      // Canonical design references are stable integer handles, not pointers.
+      auto forwarded = cast<BranchOpInterface>(operation)
+                           .getSuccessorOperands(0)
+                           .getForwardedOperands();
+      if (llvm::any_of(forwarded, [](Value value) {
+            return isa<LLVM::LLVMPointerType>(value.getType());
+          }))
+        directActivation = false;
+    });
+  std::string rampName = baseName + (directActivation ? ".__obelisk_group_body"
+                                                      : ".__obelisk_coro_ramp");
   auto ramp = LLVM::LLVMFuncOp::create(
       builder, location, rampName,
       LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context),
                                   {pointer, i32, pointer, pointer}, false));
-  ramp->setAttr(
-      "passthrough",
-      builder.getArrayAttr({builder.getStringAttr("presplitcoroutine")}));
+  if (!directActivation)
+    ramp->setAttr(
+        "passthrough",
+        builder.getArrayAttr({builder.getStringAttr("presplitcoroutine")}));
   copyNativePartition(function, ramp);
   addFrameAttributes(ramp, analysis, builder);
-  bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
   ramp.getBody().takeBody(function.getBody());
   function.erase();
 
@@ -623,8 +677,8 @@ prepareSuspendableProcess(sim::SimFuncOp function,
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
   return PreparedSuspendableProcess{
-      module, ramp, location, std::move(baseName), stableID, &analysis,
-      unmanagedNative};
+      module,   ramp,      location,        std::move(baseName),
+      stableID, &analysis, unmanagedNative, directActivation};
 }
 
 LogicalResult
@@ -656,9 +710,11 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   builder.setInsertionPointToStart(entry);
   Value zero32 = llvmConstant(builder, location, i32, 0);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
-  Value id = LLVM::CoroIdOp::create(builder, location,
-                                    LLVM::LLVMTokenType::get(context), zero32,
-                                    null, null, null);
+  Value id;
+  if (!process.directActivation)
+    id = LLVM::CoroIdOp::create(builder, location,
+                                LLVM::LLVMTokenType::get(context), zero32, null,
+                                null, null);
   Value requirementsMode =
       arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                             entry->getArgument(1), zero32);
@@ -666,24 +722,32 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
                            ValueRange{}, execute, ValueRange{});
 
   builder.setInsertionPointToStart(requirements);
-  Value size = LLVM::CoroSizeOp::create(builder, location, i64);
-  Value alignment = LLVM::CoroAlignOp::create(builder, location, i64);
+  Value size =
+      process.directActivation
+          ? llvmConstant(builder, location, i64, 0)
+          : LLVM::CoroSizeOp::create(builder, location, i64).getResult();
+  Value alignment =
+      process.directActivation
+          ? llvmConstant(builder, location, i64, 1)
+          : LLVM::CoroAlignOp::create(builder, location, i64).getResult();
   LLVM::StoreOp::create(builder, location, size, entry->getArgument(2), 8);
   LLVM::StoreOp::create(builder, location, alignment, entry->getArgument(3), 8);
   LLVM::ReturnOp::create(builder, location, ValueRange{});
 
   builder.setInsertionPointToStart(execute);
   Value instance = entry->getArgument(0);
-  Value allocation =
-      loadAt(builder, location, instance, kInstanceAllocationField, pointer, 0);
-  Value scratchOffset =
-      loadAt(builder, location, instance, kInstanceScratchField, i64, 8);
-  Value scratch =
-      LLVM::GEPOp::create(builder, location, pointer, builder.getI8Type(),
-                          allocation, ValueRange{scratchOffset});
-  Value handle =
-      LLVM::CoroBeginOp::create(builder, location, pointer, id, scratch);
-  storeAt(builder, location, instance, kInstanceNativeHandleField, handle, 0);
+  Value handle;
+  if (!process.directActivation) {
+    Value allocation = loadAt(builder, location, instance,
+                              kInstanceAllocationField, pointer, 0);
+    Value scratchOffset =
+        loadAt(builder, location, instance, kInstanceScratchField, i64, 8);
+    Value scratch =
+        LLVM::GEPOp::create(builder, location, pointer, builder.getI8Type(),
+                            allocation, ValueRange{scratchOffset});
+    handle = LLVM::CoroBeginOp::create(builder, location, pointer, id, scratch);
+    storeAt(builder, location, instance, kInstanceNativeHandleField, handle, 0);
+  }
 
   // Fixed ABI temporaries and managed-root records were deliberately hoisted
   // to the source function entry. The coroutine ramp adds a new dispatch
@@ -712,8 +776,16 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     address->moveBefore(execute, execute->end());
 
   RampBlocks blocks;
-  blocks.suspendReturn =
-      makeCoroutineReturnBlock(ramp.getBody(), location, handle);
+  blocks.directActivation = process.directActivation;
+  if (process.directActivation) {
+    blocks.suspendReturn = new Block;
+    ramp.getBody().push_back(blocks.suspendReturn);
+    builder.setInsertionPointToStart(blocks.suspendReturn);
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+  } else {
+    blocks.suspendReturn =
+        makeCoroutineReturnBlock(ramp.getBody(), location, handle);
+  }
   blocks.cleanup = new Block;
   bool canTerminate = false;
   ramp.walk([&](Operation *operation) {
@@ -810,6 +882,11 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   size_t physicalArgument = 0;
   auto refreshFrameArgument = [&](BlockArgument argument, Type type,
                                   uint64_t offset, uint32_t alignment) {
+    // An ordinary group returns at each boundary and reloads its captures on
+    // reentry. Its entry SSA values dominate the complete activation; only a
+    // coroutine needs per-use reloads across native resume addresses.
+    if (process.directActivation)
+      return;
     SmallVector<OpOperand *> uses;
     for (OpOperand &use : argument.getUses())
       uses.push_back(&use);
@@ -827,6 +904,10 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     if (!slot.hasValueStorage()) {
       entryArguments.push_back(loadAt(builder, location, instance,
                                       kInstanceContextField, pointer, 0));
+      if (process.directActivation) {
+        ++physicalArgument;
+        continue;
+      }
       // The scheduler may supply a different transient context on every
       // invocation.  Do not let LLVM preserve the first context in the
       // coroutine frame: reload it through the runtime-owned instance at each
@@ -920,22 +1001,26 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
                   OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
                   llvmConstant(builder, location, i64, 0), 0);
-    Value final = llvmConstant(builder, location, builder.getI1Type(), 1);
-    Value save = LLVM::CoroSaveOp::create(
-        builder, location, LLVM::LLVMTokenType::get(context), handle);
-    Value finalState = LLVM::CoroSuspendOp::create(
-        builder, location, builder.getI8Type(), save, final);
-    Block *invalidFinalResume = new Block;
-    ramp.getBody().push_back(invalidFinalResume);
-    builder.setInsertionPointToStart(invalidFinalResume);
-    LLVM::UnreachableOp::create(builder, location);
-    builder.setInsertionPointToEnd(blocks.terminate);
-    SmallVector<Block *> destinations{invalidFinalResume, blocks.cleanup};
-    SmallVector<ValueRange> destinationOperands(2);
-    SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
-    LLVM::SwitchOp::create(builder, location, finalState, blocks.suspendReturn,
-                           ValueRange{}, caseValues, destinations,
-                           destinationOperands, ArrayRef<int32_t>{});
+    if (process.directActivation) {
+      LLVM::ReturnOp::create(builder, location, ValueRange{});
+    } else {
+      Value final = llvmConstant(builder, location, builder.getI1Type(), 1);
+      Value save = LLVM::CoroSaveOp::create(
+          builder, location, LLVM::LLVMTokenType::get(context), handle);
+      Value finalState = LLVM::CoroSuspendOp::create(
+          builder, location, builder.getI8Type(), save, final);
+      Block *invalidFinalResume = new Block;
+      ramp.getBody().push_back(invalidFinalResume);
+      builder.setInsertionPointToStart(invalidFinalResume);
+      LLVM::UnreachableOp::create(builder, location);
+      builder.setInsertionPointToEnd(blocks.terminate);
+      SmallVector<Block *> destinations{invalidFinalResume, blocks.cleanup};
+      SmallVector<ValueRange> destinationOperands(2);
+      SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+      LLVM::SwitchOp::create(
+          builder, location, finalState, blocks.suspendReturn, ValueRange{},
+          caseValues, destinations, destinationOperands, ArrayRef<int32_t>{});
+    }
   }
 
   builder.setInsertionPointToStart(blocks.cleanup);
@@ -988,12 +1073,12 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 LogicalResult
 finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
                                  const SymbolTable &embeddedSymbols) {
-  if (failed(
-          makeNativeWrappers(process.module, process.ramp, process.baseName)))
+  if (failed(makeNativeWrappers(process.module, process.ramp, process.baseName,
+                                process.directActivation)))
     return failure();
-  return makeProcessDescriptor(process.module, embeddedSymbols, process.location,
-                               process.baseName, process.stableID,
-                               *process.analysis, process.unmanagedNative);
+  return makeProcessDescriptor(
+      process.module, embeddedSymbols, process.location, process.baseName,
+      process.stableID, *process.analysis, process.unmanagedNative);
 }
 
 LogicalResult

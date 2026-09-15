@@ -27,6 +27,8 @@ extern "C" const obelisk_rt_process_descriptor_v1
     automaticDescriptor asm("automatic_process.__obelisk_process_descriptor");
 extern "C" const obelisk_rt_process_descriptor_v1 automaticLoopDescriptor asm(
     "automatic_loop_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1
+    groupDescriptor asm("group_process.__obelisk_process_descriptor");
 
 namespace {
 
@@ -212,6 +214,74 @@ TEST(GeneratedProcess, EmittedDesignBytecodeMatchesNativeLifecycle) {
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(native), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(bytecode), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(GeneratedProcess, DirectGroupResumesCanonicalStateAcrossBytecode) {
+  uint64_t size = UINT64_MAX, alignment = 0;
+  ASSERT_EQ(groupDescriptor.native_requirements(&size, &alignment),
+            OBELISK_RT_OK);
+  ASSERT_EQ(size, 0u);
+  ASSERT_EQ(alignment, 1u);
+
+  for (bool startNative : {false, true}) {
+    obelisk_rt_context *context = nullptr;
+    std::array<uint64_t, 2> expected{};
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(groupDescriptor.execution,
+                                                    &context),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 64),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 64, 64),
+              OBELISK_RT_OK);
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_process_instance_create(&groupDescriptor, &instance),
+        OBELISK_RT_OK);
+    unsigned captures = 0;
+    uint64_t captureOffset = 0;
+    const auto &layout = *groupDescriptor.frame_layout;
+    for (uint32_t index = 0; index != layout.field_count; ++index) {
+      const auto &field = layout.fields[index];
+      if (field.kind != OBELISK_RT_FRAME_CAPTURE)
+        continue;
+      ASSERT_EQ(field.size, sizeof(uint64_t));
+      captureOffset = field.offset;
+      ++captures;
+    }
+    ASSERT_EQ(captures, 1u);
+    void *frame = instance->frame;
+    uint32_t continuation = 0;
+    for (uint64_t step = 1; step <= 12; ++step) {
+      bool native = (step % 2 != 0) == startNative;
+      // Tier changes must observe the new capture binding and simulation
+      // time without restarting the carried counter or caching signal state.
+      size_t lane = (step / 3) % 2;
+      context->schedulerTime = step * 100;
+      uint64_t handle = obelisk_rt_v1_native_state_static_handle(lane + 1);
+      std::memcpy(static_cast<uint8_t *>(instance->frame) + captureOffset,
+                  &handle, sizeof(handle));
+      obelisk_rt_fragment_action_v1 action{};
+      ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
+                    instance, context,
+                    native ? OBELISK_RT_TIER_NATIVE : OBELISK_RT_TIER_BYTECODE,
+                    &action),
+                OBELISK_RT_OK);
+      EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_SUSPEND);
+      EXPECT_EQ(action.suspend_kind, OBELISK_RT_SUSPEND_CHANGE);
+      if (step == 1)
+        continuation = action.continuation;
+      EXPECT_NE(continuation, 0u);
+      EXPECT_EQ(action.continuation, continuation);
+      expected[lane] = step + context->schedulerTime;
+      ASSERT_GE(context->stateValue.size(), 2u);
+      for (size_t word = 0; word != 2; ++word)
+        EXPECT_EQ(context->stateValue[word], expected[word]);
+      EXPECT_EQ(instance->frame, frame);
+      EXPECT_EQ(instance->native_handle, nullptr);
+    }
+    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(GeneratedProcess, SchedulerRunsEventSpawnJoinAndAwait) {

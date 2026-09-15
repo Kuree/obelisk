@@ -15,6 +15,32 @@ module attributes {
     obelisk_sim.code_unit.decl 9000010 in 0 initial hierarchy "test.generated_execution.long_child.9000010"
     obelisk_sim.code_unit.decl 9000011 in 0 initial hierarchy "test.generated_execution.orchestration_process.9000011"
     obelisk_sim.scope.decl 0
+    obelisk_sim.storage.decl 0 in 0 : i64 design
+    obelisk_sim.storage.decl 1 in 0 : i64 design
+    obelisk_sim.code_unit.decl 9000012 in 0 continuous hierarchy "test.generated_execution.group_process"
+
+    // Post-materialization group fixture. Its changing continuation lane
+    // models the snapshots/dirty state carried by a union-wait group. The
+    // direct executor must retain this canonical frame state across Tier-3
+    // visits, even though it has no coroutine frame of its own.
+    obelisk_sim.func @group_process(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %signal: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 3 : i32,
+                                      obelisk_sim.descriptor_id = 0 : i64})
+        attributes {entry_kind = 7 : i32, code_unit_id = 9000012 : i64,
+                    obelisk.native.region_body,
+                    obelisk.eval.reconstructs_continuation_args} {
+      %zero = arith.constant 0 : i64
+      cf.br ^body(%zero : i64)
+    ^body(%value: i64):
+      %one = arith.constant 1 : i64
+      %next = arith.addi %value, %one : i64
+      %now = obelisk_sim.time.now %ctx
+      %published = arith.addi %next, %now : i64
+      obelisk_sim.ref.store %published to %signal : i64, !obelisk_sim.ref<i64>
+      obelisk_sim.suspend.change %signal to ^body(%next : i64) :
+          !obelisk_sim.ref<i64>
+    }
 
     obelisk_sim.func @execution_process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},

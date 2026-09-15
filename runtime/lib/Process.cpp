@@ -346,10 +346,6 @@ nativeWaitReadyImpl(obelisk_rt_context &context,
   switch (process.suspendKind) {
   case OBELISK_RT_SUSPEND_OBSERVER:
     return process.signalTriggered;
-  case OBELISK_RT_SUSPEND_CHANGE:
-  case OBELISK_RT_SUSPEND_EDGE:
-    return process.signalTriggered ||
-           (process.signalLatch && process.signalLatch->triggered);
   case OBELISK_RT_SUSPEND_EVENT:
     if (process.waitGenerations.size() != wait->count)
       return false;
@@ -421,34 +417,31 @@ nativeWaitReadyImpl(obelisk_rt_context &context,
   }
 }
 
-bool nativeWaitReady(obelisk_rt_context &context,
-                     const ScheduledProcess &process) {
-  return nativeWaitReadyImpl<true>(context, process);
-}
-
 template <bool RecordSchedulerEffects>
 __attribute__((always_inline)) static inline bool
 nativeProcessReadyImpl(obelisk_rt_context &context,
-                       const ScheduledProcess &process,
-                       bool directStaticSignalWait) {
+                       const ScheduledProcess &process) {
   if (process.explicitlySuspended)
     return false;
   if (!process.started || process.suspendKind == OBELISK_RT_SUSPEND_NONE)
     return true;
   if (process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
     return process.wakeTime <= context.schedulerTime;
-  if (directStaticSignalWait &&
-      (process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-       process.suspendKind == OBELISK_RT_SUSPEND_EDGE))
+  // Signal subscriptions are installed only after action/wait validation.
+  // Publications latch their readiness; the serialized wait is needed again
+  // when adopting a new suspension, not on every ready-queue comparison.
+  // Keep this path ahead of wait-probe diagnostics, as installed nodes were
+  // before unification. All executors now use the same constant-time check.
+  if (process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
+      process.suspendKind == OBELISK_RT_SUSPEND_EDGE)
     return process.signalTriggered ||
            (process.signalLatch && process.signalLatch->triggered);
   return nativeWaitReadyImpl<RecordSchedulerEffects>(context, process);
 }
 
 bool nativeProcessReady(obelisk_rt_context &context,
-                        const ScheduledProcess &process,
-                        bool directStaticSignalWait) {
-  return nativeProcessReadyImpl<true>(context, process, directStaticSignalWait);
+                        const ScheduledProcess &process) {
+  return nativeProcessReadyImpl<true>(context, process);
 }
 
 static bool indexedSignalBlocked(const ScheduledProcess &process) {
@@ -465,9 +458,14 @@ static bool indexedSignalBlocked(const ScheduledProcess &process) {
 // and NBA barrier at the current numeric time, but before true Postponed work.
 // The stored queued/home region remains Observed so notifier publication is
 // legal and no process ABI or event-region ordinal changes.
-static uint32_t schedulerOrderingRegion(const ScheduledProcess &process,
+static uint32_t schedulerOrderingRegion(const obelisk_rt_context &context,
+                                        const ScheduledProcess &process,
                                         bool signalResume) {
-  if (signalResume &&
+  // Registering a clock-occurrence wait creates this optional feature state
+  // before it can publish readiness. Designs without timing observers need
+  // no frame lookup to establish an ordinary actor's ordering region. Retain
+  // the check for installed plans, which can own waits without subscriptions.
+  if (signalResume && (context.clockOccurrences || context.nativeSchedulePlan) &&
       obelisk_rt_is_slot_final_clock_occurrence_wait(currentWait(process)))
     return OBELISK_RT_REGION_POSTPONED;
   return process.queuedRegion == OBELISK_RT_REGION_POSTPONED
@@ -595,14 +593,15 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
       continue;
     bool signalResume = process.signalTriggered ||
                         (process.signalLatch && process.signalLatch->triggered);
-    bool runnable = nativeProcessReadyImpl<false>(*context, process, false);
+    bool runnable = nativeProcessReadyImpl<false>(*context, process);
     if (runnable && process.queuedRegion >= unstartedActorRegion &&
         signalResume && !process.urgent && !process.prioritySignal)
       runnable = false;
     if (!runnable)
       continue;
-    if (process.urgent || schedulerOrderingRegion(process, signalResume) <=
-                              OBELISK_RT_REGION_POSTPONED)
+    if (process.urgent ||
+        schedulerOrderingRegion(*context, process, signalResume) <=
+            OBELISK_RT_REGION_POSTPONED)
       return true;
   }
   if (obelisk_rt_design_task_pending_before_read_only_unlocked(context))
@@ -2823,7 +2822,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                 : (selectedIndex + processCount -
                                    context->schedulerCursor % processCount) %
                                       processCount;
-          ready.region = schedulerOrderingRegion(scheduled, signalResume);
+          ready.region =
+              schedulerOrderingRegion(*context, scheduled, signalResume);
           if (scheduled.prioritySignal && signalResume) {
             ready.rank = 0;
             ready.insertionSequence = 0;
@@ -3001,10 +3001,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (!candidate.instance ||
             candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
           return std::nullopt;
-        bool runnable = nativeProcessReady(
-            *context, candidate,
-            forcedNativeNode ||
-                (options.nativePlan && candidate.aotActorSlot != UINT32_MAX));
+        bool runnable = nativeProcessReady(*context, candidate);
         signalResume =
             candidate.signalTriggered ||
             (candidate.signalLatch && candidate.signalLatch->triggered);
@@ -3023,11 +3020,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                    context->schedulerCursor % nativeScanProcessCount) %
                       nativeScanProcessCount;
         if (candidate.prioritySignal && signalResume) {
-          ready.region = schedulerOrderingRegion(candidate, signalResume);
+          ready.region =
+              schedulerOrderingRegion(*context, candidate, signalResume);
           ready.rank = 0;
           ready.insertionSequence = 0;
         } else {
-          ready.region = schedulerOrderingRegion(candidate, signalResume);
+          ready.region =
+              schedulerOrderingRegion(*context, candidate, signalResume);
           ready.rank = candidate.scheduleRank;
           ready.insertionSequence = candidate.insertionSequence;
         }
@@ -3428,16 +3427,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         bool runnable =
             candidate.instance && candidate.token == nativeCandidateToken &&
             candidate.phase == (context->schedulerRunningFinals ? 1u : 0u) &&
-            nativeProcessReady(*context, candidate,
-                               context->nativeScheduleForcedSlot !=
-                                       UINT32_MAX ||
-                                   (options.nativePlan &&
-                                    candidate.aotActorSlot != UINT32_MAX));
+            nativeProcessReady(*context, candidate);
         bool signalResume =
             candidate.signalTriggered ||
             (candidate.signalLatch && candidate.signalLatch->triggered);
         uint32_t orderingRegion =
-            schedulerOrderingRegion(candidate, signalResume);
+            schedulerOrderingRegion(*context, candidate, signalResume);
         auto key = candidate.prioritySignal && signalResume
                        ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
                        : std::tuple{orderingRegion, candidate.scheduleRank,
@@ -3465,9 +3460,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (!candidate.instance ||
               candidate.phase != (context->schedulerRunningFinals ? 1u : 0u))
             continue;
-          bool runnable = nativeProcessReady(
-              *context, candidate,
-              options.nativePlan && candidate.aotActorSlot != UINT32_MAX);
+          bool runnable = nativeProcessReady(*context, candidate);
           if (!runnable)
             continue;
           if (candidate.urgent) {
@@ -3482,7 +3475,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               candidate.signalTriggered ||
               (candidate.signalLatch && candidate.signalLatch->triggered);
           uint32_t orderingRegion =
-              schedulerOrderingRegion(candidate, signalResume);
+              schedulerOrderingRegion(*context, candidate, signalResume);
           auto key = candidate.prioritySignal && signalResume
                          ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
                          : std::tuple{orderingRegion, candidate.scheduleRank,

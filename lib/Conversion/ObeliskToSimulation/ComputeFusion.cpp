@@ -5,12 +5,14 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -32,6 +34,13 @@ bool isStaticDigitalType(Type type) {
     return isStaticDigitalType(packed.getElementType());
   if (auto unpacked = dyn_cast<sim::UnpackedArrayType>(type))
     return isStaticDigitalType(unpacked.getElementType());
+  if (isa<sim::PackedStructType, sim::PackedUnionType>(type)) {
+    for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+         index != count; ++index)
+      if (!isStaticDigitalType(sim::getAggregateElementType(type, index)))
+        return false;
+    return true;
+  }
   return false;
 }
 
@@ -188,13 +197,286 @@ bool isComputeBodyFusionEligibleImpl(
 
 } // namespace
 
+CombinationalFusionAnalysis::CombinationalFusionAnalysis(
+    sim::SimDesignOp design,
+    const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis) {
+  auto graph = design.getComputeGraphAttr();
+  // Full foreign mutation needs a range-scoped invalidation route for this
+  // idempotent kernel. Existing externally driven evaluators retain their
+  // own admission; do not silently extend their contract here.
+  unsupported = !graph || graph.getVpi() == sim::ComputeVPIMode::Full;
+  if (!graph)
+    return;
+  design.walk([&](Operation *op) {
+    unsupported |= isa<sim::SimDPICallOp, sim::SimOverrideOp,
+                       sim::SimReleaseOverrideOp, sim::SimDynamicOverrideOp,
+                       sim::SimProcessControlOp, sim::SimControlDisableOp>(op);
+  });
+  if (unsupported)
+    return;
+  llvm::StringMap<sim::SimFuncOp> functions;
+  llvm::StringMap<SmallVector<Operation *>> callers;
+  DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
+  bool haveCallers = false;
+  auto resolveFormal = [&](StringAttr owner, sim::ComputeEffectAttr effect) {
+    if (!haveCallers) {
+      for (sim::SimFuncOp function :
+           design.getBody().front().getOps<sim::SimFuncOp>())
+        functions[function.getSymName()] = function;
+      design.walk([&](Operation *op) {
+        if (auto call = dyn_cast<sim::SimTaskCallOp>(op))
+          callers[call.getCallee()].push_back(op);
+        else if (auto call = dyn_cast<sim::SimCallOp>(op))
+          callers[call.getCallee()].push_back(op);
+        else if (auto spawn = dyn_cast<sim::SimSpawnOp>(op))
+          callers[spawn.getCallee()].push_back(op);
+        // Descriptor-dispatched call targets need their own complete binding
+        // inventory. A direct-call inventory cannot certify those mutations.
+        else if (isa<sim::SimClassVirtualTaskCallOp, sim::SimClassVirtualCallOp,
+                     sim::SimClassDirectCallOp>(op))
+          unsupported = true;
+      });
+      haveCallers = true;
+    }
+    using Formal = std::pair<StringAttr, unsigned>;
+    SmallVector<Formal> pending{
+        {owner, static_cast<unsigned>(effect.getFormal())}};
+    DenseSet<Formal> seen;
+    while (!pending.empty()) {
+      auto [name, index] = pending.pop_back_val();
+      if (!seen.insert({name, index}).second)
+        continue;
+      auto function = functions.lookup(name.getValue());
+      auto sites = callers.find(name.getValue());
+      if (!function || function->hasAttr("obelisk_sim.dpi_export") ||
+          sites == callers.end()) {
+        unsupported = true;
+        continue;
+      }
+      for (Operation *site : sites->second) {
+        ValueRange arguments = site->getOperands();
+        if (auto task = dyn_cast<sim::SimTaskCallOp>(site))
+          arguments = task.getArguments();
+        auto caller = site->getParentOfType<sim::SimFuncOp>();
+        if (!caller || index >= arguments.size()) {
+          unsupported = true;
+          continue;
+        }
+        auto [facts, inserted] = provenance.try_emplace(caller.getOperation());
+        if (inserted)
+          facts->second = provenanceAnalysis.derive(caller);
+        auto actual = facts->second.find(arguments[index]);
+        if (actual == facts->second.end()) {
+          unsupported = true;
+          continue;
+        }
+        const auto &target = actual->second;
+        if (target.resource == sim::ComputeResourceKind::Local)
+          continue;
+        if (target.resource != sim::ComputeResourceKind::Storage) {
+          unsupported = true;
+        } else if (target.descriptor) {
+          // Resolve physical roots, not combinations of call paths. Widen
+          // formal subranges within each root until an offset-sensitive call
+          // proof is available; unrelated roots stay independent.
+          auto resolved = sim::ComputeEffectAttr::get(
+              design.getContext(), effect.getEffect(), target.resource,
+              sim::ComputeTargetKind::Descriptor, *target.descriptor, 0, 0,
+              target.rootWidth, true, effect.getDeferred(),
+              effect.getTrigger());
+          storageWriters[*target.descriptor].push_back({owner, resolved});
+        } else if (target.formal) {
+          pending.push_back({caller.getSymNameAttr(), *target.formal});
+        } else {
+          unsupported = true;
+        }
+      }
+    }
+  };
+  for (Attribute attr : graph.getNodes()) {
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attr);
+    if (!fragment)
+      continue;
+    if (fragment.getTier() != sim::ComputeTierKind::Native)
+      nonNativeOwners.insert(fragment.getFunction().getAttr());
+    for (Attribute attr : fragment.getEffects()) {
+      auto effect = cast<sim::ComputeEffectAttr>(attr);
+      if (effect.getEffect() != sim::ComputeEffectKind::Write &&
+          effect.getEffect() != sim::ComputeEffectKind::NBA)
+        continue;
+      if (effect.getResource() != sim::ComputeResourceKind::Storage &&
+          effect.getResource() != sim::ComputeResourceKind::Unknown)
+        continue;
+      if (effect.getResource() == sim::ComputeResourceKind::Storage &&
+          effect.getTarget() == sim::ComputeTargetKind::Formal) {
+        resolveFormal(fragment.getFunction().getAttr(), effect);
+        continue;
+      }
+      if (effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+          effect.getResource() == sim::ComputeResourceKind::Unknown) {
+        unsupported = true;
+        continue;
+      }
+      storageWriters[effect.getDescriptor()].push_back(
+          {fragment.getFunction().getAttr(), effect});
+    }
+  }
+}
+
+std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
+    sim::SimFuncOp function,
+    const analysis::DescriptorProvenanceAnalysis &analysis) const {
+  if (unsupported || !function || function.isExternal() ||
+      function.getEntryKind() != sim::EntryKind::AlwaysComb ||
+      function.getHomeRegion() != sim::EventRegion::Active ||
+      nonNativeOwners.contains(function.getSymNameAttr()) ||
+      !isComputeBodyFusionEligible(function, analysis))
+    return std::nullopt;
+  auto &entry = function.getBody().front();
+  auto start = dyn_cast<cf::BranchOp>(entry.getTerminator());
+  if (!start || !start.getDestOperands().empty())
+    return std::nullopt;
+  for (Operation &op : entry.without_terminator())
+    if (!isMemoryEffectFree(&op) || !isSpeculatable(&op))
+      return std::nullopt;
+  CombinationalFusionBody result{start.getDest(), nullptr, {}, {}};
+  SmallVector<Value> reads, watches;
+  SmallVector<Operation *> stores;
+  auto provenance = analysis.derive(function);
+  bool valid = true;
+  function.walk([&](Operation *op) {
+    if (op == function.getOperation())
+      return;
+    if (auto change = dyn_cast<sim::SimSuspendChangeOp>(op)) {
+      valid &= !result.suspend;
+      result.suspend = op;
+      watches.push_back(change.getWatched());
+    } else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(op)) {
+      valid &= !result.suspend && llvm::all_of(any.getEdges(), [](int32_t e) {
+        return e == static_cast<int32_t>(sim::EdgeKind::Change);
+      });
+      result.suspend = op;
+      watches.append(any.getWatched().begin(), any.getWatched().end());
+    } else if (auto load = dyn_cast<sim::SimRefLoadOp>(op)) {
+      reads.push_back(load.getReference());
+    } else if (auto load = dyn_cast<sim::SimNetReadOp>(op)) {
+      reads.push_back(load.getNet());
+    } else if (auto store = dyn_cast<sim::SimRefStoreOp>(op)) {
+      result.outputs.push_back(store.getReference());
+      stores.push_back(op);
+    } else if (!isa<cf::BranchOp, cf::CondBranchOp>(op)) {
+      valid &= op->getNumRegions() == 0 && isMemoryEffectFree(op);
+    }
+  });
+  if (!valid || !result.suspend || result.outputs.empty() || watches.empty() ||
+      result.suspend->getSuccessor(0) != result.activation ||
+      !cast<BranchOpInterface>(result.suspend)
+           .getSuccessorOperands(0)
+           .getForwardedOperands()
+           .empty())
+    return std::nullopt;
+  if (auto region =
+          result.suspend->getAttrOfType<sim::EventRegionAttr>("resume_region");
+      region && region.getValue() != sim::EventRegion::Active)
+    return std::nullopt;
+  // An always_comb spelling is not a proof that every path assigns its
+  // outputs. Retained-state behavior keeps the original activation protocol.
+  DominanceInfo dominance(function);
+  for (Operation *store : stores)
+    if (!dominance.dominates(store, result.suspend))
+      return std::nullopt;
+  auto precise = [&](Value value) -> const analysis::DescriptorProvenance * {
+    auto found = provenance.find(value);
+    if (found == provenance.end() || !found->second.descriptor ||
+        found->second.dynamic || !found->second.width ||
+        found->second.low > UINT64_MAX - found->second.width)
+      return nullptr;
+    return &found->second;
+  };
+  auto overlap = [](const auto &a, const auto &b) {
+    return a.resource == b.resource && a.descriptor == b.descriptor &&
+           a.low < b.low + b.width && b.low < a.low + a.width;
+  };
+  for (Value read : reads) {
+    const auto *r = precise(read);
+    if (!r || !llvm::any_of(watches, [&](Value watch) {
+          const auto *w = precise(watch);
+          return w && r->resource == w->resource &&
+                 r->descriptor == w->descriptor && w->low <= r->low &&
+                 r->low + r->width <= w->low + w->width;
+        }))
+      return std::nullopt;
+  }
+  for (auto [index, output] : llvm::enumerate(result.outputs)) {
+    const auto *w = precise(output);
+    auto type = dyn_cast<sim::RefType>(output.getType());
+    if (!w || !type || !sim::getPackedScalarType(type.getElementType()))
+      return std::nullopt;
+    for (Value read : reads)
+      if (overlap(*w, *precise(read)))
+        return std::nullopt;
+    for (Value previous : ArrayRef(result.outputs).take_front(index)) {
+      const auto *p = precise(previous);
+      if (!p || overlap(*w, *p))
+        return std::nullopt;
+    }
+    auto writers = storageWriters.find(*w->descriptor);
+    if (writers == storageWriters.end())
+      return std::nullopt;
+    for (auto [owner, effect] : writers->second) {
+      if (owner == function.getSymNameAttr())
+        continue;
+      if (effect.getDynamic() || !effect.getWidth() ||
+          effect.getLow() > UINT64_MAX - effect.getWidth() ||
+          (w->low < effect.getLow() + effect.getWidth() &&
+           effect.getLow() < w->low + w->width))
+        return std::nullopt;
+    }
+  }
+  // Cut the implicit wait before topological sorting. The process backedge is
+  // not combinational feedback. Every other CFG cycle stays outside the group.
+  DenseMap<Block *, unsigned> incoming;
+  for (Block &block : llvm::drop_begin(function.getBody()))
+    incoming[&block] = 0;
+  for (auto &[block, count] : incoming) {
+    (void)count;
+    if (block->getTerminator() == result.suspend)
+      continue;
+    if (!isa<cf::BranchOp, cf::CondBranchOp>(block->getTerminator()))
+      return std::nullopt;
+    for (Block *next : block->getSuccessors()) {
+      auto found = incoming.find(next);
+      if (found == incoming.end())
+        return std::nullopt;
+      ++found->second;
+    }
+  }
+  SmallVector<Block *> ready;
+  for (Block &block : llvm::drop_begin(function.getBody()))
+    if (!incoming.lookup(&block))
+      ready.push_back(&block);
+  if (ready.size() != 1 || ready.front() != result.activation)
+    return std::nullopt;
+  for (size_t cursor = 0; cursor < ready.size(); ++cursor) {
+    Block *block = ready[cursor];
+    if (block->getTerminator() != result.suspend)
+      for (Block *next : block->getSuccessors())
+        if (--incoming[next] == 0)
+          ready.push_back(next);
+  }
+  if (ready.size() != incoming.size())
+    return std::nullopt;
+  result.blocks = std::move(ready);
+  return result;
+}
+
 bool isComputeBodyFusionEligible(
     sim::SimFuncOp function,
     const analysis::DescriptorProvenanceAnalysis &provenance) {
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
   return isComputeBodyFusionEligibleImpl(function, provenance, cache, active,
-                                        false);
+                                         false);
 }
 
 bool isPrimitiveComputeBodyFusionEligible(
@@ -203,7 +485,7 @@ bool isPrimitiveComputeBodyFusionEligible(
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
   return isComputeBodyFusionEligibleImpl(function, provenance, cache, active,
-                                        true);
+                                         true);
 }
 
 SmallVector<uint32_t>

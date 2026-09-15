@@ -36,7 +36,7 @@ public:
 
 private:
   Statistic plannedFusions{this, "planned-fusions",
-                           "globally adjacent process-body fusions planned"};
+                           "certified process-body fusions planned"};
   Statistic rejectedActors{
       this, "rejected-actors",
       "native direct-wait actors rejected by body eligibility"};
@@ -275,14 +275,14 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     if (functionEntry == entryOrder.end())
       continue;
     std::optional<uint64_t> instanceScope = getInstanceScope(function);
-    if (evalBodyFusion && !instanceScope) {
+    if (bodyFusion && !instanceScope) {
       ++rejectedActors;
       continue;
     }
 
-    bySensitivity[{sensitivity, evalBodyFusion ? *instanceScope : 0}].push_back(
+    bySensitivity[{sensitivity, bodyFusion ? *instanceScope : 0}].push_back(
         {static_cast<int64_t>(index), resume->second, 0, functionEntry->second,
-         function.getOperation(), evalBodyFusion ? *instanceScope : 0});
+         function.getOperation(), bodyFusion ? *instanceScope : 0});
   }
 
   SmallVector<Attribute> fusions;
@@ -291,8 +291,14 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     Attribute sensitivity = key.first;
     if (candidates.size() < 2)
       continue;
-    SmallVector<uint32_t> readyTargets = getComputeFusionReadyTargets(
-        graph, cast<sim::ComputeEffectAttr>(sensitivity));
+    // Body fusion chooses a stable, legal Active ordering for this cohort;
+    // unrelated ready actors need not remain between its members. Keep the
+    // adjacency inventory only for fragment batches, which retain the old
+    // dispatch order. The materializer certifies the indivisible activation.
+    SmallVector<uint32_t> readyTargets;
+    if (!bodyFusion)
+      readyTargets = getComputeFusionReadyTargets(
+          graph, cast<sim::ComputeEffectAttr>(sensitivity));
     llvm::erase_if(readyTargets, [&](uint32_t target) {
       return !scheduleOrder.contains(target);
     });
@@ -305,6 +311,13 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     for (auto [order, target] : llvm::enumerate(readyTargets))
       readyOrder.try_emplace(target, static_cast<uint32_t>(order));
     llvm::erase_if(candidates, [&](FusionCandidate &candidate) {
+      if (bodyFusion) {
+        auto order = scheduleOrder.find(candidate.resumeTarget);
+        if (order == scheduleOrder.end())
+          return true;
+        candidate.order = order->second;
+        return false;
+      }
       auto order = readyOrder.find(candidate.resumeTarget);
       if (order == readyOrder.end())
         return true;
@@ -338,7 +351,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
           candidate.order == static_cast<uint64_t>(*previousOrder) + 1 &&
           (bodyFusion || candidate.entryOrder ==
                              static_cast<uint64_t>(*previousEntryOrder) + 1);
-      if ((!fragments.empty() && !adjacent && !evalBodyFusion) ||
+      if ((!fragments.empty() && !adjacent && !bodyFusion) ||
           functions.contains(candidate.function))
         flush();
       fragments.push_back(candidate.fragment);
@@ -349,6 +362,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     flush();
   }
   if (bodyFusion) {
+    CombinationalFusionAnalysis combinational(design, provenance);
     using CohortKey = std::pair<uint64_t, Attribute>;
     llvm::MapVector<CohortKey, SmallVector<int64_t>> continuousByScope;
     llvm::SmallDenseSet<Operation *> seen;
@@ -359,16 +373,23 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
            fragment.getAction() != sim::ComputeActionKind::SuspendAny))
         continue;
       sim::SimFuncOp function = lookupFunction(fragment.getFunction());
+      bool combinationalBody =
+          !primitiveOnly && function &&
+          function.getEntryKind() == sim::EntryKind::AlwaysComb &&
+          entirelyNative.lookup(function.getOperation()) &&
+          combinational.analyze(function, provenance).has_value();
       if (!function || seen.contains(function.getOperation()) ||
-          !isStraightLineContinuous(function,
-                                    isBodyEligible(function, primitiveOnly),
-                                    primitiveOnly) ||
+          (!combinationalBody &&
+           !isStraightLineContinuous(function,
+                                     isBodyEligible(function, primitiveOnly),
+                                     primitiveOnly)) ||
           (primitiveOnly && (!function->hasAttr("obelisk_sim.primitive_name") ||
                              !entirelyNative.lookup(function.getOperation()))))
         continue;
       seen.insert(function.getOperation());
       std::optional<uint64_t> instanceScope = getInstanceScope(function);
-      if ((evalBodyFusion || primitiveOnly) && !instanceScope) {
+      if ((evalBodyFusion || primitiveOnly || combinationalBody) &&
+          !instanceScope) {
         ++rejectedActors;
         continue;
       }
@@ -381,27 +402,84 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       // convergence schedule. Keep the older acyclic-only profitability rule
       // for general actors.
       if (resume == resumeTargets.end() ||
-          (!primitiveOnly && !acyclicActive.contains(resume->second)))
+          (!primitiveOnly && !combinationalBody &&
+           !acyclicActive.contains(resume->second)))
         continue;
       Attribute primitive =
           primitiveOnly ? function->getAttr("obelisk_sim.primitive_name")
                         : Attribute{};
-      continuousByScope[{evalBodyFusion || primitiveOnly ? *instanceScope : 0,
+      if (combinationalBody)
+        primitive = function.getEntryKindAttr();
+      continuousByScope[{evalBodyFusion || primitiveOnly || combinationalBody
+                             ? *instanceScope
+                             : 0,
                          primitive}]
           .push_back(static_cast<int64_t>(index));
     }
+    DenseMap<StringAttr, SmallVector<StringAttr>> sensitivityTargets;
+    bool haveRankedCohort =
+        llvm::any_of(continuousByScope, [](const auto &entry) {
+          return isa_and_nonnull<sim::EntryKindAttr>(entry.first.second) &&
+                 entry.second.size() >= 2;
+        });
+    if (haveRankedCohort)
+      for (Attribute attribute : graph.getEdges()) {
+        auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+        if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity)
+          continue;
+        auto source = cast<sim::ComputeFragmentAttr>(nodes[edge.getSource()]);
+        auto target = cast<sim::ComputeFragmentAttr>(nodes[edge.getTarget()]);
+        sensitivityTargets[source.getFunction().getAttr()].push_back(
+            target.getFunction().getAttr());
+      }
     for (auto &[key, continuous] : continuousByScope) {
-      (void)key;
       llvm::sort(continuous, [&](int64_t lhs, int64_t rhs) {
         return std::tie(scheduleOrder[resumeTargets.lookup(lhs)], lhs) <
                std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);
       });
-      for (size_t offset = 0; offset < continuous.size();
-           offset += maxStraightLineMembers) {
+      auto inlineLimit =
+          module->getAttrOfType<IntegerAttr>("obelisk.native.max_inline_ops");
+      uint64_t budget = inlineLimit ? inlineLimit.getUInt() : 5000;
+      bool rankedCombinational =
+          isa_and_nonnull<sim::EntryKindAttr>(key.second);
+      DenseMap<StringAttr, size_t> order;
+      if (rankedCombinational)
+        for (auto [index, member] : llvm::enumerate(continuous))
+          order[cast<sim::ComputeFragmentAttr>(nodes[member])
+                    .getFunction()
+                    .getAttr()] = index;
+      for (size_t offset = 0; offset < continuous.size();) {
+        size_t count = std::min<size_t>(maxStraightLineMembers,
+                                        continuous.size() - offset);
+        if (rankedCombinational) {
+          uint64_t cost = 0;
+          for (size_t index = 0; index < count; ++index) {
+            auto fragment = cast<sim::ComputeFragmentAttr>(
+                nodes[continuous[offset + index]]);
+            // Cut a backward edge at a shared-loop boundary instead of
+            // excluding every actor in a conservative SCC. Each resulting
+            // kernel is forward-only; inter-kernel feedback remains ordinary
+            // publication/reactivation under the same event loop.
+            bool backward = false;
+            for (StringAttr target :
+                 sensitivityTargets[fragment.getFunction().getAttr()]) {
+              auto found = order.find(target);
+              backward |= found != order.end() && found->second >= offset &&
+                          found->second <= offset + index;
+            }
+            uint64_t next = analysis::getSimulationOperationCost(
+                lookupFunction(fragment.getFunction()).getOperation());
+            if (backward || (budget && next > budget - cost)) {
+              count = std::max<size_t>(1, index);
+              break;
+            }
+            if (budget)
+              cost += next;
+          }
+        }
         ArrayRef<int64_t> chunk =
-            ArrayRef<int64_t>(continuous)
-                .slice(offset, std::min<size_t>(maxStraightLineMembers,
-                                                continuous.size() - offset));
+            ArrayRef<int64_t>(continuous).slice(offset, count);
+        offset += count;
         if (chunk.size() < 2)
           continue;
         fusions.push_back(sim::ComputeFusionAttr::get(

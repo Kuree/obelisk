@@ -77,7 +77,7 @@ void publishAction(OpBuilder &builder, Location location, Value instance,
 }
 
 LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
-                                 StringRef baseName) {
+                                 StringRef baseName, bool directActivation) {
   OpBuilder builder(ramp);
   builder.setInsertionPointAfter(ramp);
   Location location = ramp.getLoc();
@@ -122,23 +122,29 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
-  Value handle = loadAt(builder, location, instance, kInstanceNativeHandleField,
-                        pointer, 0);
-  Value bits =
-      LLVM::PtrToIntOp::create(builder, location, builder.getI64Type(), handle);
-  Value isNull = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, bits,
-      llvmConstant(builder, location, builder.getI64Type(), 0));
-  cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
-                           resume, ValueRange{});
+  if (directActivation) {
+    cf::BranchOp::create(builder, location, start);
+  } else {
+    Value handle = loadAt(builder, location, instance,
+                          kInstanceNativeHandleField, pointer, 0);
+    Value bits = LLVM::PtrToIntOp::create(builder, location,
+                                          builder.getI64Type(), handle);
+    Value isNull = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, bits,
+        llvmConstant(builder, location, builder.getI64Type(), 0));
+    cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
+                             resume, ValueRange{});
+    builder.setInsertionPointToStart(resume);
+    LLVM::CoroResumeOp::create(builder, location, handle);
+    cf::BranchOp::create(builder, location, done);
+  }
+  if (directActivation)
+    resume->erase();
   builder.setInsertionPointToStart(start);
   Value modeExecute = llvmConstant(builder, location, i32, 1);
   Value nullOut = LLVM::ZeroOp::create(builder, location, pointer);
   LLVM::CallOp::create(builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
                        ValueRange{instance, modeExecute, nullOut, nullOut});
-  cf::BranchOp::create(builder, location, done);
-  builder.setInsertionPointToStart(resume);
-  LLVM::CoroResumeOp::create(builder, location, handle);
   cf::BranchOp::create(builder, location, done);
   builder.setInsertionPointToStart(done);
   Value status =
@@ -151,6 +157,11 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
       LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
   copyNativePartition(ramp, destroy);
   Block *destroyEntry = destroy.addEntryBlock(builder);
+  if (directActivation) {
+    builder.setInsertionPointToStart(destroyEntry);
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+    return success();
+  }
   Block *destroyCall = new Block;
   Block *destroyDone = new Block;
   destroy.getBody().push_back(destroyCall);

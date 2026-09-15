@@ -65,8 +65,10 @@ endmodule
 // CHECK: obelisk-signal-diagnostics
 // A startup force remains active until a vpiReleaseFlag operation.  The
 // generated schedule therefore keeps ownership in the fine scheduler, whose
-// direct native waits must be routed through its ordinary candidate set.
-// CHECK-SAME: readiness_calls={{[1-9][0-9]*}}
+// direct native waits still use its candidate set. Their validated publication
+// latches now establish readiness without rescanning serialized wait records.
+// CHECK-SAME: readiness_calls=0
+// CHECK-SAME: candidate_scans={{[1-9][0-9]*}}
 // CHECK-SAME: scheduler_iterations={{[1-9][0-9]*}}
 // CHECK-SAME: aot_node_executions=0
 // CHECK-SAME: aot_fanout_entries=0

@@ -137,11 +137,8 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
 // Scheduler queue maintenance (Process.cpp)
 //===----------------------------------------------------------------------===//
 
-bool nativeWaitReady(obelisk_rt_context &context,
-                     const ScheduledProcess &process);
 bool nativeProcessReady(obelisk_rt_context &context,
-                        const ScheduledProcess &process,
-                        bool directStaticSignalWait);
+                        const ScheduledProcess &process);
 inline const obelisk_rt_wait_record_v1 *
 designTaskCurrentWait(const ScheduledDesignTask &task) {
   if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||

@@ -948,9 +948,119 @@ termination destroys the suspended stack without replaying completed work
 (IEEE 1800-2023 13.3 and 4.6). Other installed actors remain scheduled during
 the call. Task-owned direct waits retain runtime subscriptions and participate
 in the existing dynamic-fanout guard until those subscriptions are removed.
-This runtime handoff does not yet admit mixed designs to generated Tier-1
-groups: compiler admission and complete publication coverage remain separate
+This runtime handoff alone does not certify a closed generated evaluator:
+compiler admission and complete publication coverage remain separate
 requirements.
+
+Mixed designs also admit local ranked combinational kernels under the shared
+descriptor loop. Their admission is independent of the closed generated
+coordinator. The current certificate covers finite `always_comb` activations
+whose reads are covered by their exact change sensitivity, whose output slices
+are exclusive and disjoint, and whose single stores dominate the terminal
+wait. A wait backedge is cut before checking the activation CFG for cycles.
+Reads of written state, overlapping/repeated stores, conditional retention,
+task or foreign operations, and `always_latch` retain their original actors.
+This follows the startup and sensitivity distinctions in IEEE 1800-2023
+9.2.2.2--9.2.2.3; the process spelling alone never proves combinational behavior.
+
+The bounded kernel keeps each member's source CFG and original stores, and
+evaluates its members in forward order at each union activation. Complete,
+exclusive, deterministic assignments prove that an unchanged-input member
+writes exactly its existing four-state value and publishes no transition.
+This idempotence proof removes input snapshots and per-member ready checks;
+it does not permit extra task calls, coverage hits or other observable effects.
+Single-store proofs exclude hidden intermediate writes and retained state.
+Planning cuts backward dependencies between bounded kernels, allowing forward
+segments inside a larger feedback component. Materialization independently
+rejects any internal backward edge left in a supplied group. The common loop
+continues to own outside publications, tasks, NBA commits and time; the kernel
+returns after one finite ranked activation. It retains `always_comb` startup
+and self-sensitivity suppression. Full foreign write capability, unresolved
+writers and force/release currently exclude this particular certificate until
+it has a range-scoped invalidation path. Existing externally driven generated
+evaluators keep their separate admission and clock-publication protocol.
+Reference-argument writers are resolved through direct call, task-call and
+spawn bindings before checking exclusivity. This finite traversal follows
+formal-to-formal bindings to their possible storage roots, and conservatively
+protects each whole root. A dump task writing a bound buffer therefore does
+not exclude unrelated compute outputs. Local allocations cannot alias design
+storage; unresolved bindings, exported reference entry points and unsupported
+indirect dispatch retain conservative exclusion. The inventory is tied to the
+current graph revision and does not cache foreign mutation assumptions.
+Packed structs and unions participate when every field belongs to the same
+supported digital type subset as scalar and array values. Aggregate spelling
+does not imply a control boundary or a two-state proof; the original value and
+unknown planes remain intact.
+
+An unmanaged task caller can likewise use an ordinary native activation entry
+across multiple direct waits and task calls. Each task call publishes the
+existing task action after saving its live continuation values to the canonical
+frame; it returns instead of preserving a native coroutine stack. Only the
+task activation is dispatched separately, and completion resumes the caller
+after the call without replaying earlier stores or side effects. Unsupported
+waits, managed activation state and raw-pointer continuation values keep the
+coroutine path. This changes the executor at a boundary, not the event loop.
+
+Local clocked body fusion is independent of that whole-design admission. A
+certified cohort can execute as one compiled activation under the shared
+descriptor loop while an unrelated task drives its clock. The loop still
+owns subscriptions, task continuations and ordered NBA commits. Threaded
+continuation arguments no longer exclude such a cohort merely because the
+design lacks a closed evaluator. Before removing those arguments, the
+materializer follows every incoming CFG edge to prove that each wait lane
+retains its initial SSA value. Both edges of a conditional branch count even
+when they share a predecessor. Changing values, unresolved operands and
+additional entries to the activation body retain the original actors. Eval
+uses the same proof; selecting an executor never establishes an invariant.
+After successful reconstruction, branch operands are removed with their
+destination arguments. This extends the existing local fusion contract; it
+does not establish general rank-ordered Tier-1 admission for mixed designs.
+
+Same-trigger clocked cohorts may choose consecutive Active execution even
+when the previous scheduler placed unrelated actors between their members
+(IEEE 1800-2023 4.6-4.8). Members retain a stable order, share their elaborated
+instance, execution domain and home region, and have no intervening task or
+control boundary. An early member may wake an outside consumer: its canonical
+publication is retained, and the common loop executes that consumer after the
+cohort returns. Ordered NBA records remain separate and commit under the same
+loop, including further Active/NBA iterations. A blocking write to the
+cohort's own trigger prevents fusion because merging rearm points could lose
+an activation. This rule does not relax always_comb/always_latch startup,
+self-sensitivity or retained-state semantics; they keep their existing path.
+
+Certified local groups with one direct signal suspension and no managed
+activation state lower to ordinary native functions when they do not already
+have a direct evaluator body. Closed evaluators keep their existing fragment
+fallback alongside that direct body. Each ordinary invocation selects
+the stable continuation from the canonical process frame, executes the group,
+stores its live continuation values and wait record, and returns the existing
+fragment action to the shared event loop. These groups allocate no coroutine
+frame and retain no native resume address. Task and other control boundaries
+keep coroutine execution. Both forms retain the same descriptor and canonical
+frame contract, so a bytecode continuation can resume through the ordinary
+group entry. Group stores and NBA enqueues still use the runtime publication
+and ordered-update paths; this local executor does not commit NBA or advance
+time. The optimization requires a materialized group and structural suspension
+validation. Unproved raw-pointer continuation state retains its coroutine
+frame until its lifetime can be established.
+
+An ordinary group loads capture handles and its current runtime context once
+on entry, keeping those bindings in SSA for that invocation. The next entry
+reloads them from the canonical instance, including after bytecode or an
+external boundary. This does not cache signal values or omit publications.
+Coroutine executors retain their resume-safe per-use reloads. Boundary
+validation retains its offset, field-kind and frame-size checks.
+Direct signal readiness uses the publication latch established by a validated
+subscription in every executor. It does not reread the serialized wait on
+each queue comparison. A new suspension still validates its action and frame
+and installs or refreshes the subscriptions before it can become runnable.
+Region selection retains its separate checks for slot-final timing observers.
+For descriptor execution without an installed plan, those checks inspect frame
+records only when the optional clock-occurrence feature state exists;
+registering such a wait creates that state before readiness can be published.
+Installed plans retain the check because they can own waits without runtime
+subscriptions. Ordinary descriptor execution therefore pays no wait lookup
+cost for inactive timing-observer support.
 
 The internal native-plan ABI now has an optional exact canonical-range
 invalidation hook, with target-derived layout shared by native and wasm32.
@@ -1143,10 +1253,14 @@ The pre-cloning promotion sweep indexes storage accessors and reference escapes
 once per design, then checks each function's loads and stores locally. Passing
 a reference through a spawn is allowed only when that spawn targets the sole
 accessor. Multiple accessors, other spawn targets, and opaque reference uses
-remain conservative. The index survives only the removal of already-private
-accesses; fusion and other transformations that introduce accessors require a
-fresh index. Dominance, suspension boundaries and value-domain checks remain
-separate from these identity facts.
+remain conservative. Per-function contributions track accessor identities,
+escape counts and spawn-target counts. Clocked fusion removes old contributions
+before erasing actors, then refreshes the new group and its rewritten root
+spawner before checking exclusivity. Promotion and evaluator cloning refresh
+their resulting bodies. Other transformations that introduce helpers discard
+the index; it is rebuilt lazily only if another clocked group needs it.
+Dominance, suspension boundaries and value-domain checks remain separate from
+these identity facts.
 
 The generated call-closure verifier builds a local symbol index and visits each
 reachable function once. Direct calls and the certified target sets of indirect
@@ -1250,15 +1364,15 @@ same fine-fragment identities back to stabilization before native execution
 resumes.
 
 The first executable coarsening step reuses compute-body fusion rather than
-adding a second inliner. It clones adjacent same-trigger native bodies into one
+adding a second inliner. It clones certified same-trigger native bodies into one
 function before LLVM lowering, including CFG block arguments, while retaining
 the original code-unit and hierarchy declarations as the identity layer. Pure
 root-entry preambles may be separated by unrelated spawns because they are
-folded into the fused actor without observable work. An outgoing Active wake is
-allowed only from the final cloned body: the fused actor then returns directly
-to the scheduler, whereas a wake from an earlier body could require an external
-actor to run between kernel members. General macro-task lowering will replace
-this deliberately narrow actor fusion, but it uses the same fine fragment IDs
+folded into the fused actor without observable work. Outgoing Active wakes
+remain canonical publications; the common loop selects outside consumers after
+the chosen consecutive cohort execution. Internal writes to the common trigger
+remain a boundary so that earlier members cannot miss a reactivation. General
+macro-task lowering extends this actor fusion using the same fine fragment IDs
 and scheduler boundaries rather than introducing a competing graph.
 
 The generated event schedule is indexed by canonical storage root and exact
