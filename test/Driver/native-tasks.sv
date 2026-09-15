@@ -173,8 +173,10 @@ endmodule
 // CHECK-DAG: shared=1
 // CHECK-DAG: args=8,12,23
 // CHECK-DAG: shared=1
-// CHECK: cancel-copyout=7
-// CHECK: event=42
+// Cancellation and event completion occur in separate processes at time 3.
+// Either Active-region order is legal; both must precede the timed return.
+// CHECK-DAG: cancel-copyout=7
+// CHECK-DAG: event=42
 // CHECK: timed=7
 // CHECK-NOT: cancelled-task-returned
 

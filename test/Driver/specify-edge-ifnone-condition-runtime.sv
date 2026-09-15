@@ -42,6 +42,9 @@ module specify_edge_ifnone_condition_runtime;
     // Clause 30.4.4.1 represents a vector condition by its LSB, so 2'b10 is
     // false and selects the ifnone delay.
     condition = 2'b10;
+    // The input ports are copy connections. Let the condition propagate
+    // before the clock edge instead of racing the two port processes.
+    #0;
     clock = 1;
     #1 $display("lsb-pending %b", q);
     #1.001 $display("lsb-done %b", q);
@@ -51,6 +54,7 @@ module specify_edge_ifnone_condition_runtime;
 
     // The same clause treats an X or Z condition result as true.
     condition = 2'bxx;
+    #0;
     clock = 1;
     #2.001 $display("x-pending %b", q);
     #3 $display("x-done %b", q);

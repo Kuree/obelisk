@@ -1186,6 +1186,7 @@ private:
   void orderStartupSpawns();
   void buildControlEdges();
   void buildDataEdges();
+  SmallVector<sim::ComputeEdgeAttr> buildSchedulingEdges();
   LogicalResult buildSites(ComputeGraphResult &result);
   FailureOr<ArrayAttr> buildRegions();
 
@@ -1602,20 +1603,11 @@ void ComputeGraphBuilder::buildDataEdges() {
     return isSettlingEntryKind(fragments[id].function.getEntryKind());
   };
   SmallVector<sim::ComputeEdgeAttr> processEdges;
-  SmallVector<sim::ComputeEdgeAttr> settleEdges;
   for (sim::ComputeEdgeAttr edge : edges) {
-    if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder) {
+    if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder &&
+        fragments[edge.getSource()].function.getHomeRegion() ==
+            fragments[edge.getTarget()].function.getHomeRegion())
       processEdges.push_back(edge);
-      settleEdges.push_back(edge);
-      continue;
-    }
-    // Only the continuously propagating processes are ranked by what they
-    // carry. Everywhere else a conflict is a choice among legal interleavings,
-    // and the existing one stays: reordering those would move output a design
-    // is entitled to see in either order, for no gain.
-    if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&
-        settles(edge.getSource()) && settles(edge.getTarget()))
-      settleEdges.push_back(edge);
   }
   SmallVector<uint32_t> fragmentIds;
   fragmentIds.reserve(fragments.size());
@@ -1629,24 +1621,29 @@ void ComputeGraphBuilder::buildDataEdges() {
     for (uint32_t member : members)
       controlGroupForFragment[member] = static_cast<unsigned>(group);
 
-  // Where a fragment lands once the sensitivity edges are counted too. The
-  // chain below picks one legal order for conflicting producers, and picking
-  // one that contradicts a producer-wakes-consumer edge would make the pair
-  // strongly connected: a cycle that only a fixpoint settles, and that a
-  // time-zero reader can observe half-finished. Ranking with those edges
-  // included costs nothing when they agree with the control order and breaks
-  // the tie the right way when they do not. A genuine loop stays a loop --
-  // its members share a rank, and the deterministic group order still applies.
-  SmallVector<unsigned> settleRank(fragments.size(), 0);
+  // Choose race ordering along the SAME activation graph used for region
+  // planning, before adding arbitrary conflict edges. In particular, account
+  // for non-settling producers and the work resumed by a settling publication.
+  // Ordering only the watch fragments can put a consumer before its producer
+  // and manufacture a large convergence SCC in an otherwise acyclic cone.
+  // Every conflict edge below is monotone in this condensation, so it cannot
+  // merge distinct activation SCCs. Required process order remains intact;
+  // cross-region order is provided by the event loop (IEEE 1800-2023 4.4-4.7).
+  SmallVector<sim::ComputeEdgeAttr> activationEdges = buildSchedulingEdges();
+  llvm::erase_if(activationEdges, [&](sim::ComputeEdgeAttr edge) {
+    return fragments[edge.getSource()].function.getHomeRegion() !=
+           fragments[edge.getTarget()].function.getHomeRegion();
+  });
+  SmallVector<unsigned> activationRank(fragments.size(), 0);
   for (auto [rank, members] : llvm::enumerate(
-           computeSCCSchedule(fragmentIds, settleEdges, settlingFirst)))
+           computeSCCSchedule(fragmentIds, activationEdges, settlingFirst)))
     for (uint32_t member : members)
-      settleRank[member] = static_cast<unsigned>(rank);
+      activationRank[member] = static_cast<unsigned>(rank);
   SmallVector<unsigned> groupRank(controlGroups.size(),
                                   std::numeric_limits<unsigned>::max());
   for (auto [group, members] : llvm::enumerate(controlGroups))
     for (uint32_t member : members)
-      groupRank[group] = std::min(groupRank[group], settleRank[member]);
+      groupRank[group] = std::min(groupRank[group], activationRank[member]);
 
   // Conflict edges only need to impose an order, not encode the complete
   // pairwise relation. Union control components connected by a conflict, then
@@ -1686,6 +1683,8 @@ void ComputeGraphBuilder::buildDataEdges() {
       activeEffects.forEachAlias(left.target, [&](IndexedEffect right) {
         if (right.owner <= lhs ||
             fragments[right.owner].function == fragments[lhs].function ||
+            fragments[right.owner].function.getHomeRegion() !=
+                fragments[lhs].function.getHomeRegion() ||
             !activeEffectsConflict(left, *right.effect))
           return;
         unsigned leftGroup = controlGroupForFragment[lhs];
@@ -1845,7 +1844,8 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
   return success();
 }
 
-FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
+SmallVector<sim::ComputeEdgeAttr>
+ComputeGraphBuilder::buildSchedulingEdges() {
   // Sensitivity edges terminate at the suspension that owns the watch, while
   // the work activated by that edge starts at the suspension's resume
   // continuation. Resume edges themselves are intentionally not scheduling
@@ -1872,6 +1872,11 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
           sim::ComputeEdgeKind::Sensitivity, edge.getResource()));
   }
   normalizeEdges(schedulingEdges);
+  return schedulingEdges;
+}
+
+FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
+  SmallVector<sim::ComputeEdgeAttr> schedulingEdges = buildSchedulingEdges();
 
   auto plan =
       [&](sim::ComputeRegionKind kind,

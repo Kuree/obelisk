@@ -1,4 +1,6 @@
 // RUN: %split-file %s %t
+// RUN: sed 's/!obelisk_sim.logic<1>/i1/g' %t/chunks.mlir > %t/two-state.mlir
+// RUN: obelisk-opt %t/two-state.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=TWO-STATE
 // RUN: obelisk-opt %t/chunks.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHUNK
 // RUN: not obelisk-opt %t/chunks.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=65}))' 2>&1 | FileCheck %s --check-prefix=LIMIT
 // RUN: obelisk-opt %t/different-scopes.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SCOPE
@@ -97,6 +99,9 @@ module {
 // CHUNK-NOT: obelisk_sim.func private @p3
 // CHUNK-NOT: .__member
 // LIMIT: error: 'obelisk_sim.design' op straight-line fusion member limit must be between 2 and 64
+// TWO-STATE-COUNT-2: obelisk_sim.spawn @__obelisk_region_kernel_
+// TWO-STATE: arith.cmpi eq, {{.*}} : i1
+// TWO-STATE-NOT: obelisk_sim.logic.compare
 
 // SCOPE-LABEL: obelisk_sim.design @different_scopes
 

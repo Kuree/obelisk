@@ -31,6 +31,28 @@ namespace obelisk {
 
 namespace {
 
+// Watch snapshots and driver values may be either value domain. A two-state
+// packed value has no unknown plane and must use integer comparison after
+// flattening; the four-state comparison retains X/Z equality semantics.
+static Value createPackedCaseComparison(OpBuilder &builder, Location location,
+                                        sim::CompareKind kind, Value lhs,
+                                        Value rhs) {
+  Type scalarType = sim::getPackedScalarType(lhs.getType());
+  if (isa<IntegerType>(scalarType)) {
+    if (lhs.getType() != scalarType) {
+      lhs = sim::SimPackedFlattenOp::create(builder, location, scalarType, lhs);
+      rhs = sim::SimPackedFlattenOp::create(builder, location, scalarType, rhs);
+    }
+    return arith::CmpIOp::create(
+        builder, location,
+        kind == sim::CompareKind::CaseEq ? arith::CmpIPredicate::eq
+                                         : arith::CmpIPredicate::ne,
+        lhs, rhs);
+  }
+  return sim::SimLogicCompareOp::create(builder, location, builder.getI1Type(),
+                                        kind, lhs, rhs);
+}
+
 static void retargetCoverageKeepalives(sim::SimFuncOp source,
                                        sim::SimFuncOp replacement) {
   auto design = source->getParentOfType<sim::SimDesignOp>();
@@ -1620,9 +1642,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       Value current = loadWatched(builder, kernel.getLoc(), watch.handle);
       if (!current)
         return bail();
-      Value equal = sim::SimLogicCompareOp::create(
-          builder, kernel.getLoc(), builder.getI1Type(),
-          sim::CompareKind::CaseEq, current, watch.previous);
+      Value equal = createPackedCaseComparison(
+          builder, kernel.getLoc(), sim::CompareKind::CaseEq, current,
+          watch.previous);
       Value changed = arith::XOrIOp::create(
           builder, kernel.getLoc(), equal,
           arith::ConstantOp::create(builder, kernel.getLoc(),
@@ -2067,9 +2089,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     auto recordRawChange = [&](Location location, Value driver, Value value) {
       Value previous = sim::SimDriverReadOp::create(helperBuilder, location,
                                                     value.getType(), driver);
-      Value rawChanged = sim::SimLogicCompareOp::create(
-          helperBuilder, location, helperBuilder.getI1Type(),
-          sim::CompareKind::CaseNe, previous, value);
+      Value rawChanged = createPackedCaseComparison(
+          helperBuilder, location, sim::CompareKind::CaseNe, previous, value);
       helperChanged = arith::OrIOp::create(helperBuilder, location,
                                            helperChanged, rawChanged);
     };
@@ -2161,8 +2182,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     Value current = loadWatched(builder, kernel.getLoc(), watch.handle);
     if (!current)
       return bail();
-    Value equal = sim::SimLogicCompareOp::create(
-        builder, kernel.getLoc(), builder.getI1Type(), sim::CompareKind::CaseEq,
+    Value equal = createPackedCaseComparison(
+        builder, kernel.getLoc(), sim::CompareKind::CaseEq,
         current, watch.previous);
     Value changed = arith::XOrIOp::create(
         builder, kernel.getLoc(), equal,

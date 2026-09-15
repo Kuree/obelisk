@@ -694,6 +694,16 @@ entry blocks, so their post-conversion addresses cannot identify entries in an
 earlier block analysis. Reusing such addresses would make scheduling depend on
 compiler allocation history instead of the certified activation order.
 
+Conflict ordering uses the same activation edges as region planning, including
+non-settling producers and the continuation resumed by a settling publication.
+The compiler first condenses that graph into SCCs, then chooses deterministic
+conflict edges that follow its topological order. These choices cannot merge
+distinct activation SCCs or manufacture feedback in an acyclic cone. Genuine
+feedback retains convergence handling, and source process order remains
+required. Conflict chains stay within their event region; the shared loop
+provides ordering between regions. This selects an LRM-legal ordering for races
+without treating historical cross-process tie choices as a constraint.
+
 Native lowering validates that plan against the native state layout and emits
 the following helper ABI. These helpers are not yet reachable from the
 installed AOT run function; until that integration is complete, auto uses the
