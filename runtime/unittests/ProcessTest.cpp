@@ -8125,6 +8125,68 @@ TEST(Scheduler, ProceduralPathsUseNativeDestinationBeforeCanonicalBinding) {
   }
 }
 
+TEST(Scheduler, InertialPathsCancelReturnToPublishedFourStateValue) {
+  // Compare all distinct leading targets and returns to 0, 1, X and Z. The
+  // same shared calendar handles drivers, blocking paths and NBA paths.
+  for (unsigned kind = 0; kind != 3; ++kind)
+    for (uint8_t original = 0; original != 4; ++original)
+      for (uint8_t leading = 0; leading != 4; ++leading) {
+        if (leading == original)
+          continue;
+        for (uint8_t returnMask : {uint8_t{0}, uint8_t{1}}) {
+          SCOPED_TRACE(::testing::Message()
+                       << "kind=" << kind << " original=" << unsigned(original)
+                       << " leading=" << unsigned(leading)
+                       << " returnMask=" << unsigned(returnMask));
+          obelisk_rt_execution_descriptor_v1 execution{};
+          execution.version = OBELISK_RT_VERSION;
+          execution.state_bit_count = 1;
+          obelisk_rt_context *context = nullptr;
+          ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+                    OBELISK_RT_OK);
+          ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+                    OBELISK_RT_OK);
+          uint8_t oldValue = original & 1, oldUnknown = original >> 1;
+          uint8_t nextValue = leading & 1, nextUnknown = leading >> 1;
+          uint8_t nativeValue = oldValue, nativeUnknown = oldUnknown;
+          context->stateValue[0] = oldValue;
+          context->stateUnknown[0] = oldUnknown;
+          context->signalDiagnosticsEnabled = true;
+          uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+          uint8_t active = 1;
+          auto schedule = [&](uint8_t value, uint8_t unknown, uint8_t mask,
+                              uint32_t group, uint32_t groups) {
+            if (kind == 0)
+              return obelisk_rt_v1_scheduler_inertial_path_driver(
+                  context, &nativeValue, &nativeUnknown, 1, handle, 1, 17, 0,
+                  group, groups, OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION,
+                  5, 5, 5, &value, &unknown, &active, &mask, &mask, &mask);
+            return obelisk_rt_v1_scheduler_inertial_path_storage(
+                context, &nativeValue, &nativeUnknown, 1, handle, 1, 17, 0,
+                group, groups, kind == 2, 5, 5, 5, &value, &unknown, &active,
+                &active, &mask, &mask, &mask);
+          };
+          ASSERT_EQ(schedule(nextValue, nextUnknown, 1, 0, 1), OBELISK_RT_OK);
+          ASSERT_EQ(context->scheduledInertialPathNBAs.size(), 1u);
+          EXPECT_EQ(context->scheduledInertialPathNBAs.begin()->first.first, 5u);
+          context->schedulerTime = 1;
+          ASSERT_EQ(schedule(oldValue, oldUnknown, returnMask, 0, 2),
+                    OBELISK_RT_OK);
+          ASSERT_EQ(schedule(oldValue, oldUnknown, returnMask, 1, 2),
+                    OBELISK_RT_OK);
+          EXPECT_TRUE(context->scheduledInertialPathNBAs.empty());
+          EXPECT_EQ(nativeValue, oldValue);
+          EXPECT_EQ(nativeUnknown, oldUnknown);
+          EXPECT_EQ(context->stateValue[0], oldValue);
+          EXPECT_EQ(context->stateUnknown[0], oldUnknown);
+          EXPECT_EQ(context->signalDiagnostics.publications, 0u);
+          ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+          EXPECT_EQ(context->schedulerTime, 1u);
+          obelisk_rt_v1_context_destroy(context);
+        }
+      }
+}
+
 TEST(Scheduler, InertialGateDriversUsePerBitTransitionDelays) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;

@@ -652,6 +652,14 @@ and read/write synchronization, and control operations. Full integration of
 group-level partial routing also remains required; preserving compiled
 fragments alone does not prove that unaffected groups stay in Tier 1.
 
+Pending inertial updates belong to the shared calendar. A return to the
+published four-state value cancels a pending default-inertial update for that
+bit, without publishing a transition or disturbing another bit's deadline.
+An empty transition mask in this case denotes cancellation rather than a
+missing delay. Later activations can schedule the bit again. Explicit pulse
+controls retain their separate classification of the leading and trailing
+edges; equality with the current value does not bypass that classification.
+
 This is an incremental replacement. Generated periodic loops still have
 separate control paths; native/runtime plane
 materialization still occurs at mixed boundaries. Their removal, shared

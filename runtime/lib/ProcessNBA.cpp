@@ -1096,13 +1096,27 @@ static obelisk_rt_status schedulerInertialPath(
         }
         setByteBit(pending.targetValue.data(), bit, targetValue);
         setByteBit(pending.targetUnknown.data(), bit, targetUnknown);
-        bool changed = currentBit(false, bit) != targetValue ||
-                       currentBit(true, bit) != targetUnknown ||
-                       pending.scheduledSequence[static_cast<size_t>(bit)] != 0;
+        bool differs = currentBit(false, bit) != targetValue ||
+                       currentBit(true, bit) != targetUnknown;
+        bool changed =
+            differs ||
+            pending.scheduledSequence[static_cast<size_t>(bit)] != 0;
         pending.valid[static_cast<size_t>(bit)] = 1;
         pending.delayed[static_cast<size_t>(bit)] = active ? 1 : 0;
         if (active) {
-          pending.needsSchedule[static_cast<size_t>(bit)] = changed ? 1 : 0;
+          if (!pending.pulseControlled && !differs) {
+            // IEEE 1800-2023 30.7: returning to the published value before
+            // the leading update matures rejects a default-inertial pulse.
+            // There is no destination transition to select a delay for: the
+            // caller's transition masks may all be empty. Cancel this bit
+            // without publishing a write or disturbing other pending bits.
+            // Explicit pulse controls still classify both scheduled edges.
+            cancelScheduled(bit);
+            pending.valid[static_cast<size_t>(bit)] = 0;
+            pending.delayed[static_cast<size_t>(bit)] = 0;
+          } else {
+            pending.needsSchedule[static_cast<size_t>(bit)] = changed ? 1 : 0;
+          }
         } else {
           cancelScheduled(bit);
           if (changed && !enqueue(bit, 0))
