@@ -1935,6 +1935,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
       return OBELISK_RT_INVALID_LIFECYCLE;
     if (context->nativeScheduleActors[actorSlot])
       return OBELISK_RT_INVALID_ARGUMENT;
+    if (uint64_t token = context->nativeScheduleActorTokens[actorSlot])
+      if (ScheduledProcess *owner = findScheduledProcess(context, token);
+          owner && owner->instance)
+        return OBELISK_RT_INVALID_ARGUMENT;
   }
   obelisk_rt_status status = obelisk_rt_v1_scheduler_add_planned(
       context, instance, flags, initialRank, continuations, ranks,
@@ -2499,7 +2503,44 @@ uint32_t nativeAOTContinuationRank(const ScheduledProcess &scheduled,
 
 void updateNativeAOTContinuationRank(ScheduledProcess &scheduled,
                                      uint32_t continuation) {
+  // Nested task continuations are not IDs in the suspended caller's rank
+  // table. They retain their logical process's ordering until that caller
+  // returns to its own generated continuation.
+  if (scheduled.suspendedAOTActorSlot != UINT32_MAX)
+    return;
   scheduled.scheduleRank = nativeAOTContinuationRank(scheduled, continuation);
+}
+
+obelisk_rt_status
+suspendNativeAOTTaskCallerUnlocked(obelisk_rt_context *context,
+                                   ScheduledProcess &scheduled) {
+  uint32_t slot = scheduled.aotActorSlot;
+  if (slot == UINT32_MAX)
+    return OBELISK_RT_OK;
+  const auto *plan = context->nativeSchedulePlan;
+  if (!plan || slot >= context->nativeScheduleActors.size() ||
+      context->nativeScheduleActors[slot] != scheduled.instance ||
+      scheduled.suspendedAOTActorSlot != UINT32_MAX)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  auto status = plan->bind(plan->mutable_state, context, slot, nullptr);
+  if (status != OBELISK_RT_OK)
+    return status;
+  // IEEE 1800-2023 13.3: the caller resumes after its task completes. Keep
+  // its generated frame layout and continuation inventory out of the task's
+  // descriptor execution, including during a disturbed-schedule handoff.
+  scheduled.suspendedAOTActorSlot = slot;
+  scheduled.aotActorSlot = UINT32_MAX;
+  context->nativeScheduleActors[slot] = nullptr;
+  // The token reserves this identity while the binding is parked. Remove
+  // the caller's old waits; the task registers its own waits in the same loop.
+  context->nativeScheduleActorTokens[slot] = scheduled.token;
+  if (slot < context->nativeScheduleActorNodes.size())
+    for (auto [continuation, node] : context->nativeScheduleActorNodes[slot]) {
+      (void)continuation;
+      clearNativeAOTNodeReadyUnlocked(context, node);
+    }
+  removeNativeAOTDeadlineUnlocked(context, slot);
+  return OBELISK_RT_OK;
 }
 
 bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
@@ -3461,6 +3502,33 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       if (selected) {
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
+        if (candidate.suspendedAOTActorSlot != UINT32_MAX &&
+            candidate.callers.empty()) {
+          // Restore only the original caller, including after task disable
+          // unwinds its stack. Never install a nested task in this slot.
+          uint32_t slot = candidate.suspendedAOTActorSlot;
+          const auto *plan = context->nativeSchedulePlan;
+          if (!plan || slot >= context->nativeScheduleActors.size() ||
+              context->nativeScheduleActors[slot] != nullptr ||
+              context->nativeScheduleActorTokens[slot] != candidate.token)
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          if (options.nativePlan &&
+              findNativeAOTNodeUnlocked(context, slot,
+                                        candidate.instance->continuation) ==
+                  UINT32_MAX)
+            return OBELISK_RT_INVALID_CONTINUATION;
+          obelisk_rt_status status = plan->bind(plan->mutable_state, context,
+                                                slot, candidate.instance);
+          if (status != OBELISK_RT_OK)
+            return status;
+          candidate.aotActorSlot = slot;
+          candidate.suspendedAOTActorSlot = UINT32_MAX;
+          context->nativeScheduleActors[slot] = candidate.instance;
+          context->nativeScheduleActorTokens[slot] = candidate.token;
+          context->nativeScheduleActorIndices[slot] = selectedIndex;
+          updateNativeAOTContinuationRank(candidate,
+                                          candidate.instance->continuation);
+        }
         if (candidate.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
           bool acquired = false;
           obelisk_rt_status status = obelisk_rt_semaphore_wait_acquire(
@@ -5001,6 +5069,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
+        status = suspendNativeAOTTaskCallerUnlocked(context, scheduled);
+        if (status != OBELISK_RT_OK)
+          return status;
         scheduled.callers.push_back(selected);
         scheduled.callerControlDepths.push_back(scheduled.controls.size());
         scheduled.instance = callee;
@@ -5024,6 +5095,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         scheduled.signalTriggered = false;
         scheduled.urgent = false;
         scheduled.queuedRegion = scheduled.homeRegion;
+      }
+      if (!scheduled.instance &&
+          scheduled.suspendedAOTActorSlot != UINT32_MAX) {
+        uint32_t slot = scheduled.suspendedAOTActorSlot;
+        context->nativeScheduleActorTokens[slot] = 0;
+        context->nativeScheduleActorIndices[slot] = SIZE_MAX;
+        scheduled.suspendedAOTActorSlot = UINT32_MAX;
       }
       if (destroy && scheduled.aotActorSlot != UINT32_MAX) {
         uint32_t slot = scheduled.aotActorSlot;

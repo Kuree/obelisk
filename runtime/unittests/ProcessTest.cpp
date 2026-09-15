@@ -880,6 +880,7 @@ void schedulerDestroy(obelisk_rt_process_instance_v1 *instance) {
 
 unsigned finishDestroyCount;
 const obelisk_rt_process_descriptor_v1 *taskCalleeDescriptor;
+const obelisk_rt_process_descriptor_v1 *nestedTaskCalleeDescriptor;
 unsigned taskCallerExecutions;
 unsigned taskCalleeExecutions;
 
@@ -6216,35 +6217,198 @@ TEST(Scheduler, AOTFinishDestroysTheCompleteTaskCallerStack) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(Scheduler, AOTTaskCallFallbackRebindsAndResumesTheCaller) {
-  AOTTestState state;
-  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
-  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
-  plan.run = aotRunNodes;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+TEST(Scheduler, AOTTaskCallLocallySuspendsAndResumesTheCaller) {
+  for (bool descriptorDriver : {false, true}) {
+    SCOPED_TRACE(descriptorDriver);
+    AOTTestState state;
+    obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+    plan.run = aotRunNodes;
+    if (descriptorDriver)
+      plan.run = [](void *, obelisk_rt_context *context) {
+        return obelisk_rt_v1_scheduler_run(context);
+      };
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
 
-  SchedulerFixture caller(44);
-  SchedulerFixture callee(45);
-  caller.descriptor.native_execute = taskCallerExecute;
-  callee.descriptor.native_execute = taskCalleeExecute;
-  taskCalleeDescriptor = &callee.descriptor;
-  taskCallerExecutions = 0;
-  taskCalleeExecutions = 0;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(context,
-                                            makeSchedulerInstance(caller), 0, 0,
-                                            0, nullptr, nullptr, 0, nullptr, 0),
-            OBELISK_RT_OK);
+    SchedulerFixture caller(44);
+    SchedulerFixture callee(45);
+    caller.descriptor.native_execute = taskCallerExecute;
+    callee.descriptor.native_execute = [](obelisk_rt_process_instance_v1 *p) {
+      EXPECT_EQ(p->context->nativeScheduleActors[0], nullptr);
+      EXPECT_EQ(p->context->scheduledProcesses.front().aotActorSlot,
+                UINT32_MAX);
+      return taskCalleeExecute(p);
+    };
+    taskCalleeDescriptor = &callee.descriptor;
+    taskCallerExecutions = 0;
+    taskCalleeExecutions = 0;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(caller), 0, 0, 0, nullptr,
+                  nullptr, 0, nullptr, 0),
+              OBELISK_RT_OK);
 
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
-  EXPECT_TRUE(context->nativeScheduleDeoptimized);
-  EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 1u);
-  EXPECT_EQ(taskCallerExecutions, 2u);
-  EXPECT_EQ(taskCalleeExecutions, 1u);
-  EXPECT_EQ(state.actors[0], nullptr);
-  taskCalleeDescriptor = nullptr;
-  obelisk_rt_v1_context_destroy(context);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+    EXPECT_FALSE(context->nativeScheduleDeoptimized);
+    EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 0u);
+    EXPECT_EQ(taskCallerExecutions, 2u);
+    EXPECT_EQ(taskCalleeExecutions, 1u);
+    EXPECT_EQ(state.actors[0], nullptr);
+    taskCalleeDescriptor = nullptr;
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(Scheduler, AOTTaskWaitKeepsOtherActorsAndCallerBinding) {
+  for (uint32_t waitKind :
+       {OBELISK_RT_SUSPEND_DELAY, OBELISK_RT_SUSPEND_EDGE}) {
+    SCOPED_TRACE(waitKind);
+    AOTTestState state;
+    obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 2);
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+    plan.bind = [](void *opaque, obelisk_rt_context *context, uint32_t slot,
+                   obelisk_rt_process_instance_v1 *instance) {
+      // A generated binding knows only its own frame layout. In particular,
+      // the task's coincident continuation IDs must never borrow slot zero.
+      if (instance && instance->descriptor->handle.id != (slot ? 143u : 44u))
+        return OBELISK_RT_INVALID_FRAME;
+      return aotBind(opaque, context, slot, instance);
+    };
+    plan.run = [](void *, obelisk_rt_context *context) {
+      constexpr obelisk_rt_native_schedule_node nodes[] = {
+          {0, 0}, {0, 1}, {1, 0}};
+      return obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes,
+                                                   std::size(nodes));
+    };
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
+    context->signalDiagnosticsEnabled = true;
+    SchedulerFixture caller(44), callee(45), independent(143);
+    caller.descriptor.native_execute = taskCallerExecute;
+    taskCalleeDescriptor = &callee.descriptor;
+    taskCallerExecutions = 0;
+    schedulerResumeCount = 0;
+    schedulerOrder.clear();
+    schedulerWaitKind = waitKind;
+    schedulerWaitDelay = 5;
+    schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_POSEDGE;
+    schedulerWaitHandle = 17;
+    schedulerWaitWidth = 1;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(caller), 0, 0, 0, nullptr,
+                  nullptr, 0, nullptr, 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(independent), 0, 1, 1, nullptr,
+                  nullptr, 0, nullptr, 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+    if (waitKind == OBELISK_RT_SUSPEND_EDGE) {
+      EXPECT_EQ(taskCallerExecutions, 1u);
+      EXPECT_EQ(state.actors[0], nullptr);
+      EXPECT_EQ(context->nativeDynamicSignalSubscriptions, 1u);
+      auto *duplicate = makeSchedulerInstance(caller);
+      ASSERT_NE(duplicate, nullptr);
+      EXPECT_EQ(obelisk_rt_v1_scheduler_add_aot(context, duplicate, 0, 0, 0,
+                                                nullptr, nullptr, 0, nullptr,
+                                                0),
+                OBELISK_RT_INVALID_ARGUMENT);
+      EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(duplicate),
+                OBELISK_RT_OK);
+      obelisk_rt_v1_scheduler_signal(context, 17, 1, OBELISK_RT_SIGNAL_POSEDGE);
+      ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+    }
+    EXPECT_EQ(taskCallerExecutions, 2u);
+    EXPECT_EQ(schedulerResumeCount, 1u);
+    EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{143, 45}));
+    EXPECT_EQ(context->signalDiagnostics.aotActorExecutions[0], 2u);
+    EXPECT_EQ(context->signalDiagnostics.aotActorExecutions[1], 1u);
+    EXPECT_EQ(context->nativeDynamicSignalSubscriptions, 0u);
+    EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 0u);
+    EXPECT_FALSE(context->nativeScheduleDeoptimized);
+    EXPECT_EQ(state.actors[0], nullptr);
+    EXPECT_EQ(state.actors[1], nullptr);
+    taskCalleeDescriptor = nullptr;
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(Scheduler, AOTNestedTaskReturnsOrFinishesWithoutRebindingInnerFrames) {
+  for (bool finish : {false, true}) {
+    SCOPED_TRACE(finish);
+    AOTTestState state;
+    obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+    plan.run = aotRunNodes;
+    plan.bind = [](void *opaque, obelisk_rt_context *context, uint32_t slot,
+                   obelisk_rt_process_instance_v1 *instance) {
+      if (instance && instance->descriptor->handle.id != 44)
+        return OBELISK_RT_INVALID_FRAME;
+      return aotBind(opaque, context, slot, instance);
+    };
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
+    SchedulerFixture caller(44), outer(45), inner(46);
+    caller.descriptor.native_execute = taskCallerExecute;
+    outer.descriptor.native_execute = [](obelisk_rt_process_instance_v1 *p) {
+      EXPECT_EQ(p->context->nativeScheduleActors[0], nullptr);
+      EXPECT_EQ(p->context->scheduledProcesses.front().aotActorSlot,
+                UINT32_MAX);
+      p->native_handle = p;
+      schedulerOrder.push_back(p->continuation ? 451 : 450);
+      if (p->continuation) {
+        *p->action = {
+            OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+        return OBELISK_RT_OK;
+      }
+      obelisk_rt_process_instance_v1 *callee = nullptr;
+      auto status = obelisk_rt_v1_process_instance_create(
+          nestedTaskCalleeDescriptor, &callee);
+      if (status != OBELISK_RT_OK)
+        return status;
+      *p->action = {OBELISK_RT_FRAGMENT_TASK_CALL,
+                    OBELISK_RT_SUSPEND_NONE,
+                    1,
+                    0,
+                    reinterpret_cast<uintptr_t>(callee),
+                    0};
+      return OBELISK_RT_OK;
+    };
+    if (finish)
+      inner.descriptor.native_execute = finishExecute;
+    caller.descriptor.native_destroy = finishDestroy;
+    outer.descriptor.native_destroy = finishDestroy;
+    inner.descriptor.native_destroy = finishDestroy;
+    taskCalleeDescriptor = &outer.descriptor;
+    nestedTaskCalleeDescriptor = &inner.descriptor;
+    taskCallerExecutions = 0;
+    finishDestroyCount = 0;
+    schedulerResumeCount = 0;
+    schedulerOrder.clear();
+    schedulerWaitKind = OBELISK_RT_SUSPEND_DELAY;
+    schedulerWaitDelay = 5;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add_aot(
+                  context, makeSchedulerInstance(caller), 0, 0, 0, nullptr,
+                  nullptr, 0, nullptr, 0),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run_aot(context), OBELISK_RT_OK);
+    EXPECT_EQ(taskCallerExecutions, finish ? 1u : 2u);
+    EXPECT_EQ(finishDestroyCount, 3u);
+    EXPECT_EQ(schedulerOrder, (finish ? std::vector<uint64_t>{450}
+                                      : std::vector<uint64_t>{450, 46, 451}));
+    EXPECT_EQ(context->signalDiagnostics.aotFallbacks, 0u);
+    EXPECT_FALSE(context->nativeScheduleDeoptimized);
+    EXPECT_EQ(state.actors[0], nullptr);
+    taskCalleeDescriptor = nullptr;
+    nestedTaskCalleeDescriptor = nullptr;
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(Scheduler, AOTExternalWriteUsesNativeFineSchedulerUntilCleanBoundary) {

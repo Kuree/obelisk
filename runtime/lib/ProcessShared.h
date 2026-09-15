@@ -227,6 +227,9 @@ void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
 
 bool markNativeAOTActorReadyUnlocked(obelisk_rt_context *context,
                                      uint32_t actorSlot);
+obelisk_rt_status
+suspendNativeAOTTaskCallerUnlocked(obelisk_rt_context *context,
+                                   ScheduledProcess &scheduled);
 void clearNativeAOTNodeReadyUnlocked(obelisk_rt_context *context,
                                      uint32_t node);
 void setNativeAOTDeadlineUnlocked(obelisk_rt_context *context,

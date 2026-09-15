@@ -579,6 +579,10 @@ struct ScheduledProcess {
   // continuation zero when the initial activation is bytecode-only.
   std::vector<uint32_t> bytecodeContinuations;
   uint32_t aotActorSlot = UINT32_MAX;
+  // A task borrows the logical process, not the caller's generated frame
+  // layout or continuation inventory. Park that binding until the outermost
+  // task returns; unrelated AOT slots remain executable in the shared loop.
+  uint32_t suspendedAOTActorSlot = UINT32_MAX;
   uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
   uint32_t phase = 0;
   uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
@@ -986,6 +990,7 @@ struct SignalSubscription {
   uint32_t edge = 0;
   Target target = NativeDirectWait;
   bool suppressActiveSelf = false;
+  bool outsideStaticFanout = false;
   SignalWaitLatch *latch = nullptr;
   std::vector<SignalSubscriptionBucketSlot> bucketSlots;
 };

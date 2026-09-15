@@ -67,8 +67,18 @@ bool appendSignalSubscriptionUnlocked(
   subscription->bucketSlots.reserve(wide ? 1 : static_cast<size_t>(pageCount));
   subscriptions.push_back(std::move(subscription));
   SignalSubscription &stored = *subscriptions.back();
-  if (target == SignalSubscription::NativeComputedWait)
+  if (target == SignalSubscription::NativeDirectWait &&
+      context->nativeSchedulePlan) {
+    ScheduledProcess *process = findScheduledProcess(context, waiterToken);
+    stored.outsideStaticFanout =
+        process && process->suspendedAOTActorSlot != UINT32_MAX;
+  }
+  if (target == SignalSubscription::NativeComputedWait ||
+      stored.outsideStaticFanout)
     ++context->nativeDynamicSignalSubscriptions;
+  if (stored.outsideStaticFanout && context->nativeSchedulePlan &&
+      context->nativeSchedulePlan->specialization_fast)
+    *context->nativeSchedulePlan->specialization_fast = 0;
   if (context->signalDiagnosticsEnabled) {
     ++context->signalDiagnostics.subscriptionsCurrent;
     context->signalDiagnostics.subscriptionsHighWater =
@@ -1092,7 +1102,8 @@ void obelisk_rt_unregister_signal_wait_unlocked(
           context->managedWatchWaiters.erase(waiters);
       }
     }
-    if (subscription.target == SignalSubscription::NativeComputedWait &&
+    if ((subscription.target == SignalSubscription::NativeComputedWait ||
+         subscription.outsideStaticFanout) &&
         context->nativeDynamicSignalSubscriptions != 0)
       --context->nativeDynamicSignalSubscriptions;
     for (const SignalSubscriptionBucketSlot &slot : subscription.bucketSlots) {

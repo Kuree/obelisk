@@ -1180,9 +1180,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           scheduled.computedObserverWaitRegistered)
         obelisk_rt_unregister_signal_wait_unlocked(
             context, scheduled.signalSubscriptions, scheduled.token, false);
-      status = context->nativeSchedulePlan->bind(
-          context->nativeSchedulePlan->mutable_state, context, actorSlot,
-          callee);
+      status = suspendNativeAOTTaskCallerUnlocked(context, scheduled);
       if (status != OBELISK_RT_OK)
         return status;
       scheduled.callers.push_back(selected);
@@ -1195,11 +1193,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       scheduled.signalTriggered = false;
       scheduled.urgent = true;
       scheduled.queuedRegion = scheduled.homeRegion;
-      context->nativeScheduleActors[actorSlot] = callee;
-      context->nativeScheduleActorTokens[actorSlot] = scheduled.token;
-      context->nativeScheduleActorIndices[actorSlot] = selectedIndex;
       pendingCallee.release();
-      requestFallback = true;
+      requestFallback = !sharedDriver;
       break;
     }
     default:

@@ -937,8 +937,20 @@ NBA barrier, and semaphore acquisition happens before selecting either
 executor. A generated single-node entry retains its boundary status contract
 until its caller is also replaced. Live continuation coverage is validated
 before installing any ready bits, so an incomplete node inventory cannot
-partially publish ownership. Task-call frame routing still needs integration
-before all boundary-triggered whole-plan fallbacks can be removed.
+partially publish ownership. A compiled node's task call now parks only its
+generated actor binding. The same protocol applies when the caller is already
+using descriptor execution after a disturbance. The shared driver executes the
+task through its own descriptor, retaining the caller stack, logical process
+identity, ordered updates and calendar. Nested task frames never borrow the caller's generated
+frame layout or continuation IDs. After the outermost task returns, the driver
+restores the original binding before selecting that caller's next executor;
+termination destroys the suspended stack without replaying completed work
+(IEEE 1800-2023 13.3 and 4.6). Other installed actors remain scheduled during
+the call. Task-owned direct waits retain runtime subscriptions and participate
+in the existing dynamic-fanout guard until those subscriptions are removed.
+This runtime handoff does not yet admit mixed designs to generated Tier-1
+groups: compiler admission and complete publication coverage remain separate
+requirements.
 
 The internal native-plan ABI now has an optional exact canonical-range
 invalidation hook, with target-derived layout shared by native and wasm32.

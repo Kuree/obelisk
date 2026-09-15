@@ -1084,7 +1084,8 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
           subscription->latch->triggered = true;
           bool staticallyPolledNative =
               fullyStaticAOT &&
-              subscription->target == SignalSubscription::NativeDirectWait;
+              subscription->target == SignalSubscription::NativeDirectWait &&
+              !subscription->outsideStaticFanout;
           if (staticallyPolledNative) {
             ScheduledProcess *scheduled =
                 findScheduledProcess(context, subscription->waiterToken);
