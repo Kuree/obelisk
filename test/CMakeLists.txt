@@ -321,7 +321,24 @@ target_compile_features(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
 set_target_properties(ObeliskGeneratedArithmeticRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
+add_llvm_executable(ObeliskNativePartitionTests EXCLUDE_FROM_ALL
+  Support/NativePartitionTest.cpp
+)
+llvm_update_compile_flags(ObeliskNativePartitionTests)
+target_include_directories(ObeliskNativePartitionTests PRIVATE
+  "${PROJECT_SOURCE_DIR}/tools/driver"
+)
+target_link_libraries(ObeliskNativePartitionTests PRIVATE
+  LLVMCore
+  LLVMSupport
+  GTest::gtest_main
+)
+set_target_properties(ObeliskNativePartitionTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
+
 set(OBELISK_RUNTIME_UNIT_TARGETS
+  ObeliskNativePartitionTests
   ObeliskGeneratedArithmeticRuntimeTests
   ObeliskGeneratedClassBitstreamBytecode
   ObeliskGeneratedClassBitstreamNative

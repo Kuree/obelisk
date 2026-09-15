@@ -11,6 +11,7 @@
 
 #include "BackendUtils.h"
 #include "NativeBackend.h"
+#include "NativePartitionCost.h"
 #include "WasmBackend.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
@@ -232,27 +233,6 @@ struct NativeModuleSplitPlan {
   llvm::DenseSet<unsigned> nativeObjectGroups;
 };
 
-uint64_t estimateNativeGlobalWeight(const llvm::GlobalVariable &global) {
-  if (!global.hasInitializer())
-    return 1;
-  uint64_t weight = 1;
-  SmallVector<const llvm::Constant *> worklist{global.getInitializer()};
-  llvm::SmallPtrSet<const llvm::Constant *, 32> visited;
-  while (!worklist.empty()) {
-    const llvm::Constant *constant = worklist.pop_back_val();
-    if (!visited.insert(constant).second)
-      continue;
-    if (auto *data = dyn_cast<llvm::ConstantDataSequential>(constant))
-      weight += std::max<uint64_t>(1, (data->getNumElements() + 31) / 32);
-    else
-      weight += std::max<unsigned>(1, constant->getNumOperands());
-    for (const llvm::Use &operand : constant->operands())
-      if (auto *child = dyn_cast<llvm::Constant>(operand.get()))
-        worklist.push_back(child);
-  }
-  return weight;
-}
-
 Expected<NativeModuleSplitPlan>
 planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
                       unsigned maxGroups) {
@@ -331,7 +311,7 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
       // selection are removed before translation.
       unit.nativeObject = function->getInstructionCount() > 20000;
     } else if (auto *global = dyn_cast<llvm::GlobalVariable>(&value))
-      unit.weight = estimateNativeGlobalWeight(*global);
+      unit.weight = detail::estimateNativeGlobalWeight(*global);
   }
   llvm::sort(units, [](const SplitUnit &lhs, const SplitUnit &rhs) {
     if (lhs.nativeObject != rhs.nativeObject)

@@ -711,6 +711,14 @@ used only for the fixed input functions, never newly emitted plan helpers.
 Opt-in compiler timing separates route materialization,
 proof publication, and call-closure verification from backend code generation.
 
+Native partition balancing charges each global's own initializer, including
+its constant expressions and address references. A referenced global or alias
+is a separate definition unit: its initializer is not traversed or charged
+again through incoming references. This keeps shared and cyclic descriptor
+tables from inflating unrelated unit weights and turning cost estimation into
+repeated whole-module traversal. Definition ownership and cross-partition
+imports remain independent of this physical cost estimate.
+
 Native actor entry ordering uses the rank captured from the semantic schedule,
 shared with the actor's spawn helper. Packed signature conversion can replace
 entry blocks, so their post-conversion addresses cannot identify entries in an
