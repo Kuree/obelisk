@@ -1,4 +1,4 @@
-//===- SimulationAOTCoordinatorMaterialization.cpp ----------------------===//
+//===- SimulationEvalDispatchMaterialization.cpp ----------------------===//
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalNBAQueue.h"
@@ -14,6 +14,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 using namespace mlir;
 
@@ -24,8 +25,6 @@ constexpr StringLiteral evalStepFourStateFallbackName =
     "__obelisk_eval_step_four_state_fallback_v1";
 constexpr StringLiteral evalStepFourStateNBARootsName =
     "__obelisk_eval_step_four_state_nba_roots_v1";
-constexpr StringLiteral evalFastNBALatchedName =
-    "__obelisk_eval_fast_nba_latched_v1";
 constexpr StringLiteral evalFastNBARootsName =
     "__obelisk_eval_fast_nba_roots_v1";
 constexpr StringLiteral promotionPendingMaskName =
@@ -40,29 +39,23 @@ constexpr StringLiteral evalFourStateNBAHandoffName =
 
 } // namespace
 
-LogicalResult materializeNativeEvalCoordinator(
-    ModuleOp module, const NativeEvalCoordinatorPlan &plan,
-    StringRef functionName, ArrayRef<std::string> executors,
-    NativeEvalCoordinatorOptions options) {
+LogicalResult
+materializeNativeEvalDispatch(ModuleOp module,
+                              const NativeEvalCoordinatorPlan &plan) {
+  StringRef functionName = evalDispatchName;
+  ArrayRef<std::string> executors = plan.fourStateExecutors;
   ArrayRef<NativeEvalClockKernel> clockKernels = plan.clockKernels;
   ArrayRef<obelisk_rt_native_merged_fragment> mergedFragments = plan.fragments;
-  ArrayRef<std::string> mergedExecutors = plan.fourStateExecutors;
   ArrayRef<std::string> mergedTwoStateExecutors = plan.twoStateExecutors;
   ArrayRef<std::string> promotionKernelReadyNames =
       plan.promotionReadyFunctions;
   ArrayRef<APInt> ownerSubsumptionMasks = plan.ownerSubsumptionMasks;
   uint32_t nbaTaintWordCount = plan.nbaTaintWordCount;
   bool prioritySignalHandoff = plan.prioritySignalHandoff;
-  bool promotedCoordinator = options.promoted;
-  bool hybridCoordinator = options.hybrid;
   unsigned ownerCount = std::max<size_t>(64, mergedFragments.size());
   APInt allOwners = APInt::getAllOnes(ownerCount);
   const runtime::ReadySetLayout readyLayout(ownerCount);
-  APInt allowedOwnerMask = options.allowedOwnerMask.value_or(allOwners);
-  APInt pendingGuardMask = options.pendingGuardMask.value_or(allOwners);
-  bool trustedTwoState = options.trustedTwoState;
-  bool guardPendingOwners = options.guardPendingOwners;
-  bool observePathFallback = options.observePathFallback;
+  APInt allowedOwnerMask = allOwners;
 
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
@@ -103,34 +96,11 @@ LogicalResult materializeNativeEvalCoordinator(
   SymbolTable executorSymbols(module);
   builder.setInsertionPointToEnd(module.getBody());
   SmallVector<Type> coordinatorArguments{pointer, pointer};
-  if (trustedTwoState)
-    coordinatorArguments.push_back(pointer);
-  if (guardPendingOwners)
-    coordinatorArguments.push_back(pointer);
   auto fastCoordinator = LLVM::LLVMFuncOp::create(
       builder, location, functionName,
       LLVM::LLVMFunctionType::get(i32, coordinatorArguments, false));
-  if (promotedCoordinator && !hybridCoordinator)
-    fastCoordinator->setAttr(sim::metadata::evalTwoStateVariant,
-                             builder.getUnitAttr());
-  // A guarded steady coordinator proves the same owner-local invariant after
-  // rejecting a selected pending owner. Mark it as a trusted call-closure
-  // root too, so wrapper specialization can replace mutable route pointers
-  // with direct two-state edges on the accepted path.
-  if (trustedTwoState)
-    fastCoordinator->setAttr(sim::metadata::evalTrustedTwoStateCoordinator,
-                             builder.getUnitAttr());
   fastCoordinator->setAttr(sim::metadata::evalCallClosureRoot,
                            builder.getUnitAttr());
-  // Hybrid coordinators are module-instance scheduling bodies. Leave them to
-  // normal LLVM profitability so the periodic run loop can inline a
-  // profitable model while large generated bodies remain out of line.
-  bool observesFourStateFallback =
-      hybridCoordinator || guardPendingOwners || observePathFallback;
-  if (!hybridCoordinator && !(trustedTwoState && !observesFourStateFallback))
-    fastCoordinator->setAttr(
-        "passthrough",
-        builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
   Block *fastEntry = fastCoordinator.addEntryBlock(builder);
   Block *dispatch = new Block;
   Block *commit = new Block;
@@ -139,7 +109,6 @@ LogicalResult materializeNativeEvalCoordinator(
   Block *complete = new Block;
   complete->addArgument(i32, location);
   Block *stopped = new Block;
-  Block *guardRejected = guardPendingOwners ? new Block : nullptr;
   Block *failed = new Block;
   failed->addArgument(i32, location);
   fastCoordinator.getBody().push_back(dispatch);
@@ -148,55 +117,23 @@ LogicalResult materializeNativeEvalCoordinator(
   fastCoordinator.getBody().push_back(afterCommit);
   fastCoordinator.getBody().push_back(complete);
   fastCoordinator.getBody().push_back(stopped);
-  if (guardRejected)
-    fastCoordinator.getBody().push_back(guardRejected);
   fastCoordinator.getBody().push_back(failed);
   builder.setInsertionPointToStart(fastEntry);
-  if (guardPendingOwners) {
-    unsigned guardArgument = trustedTwoState ? 3 : 2;
-    LLVM::StoreOp::create(
-        builder, location,
-        llvmConstant(builder, location, builder.getI1Type(), 0),
-        fastEntry->getArgument(guardArgument), 1);
-  }
   Value changed = entryAlloca(builder, location, i32, 1, 4);
   Value fourStateFallback =
       entryAlloca(builder, location, builder.getI1Type(), 1, 1);
   LLVM::StoreOp::create(
       builder, location,
-      (trustedTwoState && !observesFourStateFallback)
-          ? llvmConstant(builder, location, builder.getI1Type(), 0)
-      : (promotedCoordinator || hybridCoordinator || guardPendingOwners)
-          ? arith::CmpIOp::create(
-                builder, location, arith::CmpIPredicate::ne,
-                LLVM::LoadOp::create(
-                    builder, location, builder.getI8Type(),
-                    LLVM::AddressOfOp::create(builder, location, pointer,
-                                              evalStepFourStateFallbackName),
-                    1),
-                llvmConstant(builder, location, builder.getI8Type(), 0))
-                .getResult()
-          : llvmConstant(builder, location, builder.getI1Type(), 0),
+      arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          LLVM::LoadOp::create(
+              builder, location, builder.getI8Type(),
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        evalStepFourStateFallbackName),
+              1),
+          llvmConstant(builder, location, builder.getI8Type(), 0))
+          .getResult(),
       fourStateFallback, 1);
-  // Pending ownership cannot change while the guarded steady coordinator is
-  // executing: a pending selection returns to the hybrid caller, and accepted
-  // direct bodies contain no runtime handoff. Hoist the mask load out of the
-  // local dirty-mask fixpoint instead of reloading it for every ready owner.
-  SmallVector<Value> guardedUnsafeOwnerMasks;
-  if (guardPendingOwners) {
-    Value pending = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              promotionPendingMaskName);
-    for (unsigned word = 0; word != allOwners.getNumWords(); ++word)
-      guardedUnsafeOwnerMasks.push_back(arith::OrIOp::create(
-          builder, location,
-          arith::AndIOp::create(
-              builder, location,
-              loadOwnerWord(builder, location, pending, word),
-              llvmConstant(builder, location, i64,
-                           ownerMaskWord(pendingGuardMask, word))),
-          llvmConstant(builder, location, i64,
-                       ~ownerMaskWord(allowedOwnerMask, word))));
-  }
   auto ingressAddress = [&] {
     return LLVM::AddressOfOp::create(builder, location, pointer,
                                      clockKernels.front().ingressName)
@@ -302,11 +239,56 @@ LogicalResult materializeNativeEvalCoordinator(
   SmallVector<APInt> cases;
   SmallVector<Block *> destinations;
   SmallVector<ValueRange> destinationOperands;
+  // Every entry policy shares these groups and their local domain proofs.
+  auto rankedExecutor = [&](unsigned index) -> StringRef {
+    return index < plan.rankedGroupExecutors.size()
+               ? StringRef(plan.rankedGroupExecutors[index])
+               : StringRef{};
+  };
+  llvm::StringMap<Block *> rankedEntries;
   for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
     if (executors[recordIndex].empty())
       continue;
     if (!allowedOwnerMask[record.bit])
       continue;
+    StringRef ranked = rankedExecutor(recordIndex);
+    if (!ranked.empty()) {
+      auto [entry, inserted] = rankedEntries.try_emplace(ranked, nullptr);
+      if (inserted) {
+        Block *execute = new Block, *poll = new Block;
+        fastCoordinator.getBody().push_back(execute);
+        fastCoordinator.getBody().push_back(poll);
+        entry->second = execute;
+        builder.setInsertionPointToStart(execute);
+        LLVM::CallOp::create(builder, location, TypeRange{},
+                             SymbolRefAttr::get(context, ranked),
+                             ValueRange{fastEntry->getArgument(1)});
+        // Finite sweeps return here even for a true oscillator. Consume no
+        // owner after the call: backward publications belong to the next
+        // activation. Termination is polled at this real group boundary.
+        Value address = LLVM::LoadOp::create(
+            builder, location, pointer,
+            LLVM::AddressOfOp::create(builder, location, pointer,
+                                      periodicTerminationName),
+            8);
+        Value absent = LLVM::ICmpOp::create(
+            builder, location, LLVM::ICmpPredicate::eq, address,
+            LLVM::ZeroOp::create(builder, location, pointer));
+        cf::CondBranchOp::create(builder, location, absent, dispatch,
+                                 ValueRange{}, poll, ValueRange{});
+        builder.setInsertionPointToStart(poll);
+        Value stopping = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne,
+            LLVM::LoadOp::create(builder, location, i32, address, 4),
+            llvmConstant(builder, location, i32, 0));
+        cf::CondBranchOp::create(builder, location, stopping, stopped,
+                                 ValueRange{}, dispatch, ValueRange{});
+      }
+      cases.push_back(APInt(64, record.bit));
+      destinations.push_back(entry->second);
+      destinationOperands.push_back(ValueRange{});
+      continue;
+    }
     Block *execute = new Block;
     fastCoordinator.getBody().push_back(execute);
     cases.push_back(APInt(64, record.bit));
@@ -343,22 +325,8 @@ LogicalResult materializeNativeEvalCoordinator(
     }
     Value ownerBit =
         llvmConstant(builder, location, i64, uint64_t{1} << (record.bit % 64));
-    if (guardPendingOwners) {
-      Value unsafeSelected =
-          arith::AndIOp::create(builder, location, ownerBit,
-                                guardedUnsafeOwnerMasks[record.bit / 64]);
-      Value selectedIsUnsafe = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, unsafeSelected,
-          llvmConstant(builder, location, i64, 0));
-      Block *accepted = new Block;
-      fastCoordinator.getBody().push_back(accepted);
-      cf::CondBranchOp::create(builder, location, selectedIsUnsafe,
-                               guardRejected, ValueRange{}, accepted,
-                               ValueRange{});
-      builder.setInsertionPointToStart(accepted);
-    }
     Value selectedPromotionPending;
-    if (hybridCoordinator) {
+    {
       Value pending = LLVM::AddressOfOp::create(builder, location, pointer,
                                                 promotionPendingMaskName);
       selectedPromotionPending = arith::CmpIOp::create(
@@ -368,8 +336,7 @@ LogicalResult materializeNativeEvalCoordinator(
               loadOwnerWord(builder, location, pending, record.bit / 64)),
           llvmConstant(builder, location, i64, 0));
     }
-    if ((promotedCoordinator || hybridCoordinator) &&
-        mergedTwoStateExecutors[recordIndex].empty()) {
+    if (mergedTwoStateExecutors[recordIndex].empty()) {
       LLVM::StoreOp::create(
           builder, location,
           llvmConstant(builder, location, builder.getI1Type(), 1),
@@ -377,9 +344,8 @@ LogicalResult materializeNativeEvalCoordinator(
       if (ownerMayTaintNBA(recordIndex))
         markOwnerNBATaint(recordIndex);
     }
-    auto executor = executorSymbols.lookup<LLVM::LLVMFuncOp>(
-        guardPendingOwners ? mergedExecutors[recordIndex]
-                           : executors[recordIndex]);
+    auto executor =
+        executorSymbols.lookup<LLVM::LLVMFuncOp>(executors[recordIndex]);
     auto twoStateExecutor = executorSymbols.lookup<LLVM::LLVMFuncOp>(
         mergedTwoStateExecutors[recordIndex]);
     bool convergenceOwner =
@@ -396,7 +362,7 @@ LogicalResult materializeNativeEvalCoordinator(
     if (convergenceOwner)
       clearIngressMask(consumed);
     Value executeStatus;
-    if (hybridCoordinator && !mergedTwoStateExecutors[recordIndex].empty() &&
+    if (!mergedTwoStateExecutors[recordIndex].empty() &&
         !promotionKernelReadyNames[recordIndex].empty()) {
       Block *checkPromotion = new Block;
       Block *executeFourState = new Block;
@@ -430,9 +396,7 @@ LogicalResult materializeNativeEvalCoordinator(
       Value fourStateStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, hybridCoordinator
-                                              ? executors[recordIndex]
-                                              : mergedExecutors[recordIndex]),
+              SymbolRefAttr::get(context, executors[recordIndex]),
               ValueRange{fastEntry->getArgument(1)})
               .getResult();
       cf::BranchOp::create(builder, location, executeJoin,
@@ -444,6 +408,8 @@ LogicalResult materializeNativeEvalCoordinator(
               SymbolRefAttr::get(context, mergedTwoStateExecutors[recordIndex]),
               ValueRange{fastEntry->getArgument(1)})
               .getResult();
+      twoStateStatus.getDefiningOp()->setAttr(
+          "obelisk.eval.proven_two_state_call", builder.getUnitAttr());
       cf::BranchOp::create(builder, location, executeJoin,
                            ValueRange{twoStateStatus});
       builder.setInsertionPointToStart(executeJoin);
@@ -495,7 +461,7 @@ LogicalResult materializeNativeEvalCoordinator(
       continue;
     }
     Block *checkTermination = new Block;
-    Block *loadTermination = trustedTwoState ? nullptr : new Block;
+    Block *loadTermination = new Block;
     fastCoordinator.getBody().push_back(checkTermination);
     if (loadTermination)
       fastCoordinator.getBody().push_back(loadTermination);
@@ -503,23 +469,12 @@ LogicalResult materializeNativeEvalCoordinator(
                              ValueRange{}, failed, ValueRange{executeStatus});
     builder.setInsertionPointToStart(checkTermination);
     Value terminationAddress =
-        trustedTwoState ? fastEntry->getArgument(2)
-                        : LLVM::LoadOp::create(builder, location, pointer,
-                                               LLVM::AddressOfOp::create(
-                                                   builder, location, pointer,
-                                                   periodicTerminationName),
-                                               8)
-                              .getResult();
-    if (trustedTwoState) {
-      Value termination =
-          LLVM::LoadOp::create(builder, location, i32, terminationAddress, 4);
-      Value stopping = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, termination,
-          llvmConstant(builder, location, i32, 0));
-      cf::CondBranchOp::create(builder, location, stopping, stopped,
-                               ValueRange{}, dispatch, ValueRange{});
-      continue;
-    }
+        LLVM::LoadOp::create(builder, location, pointer,
+                             LLVM::AddressOfOp::create(builder, location,
+                                                       pointer,
+                                                       periodicTerminationName),
+                             8)
+            .getResult();
     Value noTerminationAddress = LLVM::ICmpOp::create(
         builder, location, LLVM::ICmpPredicate::eq, terminationAddress,
         LLVM::ZeroOp::create(builder, location, pointer));
@@ -535,9 +490,8 @@ LogicalResult materializeNativeEvalCoordinator(
                              dispatch, ValueRange{});
   }
   builder.setInsertionPointToEnd(switchBlock);
-  LLVM::SwitchOp::create(builder, location, bit,
-                         guardPendingOwners ? guardRejected : stopped,
-                         ValueRange{}, cases, destinations, destinationOperands,
+  LLVM::SwitchOp::create(builder, location, bit, stopped, ValueRange{}, cases,
+                         destinations, destinationOperands,
                          ArrayRef<int32_t>{});
 
   builder.setInsertionPointToStart(commit);
@@ -580,7 +534,7 @@ LogicalResult materializeNativeEvalCoordinator(
       performCommit, ValueRange{});
 
   builder.setInsertionPointToStart(performCommit);
-  if (observesFourStateFallback) {
+  {
     // A path dispatcher can reject after coordinator entry.  Observe that
     // rejection at the barrier so its four-state staging is never committed
     // by the compact value-plane-only path.
@@ -602,24 +556,7 @@ LogicalResult materializeNativeEvalCoordinator(
   LLVM::StoreOp::create(builder, location,
                         llvmConstant(builder, location, i32, 0), changed, 4);
   Value commitStatus;
-  if (trustedTwoState && !observesFourStateFallback) {
-    auto fastTwoStateCall = LLVM::CallOp::create(
-        builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, nbaCommitName),
-        ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
-                   llvmConstant(builder, location, i32, 2), changed});
-    fastTwoStateCall->setAttr("obelisk.eval.use_fast_two_state_nba",
-                              builder.getUnitAttr());
-    commitStatus = fastTwoStateCall.getResult();
-  } else if (!promotedCoordinator && !hybridCoordinator) {
-    commitStatus =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, nbaCommitName),
-            ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
-                       llvmConstant(builder, location, i32, 2), changed})
-            .getResult();
-  } else {
+  {
     Block *fastTwoStateCommit = new Block;
     Block *canonicalTwoStateCommit = new Block;
     Block *fourStateCommit = new Block;
@@ -665,14 +602,8 @@ LogicalResult materializeNativeEvalCoordinator(
       }
     };
     builder.setInsertionPointToStart(selectFastNBA);
-    Value fastNBALatched = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne,
-        LLVM::LoadOp::create(builder, location, builder.getI8Type(),
-                             LLVM::AddressOfOp::create(builder, location,
-                                                       pointer,
-                                                       evalFastNBALatchedName),
-                             1),
-        llvmConstant(builder, location, builder.getI8Type(), 0));
+    Value fastRootsKnown =
+        llvmConstant(builder, location, builder.getI1Type(), 0);
     if (nbaTaintWordCount != 0) {
       Value dirtyBase = LLVM::AddressOfOp::create(builder, location, pointer,
                                                   nbaDirtyRootsName);
@@ -702,13 +633,13 @@ LogicalResult materializeNativeEvalCoordinator(
                                   missing,
                                   llvmConstant(builder, location, i64, 0)));
       }
-      fastNBALatched = arith::OrIOp::create(
-          builder, location, fastNBALatched,
+      fastRootsKnown = arith::OrIOp::create(
+          builder, location, fastRootsKnown,
           arith::XOrIOp::create(
               builder, location, missingFastRoot,
               llvmConstant(builder, location, builder.getI1Type(), 1)));
     }
-    cf::CondBranchOp::create(builder, location, fastNBALatched,
+    cf::CondBranchOp::create(builder, location, fastRootsKnown,
                              fastTwoStateCommit, ValueRange{},
                              checkCanonicalNBA, ValueRange{});
     builder.setInsertionPointToStart(checkFallbackNBA);
@@ -773,7 +704,8 @@ LogicalResult materializeNativeEvalCoordinator(
             ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
                        changed})
             .getResult();
-    LLVM::ReturnOp::create(builder, location, fourStateStatus);
+    cf::BranchOp::create(builder, location, commitJoin,
+                         ValueRange{fourStateStatus});
     builder.setInsertionPointToStart(commitJoin);
     commitStatus = commitJoin->getArgument(0);
   }
@@ -796,17 +728,6 @@ LogicalResult materializeNativeEvalCoordinator(
   LLVM::ReturnOp::create(
       builder, location,
       llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
-  if (guardRejected) {
-    builder.setInsertionPointToStart(guardRejected);
-    unsigned guardArgument = trustedTwoState ? 3 : 2;
-    LLVM::StoreOp::create(
-        builder, location,
-        llvmConstant(builder, location, builder.getI1Type(), 1),
-        fastEntry->getArgument(guardArgument), 1);
-    LLVM::ReturnOp::create(
-        builder, location,
-        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
-  }
   builder.setInsertionPointToStart(failed);
   LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
   return success();

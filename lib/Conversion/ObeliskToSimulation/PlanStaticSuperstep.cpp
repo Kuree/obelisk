@@ -6,6 +6,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -38,6 +39,10 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
     return signalPassFailure();
   }
   design->removeAttr(sim::metadata::staticSuperstep);
+  // This pass only publishes plan metadata; function identities are fixed.
+  // Resolve every fragment and spawn through one index rather than scanning
+  // the design body for each node of a large graph.
+  SymbolTable symbols(design);
 
   std::string reason;
   auto reject = [&](StringRef message) {
@@ -64,7 +69,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
       auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
           graph.getNodes()[static_cast<size_t>(member)]);
       sim::SimFuncOp function = fragment
-                                    ? design.lookupSymbol<sim::SimFuncOp>(
+                                    ? symbols.lookup<sim::SimFuncOp>(
                                           fragment.getFunction().getValue())
                                     : nullptr;
       if (isRuntimeOwnedColdActor(function))
@@ -172,7 +177,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         reject("bytecode-only compute fragment");
         continue;
       }
-      sim::SimFuncOp function = design.lookupSymbol<sim::SimFuncOp>(
+      sim::SimFuncOp function = symbols.lookup<sim::SimFuncOp>(
           fragment.getFunction().getValue());
       bool runtimeOwnedColdActor = isRuntimeOwnedColdActor(function);
       for (Attribute effectAttribute : fragment.getEffects()) {
@@ -251,7 +256,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
     design.walk([&](sim::SimSpawnOp spawn) {
       if (spawn->getParentOfType<sim::SimFuncOp>() != root) {
         sim::SimFuncOp actor =
-            design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+            symbols.lookup<sim::SimFuncOp>(spawn.getCallee());
         // IEEE 1800-2017 31.9.1 requires a transport-delayed copy of each
         // affected terminal.  Its compiler-generated one-shot commit is the
         // only non-root spawn admitted here: the shared structural certificate
@@ -264,7 +269,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
         return;
       }
       sim::SimFuncOp actor =
-          design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+          symbols.lookup<sim::SimFuncOp>(spawn.getCallee());
       // Clause 31.7 coordinators and the exact Clause 31.9.1 transport
       // monitors keep their waits in the generic scheduler. The latter is
       // certified by its complete CFG and unique commit-spawn shape.

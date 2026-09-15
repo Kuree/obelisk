@@ -1379,7 +1379,13 @@ static int executeCompilation(
     if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(
           passManager, requestedWorkers.value_or(1), vpiMode, optLevel,
-          staticSpecialization);
+          // Exact eval selection needs the verified static-state/NBA and
+          // superstep plans even at O0. Auto otherwise follows optimization
+          // level; an explicit "off" remains authoritative.
+          staticSpecialization == "auto" && nativeScheduler == "eval" &&
+                  executionTier != "bytecode"
+              ? "on"
+              : staticSpecialization);
     if (failed(passManager.run(*module)))
       return 1;
   }
@@ -1422,6 +1428,8 @@ static int executeCompilation(
     nativeOptions.optLevel = optLevel;
     nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, false);
     nativeOptions.timing = args.hasArg(OPT_mlir_timing);
+    nativeOptions.debugNativeExecutionCounts =
+        args.hasArg(OPT_debug_native_execution_counts);
     nativeOptions.compileThreads = resolvedCompilerThreads;
     nativeOptions.target = targetName == "wasm32"
                                ? obelisk::driver::TargetKind::Wasm

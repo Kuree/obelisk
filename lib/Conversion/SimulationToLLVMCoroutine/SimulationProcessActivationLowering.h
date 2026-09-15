@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -24,12 +25,16 @@ struct NativeSchedulePlan {
 };
 
 mlir::LogicalResult
-makeProcessActivationHelper(mlir::ModuleOp module, sim::SimFuncOp function,
+makeProcessActivationHelper(mlir::ModuleOp module, mlir::SymbolTable &symbols,
+                            sim::SimFuncOp function,
                             const SimulationProcessFrameAnalysis &analysis);
 mlir::LogicalResult
-makeProcessSpawnHelper(mlir::ModuleOp module, sim::SimFuncOp function,
+makeProcessSpawnHelper(mlir::ModuleOp module, mlir::SymbolTable &symbols,
+                       sim::SimFuncOp function,
                        const SimulationProcessFrameAnalysis &analysis,
                        const NativeSchedulePlan &schedule);
+
+void declareProcessSpawnRuntimeABI(mlir::ModuleOp module);
 
 } // namespace obelisk::detail
 

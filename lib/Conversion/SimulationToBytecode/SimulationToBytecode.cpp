@@ -74,17 +74,40 @@ static FailureOr<SmallVector<SimulationSampledRange>>
 planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
   SmallVector<SimulationSampledRange> sampledRanges;
   bool invalidSampledRange = false;
+  std::optional<analysis::DescriptorProvenanceAnalysis> provenanceAnalysis;
   design.walk([&](sim::SimFuncOp function) {
-    analysis::DescriptorProvenanceMap provenance =
-        analysis::deriveDescriptorProvenance(function);
+    std::optional<analysis::DescriptorProvenanceMap> provenance;
     function.walk([&](sim::SimSampledReadOp sampled) {
-      auto found = provenance.find(sampled.getSource());
+      // Sampling is opt-in. Derive value provenance only for a body that
+      // actually samples, and share the immutable driver-to-net index across
+      // those bodies. Unsampled designs must not pay a design scan per actor.
+      if (!provenance) {
+        if (!provenanceAnalysis)
+          provenanceAnalysis.emplace(design);
+        provenance.emplace(provenanceAnalysis->derive(function));
+      }
+      auto found = provenance->find(sampled.getSource());
       std::optional<unsigned> width =
           sim::getPackedWidth(sampled.getResult().getType());
-      if (found == provenance.end() || !found->second.descriptor ||
-          found->second.dynamic || !width) {
+      if (found == provenance->end() || !found->second.descriptor || !width) {
         sampled.emitOpError(
-            "requires one statically resolved canonical state range");
+            "requires a proven canonical descriptor and a packed result");
+        invalidSampledRange = true;
+        return;
+      }
+      // A dynamic selection retains its descriptor identity, but its selected
+      // address is not known until execution. Preserve that object's complete
+      // Preponed range once, then let the sampled handle select within it.
+      // This neither clones a read for every lane nor substitutes current
+      // state for the sampled array (IEEE 1800-2023 16.5.1). Unknown roots
+      // remain rejected above; unsampled objects require no snapshot.
+      uint64_t low = found->second.dynamic ? 0 : found->second.low;
+      // A CFG join may select among static subranges of one descriptor.
+      // Provenance contains their union, not just the loaded result's width.
+      uint64_t rangeWidth =
+          found->second.dynamic ? found->second.rootWidth : found->second.width;
+      if (rangeWidth == 0 || *width > rangeWidth) {
+        sampled.emitOpError("has no bounded canonical sampled range");
         invalidSampledRange = true;
         return;
       }
@@ -98,18 +121,18 @@ planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
                           : state.storageOffsets.end();
       if (!offsets || base == offsets->end() ||
           base->second >
-              std::numeric_limits<uint64_t>::max() - found->second.low) {
+              std::numeric_limits<uint64_t>::max() - low) {
         sampled.emitOpError("references an unknown canonical state object");
         invalidSampledRange = true;
         return;
       }
-      uint64_t bitOffset = base->second + found->second.low;
-      if (bitOffset > state.bits || *width > state.bits - bitOffset) {
+      uint64_t bitOffset = base->second + low;
+      if (bitOffset > state.bits || rangeWidth > state.bits - bitOffset) {
         sampled.emitOpError("canonical sampled range exceeds design state");
         invalidSampledRange = true;
         return;
       }
-      sampledRanges.push_back({bitOffset, *width});
+      sampledRanges.push_back({bitOffset, rangeWidth});
     });
   });
   if (invalidSampledRange)

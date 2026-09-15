@@ -4339,6 +4339,19 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     if (failed(converted))
       return failure();
     sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
+            "obelisk_sim.initialize_sample_default")) {
+      Value original = lvalues.lookup(path.getValue());
+      Value snapshot = sim::SimContextStorageOp::create(
+          builder, location, original.getType(),
+          function.getBody().front().getArgument(0), snapshotID);
+      if (auto ordinal = op->getAttrOfType<IntegerAttr>(
+              "obelisk_sim.initialize_subelement"))
+        snapshot = sim::SimRefSubelementOp::create(
+            builder, location, destination.getType(), snapshot,
+            builder.getDenseI64ArrayAttr({ordinal.getInt()}));
+      sim::SimRefStoreOp::create(builder, location, *converted, snapshot);
+    }
     return success();
   }
   if (auto path = op->getAttrOfType<StringAttr>("obelisk_sim.initialize_net")) {

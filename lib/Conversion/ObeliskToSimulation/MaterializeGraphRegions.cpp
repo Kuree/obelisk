@@ -502,14 +502,19 @@ void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
     }
   }
 
-  design->setAttr(sim::metadata::threeTierSchedule,
-                  sim::ThreeTierScheduleAttr::get(
-                      design.getContext(), sim::metadata::schemaVersion, graph,
-                      ownerCount,
-                      ArrayAttr::get(design.getContext(), triggerAttributes),
-                      ArrayAttr::get(design.getContext(), scheduledKernels),
-                      ArrayAttr::get(design.getContext(), roots),
-                      ArrayAttr::get(design.getContext(), ingress)));
+  // Native lowering consumes this plan without a serialization boundary.
+  // Run the same verifier here that parses a saved plan, so an invalid proof
+  // cannot remain hidden until emitted IR is read back.
+  auto schedule = sim::ThreeTierScheduleAttr::getChecked(
+      [&] { return design.emitOpError("invalid materialized schedule: "); },
+      design.getContext(), sim::metadata::schemaVersion, graph, ownerCount,
+      ArrayAttr::get(design.getContext(), triggerAttributes),
+      ArrayAttr::get(design.getContext(), scheduledKernels),
+      ArrayAttr::get(design.getContext(), roots),
+      ArrayAttr::get(design.getContext(), ingress));
+  if (!schedule)
+    return signalPassFailure();
+  design->setAttr(sim::metadata::threeTierSchedule, schedule);
 }
 
 } // namespace

@@ -1095,18 +1095,26 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
               return false;
             }
           }
+          bool recordedNativePublication = false;
           if (!staticallyPolledNative && subscription->waiterToken != 0) {
             auto &candidates =
                 subscription->target == SignalSubscription::NativeDirectWait
                     ? context->nativePollCandidates
                     : context->designPollCandidates;
-            OBELISK_RT_TRY { candidates.insert(subscription->waiterToken); }
+            OBELISK_RT_TRY {
+              bool inserted = candidates.insert(subscription->waiterToken).second;
+              if (subscription->target == SignalSubscription::NativeDirectWait) {
+                obelisk_rt_record_native_ready_publication_unlocked(
+                    context, subscription->waiterToken, inserted);
+                recordedNativePublication = true;
+              }
+            }
             OBELISK_RT_CATCH(const std::bad_alloc &) {
               context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
               return false;
             }
           }
-          if (!staticallyPolledNative &&
+          if (!staticallyPolledNative && !recordedNativePublication &&
               ++context->schedulerSelectionGeneration == 0)
             context->schedulerSelectionGeneration = 1;
           continue;

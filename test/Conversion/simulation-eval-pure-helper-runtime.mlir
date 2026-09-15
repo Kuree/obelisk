@@ -13,7 +13,7 @@
 // a checkpoint per activation. Real finish/fatal effects still use cold routes.
 // The predicate may duplicate this helper, but must not duplicate stateful ones.
 // PLAN: llvm.func @publish.__obelisk_eval_body_0.__obelisk_checkpoint_path
-// PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
+// PLAN: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: 10000000000000000 1 0
 // CHECK-NEXT: 0ffffffffffffffff 1 1
 // The initial checker finishes through its ordinary timed continuation, not

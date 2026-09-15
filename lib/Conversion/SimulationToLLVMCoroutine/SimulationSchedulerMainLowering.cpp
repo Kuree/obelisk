@@ -9,6 +9,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -285,7 +286,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
-  for (const NativeStateLayout::Bound &bound : stateLayout.bounds) {
+  auto emitBoundRegistration = [&](OpBuilder &builder, Value runtimeContext,
+                                   const NativeStateLayout::Bound &bound)
+      -> LogicalResult {
     auto status = LLVM::CallOp::create(
         builder, location, TypeRange{i32},
         SymbolRefAttr::get(context,
@@ -337,6 +340,47 @@ LogicalResult makeSchedulerMain(ModuleOp module,
             SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
             ValueRange{runtimeContext, designRootStatus});
       }
+    }
+    return success();
+  };
+  // Registration is ordered initialization, not a scheduling boundary. Keep
+  // large designs from producing a single basic block with tens of thousands
+  // of calls (and quadratic register-allocation work). The helpers preserve
+  // each bound's registration, managed roots and status reporting in place.
+  constexpr size_t registrationBatchSize = 256;
+  if (stateLayout.bounds.size() <= registrationBatchSize) {
+    for (const NativeStateLayout::Bound &bound : stateLayout.bounds)
+      if (mlir::failed(emitBoundRegistration(builder, runtimeContext, bound)))
+        return failure();
+  } else {
+    SymbolTable symbols(module);
+    for (size_t first = 0; first < stateLayout.bounds.size();
+         first += registrationBatchSize) {
+      LLVM::LLVMFuncOp helper;
+      {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToEnd(module.getBody());
+        helper = LLVM::LLVMFuncOp::create(
+            builder, location,
+            "__obelisk_register_static_state_" + std::to_string(first),
+            LLVM::LLVMFunctionType::get(voidType, {pointer}, false),
+            LLVM::Linkage::Internal);
+        symbols.insert(helper);
+        helper.setNoInline(true);
+        Block *entry = helper.addEntryBlock(builder);
+        builder.setInsertionPointToStart(entry);
+        size_t end = std::min(first + registrationBatchSize,
+                              stateLayout.bounds.size());
+        for (size_t index = first; index < end; ++index)
+          if (mlir::failed(emitBoundRegistration(
+                  builder, entry->getArgument(0), stateLayout.bounds[index])))
+            return failure();
+        LLVM::ReturnOp::create(builder, location, ValueRange{});
+      }
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(context, helper.getSymName()),
+          ValueRange{runtimeContext});
     }
   }
   if (requiresNativeStateSync) {

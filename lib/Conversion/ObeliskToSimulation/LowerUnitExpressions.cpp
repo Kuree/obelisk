@@ -361,6 +361,58 @@ FailureOr<Value> UnitLowering::lowerStaticClockingVariable(Operation *op,
 FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
+  if (sampleAssertionDefaults && !lvalue &&
+      !op->hasAttr("obelisk_sim.sample_default_current") &&
+      !getConstantSpelling(op)) {
+    if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
+            "obelisk_sim.sample_default_snapshot")) {
+      FailureOr<Type> type = getNormalizedSemanticType(op);
+      if (failed(type))
+        return failure();
+      Value snapshot = sim::SimContextStorageOp::create(
+          builder, getSemanticLocation(op),
+          sim::RefType::get(function.getContext(), *type),
+          function.getBody().front().getArgument(0), snapshotID);
+      return sim::SimRefLoadOp::create(builder, getSemanticLocation(op), *type,
+                                       snapshot)
+          .getResult();
+    }
+    if (op->hasAttr("obelisk_sim.sample_default_dynamic"))
+      return emitError(getSemanticLocation(op))
+                 << "sampled history default requires preservation of a "
+                    "nonconstant declaration initializer",
+             failure();
+    FailureOr<Type> type = getNormalizedSemanticType(op);
+    if (failed(type))
+      return failure();
+    auto spelling =
+        op->getAttrOfType<StringAttr>("obelisk_sim.sample_default_constant");
+    if (!spelling)
+      return createDefaultValue(builder, getSemanticLocation(op), *type);
+    Type scalarType = sim::getPackedScalarType(*type);
+    auto width = sim::getPackedWidth(*type);
+    if (!scalarType || !width)
+      return emitError(getSemanticLocation(op))
+                 << "sampled declaration default requires a packed value",
+             failure();
+    auto parsed =
+        parseSVInteger(spelling.getValue(), *width, getSemanticLocation(op));
+    if (failed(parsed))
+      return failure();
+    Value value;
+    if (auto integer = dyn_cast<IntegerType>(scalarType))
+      value = arith::ConstantOp::create(
+          builder, getSemanticLocation(op), integer,
+          builder.getIntegerAttr(integer, parsed->value));
+    else {
+      auto planeType = builder.getIntegerType(*width);
+      value = sim::SimLogicConstantOp::create(
+          builder, getSemanticLocation(op), scalarType,
+          builder.getIntegerAttr(planeType, parsed->value),
+          builder.getIntegerAttr(planeType, parsed->unknown));
+    }
+    return convert(value, *type, isSignedNode(op), getSemanticLocation(op));
+  }
   if (auto objectField = op->getAttrOfType<FlatSymbolRefAttr>(
           randomNestedStateFieldAttrName)) {
     auto concreteTypeAttr =

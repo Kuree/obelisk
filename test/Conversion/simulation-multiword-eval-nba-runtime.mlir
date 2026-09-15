@@ -17,7 +17,7 @@
 // PLAN-SAME: !llvm.array<2 x i64>
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// PLAN-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1(
+// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.switch
 // PLAN: 64: ^
 // CHECK: 00000000000000000

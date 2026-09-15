@@ -78,4 +78,4 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
 // CHECK: llvm.call @__obelisk_direct_fragment_2_2.__obelisk_execute
 // CHECK-NOT: llvm.call @__obelisk_direct_fragment_3_8.__obelisk_execute
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1

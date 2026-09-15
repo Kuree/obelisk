@@ -52,36 +52,23 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// One clock-sensitive activation owns the whole group.  The four-state,
-// provisional two-state, and trusted steady-state coordinators must all call
-// that direct owner without entering the runtime.
+// One clock-sensitive activation owns the group. The shared dispatcher
+// selects either value-domain executor without entering the runtime.
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
 // CHECK-SAME: attributes {obelisk.eval.infallible, passthrough = ["alwaysinline"]}
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state(
 // CHECK-SAME: attributes {obelisk.eval.infallible, obelisk.eval.two_state_variant, passthrough = ["alwaysinline"]}
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1(
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
+// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
 // CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_two_state_v1(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
 // CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1(
-// CHECK-SAME: obelisk.eval.trusted_two_state_coordinator
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1(
+// CHECK: llvm.return
+// The selected call carries the owner proof; no enclosing controller variant
+// is required to preserve a direct two-state computation edge.
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted(
-// CHECK-SAME: attributes {obelisk.eval.infallible, obelisk.eval.trusted_two_state_closure, obelisk.eval.two_state_variant, passthrough = ["alwaysinline"]}
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-SAME: obelisk.eval.trusted_two_state_closure
+// CHECK-NOT: llvm.call %
 // CHECK: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0
 // CHECK: llvm.return

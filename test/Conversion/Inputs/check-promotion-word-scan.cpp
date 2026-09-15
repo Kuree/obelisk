@@ -11,8 +11,6 @@ extern uint8_t __obelisk_eval_kernel_promotion_latched_v1[];
 extern uint64_t __obelisk_eval_promotion_pending_mask_v1[];
 extern uint64_t __obelisk_eval_route_promotion_pending_v1[];
 extern uint8_t __obelisk_eval_promotion_latched_v1;
-extern uint8_t __obelisk_eval_periodic_promotion_latched_v1;
-extern uint8_t __obelisk_eval_fast_nba_latched_v1;
 extern uint8_t __obelisk_eval_step_four_state_fallback_v1;
 extern uint64_t __obelisk_eval_fast_nba_roots_v1[];
 int __obelisk_eval_four_state_nba_handoff_v1(void *, void *, void *);
@@ -138,12 +136,8 @@ int main() {
   // Recovery preserves positive aggregate certificates; only a subsequent
   // loss may clear them. Their inputs are known at this test boundary.
   __obelisk_eval_promotion_latched_v1 = 1;
-  __obelisk_eval_periodic_promotion_latched_v1 = 1;
-  __obelisk_eval_fast_nba_latched_v1 = 1;
   __obelisk_eval_promotion_recheck_range_v1(11, 1);
   assert(__obelisk_eval_promotion_latched_v1 == 1);
-  assert(__obelisk_eval_periodic_promotion_latched_v1 == 1);
-  assert(__obelisk_eval_fast_nba_latched_v1 == 1);
   assert(__obelisk_eval_function_route_v1_0 == known);
   assert(__obelisk_eval_function_route_v1_1 == otherKnown);
 
@@ -199,11 +193,9 @@ int main() {
   auto fallback = __obelisk_eval_function_route_v1_0;
   assert(fallback != known);
   __obelisk_eval_fast_nba_roots_v1[0] = 3;
-  __obelisk_eval_fast_nba_latched_v1 = 1;
   __obelisk_eval_step_four_state_fallback_v1 = 0;
   fallback(nullptr);
   assert(__obelisk_eval_step_four_state_fallback_v1 == 1);
-  assert(__obelisk_eval_fast_nba_latched_v1 == 1);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
   assert(__obelisk_eval_function_route_v1_1 == otherKnown);
   // A failed proof is consumed once. Changing its bytes without reporting a

@@ -21,7 +21,7 @@
 // Empty-barrier bypass must not suppress the second commit, and canonical
 // handover must clear B's initial X. No display may execute in a dry-run probe.
 // PLAN-DAG: llvm.call @obelisk_rt_v1_eval_display
-// PLAN-DAG: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// PLAN-DAG: llvm.func @__obelisk_eval_dispatch_v1
 // PLAN-DAG: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 // CHECK: active 0 x
 // CHECK-NEXT: cascade 1 x

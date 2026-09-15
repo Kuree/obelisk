@@ -803,22 +803,31 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
   llvm_unreachable("unknown state-domain reason");
 }
 
-FailureOr<DenseMap<Value, StateDomainFact>>
-computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
-  if (design.getBody().empty()) {
-    design.emitOpError("cannot analyze a design with no body");
-    return failure();
-  }
+// Immutable structure for one analysis of an unchanged design. Inductive
+// rejection changes assumed roots, never IR; share summaries and boundary
+// seeds across those waves, but rebuild all propagated facts for every solve.
+struct ValueFactProgram {
+  explicit ValueFactProgram(sim::SimDesignOp design);
 
-  SmallVector<sim::SimFuncOp> functions(
-      design.getBody().front().getOps<sim::SimFuncOp>());
+  sim::SimDesignOp design;
+  SmallVector<sim::SimFuncOp> functions;
+  SmallVector<FunctionSummary, 0> summaries;
+  DenseMap<Operation *, unsigned> calleeIndex;
+  SmallVector<SmallVector<unsigned>> callers;
+  SmallVector<SmallVector<StateDomainFact>> formalBoundaries;
+  SmallVector<SmallVector<StateDomainFact>> resultBoundaries;
+};
+
+ValueFactProgram::ValueFactProgram(sim::SimDesignOp design)
+    : design(design),
+      functions(design.getBody().front().getOps<sim::SimFuncOp>()) {
   llvm::sort(functions, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
     return lhs.getSymName() < rhs.getSymName();
   });
 
   analysis::ClassDispatchAnalysis classDispatch(design);
   analysis::DescriptorProvenanceAnalysis descriptorProvenance(design);
-  SmallVector<FunctionSummary, 0> summaries(functions.size());
+  summaries.resize(functions.size());
   parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
     summaries[index] =
         buildSummary(functions[index], classDispatch, descriptorProvenance);
@@ -831,8 +840,7 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
   // Resolve symbol references serially using MLIR's symbol-table semantics,
   // then retain operation indices for read-only local propagation.
   SymbolTableCollection symbolTables;
-  DenseMap<Operation *, unsigned> calleeIndex;
-  SmallVector<SmallVector<unsigned>> callers(functions.size());
+  callers.resize(functions.size());
   for (auto [caller, summary] : llvm::enumerate(summaries)) {
     for (InvocationSummary &invocation : summary.invocations) {
       sim::SimFuncOp callee =
@@ -854,8 +862,8 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
     }
   }
 
-  SmallVector<SmallVector<StateDomainFact>> formalBoundaries(functions.size());
-  SmallVector<SmallVector<StateDomainFact>> resultBoundaries(functions.size());
+  formalBoundaries.resize(functions.size());
+  resultBoundaries.resize(functions.size());
   SmallVector<SmallVector<bool>> hasIncoming(functions.size());
   for (auto [index, function] : llvm::enumerate(functions)) {
     unsigned numInputs = function.getFunctionType().getNumInputs();
@@ -945,7 +953,18 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
                SymbolTable::Visibility::Private ||
            !hasIncoming[function][index]))
         boundaries[index] = mayFourState(StateDomainReason::FunctionEntry);
+}
 
+FailureOr<DenseMap<Value, StateDomainFact>>
+computeValueFacts(const ValueFactProgram &program,
+                  const RootSet &assumedKnownRoots) {
+  sim::SimDesignOp design = program.design;
+  const auto &functions = program.functions;
+  const auto &summaries = program.summaries;
+  const auto &calleeIndex = program.calleeIndex;
+  const auto &callers = program.callers;
+  auto formalBoundaries = program.formalBoundaries;
+  auto resultBoundaries = program.resultBoundaries;
   SmallVector<LocalFacts> locals;
   locals.reserve(summaries.size());
   for (const FunctionSummary &summary : summaries)
@@ -975,7 +994,8 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
                       locals[function]);
 
     for (auto [result, fact] : llvm::enumerate(locals[function].results)) {
-      if (!isLogic(functions[function].getFunctionType().getResult(result)) ||
+      sim::SimFuncOp current = functions[function];
+      if (!isLogic(current.getFunctionType().getResult(result)) ||
           !updateBoundary(resultBoundaries[function][result], fact,
                           fact.reason))
         continue;
@@ -1033,6 +1053,15 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
       facts.try_emplace(value, fact);
     }
   return facts;
+}
+
+FailureOr<DenseMap<Value, StateDomainFact>>
+computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
+  if (design.getBody().empty()) {
+    design.emitOpError("cannot analyze a design with no body");
+    return failure();
+  }
+  return computeValueFacts(ValueFactProgram(design), assumedKnownRoots);
 }
 
 std::optional<RootKey>
@@ -1175,18 +1204,19 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
   }
 
   DenseMap<Value, StateDomainFact> facts;
-  analysis::DescriptorProvenanceAnalysis descriptorProvenance(design);
+  ValueFactProgram program(design);
   while (true) {
     FailureOr<DenseMap<Value, StateDomainFact>> solved =
-        computeValueFacts(design, candidates);
+        computeValueFacts(program, candidates);
     if (failed(solved))
       return failure();
     facts = std::move(*solved);
     RootSet rejected;
-    for (sim::SimFuncOp function :
-         design.getBody().front().getOps<sim::SimFuncOp>()) {
-      analysis::DescriptorProvenanceMap provenance =
-          descriptorProvenance.derive(function);
+    bool rejectAllResources = false;
+    llvm::SmallDenseSet<unsigned, 8> rejectedResources;
+    for (const FunctionSummary &summary : program.summaries) {
+      sim::SimFuncOp function = summary.function;
+      const analysis::DescriptorProvenanceMap &provenance = summary.provenance;
       function.walk([&](Operation *operation) {
         auto rejectWrite = [&](Value destination, Value value) {
           if (getValueFact(facts, value).domain == StateDomain::TwoState)
@@ -1201,10 +1231,14 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
           sim::ComputeResourceKind resource =
               found == provenance.end() ? sim::ComputeResourceKind::Unknown
                                         : found->second.resource;
-          for (RootKey root : candidates)
-            if (resource == sim::ComputeResourceKind::Unknown ||
-                root.first == static_cast<unsigned>(resource))
-              rejected.insert(root);
+          // Unknown destinations reject a resource class, not a different
+          // set for every write. Union those demands now and expand them once
+          // after the wave, avoiding O(unknown writes * candidate roots).
+          // No candidate is removed until every write used the same facts.
+          if (resource == sim::ComputeResourceKind::Unknown)
+            rejectAllResources = true;
+          else
+            rejectedResources.insert(static_cast<unsigned>(resource));
         };
         if (auto pair = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
                 operation)) {
@@ -1255,6 +1289,10 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
         rejectWrite(destination, value);
       });
     }
+    if (rejectAllResources || !rejectedResources.empty())
+      for (RootKey root : candidates)
+        if (rejectAllResources || rejectedResources.contains(root.first))
+          rejected.insert(root);
     if (rejected.empty())
       break;
     for (RootKey root : rejected)
@@ -1296,12 +1334,13 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
         assumedKnown.insert(
             getRootKey(sim::ComputeResourceKind::Net, net.getId()));
   }
+  ValueFactProgram program(design);
   FailureOr<DenseMap<Value, StateDomainFact>> guarded =
-      computeValueFacts(design, assumedKnown);
+      computeValueFacts(program, assumedKnown);
   if (failed(guarded))
     return failure();
   FailureOr<DenseMap<Value, StateDomainFact>> unconditional =
-      computeValueFacts(design, RootSet{});
+      computeValueFacts(program, RootSet{});
   if (failed(unconditional))
     return failure();
   SmallVector<InductiveStateRoot> roots;

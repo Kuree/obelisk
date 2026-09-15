@@ -3,18 +3,23 @@
 #ifndef OBELISK_CONVERSION_OBELISKTOSIMULATION_COMPUTEFUSION_H
 #define OBELISK_CONVERSION_OBELISKTOSIMULATION_COMPUTEFUSION_H
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 namespace obelisk {
 
 /// Return true when a process body can be merged without combining
 /// actor-local state or admitting behavior outside the static digital subset.
-bool isComputeBodyFusionEligible(sim::SimFuncOp function);
+bool isComputeBodyFusionEligible(
+    sim::SimFuncOp function,
+    const analysis::DescriptorProvenanceAnalysis &provenance);
 
 /// Primitive-only union kernels additionally admit the UDP driver-state read
 /// and inertial publication operations that their materializer preserves.
 /// General and eval body fusion deliberately retain the narrower contract.
-bool isPrimitiveComputeBodyFusionEligible(sim::SimFuncOp function);
+bool isPrimitiveComputeBodyFusionEligible(
+    sim::SimFuncOp function,
+    const analysis::DescriptorProvenanceAnalysis &provenance);
 
 /// Return continuation targets that can coexist in the Active ready set when
 /// the given sensitivity awakens. A constant-delay continuation is excluded

@@ -15,6 +15,20 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
+namespace {
+bool needsExpressionHistoryDefault(Operation *expression) {
+  return !isa<semantic::SVNamedValueExpressionOp>(expression) ||
+         getConstantSpelling(expression).has_value() ||
+         expression->hasAttr("obelisk_sim.sample_default_constant") ||
+         expression->hasAttr("obelisk_sim.sample_default_snapshot") ||
+         expression->hasAttr("obelisk_sim.sample_default_dynamic") ||
+         expression->hasAttr("obelisk_sim.sample_default_current");
+}
+
+uint64_t historyValidityID(uint64_t siteID) {
+  return stableCodeUnitID((Twine(siteID) + ".$history_valid").str());
+}
+} // namespace
 
 FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     Operation *expression, Operation *gateExpression, Operation *clock,
@@ -310,43 +324,68 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
         sampleBuilder, location, entry.getArgument(0), currentSample, gateValue,
         sampleBuilder.getI64IntegerAttr(siteID),
         sampleBuilder.getI64IntegerAttr(depth));
+    if (needsExpressionHistoryDefault(expression)) {
+      Value valid = arith::ConstantOp::create(sampleBuilder, location,
+                                              sampleBuilder.getI1Type(),
+                                              sampleBuilder.getBoolAttr(true));
+      sim::SimClockedSampleUpdateOp::create(
+          sampleBuilder, location, entry.getArgument(0), valid, gateValue,
+          sampleBuilder.getI64IntegerAttr(historyValidityID(siteID)),
+          sampleBuilder.getI64IntegerAttr(depth));
+    }
     cf::BranchOp::create(sampleBuilder, location, wait);
     sampler->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   }
 
   Value processContext = function.getBody().front().getArgument(0);
-  return sim::SimClockedSampleReadOp::create(
-             builder, location, sourceType, processContext,
-             builder.getI64IntegerAttr(siteID),
-             builder.getI64IntegerAttr(depth), builder.getI64IntegerAttr(age))
-      .getResult();
+  Value prior =
+      sim::SimClockedSampleReadOp::create(
+          builder, location, sourceType, processContext,
+          builder.getI64IntegerAttr(siteID), builder.getI64IntegerAttr(depth),
+          builder.getI64IntegerAttr(age))
+          .getResult();
+  if (!needsExpressionHistoryDefault(expression))
+    return prior;
+  Value valid = sim::SimClockedSampleReadOp::create(
+      builder, location, builder.getI1Type(), processContext,
+      builder.getI64IntegerAttr(historyValidityID(siteID)),
+      builder.getI64IntegerAttr(depth), builder.getI64IntegerAttr(age));
+  Block *missing = addBlock();
+  Block *join = addBlock();
+  join->addArgument(sourceType, location);
+  cf::CondBranchOp::create(builder, location, valid, join, ValueRange{prior},
+                           missing, ValueRange{});
+  setCurrent(missing);
+  bool savedDefaults = sampleAssertionDefaults;
+  sampleAssertionDefaults = true;
+  FailureOr<Value> initial = lowerSampledValue(expression, location);
+  sampleAssertionDefaults = savedDefaults;
+  if (failed(initial))
+    return failure();
+  cf::BranchOp::create(builder, location, join, ValueRange{*initial});
+  setCurrent(join);
+  return join->getArgument(0);
 }
 
 FailureOr<Value> UnitLowering::lowerSampledValue(Operation *expression,
                                                  Location location) {
-  if (!isAddressableExpression(expression)) {
+  // IEEE 1800-2023 16.5.1 defines expression sampling recursively. Evaluate
+  // operators on sampled operands, including nested sampled-value calls;
+  // the expression itself need not denote storage. Reuse assertion rvalue
+  // lowering so packed selections sample their base and selector correctly.
+  // Restore the caller's mode before lowering surrounding procedural work.
+  bool savedSampleAssertionValues = sampleAssertionValues;
+  sampleAssertionValues = !sampleAssertionDefaults;
+  FailureOr<Value> sampled = lowerExpression(expression);
+  sampleAssertionValues = savedSampleAssertionValues;
+  if (failed(sampled))
+    return failure();
+  if (!sim::getPackedWidth((*sampled).getType())) {
     emitError(getSemanticLocation(expression))
-        << "sampled-value expressions currently require statically "
-           "addressable packed storage";
+        << "sampled-value expressions currently require packed values";
     return failure();
   }
-  FailureOr<Value> source = lowerExpression(expression, true);
-  if (failed(source))
-    return failure();
-  Type resultType;
-  if (auto ref = dyn_cast<sim::RefType>((*source).getType()))
-    resultType = ref.getElementType();
-  else if (auto net = dyn_cast<sim::NetType>((*source).getType()))
-    resultType = net.getElementType();
-  if (!resultType || !sim::getPackedWidth(resultType)) {
-    emitError(getSemanticLocation(expression))
-        << "sampled-value expressions currently require packed storage";
-    return failure();
-  }
-  Value context = function.getBody().front().getArgument(0);
-  return sim::SimSampledReadOp::create(builder, location, resultType, context,
-                                       *source)
-      .getResult();
+  return *sampled;
 }
 
 FailureOr<Value>
@@ -1038,12 +1077,39 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
             .str());
   };
   auto sampledHistory = [&](Value current, Value gate,
-                            uint64_t depth) -> Value {
-    return sim::SimSampledHistoryOp::create(
-               builder, location, current.getType(), context, current, gate,
-               builder.getI64IntegerAttr(sampledSiteID()),
-               builder.getI64IntegerAttr(depth))
-        .getResult();
+                            uint64_t depth) -> FailureOr<Value> {
+    Value previous = sim::SimSampledHistoryOp::create(
+                         builder, location, current.getType(), context, current,
+                         gate, builder.getI64IntegerAttr(sampledSiteID()),
+                         builder.getI64IntegerAttr(depth))
+                         .getResult();
+    // A plain static variable without an initializer already has the type
+    // default represented by the runtime ring. Keep that common path unchanged.
+    if (!needsExpressionHistoryDefault(children.front()))
+      return previous;
+    // A parallel one-bit history describes which samples actually exist.
+    // It uses the same gate/depth and the existing instruction/ABI. Underflow
+    // evaluates the expression's default, rather than the result type's zero/X.
+    uint64_t validID = historyValidityID(sampledSiteID());
+    Value valid = sim::SimSampledHistoryOp::create(
+        builder, location, builder.getI1Type(), context,
+        constant(builder.getI1Type(), 1), gate,
+        builder.getI64IntegerAttr(validID), builder.getI64IntegerAttr(depth));
+    Block *missing = addBlock();
+    Block *join = addBlock();
+    join->addArgument(current.getType(), location);
+    cf::CondBranchOp::create(builder, location, valid, join,
+                             ValueRange{previous}, missing, ValueRange{});
+    setCurrent(missing);
+    bool savedDefaults = sampleAssertionDefaults;
+    sampleAssertionDefaults = true;
+    FailureOr<Value> initial = lowerSampledValue(children.front(), location);
+    sampleAssertionDefaults = savedDefaults;
+    if (failed(initial))
+      return failure();
+    cf::BranchOp::create(builder, location, join, ValueRange{*initial});
+    setCurrent(join);
+    return join->getArgument(0);
   };
 
   if (name == "$sampled") {
@@ -1156,6 +1222,15 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                                                        : "one or two")
                           << " arguments";
       return failure();
+    }
+    if (sampleAssertionDefaults) {
+      if (historyName == "$past") {
+        FailureOr<Value> initial = sampledValue(children.front());
+        return failed(initial) ? FailureOr<Value>(failure())
+                               : convertResult(*initial);
+      }
+      return convertResult(
+          constant(builder.getI1Type(), historyName == "$stable"));
     }
     Operation *clockArgument = nullptr;
     semantic::SVSignalEventControlOp explicitEvent;
@@ -1304,7 +1379,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           return failure();
         gate = *truth;
       }
-      previous = sampledHistory(*current, gate, depth);
+      FailureOr<Value> prior = sampledHistory(*current, gate, depth);
+      if (failed(prior))
+        return failure();
+      previous = *prior;
       if (historyName == "$past")
         return convertResult(previous);
     }

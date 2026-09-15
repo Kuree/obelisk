@@ -170,6 +170,17 @@ obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
   size_t bytes = 0;
   if (!context || !outValue || !outUnknown || !checkedBytes(bitWidth, bytes))
     return OBELISK_RT_INVALID_ARGUMENT;
+  // Fixed-array selection uses this sentinel for an unknown or out-of-range
+  // index. Its read is X (zero after conversion to two-state), just as an
+  // ordinary invalid array read; it is not a missing runtime object.
+  if (stableID == UINT64_MAX) {
+    std::memset(outValue, 0, bytes);
+    std::memset(outUnknown, UINT8_MAX, bytes);
+    if (bitWidth % 8)
+      outUnknown[bytes - 1] &=
+          static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
+    return OBELISK_RT_OK;
+  }
   ContextTransaction transaction(context);
   OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);

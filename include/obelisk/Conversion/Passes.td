@@ -553,6 +553,19 @@ def ConvertObeliskRuntimeToLLVMPass
   ];
 }
 
+def MaterializeObeliskNativeEvalGroupsPass
+    : Pass<"obelisk-materialize-native-eval-groups", "mlir::ModuleOp"> {
+  let summary = "Materialize certified native activation bodies and boundary state";
+  let description = [{
+    Expands certified executor calls in LLVM dialect after value-domain routes
+    are specialized and the canonical bytecode fallback is frozen. Preserves
+    activation predicates and publishes SSA state at retained boundaries.
+    Run before computing the final native partition manifest. The coroutine
+    conversion invokes the same materializer at that point in its pipeline.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+}
+
 def ConvertObeliskSimProcessesToLLVMCoroutinesPass
     : Pass<"convert-obelisk-sim-processes-to-llvm-coroutines",
            "mlir::ModuleOp"> {

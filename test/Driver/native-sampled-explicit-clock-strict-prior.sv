@@ -23,15 +23,15 @@ module native_sampled_explicit_clock_strict_prior;
 
   strict_prior: assert property (@(posedge main_clk)
       ((phase == 1) &&
-       ($past(data, 1, , @(posedge alternate_clk)) === 1'bx) &&
-       ($past(data, 2, , @(posedge alternate_clk)) === 1'bx) &&
+       ($past(data, 1, , @(posedge alternate_clk)) === 1'b0) &&
+       ($past(data, 2, , @(posedge alternate_clk)) === 1'b0) &&
        !$rose(data, @(posedge alternate_clk)) &&
-       $fell(data, @(posedge alternate_clk)) &&
-       !$stable(data, @(posedge alternate_clk)) &&
-       $changed(data, @(posedge alternate_clk))) ||
+       !$fell(data, @(posedge alternate_clk)) &&
+       $stable(data, @(posedge alternate_clk)) &&
+       !$changed(data, @(posedge alternate_clk))) ||
       (((phase == 2) || (phase == 3)) &&
        ($past(data, 1, , @(posedge alternate_clk)) === 1'b0) &&
-       ($past(data, 2, , @(posedge alternate_clk)) === 1'bx) &&
+       ($past(data, 2, , @(posedge alternate_clk)) === 1'b0) &&
        $rose(data, @(posedge alternate_clk)) &&
        !$fell(data, @(posedge alternate_clk)) &&
        !$stable(data, @(posedge alternate_clk)) &&
@@ -52,6 +52,8 @@ module native_sampled_explicit_clock_strict_prior;
     // Both edges occur in one time step. The alternate-clock sample from this
     // slot is not a strictly prior sample while the assertion is in Observed.
     // The caller-current sampled value of data is still its Preponed zero.
+    // LRM 16.5.1 also makes its declaration initializer the pre-history
+    // default, so the first comparison is zero against zero, with no change.
     #1 begin data = 1; alternate_clk = 1; main_clk = 1; end
     #1 begin alternate_clk = 0; main_clk = 0; end
 

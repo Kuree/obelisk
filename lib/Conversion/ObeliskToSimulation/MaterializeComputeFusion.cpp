@@ -99,7 +99,7 @@ bool useEvalBodyFusion(sim::SimDesignOp design) {
   return analysis::NativeAOTAnalysis::compute(module).isAOTCostEffective();
 }
 
-bool isPrimitiveContinuousFusion(sim::SimDesignOp design,
+bool isPrimitiveContinuousFusion(SymbolTable &symbols,
                                  sim::ComputeFusionAttr fusion,
                                  sim::ComputeGraphAttr graph) {
   if (!fusion || !graph || fusion.getFragments().empty())
@@ -109,9 +109,9 @@ bool isPrimitiveContinuousFusion(sim::SimDesignOp design,
       return false;
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
         graph.getNodes()[static_cast<size_t>(member)]);
-    sim::SimFuncOp function = fragment ? design.lookupSymbol<sim::SimFuncOp>(
-                                             fragment.getFunction().getValue())
-                                       : sim::SimFuncOp{};
+    sim::SimFuncOp function =
+        fragment ? symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue())
+                 : sim::SimFuncOp{};
     if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
         !function->hasAttr("obelisk_sim.primitive_name"))
       return false;
@@ -209,6 +209,7 @@ bool isTypedSuspend(Operation *operation) {
 /// is the experiment's Verilator-shaped executable body, not a production
 /// profitability decision.
 LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
+                                            SymbolTable &symbols,
                                             sim::SimFuncOp function,
                                             const DenseSet<uint64_t> &controlTargets,
                                             bool foreignControl) {
@@ -242,7 +243,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   Block *activation = wait->getSuccessor(0);
   for (sim::SimSpawnOp spawn : activation->getOps<sim::SimSpawnOp>()) {
     sim::SimFuncOp target =
-        design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+        symbols.lookup<sim::SimFuncOp>(spawn.getCallee());
     // IEEE 1800-2017 31.9.1 transport monitors must hand this activation to
     // the generic scheduler so the one-shot commit registers its calendar
     // delay before AOT may advance time.  Cloning the activation as an eval
@@ -275,7 +276,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   SmallString<48> evalName = SymbolTable::generateSymbolName<48>(
       evalBase,
       [&](StringRef candidate) {
-        return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+        return symbols.lookup(candidate) != nullptr;
       },
       evalCounter);
   OpBuilder builder = OpBuilder::atBlockEnd(&design.getBody().front());
@@ -302,11 +303,12 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       FunctionType::get(design.getContext(),
                         function.getFunctionType().getInputs(), TypeRange{}),
       sim::EntryKind::Function, evalAttributes, argumentAttrs);
+  symbols.insert(evalBody);
   // Every path that abandons the clone below erases both halves: a code-unit
   // declaration naming a body that was never materialized would outlive the
   // rejection and describe a symbol the design does not contain.
   auto abandon = [&] {
-    evalBody.erase();
+    symbols.erase(evalBody);
     evalDeclaration.erase();
   };
   evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
@@ -1361,8 +1363,10 @@ uint64_t shareStableBranchConditions(sim::SimFuncOp function,
 }
 
 FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
-    sim::SimDesignOp design, sim::ComputeFusionAttr fusion,
+    sim::SimDesignOp design, SymbolTable &symbols, sim::ComputeFusionAttr fusion,
     sim::ComputeGraphAttr graph,
+    const analysis::DescriptorProvenanceAnalysis &provenance,
+    const DenseMap<int64_t, int64_t> &resumeTargets,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
   struct Candidate {
     sim::SimFuncOp function;
@@ -1375,12 +1379,6 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     int64_t fragment;
     int64_t resumeTarget;
   };
-  DenseMap<int64_t, int64_t> resumeTargets;
-  for (Attribute attribute : graph.getEdges()) {
-    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
-      resumeTargets.try_emplace(edge.getSource(), edge.getTarget());
-  }
   SmallVector<Candidate> candidates;
   for (int64_t member : fusion.getFragments().asArrayRef()) {
     if (member < 0 || static_cast<uint64_t>(member) >= graph.getNodes().size())
@@ -1390,13 +1388,13 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     if (!fragment)
       return failure();
     sim::SimFuncOp function =
-        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+        symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
     auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
     bool primitive =
         function && function->hasAttr("obelisk_sim.primitive_name");
     if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
-        !(primitive ? isPrimitiveComputeBodyFusionEligible(function)
-                    : isComputeBodyFusionEligible(function)) ||
+        !(primitive ? isPrimitiveComputeBodyFusionEligible(function, provenance)
+                    : isComputeBodyFusionEligible(function, provenance)) ||
         function.getBody().getBlocks().size() != 2 ||
         spawns == spawnsByCallee.end() || spawns->second.size() != 1)
       return failure();
@@ -1493,7 +1491,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   name = SymbolTable::generateSymbolName<40>(
       name,
       [&](StringRef candidate) {
-        return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+        return symbols.lookup(candidate) != nullptr;
       },
       symbolCounter);
   sim::SimFuncOp first = candidates.front().function;
@@ -1504,6 +1502,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       builder, first.getLoc(), name,
       FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
       sim::EntryKind::Continuous, attributes, argumentAttrs);
+  symbols.insert(kernel);
   SymbolTable::setSymbolVisibility(kernel, SymbolTable::Visibility::Private);
   kernel->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
   kernel->setAttr(sim::metadata::evalReconstructsContinuationArgs,
@@ -1529,7 +1528,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       }
     IntegerAttr codeUnit = sourceFunction.getCodeUnitIdAttr();
     if (!site || !codeUnit) {
-      kernel.erase();
+      symbols.erase(kernel);
       return failure();
     }
     sourceOwners.push_back(builder.getDictionaryAttr(
@@ -1546,10 +1545,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   // terminator-less function to a caller that only checks for success.
   auto bail = [&]() -> FailureOr<sim::SimFuncOp> {
     if (memberHelper)
-      memberHelper.erase();
+      symbols.erase(memberHelper);
     if (memberHelperDeclaration)
       memberHelperDeclaration.erase();
-    kernel.erase();
+    symbols.erase(kernel);
     return failure();
   };
   Block &entry = kernel.getBody().front();
@@ -1822,7 +1821,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       candidate.spawn.erase();
     for (Candidate &candidate : candidates) {
       retargetCoverageKeepalives(candidate.function, kernel);
-      candidate.function.erase();
+      symbols.erase(candidate.function);
     }
     return kernel;
   }
@@ -2073,6 +2072,15 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   if (!helper) {
     SmallString<48> helperName;
     (kernel.getSymName() + ".__member").toVector(helperName);
+    if (symbols.lookup(helperName)) {
+      unsigned helperCounter = 0;
+      helperName = SymbolTable::generateSymbolName<48>(
+          helperName,
+          [&](StringRef candidate) {
+            return symbols.lookup(candidate) != nullptr;
+          },
+          helperCounter);
+    }
     llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
     for (sim::SimCodeUnitDeclOp declaration :
          design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
@@ -2102,6 +2110,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                                     helperType, sim::EntryKind::Function,
                                     helperAttributes, helperArgumentAttrs);
     memberHelper = helper;
+    symbols.insert(helper);
     SymbolTable::setSymbolVisibility(helper, SymbolTable::Visibility::Private);
     helper->setAttr("obelisk_sim.outlined_primitive_member",
                     helperBuilder.getUnitAttr());
@@ -2445,15 +2454,18 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     candidate.spawn.erase();
   for (Candidate &candidate : candidates) {
     retargetCoverageKeepalives(candidate.function, kernel);
-    candidate.function.erase();
+    symbols.erase(candidate.function);
   }
   return kernel;
 }
 
 FailureOr<sim::SimFuncOp> materializeFusion(
-    sim::SimDesignOp design, sim::ComputeFusionAttr fusion,
+    sim::SimDesignOp design, SymbolTable &symbols, sim::ComputeFusionAttr fusion,
     sim::ComputeGraphAttr graph,
+    const analysis::DescriptorProvenanceAnalysis &provenance,
     const DenseMap<uint32_t, uint32_t> &scheduleOrder,
+    const DenseMap<uint32_t, uint32_t> &resumeTargets,
+    const DenseMap<StringAttr, uint32_t> &entryOrder,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
     bool evalBodyFusion, uint64_t &eliminatedTerminationPolls,
     uint64_t &ifConvertedNBAs, uint64_t &sharedStableConditions,
@@ -2461,35 +2473,6 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   auto rejectEval = [&](StringRef) -> FailureOr<sim::SimFuncOp> {
     return failure();
   };
-  DenseMap<uint32_t, uint32_t> resumeTargets;
-  for (Attribute attribute : graph.getEdges()) {
-    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
-      resumeTargets[edge.getSource()] = edge.getTarget();
-  }
-  SmallVector<uint32_t> entryTargets;
-  for (Attribute attribute : graph.getEdges()) {
-    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-    if (edge.getKind() == sim::ComputeEdgeKind::Spawn &&
-        scheduleOrder.contains(edge.getTarget()))
-      entryTargets.push_back(edge.getTarget());
-  }
-  llvm::sort(entryTargets, [&](uint32_t lhs, uint32_t rhs) {
-    return scheduleOrder.at(lhs) < scheduleOrder.at(rhs);
-  });
-  entryTargets.erase(std::unique(entryTargets.begin(), entryTargets.end()),
-                     entryTargets.end());
-  DenseMap<StringAttr, uint32_t> entryOrder;
-  for (auto [order, target] : llvm::enumerate(entryTargets)) {
-    auto fragment =
-        target < graph.getNodes().size()
-            ? dyn_cast<sim::ComputeFragmentAttr>(graph.getNodes()[target])
-            : sim::ComputeFragmentAttr{};
-    if (fragment)
-      entryOrder.try_emplace(fragment.getFunction().getAttr(),
-                             static_cast<uint32_t>(order));
-  }
-
   SmallVector<BodyFusionCandidate, 4> candidates;
   sim::ComputeEffectAttr commonSensitivity;
   for (int64_t member : fusion.getFragments().asArrayRef()) {
@@ -2504,7 +2487,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       return rejectEval("sensitivity mismatch");
     commonSensitivity = sensitivity;
     sim::SimFuncOp function =
-        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+        symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
     auto spawns = function ? spawnsByCallee.find(function.getSymNameAttr())
                            : spawnsByCallee.end();
     auto resume = resumeTargets.find(static_cast<uint32_t>(member));
@@ -2513,7 +2496,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
             ? spawns->second.front()->getParentOfType<sim::SimFuncOp>()
             : sim::SimFuncOp{};
     if (!function || !isSupportedEntryKind(function.getEntryKind()) ||
-        !isComputeBodyFusionEligible(function) ||
+        !isComputeBodyFusionEligible(function, provenance) ||
         spawns == spawnsByCallee.end() || spawns->second.size() != 1 ||
         !spawningFunction ||
         spawningFunction.getEntryKind() != sim::EntryKind::RootInitializer ||
@@ -2698,7 +2681,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   SmallString<32> name = SymbolTable::generateSymbolName<32>(
       symbolBase,
       [&](StringRef candidate) {
-        return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+        return symbols.lookup(candidate) != nullptr;
       },
       symbolCounter);
   SmallVector<NamedAttribute> fusedAttributes;
@@ -2709,6 +2692,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       builder, first.getLoc(), name,
       FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
       first.getEntryKind(), fusedAttributes, argumentAttrs);
+  symbols.insert(fused);
   SymbolTable::setSymbolVisibility(fused, SymbolTable::Visibility::Private);
   fused->setAttr(sim::metadata::nativeRegionBody, builder.getUnitAttr());
   fused->setAttr(sim::metadata::evalReconstructsContinuationArgs,
@@ -2908,7 +2892,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     candidate.spawn.erase();
   for (BodyFusionCandidate &candidate : candidates) {
     retargetCoverageKeepalives(candidate.function, fused);
-    candidate.function.erase();
+    symbols.erase(candidate.function);
   }
 
   // Remove private activation temporaries before if-converting NBA diamonds.
@@ -2940,7 +2924,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     SmallString<40> evalName = SymbolTable::generateSymbolName<40>(
         evalBase,
         [&](StringRef candidate) {
-          return SymbolTable::lookupSymbolIn(design, candidate) != nullptr;
+          return symbols.lookup(candidate) != nullptr;
         },
         evalCounter);
     builder.setInsertionPointToEnd(&design.getBody().front());
@@ -2963,6 +2947,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         builder, fused.getLoc(), evalName,
         FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
         sim::EntryKind::Function, evalAttributes, argumentAttrs);
+    symbols.insert(evalBody);
     evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.raw_captures", builder.getUnitAttr());
     evalBody->setAttr("obelisk.eval.instance_coordinator",
@@ -2984,7 +2969,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
                  dyn_cast<sim::SimSuspendObserveOp>(wait->getTerminator()))
       activationSite = suspend.getSiteAttr();
     if (!activationSite || activationSite.getId() == 0) {
-      evalBody.erase();
+      symbols.erase(evalBody);
       return fused;
     }
     // The source suspension may be erased by later fusion and CFG cleanup.
@@ -3100,7 +3085,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         break;
     }
     if (!cloneSupported) {
-      evalBody.erase();
+      symbols.erase(evalBody);
     } else {
       preserveEvalNBASiteOrigins(evalBody);
       fused->setAttr("obelisk.eval.body",
@@ -3113,6 +3098,13 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
 void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  // One mutable index serves every cohort and standalone activation. Keep
+  // creations and rejected clones in sync so lookup is independent of the
+  // total design size without retaining erased operations.
+  SymbolTable symbols(design);
+  // Fusion changes function bodies but never driver declarations. Reuse the
+  // immutable driver-to-net index while deriving fresh per-body value facts.
+  analysis::DescriptorProvenanceAnalysis provenance(design);
   DenseSet<uint64_t> controlTargets;
   bool foreignControl = false;
   design.walk([&](Operation *operation) {
@@ -3175,8 +3167,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
          design.getBody().front().getOps<sim::SimFuncOp>())
       actors.push_back(function);
     for (sim::SimFuncOp function : actors)
-      if (failed(materializeStandaloneEvalBody(design, function, controlTargets,
-                                               foreignControl))) {
+      if (failed(materializeStandaloneEvalBody(
+              design, symbols, function, controlTargets, foreignControl))) {
         if (prepareDormantTier1)
           finalizeDormantTier1Stores(design);
         signalPassFailure();
@@ -3202,6 +3194,38 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
         scheduleOrder[static_cast<uint32_t>(member)] = nextOrder++;
   }
 
+  // These indices describe the frozen input graph, not the progressively
+  // rewritten functions. Build them once, preserving each consumer's resume
+  // selection and the region's stable source activation order.
+  DenseMap<int64_t, int64_t> firstResumeTargets;
+  DenseMap<uint32_t, uint32_t> resumeTargets;
+  SmallVector<uint32_t> entryTargets;
+  for (Attribute attribute : graph.getEdges()) {
+    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+    if (edge.getKind() == sim::ComputeEdgeKind::Resume) {
+      firstResumeTargets.try_emplace(edge.getSource(), edge.getTarget());
+      resumeTargets[edge.getSource()] = edge.getTarget();
+    }
+    if (edge.getKind() == sim::ComputeEdgeKind::Spawn &&
+        scheduleOrder.contains(edge.getTarget()))
+      entryTargets.push_back(edge.getTarget());
+  }
+  llvm::sort(entryTargets, [&](uint32_t lhs, uint32_t rhs) {
+    return scheduleOrder.at(lhs) < scheduleOrder.at(rhs);
+  });
+  entryTargets.erase(std::unique(entryTargets.begin(), entryTargets.end()),
+                     entryTargets.end());
+  DenseMap<StringAttr, uint32_t> entryOrder;
+  for (auto [order, target] : llvm::enumerate(entryTargets)) {
+    auto fragment =
+        target < graph.getNodes().size()
+            ? dyn_cast<sim::ComputeFragmentAttr>(graph.getNodes()[target])
+            : sim::ComputeFragmentAttr{};
+    if (fragment)
+      entryOrder.try_emplace(fragment.getFunction().getAttr(),
+                            static_cast<uint32_t>(order));
+  }
+
   DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> spawnsByCallee;
   design.walk([&](sim::SimSpawnOp spawn) {
     spawnsByCallee[spawn.getCalleeAttr().getAttr()].push_back(spawn);
@@ -3217,10 +3241,11 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     if (!fusion)
       continue;
     bool primitiveContinuous =
-        isPrimitiveContinuousFusion(design, fusion, graph);
+        isPrimitiveContinuousFusion(symbols, fusion, graph);
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
-        design, fusion, graph, scheduleOrder, spawnsByCallee, evalScheduler,
-        removedPolls, convertedNBAs, sharedConditions, promotedStores);
+        design, symbols, fusion, graph, provenance, scheduleOrder, resumeTargets,
+        entryOrder, spawnsByCallee, evalScheduler, removedPolls, convertedNBAs,
+        sharedConditions, promotedStores);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
     // the actor scheduler.  A primitive-only cohort is different: replacing
@@ -3229,8 +3254,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     // typed source owners preserve the original fine identities for eval
     // handoff.
     if (failed(fused) && (!evalScheduler || primitiveContinuous))
-      fused =
-          materializeStraightLineKernel(design, fusion, graph, spawnsByCallee);
+      fused = materializeStraightLineKernel(design, symbols, fusion, graph,
+                                            provenance, firstResumeTargets,
+                                            spawnsByCallee);
     changed |= succeeded(fused);
     if (succeeded(fused))
       ++materializedFusions;
@@ -3250,8 +3276,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       // Eligibility is entirely structural. Symbol spelling is an identity
       // and debugging concern; generated bodies must not depend on the
       // frontend's current `unit_N` naming convention.
-      if (failed(materializeStandaloneEvalBody(design, function, controlTargets,
-                                               foreignControl))) {
+      if (failed(materializeStandaloneEvalBody(
+              design, symbols, function, controlTargets, foreignControl))) {
         if (prepareDormantTier1)
           finalizeDormantTier1Stores(design);
         signalPassFailure();

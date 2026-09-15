@@ -17,8 +17,6 @@ symbols = ("__obelisk_state_unknown", "__obelisk_eval_function_route_v1_0",
                "__obelisk_eval_promotion_pending_mask_v1",
                "__obelisk_eval_route_promotion_pending_v1",
                "__obelisk_eval_promotion_latched_v1",
-               "__obelisk_eval_periodic_promotion_latched_v1",
-               "__obelisk_eval_fast_nba_latched_v1",
                "__obelisk_eval_step_four_state_fallback_v1",
                "__obelisk_eval_fast_nba_roots_v1")
 if multiword:

@@ -3,9 +3,11 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Runtime/ActivationOrder.h"
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <numeric>
 
@@ -26,6 +28,186 @@ bool rangesOverlap(sim::ComputeEffectAttr lhs, sim::ComputeEffectAttr rhs) {
   // an independent overflow precondition.
   return lhs.getLow() < rhs.getLow() + rhs.getWidth() &&
          rhs.getLow() < lhs.getLow() + lhs.getWidth();
+}
+
+/// Inventory closed zero-time activations using current graph identities.
+/// Always_comb and always_latch retain their source predicates and stores;
+/// neither keyword proves that every output is assigned on every activation.
+/// Reads through dynamic selectors and unrepresented effects remain boundaries.
+/// Possible feedback edges are retained, including mux-dependent routes: graph
+/// shape never proves a route inactive under the current configuration.
+SmallVector<NativeRankedEvalNode>
+collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
+                   const NativeStateLayout &stateLayout,
+                   const NativeStaticFanoutPlan &fanout,
+                   ArrayRef<NativeDirectFragment> directFragments,
+                   sim::ComputeGraphAttr graph) {
+  if (!graph)
+    return {};
+  llvm::StringMap<sim::SimFuncOp> functions;
+  module.walk([&](sim::SimFuncOp function) {
+    functions.try_emplace(function.getSymName(), function);
+  });
+  DenseMap<uint32_t, sim::ComputeFragmentAttr> fragments;
+  for (Attribute raw : graph.getNodes())
+    if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(raw))
+      fragments.try_emplace(fragment.getId(), fragment);
+  llvm::StringMap<const NativeDirectFragment *> directByWrapper;
+  for (const auto &direct : directFragments)
+    directByWrapper.try_emplace(direct.wrapper, &direct);
+  struct Range {
+    uint32_t state;
+    uint64_t low, high;
+  };
+  struct Node {
+    NativeRankedEvalNode plan;
+    SmallVector<Range> reads, writes;
+  };
+  SmallVector<Node, 0> nodes;
+  DenseMap<uint32_t, uint64_t> widths;
+  for (const auto &bound : stateLayout.bounds)
+    widths.try_emplace(bound.handleID, bound.width);
+  APInt subsumed(std::max<size_t>(64, plan.mergedFragments.size()), 0);
+  for (const APInt &mask : plan.ownerSubsumptionMasks)
+    subsumed |= mask;
+  for (auto [owner, record] : llvm::enumerate(plan.mergedFragments)) {
+    auto found = directByWrapper.find(plan.mergedExecutors[owner]);
+    if (found == directByWrapper.end())
+      continue;
+    const auto &direct = *found->second;
+    if (direct.instanceCoordinator || direct.fragmentIDs.empty() ||
+        subsumed[record.bit] || !plan.ownerSubsumptionMasks[owner].isZero())
+      continue;
+    Node node{{record.bit, direct.body, direct.twoStateBody, {}}, {}, {}};
+    bool safe = llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
+      auto fragment = fragments.find(id);
+      if (fragment == fragments.end() ||
+          fragment->second.getRegion() != sim::ComputeRegionKind::Active)
+        return false;
+      auto function =
+          functions.lookup(fragment->second.getFunction().getValue());
+      if (!function || (function.getEntryKind() != sim::EntryKind::Continuous &&
+                        function.getEntryKind() != sim::EntryKind::Always &&
+                        function.getEntryKind() != sim::EntryKind::AlwaysComb &&
+                        function.getEntryKind() != sim::EntryKind::AlwaysLatch &&
+                        function.getEntryKind() != sim::EntryKind::PortInput &&
+                        function.getEntryKind() != sim::EntryKind::PortOutput))
+        return false;
+      return llvm::all_of(fragment->second.getEffects(), [&](Attribute raw) {
+        auto effect = cast<sim::ComputeEffectAttr>(raw);
+        if (effect.getEffect() != sim::ComputeEffectKind::Read &&
+            effect.getEffect() != sim::ComputeEffectKind::Write &&
+            effect.getEffect() != sim::ComputeEffectKind::Watch)
+          return false;
+        if (effect.getResource() != sim::ComputeResourceKind::Storage ||
+            effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+            effect.getDynamic() || effect.getDeferred() || !effect.getWidth())
+          return false;
+        auto handle = stateLayout.storage.find(effect.getDescriptor());
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (handle == stateLayout.storage.end() ||
+            !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset)
+          return false;
+        auto width = widths.find(decoded.id);
+        if (width == widths.end() || effect.getLow() >= width->second ||
+            effect.getWidth() > width->second - effect.getLow())
+          return false;
+        Range range{decoded.id, effect.getLow(),
+                    effect.getLow() + effect.getWidth()};
+        if (effect.getEffect() == sim::ComputeEffectKind::Write) {
+          if (fanout.runtimeTransitionStates.contains(decoded.id))
+            return false;
+          node.writes.push_back(range);
+        } else
+          node.reads.push_back(range);
+        return true;
+      });
+    });
+    // IEEE 1800-2023 9.2.2.2.1 excludes written expressions from always_comb
+    // sensitivity. A read-before-write source therefore cannot be treated as
+    // an algebraic feedback equation and iterated to a fixed point. Keep
+    // self-dependent processes on their existing executor for now.
+    for (const auto &write : node.writes)
+      for (const auto &read : node.reads)
+        safe &= write.state != read.state || write.low >= read.high ||
+                read.low >= write.high;
+    if (safe && !node.writes.empty())
+      nodes.push_back(std::move(node));
+  }
+  struct Reader {
+    uint64_t low, high, prefixHigh;
+    uint32_t owner;
+  };
+  DenseMap<uint32_t, SmallVector<Reader>> readers;
+  for (const auto &node : nodes)
+    for (const auto &read : node.reads)
+      readers[read.state].push_back({read.low, read.high, 0, node.plan.owner});
+  for (auto &[state, ranges] : readers) {
+    llvm::sort(ranges, [](const Reader &a, const Reader &b) {
+      return std::tie(a.low, a.high, a.owner) <
+             std::tie(b.low, b.high, b.owner);
+    });
+    uint64_t high = 0;
+    for (auto &range : ranges)
+      range.prefixHigh = high = std::max(high, range.high);
+  }
+  SmallVector<NativeRankedEvalNode> result;
+  for (auto &node : nodes) {
+    for (const auto &write : node.writes) {
+      auto &ranges = readers[write.state];
+      auto next = llvm::lower_bound(
+          ranges, write.high,
+          [](const Reader &r, uint64_t high) { return r.low < high; });
+      while (next != ranges.begin()) {
+        const auto &read = *--next;
+        if (read.prefixHigh <= write.low)
+          break;
+        if (read.high > write.low)
+          node.plan.successors.push_back(read.owner);
+      }
+    }
+    llvm::sort(node.plan.successors);
+    node.plan.successors.erase(
+        std::unique(node.plan.successors.begin(), node.plan.successors.end()),
+        node.plan.successors.end());
+    result.push_back(std::move(node.plan));
+  }
+  DenseMap<uint32_t, uint32_t> dense;
+  for (auto [id, node] : llvm::enumerate(result))
+    dense.try_emplace(node.owner, id);
+  std::vector<std::pair<uint32_t, uint32_t>> edges;
+  for (auto [id, node] : llvm::enumerate(result))
+    for (uint32_t target : node.successors)
+      edges.emplace_back(id, dense.lookup(target));
+  // Keep independent cones in separate helper bodies. Interleaving their
+  // equally legal topological ranks would sweep unrelated predicates whenever
+  // only one cone receives an activation.
+  SmallVector<uint32_t> islands(result.size());
+  std::iota(islands.begin(), islands.end(), 0);
+  auto root = [&](uint32_t node) {
+    while (islands[node] != node) {
+      islands[node] = islands[islands[node]];
+      node = islands[node];
+    }
+    return node;
+  };
+  for (auto [from, to] : edges) {
+    uint32_t a = root(from), b = root(to);
+    islands[std::max(a, b)] = std::min(a, b);
+  }
+  for (uint32_t id = 0; id < result.size(); ++id)
+    result[id].island = root(id);
+  runtime::ActivationOrder order;
+  if (!runtime::ActivationOrder::build(result.size(), std::move(edges), order))
+    return {};
+  llvm::stable_sort(order.nodes, [&](uint32_t a, uint32_t b) {
+    return result[a].island < result[b].island;
+  });
+  SmallVector<NativeRankedEvalNode> ranked;
+  for (uint32_t id : order.nodes)
+    ranked.push_back(std::move(result[id]));
+  return ranked;
 }
 
 } // namespace
@@ -425,6 +607,10 @@ resolveNativeEvalPlan(ModuleOp module,
     result.ownerSubsumptionMasks.assign(
         result.mergedFragments.size(),
         llvm::APInt(std::max<size_t>(64, result.mergedFragments.size()), 0));
+
+  result.rankedNodes = collectRankedNodes(module, result, stateLayout,
+                                         staticFanoutPlan, directFragments,
+                                         computeGraph);
 
   // Project graph-level NBA reachability onto exclusive generated owners.
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;

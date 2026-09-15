@@ -33,7 +33,9 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <optional>
+#include <set>
 
 using namespace mlir;
 
@@ -1191,8 +1193,6 @@ LogicalResult ThreeTierScheduleAttr::verify(
     uint64_t low;
     uint64_t high;
     uint32_t kernel;
-    uint32_t owner;
-    SchedulerTierKind tier;
   };
   SmallVector<ScheduledWriter> writers;
   auto recordWriter = [&](uint32_t fragmentID, ComputeEffectAttr effect) {
@@ -1209,8 +1209,7 @@ LogicalResult ThreeTierScheduleAttr::verify(
       return;
     writers.push_back({effect.getResource(), effect.getDescriptor(),
                        effect.getLow(), effect.getLow() + effect.getWidth(),
-                       kernel->second.getId(), kernel->second.getOwner(),
-                       kernel->second.getTier()});
+                       kernel->second.getId()});
   };
   for (auto [fragmentID, node] : llvm::enumerate(sourceGraph.getNodes())) {
     if (auto fragment = dyn_cast<ComputeFragmentAttr>(node))
@@ -1227,74 +1226,98 @@ LogicalResult ThreeTierScheduleAttr::verify(
                       rhs.getWidth());
   });
   using DescriptorKey = std::pair<ComputeResourceKind, uint64_t>;
-  std::map<DescriptorKey, std::map<std::vector<uint32_t>, uint32_t>>
-      barrierOwners;
+  // The planner may coalesce adjacent intervals with the same ownership even
+  // when their individual writers differ. Verify every atomic interval, not
+  // whether each overlapping write spans the entire coalesced root. Sorted
+  // endpoint sweeps also avoid comparing every root with every design writer.
+  struct RangeEvent {
+    uint64_t position;
+    uint32_t identity;
+    bool root;
+    bool start;
+  };
+  std::map<DescriptorKey, SmallVector<RangeEvent>> eventsByDescriptor;
+  for (const ScheduledWriter &writer : writers) {
+    auto &events = eventsByDescriptor[{writer.resource, writer.descriptor}];
+    events.push_back({writer.low, writer.kernel, false, true});
+    events.push_back({writer.high, writer.kernel, false, false});
+  }
+  for (auto [index, root] : llvm::enumerate(scheduledRoots)) {
+    auto &events =
+        eventsByDescriptor[{root.getResource(), root.getDescriptor()}];
+    events.push_back({root.getLow(), static_cast<uint32_t>(index), true, true});
+    events.push_back({root.getLow() + root.getWidth(),
+                      static_cast<uint32_t>(index), true, false});
+  }
   uint32_t nextBarrierOwner = nextSharedOwner;
-  for (ScheduledRootAttr root : scheduledRoots) {
-    uint64_t high = root.getLow() + root.getWidth();
-    SmallVector<const ScheduledWriter *> overlapping;
-    for (const ScheduledWriter &writer : writers)
-      if (writer.resource == root.getResource() &&
-          writer.descriptor == root.getDescriptor() && writer.low < high &&
-          root.getLow() < writer.high)
-        overlapping.push_back(&writer);
-    if (overlapping.empty() ||
-        llvm::any_of(overlapping, [&](const ScheduledWriter *writer) {
-          return writer->low > root.getLow() || writer->high < high;
-        }))
-      return emitError()
-             << "scheduled root crosses or lacks an exact writer partition";
-    SchedulerTierKind tier = overlapping.front()->tier;
-    uint32_t commonOwner = overlapping.front()->owner;
-    bool common = true;
-    SmallVector<uint32_t> writerKernels;
-    writerKernels.push_back(overlapping.front()->kernel);
-    for (const ScheduledWriter *writer : ArrayRef(overlapping).drop_front()) {
-      if (static_cast<uint32_t>(writer->tier) > static_cast<uint32_t>(tier))
-        tier = writer->tier;
-      common &= writer->owner == commonOwner;
-      writerKernels.push_back(writer->kernel);
+  for (auto &[descriptor, events] : eventsByDescriptor) {
+    llvm::sort(events, [](const RangeEvent &lhs, const RangeEvent &rhs) {
+      return std::tie(lhs.position, lhs.start, lhs.root, lhs.identity) <
+             std::tie(rhs.position, rhs.start, rhs.root, rhs.identity);
+    });
+    // Counts preserve overlapping or repeated effects from the same kernel.
+    // Ending one write must not remove another write that is still active.
+    std::map<uint32_t, uint32_t> activeWriters;
+    std::set<uint32_t> activeRoots;
+    std::map<std::vector<uint32_t>, uint32_t> barrierOwners;
+    size_t next = 0;
+    while (next < events.size()) {
+      uint64_t position = events[next].position;
+      do {
+        const RangeEvent &event = events[next++];
+        if (event.root) {
+          if (event.start)
+            activeRoots.insert(event.identity);
+          else
+            activeRoots.erase(event.identity);
+        } else if (event.start) {
+          ++activeWriters[event.identity];
+        } else {
+          auto writer = activeWriters.find(event.identity);
+          assert(writer != activeWriters.end());
+          if (--writer->second == 0)
+            activeWriters.erase(writer);
+        }
+      } while (next < events.size() && events[next].position == position);
+      if (next == events.size())
+        break;
+      if (activeRoots.size() > 1)
+        return emitError() << "scheduled-root ranges overlap";
+      if (activeWriters.empty()) {
+        if (!activeRoots.empty())
+          return emitError()
+                 << "scheduled root crosses or lacks an exact writer partition";
+        continue;
+      }
+      if (activeRoots.empty())
+        return emitError() << "scheduled roots do not cover every writer range";
+      auto first =
+          cast<ScheduledKernelAttr>(kernels[activeWriters.begin()->first]);
+      SchedulerTierKind tier = first.getTier();
+      uint32_t expectedOwner = first.getOwner();
+      bool common = true;
+      std::vector<uint32_t> writerKey;
+      for (auto [kernelID, count] : activeWriters) {
+        auto kernel = cast<ScheduledKernelAttr>(kernels[kernelID]);
+        tier = std::max(tier, kernel.getTier());
+        common &= kernel.getOwner() == expectedOwner;
+        writerKey.push_back(kernelID);
+      }
+      if (!common) {
+        auto [barrier, inserted] =
+            barrierOwners.try_emplace(std::move(writerKey), nextBarrierOwner);
+        if (inserted)
+          ++nextBarrierOwner;
+        expectedOwner = barrier->second;
+      }
+      ScheduledRootAttr root = scheduledRoots[*activeRoots.begin()];
+      if (root.getTier() != tier || root.getOwner() != expectedOwner)
+        return emitError()
+               << "scheduled-root owner or tier disagrees with writers";
     }
-    uint32_t expectedOwner = commonOwner;
-    if (!common) {
-      llvm::sort(writerKernels);
-      writerKernels.erase(
-          std::unique(writerKernels.begin(), writerKernels.end()),
-          writerKernels.end());
-      std::vector<uint32_t> writerKey(writerKernels.begin(),
-                                      writerKernels.end());
-      auto &descriptorOwners =
-          barrierOwners[{root.getResource(), root.getDescriptor()}];
-      auto [barrier, inserted] =
-          descriptorOwners.try_emplace(std::move(writerKey), nextBarrierOwner);
-      if (inserted)
-        ++nextBarrierOwner;
-      expectedOwner = barrier->second;
-    }
-    if (root.getTier() != tier || root.getOwner() != expectedOwner)
-      return emitError()
-             << "scheduled-root owner or tier disagrees with writers";
   }
   if (nextBarrierOwner != ownerCount)
     return emitError() << "three-tier owner inventory is not canonical";
-  for (const ScheduledWriter &writer : writers) {
-    SmallVector<std::pair<uint64_t, uint64_t>> coverage;
-    for (ScheduledRootAttr root : scheduledRoots)
-      if (root.getResource() == writer.resource &&
-          root.getDescriptor() == writer.descriptor &&
-          root.getLow() < writer.high &&
-          writer.low < root.getLow() + root.getWidth())
-        coverage.push_back({root.getLow(), root.getLow() + root.getWidth()});
-    llvm::sort(coverage);
-    uint64_t cursor = writer.low;
-    for (auto [low, high] : coverage) {
-      if (low > cursor)
-        break;
-      cursor = std::max(cursor, high);
-    }
-    if (cursor < writer.high)
-      return emitError() << "scheduled roots do not cover every writer range";
-  }
 
   auto isPhysicalWatch = [](ComputeEffectAttr effect) {
     return effect.getEffect() == ComputeEffectKind::Watch &&

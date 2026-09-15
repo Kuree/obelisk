@@ -156,5 +156,5 @@ module attributes {
 // CHECK: llvm.return
 // CHECK: llvm.func @__obelisk_eval_four_state_fallback_v1_
 // CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_
-// CHECK: llvm.call @__obelisk_eval_fast_coordinator_hybrid_v1
+// CHECK: llvm.call @__obelisk_eval_dispatch_v1
 // CHECK: llvm.call @obelisk_rt_v1_native_state_sync

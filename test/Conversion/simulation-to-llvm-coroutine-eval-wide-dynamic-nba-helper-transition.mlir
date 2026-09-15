@@ -69,7 +69,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // CHECK-LABEL: module attributes
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK-NOT: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-NOT: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
 // CHECK: llvm.call @touch_clock.__obelisk_eval_private_0

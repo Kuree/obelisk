@@ -13,6 +13,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
@@ -527,6 +528,9 @@ specializeNativeAOTCaptures(ModuleOp module,
   if (!root)
     return module.emitError(
         "cannot specialize AOT captures without a root initializer");
+  // Capture rewriting changes operands and signatures, never symbol identity.
+  // Keep lookup local to each design while sharing its index across actors.
+  SymbolTableCollection symbols;
 
   // Capture addressing is independent of scheduler eligibility.  A callee
   // with exactly one whole-design spawn has the same fixed context object on
@@ -539,7 +543,7 @@ specializeNativeAOTCaptures(ModuleOp module,
   WalkResult specialized = root.walk([&](sim::SimSpawnOp spawn) {
     sim::SimDesignOp design = spawn->getParentOfType<sim::SimDesignOp>();
     sim::SimFuncOp target =
-        design ? design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee())
+        design ? symbols.lookupSymbolIn<sim::SimFuncOp>(design, spawn.getCalleeAttr())
                : nullptr;
     if (!target || spawnCounts.lookup(spawn.getCallee()) != 1)
       return WalkResult::advance();
@@ -558,7 +562,7 @@ specializeNativeAOTCaptures(ModuleOp module,
     sim::SimFuncOp evalBody;
     if (auto evalBodyRef =
             target->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body")) {
-      evalBody = design.lookupSymbol<sim::SimFuncOp>(evalBodyRef.getValue());
+      evalBody = symbols.lookupSymbolIn<sim::SimFuncOp>(design, evalBodyRef);
       if (!evalBody || evalBody.getBody().front().getNumArguments() !=
                            entry.getNumArguments()) {
         target.emitOpError("AOT eval body has an invalid capture signature");
@@ -633,7 +637,7 @@ specializeNativeAOTCaptures(ModuleOp module,
       continue;
     sim::SimDesignOp design = call->getParentOfType<sim::SimDesignOp>();
     sim::SimFuncOp callee =
-        design ? design.lookupSymbol<sim::SimFuncOp>(call.getCallee())
+        design ? symbols.lookupSymbolIn<sim::SimFuncOp>(design, call.getCalleeAttr())
                : sim::SimFuncOp{};
     if (!callee || callee.isExternal() ||
         SymbolTable::getSymbolVisibility(callee) !=
@@ -642,6 +646,24 @@ specializeNativeAOTCaptures(ModuleOp module,
         callee.getNumArguments() == 0 ||
         !isa<sim::ContextType>(callee.getArgument(0).getType()))
       continue;
+    auto getStaticProjection = [&](Value actual) -> Operation * {
+      Operation *producer = actual.getDefiningOp();
+      if (!producer ||
+          !isa<sim::SimContextStorageOp, sim::SimContextNetOp,
+               sim::SimContextDriverOp, sim::SimContextEventOp>(producer) ||
+          producer->getNumOperands() != 1 ||
+          producer->getOperand(0) != call.getOperand(0) ||
+          producer->getNumResults() != 1 || producer->getResult(0) != actual)
+        return nullptr;
+      return producer;
+    };
+    // Pure value calls cannot change their ABI here. Do not scan the design's
+    // symbol uses unless at least one operand is a specializable projection.
+    if (llvm::none_of(call.getOperands().drop_front(), [&](Value actual) {
+          return getStaticProjection(actual) != nullptr;
+        }))
+      continue;
+
     // Rewriting the private function ABI is valid only when this exact call
     // is its sole symbol use.  Counting sim.call operations is insufficient:
     // spawn/callback/eval metadata may reference the same symbol while still
@@ -658,13 +680,8 @@ specializeNativeAOTCaptures(ModuleOp module,
     llvm::BitVector erase(callee.getNumArguments());
     for (unsigned index = 1; index != callee.getNumArguments(); ++index) {
       Value actual = call.getOperand(index);
-      Operation *producer = actual.getDefiningOp();
-      if (!producer ||
-          !isa<sim::SimContextStorageOp, sim::SimContextNetOp,
-               sim::SimContextDriverOp, sim::SimContextEventOp>(producer) ||
-          producer->getNumOperands() != 1 ||
-          producer->getOperand(0) != call.getOperand(0) ||
-          producer->getNumResults() != 1 || producer->getResult(0) != actual)
+      Operation *producer = getStaticProjection(actual);
+      if (!producer)
         continue;
 
       BlockArgument argument = callee.getArgument(index);
@@ -712,13 +729,14 @@ buildNativeStaticActorRootPlan(
              : sim::StaticSpecializationAttr{};
   if (!specialization)
     return plan;
+  SymbolTable symbols(design);
   for (Attribute attribute : specialization.getActorRoots()) {
     auto dependency = dyn_cast<sim::StaticActorRootAttr>(attribute);
     if (!dependency)
       return module.emitError("invalid static actor/root dependency"),
              failure();
     sim::SimFuncOp function =
-        design.lookupSymbol<sim::SimFuncOp>(dependency.getFunction());
+        symbols.lookup<sim::SimFuncOp>(dependency.getFunction().getValue());
     auto actor =
         function ? actorSlots.find(function.getOperation()) : actorSlots.end();
     if (!function || actor == actorSlots.end())
@@ -775,6 +793,16 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   if (!graph)
     return module.emitError("static fanout plan requires a compute graph"),
            failure();
+  SymbolTable symbols(design);
+  DenseMap<uint32_t, SmallVector<uint32_t>> resumeTargets;
+  DenseMap<uint32_t, SmallVector<uint32_t>> processSuccessors;
+  for (Attribute attribute : graph.getEdges()) {
+    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
+      resumeTargets[edge.getSource()].push_back(edge.getTarget());
+    else if (edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
+      processSuccessors[edge.getSource()].push_back(edge.getTarget());
+  }
   auto disableExactFanout = [&](StringRef reason,
                                 sim::SimFuncOp function = {}) {
     if (module->hasAttr("obelisk.debug.native_timing")) {
@@ -791,12 +819,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   auto resumeClosure = [&](uint32_t suspension) {
     SmallVector<uint32_t> result;
     SmallVector<uint32_t> pending;
-    for (Attribute attribute : graph.getEdges()) {
-      auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-      if (edge.getSource() == suspension &&
-          edge.getKind() == sim::ComputeEdgeKind::Resume)
-        pending.push_back(edge.getTarget());
-    }
+    if (auto found = resumeTargets.find(suspension); found != resumeTargets.end())
+      llvm::append_range(pending, found->second);
     llvm::SmallDenseSet<uint32_t, 16> seen;
     // The resume closure describes one activation body. Do not follow the
     // process-order backedge into the suspension that owns the next event.
@@ -806,12 +830,9 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       if (!seen.insert(fragment).second)
         continue;
       result.push_back(fragment);
-      for (Attribute attribute : graph.getEdges()) {
-        auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-        if (edge.getSource() == fragment &&
-            edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
-          pending.push_back(edge.getTarget());
-      }
+      if (auto found = processSuccessors.find(fragment);
+          found != processSuccessors.end())
+        llvm::append_range(pending, found->second);
     }
     llvm::sort(result);
     return result;
@@ -829,7 +850,7 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     if (watches.empty())
       continue;
     sim::SimFuncOp function =
-        design.lookupSymbol<sim::SimFuncOp>(fragment.getFunction().getValue());
+        symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
     Block *block =
         function
             ? analysis::lookupComputeGraphBlock(function, fragment.getBlock())

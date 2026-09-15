@@ -23,7 +23,8 @@ prepareSuspendableProcess(sim::SimFuncOp function,
 mlir::LogicalResult
 lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process);
 mlir::LogicalResult
-finishPreparedSuspendableProcess(PreparedSuspendableProcess &process);
+finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
+                                 const mlir::SymbolTable &embeddedSymbols);
 mlir::LogicalResult
 lowerSuspendableProcess(sim::SimFuncOp function,
                         const SimulationProcessFrameAnalysis &analysis);

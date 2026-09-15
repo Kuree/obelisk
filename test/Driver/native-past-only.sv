@@ -28,7 +28,8 @@ module native_past_only;
   end
 endmodule
 
-// OUTPUT: past=x
+// LRM 16.5.1: the declaration initializer supplies the pre-history default.
+// OUTPUT: past=0
 // OUTPUT-NEXT: past=1
 // LLVM: @__obelisk_execution_descriptor_v1 = constant
 // LLVM-SAME: { i32 1, i32 32, i64 120,

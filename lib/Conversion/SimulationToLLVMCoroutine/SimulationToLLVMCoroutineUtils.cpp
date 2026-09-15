@@ -5,8 +5,10 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -320,6 +322,20 @@ Value insertValue(OpBuilder &builder, Location location, Value aggregate,
 
 void emitNativeStateRetain(OpBuilder &builder, Location location,
                            Value handle) {
+  // Native entries run with a live context. For a constant global/static
+  // handle, retain only validates its encoding and returns OK: these objects
+  // live for the design lifetime and have no automatic reference count.
+  // Use the runtime decoder, preserving checks for malformed encodings and
+  // all automatic or unresolved handles. Do not infer lifetime from knownness.
+  APInt constant;
+  if (matchPattern(handle, m_ConstantInt(&constant)) &&
+      constant.getBitWidth() == 64) {
+    obelisk_rt_stable_handle_v1 decoded;
+    if (obelisk_rt_stable_handle_decode(constant.getZExtValue(), &decoded) &&
+        (decoded.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL ||
+         decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC))
+      return;
+  }
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i32 = builder.getI32Type();
   Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,

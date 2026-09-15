@@ -152,7 +152,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: llvm.func @touch_driver.__obelisk_eval_private_0(
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 
 // NO-PURE-CLONE-NOT: @pure_leaf.__obelisk_eval_private
 

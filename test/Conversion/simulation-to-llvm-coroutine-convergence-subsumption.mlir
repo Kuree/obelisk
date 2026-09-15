@@ -96,7 +96,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // another fixpoint iteration.
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
 // CHECK-SAME: obelisk.eval.tier2_convergence
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: llvm.switch
 // CHECK: %[[OLD_INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
 // CHECK: %[[OLD_READY:.*]] = llvm.load %[[OLD_INGRESS]]

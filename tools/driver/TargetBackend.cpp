@@ -11,6 +11,7 @@
 
 #include "BackendUtils.h"
 #include "NativeBackend.h"
+#include "NativeExecutionCounts.h"
 #include "NativePartitionCost.h"
 #include "WasmBackend.h"
 
@@ -1052,6 +1053,15 @@ LogicalResult emitTargetOutput(ModuleOp module,
              !useBytecode) {
     obelisk::analysis::NativeAOTAnalysis aot =
         obelisk::analysis::NativeAOTAnalysis::compute(module);
+    if (options.timing) {
+      errs() << "obelisk native eligibility: eligible=" << aot.isEligible()
+             << " fully_eligible=" << aot.isFullyEligible()
+             << " cost_effective=" << aot.isAOTCostEffective()
+             << " native_cost=" << aot.getNativeGraphCost()
+             << " total_cost=" << aot.getTotalGraphCost() << '\n';
+      for (StringRef reason : aot.getReasons())
+        errs() << "obelisk native boundary: " << reason << '\n';
+    }
     if (!aot.isEligible() || !aot.isAOTCostEffective())
       *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
     // A structural periodic candidate is only a cheap pipeline-shaping hint.
@@ -1110,6 +1120,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
   if (options.target == TargetKind::Native)
     applyNativeFunctionTargetAttributes(*llvmModule, *targetMachine);
   markBackendTiming("VPI lifecycle materialization");
+  if (options.debugNativeExecutionCounts &&
+      !detail::addNativeExecutionCounts(*llvmModule)) {
+    errs() << "obelisk: error: execution counts require a generated main\n";
+    return failure();
+  }
   bool splitModule = nativePartitionPlan &&
                      shouldSplitNativeModule(*llvmModule, *nativePartitionPlan);
   bool thinLTO = splitModule && options.optLevel != 0 && !options.noLTO;

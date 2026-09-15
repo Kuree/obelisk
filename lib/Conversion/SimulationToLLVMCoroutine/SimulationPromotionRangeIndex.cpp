@@ -259,11 +259,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   auto reset = getOrDeclareLLVMFunction(
       module, "__obelisk_eval_proof_aggregate_invalidate_v1", voidType, {});
   builder.setInsertionPointToStart(reset.addEntryBlock(builder));
-  for (StringRef name : {"__obelisk_eval_promotion_latched_v1",
-                         "__obelisk_eval_periodic_promotion_latched_v1",
-                         "__obelisk_eval_periodic_entry_promotion_latched_v1",
-                         "__obelisk_eval_periodic_promotion_scanned_v1",
-                         "__obelisk_eval_fast_nba_latched_v1"})
+  for (StringRef name : {"__obelisk_eval_promotion_latched_v1"})
     if (auto global = module.lookupSymbol<LLVM::GlobalOp>(name))
       LLVM::StoreOp::create(
           builder, location,
@@ -283,14 +279,12 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   builder.setInsertionPointToStart(request.addEntryBlock(builder));
   // A gain in knownness cannot invalidate a positive proof. Only cached
   // failed scans need to become eligible for another boundary check.
-  for (StringRef name : {"__obelisk_eval_periodic_promotion_scanned_v1",
-                         "__obelisk_eval_route_promotion_dirty_v1"})
+  for (StringRef name : {"__obelisk_eval_route_promotion_dirty_v1"})
     if (auto global = module.lookupSymbol<LLVM::GlobalOp>(name))
       LLVM::StoreOp::create(
           builder, location,
           llvmConstant(builder, location, builder.getI8Type(),
-                       name == "__obelisk_eval_route_promotion_dirty_v1" ? 1
-                                                                         : 0),
+                       1),
           LLVM::AddressOfOp::create(builder, location, pointer, name));
   LLVM::ReturnOp::create(builder, location, ValueRange{});
   builder.setInsertionPointToStart(recheckEntry);

@@ -38,7 +38,7 @@ for mode in ("off", "read", "full"):
         slots = result.stdout.count("llvm.mlir.global internal @__obelisk_eval_nba_valid_")
         if name == "disjoint":
             assert slots == 3, (mode, name, slots)
-            assert "llvm.func @__obelisk_eval_fast_coordinator_v1(" in result.stdout
+            assert "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
         else:
             assert slots == 0, (mode, name, slots)
-            assert "llvm.func @__obelisk_eval_fast_coordinator_v1(" not in result.stdout
+            assert "llvm.func @__obelisk_eval_dispatch_v1(" not in result.stdout

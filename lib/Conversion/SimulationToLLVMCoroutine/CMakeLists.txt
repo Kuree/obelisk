@@ -1,6 +1,6 @@
 add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationAggregateLowering.cpp
-  SimulationAOTCoordinatorMaterialization.cpp
+  SimulationEvalDispatchMaterialization.cpp
   SimulationAOTMaterialization.cpp
   SimulationAOTMaterializationLegacy.cpp
   SimulationAOTEvalAnalysis.cpp
@@ -28,6 +28,10 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationNBALowering.cpp
   SimulationNBAPlanning.cpp
   SimulationNativeRegionOptimization.cpp
+  SimulationNativeGroupMaterialization.cpp
+  SimulationGroupDataflow.cpp
+  SimulationGroupHierarchy.cpp
+  SimulationRankedGroupMaterialization.cpp
   SimulationNativePartitionPlanning.cpp
   SimulationObserverLowering.cpp
   SimulationOverrideLowering.cpp
@@ -75,6 +79,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRIR
   MLIRLLVMCommonConversion
   MLIRLLVMDialect
+  MLIRLLVMIRTransforms
   MLIRMathDialect
   MLIRMathToLLVM
   MLIRMathTransforms

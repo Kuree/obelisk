@@ -127,26 +127,11 @@ module attributes {
 // CHECK: %[[UNKNOWN_BYTE1:.*]] = llvm.load
 // CHECK: %[[RANGE_MASK1:.*]] = llvm.mlir.constant(1 : i8)
 // CHECK: llvm.and %[[UNKNOWN_BYTE1]], %[[RANGE_MASK1]]
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | %python %S/Inputs/check-guarded-eval-default.py
 
-// A guarded owner has a separate full-closure certificate. While that
-// stronger certificate remains pending, its exact path dispatcher is already
-// a safe steady route and must not bounce the owner through Tier 2 every slot.
-// CHECK-LABEL: llvm.func @__obelisk_eval_steady_two_state_coordinator_v1
-// CHECK: %[[PENDING_ADDR:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// CHECK-DAG: %[[PENDING:.*]] = llvm.load %[[PENDING_ADDR]]
-// CHECK-DAG: %[[ALLOWED_MASK:.*]] = llvm.mlir.constant(-2 : i64)
-// CHECK-DAG: %[[GUARD_MASK:.*]] = llvm.mlir.constant(-2 : i64)
-// CHECK: %[[ROUTE_PENDING:.*]] = llvm.and %[[PENDING]], %[[GUARD_MASK]]
-// CHECK: llvm.or %[[ROUTE_PENDING]], %[[ALLOWED_MASK]]
-// Once the stronger certificate succeeds, the guard-free coordinator keeps a
-// direct trusted-wrapper edge; the wrapper still retains the Tier-3
-// checkpoint path dispatcher.
-// CHECK-LABEL: llvm.func @__obelisk_eval_periodic_two_state_coordinator_v1
-// CHECK-SAME: obelisk.eval.trusted_two_state_coordinator
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// Path probes and checkpoint continuation remain local to their executor.
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute
 // CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_time
 // CHECK: llvm.call @obelisk_rt_v1_display
@@ -154,17 +139,12 @@ module attributes {
 // CHECK: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
 // CHECK: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
 // CHECK: llvm.store %[[ONE]], %[[FALLBACK]]
-// CHECK: %[[LATCH:.*]] = llvm.mlir.addressof @__obelisk_eval_fast_nba_latched_v1
-// CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i8)
-// CHECK: llvm.store %[[ZERO]], %[[LATCH]]
 // CHECK: %[[ROOTS:.*]] = llvm.mlir.addressof @__obelisk_eval_fast_nba_roots_v1
 // CHECK: %[[ROOT_ZERO:.*]] = llvm.mlir.zero : !llvm.array<1 x i64>
 // CHECK: llvm.store %[[ROOT_ZERO]], %[[ROOTS]]
 // CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_0
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint
 // CHECK-LABEL: llvm.func @__obelisk_eval_path_dispatch_v1_0(
-// CHECK: llvm.mlir.addressof @__obelisk_eval_periodic_promotion_latched_v1
-// CHECK: llvm.load
 // CHECK: llvm.cond_br {{.*}}, ^[[PROMOTED:bb[0-9]+]], ^[[TRANSIENT:bb[0-9]+]]
 // CHECK: ^[[TRANSIENT]]:
 // CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_path_known_0
@@ -174,7 +154,4 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
 // CHECK: llvm.mlir.addressof @__obelisk_eval_four_state_fallback_v1_0
 // CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted
-// CHECK-SAME: obelisk.eval.checkpoint_safe
-// CHECK-SAME: obelisk.eval.path_guarded_known_preserving
-// CHECK: llvm.call @__obelisk_eval_path_dispatch_v1_0
+// CHECK: llvm.return

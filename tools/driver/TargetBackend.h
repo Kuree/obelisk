@@ -80,6 +80,7 @@ struct NativeOutputOptions {
   // peak simulation speed for a cheaper link.
   bool noLTO = false;
   bool timing = false;
+  bool debugNativeExecutionCounts = false;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;
 };

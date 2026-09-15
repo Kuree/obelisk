@@ -17,6 +17,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
     obelisk_sim.code_unit.decl 1 in 0 always_comb hierarchy "comb"
     obelisk_sim.code_unit.decl 2 in 0 always_latch hierarchy "latch"
     obelisk_sim.code_unit.decl 3 in 0 function hierarchy "disable_latch"
+    obelisk_sim.code_unit.decl 4 in 0 function hierarchy "existing_eval_name"
     obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
       %data = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
@@ -29,7 +30,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
       obelisk_sim.return
     }
     // CHECK-LABEL: obelisk_sim.func @comb(
-    // CHECK-SAME: obelisk.eval.body = @[[COMB:comb.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: obelisk.eval.body = @[[COMB:comb.__obelisk_eval_body_1]]
     // CHECK: obelisk_sim.suspend.any %{{.*}}, %{{.*}} edges [0, 0]
     obelisk_sim.func @comb(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -88,6 +89,15 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
       obelisk_sim.control.disable 11 {hierarchical = true}
       obelisk_sim.return
     }
+    // An existing symbol occupies the first generated name. The shared symbol
+    // index must preserve it and assign the clone a distinct name.
+    obelisk_sim.func private @comb.__obelisk_eval_body_0(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
+      obelisk_sim.return
+    }
+    // CHECK: obelisk_sim.func private @comb.__obelisk_eval_body_0(
+    // CHECK-NEXT: obelisk_sim.return
     // CHECK: obelisk_sim.func private @[[COMB]](
     // CHECK: obelisk_sim.ref.store
     // CHECK: cf.cond_br
@@ -110,7 +120,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
     // CONTROL-LABEL: obelisk_sim.func @comb(
     // CONTROL: obelisk_sim.control.enter 10
     // CONTROL: obelisk_sim.control.leave
-    // CONTROL-LABEL: obelisk_sim.func private @comb.__obelisk_eval_body_0(
+    // CONTROL-LABEL: obelisk_sim.func private @comb.__obelisk_eval_body_1(
     // CONTROL-NOT: obelisk_sim.control.
     // CONTROL-LABEL: obelisk_sim.func private @latch.__obelisk_eval_body_0(
     // CONTROL: obelisk_sim.control.enter 11

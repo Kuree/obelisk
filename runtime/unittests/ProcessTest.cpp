@@ -732,6 +732,51 @@ cachedSignalCohortExecute(obelisk_rt_process_instance_v1 *instance) {
   return OBELISK_RT_OK;
 }
 
+constexpr uint64_t incrementalCohortSize = 256;
+constexpr uint64_t incrementalCohortSignal = 8000;
+bool incrementalCohortDisturbRank = false;
+const obelisk_rt_process_descriptor_v1 *incrementalCohortReentry = nullptr;
+
+obelisk_rt_status
+incrementalCohortExecute(obelisk_rt_process_instance_v1 *instance) {
+  instance->native_handle = instance;
+  uint64_t id = instance->descriptor->handle.id;
+  if (instance->continuation != 0) {
+    schedulerOrder.push_back(id);
+    if (id <= incrementalCohortSize)
+      obelisk_rt_v1_scheduler_signal(instance->context,
+                                     incrementalCohortSignal + id, 1,
+                                     OBELISK_RT_SIGNAL_CHANGE);
+    if (id == 1 && incrementalCohortDisturbRank) {
+      // An unrelated ordering change between two direct publications must
+      // invalidate the entire cached ordering, even with a pending journal.
+      for (auto &process : instance->context->scheduledProcesses)
+        if (process.instance->descriptor->handle.id == incrementalCohortSize)
+          process.scheduleRank = 0;
+      ++instance->context->schedulerSelectionGeneration;
+    }
+    if (id == 1 && incrementalCohortReentry) {
+      obelisk_rt_process_instance_v1 *callee = nullptr;
+      auto status = obelisk_rt_v1_process_instance_create(
+          incrementalCohortReentry, &callee);
+      if (status != OBELISK_RT_OK)
+        return status;
+      status = obelisk_rt_v1_dpi_export_task_run(instance->context, callee);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+  }
+  auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  *entry = {incrementalCohortSignal +
+                (id <= incrementalCohortSize ? 0 : id - incrementalCohortSize),
+            OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND, OBELISK_RT_SUSPEND_CHANGE,
+                       1, OBELISK_RT_ACTION_FRAME_WAIT_RECORD, 0, 48};
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 schedulerSelfTriggerExecute(obelisk_rt_process_instance_v1 *instance) {
   if (!instance || !instance->action || !instance->context)
@@ -2954,6 +2999,87 @@ TEST(Scheduler, CachedSignalCohortInvalidatesForNewPriorityPublication) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, IncrementalSignalCohortOrdersNewWakesAndInvalidatesDisturbances) {
+  for (unsigned mode : {0u, 1u, 2u}) {
+    SCOPED_TRACE(mode);
+    bool disturb = mode == 1;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    incrementalCohortDisturbRank = disturb;
+    SchedulerFixture exported(incrementalCohortSize * 2 + 2);
+    exported.descriptor.native_execute =
+        +[](obelisk_rt_process_instance_v1 *instance) -> obelisk_rt_status {
+      instance->native_handle = instance;
+      *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE,
+                           OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+      return OBELISK_RT_OK;
+    };
+    incrementalCohortReentry = mode == 2 ? &exported.descriptor : nullptr;
+    schedulerOrder.clear();
+    std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+    for (uint64_t id = 1; id <= incrementalCohortSize * 2; ++id) {
+      fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+      fixtures.back()->descriptor.native_execute = incrementalCohortExecute;
+      ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(
+                    context, makeSchedulerInstance(*fixtures.back()), 0,
+                    id <= incrementalCohortSize ? static_cast<uint32_t>(id) : 0),
+                OBELISK_RT_OK);
+    }
+    // Future timed work remains in the exact slow candidate scan. Its
+    // presence must not disable incremental admission of independent wakes.
+    SchedulerFixture timer(incrementalCohortSize * 2 + 1);
+    timer.descriptor.native_execute =
+        +[](obelisk_rt_process_instance_v1 *instance) -> obelisk_rt_status {
+      instance->native_handle = instance;
+      if (instance->continuation != 0)
+        return OBELISK_RT_INVALID_LIFECYCLE;
+      auto *wait =
+          reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+      *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 1, 0};
+      *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                           OBELISK_RT_SUSPEND_DELAY, 1,
+                           OBELISK_RT_ACTION_FRAME_WAIT_RECORD, 0, 48};
+      return OBELISK_RT_OK;
+    };
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                  context, makeSchedulerInstance(timer), 0),
+              OBELISK_RT_OK);
+    auto drainCurrentSlot = [&] {
+      NativeAOTMutexScope lock(context);
+      return runScheduler(context, {/*nativePlan=*/false,
+                                    /*currentSlotOnly=*/true});
+    };
+    ASSERT_EQ(drainCurrentSlot(), OBELISK_RT_OK);
+    ASSERT_TRUE(schedulerOrder.empty());
+    context->signalDiagnosticsEnabled = true;
+    context->signalDiagnostics.candidateScans = 0;
+    obelisk_rt_v1_scheduler_signal(context, incrementalCohortSignal, 1,
+                                   OBELISK_RT_SIGNAL_CHANGE);
+    ASSERT_EQ(drainCurrentSlot(), OBELISK_RT_OK);
+    std::vector<uint64_t> expected;
+    if (disturb)
+      expected = {1, incrementalCohortSize, incrementalCohortSize + 1,
+                  incrementalCohortSize * 2};
+    for (uint64_t id = disturb ? 2 : 1;
+         id <= incrementalCohortSize - (disturb ? 1 : 0); ++id) {
+      expected.push_back(id);
+      expected.push_back(id + incrementalCohortSize);
+    }
+    EXPECT_EQ(schedulerOrder, expected);
+    // A publication per actor must not repeatedly scan the remaining large
+    // cohort. Existing scalar readiness diagnostics verify the intended path.
+    if (!disturb) {
+      EXPECT_LT(context->signalDiagnostics.candidateScans,
+                incrementalCohortSize * 16);
+    }
+    EXPECT_EQ(context->nativeReadyPublicationBatch, nullptr);
+    EXPECT_EQ(context->schedulerTime, 0u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+  incrementalCohortDisturbRank = false;
+  incrementalCohortReentry = nullptr;
+}
+
 TEST(Scheduler, CachedReactiveSignalCohortYieldsToSameSlotNBA) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -4810,9 +4936,18 @@ TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
   schedulerPromotionInvalidationCount = 0;
   uint64_t handle = obelisk_rt_canonical_state_handle_unlocked(context, 3, 1);
 
+  // VPI first synchronizes the bound coroutine plane, then reconciles the
+  // deposited root. The first copy must publish the delta: reconciliation
+  // cannot discover it once the native unknown bits have been overwritten.
+  context->nativeStateValue = value.data();
+  context->nativeStateUnknown = unknown.data();
+  context->nativeStateBitCount = 16;
+
   // Indexed X deposits invalidate their canonical packed range before a
   // dependent executor can run. Unrelated certificates remain valid.
   context->stateUnknown[0] = uint64_t{1} << 3;
+  obelisk_rt_sync_native_state_range_unlocked(context, 3, 1);
+  EXPECT_EQ(invalidated, (std::vector<std::pair<uint64_t, uint64_t>>{{3, 1}}));
   ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, handle, 3, 1));
   EXPECT_EQ(invalidated, (std::vector<std::pair<uint64_t, uint64_t>>{{3, 1}}));
   EXPECT_EQ(certificates, (std::array<bool, 3>{false, true, true}));
@@ -4830,6 +4965,8 @@ TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
   EXPECT_TRUE(rechecked.empty());
   EXPECT_EQ(unknown[0], uint8_t{8});
   context->stateUnknown[0] = 0;
+  obelisk_rt_sync_native_state_range_unlocked(context, 3, 1);
+  EXPECT_EQ(rechecked, (std::vector<std::pair<uint64_t, uint64_t>>{{3, 1}}));
   ASSERT_TRUE(obelisk_rt_aot_external_deposit_unlocked(context, handle, 3, 1));
   EXPECT_EQ(invalidated.size(), 1u);
   EXPECT_EQ(rechecked, (std::vector<std::pair<uint64_t, uint64_t>>{{3, 1}}));
@@ -4844,6 +4981,18 @@ TEST(Scheduler, ExactMutationFootprintsUseScopedProofInvalidation) {
   EXPECT_EQ(schedulerPromotionInvalidationCount, 0u);
   obelisk_rt_aot_external_write_range_unlocked(context, 4, 1, false);
   EXPECT_EQ(certificates, (std::array<bool, 3>{false, false, true}));
+
+  // Shared native stores must publish the same exact loss and recovery even
+  // when no later deposit reconciliation takes place.
+  invalidated.clear();
+  rechecked.clear();
+  ASSERT_TRUE(storeNativeScheduleStateUnlocked(context, 12, 4, 0, 3));
+  EXPECT_EQ(invalidated, (std::vector<std::pair<uint64_t, uint64_t>>{{12, 2}}));
+  ASSERT_TRUE(storeNativeScheduleStateUnlocked(context, 12, 4, 9, 0));
+  EXPECT_EQ(rechecked, (std::vector<std::pair<uint64_t, uint64_t>>{{12, 2}}));
+  ASSERT_TRUE(storeNativeScheduleStateUnlocked(context, 12, 4, 5, 0));
+  EXPECT_EQ(invalidated.size(), 1u);
+  EXPECT_EQ(rechecked.size(), 1u);
 
   // Empty writes do nothing; malformed and unknown footprints retain the
   // mandatory conservative invalidator even when a scoped hook is installed.
@@ -10551,6 +10700,21 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   EXPECT_EQ(value[1], UINT8_C(0x02));
   EXPECT_EQ(unknown[0], UINT8_C(0x20));
   EXPECT_EQ(unknown[1], UINT8_C(0x00));
+  // A dynamically selected subrange reads the same frozen plane after the
+  // live array has changed. An address outside the declared snapshot still
+  // fails; only the explicit invalid-selection sentinel returns X.
+  EXPECT_EQ(obelisk_rt_v1_sampled_read(context, 6, 4, value, unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0], UINT8_C(6));
+  EXPECT_EQ(unknown[0], UINT8_C(4));
+  EXPECT_EQ(obelisk_rt_v1_sampled_read(context, 14, 4, value, unknown),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_v1_sampled_read(context, UINT64_MAX, 10, value, unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value[0], 0);
+  EXPECT_EQ(value[1], 0);
+  EXPECT_EQ(unknown[0], UINT8_MAX);
+  EXPECT_EQ(unknown[1], UINT8_C(3));
   obelisk_rt_v1_context_destroy(context);
 }
 

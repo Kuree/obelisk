@@ -11,6 +11,7 @@
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -994,13 +995,7 @@ bool isSchedulingEdge(sim::ComputeEdgeKind kind) {
          kind != sim::ComputeEdgeKind::Spawn;
 }
 
-bool isSettlingEntryKind(sim::EntryKind kind) {
-  return kind == sim::EntryKind::AlwaysComb ||
-         kind == sim::EntryKind::AlwaysLatch ||
-         kind == sim::EntryKind::Continuous ||
-         kind == sim::EntryKind::PortInput ||
-         kind == sim::EntryKind::PortOutput;
-}
+using analysis::isSettlingEntryKind;
 
 void normalizeEdges(SmallVectorImpl<sim::ComputeEdgeAttr> &edges) {
   llvm::sort(edges, [](sim::ComputeEdgeAttr lhs, sim::ComputeEdgeAttr rhs) {
@@ -1856,21 +1851,10 @@ ComputeGraphBuilder::buildSchedulingEdges() {
   // semantics. Settling publications must nevertheless precede every kind of
   // resumed consumer: a procedural observer cannot run on one settled sibling
   // while another sibling publication is still pending.
-  SmallVector<sim::ComputeEdgeAttr> schedulingEdges(edges.begin(), edges.end());
-  DenseMap<uint32_t, SmallVector<uint32_t>> resumeContinuations;
-  for (sim::ComputeEdgeAttr edge : edges)
-    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
-      resumeContinuations[edge.getSource()].push_back(edge.getTarget());
-  for (sim::ComputeEdgeAttr edge : edges) {
-    if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity ||
-        !isSettlingEntryKind(
-            fragments[edge.getSource()].function.getEntryKind()))
-      continue;
-    for (uint32_t continuation : resumeContinuations[edge.getTarget()])
-      schedulingEdges.push_back(sim::ComputeEdgeAttr::get(
-          design.getContext(), edge.getSource(), continuation,
-          sim::ComputeEdgeKind::Sensitivity, edge.getResource()));
-  }
+  auto schedulingEdges =
+      analysis::projectActivationSchedulingEdges(edges, [&](uint32_t source) {
+        return isSettlingEntryKind(fragments[source].function.getEntryKind());
+      });
   normalizeEdges(schedulingEdges);
   return schedulingEdges;
 }
@@ -1881,12 +1865,49 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   auto plan =
       [&](sim::ComputeRegionKind kind,
           ArrayRef<SmallVector<uint32_t>> groups) -> FailureOr<Attribute> {
+    // Classify only the edges internal to each already-computed SCC. Scanning
+    // the full design for every singleton made an acyclic graph cost O(V*E),
+    // and repeated the same work for each feedback component. Dense node IDs
+    // and a stable CSR partition keep this phase O(V+E) per event region.
+    // The SCC order, edge kinds and normalized feedback-resource order remain
+    // unchanged; resume/spawn edges still cannot make an activation cyclic.
+    constexpr uint32_t absent = std::numeric_limits<uint32_t>::max();
+    SmallVector<uint32_t> groupForNode;
+    SmallVector<size_t> offsets(groups.size() + 1, 0);
+    SmallVector<sim::ComputeEdgeAttr> internalEdges;
+    if (!groups.empty()) {
+      groupForNode.assign(
+          fragments.size() + nbaCommitIds.size() + eventCommitIds.size(),
+          absent);
+      for (auto [index, group] : llvm::enumerate(groups))
+        for (uint32_t node : group)
+          groupForNode[node] = index;
+      auto internalGroup = [&](sim::ComputeEdgeAttr edge) {
+        uint32_t source = groupForNode[edge.getSource()];
+        return source != absent && source == groupForNode[edge.getTarget()]
+                   ? source
+                   : absent;
+      };
+      for (sim::ComputeEdgeAttr edge : schedulingEdges)
+        if (uint32_t group = internalGroup(edge); group != absent)
+          ++offsets[group + 1];
+      for (size_t index = 1; index < offsets.size(); ++index)
+        offsets[index] += offsets[index - 1];
+      internalEdges.resize(offsets.back());
+      SmallVector<size_t> cursor(offsets);
+      for (sim::ComputeEdgeAttr edge : schedulingEdges)
+        if (uint32_t group = internalGroup(edge); group != absent)
+          internalEdges[cursor[group]++] = edge;
+    }
     SmallVector<Attribute> groupAttributes;
-    for (ArrayRef<uint32_t> group : groups) {
+    for (auto [index, group] : llvm::enumerate(groups)) {
+      ArrayRef<sim::ComputeEdgeAttr> groupEdges =
+          ArrayRef(internalEdges).slice(offsets[index],
+                                        offsets[index + 1] - offsets[index]);
       SmallVector<int64_t> ids(group.begin(), group.end());
       bool cyclic = group.size() > 1;
       if (!cyclic)
-        cyclic = llvm::any_of(schedulingEdges, [&](sim::ComputeEdgeAttr edge) {
+        cyclic = llvm::any_of(groupEdges, [&](sim::ComputeEdgeAttr edge) {
           return isSchedulingEdge(edge.getKind()) &&
                  edge.getSource() == group.front() &&
                  edge.getTarget() == group.front();
@@ -1894,13 +1915,13 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
       sim::ComputeScheduleKind schedule = sim::ComputeScheduleKind::Acyclic;
       SmallVector<Attribute> feedback;
       if (cyclic) {
-        if (hasProceduralControlCycle(group, schedulingEdges)) {
+        if (hasProceduralControlCycle(group, groupEdges)) {
           schedule = sim::ComputeScheduleKind::ControlLoop;
         } else {
           schedule = sim::ComputeScheduleKind::Convergence;
           DenseSet<uint32_t> members(group.begin(), group.end());
           llvm::SmallDenseSet<Attribute> unique;
-          for (sim::ComputeEdgeAttr edge : schedulingEdges)
+          for (sim::ComputeEdgeAttr edge : groupEdges)
             if (members.contains(edge.getSource()) &&
                 members.contains(edge.getTarget()) &&
                 edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&

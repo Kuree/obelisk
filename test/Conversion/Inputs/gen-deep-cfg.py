@@ -1,7 +1,8 @@
 """Emit one process whose body is a long block chain closed into a loop.
 
-The chain length is the only argument. This exists so the compute-graph passes
-are exercised at a CFG size no recursive traversal could survive.
+The first argument is the chain length. Optional --acyclic ends it in a return
+instead of a backedge, exercising region classification with many singleton
+SCCs as well as traversal at a size no recursive implementation could survive.
 """
 
 import sys
@@ -19,8 +20,13 @@ out("        attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {\n")
 out("      cf.br ^bb1\n")
 for index in range(1, blocks):
     out("    ^bb%d:\n      cf.br ^bb%d\n" % (index, index + 1))
-# Closing the chain gives the schedule exactly one cyclic group to plan.
-out("    ^bb%d:\n      cf.br ^bb1\n" % blocks)
+if sys.argv[2:] == ["--acyclic"]:
+    out("    ^bb%d:\n      obelisk_sim.return\n" % blocks)
+elif not sys.argv[2:]:
+    # Closing the chain gives the schedule exactly one cyclic group to plan.
+    out("    ^bb%d:\n      cf.br ^bb1\n" % blocks)
+else:
+    raise SystemExit("usage: gen-deep-cfg.py BLOCKS [--acyclic]")
 out("    }\n")
 out("  }\n")
 out("}\n")

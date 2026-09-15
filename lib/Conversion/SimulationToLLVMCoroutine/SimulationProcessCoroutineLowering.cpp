@@ -986,11 +986,12 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 }
 
 LogicalResult
-finishPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
+finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
+                                 const SymbolTable &embeddedSymbols) {
   if (failed(
           makeNativeWrappers(process.module, process.ramp, process.baseName)))
     return failure();
-  return makeProcessDescriptor(process.module, process.location,
+  return makeProcessDescriptor(process.module, embeddedSymbols, process.location,
                                process.baseName, process.stableID,
                                *process.analysis, process.unmanagedNative);
 }
@@ -1002,7 +1003,8 @@ lowerSuspendableProcess(sim::SimFuncOp function,
       prepareSuspendableProcess(function, analysis);
   if (failed(prepared) || failed(lowerPreparedSuspendableProcess(*prepared)))
     return failure();
-  return finishPreparedSuspendableProcess(*prepared);
+  SymbolTable embeddedSymbols(prepared->module);
+  return finishPreparedSuspendableProcess(*prepared, embeddedSymbols);
 }
 
 } // namespace obelisk::detail

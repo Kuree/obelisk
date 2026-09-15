@@ -2,7 +2,8 @@
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libcustom_edge_external.so -o %t.dir/lib/libcustom_edge_external.so
 // RUN: cd %t.dir && obelisk -fno-lto -O0 --vpi=full --native-scheduler=generic %t/design.sv lib/libcustom_edge_external.so -o bin/native
-// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=full --native-scheduler=auto %t/design.sv lib/libcustom_edge_external.so -o bin/aot
+// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=full --native-scheduler=auto --mlir-timing %t/design.sv lib/libcustom_edge_external.so -o bin/aot 2> %t.auto.timing
+// RUN: FileCheck %s --check-prefix=ELIGIBILITY < %t.auto.timing
 // RUN: %t.dir/bin/native | FileCheck %s
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/aot 2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=AOT
 
@@ -25,8 +26,9 @@ module system_timing_check_custom_edge_external;
   import "DPI-C" function void external_partial_force();
   import "DPI-C" function void external_partial_release();
 
-  // Foreign reentrancy stays runtime-owned while the timing actors remain in
-  // the actor-local native AOT plan, exercising mixed-tier external ingress.
+  // Foreign reentrancy stays runtime-owned. Automatic admission still requires
+  // whole-design closure, so these boundaries select the descriptor-driven
+  // path even though other actors are statically eligible.
   always @(posedge call_first) external_first_transitions();
   always @(posedge call_deposit) external_partial_deposit();
   always @(posedge call_force) external_partial_force();
@@ -70,6 +72,8 @@ endmodule
 // AOT: obelisk-signal-diagnostics
 // AOT-SAME: aot_node_executions=0
 // AOT-SAME: aot_fallbacks=0
+// ELIGIBILITY: obelisk native eligibility: eligible=1 fully_eligible=0 cost_effective=0
+// ELIGIBILITY: obelisk native boundary: DPI reentrancy is present
 
 //--- plugin.c
 #include "vpi_user.h"

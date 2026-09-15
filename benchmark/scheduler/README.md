@@ -50,3 +50,38 @@ build/tools/driver/obelisk -O3 --native-scheduler=auto \
   benchmark/scheduler/gated_scc.sv -o tmp/gated-scc-auto
 diff <(tmp/gated-scc-generic) <(tmp/gated-scc-auto)
 ```
+
+## Performance coverage
+
+CPU elapsed time is one acceptance signal, not a scheduling cost model. Use
+larger designs together with controlled graph workloads to distinguish the
+following costs:
+
+| Workload | Vary | Measure |
+| --- | --- | --- |
+| Chains and reconvergent diamonds | Depth and helper-size splits | Instructions per activation, repeated evaluation, state loads/stores |
+| Independent cones and sparse fanout | Total size at fixed active size | Empty ready scans and work charged to dormant logic |
+| Configurable routing fabric | Potential SCC size and selected routes | Local convergence passes, affected tiers, scheduling-proof invalidation |
+| Memory/interconnect-heavy SoC | Masters, queues, memories and clock domains | Dynamic-access cost, shared consumers, code/cache size, compilation time and peak memory |
+| Externally clocked design | VPI off/read/full and actual observers | Dormant cost, boundary work and scoped invalidation |
+
+The larger-design and structural matrix above is a coverage target; this
+directory currently automates only the eight-lane NBA workload. A larger CPU
+alone does not isolate these costs. Increasing total graph size while holding
+active work fixed is particularly useful for checking pay-to-play behavior.
+
+Measure elapsed time and hardware counters on uninstrumented binaries with
+warmups and interleaved matched trials, without concurrent builds. Collect
+activation, convergence and tier counters in a separate diagnostic run. The
+current `run_nba8.py` measurements enable runtime diagnostics and therefore do
+not establish an uninstrumented performance acceptance result. Preserve source
+and executable hashes, compiler options, workload parameters and output checks.
+Report compile time, peak memory and generated code size separately from
+simulation throughput.
+
+A smaller dispatcher share can hide more total work in generated helpers.
+Judge a scheduling change by total instructions and elapsed time as well as
+the profile breakdown. Reject repeated empty scans or extra activations even
+when the apparent dispatcher hotspot shrinks. Require each optimization to
+improve its predicted cost across the relevant scaling axis before extending
+it to another large IP.

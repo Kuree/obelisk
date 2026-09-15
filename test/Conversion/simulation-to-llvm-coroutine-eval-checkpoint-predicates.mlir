@@ -19,10 +19,31 @@ module attributes {
         hierarchy "eval_dynamic_load.clock"
     obelisk_sim.code_unit.decl 3 in 0 always
         hierarchy "eval_dynamic_load.consume"
+    obelisk_sim.code_unit.decl 4 in 0 function hierarchy "reserved_variant"
+    obelisk_sim.code_unit.decl 5 in 0 function hierarchy "reserved_path"
+    obelisk_sim.code_unit.decl 6 in 0 function hierarchy "reserved_checkpoint"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
     obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<32> design
     obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<64> design
     obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.logic<8> design
+
+    // Existing declarations must reserve names across variant and predicate
+    // creation. These functions are distinct from the generated definitions.
+    obelisk_sim.func @consume.__obelisk_eval_body_0.__obelisk_two_state_0(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @consume.__obelisk_eval_body_0.__obelisk_path_known_0(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
+      obelisk_sim.return
+    }
+    obelisk_sim.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
+      obelisk_sim.return
+    }
 
     obelisk_sim.func @root(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
@@ -115,13 +136,17 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_path_known
+// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_path_known_0(
+// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_two_state_1(
+// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_path_known_1(
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path
+// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path_1(
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.return
 // CHECK: llvm.func @__obelisk_eval_four_state_fallback_v1_
 // CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_
-// CHECK: llvm.call @__obelisk_eval_fast_coordinator_hybrid_v1
+// CHECK: llvm.call @__obelisk_eval_dispatch_v1
 // CHECK: llvm.call @obelisk_rt_v1_native_state_sync

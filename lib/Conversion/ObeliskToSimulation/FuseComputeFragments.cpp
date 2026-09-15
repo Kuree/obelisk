@@ -125,6 +125,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   };
   DenseMap<Operation *, bool> bodyEligibility;
   DenseMap<Operation *, bool> primitiveBodyEligibility;
+  analysis::DescriptorProvenanceAnalysis provenance(design);
   auto isBodyEligible = [&](sim::SimFuncOp function, bool primitive) {
     if (!function)
       return false;
@@ -132,8 +133,9 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     auto found = cache.find(function.getOperation());
     if (found != cache.end())
       return found->second;
-    bool eligible = primitive ? isPrimitiveComputeBodyFusionEligible(function)
-                              : isComputeBodyFusionEligible(function);
+    bool eligible =
+        primitive ? isPrimitiveComputeBodyFusionEligible(function, provenance)
+                  : isComputeBodyFusionEligible(function, provenance);
     cache.try_emplace(function.getOperation(), eligible);
     return eligible;
   };

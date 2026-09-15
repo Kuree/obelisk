@@ -544,6 +544,16 @@ inline uint32_t obelisk_rt_commit_region(uint32_t homeRegion) {
                                                        : UINT32_MAX;
 }
 
+// A live descriptor-loop ready cache may accept ordinary direct signal wakes
+// without rescanning its existing cohort. The loop owns this transient record;
+// unrelated selection-generation changes and reentry invalidate it.
+struct NativeReadyPublicationBatch {
+  uint64_t generation = 0;
+  bool valid = false;
+  std::vector<uint64_t> tokens;
+  std::unordered_set<uint64_t> queued;
+};
+
 struct ScheduledProcess {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> callers;
@@ -2021,6 +2031,7 @@ struct obelisk_rt_context {
   std::unordered_set<uint32_t> nativePeriodicGeneratedWritableStates;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   std::unordered_set<uint64_t> nativePollCandidates;
+  NativeReadyPublicationBatch *nativeReadyPublicationBatch = nullptr;
   // Lazy min-heap of (wake time, process token). Stale entries are discarded
   // when queried after a process resumes, changes wait kind, or terminates.
   std::vector<std::pair<uint64_t, uint64_t>> scheduledProcessDelayHeap;
@@ -2374,6 +2385,26 @@ obelisk_rt_invalidate_design_ready_cohort(obelisk_rt_context *context) {
   context->designReadyCohort->persistentSuppression = false;
 }
 
+// Caller holds the context lock and handles allocation failures. Only a new
+// direct native signal candidate is admissible. Every other mutation keeps
+// the ordinary generation invalidation, so gaps cannot be mistaken for wakes.
+inline void obelisk_rt_record_native_ready_publication_unlocked(
+    obelisk_rt_context *context, uint64_t token, bool inserted) {
+  uint64_t previous = context->schedulerSelectionGeneration;
+  if (++context->schedulerSelectionGeneration == 0)
+    context->schedulerSelectionGeneration = 1;
+  auto *batch = context->nativeReadyPublicationBatch;
+  if (!batch || !batch->valid)
+    return;
+  if (!inserted || batch->generation != previous ||
+      context->schedulerSelectionGeneration == 1 || batch->queued.count(token)) {
+    batch->valid = false;
+    return;
+  }
+  batch->tokens.push_back(token);
+  batch->generation = context->schedulerSelectionGeneration;
+}
+
 inline void
 obelisk_rt_set_design_task_filter_unlocked(obelisk_rt_context *context,
                                            bool active, uint64_t forcedTask) {
@@ -2386,30 +2417,9 @@ obelisk_rt_set_design_task_filter_unlocked(obelisk_rt_context *context,
   context->nativeScheduleForcedDesignTask = forcedTask;
 }
 
-inline void
-obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
-                                            uint64_t begin, uint64_t width) {
-  if (!context || !context->nativeStateValue || !context->nativeStateUnknown ||
-      begin >= context->nativeStateBitCount)
-    return;
-  uint64_t end = width > context->nativeStateBitCount - begin
-                     ? context->nativeStateBitCount
-                     : begin + width;
-  for (uint64_t bit = begin; bit != end; ++bit) {
-    uint8_t mask = static_cast<uint8_t>(UINT8_C(1) << (bit % 8));
-    uint64_t byte = bit / 8;
-    bool value =
-        (context->stateValue[bit / 64] & (uint64_t{1} << (bit % 64))) != 0;
-    bool unknown =
-        (context->stateUnknown[bit / 64] & (uint64_t{1} << (bit % 64))) != 0;
-    context->nativeStateValue[byte] =
-        value ? context->nativeStateValue[byte] | mask
-              : context->nativeStateValue[byte] & ~mask;
-    context->nativeStateUnknown[byte] =
-        unknown ? context->nativeStateUnknown[byte] | mask
-                : context->nativeStateUnknown[byte] & ~mask;
-  }
-}
+void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
+                                                 uint64_t begin,
+                                                 uint64_t width);
 
 obelisk_rt_status
 obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context);

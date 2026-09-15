@@ -510,7 +510,7 @@ or triggerless cones, convergence SCCs, control loops, and bytecode islands use
 exclusive shared owners and are never cloned into several clock functions.
 Writable descriptors are partitioned at exact packed-range boundaries; an
 overlapping interval with writers in several tiers moves to a shared owner at
-the least-static writer tier. Tier 1 is acyclic generated clock/eval work,
+the least-static writer tier. Tier 1 is generated clock/eval work,
 Tier 2 is a generated local
 dirty-mask convergence algorithm, and Tier 3 is the existing bytecode boundary
 for dynamic or unsupported control.
@@ -522,6 +522,345 @@ Scheduling certification and two-state certification are independent: an
 acyclic graph alone does not prove activation coalescing or unobservable
 intermediate stores (IEEE 1800-2023 4.3–4.7). Whole-group execution requires
 those additional proofs before removing fine-fragment boundaries.
+
+The unit of static execution is a certified activation segment, not a process
+CFG block or an arbitrary run of adjacent ready bits. Runtime scheduling work
+should scale with activated groups, required feedback iterations, and observable
+boundaries. Internal acyclic actors do not inherently require runtime events:
+their private values can flow through SSA when exact activation and visibility
+proofs permit it. Event-control backedges describe future activations; they do
+not by themselves establish combinational feedback. Region-ordering metadata
+therefore remains distinct from the activation certificate needed to materialize
+a whole-group body. A clock supplied through a foreign interface is still an
+ordinary ingress edge to that body. Scheduling and knownness certificates are
+checked or invalidated at their respective boundaries, rather than making each
+internal actor rediscover the group's execution policy.
+
+The cost model is pay to play. A stable certified component reuses its compiled
+schedule and durable value-domain proof. Optional features must not impose
+model-wide scans, state copies, or repeated proof reconstruction on this path.
+Runtime ordering metadata is needed only for components using runtime ordering;
+rebuilding is charged to relevant proof invalidations, not to each clock edge.
+Feedback work is charged to actually activated feedback, retained latch state
+to its owning component, and observation work to active observer demand.
+Writable-VPI support alone must not tax every computation as if force/release
+were active. Unknown values and mutations affect the exact dependent ranges;
+an unrelated X range must not make an entire scheduling group four-state.
+These are performance acceptance requirements as well as interface rules:
+test dormant features against equivalent feature-off binaries, and local
+disturbances against unaffected components. Existing global guards remain replacement work, not exceptions to this policy.
+Derived ready indices must be evaluated across both publication and selection.
+A reduction in dispatcher cost alone does not justify additional work on every
+store; the complete activated computation must become cheaper.
+
+Possible connectivity and proved active connectivity are different graphs.
+Configurable routing can form a large static SCC even when its selected routes
+are acyclic. Such an SCC must not force all its computations into Tier 2.
+The shared ordering primitive uses dense identities, sorted forward/reverse
+CSR adjacency, iterative SCC condensation, and deterministic topological ties.
+Within a potential feedback component, reverse DFS finish order follows
+dependencies through a finite sweep; stable identities still break ties
+between independent components. This ordering is a heuristic, not an
+activation or coalescing proof. Every dependency and pending predicate remains
+live, and a publication to an already visited member requests another sweep.
+No selector edge is discarded, no configuration proof is cached, and no
+component is downgraded merely to choose this order.
+The shared semantic schedule also refines tied convergence ranks using the
+complete activation graph, including actors that cannot join a native helper.
+Both bytecode and native continuations consume these ranks. Rank refinement
+shares the graph builder's wait-to-resume projection, retains region/group
+order and procedural-loop boundaries, and does not alter ownership or remove
+feedback edges. Designs without a multi-member convergence group need no
+additional ordering graph.
+Region classification partitions normalized edges into a stable CSR index of
+SCC-internal edges. Singleton cycle checks, procedural-loop checks and feedback
+resource collection inspect their own component's edges, giving linear work
+per region after SCC ordering. Resource order and all scheduling edges are
+preserved; resume and spawn edges cannot turn a repeating activation into a
+combinational cycle.
+Fusion similarly builds source activation and resume indices once for the
+frozen input graph. A mutable symbol table tracks generated and erased bodies,
+including rejected clones, so each cohort resolves its members without scanning
+the complete design. These indices change lookup cost, not activation order or
+fusion eligibility.
+Native direct-call ABI reconciliation uses a lazy symbol-table index after
+ordinary function signatures are final. Rewriting calls and wrapper returns
+does not change the indexed declarations. Module-before-design lookup and
+status propagation remain the same; each generated domain call no longer
+rescans all declarations to find its body.
+Value-domain variant construction likewise maintains one symbol index through
+proof propagation and cloning. New variants, private helpers and path predicates
+enter that index; rejected functions leave it before deletion. Symbol collision
+checks therefore see the same declarations throughout construction. This avoids
+rebuilding an inventory per variant without changing which proofs succeed,
+which paths require guards, or which four-state bodies remain available.
+Static-superstep planning also resolves fragments and spawns through a single
+symbol index; its metadata-only transformation leaves that index valid.
+Fusion eligibility and constant-propagation waves share an immutable
+driver-to-net index while deriving fresh value provenance for each function.
+Function rewriting cannot invalidate this index because those passes preserve
+driver declarations; no value-domain proof is cached by this optimization.
+Unknown-destination writes accumulate resource-class rejection within each
+inductive-proof wave. The analysis expands that union once at the wave boundary,
+preserving conservative rejection and subsequent propagation without rescanning
+every candidate root for every unknown write.
+Inductive-proof iterations share immutable function summaries, descriptor
+provenance, call indices and entry-boundary seeds for the unchanged design.
+Each iteration creates fresh value, result and reachability facts using its
+current assumed-root set. Guarded and unconditional solves likewise retain
+separate facts; structural reuse does not carry knownness across proof changes.
+Sampled-state planning derives provenance only for functions containing a
+sampled read. Those functions share the immutable driver index; an unsampled
+design performs no sampling provenance analysis. Range validation and
+coalescing remain the same for native and bytecode image construction.
+Native capture specialization preserves symbol identities while rewriting
+operands and signatures, so it shares a symbol index per design. Static actor
+roots and fanout planning likewise resolve identities through indexed lookup.
+Capture specialization first checks for compatible context projections. Calls
+with only value operands need no whole-design use proof. Every actual ABI
+rewrite still requires the exact unique-symbol-use check, including callback
+and metadata references.
+Fanout resume closures traverse indexed outgoing resume/process-order edges;
+the owning suspension remains excluded and the resulting closure stays sorted.
+Process helper generation declares its shared runtime ABI once per batch and
+maintains a module symbol index as helpers and schedule globals are added.
+Nested bootstrap helpers retain their original lookup scope. This eliminates
+per-actor module scans without changing captures, continuation identities or
+scheduler actions.
+Descriptor finalization shares a snapshot of the already frozen embedded-image
+symbols. Frame descriptors and native wrappers add distinct symbols, so their
+generation does not require rescanning the module for each bytecode binding.
+Native calls omit automatic-state retain operations for constant global or
+static handles whose encoding passes the shared runtime decoder. Those objects
+have design lifetime and retain has no side effects with a live native context.
+Automatic, unresolved and malformed handles retain their runtime checks; value
+knownness is never used as evidence of object lifetime.
+Large static-state registration sequences use bounded native helpers. Each
+bound's registration, managed-root registrations and status reporting remain
+in their original order before scheduling starts. Helpers cannot be inlined
+back into an unbounded startup block, and introduce no time or region boundary.
+The ordering primitive preserves every supplied edge. Ranked Tier-1 sweeps test actual pending
+activations and retain backward publications for another sweep; they neither
+speculate inactive actors nor assume that observing no change proves an edge
+absent. Self-dependent activations without a sensitivity certificate retain
+their existing executor. Bounded helpers share one dispatch path, with independent per-member
+value-domain selection. Four-state, guarded two-state and trusted two-state
+model-wide controller variants are removed; the selected executor consults
+its own certificate and preserves every pending activation.
+The proof travels with the selected two-state call. A shared wrapper can then
+use a direct computation edge without consulting its mutable route again;
+path-dependent callees retain their activation-local probes. This does not
+confer two-state status on other calls or on the enclosing dispatcher.
+
+Eligible groups also have a predicated dataflow representation. A dense
+control-flow analysis carries reachability, block arguments, and exact physical
+memory slots along each edge. Joins select the actual predecessor's state.
+Internal computation and publications become SSA, with authoritative stores
+at return. The actor activation and source assignment predicates remain part
+of that computation: an inactive actor cannot overwrite a deposited output,
+and a closed latch retains its stored value. This transformation needs no
+cached assumption that outputs still equal a combinational function of inputs.
+
+One group-level check of the existing two-state certificates selects this
+representation; pending proofs retain per-member selection and recovery.
+The verifier admits only finite CFGs, disjoint statically addressed storage,
+and safe speculative expressions. It rejects calls, opaque memory effects,
+volatile/atomic access, overlapping windows, and division/remainder. Both
+analysis work and generated size use the native helper budget. Possible
+activation-graph feedback remains live: the finite predicated sweep preserves
+backward publications for the next sweep, without asserting a fixed point.
+This implements the same ordered activation semantics (IEEE 1800-2023
+4.3--4.7), including source assignment predicates for always_comb/always_latch
+(9.2.2.2--9.2.2.3), rather than inferring combinational completeness from their
+keywords. Boundary visibility remains required by 4.10 and 38.34.
+
+Adjacent certified helper-size splits can execute through direct predicated
+segments, as described below. Admission still needs legal ordering and bounded
+expansion: an unconditional scan of a connected island can repeatedly test
+empty helpers and execute consumers before pending producers outside the
+admitted graph. Feedback publications survive each finite pass; a helper
+segment neither advances time nor drains NBA regions. Boundary actors retain
+their positions in the complete activation graph.
+
+Boundary-time graph reordering is a further specialization, not yet connected
+to the runtime. A configuration-dependent proof may remove inactive edges and
+cache an order for the affected component, reusing compiled computation bodies
+without regenerating machine code. Routing writes must revoke that scheduling
+proof even when the new value is known; ordinary clock edges reuse it. Unknown
+footprints revoke conservatively. Until a replacement proof is available, the
+affected component retains conservative edges and local sweeps while unrelated
+components keep their orders. Traffic-dependent arbitration or changing data
+selectors require activation-local guards unless a persistent proof covers
+them. Knownness certificates remain independent of these scheduling proofs.
+Invalidation follows dependency ranges, not a signal's name or clock label:
+a signal used both as a clock and as a routing selector still invalidates any
+order proved from that selector. Known-to-known value-plane writes therefore
+need scheduling-proof hooks; unknown-mask invalidation alone is insufficient.
+
+IEEE 1800-2023, rather than another simulator's generated schedule, defines
+the admissible transformations. Section 4.3 permits alternative algorithms
+only when their user-visible effects agree with the reference algorithm.
+Sections 4.6--4.8 permit stable choices between unordered Active events, while
+preserving source statement order and the execution order of NBA updates.
+Matching only a final settled value does not establish this equivalence.
+Required update transitions, edge activations (including X/Z transitions in
+Table 9-2), and callback control points in 4.10 remain observable boundaries.
+NBA destination indices and RHS values are captured on evaluation, separately
+from the ordered update (10.4.2).
+
+A proved inactive data dependency is not permission to delete a language
+sensitivity. The implicit sensitivity of always_comb is based on longest
+static read prefixes, with the local-variable, written-expression and timing-
+expression exclusions of 9.2.2.2.1. Source statement order and time-zero startup
+remain intact (9.2.2.2); a read-before-write procedure must not be converted
+into a repeatedly evaluated algebraic equation. Eliminating an activation
+requires a separate proof that its entire effect is unobservable. Until that
+proof exists, runtime reordering changes evaluation order only; authoritative
+activation subscriptions stay intact. An ambiguous conditional selector must
+retain the integral bit-merge semantics of 11.4.11, rather than select either
+route from its previous known value. Implicit port assignments remain distinct
+from proved aliases (4.9.6). Force/release must preserve the appropriate driver
+or variable behavior (10.6.2, 38.34), including during a scheduling downgrade.
+
+Always_latch has the same startup and sensitivity semantics as always_comb
+(9.2.2.3), while incomplete assignments deliberately retain state. The same
+ranked candidate checks apply to both: an explicit latch does not by itself
+require another executor. Its original branch predicates and stores preserve
+enable behavior, untouched packed ranges and X/Z state; grouping must not
+substitute a combinational fixed point for held state. Explicit self-dependent
+reads still retain the existing executor pending a stronger certificate.
+The same retention rule applies to incomplete assignments in always_comb;
+its combinational-intent checks do not erase the procedural semantics. The
+executable latch regression starts closed with X state, writes only a low
+packed slice, changes data while open and while closed, and verifies capture
+after reopening against required bytecode at O0 and O3.
+
+Native group materialization now expands certified executor calls after route
+specialization and after the bytecode image is frozen. Direct bodies share the
+existing activation predicates and continuation exits; unresolved routes and
+large computations retain their executor/helper boundaries. The existing native
+inlining budget limits expansion and boundary publication code, and each shared
+definition is expanded at most once per group. Constant-address ready
+words can then flow through SSA across the group. Retained calls, dynamic ready
+lookups, and returns publish pending work to authoritative storage; returning
+calls acquire any additional work before execution resumes. This preserves a
+pending activation even when its triggering signal changes back before the
+consumer executes.
+
+After a whole group is certified as finite SSA, its computation becomes the
+group's entry body. The entry checks the group's durable proof bits once and
+branches directly into that computation. Proof restoration calls a separate
+cold helper retaining the original per-owner behavior. The materializer moves
+the two bodies rather than cloning them, so there is one copy of each variant
+and no out-of-line SSA wrapper on every known activation. This decision occurs
+before physical native partitioning; it does not depend on cross-object
+inlining. Transient candidates with existing callers retain their callable
+interface and are excluded from this entry replacement.
+
+A certified finite dataflow group can also refine the ready cache at return.
+The cache remains a lower bound on the first pending word. The group advances
+it only when an exact final SSA word at that bound is empty; an uninspected
+word or any remaining bit stops advancement. The ready layout is checked
+against the group's declared word count. This uses values already computed by
+the group, adds no publication bookkeeping or state loads, and never consumes
+an activation. Refinement is charged to the existing materialization budget.
+
+Adjacent certified helpers split only by the native size budget can share one
+finite activation segment. A segment tests each child's sparse ready-word mask
+and directly calls only pending children in dependency order. Each child keeps
+its own activation and value-domain predicates and its bounded computation
+body. The segment does not clear pending work after a child returns: backward
+publications survive for the next shared-loop activation. Independent components,
+ineligible or oversized actors, and ungrouped singletons end the segment.
+Thus a size split need not create another global owner lookup or region handoff;
+actual foreign and observable boundaries retain their existing executors.
+
+Bounded groups can refine into a hierarchy of execution children when an
+opaque effect or an operation requiring source control prevents whole-group
+SSA. A memory-representation or analysis-budget failure alone does not create
+an execution boundary. The materializer partitions the existing
+ordered source-owner inventory at executable activation entries, checks both
+domain bodies, and retries the smaller children. It requires a complete,
+unique leaf cover, a single entry and exit for each slice, and reproducible
+constant and static-address setup across slices. Captured state loads, skipped
+entries, early returns and unrepresented effects cannot become replayed setup.
+A rejected child retains its original control flow. A certified child collapses
+its internal state and readiness accesses into SSA and checks only its own pending
+value-domain proofs. A disturbance in one child therefore leaves its siblings'
+collapsed bodies available.
+
+Parents test each child's existing pending mask before making an ordered
+direct call, so inactive collapsed expressions incur no computation cost. They
+reacquire pending work after each child to include its publications. Child
+domain selection is emitted in the parent before native partitioning: a
+collapsed activation calls its SSA computation directly; proof restoration
+calls the child's original fallback. This avoids relying on cross-partition
+inlining to remove an extra guarded wrapper. Parents own no additional
+readiness bits, proof flags, queues or simulation regions. Each child publishes
+boundary state before the next child executes, and backward activations survive
+for the shared event loop. The hierarchy describes execution granularity, independently of
+execution tiers and value-domain proof components; it does not infer a new
+activation or permit unconditional evaluation of a latch. Refinement shares a
+bounded work allowance derived from the native operation budget. Only children
+of a rejected candidate are explored; a hierarchy is retained only if at least
+one descendant actually becomes SSA. Failed attempts leave the original
+executor intact. There is no enumeration of combinations of child domains.
+
+The same materializer can forward exact physical integer state ranges shared
+by certified actors. For finite dataflow, a sorted interval sweep unifies
+literal overlapping byte ranges of the same canonical global into bounded SSA
+slots. Reads extract the addressed bits using the target's byte order; partial
+stores preserve the remaining bits, including canonical X/Z in the unknown
+plane. Private stack temporaries are promoted through the memory-slot
+interfaces before the effect inventory, when their complete uses prove that
+they do not escape. This exposes computation without inventing another
+execution boundary. Unsupported widths, unknown addresses and oversized
+overlapping ranges retain the original executor. Control-preserving memory
+promotion retains its conservative overlap checks. Copy-connected ports are
+not inferred to be aliases. Entry acquires the actual canonical value and
+unknown planes, preserving uninitialized X/Z. Original transition tests,
+activation predicates, and knownness invalidation still run
+at each logical store. Calls, indirect accesses that may alias design state,
+and other memory effects publish cached state before execution and reacquire
+it afterward. Returns publish before handing control back. Thus an observer
+or executor boundary sees completed writes, and a resumed group consumes any
+external mutation. Unsupported address escapes retain ordinary storage
+accesses. This transformation changes state representation, not the schedule
+or the value-domain proof. Publication and SSA growth share the existing native
+inlining budget. Eliminating remaining internal activation bookkeeping still
+requires stronger activation and observability certificates.
+
+Executor inlining alone does not establish whole-group execution. A dispatcher
+may still select each actor outside the certified groups,
+call its value-domain route, publish internal changes, and schedule port-copy
+consumers separately. Its expansion budget may also be exhausted before any
+state can be forwarded. Whole-group validation must inspect the computation
+actually reached: internal acyclic dependencies should become ordered dataflow,
+with executor selection and state publication at certified boundaries. Small
+fixtures reaching SSA are insufficient evidence that larger designs use this
+execution path.
+
+The remaining architectural requirement is a region activation certificate,
+not a larger executor-inlining budget. Rank ordering and SSA forwarding already
+exist, but the ranked representation still carries per-owner readiness and
+value-domain selection. A stronger certificate must prove which source
+activations may coalesce, which members can execute once, and which internal
+publications have no observer or scheduling consequence (IEEE 1800-2023
+4.3--4.7). Those facts must enter group construction before individual executor
+interfaces obscure them. Only then may the group replace internal ready-bit
+traffic with direct computation and keep intermediate values until an actual
+visibility boundary. This contract is not yet implemented for general groups.
+
+The certificate must preserve activation predicates and latch hold behavior;
+an acyclic graph alone does not authorize unconditional evaluation. A selected
+configuration may certify a usable order through a structurally cyclic routing
+network. A disturbed dependency invalidates the affected schedule certificate,
+with local order repair or convergence under the same event loop. Value-domain
+certificates remain a separate partition, with at most a two-state and a
+four-state body per component. Foreign clock ingress can retain the certified
+compute schedule; a compute disturbance requires reconsidering only the affected
+regions and proofs. General partial admission additionally requires complete
+runtime ingress and observer coverage for actors outside these groups.
 
 The first runtime integration routes mixed native/bytecode current-slot drains
 through `runScheduler` with an installed-plan executor policy. Static publications,
@@ -538,6 +877,33 @@ barrier selector, including generated accumulators and their dirty hierarchy.
 DPI task reentry temporarily releases the suspended caller's executor-selection
 restrictions and restores them on return while retaining the context's queues.
 
+Sampled-value calls reuse the recursive assertion-expression lowering defined
+by IEEE 1800-2023 16.5.1 and 16.9.3. Arithmetic consumes sampled operands;
+nested history calls retain distinct history sites. Packed dynamic selections
+sample both the base value and selector before extraction. The sampled mode
+is scoped to the argument, so an adjacent procedural expression still reads
+current state. This applies to packed expressions using the current inferred
+clock; the separate alternate-clock sampler retains its descriptor-bound
+source and clock restrictions. Both executors consume the same sampled-read
+and history operations, using the shared slot snapshot across tier boundaries.
+For statically bound packed expressions, history underflow evaluates the
+expression's declaration defaults. A companion validity history uses the same
+clock, gate and depth to distinguish missing history from a real X/Z sample;
+the bytecode encoding and runtime history ABI are unchanged. Plain static
+variables without initializers retain the original one-ring path. Constant
+initializers become immutable default operands. A nonconstant initializer's
+result is saved once, during declaration initialization, only when its default
+is needed by a sampled expression. Reading that retained value never repeats
+initializer side effects or substitutes a later procedural/VPI write. The
+same rule applies to the existing descriptor-bound alternate-clock sampler.
+Dynamic selections from fixed unpacked arrays retain a proven descriptor
+identity. Their snapshot covers that descriptor's canonical range once, and
+the sampled selector chooses a lane at execution time. This requires neither
+one generated read per lane nor snapshots of unrelated descriptors. An
+unknown or out-of-range lane produces the element type's invalid-read value;
+an unresolved descriptor remains an error. Snapshot planning remains lazy for
+functions that contain sampled reads, so unsampled designs pay no added cost.
+
 AOT node runs delegate to that driver, including time advancement and periodic
 bootstrap restricted to the current slot. The separate trusted
 worklist loop, bootstrap arbitration loop, trusted fragment action adopter,
@@ -548,7 +914,16 @@ startup and signal-ready cohorts in scheduler-key order. Actors suspended on
 unchanged signals leave the poll set; runtime waits remain individually
 pollable. Changes to the earliest startup region invalidate the cache so a
 completed startup cohort cannot hide same-region signal resumptions. Native
-ready publications from an executing actor are preserved
+ordinary direct signal wakes can extend an already ordered cohort through a
+transient publication journal. It is enabled only for an ordered cohort without
+urgent or startup work; polled waits retain their separate exact scan. New
+candidates enter the same ordering heap, with
+queued-token membership preventing duplicate activations. A gap in selection
+generations, changed time/phase/startup boundary, or reentry discards the cached
+ordering. The journal belongs to the active driver invocation and has no time
+or region policy; NBA barriers still arbitrate before execution. Dormant
+generated scheduling creates no journal inventory.
+Native ready publications from an executing actor are preserved
 when it returns to the same wait; external clock callbacks consume their
 ingress before reentry. Disturbances no longer select bytecode merely because
 the static-specialization guard is false: mapped compiled fragments retain
@@ -613,7 +988,9 @@ recovery, and preservation of pending work at unsuccessful boundaries.
 The internal native plan also exposes a range recovery hook. Reconciliation
 of indexed VPI deposits and dirty roots publishes actual unknown-mask deltas:
 loss invalidates exact changed ranges, while recovery queues failed proofs.
-Known clock toggles do neither. Both hooks use target-derived layout (native
+Bound-plane synchronization and shared native stores capture and publish the
+delta before overwriting unknown bits; subsequent reconciliation cannot recover
+a transition that an earlier copy erased. Known clock toggles do neither. Both hooks use target-derived layout (native
 plan size 272 bytes; wasm32 size 208 bytes) and cannot execute observers or
 actors. Runtime commit paths that bypass reconciliation still need coverage.
 Pure generated four-state route wrappers retain NBA staging provenance without
@@ -624,8 +1001,9 @@ runtime and Tier-3 invalidation remain until those paths are covered.
 
 The required disturbance policy is local: VPI-driven clocks, including cocotb
 clocks without an internal oscillator, enter Tier 1 through their indexed clock
-boundary. A change at a compute boundary sends affected work to Tier 2 while
-unrelated groups remain in Tier 1. Tier 3 handles work outside mapped compute
+boundary. A change at a compute boundary may keep affected work in a certified
+Tier-1 sweep or select Tier 2 locally when its scheduling proof is lost.
+Unrelated groups remain in Tier 1. Tier 3 handles work outside mapped compute
 boundaries. The same policy applies independently of two-state/four-state
 selection. The executable external-clock regression drives 1,000 rising edges
 through VPI with no HDL oscillator and checks constant startup-only fragment
@@ -651,6 +1029,11 @@ Full cocotb support still requires other VPI callbacks, including value-change
 and read/write synchronization, and control operations. Full integration of
 group-level partial routing also remains required; preserving compiled
 fragments alone does not prove that unaffected groups stay in Tier 1.
+Writable-VPI continuous assignments also still require retained driver-value
+planes in clean generated bodies for force/release. Their conservative guard
+currently prevents those bodies from joining generated groups; this restriction
+must be removed with the driver-state implementation, not by assuming that a
+foreign clock source will never force another signal.
 
 Pending inertial updates belong to the shared calendar. A return to the
 published four-state value cancels a pending default-inertial update for that
@@ -674,6 +1057,61 @@ transitions. Proof tests verify exact invalidation, recovery of failed proofs,
 and preservation of unrelated positive certificates. Performance measurements
 and implementation acceptance targets are maintained separately from this
 architecture description.
+
+Execution diagnostics are selected at compilation time. The internal
+`--debug-native-execution-counts` option inserts entry counters after LLVM
+translation and before native optimization and partitioning, preserving
+separate ranked, dataflow, standalone eval and NBA-commit function identities.
+It reports nonzero counts after ordinary generated-main exits. These counts
+measure the instrumented function entries; a ranked helper can contain mixed
+value-domain work, so its entry count alone does not establish two-state
+coverage. Volatile counter updates survive native inlining, and obsolete
+memory/speculation attributes are discarded before optimization. Ordinary
+compilation emits no counters or reporting hooks. Instrumented binaries are
+used for diagnosis, while performance acceptance uses uninstrumented binaries.
+Native timing diagnostics also map group names to stable owners, actor and
+continuation identities, global compute-node ranks, and helper dependencies.
+The complete owner inventory includes boundary work omitted from the helper
+graph; the latter must not be mistaken for a replacement global priority graph.
+With automatic scheduler selection, `--mlir-timing` also reports static actor
+eligibility, whole-design closure, the admission decision and graph costs,
+followed by the boundary reasons retained by the analysis. This distinguishes
+early admission failure from a later failure to materialize native groups.
+These diagnostics do not change the admission proof or generated execution.
+Automatic admission currently requires whole-design closure. Designs with
+statically eligible computation alongside unproved task, managed-state or
+control-loop boundaries can therefore still select the descriptor-driven
+executor path. Supporting such mixed designs in generated groups requires
+complete boundary ownership and continuation proofs; relaxing the admission
+predicate alone does not provide partial Tier-1 execution.
+
+Direct storage addressing is independent of whole-group admission. Ordinary
+language force/release uses the static-state planner's root policies: affected
+roots retain runtime guards, unresolved targets guard all storage roots, and
+unrelated proven roots remain direct. Forced procedural writes still take the
+runtime path, and release retains the value required by IEEE 1800-2023 10.6.2.
+Continuous stores retain the runtime bookkeeping needed to restore their value
+after release. Dynamic override ownership remains a conservative design-wide
+barrier until it has a matching root proof. Net and driver authorization keeps
+its separate resolution barrier. These addressing choices do not admit an
+otherwise unproved scheduling group or change knownness certificates.
+
+Explicit eval selection requires the verified static-state, NBA and superstep
+plans independently of native optimization level. With automatic static
+specialization, the driver therefore requests those proof passes even at O0.
+An explicit request to disable specialization remains authoritative; exact eval
+selection rejects missing ownership rather than bypassing its verifier. This
+selection does not enable native optimization or change bytecode execution.
+
+The schedule may represent adjacent packed intervals with one root when their
+owner and tier agree. Its verifier checks ownership at every writer and root
+endpoint, allowing different partial writes within that root while rejecting
+uncovered bits, overlapping roots and ownership changes hidden by coalescing.
+Repeated overlapping writes from one kernel retain separate interval counts.
+Descriptor-local sorted sweeps validate both coverage directions without
+comparing each root against every writer in the design. Materialization runs
+the verifier before publishing a plan to native lowering; serialized plans
+pass the same checks when read back.
 
 Private static temporaries can stay in SSA when one store dominates every
 read, no other executable accessor or escaping reference exists, and the
@@ -734,6 +1172,24 @@ feedback retains convergence handling, and source process order remains
 required. Conflict chains stay within their event region; the shared loop
 provides ordering between regions. This selects an LRM-legal ordering for races
 without treating historical cross-process tie choices as a constraint.
+
+Generated evaluation uses one dispatcher for Active/NBA iteration. Ranked
+helpers execute finite sweeps, with pending predicates and independent domain
+proofs; unsupported work uses its existing compiled executor at the same
+boundary. The former forward-owner scan generator and the model-wide
+four-state, hybrid, guarded-steady and trusted-periodic controllers are removed.
+No compatibility controller starts a second drain. In particular, the cold
+four-state NBA helper returns its commit result to this dispatcher, which
+handles any post-NBA activation and further NBA iteration itself.
+
+The dispatcher preserves captured updates, status and termination boundaries,
+ordered NBA records and local convergence. Selecting a two-state body does not
+select another controller. The periodic clock prefix remains a specialization
+of known ingress work; its publications enter the same authoritative ready set
+and the same dispatcher. The periodic model-wide promotion latches and scanner
+are removed; the prefix checks only its participating owners' pending proofs.
+Moving this remaining clock prefix into component execution is separate
+consolidation work.
 
 Native lowering validates that plan against the native state layout and emits
 the following helper ABI. These helpers are not yet reachable from the

@@ -80,7 +80,7 @@
 
 // A fixed-only design must return directly when its bitmap is empty, before
 // probing unknown state or selecting/calling an NBA barrier.
-// BARRIER-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1(
+// BARRIER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // BARRIER: %[[DIRTY:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
 // BARRIER-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)

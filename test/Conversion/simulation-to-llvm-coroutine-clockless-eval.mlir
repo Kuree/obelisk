@@ -102,5 +102,5 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: llvm.switch

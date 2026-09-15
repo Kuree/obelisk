@@ -814,6 +814,7 @@ private:
   ::mlir::Value lvalueReferencePlaceholder;
   bool continuousStore = false;
   bool sampleAssertionValues = false;
+  bool sampleAssertionDefaults = false;
   struct AlternateClockSamplePlan {
     uint64_t id;
     uint64_t depth;

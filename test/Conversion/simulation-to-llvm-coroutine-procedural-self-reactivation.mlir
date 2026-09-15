@@ -157,7 +157,7 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{[0-9]+}}_1.__obelisk_execute(
 // CHECK-SAME: obelisk.eval.tier2_convergence
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: llvm.switch
 // CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
 // CHECK: %[[QUEUED:.*]] = llvm.load %[[INGRESS]]

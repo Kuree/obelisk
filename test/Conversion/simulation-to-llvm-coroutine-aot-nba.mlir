@@ -215,7 +215,7 @@ module attributes {
 // TWO-STATE-LABEL: llvm.func @root.__obelisk_spawn(
 // TWO-STATE-SAME: %[[SPAWN_CTX:.*]]: !llvm.ptr)
 // TWO-STATE: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[SPAWN_CTX]], {{.*}}, {{.*}})
-// TWO-STATE-LABEL: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// TWO-STATE-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // TWO-STATE-SAME: alignment = 64 : i64
 // TWO-STATE: %[[DIRTY_ROOTS:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // TWO-STATE: llvm.load {{.*}} : !llvm.ptr -> i64

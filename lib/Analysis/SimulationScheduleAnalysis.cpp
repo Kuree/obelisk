@@ -1,9 +1,11 @@
 //===- SimulationScheduleAnalysis.cpp - Shared schedule ranks ------------===//
 
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
+#include "obelisk/Runtime/ActivationOrder.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <limits>
@@ -28,6 +30,38 @@ bool isScheduledRegion(sim::ComputeRegionKind kind) {
 }
 
 } // namespace
+
+bool isSettlingEntryKind(sim::EntryKind kind) {
+  return kind == sim::EntryKind::AlwaysComb ||
+         kind == sim::EntryKind::AlwaysLatch ||
+         kind == sim::EntryKind::Continuous ||
+         kind == sim::EntryKind::PortInput ||
+         kind == sim::EntryKind::PortOutput;
+}
+
+SmallVector<sim::ComputeEdgeAttr> projectActivationSchedulingEdges(
+    ArrayRef<sim::ComputeEdgeAttr> edges,
+    llvm::function_ref<bool(uint32_t)> isSettlingSource) {
+  // A sensitivity edge ends at the wait; execution starts at its resume
+  // continuation. Project the publication, not the wait's repeating backedge.
+  // This is shared with graph construction so rank refinement cannot omit
+  // boundary consumers or invent a different activation graph.
+  SmallVector<sim::ComputeEdgeAttr> projected(edges.begin(), edges.end());
+  DenseMap<uint32_t, SmallVector<uint32_t>> continuations;
+  for (auto edge : edges)
+    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
+      continuations[edge.getSource()].push_back(edge.getTarget());
+  for (auto edge : edges) {
+    if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity ||
+        !isSettlingSource(edge.getSource()))
+      continue;
+    for (uint32_t continuation : continuations[edge.getTarget()])
+      projected.push_back(sim::ComputeEdgeAttr::get(
+          edge.getContext(), edge.getSource(), continuation,
+          sim::ComputeEdgeKind::Sensitivity, edge.getResource()));
+  }
+  return projected;
+}
 
 Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
   for (Block &block : function.getBody()) {
@@ -75,6 +109,56 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
   if (!graph)
     return result;
   ArrayAttr nodes = graph.getNodes();
+  // Refine convergence ties using the complete activation graph, including
+  // boundary actors. Helper-only dependencies cannot define global priority.
+  // Region/group order, procedural control loops and ownership stay intact.
+  SmallVector<uint32_t> groupOf, position;
+  uint32_t nextGroup = 0;
+  auto refine = [](sim::ComputeGroupAttr group) {
+    return group.getSchedule() == sim::ComputeScheduleKind::Convergence &&
+           group.getFragments().size() > 1;
+  };
+  for (Attribute rawRegion : graph.getRegions()) {
+    auto region = cast<sim::ComputeRegionAttr>(rawRegion);
+    if (!isScheduledRegion(region.getKind()))
+      continue;
+    for (Attribute rawGroup : region.getGroups()) {
+      auto group = cast<sim::ComputeGroupAttr>(rawGroup);
+      if (!refine(group))
+        continue;
+      if (groupOf.empty())
+        groupOf.assign(nodes.size(), UINT32_MAX);
+      for (int64_t member : group.getFragments().asArrayRef())
+        groupOf[member] = nextGroup;
+      ++nextGroup;
+    }
+  }
+  if (nextGroup) {
+    SmallVector<sim::ComputeEdgeAttr> graphEdges;
+    for (Attribute raw : graph.getEdges())
+      graphEdges.push_back(cast<sim::ComputeEdgeAttr>(raw));
+    auto projected =
+        projectActivationSchedulingEdges(graphEdges, [&](uint32_t source) {
+          auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[source]);
+          auto function =
+              fragment ? functions.lookup(fragment.getFunction().getValue())
+                       : sim::SimFuncOp{};
+          return function && isSettlingEntryKind(function.getEntryKind());
+        });
+    std::vector<std::pair<uint32_t, uint32_t>> edges;
+    for (auto edge : projected)
+      if (edge.getKind() != sim::ComputeEdgeKind::Resume &&
+          edge.getKind() != sim::ComputeEdgeKind::Spawn &&
+          groupOf[edge.getSource()] != UINT32_MAX &&
+          groupOf[edge.getSource()] == groupOf[edge.getTarget()])
+        edges.emplace_back(edge.getSource(), edge.getTarget());
+    runtime::ActivationOrder order;
+    if (!runtime::ActivationOrder::build(nodes.size(), std::move(edges), order))
+      return design.emitOpError("invalid activation edge in schedule ranks");
+    position.resize(nodes.size());
+    for (auto [rank, node] : llvm::enumerate(order.nodes))
+      position[node] = rank;
+  }
   uint32_t rank = 0;
   for (Attribute regionAttribute : graph.getRegions()) {
     auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
@@ -84,7 +168,17 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
       auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
       if (!group)
         continue;
-      for (int64_t member : group.getFragments().asArrayRef()) {
+      ArrayRef<int64_t> members = group.getFragments().asArrayRef();
+      SmallVector<int64_t> ordered;
+      bool refined = refine(group);
+      if (refined) {
+        ordered.assign(members.begin(), members.end());
+        llvm::sort(ordered, [&](int64_t lhs, int64_t rhs) {
+          return position[lhs] < position[rhs];
+        });
+        members = ordered;
+      }
+      for (int64_t member : members) {
         if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
           continue;
         auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
@@ -106,8 +200,10 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
         result.blockRanks[block] = rank;
         if (fragment.getBlock() == 0)
           result.entryRanks[function.getOperation()] = rank;
+        if (refined && rank != std::numeric_limits<uint32_t>::max())
+          ++rank;
       }
-      if (rank != std::numeric_limits<uint32_t>::max())
+      if (!refined && rank != std::numeric_limits<uint32_t>::max())
         ++rank;
     }
   }

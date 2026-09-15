@@ -62,7 +62,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // CHECK-LABEL: module attributes
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK-NOT: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-NOT: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK-LABEL: llvm.func @update.__obelisk_coro_ramp(
 // CHECK-COUNT-2: llvm.call @stage
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(

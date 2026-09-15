@@ -5330,6 +5330,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     uint64_t stable = UINT64_MAX;
     if (!encodeCanonicalHandle(frame.data + source.offset, stable))
       return OBELISK_RT_INVALID_HANDLE;
+    // Array offsets encode an invalid lane at the end of the array and clip
+    // its bytecode view to an empty interval. Canonical handles do not carry
+    // that interval: preserve the invalid selection before crossing the ABI,
+    // rather than reading the following object or reporting a missing handle.
+    int64_t start = 0, end = 0;
+    std::memcpy(&start, frame.data + source.offset + 16, sizeof(start));
+    std::memcpy(&end, frame.data + source.offset + 24, sizeof(end));
+    if (start != kInvalidHandleStart && end <= start)
+      stable = UINT64_MAX;
     Logic sampled{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
                   LimbVector(limbCount(output.width)),
                   LimbVector(limbCount(output.width))};

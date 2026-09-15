@@ -91,10 +91,11 @@ bool rangesOverlap(sim::ComputeEffectAttr lhs, sim::ComputeEffectAttr rhs) {
   return lhs.getLow() < rhsEnd && rhs.getLow() < lhsEnd;
 }
 
-bool isComputeBodyFusionEligibleImpl(sim::SimFuncOp function,
-                                     llvm::DenseMap<Operation *, bool> &cache,
-                                     llvm::SmallPtrSetImpl<Operation *> &active,
-                                     bool primitiveDriverOps) {
+bool isComputeBodyFusionEligibleImpl(
+    sim::SimFuncOp function,
+    const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis,
+    llvm::DenseMap<Operation *, bool> &cache,
+    llvm::SmallPtrSetImpl<Operation *> &active, bool primitiveDriverOps) {
   if (!function || function.isExternal() ||
       !llvm::all_of(function.getFunctionType().getInputs(),
                     isStaticDigitalType))
@@ -106,7 +107,7 @@ bool isComputeBodyFusionEligibleImpl(sim::SimFuncOp function,
 
   sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
   analysis::DescriptorProvenanceMap provenance =
-      analysis::deriveDescriptorProvenance(function);
+      provenanceAnalysis.derive(function);
   bool eligible = true;
   function.walk([&](Operation *operation) {
     if (!eligible || operation == function.getOperation())
@@ -131,7 +132,8 @@ bool isComputeBodyFusionEligibleImpl(sim::SimFuncOp function,
       eligible = callee && callee.getEntryKind() == sim::EntryKind::Function &&
                  hasOnlyStaticDigitalValues(operation) &&
                  hasConcreteHandleValues(operation, provenance) &&
-                 isComputeBodyFusionEligibleImpl(callee, cache, active, false);
+                 isComputeBodyFusionEligibleImpl(callee, provenanceAnalysis,
+                                                 cache, active, false);
       return;
     }
 
@@ -186,16 +188,22 @@ bool isComputeBodyFusionEligibleImpl(sim::SimFuncOp function,
 
 } // namespace
 
-bool isComputeBodyFusionEligible(sim::SimFuncOp function) {
+bool isComputeBodyFusionEligible(
+    sim::SimFuncOp function,
+    const analysis::DescriptorProvenanceAnalysis &provenance) {
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
-  return isComputeBodyFusionEligibleImpl(function, cache, active, false);
+  return isComputeBodyFusionEligibleImpl(function, provenance, cache, active,
+                                        false);
 }
 
-bool isPrimitiveComputeBodyFusionEligible(sim::SimFuncOp function) {
+bool isPrimitiveComputeBodyFusionEligible(
+    sim::SimFuncOp function,
+    const analysis::DescriptorProvenanceAnalysis &provenance) {
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
-  return isComputeBodyFusionEligibleImpl(function, cache, active, true);
+  return isComputeBodyFusionEligibleImpl(function, provenance, cache, active,
+                                        true);
 }
 
 SmallVector<uint32_t>

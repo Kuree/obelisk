@@ -86,8 +86,8 @@ inline constexpr llvm::StringLiteral evalCheckpointCallbackName =
     "__obelisk_eval_checkpoint_callback_v1";
 inline constexpr llvm::StringLiteral evalCheckpointMutableStateName =
     "__obelisk_eval_checkpoint_mutable_state_v1";
-inline constexpr llvm::StringLiteral evalHybridCoordinatorName =
-    "__obelisk_eval_fast_coordinator_hybrid_v1";
+inline constexpr llvm::StringLiteral evalDispatchName =
+    "__obelisk_eval_dispatch_v1";
 inline constexpr llvm::StringLiteral evalRuntimeNBARequiredAttr =
     "obelisk.eval.runtime_nba_required";
 inline constexpr llvm::StringLiteral evalRuntimeNBAFallbackAttr =
@@ -178,6 +178,17 @@ enum class NativeSchedulePlanField : int64_t {
 
 mlir::LogicalResult materializeNativePromotionRangeIndex(mlir::ModuleOp module);
 mlir::LogicalResult materializeNativePromotionWrites(mlir::ModuleOp module);
+bool materializeNativeGroupDataflow(mlir::LLVM::LLVMFuncOp function,
+                                    mlir::SymbolTable &symbols,
+                                    uint64_t budget);
+/// Refine a rejected collapsed group into ordered children. Leaves keep their
+/// source activation identities; parents own no additional ready/proof state.
+/// Returns original/candidate pairs, or an empty vector without changing the
+/// original executor when the single-entry activation boundaries are unproved.
+mlir::SmallVector<mlir::LLVM::LLVMFuncOp>
+splitNativeEvalGroup(mlir::LLVM::LLVMFuncOp original,
+                     mlir::LLVM::LLVMFuncOp candidate,
+                     mlir::SymbolTable &symbols, uint64_t &budget);
 
 mlir::LLVM::LLVMStructType
 getNativeSchedulePlanLLVMType(mlir::MLIRContext *context);
@@ -421,7 +432,9 @@ mlir::LogicalResult serializeRuntimeWait(
 uint64_t stableProcessID(llvm::StringRef name);
 bool isUnmanagedNativeProcess(sim::SimFuncOp function);
 mlir::LogicalResult
-makeProcessDescriptor(mlir::ModuleOp module, mlir::Location location,
+makeProcessDescriptor(mlir::ModuleOp module,
+                      const mlir::SymbolTable &embeddedSymbols,
+                      mlir::Location location,
                       llvm::StringRef baseName, uint64_t stableID,
                       const SimulationProcessFrameAnalysis &analysis,
                       bool unmanagedNative = false);

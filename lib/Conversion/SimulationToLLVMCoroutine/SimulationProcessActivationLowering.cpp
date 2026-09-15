@@ -17,8 +17,19 @@
 using namespace mlir;
 
 namespace obelisk::detail {
+// Bootstrap helpers may still be nested in a simulation design. Match module
+// lookup scope and retain the first symbol on a collision, leaving duplicate
+// symbol diagnostics intact instead of allowing automatic renaming.
+static void indexModuleSymbol(ModuleOp module, SymbolTable &symbols,
+                              Operation *symbol) {
+  if (symbol->getParentOp() == module &&
+      !symbols.lookup(SymbolTable::getSymbolName(symbol)))
+    symbols.insert(symbol);
+}
+
 LogicalResult
-makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
+makeProcessActivationHelper(ModuleOp module, SymbolTable &symbols,
+                            sim::SimFuncOp function,
                             const SimulationProcessFrameAnalysis &analysis) {
   if (function.getEntryKind() != sim::EntryKind::Task)
     return success();
@@ -39,7 +50,7 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
       (function.getSymName() + ".__obelisk_activate_checked").str();
   std::string helperName =
       (function.getSymName() + ".__obelisk_activate").str();
-  if (module.lookupSymbol(checkedHelperName) || module.lookupSymbol(helperName))
+  if (symbols.lookup(checkedHelperName) || symbols.lookup(helperName))
     return success();
   builder.setInsertionPointAfter(function);
   SmallVector<Type> checkedArguments(arguments);
@@ -49,6 +60,7 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
       LLVM::LLVMFunctionType::get(i32, checkedArguments, false),
       LLVM::Linkage::Internal);
   copyNativePartition(function, checkedHelper);
+  indexModuleSymbol(module, symbols, checkedHelper);
   Block *entry = checkedHelper.addEntryBlock(builder);
   Block *created = new Block;
   Block *failed = new Block;
@@ -120,6 +132,7 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
       builder, location, helperName,
       LLVM::LLVMFunctionType::get(i64, arguments, false));
   copyNativePartition(function, helper);
+  indexModuleSymbol(module, symbols, helper);
   Block *wrapperEntry = helper.addEntryBlock(builder);
   Block *wrapperSucceeded = new Block;
   Block *wrapperFailed = new Block;
@@ -171,7 +184,8 @@ makeProcessActivationHelper(ModuleOp module, sim::SimFuncOp function,
 }
 
 LogicalResult
-makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
+makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
+                       sim::SimFuncOp function,
                        const SimulationProcessFrameAnalysis &analysis,
                        const NativeSchedulePlan &schedule) {
   MLIRContext *context = module.getContext();
@@ -184,7 +198,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
   for (BlockArgument argument : function.getBody().front().getArguments())
     arguments.push_back(convertProcessType(argument.getType(), context));
   std::string helperName = (function.getSymName() + ".__obelisk_spawn").str();
-  if (module.lookupSymbol(helperName))
+  if (symbols.lookup(helperName))
     return success();
   std::string continuationName =
       (function.getSymName() + ".__obelisk_schedule_continuations").str();
@@ -212,6 +226,7 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
             return array;
           });
       copyNativePartition(function, global);
+      indexModuleSymbol(module, symbols, global);
     };
     makeArray(continuationName, 0);
     makeArray(rankName, 1);
@@ -232,12 +247,14 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
           return array;
         });
     copyNativePartition(function, global);
+    indexModuleSymbol(module, symbols, global);
   }
   builder.setInsertionPointAfter(function);
   auto helper = LLVM::LLVMFuncOp::create(
       builder, location, helperName,
       LLVM::LLVMFunctionType::get(i64, arguments, false));
   copyNativePartition(function, helper);
+  indexModuleSymbol(module, symbols, helper);
   Block *entry = helper.addEntryBlock(builder);
   Block *created = new Block;
   Block *createFailed = new Block;
@@ -444,6 +461,15 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
         ValueRange{entry->getArgument(0), registerStatus});
   }
   LLVM::ReturnOp::create(builder, location, logicalToken);
+  return success();
+}
+
+void declareProcessSpawnRuntimeABI(ModuleOp module) {
+  MLIRContext *context = module.getContext();
+  OpBuilder builder(context);
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
 
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_process_instance_create_for_context",
@@ -510,7 +536,6 @@ makeProcessSpawnHelper(ModuleOp module, sim::SimFuncOp function,
                            {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_instance_destroy",
                            i32, {pointer});
-  return success();
 }
 
 } // namespace obelisk::detail

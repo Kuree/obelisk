@@ -17,7 +17,7 @@
 // PLAN-LABEL: llvm.func @report.__obelisk_eval_private_
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_time(
 // PLAN: llvm.call @obelisk_rt_v1_eval_display(
-// PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
+// PLAN: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: 10000000000000000 1 0
 // CHECK-NEXT: 0ffffffffffffffff 1 1
 // DIAG: copy 1 at 2

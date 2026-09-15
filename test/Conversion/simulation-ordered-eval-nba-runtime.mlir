@@ -9,7 +9,7 @@
 // different actor resets src and stages zero at the SAME semantic site.
 // The final value is zero, but a posedge observer must still run (LRM 4.6).
 // PLAN: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
+// PLAN: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: 00000000000000000 1
 
 !bit = !obelisk_sim.logic<1>

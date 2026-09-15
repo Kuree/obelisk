@@ -122,12 +122,11 @@ struct FunctionObservation {
 };
 
 static void addNetSeeds(sim::SimFuncOp function,
+                        const analysis::DescriptorProvenanceMap &provenance,
                         const DenseMap<uint64_t, BoundaryFact> &netFacts,
                         DenseMap<Value, BoundaryFact> &seeds) {
   if (netFacts.empty())
     return;
-  analysis::DescriptorProvenanceMap provenance =
-      analysis::deriveDescriptorProvenance(function);
   function.walk([&](sim::SimNetReadOp read) {
     auto found = provenance.find(read.getNet());
     if (found == provenance.end() || !found->second.descriptor ||
@@ -197,6 +196,7 @@ static void addBoundarySeeds(ArrayRef<FunctionInfo> functions,
 
 static LogicalResult
 analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
+                const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis,
                 const DenseMap<uint64_t, BoundaryFact> &netFacts,
                 FunctionObservation &observation) {
   const FunctionInfo &info = functions[functionIndex];
@@ -205,8 +205,10 @@ analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
     return success();
 
   DenseMap<Value, BoundaryFact> seeds;
+  analysis::DescriptorProvenanceMap provenance =
+      provenanceAnalysis.derive(function);
   addBoundarySeeds(functions, functionIndex, seeds);
-  addNetSeeds(function, netFacts, seeds);
+  addNetSeeds(function, provenance, netFacts, seeds);
 
   DataFlowConfig config;
   config.setInterprocedural(false);
@@ -235,8 +237,6 @@ analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
     }
   }
 
-  analysis::DescriptorProvenanceMap provenance =
-      analysis::deriveDescriptorProvenance(function);
   function.walk([&](Operation *operation) {
     if (!isa<sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(operation) ||
         !isExecutable(*solver, operation))
@@ -338,6 +338,9 @@ public:
 
 void ObeliskSimSCCPPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
+  // Driver declarations remain fixed across all solver waves. Share only
+  // their immutable index; each worker derives its own current value facts.
+  analysis::DescriptorProvenanceAnalysis provenance(design);
   analysis::ClassDispatchAnalysis classDispatch(design);
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> symbolToFunction;
@@ -524,8 +527,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
               design.getContext(), wave, [&](unsigned functionIndex) {
                 auto observation = std::make_unique<FunctionObservation>();
                 static const DenseMap<uint64_t, BoundaryFact> noNetFacts;
-                if (failed(analyzeFunction(functions, functionIndex, noNetFacts,
-                                           *observation)))
+                if (failed(analyzeFunction(functions, functionIndex, provenance,
+                                           noNetFacts, *observation)))
                   return failure();
                 observations[functionIndex] = std::move(observation);
                 return success();
@@ -749,7 +752,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
       if (failed(failableParallelForEach(
               design.getContext(), deterministicOrder, [&](unsigned index) {
                 auto observation = std::make_unique<FunctionObservation>();
-                if (failed(analyzeFunction(functions, index, netFacts,
+                if (failed(analyzeFunction(functions, index, provenance, netFacts,
                                            *observation)))
                   return failure();
                 observations[index] = std::move(observation);

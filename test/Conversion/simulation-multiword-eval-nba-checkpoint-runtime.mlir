@@ -11,7 +11,7 @@
 // survive queue growth and subsequent reuse after the first NBA barrier.
 // PLAN-NOT: .ordered_nba_checkpoint
 // PLAN: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
+// PLAN: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: 00000000000000000
 // CHECK-NEXT: 1ffffffffffffffff
 // CHECK-NEXT: 00000000000000000

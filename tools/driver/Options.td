@@ -56,6 +56,9 @@ def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
 def mlir_timing : Flag<["--"], "mlir-timing">, Group<Output_Group>,
   Flags<[HelpHidden]>,
   HelpText<"Report per-pass execution times for the MLIR pipeline">;
+def debug_native_execution_counts : Flag<["--"], "debug-native-execution-counts">,
+  Group<Diagnostic_Group>, Flags<[HelpHidden]>,
+  HelpText<"Instrument generated native function entries and print counts at exit">;
 def sysroot_EQ : Joined<["--"], "sysroot=">, Group<Output_Group>,
   MetaVarName<"<dir>">,
   HelpText<"Use <dir> for wasm32 C and C++ link inputs">;

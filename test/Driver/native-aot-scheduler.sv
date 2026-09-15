@@ -19,7 +19,13 @@
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: not obelisk -O0 --native-scheduler=eval -emit-llvm %s -o %t.eval.ll \
+// RUN: obelisk -O0 --native-scheduler=eval -emit-llvm %s -o %t.eval.ll
+// RUN: FileCheck %s --check-prefix=EVAL < %t.eval.ll
+// RUN: obelisk -O0 -fno-lto --native-scheduler=eval %s -o %t.eval
+// RUN: %t.eval > %t.eval.out
+// RUN: diff -u %t.bytecode.out %t.eval.out
+// RUN: not obelisk -O0 --native-scheduler=eval --static-specialization=off \
+// RUN:   -emit-llvm %s -o %t.eval-off.ll \
 // RUN:   2>&1 | FileCheck %s --check-prefix=EVAL-DIAG
 
 module native_aot_scheduler;
@@ -53,5 +59,8 @@ endmodule
 // SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_roots_v1
 // SPECIALIZATION-ON: @__obelisk_aot_nba_dirty_summary_v1
 // SPECIALIZATION-ON-NOT: call i32 @obelisk_rt_v1_static_nba_claim
-// Exact Eval mode rejects this non-closed design before constructing a loop.
+// Forced eval resolves automatic specialization to the required proof passes,
+// independently of O0 code generation. Explicitly disabling those passes still
+// rejects missing ownership instead of silently weakening the eval contract.
+// EVAL: define {{.*}}@__obelisk_eval_dispatch_v1(
 // EVAL-DIAG: error: eval exact owner miss:

@@ -8,7 +8,7 @@
 // Dynamic blocking stores clip to the packed root. Unknown payload bits are
 // preserved; invalid writes must neither modify data nor wake change observers.
 // LRM 11.5.1 and 9.4.2. Exercise the same input in native and bytecode modes.
-// PLAN: llvm.func @__obelisk_eval_fast_coordinator_v1
+// PLAN: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: 00000000000000000000000000000001 1
 // CHECK-NEXT: x0000000000000000000000000000001 0
 // CHECK-NEXT: x0000000000000000000000000000001 0

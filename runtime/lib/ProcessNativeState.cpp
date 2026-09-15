@@ -250,6 +250,31 @@ bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
   return false;
 }
 
+void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
+                                                 uint64_t begin,
+                                                 uint64_t width) {
+  if (!context || !context->nativeStateValue || !context->nativeStateUnknown ||
+      begin >= context->nativeStateBitCount)
+    return;
+  uint64_t end = begin + std::min(width, context->nativeStateBitCount - begin);
+  const auto *plan = context->nativeSchedulePlan;
+  for (uint64_t bit = begin; bit != end;) {
+    uint64_t count = std::min<uint64_t>(64, end - bit);
+    uint64_t oldUnknown = loadPackedBytes(context->nativeStateUnknown, bit, count);
+    uint64_t newUnknown = loadPackedBits(context->stateUnknown, bit, count);
+    // Capture the delta before overwriting the native plane. A later deposit
+    // reconciliation sees the new plane already and cannot recover this loss
+    // of knownness (IEEE 1800-2023 6.8 and 38.34).
+    if (plan && plan->state_unknown == context->nativeStateUnknown)
+      publishNativeKnownnessChangeUnlocked(plan, bit, count, oldUnknown,
+                                           newUnknown);
+    storePackedBytes(context->nativeStateValue, bit, count,
+                     loadPackedBits(context->stateValue, bit, count));
+    storePackedBytes(context->nativeStateUnknown, bit, count, newUnknown);
+    bit += count;
+  }
+}
+
 bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,
                                       uint64_t value, uint64_t unknown) {
@@ -278,6 +303,10 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
   }
 
   if (plan && plan->state_bit_count != 0) {
+    uint64_t oldUnknown =
+        loadPackedBytes(plan->state_unknown, bitOffset, bitWidth);
+    publishNativeKnownnessChangeUnlocked(plan, bitOffset, bitWidth, oldUnknown,
+                                         unknown);
     storePackedBytes(plan->state_value, bitOffset, bitWidth, value);
     storePackedBytes(plan->state_unknown, bitOffset, bitWidth, unknown);
   }

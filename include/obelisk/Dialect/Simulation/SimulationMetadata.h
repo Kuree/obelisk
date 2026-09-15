@@ -288,8 +288,6 @@ inline constexpr llvm::StringLiteral evalUnsupportedCheckpointOwner =
     "obelisk.eval.unsupported_checkpoint_owner";
 inline constexpr llvm::StringLiteral evalCallClosureRoot =
     "obelisk.eval.call_closure_root";
-inline constexpr llvm::StringLiteral evalTrustedTwoStateCoordinator =
-    "obelisk.eval.trusted_two_state_coordinator";
 inline constexpr llvm::StringLiteral evalCheckpointRoutes =
     "obelisk.eval.checkpoint_routes";
 /// Producer certificate for a generated region activation that reconstructs

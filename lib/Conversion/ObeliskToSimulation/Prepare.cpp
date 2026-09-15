@@ -2477,6 +2477,66 @@ void ObeliskSimPreparePass::runOnOperation() {
     int64_t delayTicks = 0;
     std::string monitorSymbol;
   };
+  // Nonconstant declaration initializers must execute exactly once. Retain
+  // their result only for variables reached by sampled-value expressions;
+  // unrelated static state acquires no extra storage or initialization work.
+  llvm::DenseMap<Operation *, uint64_t> sampleDefaultSnapshots;
+  semanticRoot.walk([&](semantic::SVCallExpressionOp call) {
+    StringRef name = call.getCalleeName();
+    if (name != "$past" && name != "$rose" && name != "$fell" &&
+        name != "$stable" && name != "$changed" &&
+        !isGlobalPastSampledFunction(name))
+      return;
+    call.walk([&](semantic::SVNamedValueExpressionOp named) {
+      auto symbol =
+          semanticSymbols.find(named.getReferencedSymbol().getLeafReference());
+      if (symbol == semanticSymbols.end() ||
+          sampleDefaultSnapshots.count(symbol->second))
+        return;
+      Operation *source = symbol->second;
+      auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source);
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(source);
+      if ((!variable ||
+           variable.getLifetime() != semantic::SVVariableLifetime::Static) &&
+          (!property ||
+           property.getLifetime() != semantic::SVVariableLifetime::Static))
+        return;
+      auto initializer = getChildren(source);
+      auto found = descriptors.find(getHierarchyName(source));
+      if (found == descriptors.end() ||
+          found->second.kind != DescriptorInfo::Kind::Storage)
+        return;
+      if (initializer.empty() ||
+          (sim::getPackedWidth(found->second.type) && initializer.size() == 1 &&
+           getConstantSpelling(initializer.front())))
+        return;
+      DescriptorInfo snapshot = found->second;
+      if (nextStorageId == UINT64_MAX) {
+        emitError(getSemanticLocation(source))
+            << "sample default storage exceeds descriptor space";
+        invalid = true;
+        return;
+      }
+      std::string path = (getHierarchyName(source) + ".$sample_default").str();
+      if (descriptors.count(path)) {
+        emitError(getSemanticLocation(source))
+            << "sample default storage conflicts with design object";
+        invalid = true;
+        return;
+      }
+      snapshot.id = nextStorageId++;
+      snapshot.vpiType = {};
+      descriptors[path] = snapshot;
+      sampleDefaultSnapshots[source] = snapshot.id;
+      sim::SimStorageDeclOp::create(
+          builder, getSemanticLocation(source), snapshot.id, snapshot.scopeId,
+          snapshot.type, sim::Lifetime::Design, builder.getStringAttr(path),
+          builder.getStringAttr("__obelisk_sample_default"),
+          sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+    });
+  });
+  if (invalid)
+    return abort();
   SmallVector<NegativeTimingDelayedTerminalPlan> negativeTimingTerminals;
   Type i64 = builder.getI64Type();
   for (semantic::SVClassTypeOp classType : classSources)
@@ -10606,6 +10666,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         (propertyInitializer && propertyInitializer.getLifetime() ==
                                     semantic::SVVariableLifetime::Static);
     unit.function.walk([&](Operation *nested) {
+      if (nested->hasAttr("obelisk_sim.initialize_static"))
+        if (auto snapshot = sampleDefaultSnapshots.find(unit.source);
+            snapshot != sampleDefaultSnapshots.end())
+          nested->setAttr("obelisk_sim.initialize_sample_default",
+                          builder.getI64IntegerAttr(snapshot->second));
       if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested)) {
         freezeCallContract(call);
         return;
@@ -10615,6 +10680,36 @@ void ObeliskSimPreparePass::runOnOperation() {
             named.getReferencedSymbol().getLeafReference());
         if (symbol == semanticSymbols.end())
           return;
+        // Freeze the declaration default before semantic symbols are erased.
+        // History underflow must not use the variable's later current value.
+        if (auto snapshot = sampleDefaultSnapshots.find(symbol->second);
+            snapshot != sampleDefaultSnapshots.end())
+          named->setAttr("obelisk_sim.sample_default_snapshot",
+                         builder.getI64IntegerAttr(snapshot->second));
+        auto sampledVariable =
+            dyn_cast<semantic::SVVariableSymbolOp>(symbol->second);
+        auto sampledProperty =
+            dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
+        if (sampledVariable ||
+            (sampledProperty && sampledProperty.getLifetime() ==
+                                    semantic::SVVariableLifetime::Static)) {
+          if (sampledVariable && sampledVariable.getLifetime() ==
+                                     semantic::SVVariableLifetime::Automatic) {
+            named->setAttr("obelisk_sim.sample_default_current",
+                           builder.getUnitAttr());
+          } else {
+            auto initializer = getChildren(symbol->second);
+            if (initializer.size() == 1 &&
+                !named->hasAttr("obelisk_sim.sample_default_snapshot")) {
+              if (auto spelling = getConstantSpelling(initializer.front()))
+                named->setAttr("obelisk_sim.sample_default_constant",
+                               builder.getStringAttr(*spelling));
+              else
+                named->setAttr("obelisk_sim.sample_default_dynamic",
+                               builder.getUnitAttr());
+            }
+          }
+        }
         if (staticInitializer)
           if (auto constant = staticLiteralNets.find(symbol->second);
               constant != staticLiteralNets.end())

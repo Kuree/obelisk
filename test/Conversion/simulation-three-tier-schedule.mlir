@@ -1,4 +1,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' -o %t
+// RUN: obelisk-opt %t -o %t.roundtrip
+// RUN: diff %t %t.roundtrip
 
 module {
   // Aliased process formals watching the same descriptor/range/edge collapse

@@ -2612,6 +2612,23 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       (!context->nativeSchedulePlan || activeNativeAOTContext != context ||
        lockedNativeAOTContext != context))
     return OBELISK_RT_INVALID_LIFECYCLE;
+  NativeReadyPublicationBatch publications;
+  struct PublicationBatchScope {
+    obelisk_rt_context *context;
+    NativeReadyPublicationBatch *previous;
+    explicit PublicationBatchScope(obelisk_rt_context *context)
+        : context(context), previous(nullptr) {
+      ContextMutexLock lock(context);
+      previous = context->nativeReadyPublicationBatch;
+      if (previous)
+        previous->valid = false;
+      context->nativeReadyPublicationBatch = nullptr;
+    }
+    ~PublicationBatchScope() {
+      ContextMutexLock lock(context);
+      context->nativeReadyPublicationBatch = previous;
+    }
+  } publicationScope(context);
   constexpr uint64_t maxSlotProgress = UINT64_MAX;
   auto recordSlotProgress = [&]() -> obelisk_rt_status {
     ContextMutexLock lock(context);
@@ -2661,9 +2678,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   std::vector<uint64_t> cachedNativeSlowCandidates;
   CachedNativeReadyLater cachedNativeReadyLater;
   auto pushCachedNativeReady = [&](const CachedNativeReady &ready) {
+    ContextMutexLock lock(context);
+    if (context->nativeReadyPublicationBatch == &publications &&
+        (!publications.queued.insert(ready.token).second || ready.urgent))
+      publications.valid = false;
     cachedNativeDynamicReady.push_back(ready);
     std::push_heap(cachedNativeDynamicReady.begin(),
                    cachedNativeDynamicReady.end(), cachedNativeReadyLater);
+  };
+  auto pushCachedNativeSlowCandidate = [&](uint64_t token) {
+    if (context->nativeReadyPublicationBatch == &publications)
+      publications.queued.insert(token);
+    cachedNativeSlowCandidates.push_back(token);
   };
   auto cachedNativeReadyEmpty = [&] {
     return cachedNativeReady.empty() && cachedNativeDynamicReady.empty();
@@ -2678,6 +2704,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             dynamic};
   };
   auto popCachedNativeReady = [&](bool dynamic) {
+    if (context->nativeReadyPublicationBatch == &publications)
+      publications.queued.erase(dynamic ? cachedNativeDynamicReady.front().token
+                                        : cachedNativeReady.back().token);
     if (!dynamic) {
       cachedNativeReady.pop_back();
       return;
@@ -2695,11 +2724,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   uint64_t cachedNativeReadyLastToken = 0;
   size_t cachedNativeUrgentCount = 0;
   auto clearCachedNativeReady = [&] {
+    context->nativeReadyPublicationBatch = nullptr;
+    publications.valid = false;
+    publications.tokens.clear();
+    publications.queued.clear();
     cachedNativeReady.clear();
     cachedNativeDynamicReady.clear();
     cachedNativeSlowCandidates.clear();
     cachedNativeReadyValid = false;
     cachedNativeUrgentCount = 0;
+  };
+  auto selectionGenerationCompatible = [&] {
+    if (context->nativeReadyPublicationBatch == &publications)
+      return publications.valid &&
+             publications.generation == context->schedulerSelectionGeneration;
+    return cachedNativeReadyGeneration == context->schedulerSelectionGeneration;
   };
   auto readmitNativeCandidate = [&](const ScheduledProcess &scheduled,
                                     size_t selectedIndex, bool wasCached) {
@@ -2714,8 +2753,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           context->scheduledProcesses.size() == cachedNativeReadyProcessCount;
       bool cacheShapeStable =
           cachedNativeReadyValid &&
-          cachedNativeReadyGeneration ==
-              context->schedulerSelectionGeneration &&
+          selectionGenerationCompatible() &&
           cachedNativeReadyTime == context->schedulerTime &&
           cachedNativeReadyFinals == context->schedulerRunningFinals &&
           exactProcessCount &&
@@ -2756,7 +2794,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           cachedNativeUrgentCount += ready.urgent;
         }
       } else {
-        cachedNativeSlowCandidates.push_back(scheduled.token);
+        pushCachedNativeSlowCandidate(scheduled.token);
       }
     }
   };
@@ -3014,8 +3052,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       } else {
         bool cacheShapeValid =
             cachedNativeReadyValid &&
-            cachedNativeReadyGeneration ==
-                context->schedulerSelectionGeneration &&
+            selectionGenerationCompatible() &&
             cachedNativeReadyTime == context->schedulerTime &&
             cachedNativeReadyFinals == context->schedulerRunningFinals &&
             cachedUnstartedRegion == unstartedActorRegion &&
@@ -3025,6 +3062,30 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                      .token == cachedNativeReadyLastToken);
         if (!cacheShapeValid)
           clearCachedNativeReady();
+
+        // IEEE 1800-2023 4.4--4.7: additions use the same complete ordering
+        // key and still yield to NBA/region barriers below. Only previously
+        // absent direct signal candidates are journaled; all other changes
+        // invalidate the snapshot. Never replay an already queued activation.
+        if (cachedNativeReadyValid && !publications.tokens.empty()) {
+          for (uint64_t token : publications.tokens) {
+            bool signalResume = false;
+            size_t index = SIZE_MAX;
+            auto ready = classifyNativeToken(token, signalResume, index);
+            if (!ready || !signalResume || ready->urgent ||
+                publications.queued.count(token)) {
+              publications.valid = false;
+              break;
+            }
+            pushCachedNativeReady(*ready);
+          }
+          if (!publications.valid) {
+            clearCachedNativeReady();
+          } else {
+            publications.tokens.clear();
+            cachedNativeReadyGeneration = context->schedulerSelectionGeneration;
+          }
+        }
 
         // A detached child is appended after its parent is selected. Admit
         // one urgent startup incrementally; retain any less common appended
@@ -3052,7 +3113,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               pushCachedNativeReady(*ready);
               ++cachedNativeUrgentCount;
             } else {
-              cachedNativeSlowCandidates.push_back(candidate.token);
+              pushCachedNativeSlowCandidate(candidate.token);
             }
           }
           // An ordinary newly spawned actor must take its initial activation
@@ -3093,7 +3154,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (ready && (signalResume || startup))
                 batch.push_back(*ready);
               else
-                cachedNativeSlowCandidates.push_back(token);
+                pushCachedNativeSlowCandidate(token);
             };
             // A publication invalidates this cache whenever it wakes another
             // actor. In a large, mostly sleeping design, walking the complete
@@ -3151,6 +3212,24 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   nativeScanProcessCount == 0
                       ? 0
                       : context->scheduledProcesses.back().token;
+              // Startup and urgent cohorts retain the general path. Polled
+              // waits remain in the exact per-iteration slow scan; include
+              // their tokens in membership so a changed slow wait cannot be
+              // admitted a second time through the publication journal.
+              // No storage or publication work is paid by dormant Tier-1
+              // scheduling, or by the small allocation-free ready scanner.
+              if (cachedNativeUrgentCount == 0 &&
+                  unstartedActorRegion == UINT32_MAX) {
+                publications.queued.reserve(cachedNativeReady.size() +
+                                            cachedNativeSlowCandidates.size());
+                for (const auto &ready : cachedNativeReady)
+                  publications.queued.insert(ready.token);
+                publications.queued.insert(cachedNativeSlowCandidates.begin(),
+                                            cachedNativeSlowCandidates.end());
+                publications.generation = context->schedulerSelectionGeneration;
+                publications.valid = true;
+                context->nativeReadyPublicationBatch = &publications;
+              }
             }
           }
         }
@@ -3183,7 +3262,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 context->nativePollCandidates.count(ready.token) &&
                 indexed->second < context->scheduledProcesses.size() &&
                 context->scheduledProcesses[indexed->second].instance)
-              cachedNativeSlowCandidates.push_back(ready.token);
+              pushCachedNativeSlowCandidate(ready.token);
             continue;
           }
           considerNativeReady(*current, index);

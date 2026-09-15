@@ -3541,7 +3541,14 @@ def SimSampledReadOp : SimOp<"assert.sampled_read", [
     MemoryEffects<[MemRead<SimSchedulerResource>,
                    MemRead<SimStorageResource>, MemRead<SimNetResource>]>
   ]> {
-  let summary = "read a statically addressed value from the Preponed snapshot";
+  let summary = "read a canonical state value from the Preponed snapshot";
+  let description = [{
+    The source must have a proven canonical descriptor. A dynamic selection
+    snapshots that descriptor's bounded range and reads the selected packed
+    value at execution time. Sampled expressions must also sample any dynamic
+    selector. An invalid array selection returns the element's invalid-read
+    value; an unresolved descriptor cannot establish a snapshot footprint.
+  }];
   let arguments = (ins SimContextType:$context, AnyType:$source);
   let results = (outs AnyType:$result);
   let assemblyFormat = "$context `from` $source attr-dict `:` functional-type(operands, results)";

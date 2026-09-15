@@ -1,4 +1,5 @@
-// RUN: obelisk -fno-lto -O2 --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -fno-lto -O2 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.auto.timing
+// RUN: FileCheck %s --check-prefix=ELIGIBILITY < %t.auto.timing
 // RUN: obelisk -fno-lto -O2 --native-scheduler=eval %s -o %t.eval
 // RUN: obelisk -fno-lto -O2 --native-scheduler=generic %s -o %t.generic
 // RUN: obelisk -O2 -emit-llvm --native-scheduler=eval %s -o - \
@@ -12,6 +13,11 @@
 // RUN: FileCheck %s < %t.auto.out
 // RUN: FileCheck %s --check-prefix=DIAG \
 // RUN:   --implicit-check-not=obelisk-periodic-reject < %t.eval.diag
+// RUN: obelisk -fno-lto -O0 --native-scheduler=eval %s -o %t.eval-o0
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval-o0 > %t.eval-o0.out 2> %t.eval-o0.diag
+// RUN: diff -u %t.generic.out %t.eval-o0.out
+// RUN: FileCheck %s --check-prefix=DIAG \
+// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.eval-o0.diag
 
 // Periods 4 and 12 produce coincident edges at time 6, 18, and 30. Both source
 // bits share one packed physical root and cross separate port projections;
@@ -81,6 +87,7 @@ module native_periodic_multiclock;
 endmodule
 
 // CHECK: offedge count2=1 count3=0
+// ELIGIBILITY: obelisk native eligibility: eligible=1 fully_eligible=1 cost_effective=1 native_cost={{[1-9][0-9]*}} total_cost={{[1-9][0-9]*}}
 // CHECK: coincident preedge shared=100
 // CHECK: multiclock count2=8 count3=3 count2n=8 shared=35 either=8
 
@@ -92,49 +99,31 @@ endmodule
 // scanner is a local masked-plane check and has no runtime edge.
 // LLVM-DAG: @__obelisk_eval_kernel_promotion_latched_v1 = internal {{.*}}global [7 x i8] zeroinitializer
 // LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global i64 127
-// LLVM-DAG: @__obelisk_eval_periodic_entry_promotion_latched_v1 = internal {{.*}}global i{{1|8}} {{false|0}}
 // LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_ready_v1_0
 // LLVM-NOT: call {{.*}}@obelisk_rt_
 // LLVM: load i8, ptr @__obelisk_eval_kernel_promotion_latched_v1
 // LLVM: ret i1 true
 // LLVM: store i8 1, ptr @__obelisk_eval_kernel_promotion_latched_v1
 
-// The aggregate boundary scans the exact closure once, then observes only
-// owner-ready bits. Dormant owners are not rescanned on every physical edge;
-// selected pending owners clear their own bit in the hybrid coordinator.
-// LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_periodic_promotion_ready_v1
-// LLVM: load i{{1|8}}, ptr @__obelisk_eval_periodic_promotion_scanned_v1
-// LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
-// LLVM: icmp eq i64
-// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
-// LLVM: ret i1
-
 // Promotion invalidation is a cold generated store. It contains no runtime
 // edge; the subsequent quiescent coordinator scan selects four- or two-state.
 // LLVM-LABEL: define void @__obelisk_eval_promotion_invalidate_v1
 // LLVM-NOT: call {{.*}}@obelisk_rt_
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_promotion_latched_v1
-// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_promotion_latched_v1
-// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_periodic_entry_promotion_latched_v1
 // LLVM: call void @llvm.memset{{.*}}@__obelisk_eval_kernel_promotion_latched_v1
 // LLVM: store i64 127, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
-// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_fast_nba_latched_v1
 // LLVM: ret void
 
-// The post-transient coordinator checks the ready mask against pending owners
+// The shared dispatcher checks the ready mask against pending owners
 // locally and contains no runtime edge on its normal Tier-1/Tier-2 path.
-// LLVM-LABEL: define {{.*}}i32 @__obelisk_eval_steady_two_state_coordinator_v1
+// LLVM-LABEL: define {{.*}}i32 @__obelisk_eval_dispatch_v1
 // LLVM-NOT: call {{.*}}@obelisk_rt_
 // LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
-// The transient/guarded coordinator deliberately keeps a mutable owner edge.
-// LLVM: call void %{{.*}}(ptr %{{.*}})
+// Selected owners keep their proved direct computation edges.
 // LLVM: or i64
 // LLVM: and i64
 // LLVM: ret i32
 
-// Once the complete periodic closure promotes, its specialized wrapper has a
-// static two-state body edge. This is what lets normal LLVM profitability
-// inline small module instances while leaving large bodies out of line.
-// LLVM-LABEL: define {{.*}}i32 @{{.*}}.__obelisk_trusted
-// LLVM-NOT: @__obelisk_eval_function_route_v1_
-// LLVM: ret i32 0
+// There is one dispatcher; no trusted or hybrid model controller is emitted.
+// LLVM-NOT: define {{.*}}@__obelisk_eval_steady_two_state_coordinator
+// LLVM-NOT: define {{.*}}@__obelisk_eval_fast_coordinator

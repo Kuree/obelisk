@@ -102,6 +102,21 @@ struct NativeEvalClockKernel {
   auto key() const { return std::tuple{staticState, lowBit, bitWidth, edge}; }
 };
 
+/// A pure, zero-time activation and its possible immediate dependencies.
+/// Selector-dependent edges remain present. Backward publications survive a
+/// ranked sweep and request another group activation; a potential SCC does
+/// not by itself downgrade all of its computations.
+struct NativeRankedEvalNode {
+  uint32_t owner = 0;
+  std::string body;
+  std::string twoStateBody;
+  // This is a computation-order graph, not a replacement sensitivity list.
+  // IEEE 1800-2023 9.2.2.2.1 still requires static-prefix sensitivities even
+  // when a configuration proof later cuts an inactive value dependency.
+  llvm::SmallVector<uint32_t> successors;
+  uint32_t island = 0;
+};
+
 /// Immutable result of eval scheduling analysis.  All identities are resolved
 /// before LLVM CFG construction starts; emission must not infer ownership from
 /// transformed symbols or recompute graph closure.
@@ -119,6 +134,7 @@ struct ResolvedNativeEvalPlan {
   /// For each merged owner, exact Tier-2 owner bits consumed by execution of
   /// that complete Tier-1 coordinator.
   llvm::SmallVector<llvm::APInt> ownerSubsumptionMasks;
+  llvm::SmallVector<NativeRankedEvalNode> rankedNodes;
   llvm::SmallVector<unsigned> periodicClosureRecords;
   llvm::SmallVector<unsigned> periodicEntryRecords;
   uint32_t nbaTaintWordCount = 0;
@@ -136,6 +152,7 @@ struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<std::string> twoStateExecutors;
   mlir::ArrayRef<std::string> promotionReadyFunctions;
   mlir::ArrayRef<llvm::APInt> ownerSubsumptionMasks;
+  mlir::ArrayRef<NativeRankedEvalNode> rankedNodes;
   mlir::ArrayRef<llvm::SmallVector<uint64_t>> nbaTaintMasks;
   const llvm::BitVector &nbaTaintedOwners;
   uint32_t nbaTaintWordCount = 0;
@@ -143,19 +160,8 @@ struct NativeEvalCoordinatorPlan {
   /// Dynamic slots are staged independently of the fixed-root dirty bitmap.
   mlir::ArrayRef<std::string> dynamicNBAValidNames;
   bool hasOrderedNBA = false;
-};
-
-struct NativeEvalCoordinatorOptions {
-  bool promoted = false;
-  bool hybrid = false;
-  std::optional<llvm::APInt> allowedOwnerMask;
-  /// Pending bits that require a return to the hybrid coordinator. Owners
-  /// with an intrinsic path dispatcher may remain pending for the stronger
-  /// whole-closure certificate without blocking owner-local steady routing.
-  std::optional<llvm::APInt> pendingGuardMask;
-  bool trustedTwoState = false;
-  bool guardPendingOwners = false;
-  bool observePathFallback = false;
+  /// Shared bounded ranked sweeps, indexed by the original owner identity.
+  mlir::ArrayRef<std::string> rankedGroupExecutors;
 };
 
 struct NativeThreeTierKernelPlan {
@@ -241,10 +247,13 @@ mlir::FailureOr<ResolvedNativeEvalPlan> resolveNativeEvalPlan(
     sim::ComputeGraphAttr computeGraph,
     mlir::ArrayRef<NativePeriodicClock> periodicClocks,
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases);
-mlir::LogicalResult materializeNativeEvalCoordinator(
-    mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan,
-    mlir::StringRef functionName, mlir::ArrayRef<std::string> executors,
-    NativeEvalCoordinatorOptions options);
+mlir::LogicalResult materializeNativeEvalGroupBodies(mlir::ModuleOp module);
+
+mlir::FailureOr<llvm::SmallVector<std::string>> materializeNativeRankedGroups(
+    mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan);
+
+mlir::LogicalResult materializeNativeEvalDispatch(
+    mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan);
 mlir::FailureOr<llvm::SmallVector<NativePeriodicClock>>
 buildNativePeriodicClockPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,

@@ -7,12 +7,15 @@
 // RUN: FileCheck %s < %t.out
 // RUN: FileCheck %s --check-prefix=TIERS < %t.diag
 // RUN: env OBELISK_TEST_IMMEDIATE_NET_RELEASE=1 %t.exe | FileCheck %s
+// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.o0.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
+// RUN: %t.o0.exe | FileCheck %s
 // A writer arrives only AFTER 500 Tier-1 clock activations. Deposits must
 // update the canonical planes; force must survive NBA writes; variable release
 // retains the forced value until the next assignment. Depositing X invalidates
 // two-state promotion, and a later known deposit permits recovery.
 // PLAN-DAG: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// PLAN-DAG: llvm.func @__obelisk_eval_fast_coordinator_hybrid_v1
+// PLAN-DAG: llvm.func @__obelisk_eval_dispatch_v1
 // Both long, writer-free intervals must use Tier 1. Runtime work stays
 // bounded by the seven actual mutations, including recovery after release.
 // The shared loop counts bootstrap, plan-node and barrier iterations as well

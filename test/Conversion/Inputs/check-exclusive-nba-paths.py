@@ -21,7 +21,7 @@ for name, text in {
     assert result.returncode == 0, (name, result.stderr)
     slots = result.stdout.count("llvm.mlir.global internal @__obelisk_eval_nba_valid_")
     assert slots == (4 if name == "exclusive" else 0), (name, slots)
-    fast = "llvm.func @__obelisk_eval_fast_coordinator_v1(" in result.stdout
+    fast = "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
     assert fast == (name == "exclusive"), name
 
 # Width and executor choice are independent axes of the same contract. Cover

@@ -218,11 +218,12 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
 }
 
 LogicalResult
-finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
+finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process,
+                                 const SymbolTable &embeddedSymbols) {
   if (failed(makePlainNativeWrappers(process.module, process.body,
                                      process.baseName, *process.analysis)))
     return failure();
-  return makeProcessDescriptor(process.module, process.location,
+  return makeProcessDescriptor(process.module, embeddedSymbols, process.location,
                                process.baseName, process.stableID,
                                *process.analysis, process.unmanagedNative);
 }
@@ -234,7 +235,8 @@ lowerPlainNativeProcess(sim::SimFuncOp function,
       preparePlainNativeProcess(function, analysis);
   if (failed(prepared) || failed(lowerPreparedPlainNativeProcess(*prepared)))
     return failure();
-  return finishPreparedPlainNativeProcess(*prepared);
+  SymbolTable embeddedSymbols(prepared->module);
+  return finishPreparedPlainNativeProcess(*prepared, embeddedSymbols);
 }
 
 FailureOr<PreparedOrdinaryNativeFunction>

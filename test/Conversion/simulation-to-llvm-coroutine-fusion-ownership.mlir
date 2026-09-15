@@ -108,14 +108,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: %[[DIRECT_INVERSE:.*]] = llvm.mlir.constant(-4 : i64)
 // CHECK: %[[DIRECT_REMAINING:.*]] = llvm.and {{.*}}, %[[DIRECT_INVERSE]]
 // CHECK: llvm.store %[[DIRECT_REMAINING]],
-// CHECK-LABEL: llvm.func @__obelisk_eval_fast_coordinator_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: %[[PENDING:.*]] = llvm.and %[[READY:.*]], %[[COORD_MASK:.*]]
 // CHECK: llvm.icmp "ne" %[[PENDING]], %[[ZERO:.*]]
 // CHECK: %[[MEMBER_INVERSE:.*]] = llvm.mlir.constant(-3 : i64)
 // CHECK: %[[WITHOUT_MEMBER:.*]] = llvm.and %[[READY]], %[[MEMBER_INVERSE]]
 // CHECK: %[[NORMALIZED:.*]] = llvm.select {{.*}}, %[[WITHOUT_MEMBER]], %[[READY]]
-// CHECK: llvm.store %[[NORMALIZED]],
 // CHECK: "llvm.intr.cttz"(%[[NORMALIZED]])
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
+// Unresolved compound owners retain direct fragment boundaries and masks.
+// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute
 // CHECK: llvm.mlir.constant(3 : i64)
-// CHECK: llvm.call @__obelisk_direct_fragment_2_2.__obelisk_execute
+// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute

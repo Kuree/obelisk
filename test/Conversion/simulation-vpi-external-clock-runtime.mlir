@@ -25,7 +25,7 @@
 // RUN: env OBELISK_TEST_TIMED_CLOCK=1 %t.bytecode.exe | FileCheck %s --check-prefix=TIMED
 // RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_TEST_FINISH_ON_EDGE=1 %t.bytecode.exe | FileCheck %s --check-prefix=FINISH
 // The model has no internal clock process. Every edge is a VPI deposit.
-// PLAN: llvm.func @__obelisk_eval_fast_coordinator
+// PLAN: llvm.func @__obelisk_eval_dispatch_v1
 // TIERS: aot_node_executions=2
 // TIERS-SAME: aot_nba_stages=0
 // TIERS-SAME: aot_fallbacks=0

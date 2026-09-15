@@ -59,7 +59,8 @@ bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
 }
 
 LogicalResult makeProcessDescriptor(
-    ModuleOp module, Location location, StringRef baseName, uint64_t stableID,
+    ModuleOp module, const SymbolTable &embeddedSymbols, Location location,
+    StringRef baseName, uint64_t stableID,
     const SimulationProcessFrameAnalysis &analysis, bool unmanagedNative) {
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -86,8 +87,10 @@ LogicalResult makeProcessDescriptor(
   std::string designBytecodeName =
       (baseName + ".__obelisk_bytecode_entry").str();
   constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
-  bool hasExecution = module.lookupSymbol(executionName) != nullptr;
-  bool hasDesignBytecode = module.lookupSymbol(designBytecodeName) != nullptr;
+  // These embedded-image symbols are frozen before process finalization.
+  // Generated wrappers and frame globals do not change their presence.
+  bool hasExecution = embeddedSymbols.lookup(executionName) != nullptr;
+  bool hasDesignBytecode = embeddedSymbols.lookup(designBytecodeName) != nullptr;
   auto executionFlags =
       module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
   bool bytecodeOnly =
