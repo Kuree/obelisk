@@ -693,7 +693,13 @@ The generated call-closure verifier builds a local symbol index and visits each
 reachable function once. Direct calls and the certified target sets of indirect
 calls receive the same boundary checks. The index lives only for verification,
 when symbols cannot change; it does not cache scheduling or knownness proofs
-across IR revisions. Opt-in compiler timing separates route materialization,
+across IR revisions. Schedule materialization also indexes generated call
+closures within their owning design and snapshots the already materialized
+executor symbols. These indexes preserve symbol scope and deterministic walk
+order; they do not enumerate hash-table entries to choose execution order.
+Call-graph indexes expire before symbol mutation, and executor snapshots are
+used only for the fixed input functions, never newly emitted plan helpers.
+Opt-in compiler timing separates route materialization,
 proof publication, and call-closure verification from backend code generation.
 
 Native actor entry ordering uses the rank captured from the semantic schedule,

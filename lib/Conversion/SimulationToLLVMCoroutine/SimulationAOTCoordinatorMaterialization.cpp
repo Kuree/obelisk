@@ -11,6 +11,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -97,6 +98,9 @@ LogicalResult materializeNativeEvalCoordinator(
       executors.size() != mergedFragments.size() ||
       ownerSubsumptionMasks.size() != mergedFragments.size())
     return success();
+  // Executor symbols are fixed inputs. The coordinator emitted below is not
+  // part of this lookup snapshot, and no executor is added, renamed or erased.
+  SymbolTable executorSymbols(module);
   builder.setInsertionPointToEnd(module.getBody());
   SmallVector<Type> coordinatorArguments{pointer, pointer};
   if (trustedTwoState)
@@ -373,10 +377,10 @@ LogicalResult materializeNativeEvalCoordinator(
       if (ownerMayTaintNBA(recordIndex))
         markOwnerNBATaint(recordIndex);
     }
-    auto executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+    auto executor = executorSymbols.lookup<LLVM::LLVMFuncOp>(
         guardPendingOwners ? mergedExecutors[recordIndex]
                            : executors[recordIndex]);
-    auto twoStateExecutor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+    auto twoStateExecutor = executorSymbols.lookup<LLVM::LLVMFuncOp>(
         mergedTwoStateExecutors[recordIndex]);
     bool convergenceOwner =
         (executor && executor->hasAttr(sim::metadata::evalTier2Convergence)) ||

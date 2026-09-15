@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -50,6 +51,9 @@ static bool isGeneratedEvalBody(sim::SimFuncOp function) {
 
 static SmallVector<sim::SimFuncOp>
 collectGeneratedEvalCallClosure(ModuleOp module) {
+  // This walk does not mutate symbols. Index each owning design once instead
+  // of scanning all code units for every edge of the generated call graph.
+  SymbolTableCollection symbolTables;
   SmallVector<sim::SimFuncOp> closure;
   SmallVector<sim::SimFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 16> visited;
@@ -76,8 +80,8 @@ collectGeneratedEvalCallClosure(ModuleOp module) {
       } else {
         return;
       }
-      if (sim::SimFuncOp callee =
-              design.lookupSymbol<sim::SimFuncOp>(calleeName))
+      if (sim::SimFuncOp callee = symbolTables.lookupSymbolIn<sim::SimFuncOp>(
+              design, StringAttr::get(module.getContext(), calleeName)))
         pending.push_back(callee);
     });
   }
@@ -601,6 +605,10 @@ FailureOr<bool> makeNativeEvalPlan(
                             computeGraph, periodicClocks, periodicAliases);
   if (failed(resolved))
     return failure();
+  // All input executors exist before plan materialization. Only their bodies
+  // and attributes change below; newly emitted plan helpers are not executors.
+  // Keep this snapshot local rather than retaining a table across IR phases.
+  SymbolTable executorSymbols(module);
   SmallVector<GeneratedTransitionRange> generatedTransitionRanges;
   llvm::DenseMap<Operation *, DynamicEvalNBAProof> dynamicNBAProofs;
   if (!resolved->clockKernels.empty()) {
@@ -650,6 +658,7 @@ FailureOr<bool> makeNativeEvalPlan(
     for (sim::SimFuncOp function : evalClosure)
       evalClosureSet.insert(function.getOperation());
     DenseMap<Operation *, SmallVector<Operation *, 2>> incomingEvalCalls;
+    SymbolTableCollection callSymbols;
     for (sim::SimFuncOp caller : evalClosure) {
       sim::SimDesignOp design = caller->getParentOfType<sim::SimDesignOp>();
       if (!design)
@@ -665,7 +674,8 @@ FailureOr<bool> makeNativeEvalPlan(
         } else {
           return;
         }
-        sim::SimFuncOp callee = design.lookupSymbol<sim::SimFuncOp>(calleeName);
+        sim::SimFuncOp callee = callSymbols.lookupSymbolIn<sim::SimFuncOp>(
+            design, StringAttr::get(context, calleeName));
         if (callee && evalClosureSet.contains(callee.getOperation()))
           incomingEvalCalls[callee.getOperation()].push_back(operation);
       });
@@ -812,7 +822,7 @@ FailureOr<bool> makeNativeEvalPlan(
       for (StringRef name :
            {StringRef(direct.wrapper), StringRef(direct.twoStateWrapper)})
         if (!name.empty())
-          if (auto function = module.lookupSymbol<LLVM::LLVMFuncOp>(name))
+          if (auto function = executorSymbols.lookup<LLVM::LLVMFuncOp>(name))
             function->setAttr(sim::metadata::evalTier2Convergence,
                               UnitAttr::get(context));
   auto ownerMayTaintNBA = [&](unsigned recordIndex) {
@@ -1199,7 +1209,7 @@ FailureOr<bool> makeNativeEvalPlan(
       periodicPromotionComplete = false;
       break;
     }
-    auto executor = module.lookupSymbol<LLVM::LLVMFuncOp>(
+    auto executor = executorSymbols.lookup<LLVM::LLVMFuncOp>(
         mergedTwoStateExecutors[recordIndex]);
     if (executor && executor->hasAttr(sim::metadata::evalPathGuardedTwoState)) {
       // The checkpoint-path probe alone proves control flow, not the data
@@ -3139,7 +3149,7 @@ FailureOr<bool> makeNativeEvalPlan(
       if (mergedExecutors[index].empty())
         return false;
       LLVM::LLVMFuncOp executor =
-          module.lookupSymbol<LLVM::LLVMFuncOp>(mergedExecutors[index]);
+          executorSymbols.lookup<LLVM::LLVMFuncOp>(mergedExecutors[index]);
       // A fractured checkpoint owner can share the direct prefix with an
       // infallible owner because the prefix checks its status before any
       // downstream owner executes. Convergence owners must consume their ready
@@ -3327,7 +3337,7 @@ FailureOr<bool> makeNativeEvalPlan(
       auto mayTerminate = [&](StringRef symbol) {
         LLVM::LLVMFuncOp executor =
             symbol.empty() ? LLVM::LLVMFuncOp{}
-                           : module.lookupSymbol<LLVM::LLVMFuncOp>(symbol);
+                           : executorSymbols.lookup<LLVM::LLVMFuncOp>(symbol);
         return executor && executor->hasAttr(sim::metadata::evalMayTerminate);
       };
       return mayTerminate(mergedExecutors[recordIndex]) ||
@@ -4492,7 +4502,7 @@ FailureOr<bool> makeNativeEvalPlan(
       llvm::any_of(mergedTwoStateExecutors, [&](const std::string &name) {
         auto function = name.empty()
                             ? LLVM::LLVMFuncOp{}
-                            : module.lookupSymbol<LLVM::LLVMFuncOp>(name);
+                            : executorSymbols.lookup<LLVM::LLVMFuncOp>(name);
         return function &&
                function->hasAttr(sim::metadata::evalPathGuardedTwoState);
       });
