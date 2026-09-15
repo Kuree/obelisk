@@ -913,6 +913,19 @@ std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
 uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
                                          sim::SimFuncOp function,
                                          bool markDormantTier1 = false) {
+  // A recursive or foreign reentry can overwrite a static temporary in this
+  // same function. A dominating store and exclusive accessor identity alone
+  // do not prove that its value survives a call. Retry after inlining rather
+  // than forwarding across a call without an interprocedural reentry proof.
+  if (function.walk([](Operation *operation) {
+        return isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimClassDirectCallOp,
+                   sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp,
+                   sim::SimDPICallOp, sim::SimSpawnOp>(operation)
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      }).wasInterrupted())
+    return 0;
+
   DenseMap<uint64_t, sim::SimStorageDeclOp> declarations;
   for (sim::SimStorageDeclOp declaration :
        design.getBody().front().getOps<sim::SimStorageDeclOp>())
@@ -962,6 +975,35 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
   });
 
   DominanceInfo dominance(function);
+  auto staysInActivation = [](sim::SimRefStoreOp store,
+                              sim::SimRefLoadOp load) {
+    // Follow every incoming path back to its defining store. Dominance alone
+    // permits a wait between store and load, during which another invocation
+    // of this same actor/task could overwrite the shared static root.
+    SmallVector<std::pair<Block *, Operation *>> worklist{
+        {load->getBlock(), load->getPrevNode()}};
+    llvm::SmallPtrSet<Block *, 8> visitedPredecessors;
+    while (!worklist.empty()) {
+      auto [block, cursor] = worklist.pop_back_val();
+      bool defined = false;
+      for (; cursor; cursor = cursor->getPrevNode()) {
+        if (cursor == store.getOperation()) {
+          defined = true;
+          break;
+        }
+        if (isTypedSuspend(cursor))
+          return false;
+      }
+      if (defined)
+        continue;
+      if (block->hasNoPredecessors())
+        return false;
+      for (Block *predecessor : block->getPredecessors())
+        if (visitedPredecessors.insert(predecessor).second)
+          worklist.emplace_back(predecessor, predecessor->getTerminator());
+    }
+    return true;
+  };
   uint64_t promoted = 0;
   for (auto &[descriptor, rootStores] : stores) {
     auto declaration = declarations.find(descriptor);
@@ -983,13 +1025,7 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
     Value rootReference = store.getReference();
     std::optional<unsigned> totalWidth =
         sim::getPackedWidth(store.getValue().getType());
-    if (!totalWidth || *totalWidth == 0 || *totalWidth > 64)
-      continue;
-    // The slicing sequence below operates on one integer plane. Four-state
-    // values have distinct value/unknown planes and require a plane-aware
-    // implementation rather than integer shifts and truncations.
-    Type packedScalar = sim::getPackedScalarType(store.getValue().getType());
-    if (!isa<IntegerType>(packedScalar))
+    if (!totalWidth || *totalWidth == 0)
       continue;
 
     // Accept only a tree of static subelement views, loads, and the one
@@ -1015,12 +1051,13 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
         !llvm::all_of(rootLoads->second, [&](sim::SimRefLoadOp load) {
           return dominance.dominates(store.getOperation(),
                                      load.getOperation()) &&
-                 family.contains(load.getReference());
+                 family.contains(load.getReference()) &&
+                 staysInActivation(store, load);
         }))
       continue;
 
-    auto getPackedOffset =
-        [&](Value reference) -> std::optional<std::pair<uint64_t, Type>> {
+    auto getPackedPath =
+        [&](Value reference) -> std::optional<SmallVector<int64_t>> {
       SmallVector<sim::SimRefSubelementOp> path;
       Value current = reference;
       while (current != rootReference) {
@@ -1030,37 +1067,32 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
         path.push_back(view);
         current = view.getInput();
       }
-      uint64_t offset = 0;
+      SmallVector<int64_t> indices;
       Type type = store.getValue().getType();
       for (sim::SimRefSubelementOp view : llvm::reverse(path)) {
         for (int64_t index : view.getIndices()) {
-          if (index < 0)
+          // Union reference views and active-member value extraction have
+          // different rules. Keep them in storage until that equivalence is
+          // proved, rather than treating a union like a struct.
+          if (index < 0 || isa<sim::PackedUnionType>(type))
             return std::nullopt;
-          auto child = sim::getAggregateProvenanceSubelement(
-              type, static_cast<unsigned>(index));
-          if (!child ||
-              child->first > std::numeric_limits<uint64_t>::max() - offset)
-            return std::nullopt;
-          offset += child->first;
           type =
               sim::getAggregateElementType(type, static_cast<unsigned>(index));
+          if (!type || !sim::getPackedWidth(type))
+            return std::nullopt;
+          indices.push_back(index);
         }
       }
-      return std::pair{offset, type};
+      if (type != cast<sim::RefType>(reference.getType()).getElementType())
+        return std::nullopt;
+      return indices;
     };
 
-    SmallVector<std::pair<sim::SimRefLoadOp, std::pair<uint64_t, Type>>>
-        replacements;
+    SmallVector<std::pair<sim::SimRefLoadOp, SmallVector<int64_t>>> replacements;
     bool representable = true;
     for (sim::SimRefLoadOp load : rootLoads->second) {
-      auto selected = getPackedOffset(load.getReference());
-      if (!selected || selected->second != load.getResult().getType()) {
-        representable = false;
-        break;
-      }
-      std::optional<unsigned> width = sim::getPackedWidth(selected->second);
-      if (!width || selected->first > *totalWidth ||
-          *width > *totalWidth - selected->first) {
+      auto selected = getPackedPath(load.getReference());
+      if (!selected) {
         representable = false;
         break;
       }
@@ -1069,36 +1101,18 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
     if (!representable)
       continue;
 
-    IntegerType flattenedType = cast<IntegerType>(packedScalar);
-    OpBuilder storeBuilder(store);
-    Value flattened = sim::SimPackedFlattenOp::create(
-        storeBuilder, store.getLoc(), flattenedType, store.getValue());
-    for (auto &[load, selected] : replacements) {
-      if (selected.first == 0 &&
-          selected.second == store.getValue().getType()) {
-        load.getResult().replaceAllUsesWith(store.getValue());
-        load.erase();
-        continue;
-      }
+    for (auto &[load, indices] : replacements) {
       OpBuilder builder(load);
-      Value bits = flattened;
-      if (selected.first != 0)
-        bits = arith::ShRUIOp::create(
-            builder, load.getLoc(), bits,
-            arith::ConstantOp::create(
-                builder, load.getLoc(), flattenedType,
-                builder.getIntegerAttr(flattenedType, selected.first)));
-      unsigned selectedWidth = *sim::getPackedWidth(selected.second);
-      if (selectedWidth != *totalWidth)
-        bits = arith::TruncIOp::create(
+      // Follow the same typed subelement path in SSA. Packed lowering retains
+      // both value and unknown planes, including wide and mixed-domain
+      // aggregates; integer shifts here would silently lose X/Z information.
+      Value replacement = store.getValue();
+      for (int64_t index : indices)
+        replacement = sim::SimAggregateExtractOp::create(
             builder, load.getLoc(),
-            IntegerType::get(function.getContext(), selectedWidth), bits);
-      Value replacement =
-          isa<IntegerType>(selected.second)
-              ? bits
-              : sim::SimPackedUnflattenOp::create(builder, load.getLoc(),
-                                                  selected.second, bits)
-                    .getResult();
+            sim::getAggregateElementType(replacement.getType(),
+                                         static_cast<unsigned>(index)),
+            replacement, index);
       load.getResult().replaceAllUsesWith(replacement);
       load.erase();
     }
@@ -1115,8 +1129,6 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
     } else if (markDormantTier1)
       store->setAttr(sim::metadata::evalDiscardableStore,
                      UnitAttr::get(function.getContext()));
-    if (flattened.use_empty())
-      flattened.getDefiningOp()->erase();
     ++promoted;
   }
   return promoted;

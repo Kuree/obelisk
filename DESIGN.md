@@ -667,6 +667,20 @@ and preservation of unrelated positive certificates. Performance measurements
 and implementation acceptance targets are maintained separately from this
 architecture description.
 
+Private static temporaries can stay in SSA when one store dominates every
+read, no other executable accessor or escaping reference exists, and the
+storage is not externally writable or toggle-observable. Every incoming path
+from a read must reach its defining store before crossing a suspension;
+dominance alone does not establish this activation boundary. Forwarding follows
+the reference's typed packed struct/array path, preserving both four-state
+planes and mixed two-state/four-state fields at arbitrary supported widths.
+This proof removes storage traffic without asserting that the value is known.
+Read-observable canonical bodies retain their store for boundary visibility;
+dormant evaluator clones can discard the proven-private store. Dynamic views,
+union member views, and read-before-write paths remain conservative. Calls
+also prevent this local proof until inlining removes them: reentry can change
+a static temporary through the same accessor despite store dominance.
+
 The generated call-closure verifier builds a local symbol index and visits each
 reachable function once. Direct calls and the certified target sets of indirect
 calls receive the same boundary checks. The index lives only for verification,

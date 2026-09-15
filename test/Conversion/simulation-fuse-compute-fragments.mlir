@@ -127,7 +127,17 @@
 // READ-FUSED-SSA-COUNT-2: obelisk_sim.ref.store
 // READ-FUSED-SSA-NOT: obelisk.eval.discardable_store
 // FOUR-STATE: obelisk_sim.func private @__obelisk_fused_
-// FOUR-STATE-COUNT-2: obelisk_sim.ref.store
+// FOUR-STATE-NOT: obelisk_sim.ref.store
+// FOUR-STATE: obelisk_sim.aggregate.extract
+// FOUR-STATE: obelisk_sim.logic.is_true
+// FOUR-STATE: arith.select
+// FOUR-STATE: obelisk_sim.nba.enqueue
+// FOUR-STATE-NOT: obelisk_sim.ref.store
+// FOUR-STATE: obelisk_sim.aggregate.extract
+// FOUR-STATE: obelisk_sim.logic.is_true
+// FOUR-STATE: arith.select
+// FOUR-STATE: obelisk_sim.nba.enqueue
+// FOUR-STATE-NOT: obelisk_sim.ref.store
 // CALLEE-WRITE-IR: obelisk_sim.func private @__obelisk_fused_
 // CALLEE-WRITE: 1 0
 // ORDER: 1
