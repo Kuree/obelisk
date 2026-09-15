@@ -689,6 +689,15 @@ union member views, and read-before-write paths remain conservative. Calls
 also prevent this local proof until inlining removes them: reentry can change
 a static temporary through the same accessor despite store dominance.
 
+The pre-cloning promotion sweep indexes storage accessors and reference escapes
+once per design, then checks each function's loads and stores locally. Passing
+a reference through a spawn is allowed only when that spawn targets the sole
+accessor. Multiple accessors, other spawn targets, and opaque reference uses
+remain conservative. The index survives only the removal of already-private
+accesses; fusion and other transformations that introduce accessors require a
+fresh index. Dominance, suspension boundaries and value-domain checks remain
+separate from these identity facts.
+
 The generated call-closure verifier builds a local symbol index and visits each
 reachable function once. Direct calls and the certified target sets of indirect
 calls receive the same boundary checks. The index lives only for verification,

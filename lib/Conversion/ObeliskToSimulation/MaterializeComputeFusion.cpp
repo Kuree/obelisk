@@ -927,14 +927,80 @@ std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
   return std::nullopt;
 }
 
+/// Design-wide identity/escape facts for private static storage. Promotion
+/// only deletes accesses inside an already exclusive function, so these facts
+/// remain conservative throughout the pre-cloning sweep. Rebuild after fusion
+/// or any transformation that creates accessors, escapes, or declarations.
+struct PrivateStaticAccessIndex {
+  DenseMap<uint64_t, sim::SimStorageDeclOp> declarations;
+  DenseMap<uint64_t, Operation *> accessors;
+  DenseMap<uint64_t, StringAttr> spawnTargets;
+  llvm::SmallDenseSet<uint64_t, 8> unsupportedUses;
+
+  explicit PrivateStaticAccessIndex(sim::SimDesignOp design) {
+    for (sim::SimStorageDeclOp declaration :
+         design.getBody().front().getOps<sim::SimStorageDeclOp>())
+      declarations.try_emplace(declaration.getId(), declaration);
+    design.walk([&](Operation *operation) {
+      Value reference;
+      if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+        reference = load.getReference();
+      else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
+        reference = store.getReference();
+      else {
+        // Views are checked through their eventual users. A spawn can pass
+        // a root to its exclusive accessor; any other reference consumer may
+        // observe identity or state and prevents promotion.
+        if (isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
+                sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(operation))
+          return;
+        auto spawn = dyn_cast<sim::SimSpawnOp>(operation);
+        for (Value operand : operation->getOperands()) {
+          if (!isa<sim::RefType>(operand.getType()))
+            continue;
+          auto root = resolveStorageRoot(operand);
+          if (!root)
+            continue;
+          if (!spawn) {
+            unsupportedUses.insert(*root);
+            continue;
+          }
+          StringAttr target = spawn.getCalleeAttr().getAttr();
+          auto [found, inserted] = spawnTargets.try_emplace(*root, target);
+          if (!inserted && found->second != target)
+            unsupportedUses.insert(*root);
+        }
+        return;
+      }
+      auto root = resolveStorageRoot(reference);
+      if (!root)
+        return;
+      auto function = operation->getParentOfType<sim::SimFuncOp>();
+      auto [found, inserted] =
+          accessors.try_emplace(*root, function.getOperation());
+      if (!inserted && found->second != function.getOperation())
+        found->second = nullptr;
+    });
+  }
+
+  bool isPrivateTo(uint64_t root, sim::SimFuncOp function) const {
+    if (unsupportedUses.contains(root) ||
+        accessors.lookup(root) != function.getOperation())
+      return false;
+    auto spawn = spawnTargets.find(root);
+    return spawn == spawnTargets.end() ||
+           spawn->second == function.getSymNameAttr();
+  }
+};
+
 /// Promote a static procedure temporary when this fused function is its sole
 /// executable accessor and one store dominates every read. Such a declaration
 /// is state only because its source-level lifetime spans activations; if every
 /// activation overwrites it before use, retaining the canonical store would
 /// add a signal-transition publication with no observer or semantic consumer.
-uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
-                                         sim::SimFuncOp function,
-                                         bool markDormantTier1 = false) {
+uint64_t promotePrivateStaticTemporaries(
+    sim::SimFuncOp function, const PrivateStaticAccessIndex &accessIndex,
+    bool markDormantTier1 = false) {
   // A recursive or foreign reentry can overwrite a static temporary in this
   // same function. A dominating store and exclusive accessor identity alone
   // do not prove that its value survives a call. Retry after inlining rather
@@ -948,48 +1014,19 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
       }).wasInterrupted())
     return 0;
 
-  DenseMap<uint64_t, sim::SimStorageDeclOp> declarations;
-  for (sim::SimStorageDeclOp declaration :
-       design.getBody().front().getOps<sim::SimStorageDeclOp>())
-    declarations.try_emplace(declaration.getId(), declaration);
-
   DenseMap<uint64_t, SmallVector<sim::SimRefLoadOp>> loads;
   DenseMap<uint64_t, SmallVector<sim::SimRefStoreOp>> stores;
-  llvm::SmallDenseSet<uint64_t, 8> accessedElsewhere;
-  llvm::SmallDenseSet<uint64_t, 8> unsupportedUses;
-  design.walk([&](Operation *operation) {
+  function.walk([&](Operation *operation) {
     Value reference;
     if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
       reference = load.getReference();
     else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
       reference = store.getReference();
-    else {
-      // Reference views are checked through their eventual users below, and
-      // the root initializer must pass each reference to the replacement
-      // fused process. Any other reference-consuming operation can observe
-      // identity or state (for example an NBA enqueue, force, or foreign
-      // call), so conservatively exclude its root from promotion.
-      if (isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
-              sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(operation))
-        return;
-      if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation);
-          spawn && spawn.getCallee() == function.getSymName())
-        return;
-      for (Value operand : operation->getOperands()) {
-        if (!isa<sim::RefType>(operand.getType()))
-          continue;
-        if (std::optional<uint64_t> root = resolveStorageRoot(operand))
-          unsupportedUses.insert(*root);
-      }
+    else
       return;
-    }
-    std::optional<uint64_t> root = resolveStorageRoot(reference);
+    auto root = resolveStorageRoot(reference);
     if (!root)
       return;
-    if (operation->getParentOfType<sim::SimFuncOp>() != function) {
-      accessedElsewhere.insert(*root);
-      return;
-    }
     if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
       loads[*root].push_back(load);
     else
@@ -1028,18 +1065,17 @@ uint64_t promotePrivateStaticTemporaries(sim::SimDesignOp design,
   };
   uint64_t promoted = 0;
   for (auto &[descriptor, rootStores] : stores) {
-    auto declaration = declarations.find(descriptor);
+    auto declaration = accessIndex.declarations.lookup(descriptor);
     auto rootLoads = loads.find(descriptor);
-    if (declaration == declarations.end() || rootLoads == loads.end() ||
+    if (!declaration || rootLoads == loads.end() ||
         rootStores.size() != 1 || rootLoads->second.empty() ||
-        accessedElsewhere.contains(descriptor) ||
-        unsupportedUses.contains(descriptor) ||
-        declaration->second.getLifetime() != sim::Lifetime::Static ||
-        declaration->second->hasAttr(
+        !accessIndex.isPrivateTo(descriptor, function) ||
+        declaration.getLifetime() != sim::Lifetime::Static ||
+        declaration->hasAttr(
             sim::metadata::coverageToggleObservable))
       continue;
     std::optional<sim::ComputeObservabilityKind> observability =
-        declaration->second.getObservability();
+        declaration.getObservability();
     if (!observability ||
         *observability == sim::ComputeObservabilityKind::ExternallyWritable)
       continue;
@@ -2879,7 +2915,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   // Besides avoiding canonical state publication, this turns overwrite-arm
   // loads into SSA values so only genuinely speculatable arithmetic is moved
   // out of the branch.
-  promotedPrivateStores += promotePrivateStaticTemporaries(design, fused);
+  promotedPrivateStores += promotePrivateStaticTemporaries(
+      fused, PrivateStaticAccessIndex(design));
   ifConvertedNBAs += ifConvertConditionalNBAWrites(fused, wait);
   sharedStableConditions += shareStableBranchConditions(
       fused, clonedBlocks.front().lookup(candidates.front().body));
@@ -3124,9 +3161,10 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       if (!function.isExternal() &&
           !function->hasAttr("obelisk.eval.borrowed_captures"))
         functions.push_back(function);
+    PrivateStaticAccessIndex accessIndex(design);
     for (sim::SimFuncOp function : functions)
       preparedPrivateStores += promotePrivateStaticTemporaries(
-          design, function, prepareDormantTier1);
+          function, accessIndex, prepareDormantTier1);
   }
   if ((!fusions || !graph || graph.getWorkers() != 1) && evalScheduler) {
     // Standalone activation cloning is not conditional on finding a profitable
