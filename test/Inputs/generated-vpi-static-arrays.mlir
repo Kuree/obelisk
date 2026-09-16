@@ -11,6 +11,8 @@ module attributes {
     obelisk_sim.scope.decl 5 parent 1 hierarchy "top.m[0][0]" {vpi_kind = 32 : i32}
     obelisk_sim.scope.decl 6 parent 1 hierarchy "top.i[2]" {vpi_kind = 601 : i32}
     obelisk_sim.scope.decl 7 parent 1 hierarchy "top.p[-2]" {vpi_kind = 602 : i32}
+    obelisk_sim.scope.decl 8 parent 1 hierarchy "top.generated[-3].child" {vpi_kind = 32 : i32}
+    obelisk_sim.scope.decl 9 parent 1 hierarchy "top.conditional.child" {vpi_kind = 32 : i32}
 
     obelisk_sim.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0
         hierarchy "top" debug "top" {
@@ -134,6 +136,16 @@ module attributes {
     obelisk_sim.vpi_object.anchor @empty_generated id 28 type 133 in 1 parent @top
         ordinal 12 hierarchy "top.empty_generated" debug "empty_generated" {
       sparse_indices = array<i64>
+    }
+    obelisk_sim.vpi_object.anchor @generated_child id 29 type 32 in 8 parent @generated_n3
+        ordinal 0 hierarchy "top.generated[-3].child" debug "child" {
+      backing = #obelisk_sim.vpi_backing<kind = scope, id = 8 : i64>
+    }
+    obelisk_sim.vpi_object.anchor @conditional id 30 type 134 in 1 parent @top
+        ordinal 13 hierarchy "top.conditional" debug "conditional"
+    obelisk_sim.vpi_object.anchor @conditional_child id 31 type 32 in 9 parent @conditional
+        ordinal 0 hierarchy "top.conditional.child" debug "child" {
+      backing = #obelisk_sim.vpi_backing<kind = scope, id = 9 : i64>
     }
 
     obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.run"

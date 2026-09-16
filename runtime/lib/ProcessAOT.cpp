@@ -206,6 +206,8 @@ void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
 
 void invalidateNativeStaticSpecializationFastUnlocked(
     obelisk_rt_context *context) {
+  if (context && context->nativeStateSpecializationFast)
+    *context->nativeStateSpecializationFast = 0;
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
   if (!plan || !plan->specialization_fast)
@@ -341,6 +343,24 @@ void obelisk_rt_aot_observation_demand_changed_unlocked(
 
 void refreshNativeStaticSpecializationFastUnlocked(
     obelisk_rt_context *context) {
+  if (context && context->nativeStateSpecializationFast &&
+      !context->nativeSchedulePlan) {
+    if (*context->nativeStateSpecializationFast != 0)
+      return;
+    // Generic fragments always publish through the shared scheduler. Their
+    // addressing proof needs no closed actor inventory or AOT plan. A force
+    // or procedural assign still owns its bits (LRM 10.6.1/10.6.2), and an
+    // observer's captured view must not be replaced with the live plane.
+    auto any = [](const std::vector<uint64_t> &mask) {
+      return std::any_of(mask.begin(), mask.end(),
+                         [](uint64_t word) { return word != 0; });
+    };
+    *context->nativeStateSpecializationFast =
+        !context->observerForcesCanonicalPlane && context->observerDepth == 0 &&
+        !context->vpiObservationDemand && !any(context->forceMask) &&
+        !any(context->assignMask);
+    return;
+  }
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
   if (!plan || !plan->specialization_fast || *plan->specialization_fast != 0)
@@ -2807,6 +2827,7 @@ static void disturbNativeScheduleUnlocked(obelisk_rt_context *context) {
 }
 
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
+  invalidateNativeStaticSpecializationFastUnlocked(context);
   if (!context || !context->nativeSchedulePlan ||
       context->nativeScheduleDeoptimized)
     return;
@@ -2820,6 +2841,7 @@ void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   bool persistent) {
   if (!context || bitWidth == 0)
     return;
+  invalidateNativeStaticSpecializationFastUnlocked(context);
   __int128 dirtyEnd = static_cast<__int128>(bitOffset) + bitWidth;
   for (const auto &[id, state] : context->nativeStaticStates)
     if (static_cast<__int128>(state.bitOffset) < dirtyEnd &&
@@ -2838,6 +2860,7 @@ void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
                                                    bool persistent) {
   if (!context || bitWidth == 0)
     return;
+  invalidateNativeStaticSpecializationFastUnlocked(context);
   if (!context->nativeStaticStateRangesValid) {
     obelisk_rt_aot_external_write_range_unlocked(context, bitOffset, bitWidth,
                                                  persistent);
@@ -2956,13 +2979,27 @@ void obelisk_rt_aot_release_range_unlocked(obelisk_rt_context *context,
 extern "C" uint32_t obelisk_rt_v1_static_specialization_guard(
     obelisk_rt_context *context, uint32_t actorSlot, uint32_t staticState,
     uint32_t flags) {
-  if (!context || !context->nativeSchedulePlan ||
+  if (!context ||
       (actorSlot != UINT32_MAX &&
        actorSlot >= context->nativeScheduleActors.size()) ||
       staticState == 0 || flags == 0 ||
       (flags & ~(OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE)) !=
           0)
     return 0;
+  if (!context->nativeSchedulePlan) {
+    // The same per-root fallback is usable by generic fragments. Their
+    // ordinary publication path keeps canonical state coherent. A force on
+    // one root must not deny direct addressing to unrelated roots.
+    const NativeStaticState *state =
+        findNativeStaticState(context, staticState);
+    return context->nativeStateSpecializationFast && state &&
+           !context->observerForcesCanonicalPlane &&
+           context->observerDepth == 0 &&
+           !nativeMaskIntersectsRange(context->forceMask, state->bitOffset,
+                                      state->bitWidth) &&
+           !nativeMaskIntersectsRange(context->assignMask, state->bitOffset,
+                                      state->bitWidth);
+  }
   auto dirty = [&](const std::vector<uint64_t> &mask,
                    const std::unordered_set<uint32_t> &sparse) {
     uint64_t word = staticState / 64;

@@ -255,6 +255,8 @@ public:
   ~ClockConditionPublicationOverlay() {
     context->conditionPublication = previousPublication;
     context->observerForcesCanonicalPlane = previousCanonicalPlane;
+    if (context->nativeStateSpecializationFast)
+      refreshNativeStaticSpecializationFastUnlocked(context);
   }
 
 private:
@@ -1981,6 +1983,8 @@ bool publishNativeSignalTransitionUnlocked(
   bool observerStatus =
       obelisk_rt_notify_observer_signal_unlocked(context, bitOffset, bitWidth);
   context->observerForcesCanonicalPlane = previousCanonicalPlane;
+  if (context->nativeStateSpecializationFast)
+    refreshNativeStaticSpecializationFastUnlocked(context);
   if (!observerStatus)
     return false;
   if (++context->schedulerEpoch == 0)

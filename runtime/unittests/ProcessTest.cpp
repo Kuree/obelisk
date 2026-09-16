@@ -4695,6 +4695,115 @@ TEST(Scheduler, AOTCleanSuperstepSnapshotsContinuationRankForHandover) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, GenericSpecializationUsesBoundPlanesAndScopedOverrides) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 16;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  uint32_t fast = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_specialization(context, &fast),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  std::array<uint8_t, 2> value{0x12, 0x34}, unknown{0, 0};
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 8, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(context, value.data(),
+                                            unknown.data(), 16),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_specialization(context, &fast),
+            OBELISK_RT_OK);
+  EXPECT_EQ(fast, 1u);
+  uint64_t handle =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, 1, 0);
+  uint8_t forced = 0xa5;
+  ASSERT_EQ(obelisk_rt_v1_native_override(
+                context, value.data(), unknown.data(), 16, handle, 8,
+                OBELISK_RT_DESCRIPTOR_STORAGE, 0, &forced, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(fast, 0u);
+  auto allowed = [&](uint32_t root) {
+    return obelisk_rt_v1_static_specialization_guard(
+        context, UINT32_MAX, root,
+        OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
+  };
+  EXPECT_EQ(allowed(1), 0u);
+  EXPECT_EQ(allowed(2), 1u);
+  EXPECT_EQ(allowed(3), 0u);
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  EXPECT_EQ(fast, 0u);
+  context->observerForcesCanonicalPlane = true;
+  EXPECT_EQ(allowed(2), 0u);
+  context->observerForcesCanonicalPlane = false;
+  context->forceMask[0] = 0;
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  EXPECT_EQ(fast, 1u);
+  obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+  EXPECT_EQ(fast, 0u);
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  EXPECT_EQ(fast, 0u);
+  obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  EXPECT_EQ(fast, 1u);
+  obelisk_rt_aot_external_write_unlocked(context);
+  EXPECT_EQ(fast, 0u);
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  EXPECT_EQ(fast, 1u);
+  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(fast, 0u);
+}
+
+TEST(Scheduler, BoundContinuousPlanesRetainPartialContributions) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 16;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  uint8_t *retained = nullptr, *unknown = nullptr, *mask = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_continuous(context, &retained,
+                                                       &unknown, &mask),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  std::array<uint8_t, 2> visible{0x12, 0x34}, visibleUnknown{0, 0};
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 16),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(context, visible.data(),
+                                            visibleUnknown.data(), 16),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_continuous(context, &retained,
+                                                       &unknown, &mask),
+            OBELISK_RT_OK);
+  EXPECT_EQ(mask[0], 0);
+  EXPECT_EQ(mask[1], 0);
+  // Simulate a generated partial clean store, retaining X and its exact mask.
+  retained[0] = 0xa5;
+  unknown[0] = 0xf0;
+  mask[0] = 0xff;
+  uint64_t high =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, 1, 8);
+  uint8_t contribution = 0x78, changed = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_native_state_store_continuous_plane(
+          context, visible.data(), 16, high, 8, 0, &contribution, &changed),
+      OBELISK_RT_OK);
+  EXPECT_EQ(retained[0], 0xa5);
+  EXPECT_EQ(unknown[0], 0xf0);
+  EXPECT_EQ(retained[1], 0x78);
+  EXPECT_EQ(mask[1], 0xff);
+  uint8_t *againValue = nullptr, *againUnknown = nullptr, *againMask = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_continuous(
+                context, &againValue, &againUnknown, &againMask),
+            OBELISK_RT_OK);
+  EXPECT_EQ(againValue, retained);
+  EXPECT_EQ(againUnknown, unknown);
+  EXPECT_EQ(againMask, mask);
+  EXPECT_EQ(context->continuousValue[0], 0x78a5u);
+  EXPECT_EQ(context->continuousUnknown[0], 0xf0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, StaticSpecializationGuardsIntersectOnlyDirtyRoots) {
   AOTTestState state;
   constexpr obelisk_rt_static_actor_root dependencies[] = {

@@ -311,8 +311,11 @@ public:
     // or observer invalidates the global flag before entering the slow path.
     // Continuous assignments must retain their contribution for a later
     // force/release (IEEE 1800-2023 10.6.2), even when currently unforced.
-    if (directRange && directRange->guarded && !assumeClean && !continuous &&
-        !runtimePublication && !op->hasAttr(guardedRefStoreAttr)) {
+    bool directContinuous =
+        continuous && directLayout && directLayout->directContinuous;
+    if (directRange && directRange->guarded && !assumeClean &&
+        (!continuous || directContinuous) && !runtimePublication &&
+        !op->hasAttr(guardedRefStoreAttr)) {
       Block *head = rewriter.getInsertionBlock();
       Block *tail = rewriter.splitBlock(head, op->getIterator());
       Region *region = head->getParent();
@@ -439,9 +442,10 @@ public:
     // Reload its canonical result so partial external forces cannot leak the
     // attempted value through transition publication. Direct clean stores
     // have no override mask and keep the select-only fast path above.
-    bool needsVisibleReload = sim::getPackedWidth(valueType).has_value() &&
-                              (continuous || !directLayout || !directRange ||
-                               (directRange->guarded && !assumeClean));
+    bool needsVisibleReload =
+        sim::getPackedWidth(valueType).has_value() &&
+        ((continuous && !(directContinuous && assumeClean)) || !directLayout ||
+         !directRange || (directRange->guarded && !assumeClean));
     if (needsVisibleReload) {
       notificationValue =
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),

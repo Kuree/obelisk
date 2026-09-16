@@ -720,6 +720,60 @@ TEST(GeneratedVPIStaticArrays, TraversesSparseAndEmptyGenerateArrays) {
   EXPECT_EQ(vpi_release_handle(empty), 1);
 }
 
+TEST(GeneratedVPIStaticArrays, TraversesInstancesInsideGenerateScopes) {
+  VPIContext fixture;
+  fixture.start();
+  for (const char *name : {"top.generated[-3]", "top.conditional"}) {
+    SCOPED_TRACE(name);
+    vpiHandle generated = vpi_handle_by_name(const_cast<char *>(name), nullptr);
+    ASSERT_NE(generated, nullptr);
+    std::string childName = std::string(name) + ".child";
+    EXPECT_EQ(scanNames(vpi_iterate(vpiInternalScope, generated)),
+              (std::vector<std::string>{childName}));
+    EXPECT_EQ(scanNames(vpi_iterate(vpiModule, generated)),
+              (std::vector<std::string>{childName}));
+    vpiHandle child = vpi_handle_by_name(childName.data(), nullptr);
+    ASSERT_NE(child, nullptr);
+    vpiHandle enclosing = vpi_handle(vpiModule, child);
+    ASSERT_NE(enclosing, nullptr);
+    EXPECT_STREQ(vpi_get_str(vpiFullName, enclosing), "top");
+    EXPECT_EQ(vpi_release_handle(enclosing), 1);
+    EXPECT_EQ(vpi_release_handle(child), 1);
+    EXPECT_EQ(vpi_release_handle(generated), 1);
+  }
+}
+
+TEST(GeneratedVPIStaticArrays, RejectsGeneratedChildInAnotherEnclosingScope) {
+  using namespace obelisk::reflection;
+  for (TableKind sourceTable : {TableKind::Object, TableKind::StaticObject}) {
+    SCOPED_TRACE(static_cast<unsigned>(sourceTable));
+    MutableStaticArraysImage image;
+    ASSERT_EQ(obelisk_rt_v1_design_validate(&image.execution), OBELISK_RT_OK);
+    size_t relations = get64(image.bytes, 160);
+    size_t count = get64(image.bytes, 168);
+    bool corrupted = false;
+    for (size_t index = 0; index != count; ++index) {
+      size_t relation = relations + index * RelationLayout.size;
+      uint16_t source = get16(image.bytes, relation + 14);
+      if (unpackRelationSourceTable(source) != sourceTable ||
+          unpackRelationSourceKind(source) != vpiGenScope ||
+          get16(image.bytes, relation + 12) != vpiInternalScope ||
+          unpackTableIndexKind(get32(image.bytes, relation + 4)) !=
+              TableKind::Scope)
+        continue;
+      // "top" is a legal module target, but its physical parent is $root,
+      // whereas this generate scope belongs to top.
+      put32(image.bytes, relation + 4, 1);
+      corrupted = true;
+      break;
+    }
+    ASSERT_TRUE(corrupted);
+    image.seal();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&image.execution),
+              OBELISK_RT_INVALID_DESIGN);
+  }
+}
+
 TEST(GeneratedVPIStaticArrays, RejectsCorruptRelationIndexImage) {
   using namespace obelisk::reflection;
   constexpr uint32_t objectTableTag = uint32_t{1} << 30;

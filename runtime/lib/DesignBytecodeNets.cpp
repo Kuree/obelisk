@@ -2011,8 +2011,13 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
     roots.reserve(forcedRoots.size());
     for (const auto &[root, ignored] : forcedRoots)
       roots.push_back(root);
+    // Generic native fragments also update driver planes directly. Driver
+    // writes have no signal publication to mirror them into bytecode storage;
+    // resolve from the bound authoritative planes at this foreign boundary.
     if (!resolveNetRoots(*cache, context, std::move(roots), changed,
-                         /*useNativeState=*/!cache->passComponents.empty()))
+                         /*useNativeState=*/context->nativeStateValue !=
+                                 nullptr ||
+                             !cache->passComponents.empty()))
       return context->schedulerStatus == OBELISK_RT_OK
                  ? OBELISK_RT_INVALID_HANDLE
                  : context->schedulerStatus;
@@ -2070,7 +2075,9 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
     }
     bool changed = false;
     if (!resolveNetRoots(*cache, context, std::move(roots), changed,
-                         /*useNativeState=*/!cache->passComponents.empty()))
+                         /*useNativeState=*/context->nativeStateValue !=
+                                 nullptr ||
+                             !cache->passComponents.empty()))
       return context->schedulerStatus == OBELISK_RT_OK
                  ? OBELISK_RT_INVALID_HANDLE
                  : context->schedulerStatus;

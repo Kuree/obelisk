@@ -118,7 +118,10 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       toggleBitCount = count.getValue().getZExtValue();
   }
   bool requiresNativeStateSync =
-      stateLayout.bitCount && (hasDesignBytecode || toggleBitCount != 0);
+      stateLayout.bitCount && (hasDesignBytecode || toggleBitCount != 0 ||
+                               stateLayout.directContinuous);
+  bool bindGenericSpecialization =
+      requiresNativeStateSync && !useAOT && !stateLayout.guardedHandles.empty();
   if (hasExecution) {
     Value execution =
         LLVM::AddressOfOp::create(builder, location, pointer, executionName);
@@ -401,6 +404,33 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
+  if (stateLayout.directContinuous) {
+    SmallVector<Value> arguments{runtimeContext};
+    for (StringRef name :
+         {"__obelisk_continuous_value", "__obelisk_continuous_unknown",
+          "__obelisk_continuous_mask"})
+      arguments.push_back(
+          LLVM::AddressOfOp::create(builder, location, pointer, name));
+    Value status = LLVM::CallOp::create(
+                       builder, location, TypeRange{i32},
+                       "obelisk_rt_v1_native_state_bind_continuous", arguments)
+                       .getResult();
+    LLVM::CallOp::create(builder, location, TypeRange{},
+                         "obelisk_rt_v1_scheduler_fail",
+                         ValueRange{runtimeContext, status});
+  }
+  if (bindGenericSpecialization) {
+    Value fast = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_static_specialization_fast_v1");
+    Value status =
+        LLVM::CallOp::create(builder, location, TypeRange{i32},
+                             "obelisk_rt_v1_native_state_bind_specialization",
+                             ValueRange{runtimeContext, fast})
+            .getResult();
+    LLVM::CallOp::create(builder, location, TypeRange{},
+                         "obelisk_rt_v1_scheduler_fail",
+                         ValueRange{runtimeContext, status});
+  }
   if (hasCoverage) {
     struct ToggleBinding {
       uint64_t firstBit;
@@ -639,6 +669,14 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (requiresNativeStateSync)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_sync", i32,
                              {pointer, pointer, pointer, i64});
+  if (bindGenericSpecialization)
+    getOrDeclareLLVMFunction(module,
+                             "obelisk_rt_v1_native_state_bind_specialization",
+                             i32, {pointer, pointer});
+  if (stateLayout.directContinuous)
+    getOrDeclareLLVMFunction(module,
+                             "obelisk_rt_v1_native_state_bind_continuous", i32,
+                             {pointer, pointer, pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module,

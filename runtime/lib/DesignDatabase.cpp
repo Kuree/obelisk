@@ -3706,6 +3706,24 @@ bool validateDatabaseImpl(const Database &database) {
       if (relationBackedTarget) {
         break;
       }
+      // Generated scopes are lexical records, while an instantiated module,
+      // interface or program keeps its enclosing execution scope as physical
+      // parent. IEEE 1800-2023 37.85 still exposes the instance through the
+      // generate scope's vpiInternalScope relation. Check their common
+      // enclosing scope instead of requiring a physical scope-table source.
+      if (sourceKind == static_cast<uint32_t>(
+                            obelisk::reflection::VPIObjectKind::GenScope) &&
+          targetTable == obelisk::reflection::TableKind::Scope &&
+          sourceTable != obelisk::reflection::TableKind::Scope) {
+        uint64_t enclosingScope =
+            sourceTable == obelisk::reflection::TableKind::StaticObject
+                ? database.scopes +
+                      uint64_t{read32(sourceRecord + 8)} * kScopeSize
+                : read64(sourceRecord + 16);
+        if (read64(target + 16) != enclosingScope)
+          return false;
+        break;
+      }
       if (sourceTable != obelisk::reflection::TableKind::Scope ||
           targetTable == obelisk::reflection::TableKind::Statement ||
           read64(target + 16) != sourceOffset ||
@@ -7035,6 +7053,10 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
     }
     if (stateChanged)
       obelisk_rt_aot_external_write_unlocked(context);
+    // Generic native fragments may resume direct addressing as soon as the
+    // release guard is refreshed. Materialize the released continuous/assign
+    // value in their bound planes before that boundary or any observer runs.
+    obelisk_rt_sync_native_state_range_unlocked(context, stateOffset, bitWidth);
     obelisk_rt_aot_release_range_unlocked(context, stateOffset, bitWidth);
   }
   // A procedural variable retains the forced value. Continuously driven

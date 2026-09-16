@@ -372,6 +372,8 @@ DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
   IntegerType spanType = builder.getIntegerType(byteCount * 8);
   Value base =
       LLVM::AddressOfOp::create(builder, location, pointer, globalName);
+  if (globalName.starts_with("__obelisk_continuous_"))
+    base = LLVM::LoadOp::create(builder, location, pointer, base, 8);
   Value address = LLVM::GEPOp::create(
       builder, location, pointer, i8, base,
       ValueRange{llvmConstant(builder, location, i64, firstByte)});
@@ -482,7 +484,7 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
             out});
     return LLVM::LoadOp::create(rewriter, location, resultType, out, 1);
   };
-  if (!range || !range->guarded)
+  if ((!range || !range->guarded) && (!dynamicRange || !dynamicRange->guarded))
     return emitGeneric();
 
   Block *head = rewriter.getInsertionBlock();
@@ -496,21 +498,28 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
   recordStaticSpecializationCFGBlocks(rewriter, head, 3);
 
   rewriter.setInsertionPointToEnd(head);
-  Value useDirect =
-      guardedPermission
-          ? guardedPermission
-          : staticSpecializationGuard(rewriter, location, range->staticID,
-                                      OBELISK_RT_STATIC_ROOT_READ);
+  Value useDirect = guardedPermission
+                        ? guardedPermission
+                        : staticSpecializationGuard(
+                              rewriter, location,
+                              range ? range->staticID : dynamicRange->staticID,
+                              OBELISK_RT_STATIC_ROOT_READ);
   markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
                                           directBlock, ValueRange{},
                                           genericBlock, ValueRange{}));
 
   rewriter.setInsertionPointToEnd(directBlock);
-  Value direct = extractDirectPackedPlane(
-      rewriter, location,
-      loadDirectPackedPlane(rewriter, location, globalName, range->offset,
-                            resultType.getWidth()),
-      resultType);
+  // The guard certifies storage addressing, not the selected value's
+  // knownness. Keep the dynamic range's own bounds and X/Z fallback checks.
+  Value direct =
+      range ? extractDirectPackedPlane(
+                  rewriter, location,
+                  loadDirectPackedPlane(rewriter, location, globalName,
+                                        range->offset, resultType.getWidth()),
+                  resultType)
+            : loadDirectDynamicPackedPlane(rewriter, location, globalName,
+                                           resultType, *dynamicRange,
+                                           unknownFallback);
   cf::BranchOp::create(rewriter, location, continuation, ValueRange{direct});
 
   rewriter.setInsertionPointToEnd(genericBlock);
@@ -530,6 +539,26 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
+  if (range && continuous && assumeClean && directLayout->directContinuous) {
+    // Keep the actual contribution even when no writer is attached. These
+    // pointers bind the runtime's own retained planes, so a later force,
+    // deposit, or release needs neither reconstruction nor a shadow import.
+    StringRef retained = globalName == "__obelisk_state_unknown"
+                             ? "__obelisk_continuous_unknown"
+                             : "__obelisk_continuous_value";
+    storeDirectPackedPlane(rewriter, location, input, retained, range->offset,
+                           false);
+    if (globalName == "__obelisk_state_value") {
+      Value mask = arith::ConstantOp::create(
+          rewriter, location, inputType,
+          rewriter.getIntegerAttr(inputType,
+                                  APInt::getAllOnes(inputType.getWidth())));
+      storeDirectPackedPlane(rewriter, location, mask,
+                             "__obelisk_continuous_mask", range->offset, false);
+    }
+    return storeDirectPackedPlane(rewriter, location, input, globalName,
+                                  range->offset, trackChange);
+  }
   // Unguarded roots can never be forced or procedurally assigned, so they do
   // not need a retained continuous value for release. Guarded continuous
   // roots still need the runtime path even in an assume-clean specialization:

@@ -3628,6 +3628,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   });
   bool cleanWritableEval = evalScheduler && vpi.allowsWrite() &&
                            !hasLanguageOverride && !hasContinuousStore;
+  stateLayout->directContinuous =
+      directStaticState && !useAOT && vpi.allowsWrite() && hasContinuousStore;
   if (cleanWritableEval)
     materializeCleanEvalBodies(metadataDesign);
   auto evalStateLayout = cleanWritableEval

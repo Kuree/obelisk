@@ -1,6 +1,7 @@
 //===- ProcessObservers.cpp - Native computed observers -----------------===//
 
 #include "ProcessObservers.h"
+#include "ProcessShared.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
@@ -126,6 +127,8 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
   context->designTaskExecuting = false;
   context->activeControls = std::move(waiterControls);
   ++context->observerDepth;
+  if (context->nativeStateSpecializationFast)
+    *context->nativeStateSpecializationFast = 0;
   {
     ContextCallbackUnlock unlock(context);
     OBELISK_RT_TRY {
@@ -150,6 +153,8 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
     OBELISK_RT_CATCH_ALL { status = OBELISK_RT_INVALID_ARGUMENT; }
   }
   --context->observerDepth;
+  if (context->nativeStateSpecializationFast)
+    refreshNativeStaticSpecializationFastUnlocked(context);
   waiterControls = std::move(context->activeControls);
   if (ScheduledProcess *updated = findScheduledProcess(context, processToken);
       updated && updated->instance == waiter)

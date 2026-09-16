@@ -1930,6 +1930,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           transitions.reserve(static_cast<size_t>(std::min<uint64_t>(
               value.width, std::numeric_limits<size_t>::max())));
         if (isOverride) {
+          // A Tier-3 force/assign can be followed immediately by a native
+          // fragment or foreign reentry. Revoke direct addressing before
+          // publishing the new ownership, even without an AOT schedule.
+          invalidateNativeStaticSpecializationFastUnlocked(context);
           size_t limbs = context->stateValue.size();
           if (isAssignOverride) {
             if (context->assignMask.empty()) {

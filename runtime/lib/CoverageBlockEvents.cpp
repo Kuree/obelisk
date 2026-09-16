@@ -1,6 +1,7 @@
 //===- CoverageBlockEvents.cpp - Covergroup block-event sampling --------===//
 
 #include "ProcessContext.h"
+#include "ProcessShared.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -155,6 +156,8 @@ evaluateSamplerUnlocked(obelisk_rt_context *context,
   bool previousCanonicalPlane = context->observerForcesCanonicalPlane;
   context->observerForcesCanonicalPlane = true;
   ++context->observerDepth;
+  if (context->nativeStateSpecializationFast)
+    *context->nativeStateSpecializationFast = 0;
   {
     ContextCallbackUnlock unlock(context);
     OBELISK_RT_TRY {
@@ -186,6 +189,8 @@ evaluateSamplerUnlocked(obelisk_rt_context *context,
   }
   --context->observerDepth;
   context->observerForcesCanonicalPlane = previousCanonicalPlane;
+  if (context->nativeStateSpecializationFast)
+    refreshNativeStaticSpecializationFastUnlocked(context);
   if (status != OBELISK_RT_OK)
     return status;
   // Match the ordinary bound-observer contract: a one-bit two-state result

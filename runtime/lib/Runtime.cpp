@@ -387,6 +387,8 @@ void destroyContextNow(obelisk_rt_context *context) noexcept {
     std::fflush(stdout);
   }
   OBELISK_RT_CATCH_ALL {}
+  if (context->nativeStateSpecializationFast)
+    *context->nativeStateSpecializationFast = 0;
   delete context;
 }
 

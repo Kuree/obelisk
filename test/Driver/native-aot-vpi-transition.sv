@@ -40,6 +40,14 @@
 // RUN: %t.dir/bin/local_read | FileCheck %s --check-prefix=LOCAL-READ
 // RUN: %t.dir/bin/mixed_nba | FileCheck %s --check-prefix=MIXED-NBA
 // RUN: FileCheck %s --check-prefix=MIXED-IR < %t.dir/bin/mixed_nba.mlir
+// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=full --native-scheduler=generic \
+// RUN:   %t/design.sv lib/libnative_aot_vpi_transition.so -o bin/generic
+// RUN: %t.dir/bin/generic | FileCheck %s --check-prefix=GENERIC
+// RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm \
+// RUN:   %t/design.sv -o - | FileCheck %s --check-prefix=GENERIC-IR
+// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=full --native-scheduler=generic \
+// RUN:   %t/local_read.sv lib/libnative_aot_vpi_local_read.so -o bin/local_full
+// RUN: %t.dir/bin/local_full | FileCheck %s --check-prefix=LOCAL-READ
 
 //--- design.sv
 module native_aot_vpi_transition;
@@ -62,6 +70,8 @@ module native_aot_vpi_transition;
 endmodule
 
 // CHECK: seed=7 total=14
+// GENERIC: seed=7 total=14
+// GENERIC-IR: call i32 @obelisk_rt_v1_native_state_bind_specialization
 // CHECK: obelisk-signal-diagnostics
 // A startup force remains active until a vpiReleaseFlag operation.  The
 // generated schedule therefore keeps ownership in the fine scheduler, whose

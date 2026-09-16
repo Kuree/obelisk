@@ -3962,6 +3962,19 @@ obelisk_rt_status obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
                                                   uint8_t *value,
                                                   uint8_t *unknown,
                                                   uint64_t bit_count);
+// Bind the generated direct-access guard after state synchronization. Generic
+// scheduling retains ordinary publications and ordered updates; a native
+// schedule plan owns its own guard instead. The flag outlives the context.
+obelisk_rt_status
+obelisk_rt_v1_native_state_bind_specialization(obelisk_rt_context *context,
+                                               uint32_t *fast);
+// Bind canonical retained continuous contributions after native state sync.
+// The returned planes remain stable until context destruction. Generated
+// clean stores update the exact written bits and set the corresponding mask.
+obelisk_rt_status
+obelisk_rt_v1_native_state_bind_continuous(obelisk_rt_context *context,
+                                           uint8_t **value, uint8_t **unknown,
+                                           uint8_t **mask);
 // Whole static packed language force/assign services. `assign` selects
 // procedural assign ownership; release with `assign` selects deassign.
 obelisk_rt_status obelisk_rt_v1_native_override(

@@ -233,6 +233,23 @@ LogicalResult lowerPackedSimulationOperations(
     const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite,
     bool experimentalTwoState) {
   MLIRContext *context = module.getContext();
+  if (stateLayout.directContinuous) {
+    OpBuilder builder = OpBuilder::atBlockBegin(module.getBody());
+    auto pointer = LLVM::LLVMPointerType::get(context);
+    for (StringRef name :
+         {"__obelisk_continuous_value", "__obelisk_continuous_unknown",
+          "__obelisk_continuous_mask"}) {
+      auto global =
+          LLVM::GlobalOp::create(builder, module.getLoc(), pointer, false,
+                                 LLVM::Linkage::Internal, name, Attribute{}, 8);
+      Block *init = new Block;
+      global.getInitializerRegion().push_back(init);
+      OpBuilder initializer = OpBuilder::atBlockEnd(init);
+      LLVM::ReturnOp::create(
+          initializer, module.getLoc(),
+          LLVM::ZeroOp::create(initializer, module.getLoc(), pointer));
+    }
+  }
   bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
   auto lastTiming = std::chrono::steady_clock::now();
   auto markTiming = [&](StringRef name) {

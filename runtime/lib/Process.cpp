@@ -1731,6 +1731,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     // before making the plan visible to this fresh context.
     if (plan->promotion_invalidate)
       plan->promotion_invalidate();
+    if (context->nativeStateSpecializationFast) {
+      *context->nativeStateSpecializationFast = 0;
+      context->nativeStateSpecializationFast = nullptr;
+    }
     context->nativeSchedulePlan = plan;
     if (plan->specialization_fast)
       *plan->specialization_fast = 0;
@@ -2247,6 +2251,48 @@ obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
     context->nativeStateBitCount = bitCount;
     return OBELISK_RT_OK;
   }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_bind_specialization(obelisk_rt_context *context,
+                                               uint32_t *fast) {
+  if (!context || !fast)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  if (context->nativeSchedulePlan || !context->nativeStateValue ||
+      !context->nativeStateUnknown || !context->nativeStateBitCount ||
+      (context->nativeStateSpecializationFast &&
+       context->nativeStateSpecializationFast != fast))
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  *fast = 0;
+  context->nativeStateSpecializationFast = fast;
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_bind_continuous(obelisk_rt_context *context,
+                                           uint8_t **value, uint8_t **unknown,
+                                           uint8_t **mask) {
+  if (!context || !value || !unknown || !mask)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *value = *unknown = *mask = nullptr;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (!context->nativeStateValue || !context->nativeStateUnknown ||
+        !context->nativeStateBitCount)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    size_t limbs = context->stateValue.size();
+    context->continuousValue.resize(limbs, 0);
+    context->continuousUnknown.resize(limbs, 0);
+    context->continuousMask.resize(limbs, 0);
+    *value = reinterpret_cast<uint8_t *>(context->continuousValue.data());
+    *unknown = reinterpret_cast<uint8_t *>(context->continuousUnknown.data());
+    *mask = reinterpret_cast<uint8_t *>(context->continuousMask.data());
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 

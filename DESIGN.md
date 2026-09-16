@@ -1151,11 +1151,11 @@ Full cocotb support still requires other VPI callbacks, including value-change
 and read/write synchronization, and control operations. Full integration of
 group-level partial routing also remains required; preserving compiled
 fragments alone does not prove that unaffected groups stay in Tier 1.
-Writable-VPI continuous assignments also still require retained driver-value
-planes in clean generated bodies for force/release. Their conservative guard
-currently prevents those bodies from joining generated groups; this restriction
-must be removed with the driver-state implementation, not by assuming that a
-foreign clock source will never force another signal.
+Writable-VPI continuous assignments require retained driver-value planes for
+force/release. Generic compiled fragments bind the runtime's canonical retained
+planes and update exact contribution ranges directly while their addressing
+guard holds. Generated whole-group admission still retains its conservative
+continuous-assignment boundary until it supports the same driver-state contract.
 
 Pending inertial updates belong to the shared calendar. A return to the
 published four-state value cancels a pending default-inertial update for that
@@ -1803,6 +1803,38 @@ hierarchical/scoped backdoor subset described in `docs/vpi.md`. Read mode
 supports traversal and immediate reads at safe points. Full mode additionally
 supports immediate deposits, force, and release through the descriptor's
 materialized four-state safe-point value.
+
+Physical execution hierarchy and VPI lexical hierarchy need not have identical
+records. A generated scope is a lexical reflection object; an instance inside
+it remains a physical scope under the enclosing module. Its generated
+`vpiInternalScope` relation is valid in both read and full profiles
+(IEEE 1800-2023 37.85). Database validation checks that the generated scope
+and child instance share that enclosing physical scope, for both compact and
+full lexical records, rather than requiring every lexical parent to occupy
+the physical scope table. An edge into another enclosing scope remains
+invalid. This affects reflection validation only, without changing process
+ownership, scheduling or value-domain proofs.
+
+Direct state addressing is independent of scheduler ownership. Generic native
+fragments bind a clean-access flag after their state planes are synchronized;
+writable VPI capability alone does not make every load and store a runtime
+operation. These fragments retain ordinary transition publication and ordered
+NBA updates. Mutation and observer entry invalidate the flag before dependent
+execution, and quiescent boundaries can restore it when overrides and observer
+demand are absent. While an override is active, root-scoped guards still allow
+unaffected state to use direct addressing. Clean continuous stores also write
+the runtime's retained value and unknown planes and mark only the written bits
+in its contribution mask. These buffers remain stable for the context lifetime;
+there is no shadow import at a later force or release. Unsupported ranges and
+overridden stores retain the runtime path. Release synchronizes the visible
+native range before reenabling direct access. Guarded dynamic reads retain
+their activation-local bounds and
+X/Z fallback checks, even when the static root allows direct addressing. Net
+force/release resolution also reads current bound driver planes, since direct
+driver stores need not publish a visible signal transition. The flag proves
+addressing and visibility; knownness and static scheduling require separate
+proofs.
+
 Callbacks, delayed writes, system-task dispatch, strengths, and waveform
 registration remain future work.
 

@@ -115,6 +115,7 @@ struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
   llvm::DenseSet<uint32_t> nbaHandles;
   llvm::DenseSet<uint32_t> transitionHandles;
   bool transitionHandlesExact = false;
+  bool directContinuous = false;
 };
 
 struct DirectStaticStateRange {

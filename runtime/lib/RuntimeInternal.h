@@ -1963,6 +1963,9 @@ struct obelisk_rt_context {
   uint8_t *nativeStateValue = nullptr;
   uint8_t *nativeStateUnknown = nullptr;
   uint64_t nativeStateBitCount = 0;
+  // Addressing permission for native fragments using the generic scheduler.
+  // This does not authorize static fanout, NBA elision, or two-state execution.
+  uint32_t *nativeStateSpecializationFast = nullptr;
   const obelisk_rt_static_nba_root *nativeScheduleNBARoots = nullptr;
   uint32_t nativeScheduleNBARootCount = 0;
   const obelisk_rt_static_nba_site *nativeScheduleNBASites = nullptr;
