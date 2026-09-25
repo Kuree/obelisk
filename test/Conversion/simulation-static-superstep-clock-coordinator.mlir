@@ -5,8 +5,7 @@
 // RUN: obelisk-opt %t/residual-cycle.mlir \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-plan-static-superstep{missed-remarks=true}))' \
 // RUN:   > %t/residual-cycle.out 2> %t/residual-cycle.err
-// RUN: FileCheck %s --check-prefix=NEGATIVE < %t/residual-cycle.out
-// RUN: FileCheck %s --check-prefix=NEGATIVE-REMARK < %t/residual-cycle.err
+// RUN: FileCheck %s --check-prefix=PARTIAL < %t/residual-cycle.out
 
 // A runtime-owned Clause 31 coordinator may close an Observed scheduling SCC
 // around an ordinary actor. Removing that exact cold actor leaves no procedural
@@ -97,13 +96,14 @@ module {
   }
 }
 
-// A cold coordinator must not conceal a residual ordinary ProcessOrder cycle.
+// A residual ordinary ProcessOrder cycle remains bytecode-owned while the
+// other admitted work keeps its static plan.
 
 //--- residual-cycle.mlir
 module {
-  // NEGATIVE: obelisk_sim.design @residual_cycle attributes {
-  // NEGATIVE-NOT: obelisk_sim.static_superstep
-  // NEGATIVE-REMARK: remark: static superstep not planned: control-loop compute group
+  // PARTIAL: obelisk_sim.design @residual_cycle attributes {
+  // PARTIAL-SAME: obelisk_sim.static_superstep = #obelisk_sim.static_superstep<version = 1
+  // PARTIAL-SAME: actors = [@root, @ordinary_a, @ordinary_b]
   obelisk_sim.design @residual_cycle attributes {
     compute_graph = #obelisk_sim.graph<
       version = 1, vpi = off, workers = 1,

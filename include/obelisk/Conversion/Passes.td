@@ -105,6 +105,21 @@ def ObeliskSimUnrollBoundedLoopsPass
                            "mlir::cf::ControlFlowDialect"];
 }
 
+def ObeliskSimMarkBoundedLoopsPass
+    : Pass<"obelisk-sim-mark-bounded-loops", "obelisk::sim::SimFuncOp"> {
+  let summary = "Record the termination proof for bounded induction loops";
+  let description = [{
+    Marks every constant-induction, non-suspending CFG loop whose exit is proven
+    in closed form, including loops the unroller refused to replicate because
+    their trip count or body size exceeded its budget. The mark carries no
+    iteration count and changes no IR; it lets schedule-group classification
+    distinguish such a loop from an unbounded control loop, which IEEE
+    1800-2023 12.7.6 describes as able to hang the event scheduler.
+  }];
+  let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
 def ObeliskSimThreadSuspensionPass
     : Pass<"obelisk-sim-thread-suspension", "obelisk::sim::SimFuncOp"> {
   let summary = "Thread promoted SSA state through suspension continuations";

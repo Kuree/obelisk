@@ -2688,8 +2688,13 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     bool evalBodyFusion, uint64_t &eliminatedTerminationPolls,
     uint64_t &ifConvertedNBAs, uint64_t &sharedStableConditions,
     uint64_t &promotedPrivateStores,
-    std::unique_ptr<PrivateStaticAccessIndex> &accessIndex) {
-  auto rejectEval = [&](StringRef) -> FailureOr<sim::SimFuncOp> {
+    std::unique_ptr<PrivateStaticAccessIndex> &accessIndex,
+    llvm::StringMap<uint64_t> &rejections) {
+  // Tally the reason instead of emitting a diagnostic per rejection: a remark
+  // here is attached to design IR and would serialize the module once per
+  // rejected cohort. The caller reports the distribution once.
+  auto rejectEval = [&](StringRef reason) -> FailureOr<sim::SimFuncOp> {
+    ++rejections[reason];
     return failure();
   };
   SmallVector<BodyFusionCandidate, 4> candidates;
@@ -3197,6 +3202,12 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     for (Operation &operation : fused.getBody().front().without_terminator())
       if (!isa<sim::SimCoveragePointHitOp>(operation))
         builder.clone(operation, evalMapping);
+    // The shared wait may define constants forwarded into an activation.
+    // Recreate them in the eval entry so cloned bodies never capture a value
+    // from the original coroutine region. Coverage still belongs at rearm.
+    for (Operation &operation : wait->without_terminator())
+      if (isa<arith::ConstantOp>(operation))
+        builder.clone(operation, evalMapping);
 
     Block *activation = wait->getSuccessor(0);
     SmallVector<Block *> activationBlocks;
@@ -3442,6 +3453,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   uint64_t sharedConditions = 0;
   uint64_t promotedStores = 0;
   std::unique_ptr<PrivateStaticAccessIndex> fusionAccessIndex;
+  llvm::StringMap<uint64_t> fusionRejections;
   CombinationalFusionAnalysis combinational(design, provenance);
   for (Attribute attribute : fusions) {
     auto fusion = dyn_cast<sim::ComputeFusionAttr>(attribute);
@@ -3452,7 +3464,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
         design, symbols, fusion, graph, provenance, scheduleOrder, resumeTargets,
         entryOrder, spawnsByCallee, evalScheduler, removedPolls, convertedNBAs,
-        sharedConditions, promotedStores, fusionAccessIndex);
+        sharedConditions, promotedStores, fusionAccessIndex, fusionRejections);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
     // the actor scheduler.  A primitive-only cohort is different: replacing
@@ -3475,6 +3487,22 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       ++materializedFusions;
     else
       ++rejectedFusions;
+  }
+  // A planned cohort that fails to materialize is Tier-1 work lost after
+  // planning already accepted it, and the reason was previously discarded.
+  if (design->getParentOfType<ModuleOp>()->hasAttr(
+          "obelisk.debug.native_timing")) {
+    SmallVector<StringRef> ordered;
+    for (const auto &entry : fusionRejections)
+      ordered.push_back(entry.first());
+    llvm::sort(ordered, [&](StringRef lhs, StringRef rhs) {
+      return std::make_pair(fusionRejections.lookup(rhs), rhs) <
+             std::make_pair(fusionRejections.lookup(lhs), lhs);
+    });
+    for (StringRef reason : ordered)
+      llvm::errs() << "obelisk fusion rejection: count="
+                   << fusionRejections.lookup(reason) << " reason=" << reason
+                   << '\n';
   }
   // The eval scheduler is a deliberately closed generated-model experiment.
   // Materialize every eligible actor body: selectively retaining coroutine

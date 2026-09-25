@@ -1373,8 +1373,14 @@ static int executeCompilation(
 
   if (!emitSlang && !emitBindings) {
     PassManager passManager(&context);
-    if (args.hasArg(OPT_mlir_timing))
+    if (args.hasArg(OPT_mlir_timing)) {
       passManager.enableTiming();
+      // Cohort fusion runs here, long before native lowering sets the same
+      // marker. Body fusion is the one Tier-1 path that does not depend on
+      // whole-design admission, so its planning decisions must be reportable
+      // under the existing diagnostic flag rather than only its pass timing.
+      (*module)->setAttr("obelisk.debug.native_timing", UnitAttr::get(&context));
+    }
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(

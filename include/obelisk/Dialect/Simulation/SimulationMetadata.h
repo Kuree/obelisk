@@ -206,6 +206,15 @@ inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
 inline constexpr llvm::StringLiteral staticBodyFusion =
     "obelisk_sim.static_body_fusion";
 inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";
+/// Termination proof for a constant-induction, non-suspending CFG loop. Set on
+/// the latch branch that closes the loop and on the header's conditional branch.
+/// Carries no iteration count: it records only that the loop provably exits, so
+/// schedule-group classification need not treat the backedge as an unbounded
+/// control loop. Independent of whether the unroller replicated the body.
+inline constexpr llvm::StringLiteral boundedLoopLatch =
+    "obelisk_sim.bounded_loop_latch";
+inline constexpr llvm::StringLiteral boundedLoopHeader =
+    "obelisk_sim.bounded_loop_header";
 inline constexpr llvm::StringLiteral computeKernels =
     "obelisk_sim.compute_kernels";
 inline constexpr llvm::StringLiteral threeTierSchedule =

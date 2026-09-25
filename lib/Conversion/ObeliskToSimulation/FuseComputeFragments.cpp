@@ -491,6 +491,26 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   }
   if (!fusions.empty())
     design->setAttr(metadataName, ArrayAttr::get(design.getContext(), fusions));
+  // Local cohort fusion is the only Tier-1 coarsening that does not require
+  // whole-design admission, so its planned membership is the figure that
+  // decides whether a design is losing Tier-1 work to admission or to fusion.
+  // Report the distribution, not just the pass timing.
+  if (module->hasAttr("obelisk.debug.native_timing")) {
+    uint64_t members = 0;
+    size_t largest = 0;
+    for (Attribute attribute : fusions) {
+      size_t size =
+          cast<sim::ComputeFusionAttr>(attribute).getFragments().size();
+      members += size;
+      largest = std::max(largest, size);
+    }
+    llvm::errs() << "obelisk fusion planning:"
+                 << " body=" << bodyFusion << " primitive=" << primitiveOnly
+                 << " eval_body=" << evalBodyFusion
+                 << " groups=" << fusions.size() << " members=" << members
+                 << " largest=" << largest
+                 << " rejected_actors=" << rejectedActors.getValue() << '\n';
+  }
 }
 
 } // namespace

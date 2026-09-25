@@ -47,6 +47,22 @@ bool isRuntimeClockCoordinator(sim::SimFuncOp function);
 /// process body.
 bool isCovergroupClockingSamplerActor(sim::SimFuncOp function);
 
+/// Graph cost withheld from native scheduling by one boundary reason.
+///
+/// A fragment can touch several reasons, so `cost` and `fragments` may overlap
+/// between entries and do not sum to the withheld total. The exact partition is
+/// `getNativeGraphCost()`, `getExcludedActorCost()` and
+/// `getExcludedBlockCost()`.
+struct NativeAOTBoundaryCost {
+  std::string reason;
+  /// Graph cost of fragments this reason contributed to withholding.
+  uint64_t cost = 0;
+  /// Fragments this reason contributed to withholding.
+  uint32_t fragments = 0;
+  /// Actors this reason removed from the static inventory outright.
+  uint32_t actors = 0;
+};
+
 /// Immutable native-scheduler eligibility facts for one module.
 ///
 /// `eligible` means at least one statically bound actor can use native AOT
@@ -65,12 +81,22 @@ public:
   /// observers. Explicit AOT may use the hybrid coordinator for these actors
   /// while retaining the statically bound monitor actors.
   bool isForcedHybridEligible() const { return forcedHybridEligible; }
-  /// Whether Auto can profit from a fully closed static schedule.
+  /// Whether Auto has enough native work for a closed schedule, or for a
+  /// partial periodic island. Lowering still verifies exact fanout and direct
+  /// eval ownership.
   bool isAOTCostEffective() const { return aotCostEffective; }
   bool hasPeriodicClockCandidate() const { return periodicClockCandidate; }
   uint64_t getTotalGraphCost() const { return totalGraphCost; }
   uint64_t getNativeGraphCost() const { return nativeGraphCost; }
+  /// Graph cost in actors removed from the static inventory outright.
+  uint64_t getExcludedActorCost() const { return excludedActorCost; }
+  /// Graph cost in admitted actors' individual bytecode blocks.
+  uint64_t getExcludedBlockCost() const { return excludedBlockCost; }
   mlir::ArrayRef<std::string> getReasons() const { return reasons; }
+  /// Per-reason attribution of the withheld graph cost, most expensive first.
+  mlir::ArrayRef<NativeAOTBoundaryCost> getBoundaryCosts() const {
+    return boundaryCosts;
+  }
 
   const llvm::DenseMap<mlir::Operation *, uint32_t> &getActorSlots() const {
     return actorSlots;
@@ -99,7 +125,10 @@ private:
   bool periodicClockCandidate = false;
   uint64_t totalGraphCost = 0;
   uint64_t nativeGraphCost = 0;
+  uint64_t excludedActorCost = 0;
+  uint64_t excludedBlockCost = 0;
   mlir::SmallVector<std::string> reasons;
+  mlir::SmallVector<NativeAOTBoundaryCost> boundaryCosts;
   llvm::DenseMap<mlir::Operation *, uint32_t> actorSlots;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<mlir::Block *>>
       bytecodeFragments;

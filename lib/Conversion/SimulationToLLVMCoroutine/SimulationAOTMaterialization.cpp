@@ -17,6 +17,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include <functional>
 #include <numeric>
@@ -42,7 +43,12 @@ static std::optional<uint64_t> constantU64(Value value) {
                  : std::nullopt;
 }
 
-static bool isGeneratedEvalBody(sim::SimFuncOp function) {
+static bool isGeneratedEvalBody(
+    sim::SimFuncOp function,
+    const llvm::StringSet<> *selectedRawBodies = nullptr) {
+  if (selectedRawBodies && function->hasAttr("obelisk.eval.raw_captures") &&
+      !selectedRawBodies->contains(function.getSymName()))
+    return false;
   return !function->hasAttr(evalRuntimeNBARequiredAttr) &&
          (function->hasAttr("obelisk.eval.raw_captures") ||
           function->hasAttr("obelisk.eval.path_known_predicate") ||
@@ -50,7 +56,8 @@ static bool isGeneratedEvalBody(sim::SimFuncOp function) {
 }
 
 static SmallVector<sim::SimFuncOp>
-collectGeneratedEvalCallClosure(ModuleOp module) {
+collectGeneratedEvalCallClosure(
+    ModuleOp module, const llvm::StringSet<> *selectedRawBodies = nullptr) {
   // This walk does not mutate symbols. Index each owning design once instead
   // of scanning all code units for every edge of the generated call graph.
   SymbolTableCollection symbolTables;
@@ -58,7 +65,7 @@ collectGeneratedEvalCallClosure(ModuleOp module) {
   SmallVector<sim::SimFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 16> visited;
   module.walk([&](sim::SimFuncOp function) {
-    if (isGeneratedEvalBody(function))
+    if (isGeneratedEvalBody(function, selectedRawBodies))
       pending.push_back(function);
   });
   while (!pending.empty()) {
@@ -90,10 +97,12 @@ collectGeneratedEvalCallClosure(ModuleOp module) {
 
 static FailureOr<SmallVector<GeneratedTransitionRange>>
 collectGeneratedTransitionRanges(ModuleOp module,
-                                 ArrayRef<NativeDirectFragment> fragments) {
+                                 ArrayRef<NativeDirectFragment> fragments,
+                                 const llvm::StringSet<> *selectedRawBodies) {
   SmallVector<GeneratedTransitionRange> ranges;
   LogicalResult valid = success();
-  for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
+  for (sim::SimFuncOp function :
+       collectGeneratedEvalCallClosure(module, selectedRawBodies)) {
     if (failed(valid))
       break;
     unsigned directFragment = UINT_MAX;
@@ -513,10 +522,12 @@ proveDynamicEvalNBA(LLVM::CallOp call,
 // already been written; no actor executes between these publications.
 static void normalizeGeneratedWideTransitions(
     ModuleOp module, const llvm::DataLayout &dataLayout,
-    const NativeStateLayout &layout, const NativeStaticFanoutPlan &fanout) {
+    const NativeStateLayout &layout, const NativeStaticFanoutPlan &fanout,
+    const llvm::StringSet<> *selectedRawBodies) {
   NativeStateLayout clean = makeCleanEvalStateLayout(layout);
   SmallVector<LLVM::CallOp> calls;
-  for (auto function : collectGeneratedEvalCallClosure(module))
+  for (auto function :
+       collectGeneratedEvalCallClosure(module, selectedRawBodies))
     function.walk([&](LLVM::CallOp call) {
       if (call.getCallee() &&
           *call.getCallee() == "obelisk_rt_v1_scheduler_signal_transition")
@@ -593,6 +604,16 @@ FailureOr<bool> makeNativeEvalPlan(
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
+  llvm::StringSet<> selectedEvalBodies;
+  if (staticEvalIsland)
+    for (const NativeDirectFragment &direct : directFragments) {
+      if (!direct.body.empty())
+        selectedEvalBodies.insert(direct.body);
+      if (!direct.twoStateBody.empty())
+        selectedEvalBodies.insert(direct.twoStateBody);
+    }
+  const llvm::StringSet<> *selectedRawBodies =
+      staticEvalIsland ? &selectedEvalBodies : nullptr;
 
   // Route shells and runtime checkpoint wrappers can both reference this
   // tuple, including across a conservative late Eval handoff.
@@ -615,9 +636,10 @@ FailureOr<bool> makeNativeEvalPlan(
     // Normalize before the ingress/NBA proof so wide clock disturbances are
     // visible to the same range analysis as ordinary narrow publications.
     normalizeGeneratedWideTransitions(module, dataLayout, stateLayout,
-                                      staticFanoutPlan);
+                                      staticFanoutPlan, selectedRawBodies);
     FailureOr<SmallVector<GeneratedTransitionRange>> transitionRanges =
-        collectGeneratedTransitionRanges(module, directFragments);
+        collectGeneratedTransitionRanges(module, directFragments,
+                                         selectedRawBodies);
     if (failed(transitionRanges))
       return failure();
     generatedTransitionRanges = std::move(*transitionRanges);
@@ -653,7 +675,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                             generatedTransitionRanges,
                                             computeGraph};
     SmallVector<sim::SimFuncOp> evalClosure =
-        collectGeneratedEvalCallClosure(module);
+        collectGeneratedEvalCallClosure(module, selectedRawBodies);
     llvm::SmallPtrSet<Operation *, 16> evalClosureSet;
     for (sim::SimFuncOp function : evalClosure)
       evalClosureSet.insert(function.getOperation());
@@ -1547,12 +1569,6 @@ FailureOr<bool> makeNativeEvalPlan(
           ambiguousCodeUnitOwners.insert(codeUnit);
       }
     }
-    auto isGeneratedEvalBody = [](sim::SimFuncOp function) {
-      return !function->hasAttr("obelisk.eval.runtime_nba_required") &&
-             (function->hasAttr("obelisk.eval.raw_captures") ||
-              function->hasAttr("obelisk.eval.path_known_predicate") ||
-              function->hasAttr("obelisk.eval.selected_two_state"));
-    };
     struct GeneratedTransition {
       LLVM::CallOp call;
       bool periodicTwoState = false;
@@ -1560,7 +1576,8 @@ FailureOr<bool> makeNativeEvalPlan(
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
     };
     SmallVector<GeneratedTransition> transitions;
-    for (sim::SimFuncOp function : collectGeneratedEvalCallClosure(module)) {
+    for (sim::SimFuncOp function :
+         collectGeneratedEvalCallClosure(module, selectedRawBodies)) {
       bool periodicTwoState =
           function->hasAttr("obelisk.eval.selected_two_state");
       auto activeOwner = activeOwnerBits.find(function.getSymName());
@@ -1784,7 +1801,7 @@ FailureOr<bool> makeNativeEvalPlan(
     // the activation returns, without constructing a runtime NBA object.
     SmallVector<std::pair<LLVM::CallOp, bool>> runtimeEscapes;
     module.walk([&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function))
+      if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
       bool twoState = function->hasAttr("obelisk.eval.selected_two_state");
       function.walk([&](LLVM::CallOp call) {
@@ -2263,7 +2280,7 @@ FailureOr<bool> makeNativeEvalPlan(
     // register-file read.
     SmallVector<std::pair<LLVM::CallOp, bool>> dynamicPlaneLoads;
     module.walk([&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function))
+      if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
       bool twoState = function->hasAttr("obelisk.eval.selected_two_state");
       function.walk([&](LLVM::CallOp call) {
@@ -2515,7 +2532,7 @@ FailureOr<bool> makeNativeEvalPlan(
     // calculation, including the signed 32-bit handle bounds. The outer NBA
     // guard still rejects invalid array indices and a mismatched root tag.
     module.walk([&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function))
+      if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
       SmallVector<LLVM::CallOp> offsets;
       function.walk([&](LLVM::CallOp call) {
@@ -2562,7 +2579,7 @@ FailureOr<bool> makeNativeEvalPlan(
     while (true) {
       SmallVector<Operation *> deadHandleOperations;
       module.walk([&](sim::SimFuncOp function) {
-        if (!isGeneratedEvalBody(function))
+        if (!isGeneratedEvalBody(function, selectedRawBodies))
           return;
         function.walk([&](Operation *operation) {
           if (!operation->use_empty())

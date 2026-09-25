@@ -1058,9 +1058,20 @@ LogicalResult emitTargetOutput(ModuleOp module,
              << " fully_eligible=" << aot.isFullyEligible()
              << " cost_effective=" << aot.isAOTCostEffective()
              << " native_cost=" << aot.getNativeGraphCost()
-             << " total_cost=" << aot.getTotalGraphCost() << '\n';
+             << " total_cost=" << aot.getTotalGraphCost()
+             << " excluded_actor_cost=" << aot.getExcludedActorCost()
+             << " excluded_block_cost=" << aot.getExcludedBlockCost() << '\n';
       for (StringRef reason : aot.getReasons())
         errs() << "obelisk native boundary: " << reason << '\n';
+      // A fragment can touch several reasons, so these costs may overlap and
+      // do not sum to the withheld total. They identify which boundary holds
+      // the most graph cost, which the reason list alone does not.
+      for (const obelisk::analysis::NativeAOTBoundaryCost &entry :
+           aot.getBoundaryCosts())
+        errs() << "obelisk native boundary cost: cost=" << entry.cost
+               << " fragments=" << entry.fragments
+               << " actors=" << entry.actors << " reason=" << entry.reason
+               << '\n';
     }
     if (!aot.isEligible() || !aot.isAOTCostEffective())
       *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;

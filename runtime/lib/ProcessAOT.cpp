@@ -1355,6 +1355,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     status = drainNativeAOTCurrentSlotUnlocked(context);
     if (status != OBELISK_RT_OK)
       return status;
+    if (context->schedulerFinishRequested)
+      return OBELISK_RT_TIER_UNAVAILABLE;
     // Startup actors can enable waveform collection during the drain above.
     // Recheck before the periodic loop takes ownership of the clock.
     if (obelisk_rt_dump_active_unlocked(context))
@@ -1481,6 +1483,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       if (context->schedulerFinishRequested)
         break;
     }
+    // A runtime-owned bootstrap actor may request $finish before the periodic
+    // handoff. The generated loop has no work left to claim; return control to
+    // the scheduler so it can complete final callbacks and terminate.
+    if (context->schedulerFinishRequested)
+      return OBELISK_RT_TIER_UNAVAILABLE;
 
     auto periodicFanoutMatches =
         [&](const obelisk_rt_static_fanout_entry &entry,
@@ -1738,6 +1745,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       status = drainNativeAOTCurrentSlotUnlocked(context);
       if (status != OBELISK_RT_OK)
         return status;
+      if (context->schedulerFinishRequested)
+        return OBELISK_RT_TIER_UNAVAILABLE;
     }
 
     // A finite clocked bootstrap prefix can also enable waveform collection.

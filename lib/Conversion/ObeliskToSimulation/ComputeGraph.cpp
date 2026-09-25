@@ -1022,8 +1022,9 @@ void normalizeEdges(SmallVectorImpl<sim::ComputeEdgeAttr> &edges) {
 
 /// Whether the source-order edges inside one group form a cycle. A cyclic
 /// group of procedural fragments is a loop to execute, not a value to converge.
-bool hasProceduralControlCycle(ArrayRef<uint32_t> group,
-                               ArrayRef<sim::ComputeEdgeAttr> edges) {
+bool hasProceduralControlCycle(
+    ArrayRef<uint32_t> group, ArrayRef<sim::ComputeEdgeAttr> edges,
+    const DenseSet<std::pair<uint32_t, uint32_t>> &boundedBackedges) {
   DenseSet<uint32_t> members(group.begin(), group.end());
   DenseMap<uint32_t, SmallVector<uint32_t>> successors;
   DenseMap<uint32_t, unsigned> indegree;
@@ -1033,6 +1034,12 @@ bool hasProceduralControlCycle(ArrayRef<uint32_t> group,
     if (edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
         !members.contains(edge.getSource()) ||
         !members.contains(edge.getTarget()))
+      continue;
+    // A loop with a proven finite exit is not the IEEE 1800-2023 12.7.6 hazard
+    // of a loop that can hang the scheduler. Unrolling such a loop would have
+    // deleted this backedge outright; skipping it here reaches the same
+    // classification without paying the replicated body.
+    if (boundedBackedges.contains({edge.getSource(), edge.getTarget()}))
       continue;
     successors[edge.getSource()].push_back(edge.getTarget());
     ++indegree[edge.getTarget()];
@@ -1196,6 +1203,10 @@ private:
   DenseMap<Block *, uint32_t> fragmentForBlock;
   SmallVector<sim::ComputeEdgeAttr> edges;
   EffectIndex watchedEffects;
+  /// Process-order edges that close a loop already proven to terminate. They
+  /// remain ordinary edges in the graph; only the control-loop classification
+  /// skips them, exactly as an unrolled backedge would have been absent.
+  DenseSet<std::pair<uint32_t, uint32_t>> boundedBackedges;
 
   SmallVector<DescriptorProvenance> nbaRoots, eventRoots;
   SmallVector<uint32_t> nbaCommitIds, eventCommitIds;
@@ -1493,8 +1504,15 @@ void ComputeGraphBuilder::buildControlEdges() {
           isSuspensionTerminator(terminator)
               ? sim::ComputeEdgeKind::Resume
               : sim::ComputeEdgeKind::ProcessOrder;
-      for (Block *successor : terminator->getSuccessors())
-        addEdge(fragment.id, fragmentID(successor), controlKind);
+      bool boundedLatch =
+          controlKind == sim::ComputeEdgeKind::ProcessOrder &&
+          terminator->hasAttr(sim::metadata::boundedLoopLatch);
+      for (Block *successor : terminator->getSuccessors()) {
+        uint32_t target = fragmentID(successor);
+        addEdge(fragment.id, target, controlKind);
+        if (boundedLatch)
+          boundedBackedges.insert({fragment.id, target});
+      }
     }
 
     // A spawn reached through a zero-time call still creates an actor, so the
@@ -1855,6 +1873,16 @@ ComputeGraphBuilder::buildSchedulingEdges() {
       analysis::projectActivationSchedulingEdges(edges, [&](uint32_t source) {
         return isSettlingEntryKind(fragments[source].function.getEntryKind());
       });
+  // A backedge whose loop is proven to terminate is not a scheduling cycle.
+  // Unrolling such a loop deletes this edge outright, so removing it here keeps
+  // the same schedule the unroller would have produced without paying for the
+  // replicated body. The edge remains in the executable graph; only schedule
+  // grouping ignores it.
+  if (!boundedBackedges.empty())
+    llvm::erase_if(schedulingEdges, [&](sim::ComputeEdgeAttr edge) {
+      return edge.getKind() == sim::ComputeEdgeKind::ProcessOrder &&
+             boundedBackedges.contains({edge.getSource(), edge.getTarget()});
+    });
   normalizeEdges(schedulingEdges);
   return schedulingEdges;
 }
@@ -1899,6 +1927,11 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
         if (uint32_t group = internalGroup(edge); group != absent)
           internalEdges[cursor[group]++] = edge;
     }
+    if (!boundedBackedges.empty() &&
+        design->getParentOfType<ModuleOp>()->hasAttr(
+            "obelisk.debug.native_timing"))
+      llvm::errs() << "obelisk bounded backedges in graph: "
+                   << boundedBackedges.size() << '\n';
     SmallVector<Attribute> groupAttributes;
     for (auto [index, group] : llvm::enumerate(groups)) {
       ArrayRef<sim::ComputeEdgeAttr> groupEdges =
@@ -1915,7 +1948,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
       sim::ComputeScheduleKind schedule = sim::ComputeScheduleKind::Acyclic;
       SmallVector<Attribute> feedback;
       if (cyclic) {
-        if (hasProceduralControlCycle(group, groupEdges)) {
+        if (hasProceduralControlCycle(group, groupEdges, boundedBackedges)) {
           schedule = sim::ComputeScheduleKind::ControlLoop;
         } else {
           schedule = sim::ComputeScheduleKind::Convergence;
@@ -1927,9 +1960,12 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
                 edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&
                 edge.getResource() && unique.insert(edge.getResource()).second)
               feedback.push_back(edge.getResource());
+          // Convergence compares state feedback on a cut. A group whose only
+          // remaining cycle is a proven-bounded backedge has no such feedback to
+          // compare, so it cannot use that schedule; keep the conservative
+          // control-loop handoff instead of failing the build.
           if (feedback.empty())
-            return design.emitOpError(
-                "cyclic schedule group has no state feedback to compare");
+            schedule = sim::ComputeScheduleKind::ControlLoop;
           // `edges` is already normalized, so this order is deterministic.
         }
       }

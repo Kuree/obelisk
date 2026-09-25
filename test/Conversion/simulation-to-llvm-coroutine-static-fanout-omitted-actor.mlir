@@ -11,7 +11,7 @@
 // RUN:   2>&1 | FileCheck %s --check-prefix=ACTORS
 // RUN: obelisk-opt %t/noncertified.mlir \
 // RUN:   --pass-pipeline='builtin.module(convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=FALLBACK
+// RUN:   | FileCheck %s --check-prefix=BRIDGED
 
 // EXACT: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
 // ACTORS: native-aot eligible=true fully=false{{.*}}forced_hybrid=true
@@ -19,15 +19,15 @@
 // ACTORS-NEXT: actor 1 @ordinary
 // ACTORS-NEXT: actor 2 @clock
 // ACTORS-NEXT: bytecode @coordinator bb1
-// FALLBACK-LABEL: module attributes
-// FALLBACK-NOT: @__obelisk_aot_static_fanout_v1
-// FALLBACK: llvm.func @obelisk_rt_v1_scheduler_signal_transition
+// BRIDGED-LABEL: module attributes
+// BRIDGED: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
+// BRIDGED: llvm.func @obelisk_rt_v1_scheduler_signal_transition
 
 // The planner first certifies the exact Clause 31 clock coordinator as the
 // sole runtime-owned omission. The sed variant preserves that actor inventory
 // but changes the omitted function to a different cold callback and makes its
 // spawn dynamic. NativeAOT therefore has no actor slot for it, but static
-// fanout must not silently drop its Watch dependency.
+// fanout keeps its Watch dependency on the runtime transition bridge.
 
 //--- input.mlir
 module attributes {

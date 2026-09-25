@@ -353,6 +353,12 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
       functionManager.addPass(createCanonicalizerPass());
       functionManager.addPass(createCSEPass());
     }
+    // Record loop termination proofs for the sweeps the unroller refused to
+    // replicate. This is metadata only, so it runs at every optimization level:
+    // schedule-group classification must not depend on whether replication
+    // happened to fit its budget. It must precede suspension threading, which
+    // adds continuation block arguments that hide the induction shape.
+    functionManager.addPass(createObeliskSimMarkBoundedLoopsPass());
     functionManager.addPass(createObeliskSimThreadSuspensionPass());
   }
 

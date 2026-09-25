@@ -339,8 +339,27 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   NativeAOTAnalysis result;
   bool invalidPlan = false;
   bool onlyConcurrentColdBoundaries = true;
+  bool hasRuntimePathPublication = false;
   llvm::SmallDenseSet<Operation *> dynamicActors;
   llvm::SmallDenseSet<Operation *> bytecodeActors;
+  // Boundary attribution is diagnostic only: it records which reason withheld
+  // which fragment so a partial-admission decision can be measured instead of
+  // inferred. It never participates in the admission proof itself.
+  llvm::StringMap<unsigned> reasonIndices;
+  SmallVector<std::string> reasonNames;
+  llvm::DenseMap<Block *, SmallVector<unsigned>> blockReasons;
+  llvm::DenseMap<Operation *, SmallVector<unsigned>> actorReasons;
+  auto internReason = [&](StringRef reason) {
+    auto [entry, inserted] =
+        reasonIndices.try_emplace(reason, reasonNames.size());
+    if (inserted)
+      reasonNames.emplace_back(reason.str());
+    return entry->second;
+  };
+  auto noteReason = [](SmallVector<unsigned> &indices, unsigned index) {
+    if (!llvm::is_contained(indices, index))
+      indices.push_back(index);
+  };
   auto findContainingFunction = [](Operation *operation) {
     auto function = dyn_cast_or_null<sim::SimFuncOp>(operation);
     if (!function && operation)
@@ -430,13 +449,20 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     auto function = operation->getParentOfType<sim::SimFuncOp>();
     if (!function || !operation->getBlock())
       return;
+    noteReason(blockReasons[operation->getBlock()], internReason(reason));
     auto &fragments = result.bytecodeFragments[function.getOperation()];
     if (!llvm::is_contained(fragments, operation->getBlock()))
       fragments.push_back(operation->getBlock());
   };
+  // Every caller pairs this with the requireBytecodeFragment above it, so the
+  // actor inherits the reasons already recorded against its own blocks.
   auto excludeBytecodeActor = [&](Operation *operation) {
     if (auto function = operation->getParentOfType<sim::SimFuncOp>())
       bytecodeActors.insert(function.getOperation());
+  };
+  auto excludeDynamicActor = [&](Operation *function, StringRef reason) {
+    dynamicActors.insert(function);
+    noteReason(actorReasons[function], internReason(reason));
   };
 
   // Backend selection needs to distinguish arbitrary calendar delays from a
@@ -798,6 +824,107 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     // to the user design and cannot inherit coordinator-only hybrid admission.
     return true;
   };
+  // A control loop needs bytecode scheduling because its progress is not driven
+  // solely by state change. That property belongs to the fragments on the
+  // procedural cycle, not to every fragment the SCC happens to contain: one
+  // testbench oscillator that reads a design signal inside `forever` closes an
+  // SCC around the whole clocked datapath, whose members are ordinary
+  // state-driven work.
+  //
+  // The hazard is a loop that re-reaches its own work without suspending, which
+  // IEEE 1800-2023 12.7.6 describes as hanging the event scheduler. A fragment
+  // merely reachable *after* such a loop is not that hazard: it runs once the
+  // loop finishes. So condense this group's process-order subgraph and keep only
+  // nontrivial components and self-loops, rather than every fragment a
+  // topological sweep fails to order. A fragment outside every process-order
+  // cycle cannot be re-entered without suspending, which is exactly the
+  // requirement the Convergence arm below already admits natively. IEEE
+  // 1800-2023 4.7 lets a simulator run a process to completion as one event
+  // instead of interleaving, and 4.6's source-order and NBA-order guarantees are
+  // preserved by doing so.
+  // Index the process-order edges once: a per-group rescan of the whole edge
+  // list is quadratic on a design with many control-loop groups.
+  llvm::DenseMap<uint32_t, SmallVector<uint32_t>> processOrderSuccessors;
+  for (Attribute edgeAttribute : graph.getEdges()) {
+    auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
+    if (edge && edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
+      processOrderSuccessors[edge.getSource()].push_back(edge.getTarget());
+  }
+  auto proceduralControlResidue = [&](sim::ComputeGroupAttr group) {
+    llvm::DenseSet<uint32_t> members;
+    for (int64_t member : group.getFragments().asArrayRef())
+      if (member >= 0 && static_cast<uint64_t>(member) < nodes.size())
+        members.insert(static_cast<uint32_t>(member));
+    llvm::DenseMap<uint32_t, SmallVector<uint32_t>> successors;
+    for (uint32_t member : members)
+      for (uint32_t target : processOrderSuccessors.lookup(member))
+        if (members.contains(target))
+          successors[member].push_back(target);
+
+    // Iterative Tarjan: these subgraphs follow user process CFGs, so recursion
+    // depth is attacker-visible in the worst case.
+    llvm::DenseSet<uint32_t> residue;
+    llvm::DenseMap<uint32_t, unsigned> discovery;
+    llvm::DenseMap<uint32_t, unsigned> lowlink;
+    llvm::DenseSet<uint32_t> onStack;
+    SmallVector<uint32_t> componentStack;
+    unsigned nextIndex = 0;
+    struct Frame {
+      uint32_t node;
+      size_t next;
+    };
+    for (uint32_t root : members) {
+      if (discovery.contains(root))
+        continue;
+      SmallVector<Frame> work{{root, 0}};
+      discovery[root] = lowlink[root] = nextIndex++;
+      componentStack.push_back(root);
+      onStack.insert(root);
+      while (!work.empty()) {
+        Frame &frame = work.back();
+        ArrayRef<uint32_t> targets = successors.lookup(frame.node);
+        if (frame.next < targets.size()) {
+          uint32_t successor = targets[frame.next++];
+          if (!discovery.contains(successor)) {
+            discovery[successor] = lowlink[successor] = nextIndex++;
+            componentStack.push_back(successor);
+            onStack.insert(successor);
+            work.push_back({successor, 0});
+          } else if (onStack.contains(successor)) {
+            lowlink[frame.node] =
+                std::min(lowlink[frame.node], discovery[successor]);
+          }
+          continue;
+        }
+        uint32_t node = frame.node;
+        work.pop_back();
+        if (!work.empty())
+          lowlink[work.back().node] =
+              std::min(lowlink[work.back().node], lowlink[node]);
+        if (lowlink[node] != discovery[node])
+          continue;
+        SmallVector<uint32_t> component;
+        while (true) {
+          uint32_t member = componentStack.pop_back_val();
+          onStack.erase(member);
+          component.push_back(member);
+          if (member == node)
+            break;
+        }
+        // A single fragment is only a control loop if it re-enters itself.
+        bool cyclic = component.size() > 1 ||
+                      llvm::is_contained(successors.lookup(node), node);
+        if (cyclic)
+          residue.insert(component.begin(), component.end());
+      }
+    }
+    // ComputeGraph.cpp classified this group as a control loop because the same
+    // process-order test found a cycle, so an empty residue means the two views
+    // disagree. Withhold the whole group rather than admit it on a lost proof.
+    if (residue.empty())
+      return members;
+    return residue;
+  };
   for (Attribute regionAttribute : graph.getRegions()) {
     auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
     if (!region)
@@ -808,9 +935,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         continue;
       StringRef reason;
       bool actorLocalColdLoop = false;
+      std::optional<llvm::DenseSet<uint32_t>> controlResidue;
       if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop) {
         reason = "control-loop group requires bytecode scheduling";
         actorLocalColdLoop = isolatesConcurrentColdActors(group);
+        controlResidue = proceduralControlResidue(group);
       }
       // Native ready-node scheduling is itself a dirty-set fixpoint: a write
       // that wakes an earlier-ranked member restarts the scan at that member.
@@ -824,6 +953,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         continue;
       for (int64_t member : group.getFragments().asArrayRef()) {
         if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
+          continue;
+        if (controlResidue &&
+            !controlResidue->contains(static_cast<uint32_t>(member)))
           continue;
         auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
             nodes[static_cast<size_t>(member)]);
@@ -896,14 +1028,16 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         requireBytecodeFragment(spawn, "dynamic spawn multiplicity");
       }
       if (target)
-        dynamicActors.insert(target.getOperation());
+        excludeDynamicActor(target.getOperation(),
+                            "dynamic spawn multiplicity");
       return;
     }
     if (rootSpawnCounts.lookup(spawn.getCallee()) != 1) {
       result.reasons.emplace_back("duplicate statically spawned process");
       onlyConcurrentColdBoundaries = false;
       if (sim::SimFuncOp target = lookupFunction(spawn.getCallee()))
-        dynamicActors.insert(target.getOperation());
+        excludeDynamicActor(target.getOperation(),
+                            "duplicate statically spawned process");
     }
   });
 
@@ -913,7 +1047,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
          !llvm::is_contained(staticNestedActors, function))) {
       result.reasons.emplace_back("task, await, or join control is present");
       onlyConcurrentColdBoundaries &= isConcurrentColdActor(function);
-      dynamicActors.insert(function.getOperation());
+      excludeDynamicActor(function.getOperation(),
+                          "task, await, or join control is present");
     }
     // Statically bound actors retain their semantic home region in the
     // scheduler record.  Native ready nodes are ranked from the region-ordered
@@ -948,6 +1083,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // transactional actor-removal protocol.
       rejectPlan("dynamic override ownership requires generic ordering");
     } else if (isa<sim::SimRefStoreInertialPathOp>(operation)) {
+      hasRuntimePathPublication = true;
       // This operation may either publish storage immediately or insert a
       // keyed calendar transaction after per-bit path arbitration. The AOT
       // compute graph has no node/effect encoding for that dynamic choice, so
@@ -1125,6 +1261,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   // control loop eligible merely because a coordinator is also present.
   result.forcedHybridEligible =
       result.eligible && !result.fullyEligible && onlyConcurrentColdBoundaries;
+  // Reasons recorded against any block of an actor also explain that actor's
+  // removal from the static inventory, since exclusion is always paired with a
+  // fragment requirement at the same operation.
+  llvm::DenseMap<Operation *, SmallVector<unsigned>> actorBlockReasons;
+  for (const auto &[function, blocks] : result.bytecodeFragments)
+    for (Block *block : blocks)
+      for (unsigned index : blockReasons.lookup(block))
+        noteReason(actorBlockReasons[function], index);
+  SmallVector<NativeAOTBoundaryCost> attribution(reasonNames.size());
+  for (auto [index, name] : llvm::enumerate(reasonNames))
+    attribution[index].reason = name;
   for (Attribute attribute : nodes) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
     if (!fragment)
@@ -1135,20 +1282,95 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     Block *block = function
                        ? lookupComputeGraphBlock(function, fragment.getBlock())
                        : nullptr;
+    auto charge = [&](ArrayRef<unsigned> indices, bool wholeActor) {
+      for (unsigned index : indices) {
+        attribution[index].cost += weight;
+        ++attribution[index].fragments;
+        if (wholeActor)
+          ++attribution[index].actors;
+      }
+    };
     if (!function || !block ||
-        !result.actorSlots.contains(function.getOperation()))
+        !result.actorSlots.contains(function.getOperation())) {
+      result.excludedActorCost += weight;
+      if (function) {
+        Operation *actor = function.getOperation();
+        SmallVector<unsigned> indices = actorReasons.lookup(actor);
+        for (unsigned index : actorBlockReasons.lookup(actor))
+          noteReason(indices, index);
+        charge(indices, /*wholeActor=*/true);
+      }
       continue;
+    }
     auto bytecode = result.bytecodeFragments.find(function.getOperation());
     if (bytecode != result.bytecodeFragments.end() &&
-        llvm::is_contained(bytecode->second, block))
+        llvm::is_contained(bytecode->second, block)) {
+      result.excludedBlockCost += weight;
+      charge(blockReasons.lookup(block), /*wholeActor=*/false);
       continue;
+    }
     result.nativeGraphCost += weight;
   }
-  // The legacy partial AOT wrapper ultimately runs the generic scheduler, so
-  // selecting it automatically only adds planning and code-generation work.
-  // A fully closed schedule executes generated nodes and remains profitable.
-  // Explicit AOT and Eval retain their separate strict admission contracts.
-  result.aotCostEffective = result.fullyEligible;
+  if (module->hasAttr("obelisk.debug.native_timing")) {
+    llvm::StringMap<std::pair<uint64_t, uint32_t>> byFunction;
+    for (Attribute attribute : nodes) {
+      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+      if (!fragment)
+        continue;
+      sim::SimFuncOp function =
+          lookupFunction(fragment.getFunction().getValue());
+      Block *block = function ? lookupComputeGraphBlock(function,
+                                                        fragment.getBlock())
+                              : nullptr;
+      if (!function || !block ||
+          !result.actorSlots.contains(function.getOperation()))
+        continue;
+      auto bytecode = result.bytecodeFragments.find(function.getOperation());
+      if (bytecode == result.bytecodeFragments.end() ||
+          !llvm::is_contained(bytecode->second, block))
+        continue;
+      // Aggregate by source position, not by generated actor name: the point of
+      // this report is to name the HDL construct that withheld the work.
+      std::string where;
+      {
+        llvm::raw_string_ostream stream(where);
+        block->getTerminator()->getLoc().print(stream);
+      }
+      auto &entry = byFunction[where];
+      entry.first += std::max<uint64_t>(fragment.getCost(), 1);
+      ++entry.second;
+    }
+    SmallVector<StringRef> ordered;
+    for (const auto &entry : byFunction)
+      ordered.push_back(entry.first());
+    llvm::sort(ordered, [&](StringRef lhs, StringRef rhs) {
+      return std::make_pair(byFunction.lookup(rhs).first, rhs) <
+             std::make_pair(byFunction.lookup(lhs).first, lhs);
+    });
+    for (StringRef name : ArrayRef<StringRef>(ordered).take_front(20))
+      llvm::errs() << "obelisk native withheld block: cost="
+                   << byFunction.lookup(name).first
+                   << " fragments=" << byFunction.lookup(name).second
+                   << " at=" << name << '\n';
+  }
+  llvm::stable_sort(attribution, [](const NativeAOTBoundaryCost &lhs,
+                                    const NativeAOTBoundaryCost &rhs) {
+    return lhs.cost > rhs.cost;
+  });
+  llvm::copy_if(attribution, std::back_inserter(result.boundaryCosts),
+                [](const NativeAOTBoundaryCost &entry) {
+                  return entry.cost != 0;
+                });
+  // A partially admitted island can use generated eval when its exact fanout
+  // and direct-owner proofs succeed during lowering. Auto retains its generic
+  // fallback if either later proof fails.
+  result.aotCostEffective =
+      result.eligible && result.nativeGraphCost > result.totalGraphCost / 2 &&
+      (result.fullyEligible ||
+       (result.periodicClockCandidate &&
+        result.runtimeOwnedFanoutActors.empty() &&
+        !hasRuntimePathPublication &&
+        graph.getVpi() != sim::ComputeVPIMode::Full));
   return result;
 }
 

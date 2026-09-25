@@ -781,6 +781,7 @@ buildNativeStaticActorRootPlan(
 FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
     const DenseMap<Operation *, uint32_t> &actorSlots,
+    const DenseMap<Operation *, SmallVector<Block *>> &bytecodeFragments,
     const DenseSet<Operation *> &runtimeOwnedFanoutActors, bool enabled,
     bool certifiedStaticIsland) {
   NativeStaticFanoutPlan plan;
@@ -806,10 +807,10 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   auto disableExactFanout = [&](StringRef reason,
                                 sim::SimFuncOp function = {}) {
     if (module->hasAttr("obelisk.debug.native_timing")) {
-      auto diagnostic = module.emitRemark("static fanout disabled: ");
-      diagnostic << reason;
+      llvm::errs() << "static fanout disabled: " << reason;
       if (function)
-        diagnostic << " in " << function.getSymName();
+        llvm::errs() << " in " << function.getSymName();
+      llvm::errs() << '\n';
     }
     plan.entries.clear();
     plan.fragments.clear();
@@ -861,14 +862,33 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       return module.emitError(
                  "static fanout references a stale compute fragment"),
              failure();
-    // IEEE 1800-2017 Clause 31.7 clock-set coordinators and the exact Clause
-    // 31.9.1 delayed-terminal monitors retain occurrence ordering in the
-    // runtime and are deliberately outside the certified native island. An
-    // arbitrary absent actor must instead invalidate exact fanout; silently
-    // omitting it would make the generated dependency table incomplete.
-    if (actor == actorSlots.end() && certifiedStaticIsland &&
-        runtimeOwnedFanoutActors.contains(function.getOperation())) {
-      if (function->hasAttr("obelisk_sim.covergroup_clocking_sampler")) {
+    auto bytecode = bytecodeFragments.find(function.getOperation());
+    bool bytecodeBlock =
+        bytecode != bytecodeFragments.end() &&
+        llvm::is_contained(bytecode->second, block);
+    // Every actor outside the admitted island retains its runtime watch.
+    // Exact descriptor roots enter the transition bridge so direct stores
+    // still wake those subscriptions in the same time slot. The generated
+    // covergroup registration has abstract graph watches and needs its
+    // separate operand-based root reconstruction below.
+    if ((actor == actorSlots.end() || bytecodeBlock) &&
+        certifiedStaticIsland) {
+      bool hasConditionalWait = false;
+      if (!runtimeOwnedFanoutActors.contains(function.getOperation()))
+        function.walk([&](Operation *operation) {
+          if (isa<sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
+                  sim::SimSuspendClockSetOp, sim::SimSuspendObserveOp,
+                  sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp,
+                  sim::SimCovergroupClockEventRegisterOp>(operation))
+            hasConditionalWait = true;
+        });
+      if (hasConditionalWait) {
+        disableExactFanout("runtime watch needs conditional scheduling",
+                           function);
+        continue;
+      }
+      if (runtimeOwnedFanoutActors.contains(function.getOperation()) &&
+          function->hasAttr("obelisk_sim.covergroup_clocking_sampler")) {
         // Computed covergroup primaries expose an abstract graph Watch: the
         // runtime indexes their exact static dependencies from the serialized
         // observer plan. Reconstruct those same roots from the bound observer
@@ -948,16 +968,15 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
               function);
         continue;
       }
-      // IEEE 1800-2017 31.7 and 31.9.1 keep these exact waits in the runtime,
-      // but their watched roots must still publish transitions. They are not
-      // generated fanout entries and therefore do not acquire an actor slot.
+      // Runtime waits on excluded actors have no generated fanout entry or
+      // actor slot, but their watched roots must still publish transitions.
       for (sim::ComputeEffectAttr effect : watches) {
         if (effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
             effect.getDynamic() || effect.getDeferred() ||
             (effect.getResource() != sim::ComputeResourceKind::Storage &&
              effect.getResource() != sim::ComputeResourceKind::Net) ||
             effect.getWidth() == 0) {
-          disableExactFanout("runtime-owned watch is not statically bound",
+          disableExactFanout("runtime watch is not statically bound",
                              function);
           continue;
         }
@@ -968,14 +987,14 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         auto handle = handles.find(effect.getDescriptor());
         if (handle == handles.end())
           return block->getTerminator()->emitError(
-                     "runtime-owned fanout references unknown state"),
+                     "runtime fanout references unknown state"),
                  failure();
         obelisk_rt_stable_handle_v1 decoded{};
         if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
             decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
             decoded.offset != 0)
           return block->getTerminator()->emitError(
-                     "runtime-owned fanout has an invalid native root"),
+                     "runtime fanout has an invalid native root"),
                  failure();
         auto bound =
             llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
@@ -985,7 +1004,7 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
             effect.getLow() > bound->width ||
             effect.getWidth() > bound->width - effect.getLow())
           return block->getTerminator()->emitError(
-                     "runtime-owned fanout range is out of bounds"),
+                     "runtime fanout range is out of bounds"),
                  failure();
         // A runtime-owned observer has no generated fanout entry or actor
         // slot. Keep the watched root on the v1 transition bridge so direct

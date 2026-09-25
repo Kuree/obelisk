@@ -226,6 +226,8 @@ buildNativeStaticActorRootPlan(
 mlir::FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
+    const llvm::DenseMap<mlir::Operation *, mlir::SmallVector<mlir::Block *>>
+        &bytecodeFragments,
     const llvm::DenseSet<mlir::Operation *> &runtimeOwnedFanoutActors,
     bool enabled, bool certifiedStaticIsland);
 mlir::FailureOr<NativeThreeTierPlan>

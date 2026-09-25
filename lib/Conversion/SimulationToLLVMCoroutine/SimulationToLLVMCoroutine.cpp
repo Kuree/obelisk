@@ -289,7 +289,8 @@ static void eraseEvalDiscardableStores(sim::SimFuncOp function) {
 LogicalResult
 materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
                                 const detail::NativeStateLayout &stateLayout,
-                                bool enabled) {
+                                bool enabled,
+                                const DenseMap<uint64_t, uint32_t> &actorSlots) {
   // MaterializeComputeFusion may have prepared dormant-Tier1 helper proofs
   // before late AOT eligibility is known. No success or failure path may leak
   // those pass-only markers into bytecode or LLVM lowering.
@@ -324,6 +325,9 @@ materializeEvalTwoStateVariants(ModuleOp module, sim::SimDesignOp design,
   llvm::SmallPtrSet<Operation *, 16> rootSet;
   for (sim::SimFuncOp function :
        design.getBody().front().getOps<sim::SimFuncOp>()) {
+    IntegerAttr codeUnit = function.getCodeUnitIdAttr();
+    if (!codeUnit || !actorSlots.contains(codeUnit.getUInt()))
+      continue;
     auto body = function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
     if (!body)
       continue;
@@ -3239,9 +3243,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // covers other cold assertion shapes, so only matching static-superstep
   // metadata certifies a closed native eval island.
   bool certifiedStaticSuperstep = false;
-  if (staticSuperstep && useAOT &&
-      (aotEligibility.isFullyEligible() ||
-       aotEligibility.isForcedHybridEligible())) {
+  if (staticSuperstep && useAOT) {
     ArrayAttr actors = staticSuperstep.getActors();
     if (actors.size() != aotEligibility.getActorSlots().size())
       return module.emitError(
@@ -3267,7 +3269,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // guard needed to execute the residual closure directly. Fully eligible
   // designs retain independent static capabilities even when a focused
   // conversion pipeline did not run the optional superstep planner.
-  bool staticEvalIsland = certifiedStaticSuperstep && evalScheduler &&
+  bool staticEvalIsland = certifiedStaticSuperstep &&
+                          (evalScheduler ||
+                           nativeScheduler == sim::NativeSchedulerMode::Auto) &&
                           !aotEligibility.isFullyEligible();
   bool closedStaticIsland =
       aotEligibility.isFullyEligible() || staticEvalIsland;
@@ -3316,7 +3320,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     staticNBA = staticSpecialization && !stateLayout->nbaHandles.empty();
   }
   if (staticControl) {
-    module.walk([&](Operation *operation) {
+    module.walk([&](sim::SimFuncOp function) {
+      if (!aotEligibility.getActorSlots().contains(function.getOperation()))
+        return;
+      function.walk([&](Operation *operation) {
       if (llvm::any_of(operation->getOperandTypes(),
                        [](Type type) { return isa<FloatType>(type); }) ||
           llvm::any_of(operation->getResultTypes(),
@@ -3325,6 +3332,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         staticFanout = false;
         staticFanoutMetadata = false;
       }
+      });
     });
   }
   // State, NBA, and fanout are independent capabilities. Direct access is
@@ -3467,6 +3475,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (staticFanoutMetadata) {
     FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
         module, *stateLayout, aotEligibility.getActorSlots(),
+        aotEligibility.getBytecodeFragments(),
         aotEligibility.getRuntimeOwnedFanoutActors(), true, staticEvalIsland);
     if (failed(fanout))
       return failure();
@@ -3505,6 +3514,33 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           stateLayout->transitionHandles.insert(decoded.id);
       });
     }
+  }
+  bool runtimeOrderedEvalOwner = false;
+  if (metadataDesign && nativeScheduler == sim::NativeSchedulerMode::Auto &&
+      !aotEligibility.isFullyEligible())
+    metadataDesign.walk([&](sim::SimFuncOp actor) {
+      if (!aotActorSlotFor(actor))
+        return;
+      auto body = actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
+      sim::SimFuncOp evalBody =
+          body ? metadataDesign.lookupSymbol<sim::SimFuncOp>(body.getValue())
+               : nullptr;
+      runtimeOrderedEvalOwner |=
+          evalBody && evalBody->hasAttr(evalRuntimeNBARequiredAttr);
+    });
+  // The packed NBA lowering below emits references to generated schedule
+  // globals. Decide a partial Auto fallback before that irreversible rewrite.
+  if (nativeScheduler == sim::NativeSchedulerMode::Auto &&
+      !aotEligibility.isFullyEligible() &&
+      (!staticFanoutPlan.exact || runtimeOrderedEvalOwner)) {
+    if (detailedTiming && runtimeOrderedEvalOwner)
+      llvm::errs() << "partial eval disabled: runtime-ordered NBA owner\n";
+    useAOT = false;
+    staticControl = false;
+    staticFanout = false;
+    staticNBA = false;
+    cleanSuperstep = false;
+    staticEvalIsland = false;
   }
   if (useAOT) {
     FailureOr<SmallVector<NativePeriodicClock>> clocks =
@@ -3636,7 +3672,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                              ? detail::makeCleanEvalStateLayout(*stateLayout)
                              : *stateLayout;
   if (failed(materializeEvalTwoStateVariants(module, metadataDesign,
-                                             evalStateLayout, evalScheduler)))
+                                             evalStateLayout, evalScheduler,
+                                             aotActorSlotsByCodeUnit)))
     return failure();
   markTiming("schedule ranks, roots, and two-state variants");
 
@@ -4131,15 +4168,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                           body.getValue()))
                 certifiedRuntimeNBAFallback =
                     evalBody->hasAttr(evalRuntimeNBARequiredAttr);
-        auto diagnostic =
-            certifiedRuntimeNBAFallback
-                ? module.emitRemark(
-                      "generated eval disabled by runtime-ordered NBA owner: "
-                      "actor=")
-            : nativeScheduler == sim::NativeSchedulerMode::Auto
-                ? module.emitRemark("auto eval exact owner miss: actor=")
-                : module.emitError("eval exact owner miss: actor=");
-        diagnostic << entry.actor_slot
+        std::string detail;
+        llvm::raw_string_ostream diagnostic(detail);
+        diagnostic << "actor=" << entry.actor_slot
                    << " continuation=" << entry.continuation;
         if (entry.actor_slot < actorsBySlot.size() &&
             actorsBySlot[entry.actor_slot])
@@ -4166,7 +4197,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           }
         if (nativeScheduler != sim::NativeSchedulerMode::Auto &&
             !certifiedRuntimeNBAFallback)
-          return failure();
+          return module.emitError("eval exact owner miss: " + detail),
+                 failure();
+        if (detailedTiming)
+          llvm::errs()
+              << (certifiedRuntimeNBAFallback
+                      ? "generated eval disabled by runtime-ordered NBA owner: "
+                      : "auto eval exact owner miss: ")
+              << detail << '\n';
         if (certifiedRuntimeNBAFallback)
           module->setAttr(evalRuntimeNBAFallbackAttr, UnitAttr::get(context));
         evalScheduler = false;
@@ -4180,6 +4218,25 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
                      << executors.size() << '\n';
       evalScheduler = false;
     }
+  }
+
+  // Auto's partial island is profitable only when the generated coordinator
+  // has an exact executor for every admitted fanout entry. A late owner miss
+  // must fall back to the generic scheduler, not the legacy hybrid wrapper:
+  // the latter cannot claim a partially admitted actor's framed continuation.
+  if (nativeScheduler == sim::NativeSchedulerMode::Auto &&
+      !aotEligibility.isFullyEligible() && !evalScheduler) {
+    if (staticNBA) {
+      emitError(module.getLoc())
+          << "partial eval ownership failed after static NBA lowering";
+      return failure();
+    }
+    useAOT = false;
+    staticControl = false;
+    staticFanout = false;
+    staticNBA = false;
+    cleanSuperstep = false;
+    staticEvalIsland = false;
   }
 
   if (evalScheduler) {
