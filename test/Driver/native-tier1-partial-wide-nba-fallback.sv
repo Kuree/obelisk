@@ -8,8 +8,8 @@
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
 
-// A partial island with a wide, overlapping NBA owner cannot enter the
-// generated evaluator. Auto must decide that before packed NBA lowering.
+// A single NBA site writes all 128 bits, exceeding the generated queue's
+// 64-bit record payload. Auto retains the runtime evaluator for this case.
 module native_tier1_partial_wide_nba_fallback;
   logic clk = 0;
   logic [7:0] q[0:31];

@@ -45,7 +45,6 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/IR/Verifier.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -2361,9 +2360,6 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           design.lookupSymbol<sim::SimFuncOp>(evalBodyRef.getValue());
       if (!evalBody)
         return actor.emitOpError("references a missing eval body");
-      // The body remains a valid Tier-2/runtime implementation, but it cannot
-      // be claimed by the closed Tier-1 coordinator when one of its dynamic
-      // NBA roots requires source-ordered runtime staging.
       if (evalBody->hasAttr(evalRuntimeNBARequiredAttr))
         continue;
       auto continuation =
@@ -3346,122 +3342,116 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     staticNBAPlan = std::move(*plan);
     staticNBA = !staticNBAPlan.roots.empty();
-    // A scalar wide-root latch can represent one at-most-once semantic
-    // statement, but not distinct NBA statements or one statement that may
-    // execute repeatedly. Mark every affected eval body before packed
-    // lowering erases the source enqueue operations. The ordinary
-    // coroutine/runtime path then preserves LRM source ordering while
-    // unrelated roots remain eligible for direct generated state.
-    SmallVector<llvm::SmallDenseSet<uint64_t, 4>> semanticOriginsByRoot(
+    // A generated queue can order all executions of a <=64-bit NBA site on a
+    // wide root. Before packed lowering, retain the runtime owner if another
+    // semantic site on that root has no admitted Eval body, or any site needs
+    // a wider payload than the queue can hold. A late Eval decline cannot
+    // restore the original per-update runtime publications.
+    SmallVector<llvm::SmallDenseSet<uint64_t, 4>> generatedOrigins(
         staticNBAPlan.roots.size());
-    for (const obelisk_rt_static_nba_site &site : staticNBAPlan.sites) {
-      auto root = staticNBAPlan.siteRoots.find(site.site);
-      if (root == staticNBAPlan.siteRoots.end() ||
-          root->second >= semanticOriginsByRoot.size())
-        continue;
-      auto origin = staticNBAPlan.siteSemanticOrigins.find(site.site);
-      semanticOriginsByRoot[root->second].insert(
-          origin == staticNBAPlan.siteSemanticOrigins.end() ? site.site
-                                                            : origin->second);
-    }
-    module.walk([&](sim::SimFuncOp function) {
-      // Only outlined Eval bodies are ownership candidates. Process CFG
-      // successors cross scheduler suspensions and therefore do not describe
-      // one activation; the authoritative LLVM preflight below certifies the
-      // final outlined control flow and ingress set.
-      if (!function->hasAttr("obelisk.eval.raw_captures"))
-        return;
-      SmallVector<sim::SimFuncOp> callClosure;
+    SmallVector<uint8_t> queuePayloadSupported(staticNBAPlan.roots.size(), 1);
+    auto semanticOrigin = [&](uint64_t site) {
+      auto origin = staticNBAPlan.siteSemanticOrigins.find(site);
+      return origin == staticNBAPlan.siteSemanticOrigins.end() ? site
+                                                               : origin->second;
+    };
+    SmallVector<sim::SimFuncOp> admittedBodies;
+    llvm::SmallPtrSet<Operation *, 8> mixedTierBodies;
+    if (metadataDesign)
+      metadataDesign.walk([&](sim::SimFuncOp actor) {
+        if (!aotActorSlotFor(actor))
+          return;
+        auto body =
+            actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
+        if (body)
+          if (sim::SimFuncOp function =
+                  metadataDesign.lookupSymbol<sim::SimFuncOp>(
+                      body.getValue())) {
+            admittedBodies.push_back(function);
+            auto bytecode = aotEligibility.getBytecodeFragments().find(
+                actor.getOperation());
+            if (bytecode != aotEligibility.getBytecodeFragments().end() &&
+                !bytecode->second.empty())
+              mixedTierBodies.insert(function.getOperation());
+          }
+      });
+    SmallVector<llvm::SmallDenseSet<uint32_t, 4>> bodyWideRoots(
+        admittedBodies.size());
+    for (auto [index, function] : llvm::enumerate(admittedBodies)) {
       SmallVector<sim::SimFuncOp> pending{function};
-      llvm::SmallPtrSet<Operation *, 8> closureSeen;
-      sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+      llvm::SmallPtrSet<Operation *, 8> visited;
       while (!pending.empty()) {
         sim::SimFuncOp current = pending.pop_back_val();
-        if (!closureSeen.insert(current.getOperation()).second)
+        if (!visited.insert(current.getOperation()).second)
           continue;
-        callClosure.push_back(current);
-        current.walk([&](sim::SimCallOp call) {
-          if (design)
-            if (sim::SimFuncOp callee =
-                    design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
-              pending.push_back(callee);
-        });
-      }
-      llvm::SmallDenseMap<uint64_t, unsigned, 4> semanticSiteCounts;
-      for (sim::SimFuncOp current : callClosure)
-        current.walk([&](sim::SimNBAEnqueueOp enqueue) {
-          sim::NBASiteAttr site = enqueue.getSiteAttr();
-          if (!site)
-            return;
-          auto origin = staticNBAPlan.siteSemanticOrigins.find(site.getId());
-          ++semanticSiteCounts[origin == staticNBAPlan.siteSemanticOrigins.end()
-                                   ? site.getId()
-                                   : origin->second];
-        });
-      auto siteExecutesAtMostOnce = [&](sim::SimNBAEnqueueOp enqueue) {
-        sim::NBASiteAttr site = enqueue.getSiteAttr();
-        if (!site)
-          return false;
-        auto origin = staticNBAPlan.siteSemanticOrigins.find(site.getId());
-        uint64_t semanticSite =
-            origin == staticNBAPlan.siteSemanticOrigins.end() ? site.getId()
-                                                              : origin->second;
-        if (semanticSiteCounts.lookup(semanticSite) != 1)
-          return false;
-        // A helper can be reached through multiple calls, recursion, or an
-        // enclosing loop. Until call-count/path exclusivity is certified,
-        // retain its ordered NBA executions in the runtime scheduler.
-        if (enqueue->getParentOfType<sim::SimFuncOp>() != function)
-          return false;
-        for (Operation *ancestor = enqueue->getParentOp();
-             ancestor && ancestor != function.getOperation();
-             ancestor = ancestor->getParentOp())
-          if (isa<LoopLikeOpInterface>(ancestor))
-            return false;
-        Block *originBlock = enqueue->getBlock();
-        SmallVector<Block *, 8> worklist;
-        for (Block *successor : originBlock->getTerminator()->getSuccessors())
-          worklist.push_back(successor);
-        llvm::SmallPtrSet<Block *, 16> visited;
-        while (!worklist.empty()) {
-          Block *block = worklist.pop_back_val();
-          if (block == originBlock)
-            return false;
-          if (!visited.insert(block).second)
-            continue;
-          for (Block *successor : block->getTerminator()->getSuccessors())
-            worklist.push_back(successor);
-        }
-        return true;
-      };
-      bool requiresRuntimeNBA = false;
-      for (sim::SimFuncOp current : callClosure)
         current.walk([&](sim::SimNBAEnqueueOp enqueue) {
           sim::NBASiteAttr site = enqueue.getSiteAttr();
           auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
                            : staticNBAPlan.siteRoots.end();
           if (root == staticNBAPlan.siteRoots.end() ||
-              root->second >= staticNBAPlan.roots.size() ||
-              staticNBAPlan.roots[root->second].bit_width <= 64)
+              root->second >= generatedOrigins.size())
             return;
-          bool overlappingSites =
-              semanticOriginsByRoot[root->second].size() != 1 &&
-              !staticNBAPlan.independentSiteWrites[root->second];
-          bool repeatedSite = !siteExecutesAtMostOnce(enqueue);
-          requiresRuntimeNBA |= overlappingSites || repeatedSite;
-          if (detailedTiming && (overlappingSites || repeatedSite))
-            llvm::errs() << "eval NBA proof rejected: function="
-                         << function.getSymName() << " callee="
-                         << current.getSymName() << " site=" << site.getId()
-                         << " root=" << root->second << " width="
-                         << staticNBAPlan.roots[root->second].bit_width
-                         << " overlapping=" << overlappingSites
-                         << " repeated=" << repeatedSite << "\n";
+          if (staticNBAPlan.roots[root->second].bit_width > 64)
+            bodyWideRoots[index].insert(root->second);
+          if (current == function) {
+            generatedOrigins[root->second].insert(semanticOrigin(site.getId()));
+            if (mixedTierBodies.contains(function.getOperation()))
+              queuePayloadSupported[root->second] = 0;
+          } else
+            // Shared helpers have no single generated owner. The LLVM
+            // preflight also declines them, so decide before packed lowering.
+            queuePayloadSupported[root->second] = 0;
         });
-      if (requiresRuntimeNBA)
-        function->setAttr(evalRuntimeNBARequiredAttr,
-                          UnitAttr::get(module.getContext()));
+        if (metadataDesign)
+          current.walk([&](sim::SimCallOp call) {
+            if (sim::SimFuncOp callee =
+                    metadataDesign.lookupSymbol<sim::SimFuncOp>(
+                        call.getCallee()))
+              pending.push_back(callee);
+          });
+      }
+    }
+    auto fixedReference = [](Value destination) {
+      while (destination) {
+        if (destination.getDefiningOp<sim::SimContextStorageOp>())
+          return true;
+        if (auto extract = destination.getDefiningOp<sim::SimRefExtractOp>()) {
+          destination = extract.getInput();
+          continue;
+        }
+        if (auto subelement =
+                destination.getDefiningOp<sim::SimRefSubelementOp>()) {
+          destination = subelement.getInput();
+          continue;
+        }
+        return false;
+      }
+      return false;
+    };
+    module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+      sim::NBASiteAttr site = enqueue.getSiteAttr();
+      auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
+                       : staticNBAPlan.siteRoots.end();
+      if (root == staticNBAPlan.siteRoots.end() ||
+          root->second >= queuePayloadSupported.size())
+        return;
+      auto width = detail::nativeStateWidth(enqueue.getValue().getType());
+      if (!width || *width == 0 || *width > 64 || enqueue.getDelay() ||
+          site.getTiming() ||
+          (!staticNBAPlan.independentSiteWrites[root->second] &&
+           !fixedReference(enqueue.getDestination())))
+        queuePayloadSupported[root->second] = 0;
     });
+    SmallVector<uint8_t> orderedRootClosed(staticNBAPlan.roots.size(), 1);
+    for (const obelisk_rt_static_nba_site &site : staticNBAPlan.sites)
+      if (site.root < orderedRootClosed.size() &&
+          !generatedOrigins[site.root].contains(semanticOrigin(site.site)))
+        orderedRootClosed[site.root] = 0;
+    for (auto [index, function] : llvm::enumerate(admittedBodies))
+      for (uint32_t root : bodyWideRoots[index])
+        if (!orderedRootClosed[root] || !queuePayloadSupported[root])
+          function->setAttr(evalRuntimeNBARequiredAttr,
+                            UnitAttr::get(module.getContext()));
     if (failed(materializeGeneratedNBAAccumulators(module, staticNBAPlan)))
       return failure();
     directStaticState |=

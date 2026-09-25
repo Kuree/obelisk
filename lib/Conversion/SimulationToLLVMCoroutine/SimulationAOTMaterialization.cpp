@@ -149,6 +149,7 @@ struct DynamicEvalNBAProofContext {
   ArrayRef<NativePeriodicAlias> periodicAliases;
   ArrayRef<GeneratedTransitionRange> generatedTransitionRanges;
   sim::ComputeGraphAttr computeGraph;
+  ArrayRef<uint8_t> orderedRootClosed;
 };
 
 struct DynamicEvalNBAProof {
@@ -506,8 +507,13 @@ proveDynamicEvalNBA(LLVM::CallOp call,
                             proof.siteExecutesAtMostOnce &&
                             proof.commitRegion == OBELISK_RT_REGION_NBA &&
                             staticNBAPlan.roots[root->second].bit_width > 64;
-  proof.orderedWide = commonDynamicRoot && independentSites &&
-                      proof.siteExecutesAtMostOnce &&
+  // The generated queue records every enqueue and drains in execution order,
+  // including overlapping sites and repeated executions of the same site.
+  // Those cases cannot use a final-value latch, but do not need the runtime
+  // NBA scheduler when the root and commit region are otherwise certified.
+  proof.orderedWide = commonDynamicRoot &&
+                      root->second < proofContext.orderedRootClosed.size() &&
+                      proofContext.orderedRootClosed[root->second] &&
                       proof.commitRegion == OBELISK_RT_REGION_NBA &&
                       staticNBAPlan.roots[root->second].bit_width > 64 &&
                       !proof.periodicWideLatch;
@@ -663,6 +669,42 @@ FailureOr<bool> makeNativeEvalPlan(
         });
     if (unownedTransitionNeedsActiveSelfCheck)
       return false;
+    SmallVector<sim::SimFuncOp> evalClosure =
+        collectGeneratedEvalCallClosure(module, selectedRawBodies);
+    // The generated queue can order every execution of its own sites, but it
+    // cannot interleave a runtime-owned NBA to the same overlapping root.
+    // Original coroutine bodies and generated clones share semantic origins;
+    // require each origin on an ordered root to have a generated owner.
+    SmallVector<llvm::SmallDenseSet<uint64_t, 4>> generatedOrigins(
+        staticNBAPlan.roots.size());
+    auto semanticOrigin = [&](uint64_t site) {
+      auto origin = staticNBAPlan.siteSemanticOrigins.find(site);
+      return origin == staticNBAPlan.siteSemanticOrigins.end() ? site
+                                                               : origin->second;
+    };
+    for (sim::SimFuncOp function : evalClosure) {
+      if (!function->hasAttr("obelisk.eval.direct_fragment"))
+        continue;
+      function.walk([&](LLVM::CallOp call) {
+        if (!call.getCallee() ||
+            *call.getCallee() != "obelisk_rt_v1_scheduler_static_nba" ||
+            call.getArgOperands().size() != 9)
+          return;
+        auto site = constantU64(call.getArgOperands()[1]);
+        auto root = site ? staticNBAPlan.siteRoots.find(*site)
+                         : staticNBAPlan.siteRoots.end();
+        if (root != staticNBAPlan.siteRoots.end() &&
+            root->second < generatedOrigins.size())
+          generatedOrigins[root->second].insert(semanticOrigin(*site));
+      });
+    }
+    SmallVector<uint8_t> orderedRootClosed(staticNBAPlan.roots.size(), 1);
+    for (const obelisk_rt_static_nba_site &site : staticNBAPlan.sites)
+      if (site.root >= orderedRootClosed.size() ||
+          !generatedOrigins[site.root].contains(semanticOrigin(site.site))) {
+        if (site.root < orderedRootClosed.size())
+          orderedRootClosed[site.root] = 0;
+      }
     DynamicEvalNBAProofContext proofContext{stateLayout,
                                             staticNBAPlan,
                                             resolved->fanoutEntries,
@@ -673,9 +715,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                             periodicClocks,
                                             periodicAliases,
                                             generatedTransitionRanges,
-                                            computeGraph};
-    SmallVector<sim::SimFuncOp> evalClosure =
-        collectGeneratedEvalCallClosure(module, selectedRawBodies);
+                                            computeGraph,
+                                            orderedRootClosed};
     llvm::SmallPtrSet<Operation *, 16> evalClosureSet;
     for (sim::SimFuncOp function : evalClosure)
       evalClosureSet.insert(function.getOperation());
@@ -1922,10 +1963,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                  .getResult();
         }
 
-        // Stage directly into the root accumulator.  This preserves source
-        // execution order for repeated executions of one site (for example a
-        // loop over a register file) and for distinct dynamic sites sharing a
-        // root.  A one-entry per-site latch loses all but the final execution,
+        // Keep the source value and destination offset from this execution.
+        // The ordered wide path records every activation; a one-entry latch
+        // would lose intermediate updates from overlapping or repeated sites,
         // contrary to IEEE 1800-2017 4.6 and 10.4.2.
         uint64_t rootWidth = staticNBAPlan.roots[root->second].bit_width;
         Value encodedBase =
