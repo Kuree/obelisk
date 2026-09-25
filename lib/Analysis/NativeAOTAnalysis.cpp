@@ -1362,14 +1362,20 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                   return entry.cost != 0;
                 });
   // A partially admitted island can use generated eval when its exact fanout
-  // and direct-owner proofs succeed during lowering. Auto retains its generic
-  // fallback if either later proof fails.
+  // and direct-owner proofs succeed during lowering. A periodic clock makes
+  // even a small island useful; a large clockless island can instead use the
+  // shared calendar-driven AOT node loop. Do not clone the evaluator for a
+  // tiny clockless partial schedule just to reach that same scheduler. Require
+  // at least 1024 native cost units and more than three quarters of the graph.
+  bool largeClocklessIsland =
+      result.nativeGraphCost >= 1024 &&
+      result.nativeGraphCost >
+          result.totalGraphCost - result.totalGraphCost / 4;
   result.aotCostEffective =
       result.eligible && result.nativeGraphCost > result.totalGraphCost / 2 &&
       (result.fullyEligible ||
-       (result.periodicClockCandidate &&
-        result.runtimeOwnedFanoutActors.empty() &&
-        !hasRuntimePathPublication &&
+       ((result.periodicClockCandidate || largeClocklessIsland) &&
+        result.runtimeOwnedFanoutActors.empty() && !hasRuntimePathPublication &&
         graph.getVpi() != sim::ComputeVPIMode::Full));
   return result;
 }

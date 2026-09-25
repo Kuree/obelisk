@@ -39,6 +39,10 @@ for mode in ("off", "read", "full"):
         if name == "disjoint":
             assert slots == 3, (mode, name, slots)
             assert "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
+            assert "@__obelisk_eval_ordered_nba_queue_v1" not in result.stdout
         else:
+            # Aliasing sites need ordered commits instead of independent
+            # per-lane latches, while the rest of the evaluator stays native.
             assert slots == 0, (mode, name, slots)
-            assert "llvm.func @__obelisk_eval_dispatch_v1(" not in result.stdout
+            assert "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
+            assert "@__obelisk_eval_ordered_nba_queue_v1" in result.stdout

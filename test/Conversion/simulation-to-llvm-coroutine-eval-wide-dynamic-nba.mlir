@@ -5,13 +5,10 @@
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PROOF < %t.llvm.mlir
-// RUN: FileCheck %s --check-prefix=STAGE < %t.llvm.mlir
 
-// Feed preplanned Simulation IR to only the coroutine conversion pass.  A
-// provably once-per-periodic-activation dynamic NBA into a wide root uses the
-// generated scalar latch.  This locks down the performance-critical pass
-// transformation without depending on an end-to-end SystemVerilog design.
+// Feed preplanned Simulation IR to only the coroutine conversion pass. This
+// dynamic reference is outside the generated ordered-queue ownership proof,
+// so its commit stays on the runtime path despite the periodic clock.
 !words = !obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>
 
 module attributes {
@@ -105,43 +102,11 @@ module attributes {
   }
 }
 
-// CHECK: llvm.mlir.global internal @__obelisk_eval_nba_valid_{{[0-9]+}}
-// CHECK: llvm.mlir.global internal @__obelisk_eval_nba_unknown_{{[0-9]+}}
-// CHECK: llvm.mlir.global internal @__obelisk_eval_nba_value_{{[0-9]+}}
-// CHECK: llvm.mlir.global internal @__obelisk_eval_nba_offset_{{[0-9]+}}
+// CHECK-LABEL: module attributes
+// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_offset_{{[0-9]+}}
-// CHECK: llvm.store
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_value_{{[0-9]+}}
-// CHECK: llvm.store
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_unknown_{{[0-9]+}}
-// CHECK: llvm.store
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_valid_{{[0-9]+}}
-// CHECK: llvm.store
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
-// CHECK-NOT: llvm.call @malloc
-// CHECK: llvm.return
-
-// A known payload still has to clear its selected unknown destination. This
-// wide dynamic-only root has no cached value-domain certificate: all three
-// commits preserve their canonical stores, but its verified clipped footprint
-// is disjoint from the index and needs no proof-publication guards.
-// PROOF-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
-// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// PROOF: llvm.mlir.addressof @__obelisk_state_unknown
-// PROOF: llvm.store
-// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// PROOF-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_v1(
-// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// PROOF: llvm.mlir.addressof @__obelisk_state_unknown
-// PROOF: llvm.store
-// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// PROOF-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_fast_v1(
-// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// PROOF: llvm.mlir.addressof @__obelisk_state_unknown
-// PROOF: llvm.store
-// PROOF-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// PROOF: llvm.func
-// STAGE-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// STAGE-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
-// STAGE: llvm.return
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes

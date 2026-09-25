@@ -46,14 +46,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %4 = obelisk_sim.ref.array_element %arg2[%3] : (!obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>>, !obelisk_sim.logic<64>) -> !obelisk_sim.ref<!obelisk_sim.logic<32>>
       %5 = obelisk_sim.ref.extract %4 from 16 : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %6 = obelisk_sim.logic.constant 85 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %begin = arith.constant 0 : index
-      %end = arith.constant 2 : index
-      %step = arith.constant 1 : index
-      scf.for %iteration = %begin to %end step %step {
       obelisk_sim.nba.enqueue %6 to %2 {obelisk.eval.origin_nba_site = 0 : i64, site = #obelisk_sim.nba_site<id = 0, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.nba.enqueue %6 to %5 {obelisk.eval.origin_nba_site = 1 : i64, site = #obelisk_sim.nba_site<id = 1, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
-        scf.yield
-      }
+      obelisk_sim.nba.enqueue %6 to %2 {obelisk.eval.origin_nba_site = 0 : i64, site = #obelisk_sim.nba_site<id = 0, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      obelisk_sim.nba.enqueue %6 to %5 {obelisk.eval.origin_nba_site = 1 : i64, site = #obelisk_sim.nba_site<id = 1, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       cf.br ^bb1
     }
     obelisk_sim.code_unit.decl 4 in 0 function hierarchy "update.__obelisk_eval_body_0" debug "generated native eval body" {internal}
@@ -67,23 +63,22 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %4 = obelisk_sim.ref.array_element %arg2[%3] : (!obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>>, !obelisk_sim.logic<64>) -> !obelisk_sim.ref<!obelisk_sim.logic<32>>
       %5 = obelisk_sim.ref.extract %4 from 16 : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
       %6 = obelisk_sim.logic.constant 85 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %begin = arith.constant 0 : index
-      %end = arith.constant 2 : index
-      %step = arith.constant 1 : index
-      scf.for %iteration = %begin to %end step %step {
       obelisk_sim.nba.enqueue %6 to %2 {obelisk.eval.origin_nba_site = 0 : i64, site = #obelisk_sim.nba_site<id = 0, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.nba.enqueue %6 to %5 {obelisk.eval.origin_nba_site = 1 : i64, site = #obelisk_sim.nba_site<id = 1, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
-        scf.yield
-      }
+      obelisk_sim.nba.enqueue %6 to %2 {obelisk.eval.origin_nba_site = 0 : i64, site = #obelisk_sim.nba_site<id = 0, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      obelisk_sim.nba.enqueue %6 to %5 {obelisk.eval.origin_nba_site = 1 : i64, site = #obelisk_sim.nba_site<id = 1, commit = 7, storage = root_accumulator>} : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.return
     }
   }
 }
 
 
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// Repeating the same semantic sites twice must append four queue entries.
+// This fixture is already at the conversion boundary, so spell out the two
+// iterations without leaving an scf.for for a later pipeline stage to lower.
+// CHECK: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_eval_nba_reserve
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
