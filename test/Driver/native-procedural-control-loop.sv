@@ -1,9 +1,9 @@
-// RUN: obelisk -fno-lto -O3 --vpi=off --mlir-timing %s -o %t.native 2>%t.log
+// RUN: obelisk -O3 --vpi=off --mlir-timing %s -o %t.native 2>%t.log
 // RUN: FileCheck %s --check-prefix=ADMIT < %t.log
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.o0
+// RUN: obelisk -O0 --vpi=off %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 // A while-loop whose trip count depends on the data has no bounded-induction

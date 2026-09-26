@@ -1,7 +1,7 @@
-// RUN: %obelisk -fno-lto --std=1800-2023 -O3 --target=native \
+// RUN: %obelisk --std=1800-2023 -O3 --target=native \
 // RUN:   --native-scheduler=eval --coverage=functional --compile-threads=12 \
 // RUN:   -o %t.aot %s
-// RUN: %obelisk -fno-lto --std=1800-2023 -O0 --target=native \
+// RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --native-scheduler=generic --coverage=functional \
 // RUN:   --compile-threads=12 -o %t.generic %s
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot \

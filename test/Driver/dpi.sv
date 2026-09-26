@@ -1,11 +1,11 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: not obelisk -fno-lto --dpi-link=%t.o %s -o %t.removed 2>&1 \
+// RUN: not obelisk --dpi-link=%t.o %s -o %t.removed 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=REMOVED
-// RUN: not obelisk -fno-lto %t.o -o %t.native-only 2>&1 \
+// RUN: not obelisk %t.o -o %t.native-only 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=NATIVE-ONLY
-// RUN: obelisk -fno-lto %s %t.o -o %t.native
+// RUN: obelisk %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
 // RUN: %obelisk -emit-llvm %s -o - \
 // RUN:   | FileCheck %s --check-prefix=NONCONTEXT-IR
@@ -14,30 +14,30 @@
 // RUN: llvm-readelf --dyn-syms %t.native \
 // RUN:   | FileCheck %s --check-prefix=EXPORTS \
 // RUN:     --implicit-check-not=obelisk_rt_v1_
-// RUN: obelisk -fno-lto --execution-tier=bytecode %s %t.o -o %t.bytecode
+// RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -flto=full -funified-lto -c %S/Inputs/dpi_impl.c \
 // RUN:   -I%resource_dir/include -o %t.bc
-// RUN: obelisk %s %t.bc -o %t.bitcode
+// RUN: obelisk -flto %s %t.bc -o %t.bitcode
 // RUN: %t.bitcode | FileCheck %s --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -flto=full -c %S/Inputs/dpi_impl.c \
 // RUN:   -I%resource_dir/include -o %t.incompatible.bc
-// RUN: not obelisk %s %t.incompatible.bc \
+// RUN: not obelisk -flto %s %t.incompatible.bc \
 // RUN:   -o %t.incompatible 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INCOMPATIBLE
 // RUN: %llvm_dist/bin/llvm-ar rcs %t.a %t.o
-// RUN: obelisk -fno-lto %s %t.a -o %t.archive
+// RUN: obelisk %s %t.a -o %t.archive
 // RUN: %t.archive | FileCheck %s --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib \
 // RUN:   -shared %t.o -o %t.so
 // RUN: not obelisk --target=wasm32 %s %t.so -o %t.wasm 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=WASM-NATIVE
-// RUN: obelisk -fno-lto %s %t.so -o %t.shared
+// RUN: obelisk %s %t.so -o %t.shared
 // RUN: %t.shared | FileCheck %s --check-prefix=OUTPUT
 // RUN: ln -f %t.so %t.hardlink.so
-// RUN: obelisk -fno-lto %s %t.so %t.hardlink.so -o %t.hardlink
+// RUN: obelisk %s %t.so %t.hardlink.so -o %t.hardlink
 // RUN: %t.hardlink | FileCheck %s --check-prefix=OUTPUT
 // RUN: llvm-readelf -d %t.shared \
 // RUN:   | FileCheck %s --check-prefix=NO-SONAME \
@@ -45,19 +45,19 @@
 // RUN: mkdir -p %t.collision/first %t.collision/second
 // RUN: cp %t.so %t.collision/first/plugin.so
 // RUN: cp %t.so %t.collision/second/plugin.so
-// RUN: not obelisk -fno-lto %s %t.collision/first/plugin.so \
+// RUN: not obelisk %s %t.collision/first/plugin.so \
 // RUN:   %t.collision/second/plugin.so -o %t.collision.exe 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=COLLISION
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -shared -nostdlib %S/Inputs/native_probe_failure.c \
 // RUN:   -o %t.probe-failure.so
-// RUN: not obelisk -fno-lto %s %t.probe-failure.so -o %t.probe-failure 2>&1 \
+// RUN: not obelisk %s %t.probe-failure.so -o %t.probe-failure 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=PROBE-FAILURE
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib \
 // RUN:   -shared %t.o -Wl,-soname,bad/name.so -o %t.bad-soname.so
-// RUN: not obelisk -fno-lto %s %t.bad-soname.so -o %t.bad-soname 2>&1 \
+// RUN: not obelisk %s %t.bad-soname.so -o %t.bad-soname 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-SONAME
-// RUN: not obelisk -fno-lto %s -o %t.missing 2>&1 \
+// RUN: not obelisk %s -o %t.missing 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MISSING
 
 module dpi_driver;

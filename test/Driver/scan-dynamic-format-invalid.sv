@@ -1,5 +1,5 @@
-// RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.native
-// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O0 --vpi=off %s -o %t.native
+// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: not %t.native +CASE=malformed 2>&1 | FileCheck %s --check-prefix=MALFORMED
 // RUN: not %t.native +CASE=mismatch_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.native +CASE=mismatch_type 2>&1 | FileCheck %s --check-prefix=TYPE

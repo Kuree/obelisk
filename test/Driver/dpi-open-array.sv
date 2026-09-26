@@ -1,7 +1,7 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_open_array_impl.c -I%resource_dir/include -o %t.o
-// RUN: %obelisk -fno-lto --target=native -o %t.native %s %t.o
+// RUN: %obelisk --target=native -o %t.native %s %t.o
 // RUN: %t.native | FileCheck %s
-// RUN: %obelisk -fno-lto --execution-tier=bytecode -o %t.bytecode %s %t.o
+// RUN: %obelisk --execution-tier=bytecode -o %t.bytecode %s %t.o
 // RUN: %t.bytecode | FileCheck %s
 // RUN: %obelisk --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h

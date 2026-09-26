@@ -1,10 +1,10 @@
-// RUN: obelisk -fno-lto -O2 --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -fno-lto -O2 --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O2 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.generic > %t.generic.out
 // RUN: %t.auto > %t.auto.out
 // RUN: diff -u %t.generic.out %t.auto.out
 // RUN: FileCheck %s < %t.auto.out
-// RUN: obelisk -fno-lto -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval > %t.eval.out
 // RUN: diff -u %t.generic.out %t.eval.out
 

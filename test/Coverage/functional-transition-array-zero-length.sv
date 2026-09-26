@@ -17,9 +17,9 @@ module top;
 endmodule
 
 // CHECK: error: simulation ended: invalid design metadata (status 16)
-// RUN: %obelisk -fno-lto --std=1800-2023 -O0 --target=native \
+// RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: not %t.native --no-coverage-dump 2>&1 | FileCheck %s
-// RUN: %obelisk -fno-lto --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: not %t.bytecode --no-coverage-dump 2>&1 | FileCheck %s

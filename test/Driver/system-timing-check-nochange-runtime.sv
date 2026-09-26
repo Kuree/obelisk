@@ -1,15 +1,15 @@
 // RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -fno-lto -O0 --native-scheduler=generic %s -o %t.o0.native
+// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.o0.native
 // RUN: %t.o0.native 2>&1 | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode 2>&1 | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --native-scheduler=aot %s -o %t.o0.aot
+// RUN: obelisk -O0 --native-scheduler=aot %s -o %t.o0.aot
 // RUN: %t.o0.aot 2>&1 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --native-scheduler=generic %s -o %t.o3.native
+// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.o3.native
 // RUN: %t.o3.native 2>&1 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode 2>&1 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot 2>&1 | FileCheck %s
 // RUN: obelisk -O3 --native-scheduler=aot --top=nochange_cell \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT

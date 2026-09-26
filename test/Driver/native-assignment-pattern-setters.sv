@@ -1,12 +1,12 @@
 // XFAIL: *
 // Slang v11 does not accept qualified assignment-pattern type keys.
-// RUN: obelisk -fno-lto -O0 %s -o %t.native
+// RUN: obelisk -O0 %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -fno-lto -O3 %s -o %t.o3.native
+// RUN: obelisk -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
 // RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
 // RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK

@@ -11,9 +11,9 @@ From the repository root:
 python3 benchmark/uvm/run.py
 ```
 
-The default is `-O3 --execution-tier=bytecode -fno-lto`, the fast production
+The default is `-O3 --execution-tier=bytecode` without LTO, the fast production
 configuration for library-heavy UVM designs. Use `--execution-tier=native` to
-measure native lowering, `--lto` to include the default native LTO path
+measure native lowering, `--lto` to opt into the native LTO path with `-flto`
 (ThinLTO for partitioned UVM-sized designs), and
 `--keep-binary PATH` to retain the generated executable. The UVM source tree
 defaults to the CMake-fetched checkout and can be overridden with `--uvm-root`.

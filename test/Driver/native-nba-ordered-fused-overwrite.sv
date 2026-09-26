@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 -fno-lto --native-scheduler=generic %s -o %t.o0
-// RUN: obelisk -O3 -fno-lto --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -O3 -fno-lto --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.o0
+// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
 // RUN: %t.o0 > %t.o0.out
 // RUN: %t.generic > %t.generic.out

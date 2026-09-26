@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared -nostdlib \
 // RUN:   %t/plugin.c -I%resource_dir/include -o %t/plugin.so
-// RUN: obelisk -fno-lto -O0 --vpi=full --native-scheduler=generic \
+// RUN: obelisk -O0 --vpi=full --native-scheduler=generic \
 // RUN:   %t/design.sv %t/plugin.so -o %t/o0
 // RUN: %t/o0 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --vpi=full --native-scheduler=generic \
+// RUN: obelisk -O3 --vpi=full --native-scheduler=generic \
 // RUN:   %t/design.sv %t/plugin.so -o %t/o3
 // RUN: %t/o3 | FileCheck %s
 // RUN: obelisk -O3 --vpi=full --native-scheduler=generic \
@@ -15,7 +15,7 @@
 // RUN:   -emit-llvm %t/wasm.sv -o %t/wasm.ll
 // RUN: FileCheck %s --check-prefix=GUARD < %t/wasm.ll
 // RUN: FileCheck %s --check-prefix=WASM < %t/wasm.ll
-// RUN: obelisk -fno-lto -O3 --vpi=full --execution-tier=bytecode \
+// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode \
 // RUN:   %t/design.sv %t/plugin.so -o %t/bytecode
 // RUN: %t/bytecode | FileCheck %s
 

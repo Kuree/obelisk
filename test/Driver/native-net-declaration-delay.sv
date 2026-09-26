@@ -1,4 +1,4 @@
-// RUN: obelisk -fno-lto -O0 --vpi=off --native-scheduler=generic %s -o %t
+// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t
 // RUN: %t | FileCheck %s --check-prefix=OUTPUT
 // RUN: obelisk -O0 --vpi=off --native-scheduler=generic -emit-llvm %s | FileCheck %s --check-prefix=LLVM
 

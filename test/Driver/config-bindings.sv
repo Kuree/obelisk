@@ -19,11 +19,11 @@
 // RUN:       --implicit-check-not=selected_cell \
 // RUN:       --implicit-check-not=configuration_rule_kind \
 // RUN:       --implicit-check-not=configuration_rule_source_range
-// RUN: obelisk -fno-lto -O0 --native-scheduler=generic --top=outer \
+// RUN: obelisk -O0 --native-scheduler=generic --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=RUNTIME
-// RUN: obelisk -fno-lto -O0 --native-scheduler=generic \
+// RUN: obelisk -O0 --native-scheduler=generic \
 // RUN:   --execution-tier=bytecode --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s -o %t.bytecode

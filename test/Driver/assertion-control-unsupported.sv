@@ -1,6 +1,6 @@
-// RUN: obelisk -fno-lto -O0 -DDYNAMIC_CONTROL %s -o %t.dynamic-control
-// RUN: not obelisk -fno-lto -O0 -DPROCEDURAL_SCOPE %s -o %t.scope 2>&1 | FileCheck %s --check-prefix=SCOPE
-// RUN: not obelisk -fno-lto -O0 -DINVALID_CONTROL %s -o %t.invalid 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: obelisk -O0 -DDYNAMIC_CONTROL %s -o %t.dynamic-control
+// RUN: not obelisk -O0 -DPROCEDURAL_SCOPE %s -o %t.scope 2>&1 | FileCheck %s --check-prefix=SCOPE
+// RUN: not obelisk -O0 -DINVALID_CONTROL %s -o %t.invalid 2>&1 | FileCheck %s --check-prefix=INVALID
 
 module assertion_control_unsupported;
 `ifdef DYNAMIC_CONTROL

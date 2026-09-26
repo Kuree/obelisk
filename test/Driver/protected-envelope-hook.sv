@@ -1,16 +1,16 @@
 // RUN: %protect-obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
 // RUN: %protect-obelisk -emit-obelisk %s | obelisk-opt --verify-each | FileCheck %s --check-prefix=OBELISK
-// RUN: %protect-obelisk -fno-lto -O0 %s -o %t.native-o0
+// RUN: %protect-obelisk -O0 %s -o %t.native-o0
 // RUN: %t.native-o0 | FileCheck %s --check-prefix=OUTPUT
-// RUN: %protect-obelisk -fno-lto -O3 %s -o %t.native-o3
+// RUN: %protect-obelisk -O3 %s -o %t.native-o3
 // RUN: %t.native-o3 | FileCheck %s --check-prefix=OUTPUT
-// RUN: %protect-obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
+// RUN: %protect-obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
 // RUN: %t.bytecode-o0 | FileCheck %s --check-prefix=OUTPUT
-// RUN: %protect-obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
+// RUN: %protect-obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
 // RUN: %t.bytecode-o3 | FileCheck %s --check-prefix=OUTPUT
-// RUN: %protect-obelisk -fno-lto -O0 --native-scheduler=aot %s -o %t.aot-o0
+// RUN: %protect-obelisk -O0 --native-scheduler=aot %s -o %t.aot-o0
 // RUN: %t.aot-o0 | FileCheck %s --check-prefix=OUTPUT
-// RUN: %protect-obelisk -fno-lto -O3 --native-scheduler=aot %s -o %t.aot-o3
+// RUN: %protect-obelisk -O3 --native-scheduler=aot %s -o %t.aot-o3
 // RUN: %t.aot-o3 | FileCheck %s --check-prefix=OUTPUT
 // RUN: not obelisk -emit-slang %s 2>&1 | FileCheck %s --check-prefix=NO-PROVIDER
 // RUN: not %protect-obelisk --test-max-protect-bytes=8 -emit-slang %s 2>&1 | FileCheck %s --check-prefix=SIZE-LIMIT

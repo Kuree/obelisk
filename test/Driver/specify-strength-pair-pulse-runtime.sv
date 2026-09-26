@@ -1,10 +1,10 @@
-// RUN: obelisk -fno-lto -O0 %s -o %t.native-o0
+// RUN: obelisk -O0 %s -o %t.native-o0
 // RUN: %t.native-o0 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 %s -o %t.native-o3
+// RUN: obelisk -O3 %s -o %t.native-o3
 // RUN: %t.native-o3 | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
 // RUN: %t.bytecode-o0 | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
 // RUN: %t.bytecode-o3 | FileCheck %s
 // RUN: obelisk -O0 -emit-sim %s -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=SIM < %t.sim.mlir

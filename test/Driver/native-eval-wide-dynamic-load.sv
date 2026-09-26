@@ -1,7 +1,7 @@
 // RUN: obelisk -O3 --native-scheduler=eval -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 -fno-lto --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O0 -fno-lto --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.eval > %t.eval.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.bytecode.out %t.eval.out

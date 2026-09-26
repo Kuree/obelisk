@@ -13,15 +13,15 @@
 // RUN: obelisk -O0 --vpi=full --native-scheduler=aot -emit-llvm %s \
 // RUN:   -o %t.vpi.ll
 // RUN: FileCheck %s --check-prefix=AOT < %t.vpi.ll
-// RUN: obelisk -fno-lto --native-scheduler=aot %s -o %t.native
-// RUN: obelisk -fno-lto --native-scheduler=aot --execution-tier=bytecode %s \
+// RUN: obelisk --native-scheduler=aot %s -o %t.native
+// RUN: obelisk --native-scheduler=aot --execution-tier=bytecode %s \
 // RUN:   -o %t.bytecode
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out
 // RUN: obelisk -O0 --native-scheduler=eval -emit-llvm %s -o %t.eval.ll
 // RUN: FileCheck %s --check-prefix=EVAL < %t.eval.ll
-// RUN: obelisk -O0 -fno-lto --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk -O0 --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval > %t.eval.out
 // RUN: diff -u %t.bytecode.out %t.eval.out
 // RUN: not obelisk -O0 --native-scheduler=eval --static-specialization=off \

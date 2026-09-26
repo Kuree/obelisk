@@ -3,12 +3,12 @@
 // RUN: FileCheck %s --check-prefix=NO-SDF < %t.slang.mlir
 // RUN: cd %S && obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.aot.ll
 // RUN: FileCheck %s --check-prefix=AOT-NO-SDF < %t.aot.ll
-// RUN: cd %S && obelisk -fno-lto -O0 --native-scheduler=generic %s -o %t.generic-o0
-// RUN: cd %S && obelisk -fno-lto -O3 --native-scheduler=generic %s -o %t.generic-o3
-// RUN: cd %S && obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
-// RUN: cd %S && obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
-// RUN: cd %S && obelisk -fno-lto -O0 --native-scheduler=auto %s -o %t.auto-o0
-// RUN: cd %S && obelisk -fno-lto -O3 --native-scheduler=auto %s -o %t.auto-o3
+// RUN: cd %S && obelisk -O0 --native-scheduler=generic %s -o %t.generic-o0
+// RUN: cd %S && obelisk -O3 --native-scheduler=generic %s -o %t.generic-o3
+// RUN: cd %S && obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
+// RUN: cd %S && obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
+// RUN: cd %S && obelisk -O0 --native-scheduler=auto %s -o %t.auto-o0
+// RUN: cd %S && obelisk -O3 --native-scheduler=auto %s -o %t.auto-o3
 // RUN: %t.generic-o0 > %t.generic-o0.out
 // RUN: %t.generic-o3 > %t.generic-o3.out
 // RUN: %t.bytecode-o0 > %t.bytecode-o0.out

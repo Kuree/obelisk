@@ -1,0 +1,40 @@
+# Check the selected runtime archive using an incomplete private support tree.
+# This distinguishes LTO from ordinary linking even when both produce the same
+# simulator output. Relocate the compiler so the real support tree is untouched.
+# RUN: rm -rf %t
+# RUN: mkdir -p %t/bin %t/lib/obelisk/targets/x86_64-unknown-linux-gnu
+# RUN: cp %obelisk %t/bin/obelisk
+# RUN: touch %t/lib/obelisk/targets/x86_64-unknown-linux-gnu/.complete
+# RUN: touch %t/lib/obelisk/targets/x86_64-unknown-linux-gnu/clang_rt.crtbegin.o
+
+# The default is non-LTO at every optimization level, including implicit -O3.
+# RUN: not %t/bin/obelisk %S/no-lto.sv -o %t/default 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -O0 %S/no-lto.sv -o %t/o0 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -O1 %S/no-lto.sv -o %t/o1 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -O2 %S/no-lto.sv -o %t/o2 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -O3 %S/no-lto.sv -o %t/o3 2>&1 | FileCheck %s --check-prefix=OBJECT
+
+# -flto opts in above -O0. The last LTO flag wins.
+# RUN: not %t/bin/obelisk -O0 -flto %S/no-lto.sv -o %t/o0-lto 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -O1 -flto %S/no-lto.sv -o %t/o1-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/obelisk -O2 -flto %S/no-lto.sv -o %t/o2-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/obelisk -O3 -flto %S/no-lto.sv -o %t/o3-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/obelisk -fno-lto %S/no-lto.sv -o %t/explicit 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -flto -fno-lto %S/no-lto.sv -o %t/restored 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk -fno-lto -flto %S/no-lto.sv -o %t/enabled 2>&1 | FileCheck %s --check-prefix=LTO
+
+# Whole-design bytecode follows the same runtime-link policy.
+# RUN: not %t/bin/obelisk --execution-tier=bytecode %S/no-lto.sv -o %t/bytecode 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/obelisk --execution-tier=bytecode -flto %S/no-lto.sv -o %t/bytecode-lto 2>&1 | FileCheck %s --check-prefix=LTO
+
+# Command-file expansion preserves flag precedence.
+# RUN: echo "-flto" > %t/flags.f
+# RUN: not %t/bin/obelisk -fno-lto -f %t/flags.f %S/no-lto.sv -o %t/file-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/obelisk -f %t/flags.f -fno-lto %S/no-lto.sv -o %t/file-no-lto 2>&1 | FileCheck %s --check-prefix=OBJECT
+
+# RUN: obelisk --help | FileCheck %s --check-prefix=HELP
+# HELP: -flto {{ *}}Enable LTO above -O0 (ThinLTO for partitioned native designs)
+# HELP: -fno-lto {{ *}}Disable LTO and link the object runtime archive (default)
+
+# OBJECT: obelisk: error: native support is missing '{{.*}}/libobelisk_rt.a'
+# LTO: obelisk: error: native support is missing '{{.*}}/libobelisk_rt_lto.a'

@@ -45,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--lto",
         action="store_true",
-        help="enable the compiler's default LTO path (ThinLTO for large native designs)",
+        help="enable LTO (ThinLTO for large native designs)",
     )
     parser.add_argument(
         "--keep-binary", type=Path, help="retain the generated simulator at this path"
@@ -100,8 +100,8 @@ def main() -> int:
             f"--execution-tier={args.execution_tier}",
             f"--compile-threads={args.compile_threads}",
         ]
-        if not args.lto:
-            command.append("-fno-lto")
+        if args.lto:
+            command.append("-flto")
         command.extend(("-o", str(binary)))
 
         print(f"compiler={compiler}")

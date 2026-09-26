@@ -1,7 +1,7 @@
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
 // RUN: FileCheck %s --check-prefix=IR --implicit-check-not=obelisk_rt_v1_scheduler_static_transition < %t.ll
-// RUN: obelisk -O3 -fno-lto --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s --check-prefix=OUTPUT
 
 // An ordered NBA owner makes Auto discard its partial eval island. The

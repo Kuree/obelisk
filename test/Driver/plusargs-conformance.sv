@@ -1,10 +1,10 @@
-// RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.o0.native
+// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
 // RUN: %t.o0.native '+DUP=12junk' '+DUP=42' +HELLO +B=10xz +O=7z +D=-1 '+H=123456789abcdef0123456789abcdef0' +X=dead +E=1.25e2 +F=-3.5 +G=.625 +S=hello_world '+PCT%KEY=101' +EMPTY= +BADREAL=1.25junk +TWOSTATE=12junk +DYN=255 +REALINT=12 +PS=xy + | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode '+DUP=12junk' '+DUP=42' +HELLO +B=10xz +O=7z +D=-1 '+H=123456789abcdef0123456789abcdef0' +X=dead +E=1.25e2 +F=-3.5 +G=.625 +S=hello_world '+PCT%KEY=101' +EMPTY= +BADREAL=1.25junk +TWOSTATE=12junk +DYN=255 +REALINT=12 +PS=xy + | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --vpi=off %s -o %t.o3.native
+// RUN: obelisk -O3 --vpi=off %s -o %t.o3.native
 // RUN: %t.o3.native '+DUP=12junk' '+DUP=42' +HELLO +B=10xz +O=7z +D=-1 '+H=123456789abcdef0123456789abcdef0' +X=dead +E=1.25e2 +F=-3.5 +G=.625 +S=hello_world '+PCT%KEY=101' +EMPTY= +BADREAL=1.25junk +TWOSTATE=12junk +DYN=255 +REALINT=12 +PS=xy + | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode '+DUP=12junk' '+DUP=42' +HELLO +B=10xz +O=7z +D=-1 '+H=123456789abcdef0123456789abcdef0' +X=dead +E=1.25e2 +F=-3.5 +G=.625 +S=hello_world '+PCT%KEY=101' +EMPTY= +BADREAL=1.25junk +TWOSTATE=12junk +DYN=255 +REALINT=12 +PS=xy + | FileCheck %s
 
 // IEEE 1800-2017 21.6: argv order selects the first prefix match, every

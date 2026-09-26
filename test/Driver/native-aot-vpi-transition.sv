@@ -15,18 +15,18 @@
 // RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libnative_aot_vpi_local_read.so \
 // RUN:   -o %t.dir/lib/libnative_aot_vpi_local_read.so
-// RUN: cd %t.dir && obelisk -fno-lto --vpi=full --native-scheduler=aot %t/design.sv \
+// RUN: cd %t.dir && obelisk --vpi=full --native-scheduler=aot %t/design.sv \
 // RUN:   lib/libnative_aot_vpi_transition.so -o bin/simulator
-// RUN: cd %t.dir && obelisk -fno-lto --vpi=full --native-scheduler=aot %t/design.sv \
+// RUN: cd %t.dir && obelisk --vpi=full --native-scheduler=aot %t/design.sv \
 // RUN:   lib/libnative_aot_vpi_readonly.so -o bin/readonly
-// RUN: cd %t.dir && obelisk -fno-lto --vpi=read --native-scheduler=aot %t/design.sv \
+// RUN: cd %t.dir && obelisk --vpi=read --native-scheduler=aot %t/design.sv \
 // RUN:   lib/libnative_aot_vpi_readonly.so -o bin/readmode
-// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=read --native-scheduler=generic \
+// RUN: cd %t.dir && obelisk -O3 --vpi=read --native-scheduler=generic \
 // RUN:   %t/local_read.sv lib/libnative_aot_vpi_local_read.so \
 // RUN:   -o bin/local_read
 // RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
 // RUN:   -emit-llvm %t/design.sv -o bin/guarded.ll
-// RUN: cd %t.dir && obelisk -fno-lto -O2 --vpi=full --native-scheduler=aot \
+// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
 // RUN:   %t/mixed_nba.sv -o bin/mixed_nba
 // RUN: obelisk -O2 --vpi=full -emit-sim %t/mixed_nba.sv \
 // RUN:   -o %t.dir/bin/mixed_nba.mlir
@@ -40,12 +40,12 @@
 // RUN: %t.dir/bin/local_read | FileCheck %s --check-prefix=LOCAL-READ
 // RUN: %t.dir/bin/mixed_nba | FileCheck %s --check-prefix=MIXED-NBA
 // RUN: FileCheck %s --check-prefix=MIXED-IR < %t.dir/bin/mixed_nba.mlir
-// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=full --native-scheduler=generic \
+// RUN: cd %t.dir && obelisk -O3 --vpi=full --native-scheduler=generic \
 // RUN:   %t/design.sv lib/libnative_aot_vpi_transition.so -o bin/generic
 // RUN: %t.dir/bin/generic | FileCheck %s --check-prefix=GENERIC
 // RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm \
 // RUN:   %t/design.sv -o - | FileCheck %s --check-prefix=GENERIC-IR
-// RUN: cd %t.dir && obelisk -fno-lto -O3 --vpi=full --native-scheduler=generic \
+// RUN: cd %t.dir && obelisk -O3 --vpi=full --native-scheduler=generic \
 // RUN:   %t/local_read.sv lib/libnative_aot_vpi_local_read.so -o bin/local_full
 // RUN: %t.dir/bin/local_full | FileCheck %s --check-prefix=LOCAL-READ
 

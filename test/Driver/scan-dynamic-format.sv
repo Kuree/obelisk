@@ -1,14 +1,14 @@
-// RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.o0.native
+// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
 // RUN: %t.o0.native +OUT=%t.o0.native.data | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode +OUT=%t.o0.bytecode.data | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=native \
+// RUN: obelisk -O3 --vpi=off --execution-tier=native \
 // RUN:   --native-scheduler=auto %s -o %t.o3.native
 // RUN: %t.o3.native +OUT=%t.o3.native.data | FileCheck %s
 // RUN: obelisk -O3 --vpi=off --execution-tier=native \
 // RUN:   --native-scheduler=auto -emit-llvm %s -o - \
 // RUN:   | FileCheck %s --check-prefix=AUTO-LLVM
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode +OUT=%t.o3.bytecode.data | FileCheck %s
 
 // Managed string state excludes this actor from the static AOT scheduler, but

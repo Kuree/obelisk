@@ -1,4 +1,4 @@
-// RUN: %obelisk -fno-lto --std=1800-2023 -O0 --target=native \
+// RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: %t.native --coverage-output=%t.native.forward.obcov \
 // RUN:   --coverage-test=cross-forward +producer
@@ -9,7 +9,7 @@
 // RUN: %t.native --coverage-load=%t.native.forward.obcov \
 // RUN:   --coverage-output=%t.native.loaded.obcov \
 // RUN:   --coverage-test=cross-loaded > %t.native.out
-// RUN: %obelisk -fno-lto --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: %t.bytecode --coverage-output=%t.bytecode.forward.obcov \
 // RUN:   --coverage-test=cross-forward +producer

@@ -1,10 +1,10 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_export_task_invalid_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: obelisk -fno-lto %s %t.o -o %t.native
+// RUN: obelisk %s %t.o -o %t.native
 // RUN: /bin/sh -c '"%t.native" > "%t.native.out"; test $? -eq 19'
 // RUN: test ! -s %t.native.out
-// RUN: obelisk -fno-lto --execution-tier=bytecode %s %t.o -o %t.bytecode
+// RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: /bin/sh -c '"%t.bytecode" > "%t.bytecode.out"; test $? -eq 19'
 // RUN: test ! -s %t.bytecode.out
 

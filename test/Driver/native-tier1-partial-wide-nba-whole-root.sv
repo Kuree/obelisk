@@ -2,8 +2,8 @@
 // RUN:   -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=GENERATED < %t.auto.ll
-// RUN: obelisk -O3 -fno-lto --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 -fno-lto --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out

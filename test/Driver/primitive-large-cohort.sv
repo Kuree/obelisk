@@ -1,9 +1,9 @@
-// RUN: obelisk -fno-lto -O3 --vpi=off -D AUTO_NMOS %s -o %t.auto
-// RUN: obelisk -fno-lto -O0 --vpi=off --native-scheduler=generic -G N=32 %s -o %t.generic-o0
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=aot -G N=32 %s -o %t.aot-o3
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=eval -G N=32 %s -o %t.eval-o3
-// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode-o0
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode-o3
+// RUN: obelisk -O3 --vpi=off -D AUTO_NMOS %s -o %t.auto
+// RUN: obelisk -O0 --vpi=off --native-scheduler=generic -G N=32 %s -o %t.generic-o0
+// RUN: obelisk -O3 --vpi=off --native-scheduler=aot -G N=32 %s -o %t.aot-o3
+// RUN: obelisk -O3 --vpi=off --native-scheduler=eval -G N=32 %s -o %t.eval-o3
+// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode-o0
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode-o3
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic-o0 > %t.generic-o0.out
 // RUN: %t.aot-o3 > %t.aot-o3.out

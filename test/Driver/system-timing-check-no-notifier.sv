@@ -1,6 +1,6 @@
-// RUN: obelisk -fno-lto -O0 %s -o %t.native
+// RUN: obelisk -O0 %s -o %t.native
 // RUN: %t.native 2>&1 | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode 2>&1 | FileCheck %s
 
 `timescale 1ns / 1ps

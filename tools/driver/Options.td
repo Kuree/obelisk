@@ -115,9 +115,9 @@ def cancelled_pulses_EQ : Joined<["--"], "cancelled-pulses=">,
   Group<Compilation_Group>, MetaVarName<"<hide|show>">, Values<"hide,show">,
   HelpText<"Override specify negative-pulse display globally">;
 def fno_lto : Flag<["-"], "fno-lto">, Group<Compilation_Group>,
-  HelpText<"Disable cross-partition LTO and link the object runtime archive">;
-def flto : Flag<["-"], "flto">, Group<Compilation_Group>, Flags<[HelpHidden]>,
-  HelpText<"Enable LTO (ThinLTO for partitioned native designs; default above -O0)">;
+  HelpText<"Disable LTO and link the object runtime archive (default)">;
+def flto : Flag<["-"], "flto">, Group<Compilation_Group>,
+  HelpText<"Enable LTO above -O0 (ThinLTO for partitioned native designs)">;
 def O0 : Flag<["-"], "O0">, Group<Compilation_Group>,
   HelpText<"Disable simulation and LLVM optimization">;
 def O1 : Flag<["-"], "O1">, Group<Compilation_Group>,

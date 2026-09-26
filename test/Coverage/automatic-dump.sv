@@ -1,36 +1,36 @@
-// RUN: %obelisk -fno-lto --target=native --coverage=line -o %t.native %s
+// RUN: %obelisk --target=native --coverage=line -o %t.native %s
 // RUN: %t.native --coverage-output=%t.native.obcov --coverage-test=smoke
 // RUN: obelisk-cov inspect %t.native.obcov \
 // RUN:   | FileCheck %s --check-prefix=LINE-INSPECT
-// RUN: %obelisk -fno-lto --execution-tier=bytecode --coverage=line -o %t.bytecode %s
+// RUN: %obelisk --execution-tier=bytecode --coverage=line -o %t.bytecode %s
 // RUN: %t.bytecode --coverage-output=%t.bytecode.obcov --coverage-test=smoke
 // RUN: obelisk-cov inspect %t.bytecode.obcov \
 // RUN:   | FileCheck %s --check-prefix=LINE-INSPECT
 // RUN: %t.native --coverage-output=%t.suppressed.obcov --no-coverage-dump
 // RUN: test ! -e %t.suppressed.obcov
-// RUN: %obelisk -fno-lto --target=native -o %t.functional-only.native %s
+// RUN: %obelisk --target=native -o %t.functional-only.native %s
 // RUN: %t.functional-only.native \
 // RUN:   --coverage-output=%t.functional-only.native.obcov
 // RUN: test ! -e %t.functional-only.native.obcov
-// RUN: %obelisk -fno-lto --execution-tier=bytecode \
+// RUN: %obelisk --execution-tier=bytecode \
 // RUN:   -o %t.functional-only.bytecode %s
 // RUN: %t.functional-only.bytecode \
 // RUN:   --coverage-output=%t.functional-only.bytecode.obcov
 // RUN: test ! -e %t.functional-only.bytecode.obcov
-// RUN: %obelisk -fno-lto --target=native -DREQUEST_COVERAGE_DATABASE \
+// RUN: %obelisk --target=native -DREQUEST_COVERAGE_DATABASE \
 // RUN:   -o %t.database-request.native %s
 // RUN: %t.database-request.native \
 // RUN:   --coverage-output=%t.database-request.native.obcov
 // RUN: obelisk-cov inspect %t.database-request.native.obcov \
 // RUN:   | FileCheck %s --check-prefix=DATABASE-INSPECT
-// RUN: %obelisk -fno-lto --execution-tier=bytecode \
+// RUN: %obelisk --execution-tier=bytecode \
 // RUN:   -DREQUEST_COVERAGE_DATABASE -o %t.database-request.bytecode %s
 // RUN: %t.database-request.bytecode \
 // RUN:   --coverage-output=%t.database-request.bytecode.obcov
 // RUN: obelisk-cov inspect %t.database-request.bytecode.obcov \
 // RUN:   | FileCheck %s --check-prefix=DATABASE-INSPECT
 // RUN: %python -c "import os,subprocess,sys; os.makedirs(sys.argv[2],exist_ok=True); p=subprocess.run([sys.argv[1],'--coverage-output='+sys.argv[2]],text=True,capture_output=True); assert p.returncode == 4, (p.returncode,p.stderr); print(p.stderr,end='')" %t.native %t.dump-output-directory 2>&1 | FileCheck %s --check-prefix=DUMP-IO
-// RUN: %obelisk -fno-lto --target=native --coverage=line -DDUMP_FATAL \
+// RUN: %obelisk --target=native --coverage=line -DDUMP_FATAL \
 // RUN:   -o %t.dump-fatal %s
 // RUN: %python -c "import os,subprocess,sys; os.makedirs(sys.argv[2],exist_ok=True); p=subprocess.run([sys.argv[1],'--coverage-output='+sys.argv[2]],text=True,capture_output=True); assert p.returncode == 19, (p.returncode,p.stderr); print(p.stderr,end='')" %t.dump-fatal %t.dump-fatal-output-directory 2>&1 | FileCheck %s --check-prefix=DUMP-FATAL
 

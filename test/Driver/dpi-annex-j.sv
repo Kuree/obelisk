@@ -7,11 +7,11 @@
 // RUN:   %S/Inputs/dpi_annex_j_direct.c -Wl,-soname,direct.so \
 // RUN:   -o %t.dir/root/direct.so
 // RUN: cp %S/Inputs/dpi_annex_j.libs %t.dir/root/libraries.list
-// RUN: obelisk -fno-lto %s -sv_root %t.dir/root \
+// RUN: obelisk %s -sv_root %t.dir/root \
 // RUN:   -sv_liblist libraries.list -sv_lib direct -o %t
 // RUN: %t | FileCheck %s
 // RUN: %llvm_dist/bin/llvm-readelf -d %t | FileCheck %s --check-prefix=ELF
-// RUN: not obelisk -fno-lto %s \
+// RUN: not obelisk %s \
 // RUN:   -sv_liblist %S/Inputs/dpi_annex_j_bootstrap.c -o %t.bad 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-BOOTSTRAP
 // RUN: not obelisk --target=wasm32 %s -sv_lib direct -o %t.wasm 2>&1 \

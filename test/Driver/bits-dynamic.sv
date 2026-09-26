@@ -1,6 +1,6 @@
-// RUN: obelisk -fno-lto -O0 --vpi=off %s -o %t.native
+// RUN: obelisk -O0 --vpi=off %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 // IEEE 1800-2017 20.6.2 and 9.4.2: $bits returns the live total bit count for

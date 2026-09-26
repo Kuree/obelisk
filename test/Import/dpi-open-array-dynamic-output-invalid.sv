@@ -1,4 +1,4 @@
-// RUN: not obelisk -fno-lto %s -o %t 2>&1 | FileCheck %s
+// RUN: not obelisk %s -o %t 2>&1 | FileCheck %s
 
 module dpi_open_array_dynamic_output_invalid;
   import "DPI-C" task invalid(output int values[]);

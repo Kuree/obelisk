@@ -1,5 +1,5 @@
-// RUN: obelisk -fno-lto -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -fno-lto -O2 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O2 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.eval > %t.eval.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.eval.out

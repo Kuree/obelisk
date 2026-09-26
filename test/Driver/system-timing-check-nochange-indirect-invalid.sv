@@ -1,4 +1,4 @@
-// RUN: not obelisk -fno-lto -O0 %s -o %t 2>&1 | FileCheck %s
+// RUN: not obelisk -O0 %s -o %t 2>&1 | FileCheck %s
 
 module system_timing_check_nochange_indirect_invalid(
     input wire reference, select,

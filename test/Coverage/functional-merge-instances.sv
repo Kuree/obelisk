@@ -1,4 +1,4 @@
-// RUN: %obelisk -fno-lto --std=1800-2023 -O0 --target=native \
+// RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: %t.native --coverage-output=%t.native.producer.obcov \
 // RUN:   --coverage-test=merge-producer +producer
@@ -6,7 +6,7 @@
 // RUN:   --coverage-output=%t.native.obcov --coverage-test=merge-consumer \
 // RUN:   > %t.native.stdout
 // RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: %obelisk -fno-lto --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: %t.bytecode --coverage-output=%t.bytecode.producer.obcov \
 // RUN:   --coverage-test=merge-producer +producer

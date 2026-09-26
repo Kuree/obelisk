@@ -1,12 +1,12 @@
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=generic %s \
+// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s \
 // RUN:   -o %t.native
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode %s \
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s \
 // RUN:   -o %t.bytecode
-// RUN: obelisk -fno-lto -O0 --vpi=off --execution-tier=bytecode %s \
+// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s \
 // RUN:   -o %t.bytecode-o0
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=aot %s \
+// RUN: obelisk -O3 --vpi=off --native-scheduler=aot %s \
 // RUN:   -o %t.aot
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
 // RUN:   -G N=17 -G SLOW=1024 -G CYCLES=3 %s -o %t.slow-dominant
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out

@@ -1,5 +1,5 @@
 # RUN: %split-file %s %t
-# RUN: obelisk -fno-lto -O0 --coverage=line -I%t %t/top.sv -o %t/sim
+# RUN: obelisk -O0 --coverage=line -I%t %t/top.sv -o %t/sim
 # RUN: %t/sim --coverage-output=%t/coverage.obcov
 # RUN: obelisk-cov report --format=text %t/coverage.obcov | \
 # RUN:   FileCheck %s --check-prefix=REPORT
@@ -7,7 +7,7 @@
 # RUN: FileCheck %s --check-prefix=CONTROL < %t/coverage.lcov
 # RUN: not obelisk --coverage=toggle -emit-sim %t/unbalanced.sv \
 # RUN:   -o %t/unbalanced.mlir 2>&1 | FileCheck %s --check-prefix=UNBALANCED
-# RUN: not obelisk -fno-lto -O0 --coverage=line %t/unknown.sv \
+# RUN: not obelisk -O0 --coverage=line %t/unknown.sv \
 # RUN:   -o %t/unknown 2>&1 | FileCheck %s --check-prefix=UNKNOWN
 
 # REPORT: line:

@@ -1,12 +1,12 @@
-# RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=generic \
+# RUN: obelisk -O3 --vpi=off --native-scheduler=generic \
 # RUN:   %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.no-generic
-# RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
 # RUN:   %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.no-bytecode
-# RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
 # RUN:   %S/../Driver/scan-dynamic-format.sv -o %t.yes-bytecode
-# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
+# RUN: obelisk -O3 -flto --vpi=off --execution-tier=bytecode \
 # RUN:   %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.no-bytecode-lto
-# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
+# RUN: obelisk -O3 -flto --vpi=off --execution-tier=bytecode \
 # RUN:   %S/../Driver/scan-dynamic-format.sv -o %t.yes-bytecode-lto
 # RUN: %python %S/../Inputs/check-dynamic-scan-feature-layout.py \
 # RUN:   %source_root %runtime_archive %llvm_dist %t.no-generic \

@@ -1,8 +1,8 @@
-// RUN: obelisk -fno-lto -O2 --vpi=off --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O2 --vpi=off --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk -fno-lto -O2 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O2 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -fno-lto -O2 --vpi=off --native-scheduler=aot %s -o %t.aot
+// RUN: obelisk -O2 --vpi=off --native-scheduler=aot %s -o %t.aot
 // RUN: %t.aot | FileCheck %s
 
 module wide_forward #(

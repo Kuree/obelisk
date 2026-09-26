@@ -1,4 +1,4 @@
-// RUN: %obelisk -fno-lto --std=1800-2023 -O0 --target=native \
+// RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: not %t.native --coverage-output=%t.native.obcov --coverage-test=bin-iff \
 // RUN:   2> %t.native.err
@@ -8,7 +8,7 @@
 // RUN:   2> %t.loaded.err
 // RUN: obelisk-cov report --format=json %t.loaded.obcov -o %t.loaded.json
 // RUN: %python -c "import collections,json,sys; q=json.load(open(sys.argv[1]))['illegal_bin_diagnostics']; assert len(q)==8 and all(v['count']==1 for v in q); assert collections.Counter((v['test'],v['simulation_time']) for v in q) == collections.Counter({('bin-iff',0):2,('bin-iff',10):2,('bin-iff-loaded',0):2,('bin-iff-loaded',10):2}); assert {v['hierarchy'] for v in q} == {'top.cg.cp.illegal','top.cg.cp.illegal_overlap'}" %t.loaded.json
-// RUN: %obelisk -fno-lto --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: not %t.bytecode --coverage-output=%t.bytecode.obcov \
 // RUN:   --coverage-test=bin-iff 2> %t.bytecode.err

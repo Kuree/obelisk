@@ -1,13 +1,13 @@
 // RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -fno-lto -O0 %s -o %t.o0.native
+// RUN: obelisk -O0 %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
-// RUN: obelisk -fno-lto -O3 %s -o %t.o3.native
+// RUN: obelisk -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: obelisk -fno-lto -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot | FileCheck %s
 
 `timescale 1ns / 1ps

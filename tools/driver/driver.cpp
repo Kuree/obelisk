@@ -1432,7 +1432,7 @@ static int executeCompilation(
         args.getLastArgValue(OPT_thinlto_cache_dir_EQ).str();
     nativeOptions.bytecode = executionTier == "bytecode";
     nativeOptions.optLevel = optLevel;
-    nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, false);
+    nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, true);
     nativeOptions.timing = args.hasArg(OPT_mlir_timing);
     nativeOptions.debugNativeExecutionCounts =
         args.hasArg(OPT_debug_native_execution_counts);

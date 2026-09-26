@@ -1,18 +1,18 @@
-// RUN: obelisk -fno-lto -O3 --top=native_timescale_precedence \
+// RUN: obelisk -O3 --top=native_timescale_precedence \
 // RUN:   --timescale=1us/100ns %S/Inputs/timescale-directive.sv \
 // RUN:   %S/Inputs/timescale-default.sv %s -o %t.separate.native
 // RUN: %t.separate.native | FileCheck %s --check-prefix=SEPARATE
-// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode \
+// RUN: obelisk -O3 --execution-tier=bytecode \
 // RUN:   --top=native_timescale_precedence --timescale=1us/100ns \
 // RUN:   %S/Inputs/timescale-directive.sv %S/Inputs/timescale-default.sv \
 // RUN:   %s -o %t.separate.bytecode
 // RUN: %t.separate.bytecode | FileCheck %s --check-prefix=SEPARATE
-// RUN: obelisk -fno-lto -O3 --single-unit \
+// RUN: obelisk -O3 --single-unit \
 // RUN:   --top=native_timescale_precedence --timescale=1us/100ns \
 // RUN:   %S/Inputs/timescale-directive.sv %S/Inputs/timescale-default.sv \
 // RUN:   %s -o %t.single.native
 // RUN: %t.single.native | FileCheck %s --check-prefix=SINGLE
-// RUN: obelisk -fno-lto -O3 --execution-tier=bytecode --single-unit \
+// RUN: obelisk -O3 --execution-tier=bytecode --single-unit \
 // RUN:   --top=native_timescale_precedence --timescale=1us/100ns \
 // RUN:   %S/Inputs/timescale-directive.sv %S/Inputs/timescale-default.sv \
 // RUN:   %s -o %t.single.bytecode

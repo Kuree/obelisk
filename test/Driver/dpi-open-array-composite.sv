@@ -1,13 +1,13 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_open_array_composite_impl.c -I%resource_dir/include -o %t.o
-// RUN: %obelisk -fno-lto --target=native -o %t.native %s %t.o
+// RUN: %obelisk --target=native -o %t.native %s %t.o
 // RUN: %t.native | FileCheck %s
-// RUN: %obelisk -fno-lto --execution-tier=bytecode -o %t.bytecode %s %t.o
+// RUN: %obelisk --execution-tier=bytecode -o %t.bytecode %s %t.o
 // RUN: %t.bytecode | FileCheck %s
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
 // RUN:   -flto=full -funified-lto -c %S/Inputs/dpi_open_array_composite_impl.c \
 // RUN:   -I%resource_dir/include -o %t.bc
-// RUN: %obelisk -o %t.lto %s %t.bc
+// RUN: %obelisk -flto -o %t.lto %s %t.bc
 // RUN: %t.lto | FileCheck %s
 // RUN: %obelisk --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h

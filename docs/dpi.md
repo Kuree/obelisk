@@ -114,13 +114,13 @@ symbol is an ordinary DPI/helper dependency. A VPI startup object requires
 
 Native DPI objects, static archives, and shared libraries remain supported at
 every optimization level. They are ordinary native linker inputs and do not
-participate in the `-O1` through `-O3` Full-LTO optimization of generated code
-and the Obelisk runtime.
+participate in the optional Full-LTO optimization of generated code and the
+Obelisk runtime enabled by `-flto` at `-O1` through `-O3`.
 
 A DPI input may instead contain LLVM bitcode compatible with Obelisk's pinned
-LLVM 22.1.6 unified Full-LTO pipeline. Such input participates in the same
-Full-LTO link and may be optimized with generated and runtime code. Bitcode is
-a build-internal compatibility surface, not a portable DPI distribution
+LLVM 22.1.6 unified Full-LTO pipeline. With `-flto`, such input participates in
+the same Full-LTO link and may be optimized with generated and runtime code.
+Bitcode is a build-internal compatibility surface, not a portable DPI distribution
 format. LLD reports incompatible LLVM bitcode directly; Obelisk never silently
 falls back to native or non-LTO linking.
 

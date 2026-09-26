@@ -1,4 +1,4 @@
-// RUN: %obelisk -fno-lto --std=1800-2023 -O0 --target=native \
+// RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: %t.native --coverage-output=%t.native.obcov \
 // RUN:   --coverage-test=comments
@@ -7,7 +7,7 @@
 // RUN: obelisk-cov report --format=html %t.native.obcov -o %t.native.html
 // RUN: %python -c 'import json,sys; d=json.load(open(sys.argv[1])); t=d["functional_types"][0]; g=d["functional_instance_groups"][0]; assert t["comment"] == "functional <group> type & comment"; assert g["comment"] == "functional \"group\" \\ path\n</script> & <tag>"; assert g["items"][0]["comment"] == "functional >point< & comment"; assert g["items"][0]["type_comment"] == "functional point type </script> comment"' %t.native.json
 // RUN: %python -c 'import json,re,sys; h=open(sys.argv[1]).read(); m=re.search(r"<script[^>]*id=\"coverage-data\"[^>]*>(.*?)</script>",h,re.S); assert m; p=m.group(1); assert all(c != "<" for c in p) and r"\u003c/script>" in p; d=json.loads(p); assert d["functional_types"][0]["comment"] == "functional <group> type & comment"; assert d["functional_instance_groups"][0]["items"][0]["type_comment"] == "functional point type </script> comment"' %t.native.html
-// RUN: %obelisk -fno-lto --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
 // RUN:   --coverage-test=comments

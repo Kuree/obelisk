@@ -31,12 +31,14 @@ simulation ownership:
 
 Partition IDs are derived from semantic owners. After all cross-symbol
 dependencies have been frozen, the native backend may split those owners and
-SCCs into definition-level physical shards; hidden external linkage and the
-ThinLTO combined index preserve their calls across shard boundaries. It
-deterministically packs those units into up to two instruction-weight-balanced
-physical shards per configured compile worker, capped at 256. Ordinary shards
-are ThinLTO bitcode; exceptional bodies above the direct-codegen ceiling are
-locally optimized native objects. Future
+SCCs into definition-level physical shards; hidden external linkage preserves
+their calls across shard boundaries. With `-flto`, the ThinLTO combined index
+also enables cross-shard optimization. The backend deterministically packs
+those units into up to two instruction-weight-balanced physical shards per
+configured compile worker, capped at 256. Ordinary shards
+are locally optimized native objects by default. With `-flto` above `-O0`,
+ordinary shards are ThinLTO bitcode; exceptional bodies above the direct-codegen
+ceiling remain locally optimized native objects. Future
 frontend/semantic caching will key the fine-grained semantic-owner artifacts
 before this physical packing step, so a different host thread count cannot
 invalidate them.
@@ -52,37 +54,38 @@ rules are implemented.  The unsplit path remains the correctness fallback.
 Simulation-aware whole-design optimization runs before this boundary. The
 partitioner therefore does not prevent scheduling, state-domain, devirtualize,
 specialize, or simulation-inlining passes from seeing the complete design.
-At `-O3`, ThinLTO's combined index then permits bounded cross-partition import
-and inlining during native code generation. A meaningful simulation-throughput
-regression relative to Full LTO is a release blocker, not an accepted cost of
-incremental compilation.
+At `-O3 -flto`, ThinLTO's combined index then permits bounded cross-partition
+import and inlining during native code generation. A meaningful
+simulation-throughput regression relative to Full LTO is a release blocker,
+not an accepted cost of incremental compilation.
 
-Every ordinary generated native shard carries a ThinLTO summary; exceptional
-direct-codegen object shards are already locally optimized. LLD builds the
-combined design index, performs bounded imports, and runs independent backends
-in parallel. The runtime is separately prelinked with Full LTO so its own
+With `-flto` above `-O0`, every ordinary generated native shard carries a
+ThinLTO summary; exceptional direct-codegen object shards are already locally
+optimized. LLD builds the combined design index, performs bounded imports, and
+runs independent backends in parallel. The runtime is separately prelinked
+with Full LTO so its own
 whole-program optimization is preserved without adding all runtime bitcode to
 each design's ThinLTO index. ThinLTO replaces unified Full LTO for large native
 designs; small designs may retain the single-module path when it is faster.
 Wasm32 retains its existing per-module optimization and object link.
 
-Partitioned native executables use a persistent LLD ThinLTO cache. By default
-it is stored beside the output as `<output>.thinlto-cache`; builds can select a
-shared build-cache location with `--thinlto-cache-dir=<dir>`. LLVM's cache key
+Partitioned native executables built with `-flto` above `-O0` use a persistent
+LLD ThinLTO cache. By default it is stored beside the output as
+`<output>.thinlto-cache`; builds can select a shared build-cache location with
+`--thinlto-cache-dir=<dir>`. LLVM's cache key
 includes the partition contents, combined-index imports, target, and codegen
 configuration, so unchanged backends are reused without bypassing cross-module
 optimization.
 
-`-fno-lto` remains the explicit compile-latency choice: it performs `-O3`
-optimization within each generated partition but does not request
-cross-partition LLVM imports. The default `-O3` mode does not silently select
-that tradeoff. Likewise, oversized process bodies are not moved to bytecode in
-the default native mode merely to improve compiler latency.
+LTO is disabled by default. At `-O3`, the compiler optimizes within each
+generated partition and links native objects without cross-partition LLVM
+imports. `-flto` opts into cross-partition optimization; `-fno-lto` restores
+the default. Oversized process bodies remain native in the default native mode.
 
-The prebuilt native runtime remains a separate archive. `-fno-lto` consumes
-its ordinary object archive directly. ThinLTO consumes the Full-LTO-optimized
-prelinked object archive, so compiling SystemVerilog never recompiles or
-assembles the runtime.
+The prebuilt native runtime remains a separate archive. Default and explicit
+`-fno-lto` links consume its ordinary object archive directly. ThinLTO consumes
+the Full-LTO-optimized prelinked object archive, so compiling SystemVerilog
+never recompiles or assembles the runtime.
 
 ## Cache keys and invalidation
 

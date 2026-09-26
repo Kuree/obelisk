@@ -149,15 +149,16 @@ continuation, descriptor, hierarchy, and code-unit identities. Falling back is
 a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
 `-c` always emits a conventional native ELF relocatable, independent of the
-optimization level. Executable links select the runtime representation by
-optimization level:
+optimization level. Executable links disable LTO by default:
 
-- `-O0` emits a native object and links `libobelisk_rt.a`.
-- `-O1`, `-O2`, and `-O3` serialize the optimized generated LLVM module and
-  link it together with `libobelisk_rt_lto.a` using LLD. Small unified designs
-  use Full LTO; large partitioned designs use ThinLTO.
+- All optimization levels emit native objects and link `libobelisk_rt.a`.
+- `-flto` enables LTO at `-O1`, `-O2`, and `-O3`. Small unified designs use
+  Full LTO with `libobelisk_rt_lto.a`; large partitioned designs use ThinLTO
+  with `libobelisk_rt_prelinked.a`.
+- `-fno-lto` explicitly selects the default. The last of `-flto` and
+  `-fno-lto` wins. `-O0` does not run LTO even with `-flto`.
 
-The optimized link uses matching LTO and code-generation optimization levels,
+The LTO link uses matching LTO and code-generation optimization levels,
 whole-program visibility, and parallel LTO backends. Broad dynamic
 export is disabled; the full non-deprecated Annex I `svdpi.h` `sv*` API is
 retained only when DPI is linked, for foreign objects and shared libraries.
@@ -174,8 +175,8 @@ The native support tree contains three runtime archives. They are generated
 from the same source revision and target flags by the pinned Clang, then
 content-hashed and staged with the other link inputs:
 
-- `libobelisk_rt.a` contains native ELF members for `-O0` and
-  `-fno-lto` links.
+- `libobelisk_rt.a` contains native ELF members for default links and explicit
+  `-fno-lto` links, as well as `-O0` even with `-flto`.
 - `libobelisk_rt_lto.a` contains unified LLVM bitcode members for Full LTO.
 - `libobelisk_rt_prelinked.a` contains the runtime preoptimized with Full LTO
   for partitioned ThinLTO design links.

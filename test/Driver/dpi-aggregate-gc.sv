@@ -1,8 +1,8 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_aggregate_gc_impl.c -I%resource_dir/include -o %t.o
-// RUN: obelisk -fno-lto %s %t.o -o %t.native
+// RUN: obelisk %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -fno-lto --execution-tier=bytecode %s %t.o -o %t.bytecode
+// RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 module dpi_aggregate_gc;

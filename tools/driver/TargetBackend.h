@@ -75,10 +75,9 @@ struct NativeOutputOptions {
   // Export the standardized sv* host API only for DPI-bearing designs. This
   // keeps the cold DPI archive members out of ordinary native executables.
   bool dpi = false;
-  // LTO preserves LLVM whole-program optimization across generated native
-  // partitions. Opting out links the object runtime archive instead, trading
-  // peak simulation speed for a cheaper link.
-  bool noLTO = false;
+  // Link the object runtime archive by default. Opting into LTO enables LLVM
+  // whole-program optimization across generated native partitions.
+  bool noLTO = true;
   bool timing = false;
   bool debugNativeExecutionCounts = false;
   uint32_t optLevel = 3;

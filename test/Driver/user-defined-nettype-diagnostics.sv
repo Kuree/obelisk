@@ -1,12 +1,12 @@
-// RUN: not obelisk -fno-lto -O0 -DIMPURE %s -o %t.impure 2>&1 \
+// RUN: not obelisk -O0 -DIMPURE %s -o %t.impure 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=IMPURE
-// RUN: not obelisk -fno-lto -O0 -DMUTATE %s -o %t.mutate 2>&1 \
+// RUN: not obelisk -O0 -DMUTATE %s -o %t.mutate 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MUTATE
-// RUN: not obelisk -fno-lto -O0 -DRANDOM %s -o %t.random 2>&1 \
+// RUN: not obelisk -O0 -DRANDOM %s -o %t.random 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=RANDOM
-// RUN: not obelisk -fno-lto -O0 -DUNRESOLVED %s -o %t.unresolved 2>&1 \
+// RUN: not obelisk -O0 -DUNRESOLVED %s -o %t.unresolved 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=UNRESOLVED
-// RUN: not obelisk -fno-lto -O0 -DSTATIC %s -o %t.static 2>&1 \
+// RUN: not obelisk -O0 -DSTATIC %s -o %t.static 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=STATIC
 
 // IEEE 1800-2017 6.6.7: a resolution function is automatic and may neither

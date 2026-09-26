@@ -1,8 +1,8 @@
-// RUN: %obelisk -fno-lto --std=1800-2017 -O0 --target=native \
+// RUN: %obelisk --std=1800-2017 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: %t.native --coverage-output=%t.native.obcov \
 // RUN:   --coverage-test=detect-overlap > %t.native.out 2> %t.native.err
-// RUN: %obelisk -fno-lto --std=1800-2017 -O3 --execution-tier=bytecode \
+// RUN: %obelisk --std=1800-2017 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
 // RUN:   --coverage-test=detect-overlap > %t.bytecode.out 2> %t.bytecode.err

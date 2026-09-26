@@ -8,12 +8,12 @@ pending constraint solving.
 
 The native target build produces three forms of the same support code for the
 configured host-native Linux triple. `libobelisk_rt.a` contains native ELF
-objects used by `-O0` and `-fno-lto` executable links;
+objects used by default executable links at every optimization level;
 `libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by unified Full-LTO
-links; and `libobelisk_rt_prelinked.a` contains a Full-LTO-optimized runtime
-for partitioned ThinLTO design links. The wasm target instead produces one
-`libobelisk_rt.a` containing optimized wasm32 objects, used at every
-optimization level so the browser never recompiles runtime bitcode. The host
+links with `-flto`; and `libobelisk_rt_prelinked.a` contains a Full-LTO-optimized
+runtime for partitioned ThinLTO design links with `-flto`. The wasm target
+instead produces one `libobelisk_rt.a` containing optimized wasm32 objects,
+used at every optimization level so the browser never recompiles runtime bitcode. The host
 CMake `obelisk_rt` target remains a native standalone C++17 archive for runtime
 unit tests. All forms expose the same lockstep C ABI; MLIR, slang, and
 GoogleTest are not runtime dependencies.

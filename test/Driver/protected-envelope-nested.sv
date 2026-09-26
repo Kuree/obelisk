@@ -1,5 +1,5 @@
 // RUN: %protect-obelisk -emit-obelisk %s | obelisk-opt --verify-each | FileCheck %s --check-prefix=IR
-// RUN: %protect-obelisk -fno-lto -O0 %s -o %t
+// RUN: %protect-obelisk -O0 %s -o %t
 // RUN: %t | FileCheck %s --check-prefix=OUTPUT
 // RUN: not %protect-obelisk --test-max-protect-depth=7 -emit-slang %s 2>&1 | FileCheck %s --check-prefix=LIMIT
 

@@ -1,12 +1,12 @@
-# RUN: obelisk -fno-lto -O3 --vpi=off \
+# RUN: obelisk -O3 --vpi=off \
 # RUN:   %S/../Driver/native-finish-in-final.sv -o %t.native
 # RUN: %llvm_dist/bin/llvm-nm %t.native \
 # RUN:   | FileCheck %s --check-prefix=NO-DPI --allow-empty
-# RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode \
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
 # RUN:   %S/../Driver/native-finish-in-final.sv -o %t.bytecode
 # RUN: %llvm_dist/bin/llvm-nm %t.bytecode \
 # RUN:   | FileCheck %s --check-prefix=NO-DPI --allow-empty
-# RUN: obelisk -O3 --vpi=off \
+# RUN: obelisk -O3 -flto --vpi=off \
 # RUN:   %S/../Driver/native-finish-in-final.sv -o %t.lto
 # RUN: %llvm_dist/bin/llvm-nm %t.lto \
 # RUN:   | FileCheck %s --check-prefix=NO-DPI --allow-empty

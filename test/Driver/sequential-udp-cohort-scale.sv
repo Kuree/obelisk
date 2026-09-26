@@ -1,7 +1,7 @@
-// RUN: obelisk -fno-lto -O0 --vpi=off --native-scheduler=generic %s -o %t
+// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t
 // RUN: %t --execution-tier=native | FileCheck %s
 // RUN: %t --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk -fno-lto -O0 --vpi=off --native-scheduler=generic \
+// RUN: obelisk -O0 --vpi=off --native-scheduler=generic \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM \
 // RUN:   --implicit-check-not='define {{.*}}.__member'
 

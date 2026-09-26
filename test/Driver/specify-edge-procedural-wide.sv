@@ -1,6 +1,6 @@
 // RUN: obelisk -emit-sim %s -o - | FileCheck %s
-// RUN: obelisk -fno-lto -O0 %s -o %t.native
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O0 %s -o %t.native
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 
 module specify_edge_procedural_wide(
     input wire clock, input wire [4095:0] data,

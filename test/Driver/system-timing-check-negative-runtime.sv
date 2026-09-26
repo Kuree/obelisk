@@ -1,11 +1,11 @@
 // RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -fno-lto -O0 %s -o %t.native
+// RUN: obelisk -O0 %s -o %t.native
 // RUN: %t.native 2>&1 | FileCheck %s --check-prefix=OUT
-// RUN: obelisk -fno-lto -O3 --native-scheduler=eval %s -o %t.aot
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.aot
 // RUN: %t.aot 2>&1 | FileCheck %s --check-prefix=OUT
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot > /dev/null 2> %t.diag
 // RUN: FileCheck %s --check-prefix=AOTDIAG < %t.diag
-// RUN: obelisk -fno-lto -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode 2>&1 | FileCheck %s --check-prefix=OUT
 
 `timescale 1ns / 1ps

@@ -14,10 +14,10 @@
 // RUN: FileCheck %s --check-prefix=IR --implicit-check-not=obelisk_rt_v1_file_scan_dynamic \
 // RUN:   --implicit-check-not=obelisk_rt_v1_scan_dynamic_validate \
 // RUN:   --implicit-check-not=obelisk_rt_v1_string_scan_dynamic < %t.aot.ll
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -fno-lto -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -fno-lto -O3 --vpi=off --native-scheduler=aot %s -o %t.aot
+// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O3 --vpi=off --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -O3 --vpi=off --native-scheduler=aot %s -o %t.aot
 // RUN: %t.generic > %t.generic.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: %t.auto > %t.auto.out

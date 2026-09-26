@@ -1,10 +1,10 @@
 # RUN: %split-file %s %t
-# RUN: obelisk -fno-lto -O0 --coverage=line \
+# RUN: obelisk -O0 --coverage=line \
 # RUN:   --coverage-config=%t/exclude.json %t/top.sv -o %t/exclude
 # RUN: %t/exclude --coverage-output=%t/exclude.obcov
 # RUN: obelisk-cov report --format=text %t/exclude.obcov | \
 # RUN:   FileCheck %s --check-prefix=EXCLUDE
-# RUN: obelisk -fno-lto -O0 --coverage=line \
+# RUN: obelisk -O0 --coverage=line \
 # RUN:   --coverage-config=%t/include.json %t/top.sv -o %t/include
 # RUN: %t/include --coverage-output=%t/include.obcov
 # RUN: obelisk-cov report --format=text %t/include.obcov | \

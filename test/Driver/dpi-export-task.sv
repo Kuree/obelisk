@@ -1,9 +1,9 @@
 // RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
 // RUN:   %S/Inputs/dpi_export_task_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: obelisk -fno-lto %s %t.o -o %t.native
+// RUN: obelisk %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
-// RUN: obelisk -fno-lto --execution-tier=bytecode %s %t.o -o %t.bytecode
+// RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 // RUN: obelisk --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h
