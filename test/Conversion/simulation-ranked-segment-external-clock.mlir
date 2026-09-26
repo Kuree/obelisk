@@ -1,35 +1,8 @@
 // RUN: %python %S/Inputs/mutate-forward-segments.py external-split %S/simulation-ranked-group-external-clock.mlir > %t.input.mlir
 // RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang -I%S/../../runtime/include -I%resource_dir/include -c %S/Inputs/vpi-external-clock.c -o %t.helper.o
-// RUN: %llvm_dist/bin/clang++ %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
-// RUN: FileCheck %s < %t.out
-// RUN: FileCheck %s --check-prefix=TIERS < %t.diag
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.timed.out 2> %t.timed.diag
-// RUN: FileCheck %s --check-prefix=TIMED < %t.timed.out
-// RUN: FileCheck %s --check-prefix=TIERS < %t.timed.diag
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_TEST_FINISH_ON_EDGE=1 %t.exe | FileCheck %s --check-prefix=FINISH
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o0.exe > %t.o0.out 2> %t.o0.diag
-// RUN: FileCheck %s < %t.o0.out
-// RUN: FileCheck %s --check-prefix=TIERS < %t.o0.diag
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o0.exe > %t.o0.timed.out 2> %t.o0.timed.diag
-// RUN: FileCheck %s --check-prefix=TIMED < %t.o0.timed.out
-// RUN: FileCheck %s --check-prefix=TIERS < %t.o0.timed.diag
-// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=full require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.bytecode.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.exe
-// RUN: %t.bytecode.exe | FileCheck %s
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 %t.bytecode.exe | FileCheck %s --check-prefix=TIMED
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_TEST_FINISH_ON_EDGE=1 %t.bytecode.exe | FileCheck %s --check-prefix=FINISH
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o0.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o0.exe
-// RUN: %t.bytecode.o0.exe | FileCheck %s
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 %t.bytecode.o0.exe | FileCheck %s --check-prefix=TIMED
-// RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_TEST_FINISH_ON_EDGE=1 %t.bytecode.o0.exe | FileCheck %s --check-prefix=FINISH
+
+// Runtime behavior is checked in ../Runtime/simulation-ranked-segment-external-clock.test.
 
 // Twelve copy actors cross native size-budget splits. VPI drives every clock
 // and observes the final copy after the same shared-loop slot has settled.
@@ -44,9 +17,3 @@
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0.segment(
 // Startup initializes fourteen actors and reactivates three early-registered
 // relays. Subsequent external clock edges stay in native group execution.
-// TIERS: aot_node_executions=17
-// TIERS-SAME: aot_nba_stages=0
-// TIERS-SAME: aot_fallbacks=0
-// CHECK: external clock count=1000
-// TIMED: timed external clock count=1000 time=10005
-// FINISH: timed external finish count=0 time=5

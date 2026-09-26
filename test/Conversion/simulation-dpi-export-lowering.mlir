@@ -1,47 +1,9 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=NATIVE --check-prefix=COMMON
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports \
-// RUN:   --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=BYTECODE --check-prefix=COMMON
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports \
-// RUN:   --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=false' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=AUTO --check-prefix=COMMON
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --allow-unregistered-dialect --mlir-to-llvmir \
-// RUN:   | opt -passes=verify -disable-output
-// RUN: %llvm_dist/bin/clang -std=c11 -c \
-// RUN:   %S/Inputs/dpi-export-runtime.c -o %t.c.o
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-materialize-dpi-exports,obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --allow-unregistered-dialect --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.native.o
-// RUN: %llvm_dist/bin/clang++ %t.native.o %t.c.o \
-// RUN:   %native_support/libobelisk_rt.a %native_support/libc++.a \
-// RUN:   %native_support/libc++abi.a %native_support/libunwind.a \
-// RUN:   -nostdlib++ -lpthread -ldl -o %t.native
-// RUN: %t.native | FileCheck %s --check-prefix=RUNTIME
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-materialize-dpi-exports,obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --allow-unregistered-dialect --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o %t.c.o \
-// RUN:   %native_support/libobelisk_rt.a %native_support/libc++.a \
-// RUN:   %native_support/libc++abi.a %native_support/libunwind.a \
-// RUN:   -nostdlib++ -lpthread -ldl -o %t.bytecode
-// RUN: %t.bytecode | FileCheck %s --check-prefix=RUNTIME
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-materialize-dpi-exports,obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=false},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --allow-unregistered-dialect --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.auto.o
-// RUN: %llvm_dist/bin/clang++ %t.auto.o %t.c.o \
-// RUN:   %native_support/libobelisk_rt.a %native_support/libc++.a \
-// RUN:   %native_support/libc++abi.a %native_support/libunwind.a \
-// RUN:   -nostdlib++ -lpthread -ldl -o %t.auto
-// RUN: %t.auto | FileCheck %s --check-prefix=RUNTIME
+// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE --check-prefix=COMMON
+// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE --check-prefix=COMMON
+// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=false' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=AUTO --check-prefix=COMMON
+// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --allow-unregistered-dialect --mlir-to-llvmir | opt -passes=verify -disable-output
+
+// Runtime behavior is checked in ../Runtime/simulation-dpi-export-lowering.test.
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -364,4 +326,3 @@ module attributes {
 // BYTECODE-DAG: llvm.call @obelisk_rt_v1_dpi_export_bytecode_link_anchor
 // AUTO-NOT: obelisk.feature.dpi_export_bytecode
 // AUTO-NOT: @obelisk_rt_v1_dpi_export_bytecode_link_anchor
-// RUNTIME: narrow=-1 logic=2 branch=0 scopes=11/22 direct=alpha nested=nested vector=89abcdef/12345678/15/2 output=1234

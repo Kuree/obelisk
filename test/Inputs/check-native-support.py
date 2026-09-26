@@ -78,6 +78,14 @@ graph_build = scratch / "graph-build"
 graph_runtime = scratch / "graph-runtime"
 graph_source.mkdir()
 shutil.copytree(source_root / "runtime", graph_runtime)
+# Test the production dependency/staging graph with tiny translation units.
+# Compiling the runtime implementation again (including after a header edit)
+# adds minutes without testing any additional build-graph behavior. The normal
+# build and runtime tests cover the real implementation. Keep every source and
+# header path so archive membership and dependency checks still use the real
+# graph, compiler, archiver, and staging commands.
+for source in (graph_runtime / "lib").glob("*.cpp"):
+    source.write_text(f'extern "C" int graph_probe_{source.stem}() {{ return 0; }}\n')
 (graph_source / "CMakeLists.txt").write_text(
     "\n".join(
         (

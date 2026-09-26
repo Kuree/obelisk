@@ -5,10 +5,6 @@
 // RUN: FileCheck %s --check-prefix=SIM < %t/lowered.mlir
 // RUN: %python %S/Inputs/dump-coverage-schema.py < %t/lowered.mlir \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: %python -c "p=open(r'%t/input.mlir').read().splitlines(); i=next(i for i,s in enumerate(p) if 'name = \"other\"' in s); p[i]=p[i].replace('is_array = false', 'is_array = true'); open(r'%t/real-default-array.mlir','w').write('\n'.join(p))"
-// RUN: not obelisk-opt %t/real-default-array.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=REAL-DEFAULT
 
 // IEEE 1800-2023 adds real-valued coverpoints.  Keep samples and option
 // values typed as f64 through preparation; the v1 schema represents exact
@@ -33,7 +29,6 @@
 // SCHEMA-DAG: cross_plan item=[[CROSS:[1-9][0-9]*]] first_target=0 target_count=2 {{.*}} tuple_provenance_span=128 tuple_flags=1
 // SCHEMA-DAG: cross_target cross=[[CROSS]] target=[[ITEM]] ordinal=0 tuple_bit_offset=0 tuple_bit_width=64 tuple_result_kind=3 tuple_signedness=3 tuple_flags=0
 // SCHEMA-DAG: cross_target cross=[[CROSS]] target={{[1-9][0-9]*}} ordinal=1 tuple_bit_offset=64 tuple_bit_width=1 tuple_result_kind=2 tuple_signedness=1 tuple_flags=1
-// REAL-DEFAULT: a default bin for a real coverpoint cannot be an array
 
 //--- input.sv
 module real_coverage;

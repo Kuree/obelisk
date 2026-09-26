@@ -1,20 +1,15 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: %python %S/Inputs/check-exclusive-nba-paths.py %s obelisk-opt %llvm_dist %native_support
+
+// Runtime behavior is checked in ../Runtime/simulation-exclusive-fixed-nba-runtime.test.
 
 // Two 34-bit words have alternative writes in exclusive CFG arms.
 // Verify non-byte-aligned / cross-word slots and four-state publication. On
 // the second edge only the OTHER two slots are valid; stale first-edge values
-// must not be replayed over them. This is a pass-level executable MLIR test.
+// must not be replayed over them. The runtime companion checks the resulting values.
 // PLAN-COUNT-4: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// CHECK: 000000011 000000022
-// CHECK-NEXT: 00000005X 000000000
 
 !word = !obelisk_sim.logic<34>
 !words = !obelisk_sim.unpacked_array<0 : 1 x !word>

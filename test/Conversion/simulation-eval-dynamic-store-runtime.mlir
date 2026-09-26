@@ -1,18 +1,12 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O2>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native 2> %t.native.err | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode 2> %t.bytecode.err | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-eval-dynamic-store-runtime.test.
 
 // Dynamic blocking stores clip to the packed root. Unknown payload bits are
 // preserved; invalid writes must neither modify data nor wake change observers.
 // LRM 11.5.1 and 9.4.2. Exercise the same input in native and bytecode modes.
 // PLAN: llvm.func @__obelisk_eval_dispatch_v1
-// CHECK: 00000000000000000000000000000001 1
-// CHECK-NEXT: x0000000000000000000000000000001 0
-// CHECK-NEXT: x0000000000000000000000000000001 0
-// CHECK-NEXT: x0000000000000000000000000000001 0
 !wide = !obelisk_sim.logic<32>
 !wref = !obelisk_sim.ref<!wide>
 !ref = !obelisk_sim.ref<i1>

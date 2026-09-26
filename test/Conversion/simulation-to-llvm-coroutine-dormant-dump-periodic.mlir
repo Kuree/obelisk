@@ -1,7 +1,11 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' -o %t.planned.mlir
 // RUN: obelisk-opt %t.planned.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
-// RUN: %python %S/Inputs/check-periodic-control-layout.py %t.planned.mlir %t obelisk-opt FileCheck %s
+// RUN: sed -e 's/x86_64-unknown-linux-gnu/wasm32-unknown-emscripten/g' -e 's/e-m:e-p:64:64-i64:64-n8:16:32:64-S128/e-m:e-p:32:32-i64:64-n32:64-S128/g' %t.planned.mlir > %t.wasm.mlir
+// RUN: obelisk-opt %t.wasm.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=CHECK --check-prefix=WASM
+
+// WASM: module attributes {{.*}}llvm.data_layout = "e-m:e-p:32:32-i64:64-n32:64-S128"
+// WASM-SAME: llvm.target_triple = "wasm32-unknown-emscripten"
 
 // Optional dump operations remain cold checkpoints. Their mere presence must
 // not remove the periodic Tier-1 plan; the runtime rejects it when dumping

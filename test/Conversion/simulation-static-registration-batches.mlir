@@ -1,16 +1,10 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe --execution-tier=native | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-static-registration-batches.test.
 
 // Cross a registration batch boundary, with a managed root on each side.
 // This checks native initialization and observes the last registered range.
-// CHECK: registered 2a
 // PLAN-LABEL: llvm.func @main(
 // PLAN: llvm.call @__obelisk_register_static_state_0(
 // PLAN-NEXT: llvm.call @__obelisk_register_static_state_256(
@@ -304,4 +298,3 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
   }
 }
-

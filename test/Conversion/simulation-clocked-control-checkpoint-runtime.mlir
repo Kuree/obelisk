@@ -1,14 +1,9 @@
 // RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diagnostics
-// RUN: FileCheck %s < %t.out
-// RUN: FileCheck %s --check-prefix=TICKS < %t.out
-// RUN: FileCheck %s --check-prefix=TIER < %t.diagnostics
+
+// Runtime behavior is checked in ../Runtime/simulation-clocked-control-checkpoint-runtime.test.
+
 // A checkpointing actor precedes the clock-control owner in dispatch order.
 // An early checkpoint must leave that direct owner's pending edge visible to
 // the callback's same-slot coordinator, without replaying completed owners.
@@ -23,14 +18,6 @@
 // STATE-LABEL: obelisk_sim.func @report
 // PLAN: __obelisk_eval_body
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// TIER-NOT: obelisk-periodic-reject
-// TIER: aot_node_executions=4
-// TIER-SAME: aot_fallbacks=0
-// TICKS-COUNT-2501: tick
-// TICKS-NOT: tick
-// CHECK: startup
-// CHECK: reset 5
-// CHECK: done 10005
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

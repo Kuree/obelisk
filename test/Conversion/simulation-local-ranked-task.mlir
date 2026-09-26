@@ -3,15 +3,6 @@
 // RUN: FileCheck %s --check-prefix=NO-SNAPSHOTS < %t.group.mlir
 // RUN: obelisk-opt %t.group.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
 // RUN: FileCheck %s --check-prefix=NATIVE < %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe | FileCheck %s --check-prefix=RESULT
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe | FileCheck %s --check-prefix=RESULT
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bc.o
-// RUN: %llvm_dist/bin/clang++ %t.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bc.exe
-// RUN: %t.bc.exe | FileCheck %s --check-prefix=RESULT
 // RUN: sed 's/entry_kind = 4 : i32/entry_kind = 6 : i32/g; s/always_comb/always_latch/g' %s > %t.latch.mlir
 // RUN: obelisk-opt %t.latch.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
 // RUN: sed '/^      obelisk_sim.ref.store %next to %output : !word, !ref$/p' %s > %t.repeated.mlir
@@ -23,6 +14,8 @@
 // RUN: obelisk-opt %t.feedback.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
 // RUN: sed '/%bufferDest = obelisk_sim.context.storage/s/\[0\]/[1]/' %s > %t.task-writer.mlir
 // RUN: obelisk-opt %t.task-writer.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
+
+// Runtime behavior is checked in ../Runtime/simulation-local-ranked-task.test.
 
 // Conditional computation and a reconvergent chain run in one ranked native
 // activation while a task supplies stimulus. Publications and timed task work
@@ -51,11 +44,6 @@
 // NATIVE: define void @__obelisk_region_kernel_{{[0-9_]+}}.__obelisk_group_body(
 // NATIVE-NOT: llvm.coro
 // NATIVE: define i32 @__obelisk_region_kernel_{{[0-9_]+}}.__obelisk_native_requirements
-// RESULT: result xx
-// RESULT-NEXT: result 03
-// RESULT-NEXT: result xx
-// RESULT-NEXT: result 05
-// RESULT-NEXT: caller 42
 
 !word = !obelisk_sim.logic<8>
 !ref = !obelisk_sim.ref<!word>

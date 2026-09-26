@@ -1,15 +1,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.group.mlir
-// RUN: obelisk-opt %t.group.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bc.o
-// RUN: %llvm_dist/bin/clang++ %t.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bc.exe
-// RUN: %t.bc.exe | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-local-ranked-feedback.test.
 
 // A static sensitivity SCC is not a reason to exclude all of its actors.
 // Forward segments remain native groups and the shared loop handles their
@@ -17,7 +9,6 @@
 // GROUP: obelisk_sim.spawn @__obelisk_region_kernel_
 // GROUP: obelisk_sim.func private @__obelisk_region_kernel_
 // GROUP-SAME: obelisk.native.region_body
-// CHECK: settled 1 1 1 1
 
 !bit = !obelisk_sim.logic<1>
 !ref = !obelisk_sim.ref<!bit>

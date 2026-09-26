@@ -1,27 +1,11 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
-// RUN:   | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
+
+// Runtime behavior is checked in ../Runtime/simulation-controlled-pass-runtime.test.
 
 // Hand-authored simulation IR exercises the runtime representation directly:
 // full four-state controls, exact nonresistive/resistive strength propagation,
 // bidirectional flow, and one reversed packed pass-switch run.
-// CHECK: enabled Su1 St1 Pu1
-// CHECK: disabled Su1 HiZ HiZ
-// CHECK: x-control Su1 StH PuH
-// CHECK: z-control Su1 StH PuH
-// CHECK: reverse Pu0 Pu0 Su0
-// CHECK: array 0101
 // LLVM-COUNT-3: llvm.call @obelisk_rt_v1_pass_switch_control
 // BYTECODE-COUNT-3: intrinsic {{[0-9]+}}: id=0x0001023d
 

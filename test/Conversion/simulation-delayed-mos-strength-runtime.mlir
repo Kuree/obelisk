@@ -1,38 +1,13 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe --execution-tier=native | FileCheck %s
-// RUN: %t.o0.exe --execution-tier=bytecode | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe --execution-tier=native | FileCheck %s
-// RUN: %t.o3.exe --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
-// RUN:   | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
+
+// Runtime behavior is checked in ../Runtime/simulation-delayed-mos-strength-runtime.test.
 
 // This is deliberately hand-authored Simulation IR: source parsing is tested
 // separately. It proves exact strength payloads, all three delay banks,
 // initial possible conduction, source/control replacement while pending,
 // same-logic strength changes, force/release, resistive transfer, downstream
 // pass propagation, and the absence of destination-to-source backflow.
-// CHECK: initial-x StH PuH Su0
-// CHECK-NEXT: on St1 Pu1 Pu1 Su0
-// CHECK-NEXT: strength-only Pu1 We1 We1 Su0
-// CHECK-NEXT: rejected Pu1 We1 Pu1 Su0
-// CHECK-NEXT: turnoff-pending Pu1
-// CHECK-NEXT: off HiZ HiZ Su0
-// CHECK-NEXT: force-pulse Pu1 Pu1 We1 Pu1 Pu1 Pu1 Su0
 // LLVM: llvm.call @obelisk_rt_v1_mos_drive_delayed
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x0001023f
 

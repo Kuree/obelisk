@@ -1,37 +1,12 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe --execution-tier=native | FileCheck %s
-// RUN: %t.o0.exe --execution-tier=bytecode | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe --execution-tier=native | FileCheck %s
-// RUN: %t.o3.exe --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
-// RUN:   | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
+
+// Runtime behavior is checked in ../Runtime/simulation-controlled-pass-delay-runtime.test.
 
 // Hand-authored Simulation IR checks the IEEE 1800-2017 28.8 topology-state
 // delays directly. Signals still cross an enabled channel immediately.
 // Turn-on is 3 ticks, turn-off is 5, and X/Z uses min(3,5). A rejected
 // one-tick enable pulse never changes connectivity.
-// CHECK: initial StH
-// CHECK-NEXT: before-on StH
-// CHECK-NEXT: enabled St1
-// CHECK-NEXT: before-off St1
-// CHECK-NEXT: disabled HiZ
-// CHECK-NEXT: rejected HiZ
-// CHECK-NEXT: unknown StH
 // LLVM: llvm.call @obelisk_rt_v1_pass_switch_control_delayed
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x0001023e
 

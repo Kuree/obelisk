@@ -1,0 +1,8 @@
+# RUN: obelisk -O3 -flto --vpi=off %S/../Driver/native-finish-in-final.sv -o %t.lto
+# RUN: %llvm_dist/bin/llvm-nm %t.lto | FileCheck %s --check-prefix=NO-DPI --allow-empty
+
+# NO-DPI-NOT: obelisk_rt_v1_dpi_
+# NO-DPI-NOT: svAckDisabledState
+# NO-DPI-NOT: svGetBitselBit
+# NO-DPI-NOT: svGetScope
+# NO-DPI-NOT: svIsDisabledState

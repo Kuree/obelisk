@@ -3,7 +3,8 @@
 // RUN: FileCheck %s --check-prefix=RANGE < %t.mlir
 // RUN: FileCheck %s --check-prefix=STORE < %t.mlir
 // RUN: FileCheck %s --check-prefix=CLOCK < %t.mlir
-// RUN: %python %S/Inputs/check-promotion-word-scan.py %t.mlir %t mlir-translate %llvm_dist/bin %native_support
+
+// Runtime behavior is checked in ../Runtime/simulation-eval-promotion-word-scan.test.
 
 // Overlapping views must be scanned as an exact union. Neither partial-byte
 // boundary nor the gap to another range may contribute unrelated X/Z bits

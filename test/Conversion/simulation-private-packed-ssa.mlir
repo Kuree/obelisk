@@ -2,27 +2,14 @@
 // RUN: FileCheck %s --check-prefix=OFF < %t.off
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=READ
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=FULL
-// RUN: sed 's/obelisk.native_scheduler = 3 : i32/obelisk.native_scheduler = 0 : i32/' %t.off > %t.native.mlir
-// RUN: obelisk-opt %t.native.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe | FileCheck %s --check-prefix=RESULT
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe | FileCheck %s --check-prefix=RESULT
-// RUN: sed 's/obelisk.native_scheduler = 3 : i32/obelisk.native_scheduler = 0 : i32/' %s > %t.bytecode.mlir
-// RUN: obelisk-opt %t.bytecode.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.exe
-// RUN: %t.bytecode.exe | FileCheck %s --check-prefix=RESULT
+
+// Runtime behavior is checked in ../Runtime/simulation-private-packed-ssa.test.
 
 // Forward whole values and nested packed views without converting their value
 // domain. Two unknown bits straddle the native word boundary: one X and one Z.
 // The bytecode reference is encoded from the original storage-based program.
 // The dynamic spawn test uses the automatic event-loop policy after checking
 // the promotion pass; its activation multiplicity cannot use an AOT plan.
-// RESULT: private SSA 1 1 1 1
-// RESULT-NEXT: suspended 2
-// RESULT-NEXT: suspended 2
 !lanes = !obelisk_sim.packed_array<9 : 8 x !obelisk_sim.logic<65>>
 !record = !obelisk_sim.packed_struct<[
   #obelisk_sim.field<name = "lanes", type = !lanes, ordinal = 0, packedOffset = 4>,

@@ -1,26 +1,13 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t.sim.mlir
 // RUN: obelisk-opt %t.sim.mlir --encode-obelisk-sim-to-bytecode --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.native.mlir
-// RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.bytecode.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-sampled-dynamic-array.test.
 
 // The selector and array are sampled before the Active writes. The snapshot
 // contains the proven array roots, excluding unrelated storage. An invalid
 // lane is X for four-state data and zero for two-state data (LRM 7.4.5, 16.5.1).
 // PLAN: obelisk.execution.sampled_ranges = array<i64: 0, 40, 168, 8>
-// CHECK: sampled=6 z=z invalid=x unknown=x two=0
-// CHECK-NEXT: next=9
 !word = !obelisk_sim.logic<4>
 !array = !obelisk_sim.unpacked_array<1 : 2 x !word>
 !two = !obelisk_sim.unpacked_array<1 : 2 x i4>

@@ -1,0 +1,4 @@
+// RUN: obelisk-opt %S/simulation-exclusive-fixed-nba-runtime.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not='llvm.mlir.global internal @__obelisk_eval_nba_valid_'
+
+// CHECK-COUNT-4: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// CHECK: llvm.func @__obelisk_eval_dispatch_v1(

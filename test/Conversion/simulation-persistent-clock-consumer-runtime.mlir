@@ -1,12 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diagnostics
-// RUN: FileCheck %s < %t.out
-// RUN: FileCheck %s --check-prefix=TIER < %t.diagnostics
+
+// Runtime behavior is checked in ../Runtime/simulation-persistent-clock-consumer-runtime.test.
+
 // A persistent procedural clock consumer outlives the finite periodic startup
 // budget. Keep Tier-2 fragments native while rearming its runtime subscription;
 // reject neither the lifecycle nor NBA writes, and do not exit early.
@@ -16,13 +12,6 @@
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
 // PLAN-LABEL: llvm.func @__obelisk_aot_runtime_nba_commit_v1(
 // PLAN: llvm.call @obelisk_rt_v1_static_nba_commit_roots
-// TIER: obelisk-periodic-reject={{(fanout|tier3)-bootstrap}}
-// TIER: aot_node_executions={{[1-9][0-9]*}}
-// TIER-SAME: aot_fallbacks=0
-// CHECK: 00000055 00550000
-// CHECK-NEXT: 00000055 00550000
-// CHECK-NEXT: 00000055 00550000
-// CHECK-NEXT: 00550055 00550000
 
 !words = !obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>
 

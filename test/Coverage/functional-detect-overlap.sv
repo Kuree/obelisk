@@ -8,7 +8,7 @@
 // RUN:   --coverage-test=detect-overlap > %t.bytecode.out 2> %t.bytecode.err
 // RUN: diff -u %t.native.out %t.bytecode.out
 // RUN: diff -u %t.native.err %t.bytecode.err
-// RUN: %python -c "import sys; lines=[l for l in open(sys.argv[1]) if 'functional coverpoint' in l]; assert len(lines) == 4; assert sum(\"cg.defaulted'\" in l for l in lines) == 1; assert sum(\"cg.forced'\" in l for l in lines) == 2; assert sum(\"cg.quiet'\" in l for l in lines) == 0; assert sum(\"large_cg.huge_point'\" in l for l in lines) == 1; assert all(' overlap' in l for l in lines)" %t.native.err
+// RUN: FileCheck %s --implicit-check-not="functional coverpoint" < %t.native.err
 
 module top;
   bit [1:0] sampled;
@@ -54,3 +54,7 @@ module top;
     $finish;
   end
 endmodule
+
+// CHECK-COUNT-2: functional coverpoint 'top.cg.forced' bins 'low' and 'high' overlap
+// CHECK: functional coverpoint 'top.cg.defaulted' bins 'low' and 'high' overlap
+// CHECK: functional coverpoint 'top.large_cg.huge_point' bins 'left[0]' and 'right[0]' overlap

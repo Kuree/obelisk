@@ -1,9 +1,16 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
-// RUN:   | mlir-opt --convert-to-llvm \
-// RUN:   | mlir-runner -e main -entry-point-result=i32 \
-// RUN:   | FileCheck %s --check-prefix=EXEC
+// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard --canonicalize --cse | FileCheck %s
 
-// EXEC: 1
+// Every semantic assertion below is constant. Check that lowering and folding
+// prove all of them, without translating to LLVM or executing a JIT program.
+// CHECK-LABEL: func.func @exercise_remaining_ops() -> i1
+// CHECK-NEXT: %[[TRUE:.*]] = arith.constant true
+// CHECK-NEXT: return %[[TRUE]] : i1
+// CHECK-NEXT: }
+// CHECK-LABEL: func.func @main() -> i32
+// CHECK-NEXT: %[[OK:.*]] = call @exercise_remaining_ops() : () -> i1
+// CHECK-NEXT: %[[RESULT:.*]] = arith.extui %[[OK]] : i1 to i32
+// CHECK-NEXT: return %[[RESULT]] : i32
+// CHECK-NEXT: }
 
 module {
   // Exercise the operation variants whose semantics are not covered by the

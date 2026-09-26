@@ -1,19 +1,8 @@
 // RUN: obelisk-opt %s --lower-obelisk-to-sim=opt-level=0 -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=SNAPSHOT < %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
-// RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.bytecode.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/obelisk-to-simulation-history-defaults.test.
+
 // LRM 16.5.1 and 16.9.3: before-history values come from declaration defaults
 // and recursive expression evaluation. A two-state expression can default to
 // one; a four-state expression with X operands can still default to zero.
@@ -23,14 +12,6 @@
 // This fixture uses semantic MLIR and does not require a SystemVerilog frontend.
 // SNAPSHOT-COUNT-2: debug "__obelisk_sample_default"
 // SNAPSHOT-NOT: debug "__obelisk_sample_default"
-// CHECK: defaults 1 5 9 calls=2 gate=5 nested=0 masked=0 lane=9
-// CHECK-NEXT: alternate 5
-// CHECK-NEXT: defaults 1 7 3 calls=2 gate=5 nested=1 masked=0 lane=3
-// CHECK-NEXT: alternate 5
-// CHECK-NEXT: defaults 1 8 x calls=2 gate=5 nested=0 masked=0 lane=3
-// CHECK-NEXT: alternate 7
-// CHECK-NEXT: defaults 1 9 z calls=2 gate=7 nested=0 masked=0 lane=3
-// CHECK-NEXT: alternate 8
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "history_default_matrix", name = "history_default_matrix", node_id = 0 : i64, sym_name = "s0.history_default_matrix"} {

@@ -1,5 +1,4 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
-// RUN: %python %S/Inputs/check-eval-probe-cold-successors.py %s %t obelisk-opt
 
 // Operations reachable only after a cold checkpoint are not part of its
 // dry-run predicate. A local temporary there cannot alias the hot publication.

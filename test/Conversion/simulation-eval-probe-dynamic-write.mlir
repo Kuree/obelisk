@@ -1,4 +1,7 @@
-// RUN: %python %S/Inputs/check-eval-probe-dynamic-store-alias.py %s %t obelisk-opt
+// RUN: obelisk-opt --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' %s | FileCheck %s
+
+// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
 
 // A dynamic write may be omitted from a predicate if its entire root is
 // disjoint from every later read. An overlapping read must keep runtime

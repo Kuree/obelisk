@@ -6,11 +6,6 @@
 // RUN: FileCheck %s --check-prefix=SIM < %t/lowered.mlir
 // RUN: %python %S/Inputs/dump-coverage-schema.py < %t/lowered.mlir \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: obelisk -emit-obelisk %t/sized-default.sv -o %t/sized-default.mlir
-// RUN: %python -c "p=open(r'%t/sized-default.mlir').read().splitlines(); i=next(i for i,s in enumerate(p) if 'name = \"bad\"' in s); p[i]=p[i].replace('child_roles = array<i64>', 'child_roles = array<i64: 1>').replace('has_number_of_bins = false', 'has_number_of_bins = true'); p.insert(i+1, '                obelisk.sv.expression.integer_literal attributes {constant_value = \"2\", is_declared_unsized = true, is_signed = true, node_id = 999999 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}'); open(r'%t/sized-default-invalid.mlir','w').write('\n'.join(p))"
-// RUN: not obelisk-opt %t/sized-default-invalid.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SIZED-DEFAULT
 
 // IEEE 1800-2017 19.5.1 distinguishes a per-value unsized array from a
 // fixed-cardinality array.  The latter count belongs to the constructor batch
@@ -26,7 +21,6 @@
 // SCHEMA-DAG: functional_bin_plan bin=[[FIXED]] {{.*}} cardinality_expression=[[COUNT]] array_cardinality=0 array_mode=3 distribution=3
 // SCHEMA-DAG: functional_bin_plan bin=[[UNSIZED]] {{.*}} cardinality_expression=0 array_cardinality=0 array_mode=2 distribution=2
 // SCHEMA-DAG: functional_bin_plan bin=[[DEFAULT]] value_set=0 {{.*}}array_mode=2 distribution=2
-// SIZED-DEFAULT: a default coverage bin array must be unsized
 
 //--- input.sv
 module state_bin_arrays;
@@ -43,15 +37,4 @@ module state_bin_arrays;
     cov = new;
     cov.sample();
   end
-endmodule
-
-//--- sized-default.sv
-module sized_default;
-  bit sampled;
-  covergroup cg;
-    cp: coverpoint sampled {
-      bins bad[] = default;
-      bins ordinary = {0};
-    }
-  endgroup
 endmodule

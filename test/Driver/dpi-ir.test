@@ -1,0 +1,6 @@
+// RUN: %obelisk -emit-llvm %S/dpi.sv -o %t.ll
+// RUN: FileCheck %s --check-prefix=NONCONTEXT-IR < %t.ll
+// RUN: FileCheck %s --check-prefix=CONTEXT-IR < %t.ll
+
+// NONCONTEXT-IR-COUNT-5: call i32 @obelisk_rt_v1_import_call_noncontext_guarded(
+// CONTEXT-IR: call i32 @obelisk_rt_v1_import_call_guarded(

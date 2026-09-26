@@ -1,19 +1,8 @@
 // RUN: obelisk-opt %s --lower-obelisk-to-sim=opt-level=0 -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
-// RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.bytecode.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/obelisk-to-simulation-sampled-expression.test.
+
 // IEEE 1800-2023 16.5.1, 16.9.3: $sampled(data+1), $past(data+1),
 // and $fell($past(flag)) evaluate sampled operands recursively. The clocked
 // process changes data and index before evaluating these expressions, while
@@ -31,10 +20,6 @@
 // PLAN: %[[FLAG:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg3
 // PLAN: %[[PAST:.*]] = obelisk_sim.assert.sampled_history {{.*}} from %[[FLAG]]
 // PLAN: obelisk_sim.assert.sampled_history {{.*}} from %[[PAST]]
-// CHECK: sample=4 live=5 pick=1 past=x nested=0
-// CHECK-NEXT: sample=6 live=7 pick=1 past=4 nested=0
-// CHECK-NEXT: sample=8 live=9 pick=1 past=6 nested=1
-// CHECK-NEXT: sample=a live=b pick=1 past=8 nested=0
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 0 : i64, sym_name = "s0.sampled_expression"} {

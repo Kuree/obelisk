@@ -4,18 +4,14 @@ import subprocess
 import sys
 
 
-if len(sys.argv) != 9:
+if len(sys.argv) != 4:
     raise SystemExit(
-        "usage: check-dynamic-scan-feature-layout.py SOURCE ARCHIVE LLVM_DIST "
-        "NO_GENERIC NO_BYTECODE YES_BYTECODE NO_BYTECODE_LTO "
-        "YES_BYTECODE_LTO"
+        "usage: check-dynamic-scan-feature-layout.py SOURCE ARCHIVE LLVM_DIST"
     )
 
 source = pathlib.Path(sys.argv[1])
 archive = pathlib.Path(sys.argv[2])
 llvm = pathlib.Path(sys.argv[3]) / "bin"
-no_feature_binaries = [pathlib.Path(sys.argv[index]) for index in (4, 5, 7)]
-feature_binaries = [pathlib.Path(sys.argv[index]) for index in (6, 8)]
 
 # ABI.cpp is compiled independently for native and wasm32 target runtimes.
 # These width-independent assertions lock the wasm32 rule that uint64_t keeps
@@ -451,65 +447,3 @@ class_image_contract = re.search(
 )
 if not class_image_contract:
     raise SystemExit("class bit-stream bytecode layout is not rejected early")
-
-
-def linked_layout(path):
-    sections = run([llvm / "llvm-readobj", "--sections", path]).decode()
-    symbols = run([llvm / "llvm-nm", "--defined-only", path]).decode()
-    return sections, symbols
-
-
-feature_symbols = (
-    "obelisk_rt_v1_dynamic_scan_link_anchor",
-    "invokeDynamicScanIntrinsic",
-    "obelisk_rt_dynamic_scan_plan",
-    "obelisk_rt_v1_scan_dynamic_validate",
-    "obelisk_rt_v1_string_scan_dynamic",
-    "obelisk_rt_v1_file_scan_dynamic",
-)
-bitstream_symbols = (
-    "obelisk_rt_v1_container_bitstream_link_anchor",
-    "invokeContainerBitstreamIntrinsic",
-    "obelisk_rt_v1_container_export_bitstream",
-    "obelisk_rt_v1_aggregate_export_bitstream",
-    "obelisk_rt_v1_recursive_export_bitstream",
-    "obelisk_rt_v1_recursive_bitstream_link_anchor",
-    "obelisk_rt_expand_recursive_watch_group",
-    "obelisk_rt_managed_allocate_without_safepoint",
-    "obelisk_rt_managed_object_acquire",
-    "obelisk_rt_managed_object_release",
-    "obelisk_rt_v1_class_bitstream_link_anchor",
-    "obelisk_rt_v1_class_bitstream_bytecode_link_anchor",
-    "obelisk_rt_v1_class_bitstream_finalize",
-    "obelisk_rt_v2_recursive_export_bitstream",
-    "obelisk_rt_class_bitstream_export_bytecode",
-    "obelisk_rt_expand_class_watch_group",
-    "obelisk_rt_managed_watch_range",
-)
-dpi_export_symbols = (
-    "obelisk_rt_validate_dpi_exports",
-    "obelisk_rt_execute_dpi_export_bytecode",
-    "obelisk_rt_v1_export_call",
-    "obelisk_rt_v1_export_string",
-    "obelisk_rt_v1_dpi_export_unpack_vector",
-    "obelisk_rt_v1_dpi_export_pack_vector",
-    "obelisk_rt_v1_dpi_export_bytecode_link_anchor",
-)
-for binary in no_feature_binaries:
-    sections, symbols = linked_layout(binary)
-    # The shared feature section may contain unrelated cold services (for
-    # example, the bytecode scheduler's large ready-cohort accelerator).
-    # Dynamic-scan pay-for-play is therefore identified by its complete symbol
-    # set rather than by requiring the process-wide feature section to be
-    # absent.
-    for symbol in feature_symbols + bitstream_symbols + dpi_export_symbols:
-        if symbol in symbols:
-            raise SystemExit(f"no-feature binary retained {symbol}: {binary}")
-
-for binary in feature_binaries:
-    sections, symbols = linked_layout(binary)
-    if ".obelisk.feature.text" not in sections:
-        raise SystemExit(f"dynamic bytecode binary has no feature text: {binary}")
-    for symbol in feature_symbols:
-        if symbol not in symbols:
-            raise SystemExit(f"dynamic bytecode binary omitted {symbol}: {binary}")

@@ -1,0 +1,15 @@
+// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
+// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib -shared %t.o -o %t.so
+// RUN: obelisk %S/dpi.sv %t.so -o %t.shared
+// RUN: %t.shared | FileCheck %s --check-prefix=OUTPUT
+// RUN: ln -f %t.so %t.hardlink.so
+// RUN: obelisk %S/dpi.sv %t.so %t.hardlink.so -o %t.hardlink
+// RUN: %t.hardlink | FileCheck %s --check-prefix=OUTPUT
+// RUN: llvm-readelf -d %t.shared | FileCheck %s --check-prefix=NO-SONAME --implicit-check-not='Shared library: [/'
+
+// OUTPUT: vector-ok
+// OUTPUT: 12 10 40 7 100000000
+// OUTPUT: void=42
+// OUTPUT: real=3.75 rounded=4.00 accumulated=4.25
+// NO-SONAME: Library runpath: [/
+// NO-SONAME: Shared library: [dpi-shared.test.tmp.so]

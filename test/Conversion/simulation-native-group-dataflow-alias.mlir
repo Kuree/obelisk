@@ -2,12 +2,8 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=LE < %t.mlir
 // RUN: sed 's/"e-m:e-p/"E-m:e-p/' %s | obelisk-opt --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BE
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang %t.o -o %t.exe
-// RUN: %t.exe
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3
-// RUN: %llvm_dist/bin/clang %t.o3 -o %t.o3.exe
-// RUN: %t.o3.exe
+
+// Runtime behavior is checked in ../Runtime/simulation-native-group-dataflow-alias.test.
 
 // Literal byte aliases share one SSA slot. Narrow writes preserve all other
 // value/mask bytes; later overlapping reads observe the updated slot. Distinct

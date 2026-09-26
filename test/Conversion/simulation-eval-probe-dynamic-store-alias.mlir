@@ -1,6 +1,9 @@
-// RUN: %python %S/Inputs/check-eval-probe-dynamic-store-alias.py %s %t obelisk-opt
+// RUN: obelisk-opt --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' %s | FileCheck %s
 
-// A dynamic select is bounded by its fixed physical root. The helper checks
+// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
+
+// A dynamic select is bounded by its fixed physical root. The adjacent overlap test checks
 // that a store to another root can be discarded, while a possibly aliasing
 // select on the same root still rejects generated evaluation.
 module attributes {

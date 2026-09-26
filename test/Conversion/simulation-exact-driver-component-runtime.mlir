@@ -1,19 +1,10 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+
+// Runtime behavior is checked in ../Runtime/simulation-exact-driver-component-runtime.test.
 
 // A selected stateful-cohort publication may bound the raw driver interval,
 // but it must still resolve and notify every net bit in the selected bit's
 // collapsed pass-connected component.
-// CHECK: EXACT COMPONENT PASS
 // LLVM-LABEL: llvm.func @cohort_member
 // LLVM-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
 

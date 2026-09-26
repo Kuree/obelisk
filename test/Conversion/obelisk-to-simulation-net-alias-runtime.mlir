@@ -1,16 +1,6 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s --check-prefix=RUNTIME
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s --check-prefix=RUNTIME
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=TOPOLOGY
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=TOPOLOGY
+
+// Runtime behavior is checked in ../Runtime/obelisk-to-simulation-net-alias-runtime.test.
 
 // IEEE 1800-2023 10.11: a net alias is one statically shared resolved net.
 // The declared alias identity remains available to VPI, but it adds neither a
@@ -70,4 +60,3 @@ module attributes {
 // TOPOLOGY: obelisk_sim.net.decl [[NET:[0-9]+]] {{.*}} hierarchy "t.source"
 // TOPOLOGY: obelisk_sim.vpi_net_identity.decl {{[0-9]+}} backed_by [[NET]] {{.*}} hierarchy "t.alias_name"
 // TOPOLOGY-NOT: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "t.alias_name"
-// RUNTIME: alias=1

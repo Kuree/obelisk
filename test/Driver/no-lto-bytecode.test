@@ -1,0 +1,7 @@
+# Bytecode runtime linking is independent of the native coroutine link job.
+# RUN: obelisk -O3 --execution-tier=bytecode %S/no-lto.sv -o %t.nolto
+# RUN: %t.nolto > %t.nolto.out
+# RUN: obelisk -O3 -flto --execution-tier=bytecode %S/no-lto.sv -o %t.lto
+# RUN: %t.lto > %t.lto.out
+# RUN: diff -u %t.nolto.out %t.lto.out
+# RUN: FileCheck %S/no-lto.sv --check-prefix=STDOUT < %t.nolto.out

@@ -3,35 +3,17 @@
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=BARRIER < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.bytecode.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.exe
-// RUN: %t.bytecode.exe | FileCheck %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diagnostics
-// RUN: FileCheck %s < %t.out
-// RUN: FileCheck %s --check-prefix=TICKS < %t.out
-// RUN: FileCheck %s --check-prefix=TIER < %t.diagnostics
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=VPIBARRIER < %t.read.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.read.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.read.o
-// RUN: %llvm_dist/bin/clang++ %t.read.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.read.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.read.exe > %t.read.out 2> %t.read.diagnostics
-// RUN: cmp %t.out %t.read.out
-// RUN: FileCheck %s --check-prefix=TIER < %t.read.diagnostics
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.full.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.full.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.full.llvm.mlir
 // RUN: FileCheck %s --check-prefix=VPIBARRIER < %t.full.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.full.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.full.o
-// RUN: %llvm_dist/bin/clang++ %t.full.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.full.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.full.exe > %t.full.out 2> %t.full.diagnostics
-// RUN: cmp %t.out %t.full.out
-// RUN: FileCheck %s --check-prefix=TIER < %t.full.diagnostics
+
+// Runtime behavior is checked in ../Runtime/simulation-direct-output-runtime.test.
+
 // Writable capability alone must likewise preserve Tier 1: no writer or
 // callback is attached in this fixture. Actual mutation is a cold handoff.
 // Read-only VPI capability without live readers must retain the same Tier-1
@@ -52,16 +34,7 @@
 // PLAN: __obelisk_eval_body
 // PLAN: llvm.call @obelisk_rt_v1_eval_display
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// TIER-NOT: obelisk-periodic-reject
-// TIER: aot_node_executions=4
 // A terminating checkpoint returns to finals without re-entering the model.
-// TIER-SAME: aot_fallbacks=0
-// TIER-SAME: aot_checkpoints=2 aot_terminal_checkpoints=1
-// TICKS-COUNT-2501: tick 10xz
-// TICKS-NOT: tick
-// CHECK: startup
-// CHECK: reset 5
-// CHECK: done 10005
 
 // The known-state predicate must bypass every accumulator in an empty bitmap
 // word, as occurs in the post-NBA combinational fixpoint. The dirty-root path

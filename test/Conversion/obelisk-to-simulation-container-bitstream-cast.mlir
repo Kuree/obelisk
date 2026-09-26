@@ -1,38 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(lower-obelisk-to-sim{opt-level=0},obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.exe \
-// RUN:   | FileCheck %s --check-prefix=BYTECODE-LINK \
-// RUN:     --implicit-check-not=recursive_bitstream \
-// RUN:     --implicit-check-not=recursive_export \
-// RUN:     --implicit-check-not=expand_recursive
-// RUN: not %t.exe --execution-tier=native 2>&1 | FileCheck %s --check-prefix=FATAL
-// RUN: not %t.exe --execution-tier=bytecode 2>&1 | FileCheck %s --check-prefix=FATAL
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.native.o
-// RUN: %llvm_dist/bin/clang++ %t.native.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl \
-// RUN:   -o %t.native.exe
-// RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.native.exe \
-// RUN:   | FileCheck %s --check-prefix=NATIVE-LINK \
-// RUN:     --implicit-check-not=container_bitstream_link_anchor \
-// RUN:     --implicit-check-not=invokeContainerBitstreamIntrinsic \
-// RUN:     --implicit-check-not=recursive_bitstream \
-// RUN:     --implicit-check-not=recursive_export \
-// RUN:     --implicit-check-not=expand_recursive
 
-// BYTECODE-LINK-DAG: obelisk_rt_v1_container_export_bitstream
-// BYTECODE-LINK-DAG: obelisk_rt_v1_container_bitstream_link_anchor
-// BYTECODE-LINK-DAG: invokeContainerBitstreamIntrinsic
-// NATIVE-LINK: obelisk_rt_v1_container_export_bitstream
+// Runtime behavior is checked in ../Runtime/obelisk-to-simulation-container-bitstream-cast.test.
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -98,4 +66,3 @@ module attributes {
 // CHECK-NOT: obelisk_sim.logic.dyn_insert
 // CHECK: ^[[REJECTED]]:
 // CHECK: bit-stream cast source and destination widths differ
-// FATAL: bit-stream cast source and destination widths differ

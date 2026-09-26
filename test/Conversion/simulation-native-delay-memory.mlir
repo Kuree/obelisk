@@ -1,10 +1,9 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %python %S/Inputs/check-memory-bound.py %t.exe | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-native-delay-memory.test.
+
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// CHECK: done
 // Ten million nonzero suspensions must retain O(live actors), not O(timesteps),
 // generic calendar entries even when only the native calendar is consulted.
 module attributes {

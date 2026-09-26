@@ -2,12 +2,8 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=SSA < %t.mlir
 // RUN: sed 's/module attributes {/module attributes {obelisk.native.max_inline_ops = 1 : i64,/' %s | obelisk-opt --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang %t.o -o %t.exe
-// RUN: %t.exe
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3
-// RUN: %llvm_dist/bin/clang %t.o3 -o %t.o3.exe
-// RUN: %t.o3.exe
+
+// Runtime behavior is checked in ../Runtime/simulation-native-group-hierarchy.test.
 
 // A boundary in the middle refines only its child. Pure siblings collapse to
 // SSA and select their own domain. Source owner identities and backward work

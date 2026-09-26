@@ -1,0 +1,17 @@
+// Runtime semantics for ../Conversion/simulation-fuse-compute-backedge.mlir.
+
+// RUN: %split-file %S/../Conversion/simulation-fuse-compute-backedge.mlir %t
+// RUN: obelisk -O3 --native-scheduler=generic %t/backedge.sv -o %t/backedge.generic
+// RUN: obelisk -O3 --native-scheduler=aot %t/backedge.sv -o %t/backedge.aot
+// RUN: %t/backedge.generic > %t/backedge.generic.out
+// RUN: %t/backedge.aot > %t/backedge.aot.out
+// RUN: FileCheck %s --check-prefix=BACKEDGE < %t/backedge.generic.out
+// RUN: FileCheck %s --check-prefix=BACKEDGE < %t/backedge.aot.out
+// RUN: FileCheck %s --check-prefix=BACKEDGE-ORDER < %t/backedge.generic.out
+// RUN: FileCheck %s --check-prefix=BACKEDGE-ORDER < %t/backedge.aot.out
+
+// BACKEDGE-DAG: {{^A$}}
+// BACKEDGE-DAG: {{^X$}}
+// BACKEDGE-DAG: {{^B$}}
+// BACKEDGE-ORDER: {{^A$}}
+// BACKEDGE-ORDER: {{^X$}}

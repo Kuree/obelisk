@@ -1,0 +1,22 @@
+// Runtime semantics for ../Conversion/simulation-inertial-path-cancellation.mlir.
+
+// RUN: obelisk-opt %S/../Conversion/simulation-inertial-path-cancellation.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir > %t.native.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.native.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
+// RUN: %t.o0.exe --execution-tier=native | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.native.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
+// RUN: %t.o3.exe --execution-tier=native | FileCheck %s
+// RUN: obelisk-opt %S/../Conversion/simulation-inertial-path-cancellation.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.bytecode.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.bytecode.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.bytecode.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o0.exe
+// RUN: %t.bytecode.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.bytecode.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.bytecode.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o3.exe
+// RUN: %t.bytecode.o3.exe | FileCheck %s
+
+// CHECK: base 0zx10
+// CHECK-NEXT: cancelled 0zx10
+// CHECK-NEXT: independent 1zx10
+// CHECK-NEXT: reactivated 1zx11

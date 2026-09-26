@@ -1,0 +1,13 @@
+// Active-region samples can race; check permitted values and required
+// intra-process order, without requiring one cross-process interleaving.
+// Runtime semantics for ../Conversion/simulation-fuse-compute-deadline-order.mlir.
+
+// RUN: %split-file %S/../Conversion/simulation-fuse-compute-deadline-order.mlir %t
+// RUN: obelisk -O0 --native-scheduler=generic %t/deadline-order.sv -o %t/deadline-order.unfused
+// RUN: obelisk -O3 --native-scheduler=generic %t/deadline-order.sv -o %t/deadline-order.optimized
+// RUN: %t/deadline-order.unfused > %t/deadline-order.unfused.out
+// RUN: %t/deadline-order.optimized > %t/deadline-order.optimized.out
+// RUN: FileCheck %s --check-prefix=DEADLINE < %t/deadline-order.unfused.out
+// RUN: FileCheck %s --check-prefix=DEADLINE < %t/deadline-order.optimized.out
+
+// DEADLINE: {{^[012]$}}

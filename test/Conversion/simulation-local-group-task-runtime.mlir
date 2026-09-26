@@ -4,15 +4,6 @@
 // RUN: obelisk-opt %t.auto.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
 // RUN: obelisk-opt %t.group.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
 // RUN: FileCheck %s --check-prefix=NATIVE < %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe | FileCheck %s --check-prefix=RESULT
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe | FileCheck %s --check-prefix=RESULT
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.exe
-// RUN: %t.bytecode.exe | FileCheck %s --check-prefix=RESULT
 // RUN: sed 's/cf.br ^wait(%carry : i32)/cf.br ^wait(%next : i32)/g' %s > %t.changing.mlir
 // RUN: obelisk-opt %t.changing.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
 // RUN: sed 's/obelisk.native_scheduler = 1 : i32/obelisk.native_scheduler = 3 : i32/' %t.changing.mlir > %t.eval.mlir
@@ -25,6 +16,8 @@
 // RUN: obelisk-opt %t.clock-write.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
 // RUN: sed 's/obelisk_sim.design @local_group_task {/obelisk_sim.design @local_group_task attributes {obelisk_sim.static_body_fusion = [#obelisk_sim.fusion<id = 0, fragments = [2, 5]>]} {/' %t.clock-write.mlir > %t.clock-plan.mlir
 // RUN: obelisk-opt %t.clock-plan.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
+
+// Runtime behavior is checked in ../Runtime/simulation-local-group-task-runtime.test.
 
 // The common loop runs the task that drives the clock and owns both NBA
 // barriers. The two compute actors share one compiled activation even though
@@ -68,10 +61,6 @@
 // CHANGING: obelisk_sim.func private @b(
 // CHANGING: arith.addi
 // CHANGING-NOT: __obelisk_fused_
-// RESULT: before 0 0 0
-// RESULT-NEXT: after 1 2 3
-// RESULT-NEXT: before 1 2 3
-// RESULT-NEXT: after 1 2 3
 
 !ref = !obelisk_sim.ref<i32>
 !clockref = !obelisk_sim.ref<i1>

@@ -1,0 +1,13 @@
+// Active-region samples can race; check permitted values and required
+// intra-process order, without requiring one cross-process interleaving.
+// Runtime semantics for ../Conversion/simulation-fuse-compute-entry-order.mlir.
+
+// RUN: %split-file %S/../Conversion/simulation-fuse-compute-entry-order.mlir %t
+// RUN: obelisk -O0 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.unfused
+// RUN: obelisk -O3 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.optimized
+// RUN: %t/entry-order.unfused > %t/entry-order.unfused.out
+// RUN: %t/entry-order.optimized > %t/entry-order.optimized.out
+// RUN: diff %t/entry-order.unfused.out %t/entry-order.optimized.out
+// RUN: FileCheck %s --check-prefix=ENTRY < %t/entry-order.optimized.out
+
+// ENTRY: 1 1

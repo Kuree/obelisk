@@ -1,29 +1,13 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=NATIVE < %t.native.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.native.mlir > %t.native.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.native.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe --execution-tier=native | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.native.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe --execution-tier=native | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.bytecode.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.bytecode.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o0.exe
-// RUN: %t.bytecode.o0.exe | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.bytecode.ll | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o3.exe
-// RUN: %t.bytecode.o3.exe | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-inertial-path-cancellation.test.
 
 // Returning to each of 0, 1, X and Z cancels the pending default-inertial
 // update, even though comparison with the published value yields empty
 // transition masks. Cancellation must preserve another bit's pending update
 // and allow a subsequent activation to schedule a new transition.
 // NATIVE: llvm.call @obelisk_rt_v1_scheduler_inertial_path_driver
-// CHECK: base 0zx10
-// CHECK-NEXT: cancelled 0zx10
-// CHECK-NEXT: independent 1zx10
-// CHECK-NEXT: reactivated 1zx11
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"

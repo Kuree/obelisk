@@ -1,0 +1,33 @@
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.exe
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %t.exe | FileCheck %s --check-prefix=SYMBOLS --allow-empty
+
+# SYMBOLS-NOT: obelisk_rt_v1_dynamic_scan_link_anchor
+# SYMBOLS-NOT: invokeDynamicScanIntrinsic
+# SYMBOLS-NOT: obelisk_rt_dynamic_scan_plan
+# SYMBOLS-NOT: obelisk_rt_v1_scan_dynamic_validate
+# SYMBOLS-NOT: obelisk_rt_v1_string_scan_dynamic
+# SYMBOLS-NOT: obelisk_rt_v1_file_scan_dynamic
+# SYMBOLS-NOT: obelisk_rt_v1_container_bitstream_link_anchor
+# SYMBOLS-NOT: invokeContainerBitstreamIntrinsic
+# SYMBOLS-NOT: obelisk_rt_v1_container_export_bitstream
+# SYMBOLS-NOT: obelisk_rt_v1_aggregate_export_bitstream
+# SYMBOLS-NOT: obelisk_rt_v1_recursive_export_bitstream
+# SYMBOLS-NOT: obelisk_rt_v1_recursive_bitstream_link_anchor
+# SYMBOLS-NOT: obelisk_rt_expand_recursive_watch_group
+# SYMBOLS-NOT: obelisk_rt_managed_allocate_without_safepoint
+# SYMBOLS-NOT: obelisk_rt_managed_object_acquire
+# SYMBOLS-NOT: obelisk_rt_managed_object_release
+# SYMBOLS-NOT: obelisk_rt_v1_class_bitstream_link_anchor
+# SYMBOLS-NOT: obelisk_rt_v1_class_bitstream_bytecode_link_anchor
+# SYMBOLS-NOT: obelisk_rt_v1_class_bitstream_finalize
+# SYMBOLS-NOT: obelisk_rt_v2_recursive_export_bitstream
+# SYMBOLS-NOT: obelisk_rt_class_bitstream_export_bytecode
+# SYMBOLS-NOT: obelisk_rt_expand_class_watch_group
+# SYMBOLS-NOT: obelisk_rt_managed_watch_range
+# SYMBOLS-NOT: obelisk_rt_validate_dpi_exports
+# SYMBOLS-NOT: obelisk_rt_execute_dpi_export_bytecode
+# SYMBOLS-NOT: obelisk_rt_v1_export_call
+# SYMBOLS-NOT: obelisk_rt_v1_export_string
+# SYMBOLS-NOT: obelisk_rt_v1_dpi_export_unpack_vector
+# SYMBOLS-NOT: obelisk_rt_v1_dpi_export_pack_vector
+# SYMBOLS-NOT: obelisk_rt_v1_dpi_export_bytecode_link_anchor

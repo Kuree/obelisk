@@ -1,31 +1,13 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not='llvm.func @__obelisk_eval_dispatch_v1' < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang -I%S/../../runtime/include -I%resource_dir/include -c %S/Inputs/vpi-write-tier1.c -o %t.helper.o
-// RUN: %llvm_dist/bin/clang++ %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
-// RUN: FileCheck %s < %t.out
-// RUN: env OBELISK_TEST_IMMEDIATE_NET_RELEASE=1 %t.exe | FileCheck %s
+
+// Runtime behavior is checked in ../Runtime/simulation-vpi-write-tier2-runtime.test.
+
 // Runtime companion to the guarded-store/net pass tests. Force Tier 2 in
 // the input IR: late deposits, force/release and X writes must remain correct
 // after a long clean compute-fragment interval, then recover normally.
 // PLAN: llvm.func @__obelisk_aot_schedule_run_v1
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// CHECK: before 0 000001f4
-// CHECK-NEXT: after 0 00000029
-// CHECK-NEXT: before 1 0000002a
-// CHECK-NEXT: after 1 00000007
-// CHECK-NEXT: before 2 00000007
-// CHECK-NEXT: after 2 00000007
-// CHECK-NEXT: before 3 00000008
-// CHECK-NEXT: after 3 xxxxxxxx
-// CHECK-NEXT: before 4 xxxxxxxx
-// CHECK-NEXT: after 4 00000000
-// CHECK-NEXT: before 5 00000001
-// CHECK-NEXT: after 5 00000001 net=00000037
-// CHECK-NEXT: before 6 00000002
-// CHECK-NEXT: after 6 00000002 net=00000002
-// CHECK-NEXT: done 000001f6 net=000001f6
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

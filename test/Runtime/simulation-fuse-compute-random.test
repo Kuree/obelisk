@@ -1,0 +1,11 @@
+// Runtime semantics for ../Conversion/simulation-fuse-compute-random.mlir.
+
+// RUN: %split-file %S/../Conversion/simulation-fuse-compute-random.mlir %t
+// RUN: obelisk -O0 --native-scheduler=generic %t/random.sv -o %t/random.unfused
+// RUN: obelisk -O3 --native-scheduler=generic %t/random.sv -o %t/random.optimized
+// RUN: %t/random.unfused > %t/random.unfused.out
+// RUN: %t/random.optimized > %t/random.optimized.out
+// RUN: diff %t/random.unfused.out %t/random.optimized.out
+// RUN: FileCheck %s --check-prefix=RANDOM < %t/random.optimized.out
+
+// RANDOM: 1202223563 1622423293

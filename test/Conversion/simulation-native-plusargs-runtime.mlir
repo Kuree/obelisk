@@ -3,10 +3,8 @@
 // RUN: FileCheck %s --check-prefix=PLAIN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=RESUMED < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=SCALAR < %t.llvm.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O2>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe +n=17 | FileCheck %s --check-prefix=FOUND
-// RUN: %t.exe | FileCheck %s --check-prefix=MISSING
+
+// Runtime behavior is checked in ../Runtime/simulation-native-plusargs-runtime.test.
 
 // Block-local plusarg strings are native-AOT eligible but still need a live
 // managed lane. Exercise both a plain startup actor and a resumed coroutine;
@@ -25,10 +23,6 @@
 // SCALAR: llvm.insertvalue {{.*}}[1] : !llvm.struct<(struct
 // SCALAR: %[[FLAG:.*]] = llvm.mlir.constant(1 : i32)
 // SCALAR-NEXT: llvm.insertvalue %[[FLAG]], {{.*}}[2] : !llvm.struct<(struct
-// FOUND: initial found=1 value=17
-// FOUND-NEXT: resumed found=1 value=17
-// MISSING: initial found=0 value=99
-// MISSING-NEXT: resumed found=0 value=99
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

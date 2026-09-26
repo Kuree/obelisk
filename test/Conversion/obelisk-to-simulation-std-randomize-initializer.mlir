@@ -1,14 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native --seed=1 | FileCheck %s --check-prefix=RUNTIME
-// RUN: %t.exe --execution-tier=bytecode --seed=1 | FileCheck %s --check-prefix=RUNTIME
+
+// Runtime behavior is checked in ../Runtime/obelisk-to-simulation-std-randomize-initializer.test.
+
 // REQUIRES: z3
 
 module attributes {
@@ -70,5 +63,3 @@ module attributes {
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK: obelisk_sim.random.state
 // CHECK: obelisk_sim.random.set_state
-
-// RUNTIME: init 1 7

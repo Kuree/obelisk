@@ -1,12 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s --check-prefix=OUTPUT
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+
+// Runtime behavior is checked in ../Runtime/simulation-native-unbound-dynamic-state-runtime.test.
 
 // This deliberately omits bytecode encoding and native-state synchronization.
 // A formal driver handle must therefore read and compare against the generated
@@ -16,7 +10,6 @@
 // LLVM-LABEL: llvm.func @read_and_rewrite_z
 // LLVM-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
 // LLVM-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
-// OUTPUT: NATIVE DYNAMIC INITIAL PASS
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

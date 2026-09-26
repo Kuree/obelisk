@@ -1,0 +1,11 @@
+# RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %S/../Driver/scan-dynamic-format.sv -o %t.exe
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %t.exe | FileCheck %s --check-prefix=SYMBOLS --allow-empty
+# RUN: %llvm_dist/bin/llvm-readobj --sections %t.exe | FileCheck %s --check-prefix=SECTION
+
+# SYMBOLS-DAG: obelisk_rt_v1_dynamic_scan_link_anchor
+# SYMBOLS-DAG: invokeDynamicScanIntrinsic
+# SYMBOLS-DAG: obelisk_rt_dynamic_scan_plan
+# SYMBOLS-DAG: obelisk_rt_v1_scan_dynamic_validate
+# SYMBOLS-DAG: obelisk_rt_v1_string_scan_dynamic
+# SYMBOLS-DAG: obelisk_rt_v1_file_scan_dynamic
+# SECTION: Name: .obelisk.feature.text

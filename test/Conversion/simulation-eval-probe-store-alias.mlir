@@ -1,8 +1,18 @@
-// RUN: %python %S/Inputs/check-eval-probe-store-alias.py %s %t obelisk-opt
+// RUN: obelisk-opt --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' %s | FileCheck %s
+
+// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_path_known{{[0-9_]*}}(
+// CHECK-NOT: llvm.store
+// CHECK-NOT: llvm.call
+// CHECK: {{^  }}}
+// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path{{[0-9_]*}}(
+// CHECK-NOT: llvm.store
+// CHECK-NOT: llvm.call
+// CHECK: {{^  }}}
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 
 // A dry-run checkpoint predicate may discard the low-byte store only when
-// its subsequent read addresses the disjoint high byte. The helper also
-// instantiates same-byte and partially overlapping reads; those require a
+// its subsequent read addresses the disjoint high byte. The adjacent tests
+// instantiate same-byte and partially overlapping reads; those require a
 // private whole-root overlay instead of dropping the low-byte publication.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

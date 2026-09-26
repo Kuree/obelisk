@@ -5,10 +5,8 @@
 // RUN: not obelisk-opt %t/chunks.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=65}))' 2>&1 | FileCheck %s --check-prefix=LIMIT
 // RUN: obelisk-opt %t/different-scopes.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SCOPE
 // RUN: obelisk-opt %t/cyclic.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CYCLE
-// RUN: obelisk-opt %t/cyclic.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.cycle.o
-// RUN: %llvm_dist/bin/clang++ %t.cycle.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.cycle.exe
-// RUN: %t.cycle.exe --execution-tier=native
-// RUN: %t.cycle.exe --execution-tier=bytecode
+
+// Runtime behavior is checked in ../Runtime/simulation-fuse-primitive-cohorts.test.
 
 // Five same-sensitivity primitive actors exercise the collision between the
 // general sensitivity planner and the straight-line planner.  They must form
