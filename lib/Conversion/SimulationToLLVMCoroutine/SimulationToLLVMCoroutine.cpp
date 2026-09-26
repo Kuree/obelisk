@@ -3561,6 +3561,120 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       });
     }
   }
+  if (useAOT) {
+    for (auto &entry : analyses) {
+      auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
+      if (!function)
+        return failure();
+      auto bytecode = aotEligibility.getBytecodeFragments().find(entry.first);
+      if (bytecode == aotEligibility.getBytecodeFragments().end())
+        continue;
+      SmallPtrSet<Block *, 8> bytecodeBlocks(bytecode->second.begin(),
+                                             bytecode->second.end());
+      auto activationRequiresBytecode = [&](Block *start) {
+        SmallVector<Block *> pending{start};
+        SmallPtrSet<Block *, 16> visited;
+        while (!pending.empty()) {
+          Block *block = pending.pop_back_val();
+          if (!visited.insert(block).second)
+            continue;
+          if (bytecodeBlocks.contains(block))
+            return true;
+          Operation *terminator = block->getTerminator();
+          if (sim::isSuspensionOp(terminator))
+            continue;
+          llvm::append_range(pending, terminator->getSuccessors());
+        }
+        return false;
+      };
+      SmallVector<uint32_t> &continuations =
+          aotBytecodeContinuations[entry.first];
+      if (activationRequiresBytecode(&function.getBody().front()))
+        continuations.push_back(0);
+      for (const ProcessSuspension &suspension : entry.second->getSuspensions())
+        if (activationRequiresBytecode(suspension.continuation)) {
+          continuations.push_back(suspension.continuationID);
+        }
+      llvm::sort(continuations);
+      continuations.erase(
+          std::unique(continuations.begin(), continuations.end()),
+          continuations.end());
+    }
+  }
+  // A partial Auto island needs a generated executor for every fanout entry.
+  // A continuation that reaches a bytecode block has none unless it is a
+  // runtime checkpoint. Detect that here: once packed lowering has emitted
+  // static NBA staging, the late owner check can no longer fall back.
+  bool bytecodeFanoutOwner = false;
+  if (useAOT && nativeScheduler == sim::NativeSchedulerMode::Auto &&
+      !aotEligibility.isFullyEligible() && staticFanoutPlan.exact) {
+    llvm::DenseMap<uint32_t, sim::SimFuncOp> actorsBySlot;
+    if (metadataDesign)
+      metadataDesign.walk([&](sim::SimFuncOp actor) {
+        if (std::optional<uint32_t> slot = aotActorSlotFor(actor))
+          actorsBySlot.try_emplace(*slot, actor);
+      });
+    // The coordinator drains a finite initial loop that carries repeat state
+    // before entering the periodic loop, so such a bootstrap needs no
+    // executor when a periodic clock exists (see isFiniteInitialBootstrap).
+    std::optional<bool> hasPeriodicClock;
+    auto finiteInitialBootstrap = [&](sim::SimFuncOp actor,
+                                      uint32_t continuation) -> FailureOr<bool> {
+      if (actor.getEntryKind() != sim::EntryKind::Initial)
+        return false;
+      bool loopCarried = false;
+      actor.walk([&](Operation *operation) {
+        sim::ContinuationSiteAttr site;
+        if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(operation))
+          site = suspend.getSiteAttr();
+        else if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(operation))
+          site = suspend.getSiteAttr();
+        else if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(operation))
+          site = suspend.getSiteAttr();
+        else if (auto suspend = dyn_cast<sim::SimSuspendObserveOp>(operation))
+          site = suspend.getSiteAttr();
+        if (site && site.getId() == continuation &&
+            operation->getNumSuccessors() == 1)
+          loopCarried |= operation->getSuccessor(0)->getNumArguments() != 0;
+      });
+      if (!loopCarried)
+        return false;
+      if (!hasPeriodicClock) {
+        FailureOr<SmallVector<NativePeriodicClock>> clocks =
+            buildNativePeriodicClockPlan(module, *stateLayout,
+                                         aotEligibility.getActorSlots());
+        if (failed(clocks))
+          return failure();
+        hasPeriodicClock = !clocks->empty();
+      }
+      return *hasPeriodicClock;
+    };
+    for (const obelisk_rt_static_fanout_entry &entry :
+         staticFanoutPlan.entries) {
+      sim::SimFuncOp actor = actorsBySlot.lookup(entry.actor_slot);
+      if (!actor)
+        continue;
+      FailureOr<bool> bootstrap =
+          finiteInitialBootstrap(actor, entry.continuation);
+      if (failed(bootstrap))
+        return failure();
+      if (*bootstrap)
+        continue;
+      auto bytecode = aotBytecodeContinuations.find(actor.getOperation());
+      IntegerAttr codeUnit = actor.getCodeUnitIdAttr();
+      if (bytecode == aotBytecodeContinuations.end() ||
+          !llvm::is_contained(bytecode->second, entry.continuation) ||
+          (codeUnit && runtimeCheckpointContinuations.contains(
+                           {codeUnit.getUInt(), entry.continuation})))
+        continue;
+      bytecodeFanoutOwner = true;
+      if (detailedTiming)
+        llvm::errs() << "partial eval disabled: bytecode fanout owner actor="
+                     << entry.actor_slot
+                     << " continuation=" << entry.continuation << '\n';
+      break;
+    }
+  }
   bool runtimeOrderedEvalOwner = false;
   if (metadataDesign && nativeScheduler == sim::NativeSchedulerMode::Auto &&
       !aotEligibility.isFullyEligible())
@@ -3578,7 +3692,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   // globals. Decide a partial Auto fallback before that irreversible rewrite.
   if (nativeScheduler == sim::NativeSchedulerMode::Auto &&
       !aotEligibility.isFullyEligible() &&
-      (!staticFanoutPlan.exact || runtimeOrderedEvalOwner)) {
+      (!staticFanoutPlan.exact || runtimeOrderedEvalOwner ||
+       bytecodeFanoutOwner)) {
     if (detailedTiming && runtimeOrderedEvalOwner)
       llvm::errs() << "partial eval disabled: runtime-ordered NBA owner\n";
     useAOT = false;
@@ -3587,6 +3702,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     staticNBA = false;
     cleanSuperstep = false;
     staticEvalIsland = false;
+    aotBytecodeContinuations.clear();
   }
   if (useAOT) {
     FailureOr<SmallVector<NativePeriodicClock>> clocks =
@@ -3632,46 +3748,6 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       analysis::SimulationScheduleAnalysis::compute(module);
   if (failed(scheduleRanks))
     return failure();
-  if (useAOT) {
-    for (auto &entry : analyses) {
-      auto function = dyn_cast_if_present<sim::SimFuncOp>(entry.first);
-      if (!function)
-        return failure();
-      auto bytecode = aotEligibility.getBytecodeFragments().find(entry.first);
-      if (bytecode == aotEligibility.getBytecodeFragments().end())
-        continue;
-      SmallPtrSet<Block *, 8> bytecodeBlocks(bytecode->second.begin(),
-                                             bytecode->second.end());
-      auto activationRequiresBytecode = [&](Block *start) {
-        SmallVector<Block *> pending{start};
-        SmallPtrSet<Block *, 16> visited;
-        while (!pending.empty()) {
-          Block *block = pending.pop_back_val();
-          if (!visited.insert(block).second)
-            continue;
-          if (bytecodeBlocks.contains(block))
-            return true;
-          Operation *terminator = block->getTerminator();
-          if (sim::isSuspensionOp(terminator))
-            continue;
-          llvm::append_range(pending, terminator->getSuccessors());
-        }
-        return false;
-      };
-      SmallVector<uint32_t> &continuations =
-          aotBytecodeContinuations[entry.first];
-      if (activationRequiresBytecode(&function.getBody().front()))
-        continuations.push_back(0);
-      for (const ProcessSuspension &suspension : entry.second->getSuspensions())
-        if (activationRequiresBytecode(suspension.continuation)) {
-          continuations.push_back(suspension.continuationID);
-        }
-      llvm::sort(continuations);
-      continuations.erase(
-          std::unique(continuations.begin(), continuations.end()),
-          continuations.end());
-    }
-  }
   // Certify before packed lowering turns scalar storage accesses into runtime
   // ABI calls and pointers. Those implementation details are not managed heap
   // use. Generated bodies added later conservatively retain a managed scope.

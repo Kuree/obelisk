@@ -208,6 +208,20 @@ def ObeliskSimSCCPPass
   ];
 }
 
+def ObeliskSimPropagateInitializedStoragePass
+    : Pass<"obelisk-sim-propagate-initialized-storage",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Fold whole integer storage initialized once before processes start";
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect"
+  ];
+  let options = [
+    Option<"vpi", "vpi", "std::string", "\"off\"",
+           "VPI observability mode: off, read, or full">
+  ];
+}
+
 def ObeliskSimDevirtualizeClassCallsPass
     : Pass<"obelisk-sim-devirtualize-class-calls",
            "obelisk::sim::SimDesignOp"> {

@@ -36,6 +36,7 @@ add_mlir_library(ObeliskToSimulation
   MaterializeComputeFusion.cpp
   MaterializeGraphRegions.cpp
   PlanStaticSuperstep.cpp
+  PropagateInitializedStorage.cpp
   PrepareCoverage.cpp
   PrepareCaptures.cpp
   Prepare.cpp

@@ -346,6 +346,12 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // summaries. Threading can rematerialize pointer-free constants in resume
   // blocks, which is an executable CFG change and therefore must precede the
   // persistent compute graph.
+  if (optLevel > 0) {
+    ObeliskSimPropagateInitializedStoragePassOptions initializedStorageOptions;
+    initializedStorageOptions.vpi = vpiMode.str();
+    designManager.addPass(createObeliskSimPropagateInitializedStoragePass(
+        std::move(initializedStorageOptions)));
+  }
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     if (optLevel > 0) {

@@ -195,9 +195,11 @@ recognizeBoundedLoop(Block *header,
   // The entry predecessor is a plain branch for a top-level loop, but a
   // conditional branch whenever the loop is nested inside another sweep or
   // guarded by an `if` -- the two shapes RTL reset and initialization loops
-  // actually take. The latch must stay a plain branch: a conditional backedge
+  // actually take. Folding an empty `if` join into the header leaves several
+  // entry edges; they are one entry when all start the induction at the same
+  // constant. The latch must stay a plain branch: a conditional backedge
   // would be a second exit that the termination argument does not cover.
-  Operation *entryOp = nullptr;
+  SmallVector<Operation *, 2> entryOps;
   Value entryValue;
   cf::BranchOp entry, latch;
   for (Block *pred : header->getPredecessors()) {
@@ -230,14 +232,22 @@ recognizeBoundedLoop(Block *header,
     } else {
       return std::nullopt;
     }
-    if (entryOp)
+    if (entryValue &&
+        cast<IntegerAttr>(
+            entryValue.getDefiningOp<arith::ConstantIntOp>().getValue())
+                .getValue() !=
+            cast<IntegerAttr>(
+                incoming.getDefiningOp<arith::ConstantIntOp>().getValue())
+                .getValue())
       return std::nullopt;
-    entryOp = terminator;
+    entryOps.push_back(terminator);
     entryValue = incoming;
-    entry = dyn_cast<cf::BranchOp>(terminator);
   }
-  if (!entryOp || !latch)
+  if (entryOps.empty() || !latch)
     return std::nullopt;
+  // Replication rewrites a single plain entry branch in place.
+  if (entryOps.size() == 1)
+    entry = dyn_cast<cf::BranchOp>(entryOps.front());
   Value increment = latch.getDestOperands()[0];
   auto add = increment.getDefiningOp<arith::AddIOp>();
   auto sub = increment.getDefiningOp<arith::SubIOp>();
@@ -277,7 +287,10 @@ recognizeBoundedLoop(Block *header,
   loop.operations = header->getOperations().size();
   while (!pending.empty()) {
     Block *block = pending.pop_back_val();
-    if (block == loop.exit || block == entryOp->getBlock())
+    if (block == loop.exit ||
+        llvm::any_of(entryOps, [&](Operation *entryOp) {
+          return entryOp->getBlock() == block;
+        }))
       return std::nullopt;
     if (!loop.members.insert(block).second)
       continue;
