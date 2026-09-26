@@ -203,6 +203,18 @@ inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
     "obelisk.feature.class_bitstream_source";
 inline constexpr llvm::StringLiteral thisArgument = "obelisk_sim.this_argument";
 inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
+/// Storage descriptors whose intermediate NBA updates are observable, as a
+/// sorted i64 array on the design. Every other storage root may merge its
+/// NBA updates to one final transition. Absence means every root is
+/// observable. Computed once, before body fusion changes process shapes.
+inline constexpr llvm::StringLiteral nbaTransientObservable =
+    "obelisk.nba.transient_observable";
+/// Storage descriptors watched only by waits for any change, as a sorted i64
+/// array beside nbaTransientObservable. These may merge NBA updates only when
+/// every merge also records rewritten bits in a transient mask. Absence with
+/// nbaTransientObservable present means none.
+inline constexpr llvm::StringLiteral nbaChangeWatched =
+    "obelisk.nba.change_watched";
 inline constexpr llvm::StringLiteral staticBodyFusion =
     "obelisk_sim.static_body_fusion";
 inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";

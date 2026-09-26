@@ -36,13 +36,15 @@ for mode in ("off", "read", "full"):
         )
         assert result.returncode == 0, (mode, name, result.stderr)
         slots = result.stdout.count("llvm.mlir.global internal @__obelisk_eval_nba_valid_")
-        if name == "disjoint":
+        if name == "disjoint" and mode == "off":
             assert slots == 3, (mode, name, slots)
             assert "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
             assert "@__obelisk_eval_ordered_nba_queue_v1" not in result.stdout
         else:
             # Aliasing sites need ordered commits instead of independent
             # per-lane latches, while the rest of the evaluator stays native.
+            # With VPI, a value-change callback can see the value between two
+            # disjoint updates (IEEE 1800-2017 38.36.1), so no lane latches.
             assert slots == 0, (mode, name, slots)
             assert "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
             assert "@__obelisk_eval_ordered_nba_queue_v1" in result.stdout

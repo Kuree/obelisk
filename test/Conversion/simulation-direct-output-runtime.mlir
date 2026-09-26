@@ -17,7 +17,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=BARRIER < %t.read.llvm.mlir
+// RUN: FileCheck %s --check-prefix=VPIBARRIER < %t.read.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.read.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.read.o
 // RUN: %llvm_dist/bin/clang++ %t.read.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.read.exe
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.read.exe > %t.read.out 2> %t.read.diagnostics
@@ -26,7 +26,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.full.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.full.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.full.llvm.mlir
-// RUN: FileCheck %s --check-prefix=BARRIER < %t.full.llvm.mlir
+// RUN: FileCheck %s --check-prefix=VPIBARRIER < %t.full.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.full.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.full.o
 // RUN: %llvm_dist/bin/clang++ %t.full.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.full.exe
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.full.exe > %t.full.out 2> %t.full.diagnostics
@@ -90,6 +90,20 @@
 // BARRIER-NEXT: ^[[COMMIT]]:
 // BARRIER: ^[[DONE]](%[[STATUS:.*]]: i32):
 // BARRIER-NEXT: llvm.return %[[STATUS]] : i32
+
+// With VPI a value-change callback can observe every NBA update (IEEE
+// 1800-2017 38.36.1), so the updates use the ordered queue and its count
+// joins the empty-barrier test.
+// VPIBARRIER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// VPIBARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// VPIBARRIER: %[[DIRTY:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// VPIBARRIER-NEXT: llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// VPIBARRIER: %[[COUNT:.*]] = llvm.load {{.*}} : !llvm.ptr -> i32
+// VPIBARRIER-NEXT: %[[WIDE:.*]] = llvm.zext %[[COUNT]] : i32 to i64
+// VPIBARRIER-NEXT: %[[PENDING:.*]] = llvm.or %[[DIRTY]], %[[WIDE]] : i64
+// VPIBARRIER-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
+// VPIBARRIER-NEXT: %[[EMPTY:.*]] = llvm.icmp "eq" %[[PENDING]], %[[ZERO]] : i64
+// VPIBARRIER: llvm.cond_br %[[EMPTY]]
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

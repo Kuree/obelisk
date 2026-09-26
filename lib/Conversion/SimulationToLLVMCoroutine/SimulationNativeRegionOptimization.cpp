@@ -1,5 +1,6 @@
 //===- SimulationNativeRegionOptimization.cpp - Native region SSA -------===//
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -65,10 +66,13 @@ bool isRegionLocalAccumulator(sim::SimNBAEnqueueOp enqueue) {
 
 /// Replace repeated immediate assignments to one fixed NBA root in an
 /// acyclic activation with SSA next state and one stage at the wait boundary.
+/// Each replaced assignment is its own update event (IEEE 1800-2017 4.6(b)),
+/// so only roots whose intermediate NBA values are unobservable qualify.
 /// The bytecode image has already been frozen when this helper runs, so the
 /// original sites remain the fallback implementation.
-bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
-                            uint64_t &stageCount) {
+bool forwardRegionNextState(sim::SimFuncOp function,
+                            const analysis::NBAMergeSafety &mergeSafety,
+                            uint64_t &rootCount, uint64_t &stageCount) {
   Operation *suspension = nullptr;
   bool multipleSuspensions = false;
   function.walk([&](Operation *operation) {
@@ -198,7 +202,7 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
       return true;
     auto argument = dyn_cast<BlockArgument>(root.destination);
     return !argument || argument.getOwner() != &function.getBody().front() ||
-           root.enqueues.size() < 2;
+           root.enqueues.size() < 2 || !mergeSafety.commitMayMerge(root.commit);
   });
   if (roots.empty())
     return false;
@@ -391,9 +395,13 @@ bool forwardRegionNextState(sim::SimFuncOp function, uint64_t &rootCount,
                                state->first, emit, ValueRange{}, next,
                                ValueRange{});
       builder.setInsertionPointToStart(emit);
-      sim::SimNBAEnqueueOp::create(builder, root.representativeLocation,
-                                   state->second, root.destination, Value{},
-                                   root.representativeSite, IntegerAttr{});
+      auto staged = sim::SimNBAEnqueueOp::create(
+          builder, root.representativeLocation, state->second,
+          root.destination, Value{}, root.representativeSite, IntegerAttr{});
+      // Keep the representative's provenance, such as its Eval origin site.
+      for (NamedAttribute attribute :
+           root.enqueues.back()->getDiscardableAttrs())
+        staged->setAttr(attribute.getName(), attribute.getValue());
       cf::BranchOp::create(builder, root.representativeLocation, next);
       test = next;
     }
@@ -414,6 +422,12 @@ void ObeliskSimOptimizeNativeRegionsPass::runOnOperation() {
   bool retainDirectBody =
       scheduler && scheduler.getValue() != sim::NativeSchedulerMode::Generic;
   SmallVector<sim::SimFuncOp> regions;
+  sim::SimDesignOp design;
+  getOperation().walk([&](sim::SimDesignOp candidate) {
+    design = candidate;
+    return WalkResult::interrupt();
+  });
+  analysis::NBAMergeSafety mergeSafety(design);
   getOperation().walk([&](sim::SimFuncOp function) {
     if (function->hasAttr(sim::metadata::nativeRegionBody))
       regions.push_back(function);
@@ -426,7 +440,7 @@ void ObeliskSimOptimizeNativeRegionsPass::runOnOperation() {
       function->removeAttr(sim::metadata::nativeRegionBody);
     uint64_t roots = 0;
     uint64_t stages = 0;
-    if (!forwardRegionNextState(function, roots, stages))
+    if (!forwardRegionNextState(function, mergeSafety, roots, stages))
       continue;
     ++optimizedRegions;
     coalescedRoots += roots;

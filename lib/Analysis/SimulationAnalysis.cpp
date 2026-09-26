@@ -1,6 +1,7 @@
 //===- SimulationAnalysis.cpp - Shared simulation optimization facts -----===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
@@ -455,6 +456,33 @@ uint64_t getSimulationRegionCost(Region &region) {
     cost += getSimulationOperationCost(*operation);
   });
   return cost;
+}
+
+NBAMergeSafety::NBAMergeSafety(sim::SimDesignOp design) {
+  auto observed = design ? design->getAttrOfType<DenseI64ArrayAttr>(
+                               sim::metadata::nbaTransientObservable)
+                         : DenseI64ArrayAttr{};
+  sim::ComputeGraphAttr graph =
+      design ? design.getComputeGraphAttr() : sim::ComputeGraphAttr{};
+  if (!observed || !graph)
+    return;
+  known = true;
+  for (int64_t descriptor : observed.asArrayRef())
+    observable.insert(static_cast<uint64_t>(descriptor));
+  if (auto watched = design->getAttrOfType<DenseI64ArrayAttr>(
+          sim::metadata::nbaChangeWatched))
+    for (int64_t descriptor : watched.asArrayRef())
+      changeWatched.insert(static_cast<uint64_t>(descriptor));
+  for (Attribute node : graph.getNodes()) {
+    auto commit = dyn_cast<sim::ComputeNBACommitAttr>(node);
+    if (!commit)
+      continue;
+    sim::ComputeEffectAttr effect = commit.getEffect();
+    if (effect.getResource() == sim::ComputeResourceKind::Storage &&
+        effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
+        !effect.getDynamic())
+      commitStorage.try_emplace(commit.getId(), effect.getDescriptor());
+  }
 }
 
 } // namespace obelisk::analysis

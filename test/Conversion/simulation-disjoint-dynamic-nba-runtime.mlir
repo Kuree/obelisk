@@ -40,16 +40,30 @@
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=GUARD < %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=BARRIER < %t.read.llvm.mlir
+// RUN: FileCheck %s --check-prefix=READ < %t.read.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.read.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.read.o
 // RUN: %llvm_dist/bin/clang++ %t.read.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.read.exe
 // RUN: %t.read.exe | FileCheck %s
-// Enabling read-only reflection must not remove dynamic NBA fast paths or
-// weaken their empty-slot guards, even when no VPI consumer is installed.
-// Two independent lanes must preserve both writes, including when their
-// indices alias. Negative, out-of-range and unknown indices must write none.
+// Read-only reflection admits cbValueChange, which runs after every value
+// change (IEEE 1800-2017 38.36.1), so an intermediate NBA value is observable
+// and neither lane may take a one-entry latch. The generated queue keeps both
+// writes; its count joins the dispatcher's empty-barrier test.
+// READ-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// READ: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
+// READ-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// READ-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// READ: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// READ: %[[D0:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
+// READ: llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// READ: %[[COUNT:.*]] = llvm.load {{.*}} : !llvm.ptr -> i32
+// READ: %[[WIDE:.*]] = llvm.zext %[[COUNT]] : i32 to i64
+// READ: %[[PENDING:.*]] = llvm.or %[[D0]], %[[WIDE]] : i64
+// READ: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
+// READ: %[[EMPTY:.*]] = llvm.icmp "eq" %[[PENDING]], %[[ZERO]] : i64
+// READ: llvm.cond_br %[[EMPTY]]
+// Without VPI, nothing watches the root: two independent lanes keep one
+// latch each and must preserve both writes, including when their indices
+// alias. Negative, out-of-range and unknown indices must write none.
 // PLAN-COUNT-2: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot

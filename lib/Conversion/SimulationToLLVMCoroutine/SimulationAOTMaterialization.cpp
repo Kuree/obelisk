@@ -492,17 +492,30 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   // statement executes at most once in this activation.  Otherwise an
   // intermediate edge (for example 0 -> 1 -> 0) would be lost even though
   // the final state is correct.
-  bool directAccumulator = directAccumulatorCandidate &&
+  bool mergeSafe = root != staticNBAPlan.siteRoots.end() &&
+                   root->second < staticNBAPlan.mergeSafeRoots.size() &&
+                   staticNBAPlan.mergeSafeRoots[root->second];
+  bool directAccumulator = directAccumulatorCandidate && mergeSafe &&
                            proof.uniqueSemanticRootSite &&
                            proof.siteExecutesAtMostOnce;
   // The periodic fast loop owns the design-side NBA handoff only. Reactive
   // owners require the later Re-NBA phase, which remains runtime scheduled.
+  // Disjoint site masks do not make separate update events interchangeable:
+  // a change or edge expression can span those lanes (LRM 9.4.2). Only a
+  // merge-safe root may give each independent site its own final-value
+  // latch; otherwise use the ordered queue below.
   bool independentSites =
       proof.uniqueSemanticRootSite ||
       (root != staticNBAPlan.siteRoots.end() &&
        root->second < staticNBAPlan.independentSiteWrites.size() &&
        staticNBAPlan.independentSiteWrites[root->second]);
-  proof.periodicWideLatch = commonDynamicRoot && independentSites &&
+  bool latchSafe =
+      mergeSafe ||
+      (root != staticNBAPlan.siteRoots.end() &&
+       root->second < staticNBAPlan.changeWatchedRoots.size() &&
+       staticNBAPlan.changeWatchedRoots[root->second]);
+  proof.periodicWideLatch = commonDynamicRoot && latchSafe &&
+                            independentSites &&
                             proof.exclusivePeriodicIngress &&
                             proof.siteExecutesAtMostOnce &&
                             proof.commitRegion == OBELISK_RT_REGION_NBA &&
@@ -515,7 +528,9 @@ proveDynamicEvalNBA(LLVM::CallOp call,
                       root->second < proofContext.orderedRootClosed.size() &&
                       proofContext.orderedRootClosed[root->second] &&
                       proof.commitRegion == OBELISK_RT_REGION_NBA &&
-                      staticNBAPlan.roots[root->second].bit_width > 64 &&
+                      (!mergeSafe ||
+                       staticNBAPlan.roots[root->second].bit_width > 64) &&
+                      !directAccumulator &&
                       !proof.periodicWideLatch;
   proof.eligible =
       directAccumulator || proof.periodicWideLatch || proof.orderedWide;
@@ -1848,8 +1863,20 @@ FailureOr<bool> makeNativeEvalPlan(
       function.walk([&](LLVM::CallOp call) {
         if (!call.getCallee())
           return;
-        if (*call.getCallee() == "obelisk_rt_v1_scheduler_static_nba" ||
-            *call.getCallee() == "obelisk_rt_v1_scheduler_fail")
+        bool staticNBA =
+            *call.getCallee() == "obelisk_rt_v1_scheduler_static_nba";
+        bool staticNBAFailure = false;
+        if (*call.getCallee() == "obelisk_rt_v1_scheduler_fail" &&
+            call.getArgOperands().size() == 2)
+          if (auto source =
+                  call.getArgOperands()[1].getDefiningOp<LLVM::CallOp>())
+            staticNBAFailure = source.getCallee() &&
+                               *source.getCallee() ==
+                                   "obelisk_rt_v1_scheduler_static_nba";
+        // A generic NBA call retained for an unsafe root still needs its
+        // scheduler_fail companion. Only remove the companion for a static
+        // call that this pass replaces with a generated stage.
+        if (staticNBA || staticNBAFailure)
           runtimeEscapes.push_back({call, twoState});
       });
     });
@@ -2036,10 +2063,6 @@ FailureOr<bool> makeNativeEvalPlan(
           // Preserve each activation, including repeated writes to one lane.
           // The hot path is only direct record stores. Storage growth is cold
           // and cannot execute actors or re-enter the scheduler.
-          auto function = call->getParentOfType<sim::SimFuncOp>();
-          if (!function.getFunctionType().getResults().empty())
-            return call.emitError("ordered eval NBA requires a void body"),
-                   failure();
           Block *before = call->getBlock();
           Block *continuation = before->splitBlock(call->getIterator());
           Region *region = before->getParent();
@@ -2081,7 +2104,14 @@ FailureOr<bool> makeNativeEvalPlan(
           LLVM::StoreOp::create(nbaBuilder, call.getLoc(), status,
                                 evalNBAQueueField(nbaBuilder, call.getLoc(), 3),
                                 4);
-          sim::SimReturnOp::create(nbaBuilder, call.getLoc(), ValueRange{});
+          // The queue descriptor is only a cleanup owner. Report allocation
+          // failure through the scheduler so a truncated activation cannot
+          // appear to complete successfully.
+          LLVM::CallOp::create(
+              nbaBuilder, call.getLoc(), TypeRange{},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+              ValueRange{arguments[0], status});
+          cf::BranchOp::create(nbaBuilder, call.getLoc(), continuation);
           nbaBuilder.setInsertionPointToStart(stage);
           Value data = LLVM::LoadOp::create(
               nbaBuilder, call.getLoc(), pointer,
@@ -2210,6 +2240,11 @@ FailureOr<bool> makeNativeEvalPlan(
           Value accumulator = LLVM::AddressOfOp::create(
               nbaBuilder, call.getLoc(), pointer,
               staticNBAPlan.generatedAccumulators[root->second]);
+          if (root->second < staticNBAPlan.trackTransients.size() &&
+              staticNBAPlan.trackTransients[root->second])
+            emitGeneratedNBATransient(nbaBuilder, call.getLoc(), accumulator, 0,
+                                      mask, position(staged64),
+                                      position(stagedUnknown64));
           auto mergeField = [&](size_t fieldOffset, Value positioned) {
             Value address =
                 byteGEP(nbaBuilder, call.getLoc(), accumulator, fieldOffset);
@@ -3649,7 +3684,10 @@ FailureOr<bool> makeNativeEvalPlan(
 
       Block *hybridCursor = executeDirectHybrid;
       for (unsigned recordIndex : directOwnerRecords) {
-        builder.setInsertionPointToStart(hybridCursor);
+        // Consecutive infallible owners share this block. Append each call in
+        // source order; restarting at the block front would put the eventual
+        // branch before earlier calls and leave an invalid CFG.
+        builder.setInsertionPointToEnd(hybridCursor);
         handoffPrioritySignal();
         if (promotionKernelReadyNames[recordIndex].empty()) {
           LLVM::StoreOp::create(
@@ -3741,7 +3779,7 @@ FailureOr<bool> makeNativeEvalPlan(
         }
         hybridCursor = nextOwner;
       }
-      builder.setInsertionPointToStart(hybridCursor);
+      builder.setInsertionPointToEnd(hybridCursor);
       cf::BranchOp::create(builder, location, afterDirectSequence);
       builder.setInsertionPointToStart(afterDirectSequence);
     }
@@ -4381,11 +4419,25 @@ FailureOr<bool> makeNativeEvalPlan(
       return result;
     };
     Block *head = block(), *select = block(), *done = block(),
-          *invalid = block();
+          *invalid = block(), *failed = block();
     queueAdvance = block();
     head->addArgument(i32, location);
-    cf::BranchOp::create(builder, location, head,
-                         ValueRange{llvmConstant(builder, location, i32, 0)});
+    // A failed reserve dropped an update. Publishing the rest would expose a
+    // sequence the source never executed; report the latched status instead.
+    Value error = LLVM::LoadOp::create(builder, location, i32,
+                                       evalNBAQueueField(builder, location, 3),
+                                       4);
+    Value clean =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              error,
+                              llvmConstant(builder, location, i32,
+                                           OBELISK_RT_OK));
+    cf::CondBranchOp::create(
+        builder, location, clean, head,
+        ValueRange{llvmConstant(builder, location, i32, 0)}, failed,
+        ValueRange{});
+    builder.setInsertionPointToStart(failed);
+    LLVM::ReturnOp::create(builder, location, error);
     builder.setInsertionPointToStart(head);
     Value count = evalNBAQueueSize(builder, location);
     Value pending =
@@ -4402,6 +4454,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                        LLVM::LLVMArrayType::get(i64, 4), data,
                                        ValueRange{index});
     auto field = [&](unsigned offset) -> Value {
+      // A two-state route may still enqueue an explicit X/Z literal. Keep
+      // each record's unknown bits in every commit clone; only the compact
+      // accumulator's unknown load is proven zero by promotion.
       return LLVM::LoadOp::create(builder, location, i64,
                                   byteGEP(builder, location, record, offset),
                                   8);
@@ -5243,6 +5298,26 @@ FailureOr<bool> makeNativeEvalPlan(
           builder, location,
           arith::XOrIOp::create(builder, location, oldValue, newValue),
           arith::XOrIOp::create(builder, location, oldUnknown, newUnknown));
+      // A change watcher also wakes on a bit that changed and changed back
+      // within this barrier. Only change triggers read `changed`; a tracked
+      // root has no edge watcher.
+      if (rootIndex < staticNBAPlan.trackTransients.size() &&
+          staticNBAPlan.trackTransients[rootIndex]) {
+        Value transientAddress = byteGEP(
+            builder, location, accumulatorBase,
+            offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
+        changed = arith::OrIOp::create(
+            builder, location, changed,
+            arith::AndIOp::create(
+                builder, location,
+                LLVM::LoadOp::create(builder, location, i64, transientAddress,
+                                     8),
+                llvmConstant(builder, location, i64,
+                             scalarMask(root.bit_width))));
+        LLVM::StoreOp::create(builder, location,
+                              llvmConstant(builder, location, i64, 0),
+                              transientAddress, 8);
+      }
       struct TriggerGroup {
         uint32_t edge;
         uint64_t mask;

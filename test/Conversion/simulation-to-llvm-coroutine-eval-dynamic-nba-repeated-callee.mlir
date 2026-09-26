@@ -70,5 +70,5 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
 // CHECK-COUNT-2: llvm.call @stage
 // CHECK-LABEL: llvm.func @stage(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_nba
 // CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail

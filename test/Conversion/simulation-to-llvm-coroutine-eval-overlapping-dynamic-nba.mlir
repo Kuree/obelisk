@@ -5,8 +5,9 @@
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
-// Partially overlapping lanes are not independent: preserve ordered runtime
-// NBA staging, including intermediate transitions on their shared bits.
+// Partially overlapping lanes are not independent, so neither site may take a
+// one-entry latch. The wide root takes the ordered generated queue, which
+// keeps every update and its order on the shared bits.
 !words = !obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>
 
 module attributes {
@@ -105,9 +106,9 @@ module attributes {
 }
 
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_eval_nba_reserve
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-
+// CHECK: llvm.call @__obelisk_eval_dispatch_v1

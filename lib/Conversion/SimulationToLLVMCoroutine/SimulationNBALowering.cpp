@@ -593,9 +593,13 @@ public:
       }
     }
     sim::NBASiteAttr site = op.getSiteAttr();
+    bool mappedSite =
+        site && staticPlan && staticPlan->siteRoots.contains(site.getId());
+    uint32_t plannedRoot =
+        mappedSite ? staticPlan->siteRoots.lookup(site.getId()) : UINT32_MAX;
     bool staticallyStaged =
         !op.getClockingOutputAttr() && staticSitesEnabled && staticPlan &&
-        site && staticPlan->siteRoots.contains(site.getId()) &&
+        mappedSite && staticPlan->mergeSafeRoots[plannedRoot] &&
         adaptor.getDelay().empty() && !site.getTiming() &&
         site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
 
@@ -780,6 +784,11 @@ public:
       };
       Value accumulator = LLVM::AddressOfOp::create(rewriter, location, pointer,
                                                     generatedAccumulator);
+      if (rootIndex < staticPlan->trackTransients.size() &&
+          staticPlan->trackTransients[rootIndex])
+        emitGeneratedNBATransient(rewriter, location, accumulator, 0, mask,
+                                  position(sourceValue),
+                                  position(sourceUnknown));
       auto mergeField = [&](size_t fieldOffset, Value positioned) {
         Value address = byteGEP(rewriter, location, accumulator, fieldOffset);
         Value previous =
@@ -1014,6 +1023,7 @@ public:
         !op.getClockingOutputAttr() && !driverDestination && site &&
         staticPlan && staticRoot != staticPlan->siteRoots.end() &&
         staticRoot->second < staticPlan->roots.size() &&
+        staticPlan->mergeSafeRoots[staticRoot->second] &&
         adaptor.getDelay().empty() && !site.getTiming() &&
         site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
         *width <= 64 && destinationValue &&
@@ -1119,6 +1129,54 @@ public:
             }
             LLVM::StoreOp::create(rewriter, location, merged, address, 8);
           };
+          if (staticRoot->second < staticPlan->trackTransients.size() &&
+              staticPlan->trackTransients[staticRoot->second]) {
+            auto position = [&](Value fieldValue) -> Value {
+              Value positioned = fieldValue;
+              if (decoded.offset != 0)
+                positioned = arith::ShLIOp::create(
+                    rewriter, location, positioned,
+                    llvmConstant(rewriter, location, i64, decoded.offset));
+              return arith::AndIOp::create(
+                  rewriter, location, positioned,
+                  llvmConstant(rewriter, location, i64, mask));
+            };
+            // A compact stage does not maintain write_mask, and a compact
+            // and a full body may stage one root in the same barrier. When
+            // every write to the root covers the same bits, the dirty bit that
+            // both set says whether this barrier already staged them.
+            bool planFullRoot =
+                staticRoot->second <
+                    staticPlan->generatedFullRootStages.size() &&
+                staticPlan->generatedFullRootStages[staticRoot->second];
+            Value staged;
+            if (planFullRoot || fixedWriteMask != 0) {
+              Value dirty = LLVM::LoadOp::create(
+                  rewriter, location, i64,
+                  byteGEP(rewriter, location,
+                          LLVM::AddressOfOp::create(
+                              rewriter, location, pointer,
+                              "__obelisk_aot_nba_dirty_roots_v1"),
+                          static_cast<uint64_t>(staticRoot->second / 64) *
+                              sizeof(uint64_t)),
+                  8);
+              Value bit = arith::AndIOp::create(
+                  rewriter, location, dirty,
+                  llvmConstant(rewriter, location, i64,
+                               uint64_t{1} << (staticRoot->second % 64)));
+              staged = arith::SelectOp::create(
+                  rewriter, location,
+                  arith::CmpIOp::create(
+                      rewriter, location, arith::CmpIPredicate::ne, bit,
+                      llvmConstant(rewriter, location, i64, 0)),
+                  llvmConstant(rewriter, location, i64, mask),
+                  llvmConstant(rewriter, location, i64, 0));
+            }
+            emitGeneratedNBATransient(
+                rewriter, location, base, 0,
+                llvmConstant(rewriter, location, i64, mask), position(value),
+                position(unknown), staged);
+          }
           mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
                      value);
           // A promoted body can share the generated accumulator with a
@@ -1366,10 +1424,16 @@ public:
                                               "obelisk_rt_v1_scheduler_fail"),
                            ValueRange{runtimeContext, status});
     } else {
+      bool mappedSite = site && staticPlan &&
+                        staticPlan->siteRoots.contains(site.getId());
+      uint32_t rootIndex =
+          mappedSite ? staticPlan->siteRoots.lookup(site.getId()) : UINT32_MAX;
+      bool orderedEvalQueue =
+          function && function->hasAttr("obelisk.eval.ordered_nba_queue");
       bool staticallyStaged =
           !op.getClockingOutputAttr() && !driverDestination &&
-          staticSitesEnabled && staticPlan && site &&
-          staticPlan->siteRoots.contains(site.getId()) &&
+          staticSitesEnabled && mappedSite &&
+          (staticPlan->mergeSafeRoots[rootIndex] || orderedEvalQueue) &&
           adaptor.getDelay().empty() && !site.getTiming() &&
           site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
       SmallVector<Value> arguments{
@@ -1421,6 +1485,46 @@ private:
 };
 
 } // namespace
+
+void emitGeneratedNBATransient(OpBuilder &builder, Location location,
+                               Value accumulator, uint64_t word, Value mask,
+                               Value newValue, Value newUnknown,
+                               Value staged) {
+  Type i64 = builder.getI64Type();
+  auto field = [&](size_t offset) {
+    return byteGEP(builder, location, accumulator,
+                   offset + word * sizeof(uint64_t));
+  };
+  auto load = [&](size_t offset) {
+    return LLVM::LoadOp::create(builder, location, i64, field(offset), 8)
+        .getResult();
+  };
+  if (!staged)
+    staged = arith::AndIOp::create(
+        builder, location,
+        load(offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+        mask);
+  Value differs = arith::OrIOp::create(
+      builder, location,
+      arith::XOrIOp::create(
+          builder, location,
+          load(offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
+          newValue),
+      arith::XOrIOp::create(
+          builder, location,
+          load(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
+          newUnknown));
+  Value transientAddress =
+      field(offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
+  Value transient =
+      LLVM::LoadOp::create(builder, location, i64, transientAddress, 8);
+  LLVM::StoreOp::create(
+      builder, location,
+      arith::OrIOp::create(
+          builder, location, transient,
+          arith::AndIOp::create(builder, location, staged, differs)),
+      transientAddress, 8);
+}
 
 void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          TypeConverter &converter,

@@ -5,10 +5,9 @@
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
-// A dynamic, potentially overhanging packed NBA to a planned static root must
-// remain on the generated AOT path. Its overlap, mask, and source shift are
-// scalar operations independent of the selected width: no scheduler call,
-// allocation, loop, or width-proportional CFG is introduced in the top tier.
+// Dynamic reads stay direct. The two NBA sites target different roots, so
+// their update events use the ordered scheduler until a generated owner can
+// replay both roots in source order.
 // The second RUN invokes only the conversion pass so this test directly locks
 // down that pass's generated hot path.
 module attributes {
@@ -80,14 +79,6 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_state_unknown
 // CHECK: llvm.load
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK: llvm.icmp "sgt"
-// CHECK: llvm.icmp "slt"
-// CHECK: llvm.shl
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// CHECK: llvm.store
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
-// CHECK: llvm.store
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_packed_slice_nba
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_nba
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_packed_slice_nba
 // CHECK-NOT: llvm.call @malloc
 // CHECK: llvm.return

@@ -9,6 +9,7 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <cstdint>
 #include <optional>
@@ -48,6 +49,44 @@ public:
 
 private:
   llvm::DenseMap<uint64_t, uint64_t> driverNets;
+};
+
+/// Which NBA commit roots may merge several updates between two NBA barriers
+/// into one old-to-final transition. IEEE 1800-2017 4.6(b) performs each NBA
+/// in execution order and 9.4.2 detects an event on each resulting update, so
+/// a merge is sound only for a root whose intermediate values nothing can
+/// observe. The design's sim::metadata::nbaTransientObservable records the
+/// observable roots; without it every root is treated as observable.
+class NBAMergeSafety {
+public:
+  explicit NBAMergeSafety(sim::SimDesignOp design);
+  /// Nothing observes an intermediate value: any merge, including a
+  /// compile-time fold that drops the earlier write, is exact.
+  bool storageMayMerge(uint64_t descriptor) const {
+    return known && !observable.contains(descriptor) &&
+           !changeWatched.contains(descriptor);
+  }
+  /// Only waits for any change observe the root. A merge is exact when it
+  /// records bits rewritten with a different value (the transient mask) and
+  /// the commit reports them as changed.
+  bool storageNeedsTransients(uint64_t descriptor) const {
+    return known && changeWatched.contains(descriptor);
+  }
+  bool commitMayMerge(uint32_t commit) const {
+    auto storage = commitStorage.find(commit);
+    return storage != commitStorage.end() && storageMayMerge(storage->second);
+  }
+  bool commitNeedsTransients(uint32_t commit) const {
+    auto storage = commitStorage.find(commit);
+    return storage != commitStorage.end() &&
+           storageNeedsTransients(storage->second);
+  }
+
+private:
+  bool known = false;
+  llvm::DenseSet<uint64_t> observable;
+  llvm::DenseSet<uint64_t> changeWatched;
+  llvm::DenseMap<uint32_t, uint64_t> commitStorage;
 };
 
 /// Physical bit width used by the canonical simulation state and process

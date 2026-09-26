@@ -801,6 +801,10 @@ struct StaticNBAAccumulator {
   std::vector<uint64_t> value;
   std::vector<uint64_t> unknown;
   std::vector<uint64_t> writeMask;
+  // Staged bits rewritten with a different value since the last barrier.
+  // The merge keeps only the final value; the commit reports these bits as
+  // changed so change waiters still see a round trip (IEEE 1800-2017 4.6(b)).
+  std::vector<uint64_t> transient;
   std::vector<uint64_t> changed;
   std::vector<uint64_t> posedge;
   std::vector<uint64_t> negedge;
@@ -1976,6 +1980,7 @@ struct obelisk_rt_context {
   uint64_t nativeScheduleActorRootCount = 0;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleActorRootRanges;
   std::vector<uint32_t> nativeScheduleNBASiteIndex;
+  std::vector<uint32_t> nativeScheduleNBARootIndex;
   std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
   std::vector<size_t> nativeScheduleActorIndices;

@@ -82,7 +82,9 @@ endmodule
 // CHECK-SAME: scheduler_iterations={{[1-9][0-9]*}}
 // CHECK-SAME: aot_node_executions=0
 // CHECK-SAME: aot_fanout_entries=0
-// CHECK-SAME: aot_nba_commits=2
+// Ordered runtime publications keep both staged updates separate.
+// CHECK-SAME: aot_nba_stages=2
+// CHECK-SAME: aot_nba_commits=0
 // CHECK-SAME: aot_state_slow_paths={{[1-9][0-9]*}}
 // CHECK-SAME: aot_fallbacks=0
 

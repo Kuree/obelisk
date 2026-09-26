@@ -21,8 +21,11 @@ for name, text in {
     assert result.returncode == 0, (name, result.stderr)
     slots = result.stdout.count("llvm.mlir.global internal @__obelisk_eval_nba_valid_")
     assert slots == (4 if name == "exclusive" else 0), (name, slots)
+    # Nothing watches the root, so the non-exclusive shapes may still merge
+    # into the root accumulator under generated dispatch; they must never get
+    # per-arm latches. The executable checks below pin their final values.
     fast = "llvm.func @__obelisk_eval_dispatch_v1(" in result.stdout
-    assert fast == (name == "exclusive"), name
+    assert fast or name != "exclusive", name
 
 # Width and executor choice are independent axes of the same contract. Cover
 # an odd-width window, byte-aligned fields, and both sides of the 64-bit limit.

@@ -2758,6 +2758,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleActorRootRanges.clear();
   context->nativePeriodicGeneratedWritableStates.clear();
   context->nativeScheduleNBASiteIndex.clear();
+  context->nativeScheduleNBARootIndex.clear();
   context->nativeScheduleActors.clear();
   context->nativeScheduleActorTokens.clear();
   context->nativeScheduleActorIndices.clear();

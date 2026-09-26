@@ -64,8 +64,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // NEG-LABEL: module attributes
 // NEG-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// NEG: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
+// NEG-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // NEG-LABEL: llvm.func @update.__obelisk_coro_ramp(
-// NEG-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// NEG-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_nba
+// The generated body keeps every execution in the ordered queue instead.
 // NEG-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// NEG-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_nba
-// NEG-NOT: llvm.func @__obelisk_eval_dispatch_v1
+// NEG-NOT: llvm.call @obelisk_rt_v1_scheduler_nba
+// NEG-COUNT-2: llvm.call @obelisk_rt_v1_eval_nba_reserve
+// NEG-NOT: llvm.call @obelisk_rt_v1_scheduler_nba
+// NEG: llvm.return

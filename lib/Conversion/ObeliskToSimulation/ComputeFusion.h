@@ -49,6 +49,28 @@ bool isPrimitiveComputeBodyFusionEligible(
     sim::SimFuncOp function,
     const analysis::DescriptorProvenanceAnalysis &provenance);
 
+/// Storage descriptors classified by who can observe their intermediate
+/// nonblocking updates in one NBA region. IEEE 1800-2017 4.6(b) requires NBAs
+/// to be performed in execution order, and 9.4.2 detects an event on each
+/// update. Obelisk performs every scheduled NBA of a region before the
+/// evaluations they trigger, an order 4.5 permits (the Active region is
+/// processed in any order) and 10.4.2 requires for the blocking assignments
+/// they create. Under that order a root nothing watches (except a process
+/// whose extra activation provably rewrites what it already holds) may merge
+/// freely.
+struct NBATransientObservers {
+  /// Seen by an edge, level or expression wait, VPI or toggle coverage.
+  llvm::DenseSet<uint64_t> observable;
+  /// Seen only by waits for any change of whole references. A merged commit
+  /// is exact for these when it also reports rewritten bits.
+  llvm::DenseSet<uint64_t> changeWatched;
+};
+
+/// Classify the design's storage, or std::nullopt when its observers cannot
+/// be inventoried.
+std::optional<NBATransientObservers>
+computeNBATransientObservers(sim::SimDesignOp design);
+
 /// Return continuation targets that can coexist in the Active ready set when
 /// the given sensitivity awakens. A constant-delay continuation is excluded
 /// only when graph activation edges prove it is the unique producer currently

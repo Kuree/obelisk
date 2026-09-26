@@ -6,9 +6,9 @@
 // RUN:   -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
 
-// Feed preplanned Simulation IR to only the coroutine conversion pass. This
-// dynamic reference is outside the generated ordered-queue ownership proof,
-// so its commit stays on the runtime path despite the periodic clock.
+// Feed preplanned Simulation IR to only the coroutine conversion pass. The
+// array element of a captured root is addressable, and no event control
+// watches the root, so its one semantic site takes the periodic latch.
 !words = !obelisk_sim.unpacked_array<0 : 31 x !obelisk_sim.logic<32>>
 
 module attributes {
@@ -103,10 +103,11 @@ module attributes {
 }
 
 // CHECK-LABEL: module attributes
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
+// CHECK: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_{{(static_)?}}nba
+// CHECK: llvm.return
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// CHECK: llvm.call @__obelisk_eval_dispatch_v1

@@ -1697,6 +1697,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         accumulator.value.assign(words, 0);
         accumulator.unknown.assign(words, 0);
         accumulator.writeMask.assign(words, 0);
+        accumulator.transient.assign(words, 0);
         accumulator.changed.assign(words, 0);
         accumulator.posedge.assign(words, 0);
         accumulator.negedge.assign(words, 0);
@@ -1705,6 +1706,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           *root.generated_accumulator = {};
       }
       context->nativeScheduleNBASiteIndex.clear();
+      context->nativeScheduleNBARootIndex.clear();
+      uint32_t maxNBAStaticState = 0;
+      for (uint32_t index = 0; index != nbaRootCount; ++index)
+        maxNBAStaticState =
+            std::max(maxNBAStaticState, nbaRoots[index].static_state);
+      uint64_t denseRootLimit = std::min<uint64_t>(
+          UINT64_C(1) << 20,
+          std::max<uint64_t>(1024, uint64_t{nbaRootCount} * 4));
+      if (nbaRootCount != 0 && maxNBAStaticState <= denseRootLimit) {
+        context->nativeScheduleNBARootIndex.assign(
+            size_t{maxNBAStaticState} + 1, UINT32_MAX);
+        for (uint32_t index = 0; index != nbaRootCount; ++index) {
+          uint32_t &mapped = context->nativeScheduleNBARootIndex[
+              nbaRoots[index].static_state];
+          if (mapped == UINT32_MAX)
+            mapped = index;
+        }
+      }
       uint64_t denseSiteLimit = std::min<uint64_t>(
           UINT64_C(1) << 20,
           std::max<uint64_t>(1024, nbaSiteCount <= UINT64_MAX / 4

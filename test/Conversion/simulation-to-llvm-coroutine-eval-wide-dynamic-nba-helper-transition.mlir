@@ -67,16 +67,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// The dynamic NBA reference remains outside the generated queue ownership
-// proof even with a helper transition. The private helper remains callable,
-// while the NBA uses runtime ordering and the plan retains the AOT node loop.
+// The array element of a captured root is addressable by a queue record, so
+// the ordered generated queue owns this site even with a helper transition.
+// The private helper remains callable and publishes its own transition.
 // CHECK-LABEL: module attributes
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// CHECK-NOT: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
 // CHECK: llvm.call @touch_clock.__obelisk_eval_private_0
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_nba
+// CHECK: llvm.call @obelisk_rt_v1_eval_nba_reserve
 // CHECK-LABEL: llvm.func @touch_clock(
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// CHECK: llvm.call @__obelisk_eval_dispatch_v1

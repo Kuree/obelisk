@@ -3,12 +3,14 @@
 #include "SimulationNBALowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -271,6 +273,66 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
   return success();
 }
 
+/// Return true when `enqueue` cannot execute more than once between two NBA
+/// barriers. Its statement must occur once in this call closure, sit
+/// outside any loop, lie in a function no call can re-enter, and have no
+/// control-flow path back to its own block without advancing simulation time.
+static bool nbaEnqueueExecutesAtMostOnce(
+    sim::SimNBAEnqueueOp enqueue, const NativeStaticNBAPlan &plan,
+    const llvm::DenseMap<uint64_t, unsigned> &closureSiteOps,
+    const llvm::SmallPtrSetImpl<Operation *> &callees) {
+  sim::NBASiteAttr site = enqueue.getSiteAttr();
+  if (!site)
+    return false;
+  auto origin = plan.siteSemanticOrigins.find(site.getId());
+  uint64_t semanticSite = origin == plan.siteSemanticOrigins.end()
+                              ? site.getId()
+                              : origin->second;
+  // Count only within this activation's call closure. Two-state, four-state
+  // and Eval clones of one body are alternative implementations of the same
+  // statement, not additional executions, so a module-wide count would reject
+  // every cloned actor.
+  if (closureSiteOps.lookup(semanticSite) != 1)
+    return false;
+  sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
+  if (!function || callees.contains(function.getOperation()))
+    return false;
+  for (Operation *ancestor = enqueue->getParentOp();
+       ancestor && ancestor != function.getOperation();
+       ancestor = ancestor->getParentOp())
+    if (isa<LoopLikeOpInterface>(ancestor))
+      return false;
+  // An event or #0 suspension can resume the process in the same time slot
+  // before the NBA region. Only a strictly positive delay guarantees that
+  // the next activation starts after a fresh NBA barrier (LRM 4.4.2.3-4).
+  auto advancesTime = [](Operation *terminator) {
+    auto delay = dyn_cast<sim::SimSuspendDelayOp>(terminator);
+    auto constant =
+        delay ? delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>()
+              : sim::SimTimeConstantOp{};
+    return constant && constant.getValue() != 0;
+  };
+  Block *originBlock = enqueue->getBlock();
+  if (advancesTime(originBlock->getTerminator()))
+    return true;
+  SmallVector<Block *, 8> worklist;
+  for (Block *successor : originBlock->getTerminator()->getSuccessors())
+    worklist.push_back(successor);
+  llvm::SmallPtrSet<Block *, 16> visited;
+  while (!worklist.empty()) {
+    Block *block = worklist.pop_back_val();
+    if (block == originBlock)
+      return false;
+    if (!visited.insert(block).second)
+      continue;
+    if (advancesTime(block->getTerminator()))
+      continue;
+    for (Block *successor : block->getTerminator()->getSuccessors())
+      worklist.push_back(successor);
+  }
+  return true;
+}
+
 FailureOr<NativeStaticNBAPlan>
 buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
                          ArrayRef<sim::ComputeNBACommitAttr> orderedCommits,
@@ -477,6 +539,180 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
     plan.independentSiteWrites[root] = disjoint;
   }
 
+  // Prove which roots the barrier may merge to one last write per bit. This
+  // is a property of the root's own sites, so it holds no matter which tier or
+  // body later owns them.
+  llvm::SmallVector<llvm::SmallDenseSet<uint64_t, 4>> originsByRoot(
+      plan.roots.size());
+  for (const obelisk_rt_static_nba_site &entry : plan.sites) {
+    auto root = plan.siteRoots.find(entry.site);
+    if (root == plan.siteRoots.end() || root->second >= plan.roots.size())
+      continue;
+    auto origin = plan.siteSemanticOrigins.find(entry.site);
+    originsByRoot[root->second].insert(origin == plan.siteSemanticOrigins.end()
+                                           ? entry.site
+                                           : origin->second);
+  }
+  llvm::SmallPtrSet<Operation *, 8> callees;
+  module.walk([&](sim::SimCallOp call) {
+    if (auto design = call->getParentOfType<sim::SimDesignOp>())
+      if (sim::SimFuncOp callee =
+              design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+        callees.insert(callee.getOperation());
+  });
+  llvm::DenseMap<Operation *, llvm::DenseMap<uint64_t, unsigned>> closureOps;
+  auto closureSiteOpsFor = [&](sim::SimFuncOp function) -> auto & {
+    auto [entry, inserted] = closureOps.try_emplace(function.getOperation());
+    if (!inserted)
+      return entry->second;
+    sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+    SmallVector<sim::SimFuncOp> pending{function};
+    llvm::SmallPtrSet<Operation *, 8> visited;
+    while (!pending.empty()) {
+      sim::SimFuncOp current = pending.pop_back_val();
+      if (!visited.insert(current.getOperation()).second)
+        continue;
+      current.walk([&](sim::SimNBAEnqueueOp nested) {
+        if (sim::NBASiteAttr site = nested.getSiteAttr()) {
+          auto origin = plan.siteSemanticOrigins.find(site.getId());
+          ++entry->second[origin == plan.siteSemanticOrigins.end()
+                              ? site.getId()
+                              : origin->second];
+        }
+      });
+      if (design)
+        current.walk([&](sim::SimCallOp call) {
+          if (sim::SimFuncOp callee =
+                  design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+            pending.push_back(callee);
+        });
+    }
+    return entry->second;
+  };
+  plan.mergeSafeRoots.assign(plan.roots.size(), true);
+  // Distinct disjoint writes are still distinct update events. An expression
+  // spanning their bits can observe an intermediate value (LRM 9.4.2), so
+  // a root needs one semantic NBA site unless an observer-specific proof is
+  // available. The independent-lane proof alone is insufficient here.
+  for (uint32_t root = 0; root != plan.roots.size(); ++root)
+    if (originsByRoot[root].size() != 1)
+      plan.mergeSafeRoots[root] = false;
+  llvm::DenseMap<StringRef, unsigned> spawnCounts;
+  llvm::SmallDenseSet<StringRef, 8> potentiallyRepeatedSpawns;
+  module.walk([&](sim::SimSpawnOp spawn) {
+    StringRef callee = spawn.getCallee();
+    ++spawnCounts[callee];
+    sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
+    if (!owner || owner.getEntryKind() != sim::EntryKind::RootInitializer)
+      potentiallyRepeatedSpawns.insert(callee);
+    Operation *ownerOp = owner ? owner.getOperation() : nullptr;
+    for (Operation *ancestor = spawn->getParentOp();
+         ancestor && ancestor != ownerOp;
+         ancestor = ancestor->getParentOp())
+      if (isa<LoopLikeOpInterface>(ancestor))
+        potentiallyRepeatedSpawns.insert(callee);
+    Block *origin = spawn->getBlock();
+    SmallVector<Block *, 8> pending;
+    for (Block *successor : origin->getTerminator()->getSuccessors())
+      pending.push_back(successor);
+    llvm::SmallPtrSet<Block *, 16> visited;
+    while (!pending.empty()) {
+      Block *block = pending.pop_back_val();
+      if (block == origin) {
+        potentiallyRepeatedSpawns.insert(callee);
+        break;
+      }
+      if (!visited.insert(block).second)
+        continue;
+      for (Block *successor : block->getTerminator()->getSuccessors())
+        pending.push_back(successor);
+    }
+  });
+  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    sim::NBASiteAttr site = enqueue.getSiteAttr();
+    auto mapped =
+        site ? plan.siteRoots.find(site.getId()) : plan.siteRoots.end();
+    if (mapped == plan.siteRoots.end() || mapped->second >= plan.roots.size())
+      return;
+    sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
+    bool uniqueProcess =
+        function &&
+        (function.getEntryKind() == sim::EntryKind::RootInitializer ||
+         (spawnCounts.lookup(function.getSymName()) == 1 &&
+          !potentiallyRepeatedSpawns.contains(function.getSymName())));
+    if (!uniqueProcess || !nbaEnqueueExecutesAtMostOnce(
+                         enqueue, plan, closureSiteOpsFor(function), callees))
+      plan.mergeSafeRoots[mapped->second] = false;
+  });
+  // A root whose intermediate NBA values nothing observes may merge any
+  // number of updates, in any order relative to other roots.
+  sim::SimDesignOp design;
+  module.walk([&](sim::SimDesignOp candidate) {
+    design = candidate;
+    return WalkResult::interrupt();
+  });
+  analysis::NBAMergeSafety mergeSafety(design);
+  SmallVector<bool> unobservable(plan.roots.size());
+  plan.trackTransients.assign(plan.roots.size(), false);
+  plan.changeWatchedRoots.assign(plan.roots.size(), false);
+  for (auto [index, root] : llvm::enumerate(plan.roots)) {
+    plan.changeWatchedRoots[index] =
+        mergeSafety.commitNeedsTransients(root.commit_node);
+    // A root seen only by change waits merges with a transient mask. Every
+    // generated and runtime merge of a scalar root maintains that mask.
+    plan.trackTransients[index] =
+        root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS &&
+        mergeSafety.commitNeedsTransients(root.commit_node);
+    unobservable[index] = mergeSafety.commitMayMerge(root.commit_node) ||
+                          plan.trackTransients[index];
+  }
+  // The generated commit scans roots in layout order, while the runtime NBA
+  // queue performs updates in enqueue order across all roots (LRM 4.6(b)).
+  // Until generated replay has a global sequence, static staging of an
+  // observable root is sound only when the design has one semantic NBA site
+  // on an observable root. A generic site mixed with that root would likewise
+  // lose the global order. Unobservable roots cannot reveal that order.
+  llvm::SmallDenseSet<uint64_t, 4> globalOrigins;
+  bool hasUnmappedEnqueue = false;
+  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    sim::NBASiteAttr site = enqueue.getSiteAttr();
+    auto mapped =
+        site ? plan.siteRoots.find(site.getId()) : plan.siteRoots.end();
+    if (mapped != plan.siteRoots.end() && mapped->second < plan.roots.size() &&
+        unobservable[mapped->second] && !enqueue.getClockingOutputAttr() &&
+        !enqueue.getDelay() && !site.getTiming() &&
+        site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier)
+      return;
+    if (!site || !plan.siteRoots.contains(site.getId()) ||
+        enqueue.getClockingOutputAttr() ||
+        static_cast<bool>(enqueue.getDelay()) ||
+        site.getTiming() ||
+        site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier ||
+        isa<sim::DriverType>(enqueue.getDestination().getType())) {
+      hasUnmappedEnqueue = true;
+      return;
+    }
+    auto origin = plan.siteSemanticOrigins.find(site.getId());
+    globalOrigins.insert(origin == plan.siteSemanticOrigins.end()
+                             ? site.getId()
+                             : origin->second);
+  });
+  unsigned strictRoots = 0;
+  for (uint32_t root = 0; root != plan.roots.size(); ++root)
+    strictRoots += plan.mergeSafeRoots[root] && !unobservable[root];
+  if (hasUnmappedEnqueue || globalOrigins.size() != 1 || strictRoots != 1)
+    llvm::fill(plan.mergeSafeRoots, false);
+  for (uint32_t root = 0; root != plan.roots.size(); ++root)
+    plan.mergeSafeRoots[root] = plan.mergeSafeRoots[root] || unobservable[root];
+
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    for (uint32_t root = 0; root != plan.roots.size(); ++root)
+      if (!plan.mergeSafeRoots[root])
+        llvm::errs() << "obelisk NBA root keeps ordered commits: root=" << root
+                     << " width=" << plan.roots[root].bit_width
+                     << " semantic-sites=" << originsByRoot[root].size()
+                     << " independent-lanes="
+                     << plan.independentSiteWrites[root] << '\n';
   // Prove the subset for which a dirty bit is also a complete generated-stage
   // validity proof. Fixed part-selects retain a write mask; roots shared
   // between event regions keep the existing accumulator field checks.

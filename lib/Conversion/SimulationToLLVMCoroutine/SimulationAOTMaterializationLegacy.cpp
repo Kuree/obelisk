@@ -678,6 +678,25 @@ LogicalResult makeNativeAOTPlanLegacy(
           builder, location,
           arith::XOrIOp::create(builder, location, oldValue, newValue),
           arith::XOrIOp::create(builder, location, oldUnknown, newUnknown));
+      // A change watcher also wakes on a bit that changed and changed back
+      // within this barrier; a tracked root has no edge watcher.
+      if (rootIndex < staticNBAPlan.trackTransients.size() &&
+          staticNBAPlan.trackTransients[rootIndex]) {
+        Value transientAddress = byteGEP(
+            builder, location, accumulatorBase,
+            offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
+        changed = arith::OrIOp::create(
+            builder, location, changed,
+            arith::AndIOp::create(
+                builder, location,
+                LLVM::LoadOp::create(builder, location, i64, transientAddress,
+                                     8),
+                llvmConstant(builder, location, i64,
+                             scalarMask(root.bit_width))));
+        LLVM::StoreOp::create(builder, location,
+                              llvmConstant(builder, location, i64, 0),
+                              transientAddress, 8);
+      }
       Value rootChanged = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne, changed,
           llvmConstant(builder, location, i64, 0));

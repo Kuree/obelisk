@@ -3,6 +3,7 @@
 #include "ComputeFusion.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Dominance.h"
@@ -13,7 +14,10 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <functional>
 
 using namespace mlir;
 
@@ -527,6 +531,548 @@ getComputeFusionReadyTargets(sim::ComputeGraphAttr graph,
     targets.push_back(edge.getTarget());
   }
   return targets;
+}
+
+namespace {
+
+bool overlaps(sim::ComputeEffectAttr a, sim::ComputeEffectAttr b) {
+  if (a.getResource() != b.getResource() ||
+      a.getDescriptor() != b.getDescriptor())
+    return false;
+  if (a.getDynamic() || b.getDynamic() || !a.getWidth() || !b.getWidth())
+    return true;
+  return a.getLow() < b.getLow() + b.getWidth() &&
+         b.getLow() < a.getLow() + a.getWidth();
+}
+
+bool covers(sim::ComputeEffectAttr watch, sim::ComputeEffectAttr read) {
+  return watch.getResource() == read.getResource() &&
+         watch.getDescriptor() == read.getDescriptor() &&
+         !watch.getDynamic() && watch.getLow() <= read.getLow() &&
+         read.getLow() + read.getWidth() <= watch.getLow() + watch.getWidth();
+}
+
+/// An extra activation of `function` after the NBA region is unobservable
+/// when it recomputes exactly the values it already holds. That needs a
+/// looping process with one change-only wait; every read watched, so a wake
+/// that changes no watched value sees the inputs of its previous activation;
+/// no write it reads back; exclusive stored outputs; and a first activation
+/// before the first wait, so the outputs are current from time zero.
+bool isIdempotentObserver(
+    sim::SimFuncOp function,
+    const llvm::DenseMap<uint64_t, SmallVector<std::pair<Operation *,
+                                                         sim::ComputeEffectAttr>>>
+        &storageWriters) {
+  if (function.isExternal() ||
+      function.getEntryKind() == sim::EntryKind::Observer ||
+      function.getHomeRegion() != sim::EventRegion::Active)
+    return false;
+  ArrayAttr summary = function.getEffectSummaryAttr();
+  if (!summary)
+    return false;
+  Operation *suspension = nullptr;
+  bool valid = true;
+  function.walk([&](Operation *op) {
+    if (op == function.getOperation() || !valid)
+      return;
+    if (sim::isSuspensionOp(op)) {
+      auto any = dyn_cast<sim::SimSuspendAnyOp>(op);
+      valid = !suspension &&
+              (isa<sim::SimSuspendChangeOp>(op) ||
+               (any && llvm::all_of(any.getEdges(), [](int32_t edge) {
+                  return edge == static_cast<int32_t>(sim::EdgeKind::Change);
+                })));
+      suspension = op;
+      return;
+    }
+    if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimRefStoreOp,
+            sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp,
+            cf::BranchOp, cf::CondBranchOp>(op))
+      return;
+    valid = op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  });
+  if (!valid || !suspension || suspension->getNumSuccessors() != 1)
+    return false;
+  if (auto region =
+          suspension->getAttrOfType<sim::EventRegionAttr>("resume_region");
+      region && region.getValue() != sim::EventRegion::Active)
+    return false;
+  // Every path from entry to the wait must first run the activation, unless
+  // the process is evaluated at time zero by definition: continuous
+  // assignments, including those inferred from ports (LRM 4.9.1).
+  // A process that writes nothing cannot be out of date either.
+  Block *activation = suspension->getSuccessor(0);
+  Block *wait = suspension->getBlock();
+  bool writesAnything = llvm::any_of(
+      summary.getAsRange<sim::ComputeEffectAttr>(),
+      [](sim::ComputeEffectAttr effect) {
+        return effect.getEffect() != sim::ComputeEffectKind::Read &&
+               effect.getEffect() != sim::ComputeEffectKind::Watch;
+      });
+  bool evaluatedAtTimeZero =
+      !writesAnything ||
+      function.getEntryKind() == sim::EntryKind::Continuous ||
+      function.getEntryKind() == sim::EntryKind::PortInput ||
+      function.getEntryKind() == sim::EntryKind::PortOutput;
+  SmallVector<Block *> pending;
+  if (!evaluatedAtTimeZero)
+    pending.push_back(&function.getBody().front());
+  llvm::SmallPtrSet<Block *, 16> visited;
+  while (!pending.empty()) {
+    Block *block = pending.pop_back_val();
+    if (block == activation || !visited.insert(block).second)
+      continue;
+    if (block == wait)
+      return false;
+    llvm::append_range(pending, block->getSuccessors());
+  }
+  // The activation must return to the same wait on every path.
+  pending.assign({activation});
+  visited.clear();
+  while (!pending.empty()) {
+    Block *block = pending.pop_back_val();
+    if (block == wait || !visited.insert(block).second)
+      continue;
+    if (block->getNumSuccessors() == 0)
+      return false;
+    llvm::append_range(pending, block->getSuccessors());
+  }
+
+  SmallVector<sim::ComputeEffectAttr> reads, watches, writes;
+  for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>()) {
+    if (effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+        effect.getDeferred())
+      return false;
+    switch (effect.getEffect()) {
+    case sim::ComputeEffectKind::Read:
+      reads.push_back(effect);
+      break;
+    case sim::ComputeEffectKind::Watch:
+      if (effect.getDynamic() ||
+          (effect.getTrigger() != sim::ComputeTriggerKind::None &&
+           effect.getTrigger() != sim::ComputeTriggerKind::Change))
+        return false;
+      watches.push_back(effect);
+      break;
+    case sim::ComputeEffectKind::Write:
+    case sim::ComputeEffectKind::Drive:
+      if (effect.getDynamic())
+        return false;
+      writes.push_back(effect);
+      break;
+    default:
+      return false;
+    }
+  }
+  for (sim::ComputeEffectAttr read : reads)
+    if (!llvm::any_of(watches, [&](sim::ComputeEffectAttr watch) {
+          return covers(watch, read);
+        }))
+      return false;
+  for (sim::ComputeEffectAttr write : writes) {
+    if (llvm::any_of(reads, [&](sim::ComputeEffectAttr read) {
+          return overlaps(write, read);
+        }))
+      return false;
+    // A driver belongs to this process. A stored output must not be
+    // replaced by another writer between two activations.
+    if (write.getEffect() != sim::ComputeEffectKind::Write)
+      continue;
+    auto others = storageWriters.find(write.getDescriptor());
+    if (others != storageWriters.end())
+      for (auto [owner, effect] : others->second)
+        if (owner != function.getOperation() && overlaps(write, effect))
+          return false;
+  }
+  return true;
+}
+
+/// The most `counted` operations on any control-flow path that starts at
+/// `from` and ends at the end of `until` (or at a block without successors).
+/// std::nullopt when a cycle avoids `until` or a counted operation is nested
+/// in a region, since neither has a static bound.
+std::optional<unsigned>
+maxCountOnPaths(Block *from, Block *until,
+                llvm::function_ref<bool(Operation *)> counted) {
+  llvm::DenseMap<Block *, unsigned> memo;
+  llvm::SmallPtrSet<Block *, 16> active;
+  bool bounded = true;
+  std::function<unsigned(Block *)> visit = [&](Block *block) -> unsigned {
+    if (auto found = memo.find(block); found != memo.end())
+      return found->second;
+    if (!active.insert(block).second) {
+      bounded = false;
+      return 0;
+    }
+    unsigned here = 0;
+    for (Operation &op : *block) {
+      if (counted(&op))
+        ++here;
+      else if (op.getNumRegions() != 0 &&
+               op.walk([&](Operation *nested) {
+                   return counted(nested) ? WalkResult::interrupt()
+                                          : WalkResult::advance();
+                 }).wasInterrupted())
+        bounded = false;
+    }
+    unsigned best = 0;
+    if (block != until)
+      for (Block *next : block->getSuccessors())
+        best = std::max(best, visit(next));
+    active.erase(block);
+    return memo[block] = here + best;
+  };
+  unsigned count = visit(from);
+  if (!bounded)
+    return std::nullopt;
+  return count;
+}
+
+/// The single suspension of a looping process, or null.
+Operation *singleSuspension(sim::SimFuncOp function) {
+  Operation *suspension = nullptr;
+  bool unique = true;
+  function.walk([&](Operation *op) {
+    if (!sim::isSuspensionOp(op))
+      return;
+    unique &= suspension == nullptr;
+    suspension = op;
+  });
+  return unique && suspension && suspension->getNumSuccessors() == 1
+             ? suspension
+             : nullptr;
+}
+
+} // namespace
+
+std::optional<NBATransientObservers>
+computeNBATransientObservers(sim::SimDesignOp design) {
+  sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  // VPI value-change callbacks run at each update.
+  if (!graph || graph.getVpi() != sim::ComputeVPIMode::Off)
+    return std::nullopt;
+  llvm::DenseMap<uint64_t,
+                 SmallVector<std::pair<Operation *, sim::ComputeEffectAttr>>>
+      storageWriters;
+  SmallVector<sim::SimFuncOp> functions;
+  bool complete = true;
+  design.walk([&](sim::SimFuncOp function) {
+    functions.push_back(function);
+    ArrayAttr summary = function.getEffectSummaryAttr();
+    if (!summary) {
+      // A body without a summary may still wait on storage.
+      complete &= function.isExternal() ||
+                  !function
+                       .walk([](Operation *op) {
+                         return sim::isSuspensionOp(op) ? WalkResult::interrupt()
+                                                        : WalkResult::advance();
+                       })
+                       .wasInterrupted();
+      return;
+    }
+    for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>())
+      if (effect.getResource() == sim::ComputeResourceKind::Storage &&
+          (effect.getEffect() == sim::ComputeEffectKind::Write ||
+           effect.getEffect() == sim::ComputeEffectKind::NBA)) {
+        if (effect.getTarget() != sim::ComputeTargetKind::Descriptor)
+          complete = false;
+        storageWriters[effect.getDescriptor()].push_back(
+            {function.getOperation(), effect});
+      }
+  });
+  design.walk([&](Operation *op) {
+    complete &= !isa<sim::SimDPICallOp>(op);
+  });
+  if (!complete)
+    return std::nullopt;
+
+  NBATransientObservers result;
+  llvm::DenseSet<uint64_t> &observable = result.observable;
+  design.walk([&](sim::SimStorageDeclOp storage) {
+    if (storage->hasAttr(sim::metadata::coverageToggleObservable))
+      observable.insert(storage.getId());
+  });
+  for (sim::SimFuncOp function : functions) {
+    ArrayAttr summary = function.getEffectSummaryAttr();
+    if (!summary)
+      continue;
+    SmallVector<sim::ComputeEffectAttr> watches;
+    for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>())
+      if (effect.getEffect() == sim::ComputeEffectKind::Watch &&
+          effect.getResource() != sim::ComputeResourceKind::Net)
+        watches.push_back(effect);
+    if (watches.empty() || isIdempotentObserver(function, storageWriters))
+      continue;
+    // A process that waits only for a change of whole references wakes when
+    // any update changes a watched bit. A merged commit reproduces exactly
+    // that if it also reports bits rewritten with a different value in one
+    // barrier, so such a watch needs a transient mask, not ordered commits.
+    // Edge, level, conditional and expression waits see the value sequence.
+    bool changeWaitsOnly =
+        function.getEntryKind() != sim::EntryKind::Observer &&
+        !function
+             .walk([](Operation *op) {
+               if (!sim::isSuspensionOp(op) ||
+                   isa<sim::SimSuspendChangeOp, sim::SimSuspendDelayOp>(op))
+                 return WalkResult::advance();
+               auto any = dyn_cast<sim::SimSuspendAnyOp>(op);
+               bool change =
+                   any && llvm::all_of(any.getEdges(), [](int32_t edge) {
+                     return edge ==
+                            static_cast<int32_t>(sim::EdgeKind::Change);
+                   });
+               return change ? WalkResult::advance() : WalkResult::interrupt();
+             })
+             .wasInterrupted();
+    for (sim::ComputeEffectAttr watch : watches) {
+      // A watch through a subroutine formal or an unresolved handle can
+      // reach any root.
+      if (watch.getTarget() != sim::ComputeTargetKind::Descriptor)
+        return std::nullopt;
+      if (watch.getResource() != sim::ComputeResourceKind::Storage)
+        continue;
+      // A dynamic watch wakes on a change anywhere in its root, which the
+      // commit's per-bit change report covers as well.
+      bool changeWatch = changeWaitsOnly &&
+                         (watch.getTrigger() == sim::ComputeTriggerKind::None ||
+                          watch.getTrigger() == sim::ComputeTriggerKind::Change);
+      (changeWatch ? result.changeWatched : observable)
+          .insert(watch.getDescriptor());
+    }
+  }
+  for (uint64_t descriptor : observable)
+    result.changeWatched.erase(descriptor);
+
+  // A change-watched root that receives at most one NBA per bit in any time
+  // slot has no round trip to report, so it needs no transient mask. Prove it
+  // on source processes: one writer process, at most one write per activation
+  // path, activated only by an edge of a clock that changes at most once per
+  // slot (its sole writer toggles it after each positive delay).
+  llvm::DenseMap<uint64_t, SmallVector<sim::SimFuncOp>> netDrivers;
+  for (sim::SimFuncOp function : functions)
+    if (ArrayAttr summary = function.getEffectSummaryAttr())
+      for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>())
+        if (effect.getEffect() == sim::ComputeEffectKind::Drive &&
+            effect.getResource() == sim::ComputeResourceKind::Net)
+          netDrivers[effect.getDescriptor()].push_back(function);
+  bool processControl = false;
+  llvm::StringMap<unsigned> spawns;
+  llvm::StringSet<> spawnedOutsideRoot, called, calledOutsideRoot;
+  design.walk([&](Operation *op) {
+    processControl |=
+        isa<sim::SimProcessControlOp, sim::SimControlDisableOp,
+            sim::SimOverrideOp, sim::SimReleaseOverrideOp,
+            sim::SimDynamicOverrideOp>(op);
+    if (auto spawn = dyn_cast<sim::SimSpawnOp>(op)) {
+      ++spawns[spawn.getCallee()];
+      auto owner = spawn->getParentOfType<sim::SimFuncOp>();
+      if (!owner || owner.getEntryKind() != sim::EntryKind::RootInitializer ||
+          spawn->getParentRegion() != &owner.getBody())
+        spawnedOutsideRoot.insert(spawn.getCallee());
+    } else if (isa<sim::SimCallOp, sim::SimTaskCallOp>(op)) {
+      StringRef callee = isa<sim::SimCallOp>(op)
+                             ? cast<sim::SimCallOp>(op).getCallee()
+                             : cast<sim::SimTaskCallOp>(op).getCallee();
+      called.insert(callee);
+      auto owner = op->getParentOfType<sim::SimFuncOp>();
+      if (!owner || owner.getEntryKind() != sim::EntryKind::RootInitializer)
+        calledOutsideRoot.insert(callee);
+    }
+  });
+  // Declaration initializers run from the root initializer. IEEE 1800-2017
+  // 6.8 sets these values before any initial or always procedure starts, so
+  // no wait exists yet to observe them.
+  auto initializesOnly = [&](sim::SimFuncOp function) {
+    if (function.getEntryKind() == sim::EntryKind::RootInitializer)
+      return true;
+    StringRef name = function.getSymName();
+    return function.getEntryKind() == sim::EntryKind::Function &&
+           called.contains(name) && !calledOutsideRoot.contains(name) &&
+           !spawns.contains(name) &&
+           !function
+                .walk([](Operation *op) {
+                  return sim::isSuspensionOp(op) ? WalkResult::interrupt()
+                                                 : WalkResult::advance();
+                })
+                .wasInterrupted();
+  };
+  if (processControl || result.changeWatched.empty())
+    return result;
+  auto singleInstance = [&](sim::SimFuncOp function) {
+    StringRef name = function.getSymName();
+    return spawns.lookup(name) == 1 && !spawnedOutsideRoot.contains(name) &&
+           !called.contains(name);
+  };
+  analysis::DescriptorProvenanceAnalysis provenanceAnalysis(design);
+  llvm::DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
+  using Resource = std::pair<sim::ComputeResourceKind, uint64_t>;
+  auto resourceOf = [&](sim::SimFuncOp function,
+                        Value value) -> std::optional<Resource> {
+    auto [entry, inserted] = provenance.try_emplace(function.getOperation());
+    if (inserted)
+      entry->second = provenanceAnalysis.derive(function);
+    auto found = entry->second.find(value);
+    if (found == entry->second.end() || !found->second.descriptor ||
+        found->second.dynamic ||
+        (found->second.resource != sim::ComputeResourceKind::Storage &&
+         found->second.resource != sim::ComputeResourceKind::Net))
+      return std::nullopt;
+    return Resource{found->second.resource, *found->second.descriptor};
+  };
+  auto descriptorOf = [&](sim::SimFuncOp function,
+                          Value value) -> std::optional<uint64_t> {
+    std::optional<Resource> resource = resourceOf(function, value);
+    if (!resource || resource->first != sim::ComputeResourceKind::Storage)
+      return std::nullopt;
+    return resource->second;
+  };
+  // Every path through one activation writes `descriptor` at most `limit`
+  // times, and the path from process start to the first wait at most
+  // `startLimit` times.
+  auto boundedWrites = [&](sim::SimFuncOp function, Operation *suspension,
+                           uint64_t descriptor, unsigned limit,
+                           unsigned startLimit,
+                           llvm::function_ref<Value(Operation *)> target) {
+    auto counted = [&](Operation *op) {
+      Value destination = target(op);
+      if (!destination)
+        return false;
+      std::optional<uint64_t> written = descriptorOf(function, destination);
+      return !written || *written == descriptor;
+    };
+    Block *wait = suspension->getBlock();
+    std::optional<unsigned> activation =
+        maxCountOnPaths(suspension->getSuccessor(0), wait, counted);
+    std::optional<unsigned> start =
+        maxCountOnPaths(&function.getBody().front(), wait, counted);
+    return activation && start && *activation <= limit && *start <= startLimit;
+  };
+  // The resource a copy process forwards to `written`, such as a port
+  // connection: it waits for any change, reads one resource and writes
+  // `written` once per activation, so `written` changes at most once per
+  // change of that resource.
+  auto copiedBy = [&](sim::SimFuncOp copy,
+                      Resource written) -> std::optional<Resource> {
+    Operation *wait = singleSuspension(copy);
+    auto any = dyn_cast_or_null<sim::SimSuspendAnyOp>(wait);
+    ArrayAttr summary = copy.getEffectSummaryAttr();
+    if (!wait || !summary || !singleInstance(copy) ||
+        !(isa<sim::SimSuspendChangeOp>(wait) ||
+          (any && llvm::all_of(any.getEdges(), [](int32_t edge) {
+             return edge == static_cast<int32_t>(sim::EdgeKind::Change);
+           }))))
+      return std::nullopt;
+    std::optional<Resource> copied;
+    for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>()) {
+      if (effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
+          effect.getDynamic())
+        return std::nullopt;
+      Resource resource{effect.getResource(), effect.getDescriptor()};
+      switch (effect.getEffect()) {
+      case sim::ComputeEffectKind::Read:
+      case sim::ComputeEffectKind::Watch:
+        if (copied && *copied != resource)
+          return std::nullopt;
+        copied = resource;
+        break;
+      case sim::ComputeEffectKind::Drive:
+      case sim::ComputeEffectKind::Write:
+        if (resource != written)
+          return std::nullopt;
+        break;
+      default:
+        return std::nullopt;
+      }
+    }
+    unsigned writes = 0;
+    copy.walk([&](Operation *op) {
+      writes += isa<sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp,
+                    sim::SimRefStoreOp>(op);
+    });
+    if (writes > 1)
+      return std::nullopt;
+    return copied;
+  };
+  std::function<bool(Resource, unsigned)> freeRunningClock =
+      [&](Resource source, unsigned depth) -> bool {
+    if (depth > 8)
+      return false;
+    if (source.first == sim::ComputeResourceKind::Net) {
+      auto drivers = netDrivers.find(source.second);
+      if (drivers == netDrivers.end() || drivers->second.size() != 1)
+        return false;
+      std::optional<Resource> copied = copiedBy(drivers->second.front(), source);
+      return copied && freeRunningClock(*copied, depth + 1);
+    }
+    uint64_t clock = source.second;
+    auto writers = storageWriters.find(clock);
+    if (writers == storageWriters.end())
+      return false;
+    sim::SimFuncOp toggler;
+    for (auto [owner, effect] : writers->second) {
+      auto function = cast<sim::SimFuncOp>(owner);
+      if (effect.getEffect() != sim::ComputeEffectKind::Write)
+        return false;
+      if (initializesOnly(function))
+        continue;
+      if (toggler && toggler != function)
+        return false;
+      toggler = function;
+    }
+    if (!toggler || !singleInstance(toggler))
+      return false;
+    if (std::optional<Resource> copied = copiedBy(toggler, source))
+      return freeRunningClock(*copied, depth + 1);
+    auto delay = dyn_cast_or_null<sim::SimSuspendDelayOp>(
+        singleSuspension(toggler));
+    auto constant =
+        delay ? delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>()
+              : sim::SimTimeConstantOp{};
+    if (!constant || constant.getValue() == 0)
+      return false;
+    // No write before the first delay, so at time zero only declaration
+    // initialization, which precedes every procedure (6.8), sets the clock.
+    return boundedWrites(toggler, delay, clock, 1, 0, [](Operation *op) {
+      auto store = dyn_cast<sim::SimRefStoreOp>(op);
+      return store ? store.getReference() : Value{};
+    });
+  };
+  SmallVector<uint64_t> candidates(result.changeWatched.begin(),
+                                   result.changeWatched.end());
+  for (uint64_t root : candidates) {
+    auto writers = storageWriters.find(root);
+    if (writers == storageWriters.end())
+      continue;
+    sim::SimFuncOp process;
+    bool single = true;
+    for (auto [owner, effect] : writers->second) {
+      if (effect.getEffect() != sim::ComputeEffectKind::NBA)
+        continue;
+      auto function = cast<sim::SimFuncOp>(owner);
+      single &= !process || process == function;
+      process = function;
+    }
+    if (!single || !process || !singleInstance(process) ||
+        (process.getEntryKind() != sim::EntryKind::Always &&
+         process.getEntryKind() != sim::EntryKind::AlwaysFF))
+      continue;
+    auto edge =
+        dyn_cast_or_null<sim::SimSuspendEdgeOp>(singleSuspension(process));
+    if (!edge)
+      continue;
+    std::optional<Resource> clock = resourceOf(process, edge.getWatched());
+    if (!clock ||
+        (clock->first == sim::ComputeResourceKind::Storage &&
+         clock->second == root) ||
+        !freeRunningClock(*clock, 0))
+      continue;
+    if (boundedWrites(process, edge, root, 1, 0, [](Operation *op) {
+          auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(op);
+          return enqueue ? enqueue.getDestination() : Value{};
+        }))
+      result.changeWatched.erase(root);
+  }
+  return result;
 }
 
 } // namespace obelisk

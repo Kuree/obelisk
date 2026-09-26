@@ -60,8 +60,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // CHECK-NOT: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK-LABEL: llvm.func @update.__obelisk_coro_ramp(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_nba
 // CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_nba
 // CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail

@@ -62,6 +62,19 @@ bool hasGeneratedNBAStages(
   return generated.valid != 0;
 }
 
+// Record staged bits that a new write replaces with a different value before
+// merging it. `mask`, `value` and `unknown` are positioned within `word`.
+static void recordStaticNBATransient(StaticNBAAccumulator &accumulator,
+                                     size_t word, uint64_t mask,
+                                     uint64_t value, uint64_t unknown) {
+  if (word >= accumulator.transient.size())
+    return;
+  accumulator.transient[word] |=
+      accumulator.writeMask[word] & mask &
+      ((accumulator.value[word] ^ value) |
+       (accumulator.unknown[word] ^ unknown));
+}
+
 uint32_t nextDueNativeNBABarrierRegionUnlocked(
     const obelisk_rt_context *context, bool includeGenerated) {
   uint32_t region = UINT32_MAX;
@@ -351,13 +364,13 @@ static obelisk_rt_status schedulerNBA(
             static_cast<uint64_t>(offset) <= root.bit_width &&
             bitWidth <= root.bit_width - static_cast<uint64_t>(offset);
         if (packedStage) {
-          uint64_t packedValue = 0;
-          uint64_t packedUnknown = 0;
-          for (uint64_t bit = 0; bit != bitWidth; ++bit) {
-            packedValue |= uint64_t{sourceBit(value, bit)} << bit;
-            if (unknownPlane)
-              packedUnknown |= uint64_t{sourceBit(unknown, bit)} << bit;
-          }
+          uint64_t packedValue =
+              loadPackedBytes(value, sourceBitOffset, bitWidth);
+          uint64_t packedUnknown = unknownPlane
+                                       ? loadPackedBytes(unknown,
+                                                         sourceBitOffset,
+                                                         bitWidth)
+                                       : 0;
           uint64_t sourceMask = packedWidthMask(bitWidth);
           packedValue &= sourceMask;
           packedUnknown &= sourceMask;
@@ -413,21 +426,35 @@ static obelisk_rt_status schedulerNBA(
     }
     if (boundedStatic && !stringValue && delay == 0 &&
         context->nativeSchedulePlan) {
-      for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
-           ++root)
-        if (context->nativeScheduleNBARoots[root].static_state == staticID) {
-          if (root >= context->staticNBASlowRoots.size())
-            return fail(OBELISK_RT_INVALID_DESIGN);
-          if (obelisk_rt_status status =
-                  materializeGeneratedNBAAccumulatorUnlocked(context, root,
-                                                             update.execRegion);
-              status != OBELISK_RT_OK)
-            return fail(status);
-          context->staticNBASlowRoots[root] = 1;
-          context->staticNBASlowRootsPresent = true;
-          invalidateNativeStaticSpecializationFastUnlocked(context);
-          break;
-        }
+      auto markSlowRoot = [&](uint32_t root) -> obelisk_rt_status {
+        if (root >= context->staticNBASlowRoots.size())
+          return fail(OBELISK_RT_INVALID_DESIGN);
+        if (obelisk_rt_status status =
+                materializeGeneratedNBAAccumulatorUnlocked(context, root,
+                                                           update.execRegion);
+            status != OBELISK_RT_OK)
+          return fail(status);
+        context->staticNBASlowRoots[root] = 1;
+        context->staticNBASlowRootsPresent = true;
+        invalidateNativeStaticSpecializationFastUnlocked(context);
+        return OBELISK_RT_OK;
+      };
+      uint32_t root = staticID < context->nativeScheduleNBARootIndex.size()
+                          ? context->nativeScheduleNBARootIndex[staticID]
+                          : UINT32_MAX;
+      if (root != UINT32_MAX) {
+        if (obelisk_rt_status status = markSlowRoot(root);
+            status != OBELISK_RT_OK)
+          return status;
+      } else if (context->nativeScheduleNBARootIndex.empty()) {
+        for (root = 0; root != context->nativeScheduleNBARootCount; ++root)
+          if (context->nativeScheduleNBARoots[root].static_state == staticID) {
+            if (obelisk_rt_status status = markSlowRoot(root);
+                status != OBELISK_RT_OK)
+              return status;
+            break;
+          }
+      }
     }
     update.inlinePacked =
         !automatic && boundedStatic && !stringValue && delay == 0 &&
@@ -438,11 +465,10 @@ static obelisk_rt_status schedulerNBA(
         (context->nativeSchedulePlan->flags &
          OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0;
     if (update.inlinePacked) {
-      for (uint64_t bit = 0; bit != bitWidth; ++bit)
-        update.inlineValue |= uint64_t{sourceBit(value, bit)} << bit;
+      update.inlineValue = loadPackedBytes(value, sourceBitOffset, bitWidth);
       if (unknownPlane)
-        for (uint64_t bit = 0; bit != bitWidth; ++bit)
-          update.inlineUnknown |= uint64_t{sourceBit(unknown, bit)} << bit;
+        update.inlineUnknown =
+            loadPackedBytes(unknown, sourceBitOffset, bitWidth);
       ++context->signalDiagnostics.aotNBAStages;
     } else {
       update.value.assign(static_cast<size_t>(byteCount), 0);
@@ -2320,6 +2346,8 @@ static obelisk_rt_status stageStaticNBAPacked(
   size_t word = static_cast<size_t>(rootOffset / 64);
   unsigned shift = static_cast<unsigned>(rootOffset % 64);
   uint64_t lowMask = sourceMask << shift;
+  recordStaticNBATransient(accumulator, word, lowMask, value << shift,
+                           unknown << shift);
   accumulator.value[word] =
       (accumulator.value[word] & ~lowMask) | (value << shift);
   accumulator.unknown[word] =
@@ -2327,6 +2355,8 @@ static obelisk_rt_status stageStaticNBAPacked(
   accumulator.writeMask[word] |= lowMask;
   if (shift != 0 && bitWidth > 64 - shift) {
     uint64_t highMask = sourceMask >> (64 - shift);
+    recordStaticNBATransient(accumulator, word + 1, highMask,
+                             value >> (64 - shift), unknown >> (64 - shift));
     accumulator.value[word + 1] =
         (accumulator.value[word + 1] & ~highMask) | (value >> (64 - shift));
     accumulator.unknown[word + 1] =
@@ -2390,6 +2420,12 @@ obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
   size_t words = static_cast<size_t>((root.bit_width + 63) / 64);
   for (size_t word = 0; word != words; ++word) {
     uint64_t mask = generated->write_mask[word];
+    if (word < accumulator.transient.size())
+      accumulator.transient[word] |= generated->transient[word];
+    recordStaticNBATransient(accumulator, word, mask,
+                             generated->value[word] & mask,
+                             generated->unknown[word] & mask);
+    generated->transient[word] = 0;
     accumulator.value[word] =
         (accumulator.value[word] & ~mask) | (generated->value[word] & mask);
     accumulator.unknown[word] =
@@ -2454,6 +2490,8 @@ extern "C" void obelisk_rt_v1_static_nba_stage_wide(
   size_t word = static_cast<size_t>(rootOffset / 64);
   unsigned shift = static_cast<unsigned>(rootOffset % 64);
   uint64_t lowMask = sourceMask << shift;
+  recordStaticNBATransient(accumulator, word, lowMask, value << shift,
+                           unknown << shift);
   accumulator.value[word] =
       (accumulator.value[word] & ~lowMask) | (value << shift);
   accumulator.unknown[word] =
@@ -2461,6 +2499,8 @@ extern "C" void obelisk_rt_v1_static_nba_stage_wide(
   accumulator.writeMask[word] |= lowMask;
   if (shift != 0 && bitWidth > 64 - shift) {
     uint64_t highMask = sourceMask >> (64 - shift);
+    recordStaticNBATransient(accumulator, word + 1, highMask,
+                             value >> (64 - shift), unknown >> (64 - shift));
     accumulator.value[word + 1] =
         (accumulator.value[word + 1] & ~highMask) | (value >> (64 - shift));
     accumulator.unknown[word + 1] =
@@ -2827,7 +2867,9 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   obelisk_rt_generated_nba_accumulator_256 *generated =
       root.generated_accumulator;
+  // A transient mask needs the general commit's per-bit change reporting.
   if (!generated || !hasGeneratedNBAStages(*generated) || accumulator.valid ||
+      generated->transient[0] != 0 ||
       context->staticNBASlowRoots[rootIndex] != 0 || root.bit_width > 64 ||
       (!trustedStaticFanout &&
        nativeStaticRootDirty(context, root.static_state)) ||
@@ -2919,6 +2961,10 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
     return status;
   if (!accumulator.valid || accumulator.execRegion != barrierRegion)
     return OBELISK_RT_OK;
+  // A round trip leaves old == new, so only per-bit publication reports it.
+  trackTransitions |= std::any_of(accumulator.transient.begin(),
+                                  accumulator.transient.end(),
+                                  [](uint64_t word) { return word != 0; });
   const NativeStaticState *staticState =
       findNativeStaticState(context, root.static_state);
   if (!staticState || staticState->bitWidth != root.bit_width ||
@@ -3000,7 +3046,10 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
       uint64_t newUnknown =
           (oldUnknown & ~writeMask) | (accumulator.unknown[word] & writeMask);
       uint64_t changedBits =
-          ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) & widthMask;
+          ((oldValue ^ newValue) | (oldUnknown ^ newUnknown) |
+           (word < accumulator.transient.size() ? accumulator.transient[word]
+                                                : uint64_t{0})) &
+          widthMask;
       if (trackTransitions) {
         uint64_t oldZero = ~oldUnknown & ~oldValue & widthMask;
         uint64_t oldOne = ~oldUnknown & oldValue & widthMask;
@@ -3078,6 +3127,8 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
     }
   }
   std::fill(accumulator.writeMask.begin(), accumulator.writeMask.end(),
+            uint64_t{0});
+  std::fill(accumulator.transient.begin(), accumulator.transient.end(),
             uint64_t{0});
   accumulator.valid = false;
   accumulator.sequence = 0;

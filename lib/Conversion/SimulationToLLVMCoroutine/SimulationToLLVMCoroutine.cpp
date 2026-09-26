@@ -2051,6 +2051,9 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               // Cold allocation of private generated NBA storage. This never
               // executes actors, changes design state or re-enters scheduling.
               *callee == "obelisk_rt_v1_eval_nba_reserve" ||
+              // The reserve failure block latches an error and returns from
+              // the activation. It cannot schedule or execute an actor.
+              *callee == "obelisk_rt_v1_scheduler_fail" ||
               // Exact proof-state publication over compiler-verified tables.
               // The helper cannot allocate, execute actors, access canonical
               // state, advance time, or re-enter the scheduler.
@@ -3377,6 +3380,7 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       });
     SmallVector<llvm::SmallDenseSet<uint32_t, 4>> bodyWideRoots(
         admittedBodies.size());
+    SmallVector<bool> bodyNeedsOrderedNBA(admittedBodies.size(), false);
     for (auto [index, function] : llvm::enumerate(admittedBodies)) {
       SmallVector<sim::SimFuncOp> pending{function};
       llvm::SmallPtrSet<Operation *, 8> visited;
@@ -3391,6 +3395,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           if (root == staticNBAPlan.siteRoots.end() ||
               root->second >= generatedOrigins.size())
             return;
+          // The generated accumulator publishes one old-to-final transition.
+          // Until ordered replay is available, an activation that can write a
+          // bit twice must use the ordered runtime NBA queue throughout.
+          bodyNeedsOrderedNBA[index] |=
+              !staticNBAPlan.mergeSafeRoots[root->second];
           if (staticNBAPlan.roots[root->second].bit_width > 64)
             bodyWideRoots[index].insert(root->second);
           if (current == function) {
@@ -3411,10 +3420,23 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           });
       }
     }
+    // The queue record carries a dynamic bit offset, so an array element of
+    // a captured root is as addressable as a fixed slice. A packed dynamic
+    // slice still needs a generated owner for its variable width mask.
     auto fixedReference = [](Value destination) {
       while (destination) {
         if (destination.getDefiningOp<sim::SimContextStorageOp>())
           return true;
+        if (auto argument = dyn_cast<BlockArgument>(destination)) {
+          auto function =
+              dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+          return function && argument.getOwner()->isEntryBlock();
+        }
+        if (auto element =
+                destination.getDefiningOp<sim::SimRefArrayElementOp>()) {
+          destination = element.getInput();
+          continue;
+        }
         if (auto extract = destination.getDefiningOp<sim::SimRefExtractOp>()) {
           destination = extract.getInput();
           continue;
@@ -3436,8 +3458,17 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           root->second >= queuePayloadSupported.size())
         return;
       auto width = detail::nativeStateWidth(enqueue.getValue().getType());
+      // Queue staging splits the enclosing block, which a structured
+      // single-block region such as scf.for cannot hold. The queue drains at
+      // the NBA barrier only; a reactive-set writer commits in Re-NBA, which
+      // stays runtime scheduled. Both must be decided here, since a later
+      // Eval decline cannot restore the per-update runtime publications.
+      auto function = enqueue->getParentOfType<sim::SimFuncOp>();
       if (!width || *width == 0 || *width > 64 || enqueue.getDelay() ||
-          site.getTiming() ||
+          site.getTiming() || !function ||
+          function.getHomeRegion() != sim::EventRegion::Active ||
+          enqueue->getParentRegion() != &function.getBody() ||
+          enqueue.getDestination().getDefiningOp<sim::SimRefDynExtractOp>() ||
           (!staticNBAPlan.independentSiteWrites[root->second] &&
            !fixedReference(enqueue.getDestination())))
         queuePayloadSupported[root->second] = 0;
@@ -3447,11 +3478,36 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (site.root < orderedRootClosed.size() &&
           !generatedOrigins[site.root].contains(semanticOrigin(site.site)))
         orderedRootClosed[site.root] = 0;
+    // The ordered queue must hold every update whose order is observable.
+    // A merge-safe root keeps its accumulator and cannot reveal that order.
+    bool everySiteGenerated = true;
+    module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+      sim::NBASiteAttr site = enqueue.getSiteAttr();
+      auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
+                       : staticNBAPlan.siteRoots.end();
+      if (root != staticNBAPlan.siteRoots.end() &&
+          root->second < staticNBAPlan.mergeSafeRoots.size() &&
+          staticNBAPlan.mergeSafeRoots[root->second])
+        return;
+      everySiteGenerated &=
+          root != staticNBAPlan.siteRoots.end() &&
+          root->second < orderedRootClosed.size() &&
+          orderedRootClosed[root->second] &&
+          queuePayloadSupported[root->second];
+    });
     for (auto [index, function] : llvm::enumerate(admittedBodies))
-      for (uint32_t root : bodyWideRoots[index])
-        if (!orderedRootClosed[root] || !queuePayloadSupported[root])
-          function->setAttr(evalRuntimeNBARequiredAttr,
-                            UnitAttr::get(module.getContext()));
+      if (bodyNeedsOrderedNBA[index] && everySiteGenerated)
+        function->setAttr("obelisk.eval.ordered_nba_queue",
+                          UnitAttr::get(module.getContext()));
+      else if (bodyNeedsOrderedNBA[index] ||
+               llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
+                 // A merge-safe root loses nothing if Eval later declines.
+                 return !staticNBAPlan.mergeSafeRoots[root] &&
+                        (!orderedRootClosed[root] ||
+                         !queuePayloadSupported[root]);
+               }))
+        function->setAttr(evalRuntimeNBARequiredAttr,
+                          UnitAttr::get(module.getContext()));
     if (failed(materializeGeneratedNBAAccumulators(module, staticNBAPlan)))
       return failure();
     directStaticState |=
@@ -4861,13 +4917,13 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
               *callee != "obelisk_rt_v1_coverage_point_hit" &&
               *callee != "obelisk_rt_v1_scheduler_termination_requested" &&
               *callee != "obelisk_rt_v1_scheduler_time" &&
-              *callee != "obelisk_rt_v1_eval_display")
+              *callee != "obelisk_rt_v1_eval_display" &&
+              *callee != "obelisk_rt_v1_eval_nba_reserve" &&
+              *callee != "obelisk_rt_v1_scheduler_fail")
             checkpointBlocks.try_emplace(call->getBlock(), call.getOperation());
         });
         if (checkpointBlocks.empty())
-          return function.emitError(
-                     "path-sensitive route has no checkpoint leaf"),
-                 failure();
+          return success();
         for (auto [block, firstCheckpoint] : checkpointBlocks) {
           // Keep unsupported calls out of the generated closure. The route
           // probe must intercept this path before entering either body; this

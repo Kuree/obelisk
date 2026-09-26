@@ -778,13 +778,16 @@ sim::ComputeEffectAttr getDirectSensitivity(sim::ComputeFragmentAttr fragment) {
 ///
 /// to one unconditional enqueue of `select %condition, %second, %first`.
 ///
-/// NBA values are not observable until the region barrier, so the two writes
-/// have ordinary last-write semantics. Restrict this to adjacent accumulator
-/// sites for the same commit root and to a speculatable, side-effect-free
-/// overwrite arm. Besides removing a hot branch, the resulting straight-line
+/// Both writes are separate update events (IEEE 1800-2017 4.6(b), 10.4.2):
+/// when the condition holds, an event control can see the first value before
+/// the second replaces it. Fold only a root whose intermediate NBA values are
+/// unobservable (analysis::NBAMergeSafety). Restrict this to adjacent
+/// accumulator sites for the same commit root and to a speculatable,
+/// side-effect-free overwrite arm. Besides removing a hot branch, the resulting straight-line
 /// arithmetic is suitable for downstream SLP/vector formation.
-uint64_t ifConvertConditionalNBAWrites(sim::SimFuncOp function,
-                                       Block *protectedWait) {
+uint64_t
+ifConvertConditionalNBAWrites(sim::SimFuncOp function, Block *protectedWait,
+                              const analysis::NBAMergeSafety &mergeSafety) {
   uint64_t converted = 0;
   bool changed;
   do {
@@ -849,7 +852,8 @@ uint64_t ifConvertConditionalNBAWrites(sim::SimFuncOp function,
               sim::ComputeNBAStorageKind::RootAccumulator ||
           secondSite.getStorage() !=
               sim::ComputeNBAStorageKind::RootAccumulator ||
-          firstSite.getCommit() != secondSite.getCommit())
+          firstSite.getCommit() != secondSite.getCommit() ||
+          !mergeSafety.commitMayMerge(firstSite.getCommit()))
         continue;
 
       // Move only the proven-speculatable value computation. The replacement
@@ -3109,7 +3113,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     accessIndex->refresh(fused);
   }
   promotedPrivateStores += promotePrivateStaticTemporaries(fused, *accessIndex);
-  ifConvertedNBAs += ifConvertConditionalNBAWrites(fused, wait);
+  ifConvertedNBAs += ifConvertConditionalNBAWrites(
+      fused, wait, analysis::NBAMergeSafety(design));
   sharedStableConditions += shareStableBranchConditions(
       fused, clonedBlocks.front().lookup(candidates.front().body));
 
@@ -3345,6 +3350,22 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       design->getAttrOfType<ArrayAttr>(sim::metadata::staticBodyFusion);
   sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
   bool evalScheduler = useEvalBodyFusion(design);
+  // Inventory NBA transient observers while every process still has its
+  // source shape. Fusion merges bodies and their waits, which would hide an
+  // idempotent observer inside a larger activation.
+  if (!design->hasAttr(sim::metadata::nbaTransientObservable))
+    if (std::optional<NBATransientObservers> observers =
+            computeNBATransientObservers(design)) {
+      auto sorted = [&](const llvm::DenseSet<uint64_t> &set) {
+        SmallVector<int64_t> values(set.begin(), set.end());
+        llvm::sort(values);
+        return DenseI64ArrayAttr::get(design.getContext(), values);
+      };
+      design->setAttr(sim::metadata::nbaTransientObservable,
+                      sorted(observers->observable));
+      design->setAttr(sim::metadata::nbaChangeWatched,
+                      sorted(observers->changeWatched));
+    }
   // Graph rebuilding renumbers the canonical actors as well as their eval
   // clones. Preserve both sides before fusion changes traversal order;
   // tagging only the clone makes one source NBA look like two distinct sites.

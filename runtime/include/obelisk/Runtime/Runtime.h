@@ -3241,6 +3241,11 @@ typedef struct obelisk_rt_generated_nba_accumulator_256 {
   uint64_t write_mask[4];
   uint32_t valid;
   uint32_t exec_region;
+  // Bits rewritten with a different value since the last barrier. Merging
+  // keeps only the final value, so a change watcher must still wake on a
+  // round trip such as 0 -> 1 -> 0 (IEEE 1800-2017 4.6(b), 9.4.2). Set only
+  // for roots whose watchers are all change-only; cleared at commit.
+  uint64_t transient[4];
 } obelisk_rt_generated_nba_accumulator_256;
 
 typedef struct obelisk_rt_static_nba_root {

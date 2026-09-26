@@ -1,0 +1,144 @@
+// RUN: obelisk-opt %s --split-input-file --obelisk-sim-optimize-native-regions | FileCheck %s
+
+// Each NBA is its own update event (IEEE 1800-2017 4.6(b), 10.4.2). When an
+// event control can observe the root, the epilogue must not fold
+// `q <= 1; if (c) q <= 2;` into one stage: 0 -> 1 -> 2 publishes a transient
+// that a single 0 -> 2 update would lose.
+
+module {
+  obelisk_sim.design @native_region attributes {
+      obelisk.nba.transient_observable = array<i64: 0>,
+      compute_graph = #obelisk_sim.graph<version = 1, vpi = off, workers = 1,
+        nodes = [#obelisk_sim.nba_commit<id = 7, slots = [],
+          accumulatorSites = [0, 1], frontierSites = [],
+          effect = <effect = write, resource = storage, target = descriptor,
+            descriptor = 0, formal = 0, low = 0, width = 8, dynamic = false,
+            deferred = false, trigger = none>>],
+        edges = [], regions = [
+          #obelisk_sim.region<kind = active, groups = []>,
+          #obelisk_sim.region<kind = nba, groups = [
+            #obelisk_sim.group<fragments = [7], schedule = acyclic,
+                               feedback = []>]>,
+          #obelisk_sim.region<kind = observed, groups = []>,
+          #obelisk_sim.region<kind = reactive, groups = []>,
+          #obelisk_sim.region<kind = postponed, groups = []>]>} {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 always hierarchy "native_region.region"
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<1> design
+
+    obelisk_sim.func private @region(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %target: !obelisk_sim.ref<!obelisk_sim.logic<8>>
+          {obelisk_sim.capture_kind = 3 : i32,
+           obelisk_sim.descriptor_id = 0 : i64},
+        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {obelisk_sim.capture_kind = 3 : i32,
+           obelisk_sim.descriptor_id = 1 : i64})
+        attributes {entry_kind = 3 : i32,
+                    code_unit_id = 1 : i64,
+                    obelisk.native.region_body} {
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.edge posedge %clock to ^body :
+          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+    ^body:
+      %first = obelisk_sim.logic.constant 1 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      obelisk_sim.nba.enqueue %first to %target {
+        site = #obelisk_sim.nba_site<id = 0, commit = 7,
+          storage = root_accumulator>
+      } : (!obelisk_sim.logic<8>,
+           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      %overwrite = arith.constant true
+      cf.cond_br %overwrite, ^overwrite, ^join
+    ^overwrite:
+      %last = obelisk_sim.logic.constant 2 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      obelisk_sim.nba.enqueue %last to %target {
+        site = #obelisk_sim.nba_site<id = 1, commit = 7,
+          storage = root_accumulator>
+      } : (!obelisk_sim.logic<8>,
+           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      cf.br ^join
+    ^join:
+      cf.br ^wait
+    }
+  }
+}
+
+// CHECK-LABEL: obelisk_sim.func private @region
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK-SAME: site = #obelisk_sim.nba_site<id = 0, commit = 7,
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK-SAME: site = #obelisk_sim.nba_site<id = 1, commit = 7,
+
+// -----
+
+// Without an observability inventory every root counts as observable.
+module {
+  obelisk_sim.design @native_region attributes {
+      compute_graph = #obelisk_sim.graph<version = 1, vpi = off, workers = 1,
+        nodes = [#obelisk_sim.nba_commit<id = 7, slots = [],
+          accumulatorSites = [0, 1], frontierSites = [],
+          effect = <effect = write, resource = storage, target = descriptor,
+            descriptor = 0, formal = 0, low = 0, width = 8, dynamic = false,
+            deferred = false, trigger = none>>],
+        edges = [], regions = [
+          #obelisk_sim.region<kind = active, groups = []>,
+          #obelisk_sim.region<kind = nba, groups = [
+            #obelisk_sim.group<fragments = [7], schedule = acyclic,
+                               feedback = []>]>,
+          #obelisk_sim.region<kind = observed, groups = []>,
+          #obelisk_sim.region<kind = reactive, groups = []>,
+          #obelisk_sim.region<kind = postponed, groups = []>]>} {
+    obelisk_sim.scope.decl 0
+    obelisk_sim.code_unit.decl 1 in 0 always hierarchy "native_region.region"
+    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<1> design
+
+    obelisk_sim.func private @region(
+        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
+        %target: !obelisk_sim.ref<!obelisk_sim.logic<8>>
+          {obelisk_sim.capture_kind = 3 : i32,
+           obelisk_sim.descriptor_id = 0 : i64},
+        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {obelisk_sim.capture_kind = 3 : i32,
+           obelisk_sim.descriptor_id = 1 : i64})
+        attributes {entry_kind = 3 : i32,
+                    code_unit_id = 1 : i64,
+                    obelisk.native.region_body} {
+      cf.br ^wait
+    ^wait:
+      obelisk_sim.suspend.edge posedge %clock to ^body :
+          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+    ^body:
+      %first = obelisk_sim.logic.constant 1 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      obelisk_sim.nba.enqueue %first to %target {
+        site = #obelisk_sim.nba_site<id = 0, commit = 7,
+          storage = root_accumulator>
+      } : (!obelisk_sim.logic<8>,
+           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      %overwrite = arith.constant true
+      cf.cond_br %overwrite, ^overwrite, ^join
+    ^overwrite:
+      %last = obelisk_sim.logic.constant 2 : i8, 0 : i8 :
+          !obelisk_sim.logic<8>
+      obelisk_sim.nba.enqueue %last to %target {
+        site = #obelisk_sim.nba_site<id = 1, commit = 7,
+          storage = root_accumulator>
+      } : (!obelisk_sim.logic<8>,
+           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+      cf.br ^join
+    ^join:
+      cf.br ^wait
+    }
+  }
+}
+
+// CHECK-LABEL: obelisk_sim.func private @region
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK-SAME: site = #obelisk_sim.nba_site<id = 0, commit = 7,
+// CHECK: obelisk_sim.nba.enqueue
+// CHECK-SAME: site = #obelisk_sim.nba_site<id = 1, commit = 7,
