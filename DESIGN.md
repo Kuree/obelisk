@@ -28,6 +28,15 @@ sequences, coverage, timing controls, generated hierarchy, and parameterized
 instances are semantic constructs that a synthesis-oriented source IR cannot
 represent completely.
 
+Simulation optimization and scheduling passes live in
+`lib/Dialect/Simulation/Transforms`, with public pass declarations and TableGen
+definitions in `include/obelisk/Dialect/Simulation/Transforms`. The
+`ObeliskSimulationTransforms` library owns these passes independently of the
+conversion libraries in `lib/Conversion`. Their regression tests live in
+`test/Dialect/Simulation/Transforms`. `obelisk-opt` registers both the conversion
+and simulation transformation pass sets; pass names and pipeline syntax are
+shared with the compiler driver.
+
 ## Why the frontend starts from scratch
 
 The previous frontend passed SystemVerilog through CIRCT's Moore dialect. That

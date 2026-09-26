@@ -1,6 +1,6 @@
-// Runtime semantics for ../Conversion/simulation-fuse-compute-fused-four-state.mlir.
+// Runtime semantics for ../Dialect/Simulation/Transforms/simulation-fuse-compute-fused-four-state.mlir.
 
-// RUN: %split-file %S/../Conversion/simulation-fuse-compute-fused-four-state.mlir %t
+// RUN: %split-file %S/../Dialect/Simulation/Transforms/simulation-fuse-compute-fused-four-state.mlir %t
 // RUN: obelisk -O0 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.unfused
 // RUN: obelisk -O3 --native-scheduler=generic %t/fused-four-state.sv -o %t/fused-four-state.fused
 // RUN: %t/fused-four-state.unfused > %t/fused-four-state.unfused.out

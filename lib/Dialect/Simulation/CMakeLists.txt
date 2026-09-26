@@ -37,3 +37,5 @@ add_mlir_library(ObeliskSimulationIR
 target_include_directories(ObeliskSimulationIR PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
+
+add_subdirectory(Transforms)

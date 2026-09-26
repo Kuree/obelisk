@@ -10,7 +10,7 @@
 #include "ComputeGraph.h"
 
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -22,7 +22,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMBUILDCOMPUTEGRAPHPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 

@@ -1,7 +1,7 @@
 //===- DevirtualizeClassCalls.cpp - Resolve exact class dispatches -------===//
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -17,7 +17,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMDEVIRTUALIZECLASSCALLSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 

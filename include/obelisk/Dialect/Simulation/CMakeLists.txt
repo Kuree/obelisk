@@ -33,3 +33,5 @@ mlir_tablegen(SimulationDialect.h.inc -gen-dialect-decls
 mlir_tablegen(SimulationDialect.cpp.inc -gen-dialect-defs
               -dialect=obelisk_sim)
 add_public_tablegen_target(ObeliskSimulationDialectIncGen)
+
+add_subdirectory(Transforms)

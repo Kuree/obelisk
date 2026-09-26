@@ -9,10 +9,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_COMPUTEGRAPH_H
-#define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_COMPUTEGRAPH_H
+#ifndef OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEGRAPH_H
+#define OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEGRAPH_H
 
-#include "Detail.h"
+#include "Utils.h"
 
 #include "mlir/IR/Attributes.h"
 #include "mlir/Support/LLVM.h"
@@ -65,4 +65,4 @@ validateComputeGraphStructure(sim::SimDesignOp design,
 
 } // namespace obelisk::simlowering
 
-#endif // OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_COMPUTEGRAPH_H
+#endif // OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEGRAPH_H

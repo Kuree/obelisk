@@ -22,6 +22,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"

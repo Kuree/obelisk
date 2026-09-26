@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/SDF/SDFDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 
 #include "mlir/IR/DialectRegistry.h"
@@ -24,6 +25,7 @@ int main(int argc, char **argv) {
   // be able to run them directly on obelisk_sim IR.
   mlir::registerTransformsPasses();
   obelisk::registerObeliskConversionPasses();
+  obelisk::registerObeliskSimulationPasses();
   obelisk::registerObeliskToSimulationPipeline();
 #ifdef OBELISK_INCLUDE_TESTS
   obelisk::registerManagedClassLayoutAnalysisTestPass();

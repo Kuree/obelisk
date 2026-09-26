@@ -1,6 +1,6 @@
-// Runtime semantics for ../Conversion/simulation-fuse-compute-fused-callee-write.mlir.
+// Runtime semantics for ../Dialect/Simulation/Transforms/simulation-fuse-compute-fused-callee-write.mlir.
 
-// RUN: %split-file %S/../Conversion/simulation-fuse-compute-fused-callee-write.mlir %t
+// RUN: %split-file %S/../Dialect/Simulation/Transforms/simulation-fuse-compute-fused-callee-write.mlir %t
 // RUN: obelisk -O0 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.unfused
 // RUN: obelisk -O3 --native-scheduler=generic %t/fused-callee-write.sv -o %t/fused-callee-write.fused
 // RUN: %t/fused-callee-write.unfused > %t/fused-callee-write.unfused.out

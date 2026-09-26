@@ -7,9 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Detail.h"
+#include "Utils.h"
 
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -29,7 +29,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMTHREADSUSPENSIONPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 

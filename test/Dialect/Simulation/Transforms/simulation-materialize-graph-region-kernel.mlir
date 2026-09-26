@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion),encode-obelisk-sim-to-bytecode{vpi=off})' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
+// RUN:   | %python %S/../../../Conversion/Inputs/dump-bytecode-instructions.py \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {

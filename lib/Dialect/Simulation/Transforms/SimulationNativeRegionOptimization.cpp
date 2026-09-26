@@ -1,7 +1,7 @@
 //===- SimulationNativeRegionOptimization.cpp - Native region SSA -------===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -20,7 +20,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMOPTIMIZENATIVEREGIONSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 

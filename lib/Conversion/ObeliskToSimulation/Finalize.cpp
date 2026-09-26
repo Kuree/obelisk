@@ -3,6 +3,7 @@
 #include "Detail.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"

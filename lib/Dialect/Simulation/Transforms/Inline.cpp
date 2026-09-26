@@ -1,9 +1,8 @@
 //===- Inline.cpp - Obelisk-owned simulation inlining policy ------------===//
 
-#include "Detail.h"
-
 #include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -32,7 +31,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMINLINEPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 

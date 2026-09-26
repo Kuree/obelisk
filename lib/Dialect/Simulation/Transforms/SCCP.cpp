@@ -3,7 +3,7 @@
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -34,7 +34,7 @@ using namespace mlir::dataflow;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMSCCPPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 

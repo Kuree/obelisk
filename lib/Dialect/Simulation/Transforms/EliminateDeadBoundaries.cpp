@@ -1,9 +1,9 @@
 //===- EliminateDeadBoundaries.cpp - Prune simulation boundaries --------===//
 
 #include "EliminateDeadBoundaries.h"
-#include "Detail.h"
+#include "Utils.h"
 
-#include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
@@ -21,7 +21,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMELIMINATEDEADBOUNDARIESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -226,7 +226,7 @@ static SmallVector<Type> filterTypes(TypeRange types,
 
 static void updateBindings(sim::SimFuncOp function,
                            const llvm::BitVector &erase) {
-  auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  auto bindings = function->getAttrOfType<ArrayAttr>(sim::metadata::bindings);
   if (!bindings)
     return;
   llvm::DenseSet<StringAttr> deadCopyOutPaths;
@@ -258,7 +258,7 @@ static void updateBindings(sim::SimFuncOp function,
         function.getContext(), argument.getPath(), newIndex, argument.getKind(),
         argument.getCopyOut(), argument.getLvalueNode(), argument.getCopyIn()));
   }
-  function->setAttr(bindingsAttrName,
+  function->setAttr(sim::metadata::bindings,
                     ArrayAttr::get(function.getContext(), updated));
 }
 

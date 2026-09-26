@@ -1,8 +1,8 @@
 // Active-region samples can race; check permitted values and required
 // intra-process order, without requiring one cross-process interleaving.
-// Runtime semantics for ../Conversion/simulation-fuse-compute-order.mlir.
+// Runtime semantics for ../Dialect/Simulation/Transforms/simulation-fuse-compute-order.mlir.
 
-// RUN: %split-file %S/../Conversion/simulation-fuse-compute-order.mlir %t
+// RUN: %split-file %S/../Dialect/Simulation/Transforms/simulation-fuse-compute-order.mlir %t
 // RUN: obelisk -O0 --native-scheduler=generic %t/order.sv -o %t/order.unfused
 // RUN: obelisk -O3 --native-scheduler=generic %t/order.sv -o %t/order.fused
 // RUN: %t/order.unfused > %t/order.unfused.out

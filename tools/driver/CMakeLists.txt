@@ -111,6 +111,7 @@ function(obelisk_configure_driver target)
     ObeliskIR
     ObeliskRuntimeIR
     ObeliskSimulationIR
+    ObeliskSimulationTransforms
     ObeliskSimulationToBytecode
     ObeliskSimulationToLLVMCoroutine
     ObeliskSlangIR

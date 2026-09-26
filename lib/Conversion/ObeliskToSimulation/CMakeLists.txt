@@ -1,13 +1,5 @@
 add_mlir_library(ObeliskToSimulation
-  BuildComputeGraph.cpp
-  ComputeFusion.cpp
-  ComputeGraph.cpp
-  DevirtualizeClassCalls.cpp
-  EliminateDeadBoundaries.cpp
-  EliminateDeadCaptures.cpp
   Finalize.cpp
-  FuseComputeFragments.cpp
-  Inline.cpp
   LowerUnit.cpp
   LowerUnitArrayQuerySystemCalls.cpp
   LowerUnitCalls.cpp
@@ -32,11 +24,6 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitTiming.cpp
   LowerUnitTimingChecks.cpp
   MaterializeClockedSamples.cpp
-  MaterializeClockedControl.cpp
-  MaterializeComputeFusion.cpp
-  MaterializeGraphRegions.cpp
-  PlanStaticSuperstep.cpp
-  PropagateInitializedStorage.cpp
   PrepareCoverage.cpp
   PrepareCaptures.cpp
   Prepare.cpp
@@ -46,12 +33,7 @@ add_mlir_library(ObeliskToSimulation
   PrepareTopology.cpp
   PrepareUnits.cpp
   PrepareValidation.cpp
-  SCCP.cpp
   SemanticUtils.cpp
-  SpecializeStaticStateNBA.cpp
-  ThreadSuspension.cpp
-  UnrollBoundedLoops.cpp
-  VerifyComputeGraph.cpp
 
   DEPENDS
   ObeliskConversionPassIncGen
@@ -62,6 +44,7 @@ add_mlir_library(ObeliskToSimulation
   ObeliskCoverage
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
+  ObeliskSimulationTransforms
   ObeliskSolver
   MLIRAnalysis
   MLIRArithDialect

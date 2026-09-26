@@ -1,7 +1,7 @@
 //===- ComputeFusion.h - Static process-body fusion helpers -----*- C++ -*-===//
 
-#ifndef OBELISK_CONVERSION_OBELISKTOSIMULATION_COMPUTEFUSION_H
-#define OBELISK_CONVERSION_OBELISKTOSIMULATION_COMPUTEFUSION_H
+#ifndef OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
+#define OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -81,4 +81,4 @@ getComputeFusionReadyTargets(sim::ComputeGraphAttr graph,
 
 } // namespace obelisk
 
-#endif // OBELISK_CONVERSION_OBELISKTOSIMULATION_COMPUTEFUSION_H
+#endif // OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
