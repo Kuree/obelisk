@@ -109,17 +109,45 @@ bool terminatesInFiniteSteps(const BoundedLoop &loop) {
 /// `provenBackedges` names latch branches already proven to terminate, so an
 /// enclosing loop can be recognized once its inner loops are: the DAG check
 /// below would otherwise reject every nested sweep.
+///
+/// `forMarking` asks only whether the latch runs a bounded number of times,
+/// not whether the loop can be replicated. IEEE 1800-2023 12.7.1 exits a
+/// for-loop as soon as its test fails, and the induction variable here is an
+/// SSA value no other process can modify. The marking therefore accepts a body
+/// that leaves before the induction bound: `break` and `return` (12.8) only
+/// leave the loop sooner, and neither does the `$finish` check that an inlined
+/// call leaves behind (20.2), a terminator with no successors. It also accepts
+/// values carried around the loop beside the induction variable (an
+/// accumulator such as `x ^= a[i]` promoted to SSA), other header
+/// computations, and values used after the loop: none of them can change how
+/// often the induction test passes. Replication rewrites the SSA of a
+/// single-exit loop and needs all of these restrictions.
 std::optional<BoundedLoop>
 recognizeBoundedLoop(Block *header,
-                     const llvm::DenseSet<Operation *> &provenBackedges) {
-  if (header->getNumArguments() != 1)
-    return std::nullopt;
-  auto induction = header->getArgument(0);
-  if (!isa<IntegerType>(induction.getType()))
+                     const llvm::DenseSet<Operation *> &provenBackedges,
+                     bool forMarking = false) {
+  if (header->getNumArguments() == 0 ||
+      (!forMarking && header->getNumArguments() != 1))
     return std::nullopt;
   auto condition = dyn_cast<cf::CondBranchOp>(header->getTerminator());
   if (!condition)
     return std::nullopt;
+  // The induction variable is the header argument the continuation test
+  // reads; any other argument is a loop-carried value.
+  Value tested;
+  if (auto compare = condition.getCondition().getDefiningOp<arith::CmpIOp>())
+    tested = compare.getLhs();
+  else if (auto isTrue =
+               condition.getCondition().getDefiningOp<sim::SimLogicIsTrueOp>())
+    if (auto compare = isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>())
+      if (auto fromBits =
+              compare.getLhs().getDefiningOp<sim::SimLogicFromBitsOp>())
+        tested = fromBits.getInput();
+  auto induction = dyn_cast_or_null<BlockArgument>(tested);
+  if (!induction || induction.getOwner() != header ||
+      !isa<IntegerType>(induction.getType()))
+    return std::nullopt;
+  unsigned inductionIndex = induction.getArgNumber();
 
   // The continuation test appears in two equivalent shapes. A two-state
   // comparison lowers to arith.cmpi directly. A comparison written against an
@@ -187,10 +215,11 @@ recognizeBoundedLoop(Block *header,
   // The induction variable and the limit are compared as one width.
   if (limit.getBitWidth() != induction.getType().getIntOrFloatBitWidth())
     limit = limit.zextOrTrunc(induction.getType().getIntOrFloatBitWidth());
-  for (Operation &op : header->without_terminator())
-    if (!testOperations.contains(&op) &&
-        !isa<arith::ConstantOp, sim::SimLogicConstantOp>(op))
-      return std::nullopt;
+  if (!forMarking)
+    for (Operation &op : header->without_terminator())
+      if (!testOperations.contains(&op) &&
+          !isa<arith::ConstantOp, sim::SimLogicConstantOp>(op))
+        return std::nullopt;
 
   // The entry predecessor is a plain branch for a top-level loop, but a
   // conditional branch whenever the loop is nested inside another sweep or
@@ -206,9 +235,9 @@ recognizeBoundedLoop(Block *header,
     Operation *terminator = pred->getTerminator();
     Value incoming;
     if (auto branch = dyn_cast<cf::BranchOp>(terminator)) {
-      if (branch.getDestOperands().size() != 1)
+      if (branch.getDestOperands().size() != header->getNumArguments())
         return std::nullopt;
-      incoming = branch.getDestOperands()[0];
+      incoming = branch.getDestOperands()[inductionIndex];
       if (!incoming.getDefiningOp<arith::ConstantIntOp>()) {
         if (latch)
           return std::nullopt;
@@ -224,9 +253,9 @@ recognizeBoundedLoop(Block *header,
         return std::nullopt;
       OperandRange operands = trueEdge ? branch.getTrueDestOperands()
                                        : branch.getFalseDestOperands();
-      if (operands.size() != 1)
+      if (operands.size() != header->getNumArguments())
         return std::nullopt;
-      incoming = operands[0];
+      incoming = operands[inductionIndex];
       if (!incoming.getDefiningOp<arith::ConstantIntOp>())
         return std::nullopt;
     } else {
@@ -248,7 +277,7 @@ recognizeBoundedLoop(Block *header,
   // Replication rewrites a single plain entry branch in place.
   if (entryOps.size() == 1)
     entry = dyn_cast<cf::BranchOp>(entryOps.front());
-  Value increment = latch.getDestOperands()[0];
+  Value increment = latch.getDestOperands()[inductionIndex];
   auto add = increment.getDefiningOp<arith::AddIOp>();
   auto sub = increment.getDefiningOp<arith::SubIOp>();
   Value step;
@@ -287,6 +316,8 @@ recognizeBoundedLoop(Block *header,
   loop.operations = header->getOperations().size();
   while (!pending.empty()) {
     Block *block = pending.pop_back_val();
+    if (forMarking && block == loop.exit)
+      continue;
     if (block == loop.exit ||
         llvm::any_of(entryOps, [&](Operation *entryOp) {
           return entryOp->getBlock() == block;
@@ -294,8 +325,12 @@ recognizeBoundedLoop(Block *header,
       return std::nullopt;
     if (!loop.members.insert(block).second)
       continue;
+    Operation *terminator = block->getTerminator();
+    bool leavesProcedure =
+        forMarking && terminator->getNumSuccessors() == 0;
     if (block->getParent() != header->getParent() ||
-        !isa<cf::BranchOp, cf::CondBranchOp>(block->getTerminator()))
+        (!leavesProcedure &&
+         !isa<cf::BranchOp, cf::CondBranchOp>(terminator)))
       return std::nullopt;
     loop.blocks.push_back(block);
     loop.operations += block->getOperations().size();
@@ -348,18 +383,20 @@ recognizeBoundedLoop(Block *header,
   }
   if (visited != loop.blocks.size())
     return std::nullopt;
-  for (Block *block : loop.blocks) {
-    auto escapes = [&](Value value) {
-      return llvm::any_of(value.getUsers(), [&](Operation *user) {
-        return !loop.members.contains(user->getBlock());
-      });
-    };
-    if (llvm::any_of(block->getArguments(), escapes))
-      return std::nullopt;
-    for (Operation &op : *block)
-      if (llvm::any_of(op.getResults(), escapes))
+  // Replication rewrites each value defined in the loop; marking does not.
+  if (!forMarking)
+    for (Block *block : loop.blocks) {
+      auto escapes = [&](Value value) {
+        return llvm::any_of(value.getUsers(), [&](Operation *user) {
+          return !loop.members.contains(user->getBlock());
+        });
+      };
+      if (llvm::any_of(block->getArguments(), escapes))
         return std::nullopt;
-  }
+      for (Operation &op : *block)
+        if (llvm::any_of(op.getResults(), escapes))
+          return std::nullopt;
+    }
   if (!terminatesInFiniteSteps(loop))
     return std::nullopt;
   return loop;
@@ -496,7 +533,8 @@ class ObeliskSimMarkBoundedLoopsPass
     do {
       changed = false;
       for (Block &block : function.getBody()) {
-        auto loop = recognizeBoundedLoop(&block, provenBackedges);
+        auto loop = recognizeBoundedLoop(&block, provenBackedges,
+                                         /*forMarking=*/true);
         if (!loop || provenBackedges.contains(loop->latch.getOperation()))
           continue;
         provenBackedges.insert(loop->latch.getOperation());
