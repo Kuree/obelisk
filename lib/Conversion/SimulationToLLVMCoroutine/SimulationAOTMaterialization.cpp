@@ -2430,9 +2430,11 @@ FailureOr<bool> makeNativeEvalPlan(
       std::optional<uint64_t> width = constantU64(arguments[4]);
       std::optional<uint64_t> unknownPlane = constantU64(arguments[5]);
       std::optional<uint64_t> fallback = constantU64(arguments[6]);
+      // The selection below is integer arithmetic of the field's own width, so
+      // a field wider than a machine word lowers the same way.
       if (!stateBits || *stateBits != stateLayout.bitCount || !width ||
-          *width == 0 || *width > 64 || !unknownPlane || *unknownPlane > 1 ||
-          !fallback || *fallback > 1)
+          *width == 0 || !unknownPlane || *unknownPlane > 1 || !fallback ||
+          *fallback > 1)
         return call.emitError(
                    "runtime-free eval cannot lower dynamic state load"),
                failure();
@@ -2485,8 +2487,62 @@ FailureOr<bool> makeNativeEvalPlan(
                    "dynamic state load has no fixed-root handle offset"),
                failure();
       }
-      std::optional<uint64_t> encodedRoot =
-          constantU64(offsetCall.getArgOperands()[0]);
+      // A fixed selection within a dynamically indexed element offsets the
+      // element's handle again: offset(offset(root, index), field). Fold the
+      // chain down to its constant root, summing the offsets and keeping every
+      // level's invalid-index guard; each guard selects the invalid-handle
+      // sentinel whose read yields the IEEE 1800-2023 11.5.1 out-of-range
+      // value.
+      OpBuilder chainBuilder(call);
+      Value chainBase = offsetCall.getArgOperands()[0];
+      Value dynamicOffset = offsetCall.getArgOperands()[1];
+      auto requireValid = [&](Value guard) {
+        sourceValid =
+            sourceValid ? arith::AndIOp::create(chainBuilder, call.getLoc(),
+                                                sourceValid, guard)
+                              .getResult()
+                        : guard;
+      };
+      if (sourceValid && invertSourceValid) {
+        sourceValid = arith::XOrIOp::create(
+            chainBuilder, call.getLoc(), sourceValid,
+            llvmConstant(chainBuilder, call.getLoc(),
+                         chainBuilder.getI1Type(), 1));
+        invertSourceValid = false;
+      }
+      while (true) {
+        if (auto inner = chainBase.getDefiningOp<LLVM::CallOp>();
+            inner && inner.getCallee() &&
+            *inner.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+            inner.getArgOperands().size() == 2) {
+          dynamicOffset = arith::AddIOp::create(chainBuilder, call.getLoc(),
+                                                inner.getArgOperands()[1],
+                                                dynamicOffset);
+          chainBase = inner.getArgOperands()[0];
+          continue;
+        }
+        Operation *select = chainBase.getDefiningOp();
+        if (!isa_and_nonnull<arith::SelectOp, LLVM::SelectOp>(select))
+          break;
+        std::optional<uint64_t> trueConstant =
+            constantU64(select->getOperand(1));
+        std::optional<uint64_t> falseConstant =
+            constantU64(select->getOperand(2));
+        Value guard = select->getOperand(0);
+        if (falseConstant && *falseConstant == UINT64_MAX) {
+          chainBase = select->getOperand(1);
+        } else if (trueConstant && *trueConstant == UINT64_MAX) {
+          guard = arith::XOrIOp::create(
+              chainBuilder, call.getLoc(), guard,
+              llvmConstant(chainBuilder, call.getLoc(),
+                           chainBuilder.getI1Type(), 1));
+          chainBase = select->getOperand(2);
+        } else {
+          break;
+        }
+        requireValid(guard);
+      }
+      std::optional<uint64_t> encodedRoot = constantU64(chainBase);
       obelisk_rt_stable_handle_v1 decoded{};
       if (!encodedRoot ||
           !obelisk_rt_stable_handle_decode(*encodedRoot, &decoded) ||
@@ -2510,7 +2566,6 @@ FailureOr<bool> makeNativeEvalPlan(
                failure();
 
       OpBuilder loadBuilder(call);
-      Value dynamicOffset = offsetCall.getArgOperands()[1];
       // IEEE 1800-2017 11.5.1 preserves every in-range bit of a partially
       // overhanging packed select and supplies the ordinary invalid-index
       // value only for the remainder.  Accept any overlap here, clamp the
@@ -2591,6 +2646,8 @@ FailureOr<bool> makeNativeEvalPlan(
                           ? LLVM::TruncOp::create(loadBuilder, call.getLoc(),
                                                   spanType, bitOffset)
                                 .getResult()
+                      : spanWidth == 64
+                          ? bitOffset
                           : LLVM::ZExtOp::create(loadBuilder, call.getLoc(),
                                                  spanType, bitOffset)
                                 .getResult();
@@ -2615,10 +2672,15 @@ FailureOr<bool> makeNativeEvalPlan(
                                 maximumStart),
           zero64);
       auto resultShift = [&](Value shift) -> Value {
-        return *width == 64 ? shift
-                            : LLVM::TruncOp::create(loadBuilder, call.getLoc(),
-                                                    resultType, shift)
-                                  .getResult();
+        if (*width == 64)
+          return shift;
+        if (*width < 64)
+          return LLVM::TruncOp::create(loadBuilder, call.getLoc(), resultType,
+                                       shift)
+              .getResult();
+        return LLVM::ZExtOp::create(loadBuilder, call.getLoc(), resultType,
+                                    shift)
+            .getResult();
       };
       Value lowShift = resultShift(lowClip);
       Value highShift = resultShift(highClip);
