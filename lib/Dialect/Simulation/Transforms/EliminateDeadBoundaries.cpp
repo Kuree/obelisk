@@ -619,7 +619,8 @@ void BoundaryEliminator::classifyPurity() {
     sim::SimFuncOp function = info.function;
     PurityObservation &observation = observations[index];
     if (function.isExternal() ||
-        function.getEntryKind() != sim::EntryKind::Function)
+        function.getEntryKind() != sim::EntryKind::Function ||
+        !getReexecutingBlocks(function).empty())
       return;
     observation.locallyDiscardable = true;
     walkFunctionBody(function, [&](Operation *operation) {
@@ -643,7 +644,7 @@ void BoundaryEliminator::classifyPurity() {
         observation.callees.push_back(*site.callee);
         return;
       }
-      if (isa<sim::SimSpawnOp>(operation) ||
+      if (isa<sim::SimSpawnOp>(operation) || operation->getNumRegions() != 0 ||
           !hasOnlyDiscardableEffects(operation))
         observation.locallyDiscardable = false;
     });
@@ -653,26 +654,29 @@ void BoundaryEliminator::classifyPurity() {
         observation.callees.end());
   });
 
-  for (auto [index, observation] : llvm::enumerate(observations))
-    functions[index].discardable = observation.locallyDiscardable;
-
-  // Propagate each local impurity once through the reverse call graph. This
-  // greatest fixed point intentionally leaves recursive SCCs discardable when
-  // every member has only discardable local effects.
+  // IEEE 1800-2023 13.4 prohibits suspension, not nontermination (12.7.6).
+  // Prove discardability from returning leaves outward. Recursive SCCs and
+  // their callers stay live unless a separate termination proof is available.
   SmallVector<SmallVector<unsigned>> callers(functions.size());
+  SmallVector<unsigned> remainingCallees(functions.size());
   for (auto [caller, observation] : llvm::enumerate(observations))
-    for (unsigned callee : observation.callees)
+    for (unsigned callee : observation.callees) {
       callers[callee].push_back(caller);
+      ++remainingCallees[caller];
+    }
   SmallVector<unsigned> worklist;
   for (unsigned index = 0; index != functions.size(); ++index)
-    if (!functions[index].discardable)
+    if (observations[index].locallyDiscardable && !remainingCallees[index]) {
+      functions[index].discardable = true;
       worklist.push_back(index);
+    }
   while (!worklist.empty()) {
     unsigned callee = worklist.pop_back_val();
     for (unsigned caller : callers[callee]) {
-      if (!functions[caller].discardable)
+      if (--remainingCallees[caller] ||
+          !observations[caller].locallyDiscardable)
         continue;
-      functions[caller].discardable = false;
+      functions[caller].discardable = true;
       worklist.push_back(caller);
     }
   }

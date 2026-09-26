@@ -26,6 +26,8 @@ namespace sim = ::obelisk::sim;
 struct StorageAccess {
   Operation *operation;
   sim::SimFuncOp function;
+  uint64_t low = 0;
+  uint64_t width = 0;
 };
 
 struct StorageCandidate {
@@ -79,7 +81,7 @@ private:
       return;
 
     DenseMap<Operation *, unsigned> callCounts;
-    DenseSet<Operation *> calledBeforeSpawn;
+    DenseSet<Operation *> initializedBeforeSpawn;
     SmallVector<sim::SimFuncOp> rootCalls;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
@@ -114,18 +116,25 @@ private:
         // Before the candidate's initializer, every root call must itself
         // finish without suspending or creating a process. Otherwise a read
         // could run before the initializer despite the root's block order.
-        bool simpleInitializer = callee.getBody().hasOneBlock();
+        bool simpleInitializer =
+            callee.getBody().hasOneBlock() &&
+            isa<sim::SimReturnOp>(callee.getBody().front().getTerminator());
         if (simpleInitializer)
           for (Operation &nested : callee.getBody().front())
             simpleInitializer &=
-                isa<arith::ConstantOp, sim::SimLogicConstantOp,
-                    sim::SimContextStorageOp, sim::SimRefStoreOp,
-                    sim::SimReturnOp>(nested);
+                nested.getNumRegions() == 0 &&
+                (isMemoryEffectFree(&nested) ||
+                 isa<sim::SimRefStoreOp, sim::SimReturnOp>(nested));
         safePrefix &= simpleInitializer;
+        if (safePrefix && callCounts.lookup(callee.getOperation()) == 1)
+          for (auto store :
+               callee.getBody().front().getOps<sim::SimRefStoreOp>())
+            initializedBeforeSpawn.insert(store.getOperation());
+      } else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
+        // Inlining must not hide declaration initialization from this pass.
         if (safePrefix)
-          calledBeforeSpawn.insert(callee.getOperation());
-      } else if (!isa<arith::ConstantOp, sim::SimLogicConstantOp,
-                      sim::SimContextStorageOp>(operation))
+          initializedBeforeSpawn.insert(store.getOperation());
+      } else if (!isMemoryEffectFree(&operation) || operation.getNumRegions())
         safePrefix = false;
     }
     // A read in any root-called initializer can precede another initializer.
@@ -203,19 +212,26 @@ private:
             continue;
           StorageCandidate &info = candidate->second;
           const analysis::DescriptorProvenance &span = found->second;
-          bool whole = !span.dynamic && span.low == 0 && span.width != 0 &&
-                       span.width == span.rootWidth;
-          if (!whole) {
-            info.invalid = true;
+          // A fixed view is an alias, not a write. Inspect its consumers too;
+          // partial stores and opaque escapes still invalidate the root.
+          if (isa<sim::SimRefExtractOp>(operation))
             continue;
-          }
           if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
-            if (load.getReference() == operand)
-              info.reads.push_back({operation, function});
+            auto width = sim::getProvenanceSpan(load.getResult().getType());
+            // Provenance can join different CFG slices into a covering span.
+            // Only an exact, in-bounds scalar span denotes one fixed value.
+            if (load.getReference() == operand && !span.dynamic && width &&
+                *width == span.width && span.width != 0 &&
+                span.low <= span.rootWidth &&
+                span.width <= span.rootWidth - span.low &&
+                isa<IntegerType, sim::LogicType>(load.getResult().getType()))
+              info.reads.push_back({operation, function, span.low, span.width});
             else
               info.invalid = true;
           } else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
-            if (store.getReference() == operand)
+            if (store.getReference() == operand && !span.dynamic &&
+                span.low == 0 && span.width != 0 &&
+                span.width == span.rootWidth)
               info.writes.push_back({operation, function});
             else
               info.invalid = true;
@@ -226,8 +242,8 @@ private:
             info.invalid |=
                 !design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
           } else {
-            // No aliases, partial references, delayed writes, force/release,
-            // or opaque reference users are admitted by this exact proof.
+            // Delayed writes, force/release, and opaque reference users are
+            // not admitted by this exact proof.
             info.invalid = true;
           }
         }
@@ -242,8 +258,7 @@ private:
         continue;
       StorageAccess write = info.writes.front();
       sim::SimFuncOp initializer = write.function;
-      if (!calledBeforeSpawn.contains(initializer.getOperation()) ||
-          callCounts.lookup(initializer.getOperation()) != 1 ||
+      if (!initializedBeforeSpawn.contains(write.operation) ||
           !initializer.getBody().hasOneBlock() ||
           write.operation->getBlock() != &initializer.getBody().front())
         continue;
@@ -253,14 +268,6 @@ private:
           !isa<arith::ConstantIntOp, sim::SimLogicConstantOp>(constant) ||
           store.getValue().getType() != info.type)
         continue;
-      bool initializerIsStraightLine = true;
-      for (Operation &operation : initializer.getBody().front())
-        initializerIsStraightLine &=
-            isa<arith::ConstantOp, sim::SimLogicConstantOp,
-                sim::SimContextStorageOp, sim::SimRefStoreOp, sim::SimReturnOp>(
-                operation);
-      if (!initializerIsStraightLine)
-        continue;
       bool rootRead = false;
       for (StorageAccess read : info.reads)
         rootRead |= read.function == root ||
@@ -269,11 +276,32 @@ private:
         continue;
       for (const StorageAccess &read : info.reads) {
         auto load = cast<sim::SimRefLoadOp>(read.operation);
-        if (load.getResult().getType() != info.type)
-          continue;
         OpBuilder builder(load);
-        Operation *copy = builder.clone(*constant);
-        load.getResult().replaceAllUsesWith(copy->getResult(0));
+        APInt value, unknown;
+        if (auto integer = dyn_cast<arith::ConstantIntOp>(constant)) {
+          value = cast<IntegerAttr>(integer.getValue()).getValue();
+          unknown = APInt::getZero(value.getBitWidth());
+        } else {
+          auto logic = cast<sim::SimLogicConstantOp>(constant);
+          value = logic.getValue();
+          unknown = logic.getUnknown();
+        }
+        // IEEE 1800-2023 6.8, 11.5.1: slice both planes without losing Z.
+        value = value.extractBits(read.width, read.low);
+        unknown = unknown.extractBits(read.width, read.low);
+        Type type = load.getResult().getType();
+        Value replacement;
+        if (auto integer = dyn_cast<IntegerType>(type))
+          replacement = arith::ConstantOp::create(
+              builder, load.getLoc(), integer,
+              IntegerAttr::get(integer, value & ~unknown));
+        else
+          replacement = sim::SimLogicConstantOp::create(
+              builder, load.getLoc(), cast<sim::LogicType>(type),
+              builder.getIntegerAttr(builder.getIntegerType(read.width), value),
+              builder.getIntegerAttr(builder.getIntegerType(read.width),
+                                     unknown));
+        load.getResult().replaceAllUsesWith(replacement);
         load.erase();
       }
     }

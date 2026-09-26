@@ -91,11 +91,12 @@ module {
       obelisk_sim.return %value : i32
     }
 
-    // A pure recursive forwarding SCC has no semantic demand seed.
+    // Recursive calls may not return. Remove dead ABI positions, but retain
+    // the calls themselves (IEEE 1800-2023 13.4 and 12.7.6).
     // CHECK-LABEL: obelisk_sim.func private @cycle_a(
     // CHECK-SAME: %arg0: !obelisk_sim.context
     // CHECK-NOT: %arg1
-    // CHECK-NOT: obelisk_sim.call
+    // CHECK: obelisk_sim.call
     // CHECK: obelisk_sim.return
     obelisk_sim.func private @cycle_a(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -109,7 +110,7 @@ module {
     // CHECK-LABEL: obelisk_sim.func private @cycle_b(
     // CHECK-SAME: %arg0: !obelisk_sim.context
     // CHECK-NOT: %arg1
-    // CHECK-NOT: obelisk_sim.call
+    // CHECK: obelisk_sim.call
     // CHECK: obelisk_sim.return
     obelisk_sim.func private @cycle_b(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -194,7 +195,7 @@ module {
     // CHECK-NOT: obelisk_sim.call @pure_math
     // CHECK-NOT: obelisk_sim.call @pure_reads
     // CHECK: obelisk_sim.call @writer{{.*}} : (!obelisk_sim.context, !obelisk_sim.ref<i32>, i32) -> ()
-    // CHECK-NOT: obelisk_sim.call @cycle_a
+    // CHECK: obelisk_sim.call @cycle_a
     // CHECK: obelisk_sim.call @spawning(%arg0) : (!obelisk_sim.context) -> ()
     obelisk_sim.func @root(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})

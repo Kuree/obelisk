@@ -590,6 +590,11 @@ OpFoldResult SimLogicShiftOp::fold(FoldAdaptor adaptor) {
     return getLogicAttribute(getContext(), getCanonicalUnknown(width));
   if (amount->value->isZero())
     return getInput();
+  // IEEE 1800-2023 11.4.10: logical shifts fill every vacated bit with
+  // zero, even when the shifted-out bits were X/Z. The amount is unsigned.
+  if (amount->value->uge(width) && getKind() != ShiftKind::RightArith)
+    return getLogicAttribute(getContext(),
+                             {APInt::getZero(width), APInt::getZero(width)});
 
   auto input = getLogicPlanes(adaptor.getInput());
   if (!input)
@@ -628,6 +633,11 @@ OpFoldResult SimLogicCompareOp::fold(FoldAdaptor adaptor) {
 
   auto lhs = getLogicPlanes(adaptor.getLhs());
   auto rhs = getLogicPlanes(adaptor.getRhs());
+  // IEEE 1800-2023 11.4.6: only the RHS supplies wildcard bits.
+  if (rhs && rhs->unknown.isAllOnes() &&
+      (getKind() == CompareKind::WildEq || getKind() == CompareKind::WildNe))
+    return getLogicAttribute(getContext(),
+                             getLogicBoolean(getKind() == CompareKind::WildEq));
   if (!lhs || !rhs)
     return {};
   if (getKind() == CompareKind::CaseEq || getKind() == CompareKind::CaseNe) {
@@ -880,6 +890,12 @@ OpFoldResult SimLogicDynExtractOp::fold(FoldAdaptor adaptor) {
   unsigned resultWidth = getResult().getType().getWidth();
   if (!index->value)
     return getLogicAttribute(getContext(), getCanonicalUnknown(resultWidth));
+  // IEEE 1800-2023 11.5.1: a disjoint selection is independent of the
+  // input. Use arbitrary-width comparisons before converting to host indices.
+  if (index->value->isNegative()
+          ? (-*index->value).uge(resultWidth)
+          : index->value->uge(getInput().getType().getWidth()))
+    return getLogicAttribute(getContext(), getCanonicalUnknown(resultWidth));
   if (index->value->isZero() && resultWidth == getInput().getType().getWidth())
     return getInput();
   auto input = getLogicPlanes(adaptor.getInput());
@@ -895,6 +911,10 @@ OpFoldResult SimBitsDynExtractOp::fold(FoldAdaptor adaptor) {
     return {};
   unsigned resultWidth = getResult().getType().getWidth();
   if (!index->value)
+    return IntegerAttr::get(getResult().getType(), APInt::getZero(resultWidth));
+  if (index->value->isNegative()
+          ? (-*index->value).uge(resultWidth)
+          : index->value->uge(getInput().getType().getWidth()))
     return IntegerAttr::get(getResult().getType(), APInt::getZero(resultWidth));
   if (index->value->isZero() && resultWidth == getInput().getType().getWidth())
     return getInput();
@@ -912,6 +932,13 @@ OpFoldResult SimLogicDynInsertOp::fold(FoldAdaptor adaptor) {
     return {};
   if (!index->value)
     return getInput();
+  if (index->value->isNegative()
+          ? (-*index->value).uge(getReplacement().getType().getWidth())
+          : index->value->uge(getInput().getType().getWidth()))
+    return getInput();
+  if (index->value->isZero() &&
+      getInput().getType() == getReplacement().getType())
+    return getReplacement();
   auto input = getLogicPlanes(adaptor.getInput());
   auto replacement = getLogicPlanes(adaptor.getReplacement());
   if (!input || !replacement)
@@ -929,6 +956,13 @@ OpFoldResult SimBitsDynInsertOp::fold(FoldAdaptor adaptor) {
     return {};
   if (!index->value)
     return getInput();
+  if (index->value->isNegative()
+          ? (-*index->value).uge(getReplacement().getType().getWidth())
+          : index->value->uge(getInput().getType().getWidth()))
+    return getInput();
+  if (index->value->isZero() &&
+      getInput().getType() == getReplacement().getType())
+    return getReplacement();
   auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
   auto replacement = dyn_cast_or_null<IntegerAttr>(adaptor.getReplacement());
   if (!input || !replacement)
@@ -1301,7 +1335,7 @@ struct SimplifyStaticExtract final : OpRewritePattern<ExtractOp> {
       return failure();
     // Only a view that selects the whole input *and* keeps its type is the
     // identity. A full-width extract can still retype what it names -- an
-    // IEEE 1800-2017 11.5.1 part-select spanning all of an `int` produces
+    // IEEE 1800-2023 11.5.1 part-select spanning all of an `int` produces
     // `bit [31:0]` -- and replacing that with the input would hand every user
     // a reference whose element type no longer matches the value it carries.
     if (op.getLowBit() == 0 && *inputWidth == *resultWidth &&
@@ -1373,20 +1407,35 @@ struct SimplifyLogicExtractSource final : OpRewritePattern<SimLogicExtractOp> {
     auto concat = op.getInput().getDefiningOp<SimLogicConcatOp>();
     if (!concat)
       return failure();
+    // IEEE 1800-2023 11.4.12 and 11.5.1: a slice may span several
+    // concatenation operands. Preserve their bit order and both X/Z planes.
+    SmallVector<Value> pieces;
     uint64_t inputLow = 0;
     for (Value input : llvm::reverse(concat.getInputs())) {
       uint64_t inputWidth = cast<LogicType>(input.getType()).getWidth();
       uint64_t inputHigh = inputLow + inputWidth;
-      if (low >= inputLow && high <= inputHigh) {
-        auto replacement = SimLogicExtractOp::create(
-            rewriter, op.getLoc(), op.getResult().getType(), input,
-            rewriter.getI64IntegerAttr(low - inputLow));
-        replaceWithNewOp(rewriter, op, replacement);
-        return success();
+      uint64_t overlapLow = std::max(low, inputLow);
+      uint64_t overlapHigh = std::min(high, inputHigh);
+      if (overlapLow < overlapHigh) {
+        if (overlapLow == inputLow && overlapHigh == inputHigh)
+          pieces.push_back(input);
+        else
+          pieces.push_back(SimLogicExtractOp::create(
+              rewriter, op.getLoc(),
+              LogicType::get(op.getContext(), overlapHigh - overlapLow), input,
+              rewriter.getI64IntegerAttr(overlapLow - inputLow)));
       }
       inputLow = inputHigh;
     }
-    return failure();
+    if (pieces.size() == 1)
+      rewriter.replaceOp(op, pieces.front());
+    else {
+      std::reverse(pieces.begin(), pieces.end());
+      auto replacement = SimLogicConcatOp::create(
+          rewriter, op.getLoc(), op.getResult().getType(), pieces);
+      replaceWithNewOp(rewriter, op, replacement);
+    }
+    return success();
   }
 };
 
@@ -1930,7 +1979,7 @@ struct ConstantArrayInsert final : OpRewritePattern<SimArrayDynInsertOp> {
         sourceIndex
             ? getArrayElementOrdinal(op.getInput().getType(), *sourceIndex)
             : std::nullopt;
-    // IEEE 1800-2017 7.4.6: a write through an invalid index performs no
+    // IEEE 1800-2023 7.4.5: a write through an invalid index performs no
     // operation, so the array passes through unchanged.
     if (!ordinal) {
       rewriter.replaceOp(op, op.getInput());

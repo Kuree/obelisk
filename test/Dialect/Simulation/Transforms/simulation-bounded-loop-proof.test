@@ -1,0 +1,1 @@
+# RUN: %python %S/Inputs/check-bounded-loop-proof.py %obj_root/tools/obelisk-opt/obelisk-opt

@@ -103,6 +103,7 @@ struct FunctionInfo {
   SmallVector<BoundaryFact> results;
   SmallVector<BoundarySite> sites;
   SmallVector<unsigned> callers;
+  bool canUseNetFacts = true;
 };
 
 struct SiteObservation {
@@ -208,7 +209,8 @@ analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
   analysis::DescriptorProvenanceMap provenance =
       provenanceAnalysis.derive(function);
   addBoundarySeeds(functions, functionIndex, seeds);
-  addNetSeeds(function, provenance, netFacts, seeds);
+  if (info.canUseNetFacts)
+    addNetSeeds(function, provenance, netFacts, seeds);
 
   DataFlowConfig config;
   config.setInterprocedural(false);
@@ -603,15 +605,35 @@ void ObeliskSimSCCPPass::runOnOperation() {
       return signalPassFailure();
   }
 
+  // Root-called functions may read before a drive in the root. Exclude that
+  // closure from lifetime net facts; spawned processes start after the prefix
+  // whose initialization we prove below.
+  SmallVector<unsigned> initializerClosure;
+  for (unsigned index = 0; index < functions.size(); ++index)
+    if (functions[index].function.getEntryKind() ==
+        sim::EntryKind::RootInitializer)
+      initializerClosure.push_back(index);
+  while (!initializerClosure.empty()) {
+    FunctionInfo &info = functions[initializerClosure.pop_back_val()];
+    if (!info.canUseNetFacts)
+      continue;
+    info.canUseNetFacts = false;
+    for (const BoundarySite &site : info.sites)
+      if (site.kind == BoundarySiteKind::Call && site.callee)
+        initializerClosure.push_back(*site.callee);
+  }
+
   // Resolved nets are ordinary scheduler state, so most reads are not SCCP
   // boundaries.  A narrow exception is a non-externally-writable, full-width
   // connected component with exactly one full-width driver and one exact value
-  // at every executable drive site. Such a component is immutable after its
-  // continuous assignment initializes, and seeding its reads lets local SCCP
+  // at every executable drive site, initialized before any process can read.
+  // IEEE 1800-2023 4.9.1 does not make a constant continuous assignment a
+  // declaration initializer: its first update can occur after an early read.
+  // Seeding proven initialized reads lets local SCCP
   // erase configuration-disabled RTL before compute-graph fusion. Writable VPI
   // and language overrides deliberately disable this specialization, and
   // so does a resolution kind that contributes a driver of its own: IEEE
-  // 1800-2017 6.6.6 gives a supply net supply strength, 6.6.4 gives tri0 and
+  // 1800-2023 6.6.6 gives a supply net supply strength, 6.6.4 gives tri0 and
   // tri1 a pull, and 28.16.2 lets a trireg resolve retained charge, none of
   // which the component's one `driver.decl` accounts for.
   DenseMap<uint64_t, BoundaryFact> netFacts;
@@ -637,7 +659,38 @@ void ObeliskSimSCCPPass::runOnOperation() {
     DenseMap<uint64_t, unsigned> driverCounts;
     DenseMap<uint64_t, bool> hasFullDriver;
     DenseSet<uint64_t> invalid;
-    bool hasOverride = false;
+    bool hasUnmodeledNetWrite = false;
+    DenseSet<uint64_t> initializedNets;
+    sim::SimFuncOp root;
+    unsigned roots = 0;
+    for (FunctionInfo &info : functions)
+      if (info.function.getEntryKind() == sim::EntryKind::RootInitializer) {
+        ++roots;
+        if (info.callers.empty())
+          root = info.function;
+      }
+    if (roots == 1 && root && root.getBody().hasOneBlock()) {
+      auto rootProvenance = provenance.derive(root);
+      for (Operation &operation : root.getBody().front()) {
+        Value driver;
+        if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation))
+          driver = drive.getDriver();
+        else if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation))
+          driver = drive.getDriver();
+        else if ((isMemoryEffectFree(&operation) &&
+                  operation.getNumRegions() == 0) ||
+                 isa<sim::SimRefStoreOp, sim::SimRefLoadOp, sim::SimNetReadOp>(
+                     operation))
+          continue;
+        else
+          break;
+        auto span = rootProvenance.find(driver);
+        if (span != rootProvenance.end() && span->second.descriptor &&
+            !span->second.dynamic && span->second.low == 0 &&
+            span->second.width == span->second.rootWidth)
+          initializedNets.insert(*span->second.descriptor);
+      }
+    }
 
     for (Operation &operation : design.getBody().front()) {
       if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
@@ -706,14 +759,60 @@ void ObeliskSimSCCPPass::runOnOperation() {
       }
     }
     design.walk([&](Operation *operation) {
-      hasOverride |= isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
-                         sim::SimReleaseOverrideOp>(operation);
+      hasUnmodeledNetWrite |= isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
+                                  sim::SimReleaseOverrideOp>(operation);
     });
+    // Every writer must participate in the proof, including partial, delayed,
+    // and indirect drives that the constant-drive observations cannot model.
+    for (FunctionInfo &info : functions) {
+      if (info.function.isExternal())
+        continue;
+      auto spans = provenance.derive(info.function);
+      info.function.walk([&](Operation *operation) {
+        auto effects = dyn_cast<MemoryEffectOpInterface>(operation);
+        if (!effects)
+          return;
+        SmallVector<MemoryEffects::EffectInstance> instances;
+        effects.getEffects(instances);
+        if (!llvm::any_of(instances, [](const auto &effect) {
+              return isa<MemoryEffects::Write>(effect.getEffect()) &&
+                     isa<sim::NetResource>(effect.getResource());
+            }))
+          return;
+        if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
+          auto callee = design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+          hasUnmodeledNetWrite |= !callee || callee.isExternal();
+          return;
+        }
+        if (auto call = dyn_cast<sim::SimTaskCallOp>(operation)) {
+          auto callee = design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+          hasUnmodeledNetWrite |= !callee || callee.isExternal();
+          return;
+        }
+        bool foundTarget = false;
+        for (Value operand : operation->getOperands()) {
+          if (!isa<sim::NetType, sim::DriverType>(operand.getType()))
+            continue;
+          foundTarget = true;
+          auto span = spans.find(operand);
+          if (span == spans.end() || !span->second.descriptor) {
+            hasUnmodeledNetWrite = true;
+            continue;
+          }
+          if (!isa<sim::SimDriverDriveOp, sim::SimDriverDriveChangedOp>(
+                  operation) ||
+              span->second.dynamic || span->second.low != 0 ||
+              span->second.width != span->second.rootWidth)
+            invalid.insert(*span->second.descriptor);
+        }
+        hasUnmodeledNetWrite |= !foundTarget;
+      });
+    }
 
     DenseMap<uint64_t, SmallVector<uint64_t>> components;
     DenseMap<uint64_t, uint64_t> representatives;
     DenseSet<uint64_t> visited;
-    if (!hasOverride) {
+    if (!hasUnmodeledNetWrite) {
       for (auto [root, unused] : connections) {
         if (!visited.insert(root).second)
           continue;
@@ -722,6 +821,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
         bool eligible = true;
         unsigned drivers = 0;
         bool fullDriver = false;
+        bool initialized = false;
         for (size_t index = 0; index != members.size(); ++index) {
           uint64_t member = members[index];
           representative = std::min(representative, member);
@@ -731,11 +831,12 @@ void ObeliskSimSCCPPass::runOnOperation() {
                       !invalid.contains(member);
           drivers += driverCounts.lookup(member);
           fullDriver |= hasFullDriver.lookup(member);
+          initialized |= initializedNets.contains(member);
           for (uint64_t neighbor : connections.lookup(member))
             if (visited.insert(neighbor).second)
               members.push_back(neighbor);
         }
-        eligible &= drivers == 1 && fullDriver;
+        eligible &= drivers == 1 && fullDriver && initialized;
         if (!eligible)
           continue;
         components[representative] = members;

@@ -53,56 +53,105 @@ struct BoundedLoop {
   bool signedCompare = false;
 };
 
-/// Prove the induction sequence leaves the continuation predicate after a finite
-/// number of steps, in closed form, without enumerating iterations. Only the
-/// monotone cases are accepted; anything else is declined rather than assumed.
+arith::CmpIPredicate swapPredicate(arith::CmpIPredicate predicate) {
+  using P = arith::CmpIPredicate;
+  switch (predicate) {
+  case P::slt:
+    return P::sgt;
+  case P::sle:
+    return P::sge;
+  case P::sgt:
+    return P::slt;
+  case P::sge:
+    return P::sle;
+  case P::ult:
+    return P::ugt;
+  case P::ule:
+    return P::uge;
+  case P::ugt:
+    return P::ult;
+  case P::uge:
+    return P::ule;
+  case P::eq:
+  case P::ne:
+    return predicate;
+  }
+  llvm_unreachable("unknown integer comparison");
+}
+
+/// Prove the induction sequence leaves the continuation predicate after a
+/// finite number of steps, in closed form, without enumerating iterations. Only
+/// the monotone inequality and exactly reachable modular equality cases
+/// qualify.
 bool terminatesInFiniteSteps(const BoundedLoop &loop) {
-  unsigned width = loop.init.getBitWidth();
+  // IEEE 1800-2023 11.6.1 and 12.7.1: induction arithmetic has a fixed
+  // width. Reaching the bound in mathematical integers is insufficient if
+  // the last stride wraps before the next condition is evaluated.
+  if (!arith::applyCmpPredicate(loop.predicate, loop.init, loop.limit))
+    return true;
   if (loop.stride.isZero())
     return false;
-  bool towardLimit;
-  bool needsHeadroom;
+  if (loop.predicate == arith::CmpIPredicate::eq)
+    return true; // A nonzero modular step leaves equality after one iteration.
+  if (loop.predicate == arith::CmpIPredicate::ne) {
+    // A modular induction visits exactly one residue class modulo gcd(step,
+    // 2^width). This also proves != loops that intentionally cross zero.
+    APInt distance = loop.limit - loop.init;
+    return distance.countr_zero() >= loop.stride.countr_zero();
+  }
+
+  bool increasing;
+  bool inclusive;
   switch (loop.predicate) {
   case arith::CmpIPredicate::slt:
   case arith::CmpIPredicate::ult:
-    // The value must reach `limit`, which is representable by construction.
-    towardLimit = loop.isAdd;
-    needsHeadroom = false;
+    increasing = true;
+    inclusive = false;
     break;
   case arith::CmpIPredicate::sle:
   case arith::CmpIPredicate::ule:
-    // The value must pass `limit`, so `limit` itself must not be the extreme.
-    towardLimit = loop.isAdd;
-    needsHeadroom = true;
+    increasing = true;
+    inclusive = true;
     break;
   case arith::CmpIPredicate::sgt:
   case arith::CmpIPredicate::ugt:
-    towardLimit = !loop.isAdd;
-    needsHeadroom = false;
+    increasing = false;
+    inclusive = false;
     break;
   case arith::CmpIPredicate::sge:
   case arith::CmpIPredicate::uge:
-    towardLimit = !loop.isAdd;
-    needsHeadroom = true;
+    increasing = false;
+    inclusive = true;
     break;
   default:
-    // eq/ne give no monotone progress toward a bound.
     return false;
   }
-  if (!towardLimit)
+  unsigned width = loop.init.getBitWidth();
+  unsigned proofWidth = width + 2;
+  auto extend = [&](const APInt &value) {
+    return loop.signedCompare ? value.sext(proofWidth) : value.zext(proofWidth);
+  };
+  APInt start = extend(loop.init), limit = extend(loop.limit);
+  APInt delta = extend(loop.stride);
+  if (!loop.isAdd)
+    delta = -delta;
+  if (delta.isNegative() == increasing)
     return false;
-  // A stride that is negative under the comparison's own signedness moves away
-  // from the bound, so the direction above would be wrong.
-  if (loop.signedCompare ? loop.stride.isNegative()
-                         : loop.stride.isZero())
-    return false;
-  if (!needsHeadroom)
-    return true;
-  bool increasing = loop.isAdd;
-  if (loop.signedCompare)
-    return increasing ? !loop.limit.isMaxSignedValue()
-                      : !loop.limit.isMinSignedValue();
-  return increasing ? !loop.limit.isMaxValue() : !loop.limit.isZero();
+  APInt stride = increasing ? delta : -delta;
+  APInt distance = increasing ? limit - start : start - limit;
+  if (inclusive)
+    ++distance;
+  APInt trips = distance.udiv(stride);
+  if (!distance.urem(stride).isZero())
+    ++trips;
+  APInt last = increasing ? start + trips * stride : start - trips * stride;
+  APInt minimum = loop.signedCompare
+                      ? APInt::getSignedMinValue(width).sext(proofWidth)
+                      : APInt::getZero(proofWidth);
+  APInt maximum = loop.signedCompare
+                      ? APInt::getSignedMaxValue(width).sext(proofWidth)
+                      : APInt::getMaxValue(width).zext(proofWidth);
+  return last.sge(minimum) && last.sle(maximum);
 }
 
 /// Structural recognition shared by the marking and unrolling consumers.
@@ -117,17 +166,15 @@ bool terminatesInFiniteSteps(const BoundedLoop &loop) {
 /// that leaves before the induction bound: `break` and `return` (12.8) only
 /// leave the loop sooner, and neither does the `$finish` check that an inlined
 /// call leaves behind (20.2), a terminator with no successors. It also accepts
-/// values carried around the loop beside the induction variable (an
-/// accumulator such as `x ^= a[i]` promoted to SSA), other header
-/// computations, and values used after the loop: none of them can change how
-/// often the induction test passes. Replication rewrites the SSA of a
-/// single-exit loop and needs all of these restrictions.
+/// other header computations and values used after the loop: none of them
+/// can change how often the induction test passes. Replication also supports
+/// loop-carried accumulators when their results leave via exit block arguments;
+/// direct uses outside the loop still require a separate SSA repair.
 std::optional<BoundedLoop>
 recognizeBoundedLoop(Block *header,
                      const llvm::DenseSet<Operation *> &provenBackedges,
                      bool forMarking = false) {
-  if (header->getNumArguments() == 0 ||
-      (!forMarking && header->getNumArguments() != 1))
+  if (header->getNumArguments() == 0)
     return std::nullopt;
   auto condition = dyn_cast<cf::CondBranchOp>(header->getTerminator());
   if (!condition)
@@ -136,7 +183,8 @@ recognizeBoundedLoop(Block *header,
   // reads; any other argument is a loop-carried value.
   Value tested;
   if (auto compare = condition.getCondition().getDefiningOp<arith::CmpIOp>())
-    tested = compare.getLhs();
+    tested = isa<BlockArgument>(compare.getLhs()) ? compare.getLhs()
+                                                  : compare.getRhs();
   else if (auto isTrue =
                condition.getCondition().getDefiningOp<sim::SimLogicIsTrueOp>())
     if (auto compare = isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>())
@@ -160,10 +208,13 @@ recognizeBoundedLoop(Block *header,
   std::optional<arith::CmpIPredicate> predicate;
   APInt limit;
   if (auto compare = condition.getCondition().getDefiningOp<arith::CmpIOp>()) {
-    auto bound = compare.getRhs().getDefiningOp<arith::ConstantIntOp>();
-    if (compare.getLhs() != induction || compare->getBlock() != header || !bound)
+    bool reversed = compare.getRhs() == induction;
+    auto bound = (reversed ? compare.getLhs() : compare.getRhs())
+                     .getDefiningOp<arith::ConstantIntOp>();
+    if (compare->getBlock() != header || !bound)
       return std::nullopt;
-    predicate = compare.getPredicate();
+    predicate = reversed ? swapPredicate(compare.getPredicate())
+                         : compare.getPredicate();
     limit = cast<IntegerAttr>(bound.getValue()).getValue();
     testOperations.insert(compare.getOperation());
   } else if (auto isTrue =
@@ -202,8 +253,14 @@ recognizeBoundedLoop(Block *header,
     case sim::CompareKind::UGE:
       predicate = arith::CmpIPredicate::uge;
       break;
+    case sim::CompareKind::Eq:
+      predicate = arith::CmpIPredicate::eq;
+      break;
+    case sim::CompareKind::Ne:
+      predicate = arith::CmpIPredicate::ne;
+      break;
     default:
-      // Equality and the case/wildcard forms give no monotone bound.
+      // Case/wildcard forms are not induction comparisons.
       return std::nullopt;
     }
     limit = bound.getValue();
@@ -283,6 +340,8 @@ recognizeBoundedLoop(Block *header,
   Value step;
   if (add && add.getLhs() == induction)
     step = add.getRhs();
+  else if (add && add.getRhs() == induction)
+    step = add.getLhs();
   else if (sub && sub.getLhs() == induction)
     step = sub.getRhs();
   else
@@ -414,7 +473,6 @@ bool unrollLoop(Block *header, size_t &budget) {
   // or `if`-guarded sweep -- which only the termination mark consumes.
   if (!loop.entry)
     return false;
-  cf::CondBranchOp condition = loop.condition;
   cf::BranchOp entry = loop.entry, latch = loop.latch;
   ArrayRef<Block *> blocks = loop.blocks;
   bool add = loop.isAdd;
@@ -426,15 +484,9 @@ bool unrollLoop(Block *header, size_t &budget) {
   while (arith::applyCmpPredicate(loop.predicate, value, loop.limit)) {
     if (trips++ == maxTrips)
       return false;
-    bool overflow = false;
-    if (add)
-      value = loop.signedCompare ? value.sadd_ov(loop.stride, overflow)
-                                 : value.uadd_ov(loop.stride, overflow);
-    else
-      value = loop.signedCompare ? value.ssub_ov(loop.stride, overflow)
-                                 : value.usub_ov(loop.stride, overflow);
-    if (overflow)
-      return false;
+    // The proof above handles fixed-width arithmetic, including modular
+    // equality loops. Enumerate those same bit patterns for replication.
+    value = add ? value + loop.stride : value - loop.stride;
   }
   if ((trips + 1) * loop.operations > budget)
     return false;
@@ -525,6 +577,11 @@ class ObeliskSimMarkBoundedLoopsPass
     sim::SimFuncOp function = getOperation();
     if (function.getBody().empty())
       return;
+    // A repeated run must not retain proofs invalidated by intervening edits.
+    function.walk([&](Operation *operation) {
+      operation->removeAttr(sim::metadata::boundedLoopLatch);
+      operation->removeAttr(sim::metadata::boundedLoopHeader);
+    });
     UnitAttr marker = UnitAttr::get(&getContext());
     llvm::DenseSet<Operation *> provenBackedges;
     // Innermost loops are recognized first; each round lets an enclosing sweep

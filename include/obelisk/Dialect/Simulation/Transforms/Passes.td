@@ -76,7 +76,14 @@ def ObeliskSimSCCPPass
 def ObeliskSimPropagateInitializedStoragePass
     : Pass<"obelisk-sim-propagate-initialized-storage",
            "obelisk::sim::SimDesignOp"> {
-  let summary = "Fold whole integer storage initialized once before processes start";
+  let summary = "Propagate initialized scalar storage through whole and sliced reads";
+  let description = [{
+    Proves a unique constant whole-storage initializer executes before process
+    startup, including stores inlined into the root initializer. Replaces whole
+    and fixed packed-slice reads while preserving four-state X/Z planes and the
+    observable initializing store. Later writes, opaque aliases, initializer
+    reads, and externally writable state conservatively prevent propagation.
+  }];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::arith::ArithDialect"
