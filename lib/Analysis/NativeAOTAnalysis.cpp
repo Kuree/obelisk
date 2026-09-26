@@ -551,6 +551,22 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   if (graph.getWorkers() != 1)
     rejectPlan("AOT scheduling requires one worker");
   ArrayAttr nodes = graph.getNodes();
+  // Fragments ending in a latch whose termination the bounded-loop marker
+  // proved (IEEE 1800-2023 12.7.1). Their process-order edge is the loop
+  // backedge.
+  auto isBoundedLatchFragment = [&](uint32_t node) {
+    if (node >= nodes.size())
+      return false;
+    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[node]);
+    sim::SimFuncOp function =
+        fragment ? lookupFunction(fragment.getFunction().getValue())
+                 : sim::SimFuncOp{};
+    Block *block =
+        function ? lookupComputeGraphBlock(function, fragment.getBlock())
+                 : nullptr;
+    return block && block->mightHaveTerminator() &&
+           block->getTerminator()->hasAttr(sim::metadata::boundedLoopLatch);
+  };
   DenseMap<uint32_t, bool> coldDeferredCommits;
   for (Attribute edgeAttribute : graph.getEdges()) {
     auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
@@ -792,6 +808,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     for (Attribute edgeAttribute : graph.getEdges()) {
       auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
       if (!edge || edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
+          isBoundedLatchFragment(edge.getSource()) ||
           !nonColdMembers.contains(edge.getSource()) ||
           !nonColdMembers.contains(edge.getTarget()) ||
           componentOf[edge.getSource()] != componentOf[edge.getTarget()])
@@ -844,11 +861,21 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   // preserved by doing so.
   // Index the process-order edges once: a per-group rescan of the whole edge
   // list is quadratic on a design with many control-loop groups.
+  //
+  // A latch whose loop is proven to leave after finitely many iterations is
+  // not that hazard either: its for-loop test fails after a bounded number of
+  // steps (12.7.1), and break or return only leave sooner (12.8).
+  // ComputeGraph.cpp drops the same backedge before classifying the group.
+  // Keep it out here too. Otherwise one genuine control loop anywhere in a
+  // large combinational SCC withholds every bounded sweep the SCC happens to
+  // contain.
   llvm::DenseMap<uint32_t, SmallVector<uint32_t>> processOrderSuccessors;
   for (Attribute edgeAttribute : graph.getEdges()) {
     auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
-    if (edge && edge.getKind() == sim::ComputeEdgeKind::ProcessOrder)
-      processOrderSuccessors[edge.getSource()].push_back(edge.getTarget());
+    if (!edge || edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
+        isBoundedLatchFragment(edge.getSource()))
+      continue;
+    processOrderSuccessors[edge.getSource()].push_back(edge.getTarget());
   }
   auto proceduralControlResidue = [&](sim::ComputeGroupAttr group) {
     llvm::DenseSet<uint32_t> members;
