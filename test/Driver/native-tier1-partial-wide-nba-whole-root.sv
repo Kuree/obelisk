@@ -1,16 +1,18 @@
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s \
 // RUN:   -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
-// RUN: FileCheck %s --check-prefix=GENERIC < %t.auto.ll
+// RUN: FileCheck %s --check-prefix=GENERATED < %t.auto.ll
 // RUN: obelisk -O3 -fno-lto --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk -O3 -fno-lto --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
 
-// A single NBA site writes all 128 bits, exceeding the generated queue's
-// 64-bit record payload. Auto retains the runtime evaluator for this case.
-module native_tier1_partial_wide_nba_fallback;
+// Two NBA statements each write all 128 bits of one root per activation.
+// IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order. The
+// generated queue stages each 128-bit payload as two 64-bit records, so Auto
+// keeps the generated evaluator and must match the generic scheduler.
+module native_tier1_partial_wide_nba_whole_root;
   logic clk = 0;
   logic [7:0] q[0:31];
   logic [127:0] wide = 0;
@@ -39,4 +41,7 @@ module native_tier1_partial_wide_nba_fallback;
 endmodule
 
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
-// GENERIC-NOT: @__obelisk_eval_dispatch_v1
+// ADMISSION-NOT: partial eval disabled
+// GENERATED: @__obelisk_eval_ordered_nba_queue_v1 = internal global
+// GENERATED: call i32 @obelisk_rt_v1_eval_nba_reserve
+// GENERATED: define i32 @__obelisk_eval_dispatch_v1

@@ -469,6 +469,21 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       (fixedRoot || dynamicRoot) &&
       (staticNBAPlan.generatedOffsets[root->second] & 7) == 0 &&
       proof.commitRegion != UINT32_MAX;
+  // A payload wider than one ordered-queue record is staged as consecutive
+  // records of at most 64 bits (evalNBAChunkSite). The drain performs them in
+  // bit order before any process runs, and it publishes each bit's change and
+  // edges separately (IEEE 1800-2023 9.4.2), so every bit sees the same single
+  // old-to-new transition as one update would give it (4.6(b), 10.4.2).
+  bool chunkedPayload =
+      site && *site < (uint64_t{1} << 48) && width && *width > 64 &&
+      (*width + 63) / 64 < (uint64_t{1} << 15) &&
+      root != staticNBAPlan.siteRoots.end() &&
+      root->second < staticNBAPlan.roots.size() &&
+      *width <= staticNBAPlan.roots[root->second].bit_width &&
+      root->second < staticNBAPlan.generatedOffsets.size() &&
+      (fixedRoot || dynamicRoot) &&
+      (staticNBAPlan.generatedOffsets[root->second] & 7) == 0 &&
+      proof.commitRegion != UINT32_MAX;
   bool directAccumulatorCandidate =
       commonDynamicRoot &&
       root->second < staticNBAPlan.generatedAccumulators.size() &&
@@ -525,7 +540,7 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   // including overlapping sites and repeated executions of the same site.
   // Those cases cannot use a final-value latch, but do not need the runtime
   // NBA scheduler when the root and commit region are otherwise certified.
-  proof.orderedWide = commonDynamicRoot &&
+  proof.orderedWide = (commonDynamicRoot || chunkedPayload) &&
                       root->second < proofContext.orderedRootClosed.size() &&
                       proofContext.orderedRootClosed[root->second] &&
                       proof.commitRegion == OBELISK_RT_REGION_NBA &&
@@ -1967,28 +1982,40 @@ FailureOr<bool> makeNativeEvalPlan(
         Value dynamicBit =
             offsetCall ? offsetCall.getArgOperands()[1]
                        : llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
-        IntegerType valueType = IntegerType::get(context, *width);
-        Value staged = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
-                                            valueType, arguments[7], 1);
-        Value staged64 =
-            *width == 64
-                ? staged
-                : LLVM::ZExtOp::create(nbaBuilder, call.getLoc(), i64, staged)
-                      .getResult();
-        Value stagedUnknown64 = llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
+        // Load record chunk `index` (bits [64 * index, 64 * index + 64)) of
+        // the staged payload. A payload of at most 64 bits is one chunk.
+        auto loadChunk = [&](Value payload, uint64_t index) -> Value {
+          uint64_t chunkWidth = std::min<uint64_t>(64, *width - index * 64);
+          Value address =
+              index == 0 ? payload
+                         : byteGEP(nbaBuilder, call.getLoc(), payload,
+                                   index * sizeof(uint64_t));
+          Value chunk = LLVM::LoadOp::create(
+              nbaBuilder, call.getLoc(), IntegerType::get(context, chunkWidth),
+              address, 1);
+          return chunkWidth == 64
+                     ? chunk
+                     : LLVM::ZExtOp::create(nbaBuilder, call.getLoc(), i64,
+                                            chunk)
+                           .getResult();
+        };
         // A locally promoted executor can still contain four-state literals
         // or values unrelated to its promoted inputs. The NBA ABI, not the
         // enclosing function's domain, determines whether this value carries
         // an unknown plane. ImmediateNBAConversion supplies null only for a
         // genuinely two-state value.
-        if (!arguments[8].getDefiningOp<LLVM::ZeroOp>()) {
-          Value stagedUnknown = LLVM::LoadOp::create(
-              nbaBuilder, call.getLoc(), valueType, arguments[8], 1);
-          stagedUnknown64 =
-              *width == 64 ? stagedUnknown
-                           : LLVM::ZExtOp::create(nbaBuilder, call.getLoc(),
-                                                  i64, stagedUnknown)
-                                 .getResult();
+        bool stagedHasUnknown = !arguments[8].getDefiningOp<LLVM::ZeroOp>();
+        auto loadUnknownChunk = [&](uint64_t index) -> Value {
+          return stagedHasUnknown
+                     ? loadChunk(arguments[8], index)
+                     : llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
+        };
+        // Only the ordered queue stages a payload wider than one record; the
+        // proof admits no other form for it.
+        Value staged64, stagedUnknown64;
+        if (*width <= 64) {
+          staged64 = loadChunk(arguments[7], 0);
+          stagedUnknown64 = loadUnknownChunk(0);
         }
 
         // Keep the source value and destination offset from this execution.
@@ -2049,17 +2076,23 @@ FailureOr<bool> makeNativeEvalPlan(
         Value requestedStart = arith::AddIOp::create(nbaBuilder, call.getLoc(),
                                                      safeDynamic, baseOffset);
         if (orderedWide) {
-          auto existing =
-              llvm::find_if(dynamicEvalNBAs, [&](const DynamicEvalNBA &entry) {
-                return entry.site == *site;
-              });
-          if (existing == dynamicEvalNBAs.end()) {
-            DynamicEvalNBA entry{root->second, *site, *width};
-            entry.queued = true;
-            entry.offsetName = "offset";
-            entry.valueName = "value";
-            entry.unknownName = "unknown";
-            dynamicEvalNBAs.push_back(std::move(entry));
+          uint64_t chunks = (*width + 63) / 64;
+          auto chunkSite = [&](uint64_t index) {
+            return chunks == 1 ? *site : evalNBAChunkSite(*site, index);
+          };
+          for (uint64_t index = 0; index != chunks; ++index) {
+            uint64_t recordSite = chunkSite(index);
+            if (llvm::none_of(dynamicEvalNBAs, [&](const DynamicEvalNBA &entry) {
+                  return entry.site == recordSite;
+                })) {
+              DynamicEvalNBA entry{root->second, recordSite,
+                                   std::min<uint64_t>(64, *width - index * 64)};
+              entry.queued = true;
+              entry.offsetName = "offset";
+              entry.valueName = "value";
+              entry.unknownName = "unknown";
+              dynamicEvalNBAs.push_back(std::move(entry));
+            }
           }
           // Preserve each activation, including repeated writes to one lane.
           // The hot path is only direct record stores. Storage growth is cold
@@ -2072,69 +2105,93 @@ FailureOr<bool> makeNativeEvalPlan(
             region->getBlocks().insert(Region::iterator(continuation), result);
             return result;
           };
-          Block *check = block(), *grow = block(), *stage = block(),
-                *failed = block();
+          // Append one record per chunk, in bit order.
+          SmallVector<Block *> checks;
+          for (uint64_t index = 0; index != chunks; ++index)
+            checks.push_back(block());
           nbaBuilder.setInsertionPointToEnd(before);
-          cf::CondBranchOp::create(nbaBuilder, call.getLoc(), overlaps, check,
-                                   ValueRange{}, continuation, ValueRange{});
-          nbaBuilder.setInsertionPointToStart(check);
-          Value size = evalNBAQueueSize(nbaBuilder, call.getLoc());
-          Value capacity = LLVM::LoadOp::create(
-              nbaBuilder, call.getLoc(), i32,
-              evalNBAQueueField(nbaBuilder, call.getLoc(), 2), 4);
-          Value full =
-              arith::CmpIOp::create(nbaBuilder, call.getLoc(),
-                                    arith::CmpIPredicate::eq, size, capacity);
-          cf::CondBranchOp::create(nbaBuilder, call.getLoc(), full, grow,
-                                   ValueRange{}, stage, ValueRange{});
-          nbaBuilder.setInsertionPointToStart(grow);
-          Value status =
-              LLVM::CallOp::create(
-                  nbaBuilder, call.getLoc(), TypeRange{i32},
-                  SymbolRefAttr::get(context, "obelisk_rt_v1_eval_nba_reserve"),
-                  ValueRange{arguments[0], LLVM::AddressOfOp::create(
-                                               nbaBuilder, call.getLoc(),
-                                               pointer, evalNBAQueueName)})
-                  .getResult();
-          Value ok = arith::CmpIOp::create(
-              nbaBuilder, call.getLoc(), arith::CmpIPredicate::eq, status,
-              llvmConstant(nbaBuilder, call.getLoc(), i32, OBELISK_RT_OK));
-          cf::CondBranchOp::create(nbaBuilder, call.getLoc(), ok, stage,
-                                   ValueRange{}, failed, ValueRange{});
-          nbaBuilder.setInsertionPointToStart(failed);
-          LLVM::StoreOp::create(nbaBuilder, call.getLoc(), status,
-                                evalNBAQueueField(nbaBuilder, call.getLoc(), 3),
-                                4);
-          // The queue descriptor is only a cleanup owner. Report allocation
-          // failure through the scheduler so a truncated activation cannot
-          // appear to complete successfully.
-          LLVM::CallOp::create(
-              nbaBuilder, call.getLoc(), TypeRange{},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-              ValueRange{arguments[0], status});
-          cf::BranchOp::create(nbaBuilder, call.getLoc(), continuation);
-          nbaBuilder.setInsertionPointToStart(stage);
-          Value data = LLVM::LoadOp::create(
-              nbaBuilder, call.getLoc(), pointer,
-              evalNBAQueueField(nbaBuilder, call.getLoc(), 0));
-          Value index =
-              arith::ExtUIOp::create(nbaBuilder, call.getLoc(), i64, size);
-          Value record = LLVM::GEPOp::create(nbaBuilder, call.getLoc(), pointer,
-                                             LLVM::LLVMArrayType::get(i64, 4),
-                                             data, ValueRange{index});
-          for (auto [field, value] : llvm::enumerate(SmallVector<Value>{
-                   llvmConstant(nbaBuilder, call.getLoc(), i64, *site),
-                   requestedStart, staged64, stagedUnknown64}))
+          cf::CondBranchOp::create(nbaBuilder, call.getLoc(), overlaps,
+                                   checks.front(), ValueRange{}, continuation,
+                                   ValueRange{});
+          for (uint64_t index = 0; index != chunks; ++index) {
+            Block *check = checks[index];
+            Block *next = index + 1 == chunks ? continuation : checks[index + 1];
+            Block *grow = block(), *stage = block(), *failed = block();
+            nbaBuilder.setInsertionPointToStart(check);
+            Value size = evalNBAQueueSize(nbaBuilder, call.getLoc());
+            Value capacity = LLVM::LoadOp::create(
+                nbaBuilder, call.getLoc(), i32,
+                evalNBAQueueField(nbaBuilder, call.getLoc(), 2), 4);
+            Value full =
+                arith::CmpIOp::create(nbaBuilder, call.getLoc(),
+                                      arith::CmpIPredicate::eq, size, capacity);
+            cf::CondBranchOp::create(nbaBuilder, call.getLoc(), full, grow,
+                                     ValueRange{}, stage, ValueRange{});
+            nbaBuilder.setInsertionPointToStart(grow);
+            Value status =
+                LLVM::CallOp::create(
+                    nbaBuilder, call.getLoc(), TypeRange{i32},
+                    SymbolRefAttr::get(context,
+                                       "obelisk_rt_v1_eval_nba_reserve"),
+                    ValueRange{arguments[0],
+                               LLVM::AddressOfOp::create(
+                                   nbaBuilder, call.getLoc(), pointer,
+                                   evalNBAQueueName)})
+                    .getResult();
+            Value ok = arith::CmpIOp::create(
+                nbaBuilder, call.getLoc(), arith::CmpIPredicate::eq, status,
+                llvmConstant(nbaBuilder, call.getLoc(), i32, OBELISK_RT_OK));
+            cf::CondBranchOp::create(nbaBuilder, call.getLoc(), ok, stage,
+                                     ValueRange{}, failed, ValueRange{});
+            nbaBuilder.setInsertionPointToStart(failed);
             LLVM::StoreOp::create(
-                nbaBuilder, call.getLoc(), value,
-                byteGEP(nbaBuilder, call.getLoc(), record, field * 8), 8);
-          LLVM::StoreOp::create(
-              nbaBuilder, call.getLoc(),
-              arith::AddIOp::create(
-                  nbaBuilder, call.getLoc(), size,
-                  llvmConstant(nbaBuilder, call.getLoc(), i32, 1)),
-              evalNBAQueueField(nbaBuilder, call.getLoc(), 1), 4);
-          cf::BranchOp::create(nbaBuilder, call.getLoc(), continuation);
+                nbaBuilder, call.getLoc(), status,
+                evalNBAQueueField(nbaBuilder, call.getLoc(), 3), 4);
+            // The queue descriptor is only a cleanup owner. Report allocation
+            // failure through the scheduler so a truncated activation cannot
+            // appear to complete successfully.
+            LLVM::CallOp::create(
+                nbaBuilder, call.getLoc(), TypeRange{},
+                SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+                ValueRange{arguments[0], status});
+            cf::BranchOp::create(nbaBuilder, call.getLoc(), continuation);
+            nbaBuilder.setInsertionPointToStart(stage);
+            Value chunkValue =
+                chunks == 1 ? staged64 : loadChunk(arguments[7], index);
+            Value chunkUnknown =
+                chunks == 1 ? stagedUnknown64 : loadUnknownChunk(index);
+            Value chunkStart =
+                index == 0
+                    ? requestedStart
+                    : arith::AddIOp::create(
+                          nbaBuilder, call.getLoc(), requestedStart,
+                          llvmConstant(nbaBuilder, call.getLoc(), i64,
+                                       index * 64))
+                          .getResult();
+            Value data = LLVM::LoadOp::create(
+                nbaBuilder, call.getLoc(), pointer,
+                evalNBAQueueField(nbaBuilder, call.getLoc(), 0));
+            Value recordIndex =
+                arith::ExtUIOp::create(nbaBuilder, call.getLoc(), i64, size);
+            Value record = LLVM::GEPOp::create(
+                nbaBuilder, call.getLoc(), pointer,
+                LLVM::LLVMArrayType::get(i64, 4), data,
+                ValueRange{recordIndex});
+            for (auto [field, value] : llvm::enumerate(SmallVector<Value>{
+                     llvmConstant(nbaBuilder, call.getLoc(), i64,
+                                  chunkSite(index)),
+                     chunkStart, chunkValue, chunkUnknown}))
+              LLVM::StoreOp::create(
+                  nbaBuilder, call.getLoc(), value,
+                  byteGEP(nbaBuilder, call.getLoc(), record, field * 8), 8);
+            LLVM::StoreOp::create(
+                nbaBuilder, call.getLoc(),
+                arith::AddIOp::create(
+                    nbaBuilder, call.getLoc(), size,
+                    llvmConstant(nbaBuilder, call.getLoc(), i32, 1)),
+                evalNBAQueueField(nbaBuilder, call.getLoc(), 1), 4);
+            cf::BranchOp::create(nbaBuilder, call.getLoc(), next);
+          }
         } else if (periodicWideLatch) {
           auto existing =
               llvm::find_if(dynamicEvalNBAs, [&](const DynamicEvalNBA &entry) {

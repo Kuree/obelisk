@@ -3462,9 +3462,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       // single-block region such as scf.for cannot hold. The queue drains at
       // the NBA barrier only; a reactive-set writer commits in Re-NBA, which
       // stays runtime scheduled. Both must be decided here, since a later
-      // Eval decline cannot restore the per-update runtime publications.
+      // Eval decline cannot restore the per-update runtime publications. A
+      // payload wider than one record is staged as consecutive 64-bit chunks
+      // within the bounds of the chunk-site encoding (evalNBAChunkSite).
       auto function = enqueue->getParentOfType<sim::SimFuncOp>();
-      if (!width || *width == 0 || *width > 64 || enqueue.getDelay() ||
+      if (!width || *width == 0 ||
+          (*width > 64 && (site.getId() >= (uint64_t{1} << 48) ||
+                           (*width + 63) / 64 >= (uint64_t{1} << 15))) ||
+          enqueue.getDelay() ||
           site.getTiming() || !function ||
           function.getHomeRegion() != sim::EventRegion::Active ||
           enqueue->getParentRegion() != &function.getBody() ||
