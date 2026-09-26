@@ -257,6 +257,37 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   SmallVector<Block *> preambleBlocks;
   llvm::SmallPtrSet<Block *, 8> preambleSeen;
   Block *preamble = &sourceEntry;
+  // An always_comb procedure runs its activation once at time zero (IEEE
+  // 1800-2023 9.2.2.2, 9.2.2.2.2), so its entry path leads into that
+  // activation. Canonicalization folds an argument-free activation block that
+  // only forwards constants (`^activation: br ^loop(%c0)`) out of the entry
+  // path, leaving the entry to branch to `^loop(%c0)` directly. That branch
+  // executes exactly what a branch to the forwarding block would, so it
+  // reaches the activation. The eval body repeats the preamble on every
+  // activation, so this holds only while the preamble itself has no effect.
+  auto sameConstant = [](Value lhs, Value rhs) {
+    if (lhs == rhs)
+      return true;
+    auto left = lhs.getDefiningOp<arith::ConstantOp>();
+    auto right = rhs.getDefiningOp<arith::ConstantOp>();
+    return left && right && left.getValue() == right.getValue();
+  };
+  auto forwardsLikeActivation = [&](cf::BranchOp branch) {
+    auto forward = dyn_cast<cf::BranchOp>(activation->getTerminator());
+    if (!forward || activation->getNumArguments() != 0 ||
+        forward.getDest() != branch.getDest() ||
+        !llvm::all_of(activation->without_terminator(), [](Operation &op) {
+          return isa<arith::ConstantOp>(op);
+        }))
+      return false;
+    return llvm::all_of(
+        llvm::zip_equal(branch.getDestOperands(), forward.getDestOperands()),
+        [&](auto pair) {
+          return sameConstant(std::get<0>(pair), std::get<1>(pair));
+        });
+  };
+  Block *forwardedPreamble = nullptr;
+  bool purePreamble = true;
   while (!clockedControl && preamble != wait && preamble != activation) {
     if (!preambleSeen.insert(preamble).second)
       return success();
@@ -266,6 +297,16 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       return success();
     }
     preambleBlocks.push_back(preamble);
+    purePreamble &=
+        llvm::all_of(preamble->without_terminator(), [](Operation &operation) {
+          return isMemoryEffectFree(&operation) ||
+                 isa<sim::SimCoveragePointHitOp>(operation);
+        });
+    if (purePreamble && forwardsLikeActivation(branch)) {
+      forwardedPreamble = preamble;
+      preamble = activation;
+      break;
+    }
     preamble = branch.getDest();
   }
   bool startsAtActivation = preamble == activation;
@@ -379,6 +420,10 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
     for (Operation &operation : source->without_terminator())
       if (!isa<sim::SimCoveragePointHitOp>(operation))
         builder.clone(operation, mapping);
+    // The activation block itself is cloned and entered below; it takes no
+    // arguments.
+    if (source == forwardedPreamble)
+      continue;
     auto branch = cast<cf::BranchOp>(source->getTerminator());
     if (startsAtActivation && branch.getDest() == activation) {
       if (failed(appendMappedValues(branch.getDestOperands(),
