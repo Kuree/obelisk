@@ -6,15 +6,15 @@
 // RUN: diff -u %t.reference.out %t.auto.out
 // RUN: FileCheck %s < %t.auto.out
 
-// The loop bound changes after startup, so the loop is a scheduler-owned
-// control loop and the clocked process keeps a bytecode block. The partial eval island then
-// has no generated executor for that continuation. Auto must decline the
-// island before packed lowering emits static NBA staging; the late owner check
-// could only report "partial eval ownership failed after static NBA lowering".
+// Each clock edge forks a new process (IEEE 1800-2023 9.3.2 join_none), so the
+// spawn has no static multiplicity and the clocked process keeps its spawning
+// block in bytecode. The partial eval island then has no generated executor
+// for that continuation. Auto must decline the island before packed lowering
+// emits static NBA staging; the late owner check could only report "partial
+// eval ownership failed after static NBA lowering".
 module native_partial_bytecode_fanout_owner;
   logic clk = 0;
   logic en = 1;
-  int limit = 81;
   logic [7:0] b = 0;
   logic [31:0] wide = 0;
   int b_changes = 0;
@@ -24,13 +24,8 @@ module native_partial_bytecode_fanout_owner;
   always @(posedge clk) begin
     b <= 8'd1;
     if (en) b <= 8'd0;
-    for (int j = 0; j < limit; j = j + 1)
-      wide[15:8] <= j & 1;
+    fork wide[15:8] <= wide[15:8] + 1; join_none
     wide[31:24] <= wide[31:24] + 1;
-  end
-
-  initial begin
-    #12 limit = 82;
   end
 
   initial begin

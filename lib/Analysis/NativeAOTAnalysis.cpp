@@ -966,12 +966,21 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop) {
         reason = "control-loop group requires bytecode scheduling";
         actorLocalColdLoop = isolatesConcurrentColdActors(group);
+        // A process-order cycle never suspends, so it is a loop inside one
+        // activation. IEEE 1800-2023 4.7 lets a simulator execute such a
+        // statement sequence as one event, and compiled code runs the loop to
+        // completion exactly as the interpreter does; a loop that cannot
+        // finish hangs either executor (12.7.6). Its progress is decided by
+        // its own control flow rather than by state change, which makes it
+        // Tier-2 native work, not bytecode. Only the concurrent cold actors
+        // of a Clause 31 coordinator loop keep the bytecode handoff.
+        if (!actorLocalColdLoop)
+          continue;
         controlResidue = proceduralControlResidue(group);
       }
       // Native ready-node scheduling is itself a dirty-set fixpoint: a write
       // that wakes an earlier-ranked member restarts the scan at that member.
-      // Convergence SCCs therefore need no bytecode handoff.  Control loops
-      // remain generic because progress is not driven solely by state change.
+      // Convergence SCCs therefore need no bytecode handoff.
       else if (group.getSchedule() == sim::ComputeScheduleKind::Convergence)
         continue;
       else if (group.getFragments().size() > 1)
