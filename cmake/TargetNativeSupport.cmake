@@ -130,9 +130,6 @@ set(OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT
     "${_obelisk_target_runtime_dir}/obelisk_rt_prelinked.o")
 set(OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE
     "${_obelisk_target_runtime_dir}/libobelisk_rt_prelinked.a")
-file(GLOB_RECURSE _obelisk_target_runtime_headers CONFIGURE_DEPENDS
-  "${_obelisk_runtime_source_dir}/include/*.h"
-  "${_obelisk_runtime_source_dir}/lib/*.h")
 set(_obelisk_target_runtime_vpi_include_dir
     "${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800")
 set(_obelisk_target_runtime_vpi_headers
@@ -195,51 +192,44 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
   endif()
   list(APPEND _obelisk_target_runtime_objects "${object}")
   list(APPEND _obelisk_target_runtime_lto_objects "${lto_object}")
-  add_custom_command(
-    OUTPUT "${object}" "${lto_object}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory
-            "${_obelisk_target_runtime_dir}"
-    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
-      --target=${OBELISK_TARGET_TRIPLE}
-      -std=c++17 -O3 -fPIC -fvisibility=hidden
-      ${_obelisk_target_runtime_definitions}
-      -ffunction-sections -fdata-sections
-      "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
-      "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
-      -nostdinc++
-      -isystem "${OBELISK_LLVM_DIST_DIR}/include/${OBELISK_TARGET_TRIPLE}/c++/v1"
-      -isystem "${OBELISK_LLVM_DIST_DIR}/include/c++/v1"
-      -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
-      -I "${_obelisk_runtime_source_dir}/include"
-      -I "${_obelisk_runtime_source_dir}/lib"
-      -I "${_obelisk_source_dir}/include"
-      -I "${_obelisk_target_reflection_include_dir}"
-      -isystem "${_obelisk_target_runtime_vpi_include_dir}"
-      -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
-    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
-      --target=${OBELISK_TARGET_TRIPLE}
-      -std=c++17 -O3 -flto=full -funified-lto -fPIC -fvisibility=hidden
-      ${_obelisk_target_runtime_definitions}
-      -ffunction-sections -fdata-sections
-      "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
-      "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
-      -nostdinc++
-      -isystem "${OBELISK_LLVM_DIST_DIR}/include/${OBELISK_TARGET_TRIPLE}/c++/v1"
-      -isystem "${OBELISK_LLVM_DIST_DIR}/include/c++/v1"
-      -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
-      -I "${_obelisk_runtime_source_dir}/include"
-      -I "${_obelisk_runtime_source_dir}/lib"
-      -I "${_obelisk_source_dir}/include"
-      -I "${_obelisk_target_reflection_include_dir}"
-      -isystem "${_obelisk_target_runtime_vpi_include_dir}"
-      -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${lto_object}"
-    DEPENDS
-      ${source_dependencies}
-      ${_obelisk_target_runtime_headers}
-      ${_obelisk_target_runtime_coverage_headers}
-      ${_obelisk_target_runtime_vpi_headers}
-    COMMENT "Building native and Full-LTO target runtime ${source}.cpp"
-    VERBATIM)
+  # Track actual includes instead of rebuilding the entire runtime for every
+  # private-header edit. Separate native and LTO edges can run independently.
+  foreach(output IN ITEMS "${object}" "${lto_object}")
+    set(lto_flags)
+    if(output STREQUAL lto_object)
+      set(lto_flags -flto=full -funified-lto)
+    endif()
+    get_filename_component(output_name "${output}" NAME)
+    add_custom_command(
+      OUTPUT "${output}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${_obelisk_target_runtime_dir}"
+      COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
+        --target=${OBELISK_TARGET_TRIPLE}
+        -std=c++17 -O3 ${lto_flags} -fPIC -fvisibility=hidden
+        ${_obelisk_target_runtime_definitions}
+        -ffunction-sections -fdata-sections
+        "-ffile-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
+        "-fmacro-prefix-map=${_obelisk_runtime_source_dir}=/obelisk/runtime"
+        -nostdinc++
+        -isystem "${OBELISK_LLVM_DIST_DIR}/include/${OBELISK_TARGET_TRIPLE}/c++/v1"
+        -isystem "${OBELISK_LLVM_DIST_DIR}/include/c++/v1"
+        -isystem "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/include"
+        -I "${_obelisk_runtime_source_dir}/include"
+        -I "${_obelisk_runtime_source_dir}/lib"
+        -I "${_obelisk_source_dir}/include"
+        -I "${_obelisk_target_reflection_include_dir}"
+        -isystem "${_obelisk_target_runtime_vpi_include_dir}"
+        -MD -MF "${output}.d" -MQ "${output}"
+        -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${output}"
+      DEPFILE "${output}.d"
+      DEPENDS
+        ${source_dependencies}
+        ${_obelisk_target_runtime_coverage_headers}
+        ${_obelisk_target_runtime_vpi_headers}
+      COMMENT "Building target runtime ${output_name}"
+      VERBATIM)
+  endforeach()
 endforeach()
 add_custom_command(
   OUTPUT "${OBELISK_TARGET_RUNTIME_ARCHIVE}"

@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 

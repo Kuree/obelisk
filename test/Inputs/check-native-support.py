@@ -85,7 +85,16 @@ shutil.copytree(source_root / "runtime", graph_runtime)
 # header path so archive membership and dependency checks still use the real
 # graph, compiler, archiver, and staging commands.
 for source in (graph_runtime / "lib").glob("*.cpp"):
-    source.write_text(f'extern "C" int graph_probe_{source.stem}() {{ return 0; }}\n')
+    includes = ""
+    if source.stem == "Runtime":
+        includes = '#include "obelisk/Runtime/Runtime.h"\n'
+    elif source.stem == "Bytecode":
+        includes = '#include "GraphIndirect.h"\n'
+    source.write_text(
+        includes + f'extern "C" int graph_probe_{source.stem}() {{ return 0; }}\n'
+    )
+(graph_runtime / "lib/GraphIndirect.h").write_text('#include "GraphPrivate.h"\n')
+(graph_runtime / "lib/GraphPrivate.h").write_text('// transitive dependency\n')
 (graph_source / "CMakeLists.txt").write_text(
     "\n".join(
         (
@@ -247,6 +256,9 @@ verify_staged_archives()
 
 # Public and internal runtime headers are also dependencies of both archive
 # forms and of the staged content-hash command.
+unrelated_object = graph_build / "target-runtime/Plusargs.o"
+unrelated_lto = graph_build / "target-runtime/Plusargs.bc"
+unrelated_fingerprints = (fingerprint(unrelated_object), fingerprint(unrelated_lto))
 source_runtime = fingerprint(runtime_archive)
 source_runtime_lto = fingerprint(runtime_lto_archive)
 source_support = fingerprint(support_stamps[0])
@@ -262,6 +274,35 @@ if fingerprint(runtime_lto_archive) == source_runtime_lto:
 if fingerprint(support_stamps[0]) == source_support:
     raise SystemExit("runtime-header change did not restage native support")
 verify_staged_archives()
+if (fingerprint(unrelated_object), fingerprint(unrelated_lto)) != unrelated_fingerprints:
+    raise SystemExit("runtime-header change rebuilt an unrelated source")
+
+# Track transitive private includes discovered by the compiler; neither
+# variant may miss a header absent from the handwritten dependency list.
+bytecode_objects = [
+    graph_build / f"target-runtime/Bytecode.{ext}" for ext in ("o", "bc")
+]
+bytecode_before = [fingerprint(path) for path in bytecode_objects]
+with (graph_runtime / "lib/GraphPrivate.h").open("a") as stream:
+    stream.write("// transitive private-header edit\n")
+build_graph(graph_build, "obelisk_native_support")
+if any(
+    fingerprint(path) == before
+    for path, before in zip(bytecode_objects, bytecode_before)
+):
+    raise SystemExit("private-header change did not rebuild both runtime variants")
+if (fingerprint(unrelated_object), fingerprint(unrelated_lto)) != unrelated_fingerprints:
+    raise SystemExit("private-header change rebuilt an unrelated source")
+verify_staged_archives()
+
+# Recovering a missing native object must not recompile its intact LTO sibling.
+bytecode_lto_before = fingerprint(bytecode_objects[1])
+bytecode_objects[0].unlink()
+build_graph(graph_build, "obelisk_native_support")
+if not bytecode_objects[0].is_file():
+    raise SystemExit("missing native object did not rebuild")
+if fingerprint(bytecode_objects[1]) != bytecode_lto_before:
+    raise SystemExit("missing native object unnecessarily rebuilt its LTO sibling")
 
 # Missing declared byproducts cause the staging command to self-heal and
 # atomically move the public relative link to a complete version.

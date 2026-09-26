@@ -4,6 +4,7 @@
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_H
 
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
+#include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -12,8 +13,6 @@
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
-
-#include "obelisk/Dialect/Simulation/SimulationEnums.h.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "obelisk/Dialect/Simulation/SimulationTypes.h.inc"

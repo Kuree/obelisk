@@ -7,8 +7,10 @@
 #ifndef OBELISK_CONVERSION_SIMULATIONRUNTIME_H
 #define OBELISK_CONVERSION_SIMULATIONRUNTIME_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 #include "obelisk/Runtime/Runtime.h"
+
+#include "mlir/IR/Operation.h"
 
 #include <cstdint>
 #include <limits>

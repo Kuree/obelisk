@@ -7,7 +7,11 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONVPIANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONVPIANALYSIS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationEnums.h"
+
+namespace obelisk::sim {
+class SimDesignOp;
+}
 
 namespace obelisk::analysis {
 

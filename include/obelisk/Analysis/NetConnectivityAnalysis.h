@@ -3,15 +3,18 @@
 #ifndef OBELISK_ANALYSIS_NETCONNECTIVITYANALYSIS_H
 #define OBELISK_ANALYSIS_NETCONNECTIVITYANALYSIS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
 #include <optional>
+
+namespace obelisk::sim {
+class SimDesignOp;
+}
 
 namespace obelisk::analysis {
 

@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"

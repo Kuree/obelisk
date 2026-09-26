@@ -3,7 +3,7 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONANALYSIS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
@@ -13,6 +13,11 @@
 
 #include <cstdint>
 #include <optional>
+
+namespace obelisk::sim {
+class SimDesignOp;
+class SimFuncOp;
+}
 
 namespace obelisk::analysis {
 

@@ -8,16 +8,21 @@
 #ifndef OBELISK_ANALYSIS_STATEDOMAINANALYSIS_H
 #define OBELISK_ANALYSIS_STATEDOMAINANALYSIS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <utility>
+
+namespace obelisk::sim {
+class SimDesignOp;
+}
 
 namespace obelisk {
 

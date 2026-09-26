@@ -3,8 +3,10 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/Support/LogicalResult.h"
 
 #include <cstdint>

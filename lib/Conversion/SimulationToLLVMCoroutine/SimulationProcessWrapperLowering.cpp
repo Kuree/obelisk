@@ -2,6 +2,7 @@
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationProcessRuntimeABI.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"

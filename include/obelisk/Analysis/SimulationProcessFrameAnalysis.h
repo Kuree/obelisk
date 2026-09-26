@@ -3,10 +3,12 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONPROCESSFRAMEANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONPROCESSFRAMEANALYSIS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 
 #include <cstdint>
@@ -17,6 +19,10 @@ class DataLayout;
 }
 
 namespace obelisk {
+
+namespace sim {
+class SimFuncOp;
+}
 
 enum class ProcessFrameFieldKind : uint32_t {
   Capture = 1,

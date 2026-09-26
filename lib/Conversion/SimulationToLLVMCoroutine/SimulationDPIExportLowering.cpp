@@ -2,6 +2,7 @@
 
 #include "SimulationDPILowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"

@@ -4,10 +4,10 @@
 #define OBELISK_ANALYSIS_NATIVESTATELAYOUTANALYSIS_H
 
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseMap.h"
 
@@ -15,6 +15,10 @@
 #include <cstdint>
 #include <optional>
 #include <utility>
+
+namespace mlir {
+class ModuleOp;
+}
 
 namespace obelisk::analysis {
 

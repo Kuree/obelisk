@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/ADT/DenseSet.h"
 

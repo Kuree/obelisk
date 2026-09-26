@@ -1,6 +1,7 @@
 //===- SimulationVPIAnalysis.cpp - VPI capability policy ----------------===//
 
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/Support/ErrorHandling.h"
 

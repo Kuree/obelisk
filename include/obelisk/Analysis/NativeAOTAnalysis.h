@@ -7,18 +7,26 @@
 #ifndef OBELISK_ANALYSIS_NATIVEAOTANALYSIS_H
 #define OBELISK_ANALYSIS_NATIVEAOTANALYSIS_H
 
-#include "mlir/IR/Block.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
 #include <string>
+
+namespace mlir {
+class Block;
+class ModuleOp;
+class Operation;
+}
+
+namespace obelisk::sim {
+class SimFuncOp;
+class SimSpawnOp;
+}
 
 namespace obelisk::analysis {
 

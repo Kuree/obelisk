@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 300
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +77,7 @@ jobs:
       - name: Prepare compiler cache
         run: |
           ccache --max-size=2G
+          ccache --set-config=sloppiness=pch_defines,time_macros
           ccache --zero-stats
 
       # ccache is opted into here rather than in CMakeLists.txt, so local
@@ -89,6 +91,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DOBELISK_ENABLE_PCH=ON \
             "-DLLVM_LIT_ARGS=-sv;-j12" \
             -DOBELISK_INCLUDE_TESTS=ON \
             -DOBELISK_ENABLE_REAL_UVM_TESTS=ON \
@@ -96,7 +99,7 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build -j 12
+        run: cmake --build build
 
       # Host generators run in the native build. Their architecture-independent
       # outputs are the only build artifact the wasm compiler consumes from
@@ -125,7 +128,7 @@ jobs:
           key: ccache-native-${{ runner.os }}-${{ github.sha }}
 
       - name: Run lit regression suite
-        run: cmake --build build --target check-obelisk -j 12
+        run: cmake --build build --target check-obelisk
 
   # ---------------------------------------------------------------------------
   # Build and smoke-test the wasm toolchain on every ref. Main additionally
@@ -145,6 +148,7 @@ jobs:
     # Normal CI consumes that immutable artifact instead of rebuilding LLVM.
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
       WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
     steps:
       - uses: actions/checkout@v4
@@ -172,7 +176,7 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           docker run --rm -v "$CCACHE_DIR:/ccache" \
             -e CCACHE_DIR=/ccache "$WASM_IMAGE" \
-            sh -c 'ccache --max-size=2G && ccache --zero-stats'
+            sh -c 'ccache --max-size=2G && ccache --set-config=sloppiness=pch_defines,time_macros && ccache --zero-stats'
 
       # The SDK ships inside the image. CMakeLists.txt always downloads and
       # extracts OBELISK_LLVM_PREBUILT_URL, so it is consumed through a file://
@@ -181,18 +185,20 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
             -v "$PWD/build-host-generated:/obelisk-generated:ro" \
+            -e CMAKE_BUILD_PARALLEL_LEVEL \
             -w /src -e CCACHE_DIR=/ccache "$WASM_IMAGE" bash -c '
               set -euo pipefail
               SHA=$(cat "$OBELISK_LLVM_WASM_SHA256_FILE")
               emcmake cmake -S . -B build-wasm -G Ninja \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
+                -DOBELISK_ENABLE_PCH=ON \
                 -DOBELISK_INCLUDE_TESTS=OFF \
                 -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
                 -DOBELISK_LLVM_PREBUILT_SHA256="$SHA" \
                 -DOBELISK_GENERATED_DIR=/obelisk-generated \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-              cmake --build build-wasm -j 12 --target obelisk
+              cmake --build build-wasm --target obelisk
             '
 
       - name: Compiler cache stats

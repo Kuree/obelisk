@@ -1,6 +1,7 @@
 //===- SimulationProcessDescriptorLowering.cpp - Process ABI globals -----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Runtime/Runtime.h"

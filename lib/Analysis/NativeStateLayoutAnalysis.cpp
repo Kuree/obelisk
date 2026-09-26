@@ -3,7 +3,10 @@
 #include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
+
+#include "mlir/IR/BuiltinOps.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"

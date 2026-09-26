@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
 
 #include "obelisk/Analysis/ClassBitstreamAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 

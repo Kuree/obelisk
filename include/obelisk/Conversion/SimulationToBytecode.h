@@ -4,13 +4,17 @@
 #define OBELISK_CONVERSION_SIMULATIONTOBYTECODE_H
 
 #include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
 #include <string>
+
+namespace obelisk::sim {
+class SimDesignOp;
+}
 
 namespace obelisk {
 

@@ -1,6 +1,7 @@
 //===- SimulationStatePlaneLowering.cpp - Native state planes --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"

@@ -1,6 +1,7 @@
 //===- SimulationAnalysis.cpp - Shared simulation optimization facts -----===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Interfaces/ControlFlowInterfaces.h"

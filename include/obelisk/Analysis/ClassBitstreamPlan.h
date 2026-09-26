@@ -3,7 +3,11 @@
 #ifndef OBELISK_ANALYSIS_CLASSBITSTREAMPLAN_H
 #define OBELISK_ANALYSIS_CLASSBITSTREAMPLAN_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "mlir/Support/LogicalResult.h"
+
+namespace obelisk::sim {
+class SimDesignOp;
+}
 
 namespace llvm {
 class DataLayout;

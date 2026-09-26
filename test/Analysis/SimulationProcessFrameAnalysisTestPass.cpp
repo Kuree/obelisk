@@ -3,6 +3,7 @@
 #include "AnalysisTestPasses.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
