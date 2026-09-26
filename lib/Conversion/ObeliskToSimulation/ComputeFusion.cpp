@@ -199,6 +199,118 @@ bool isComputeBodyFusionEligibleImpl(
   return eligible;
 }
 
+/// Resolves a storage write through a subroutine formal to the physical
+/// roots its call sites pass. IEEE 1800-2023 13.5 copies `output` and `inout`
+/// values into the actuals when the subroutine returns, and 13.5.2 makes a
+/// `ref` formal an alias of its actual. Either way the actual is the storage
+/// written. The simulation IR passes all three as references, so a caller's
+/// own effect summary does not record the write; only the callee's
+/// formal-target effect does.
+class FormalWriteResolver {
+public:
+  FormalWriteResolver(
+      sim::SimDesignOp design,
+      const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis)
+      : design(design), provenanceAnalysis(provenanceAnalysis) {}
+
+  /// Calls `emit` with a descriptor-target copy of `effect` for every storage
+  /// root that `owner`'s formal can reach. Returns false when some call path
+  /// cannot be resolved, in which case the reported roots are incomplete.
+  bool resolve(StringAttr owner, sim::ComputeEffectAttr effect,
+               llvm::function_ref<void(uint64_t, sim::ComputeEffectAttr)>
+                   emit) {
+    if (!indexed)
+      index();
+    if (unsupportedCalls)
+      return false;
+    bool complete = true;
+    using Formal = std::pair<StringAttr, unsigned>;
+    SmallVector<Formal> pending{
+        {owner, static_cast<unsigned>(effect.getFormal())}};
+    DenseSet<Formal> seen;
+    while (!pending.empty()) {
+      auto [name, index] = pending.pop_back_val();
+      if (!seen.insert({name, index}).second)
+        continue;
+      auto function = functions.lookup(name.getValue());
+      auto sites = callers.find(name.getValue());
+      if (!function || function->hasAttr("obelisk_sim.dpi_export") ||
+          sites == callers.end()) {
+        complete = false;
+        continue;
+      }
+      for (Operation *site : sites->second) {
+        ValueRange arguments = site->getOperands();
+        if (auto task = dyn_cast<sim::SimTaskCallOp>(site))
+          arguments = task.getArguments();
+        auto caller = site->getParentOfType<sim::SimFuncOp>();
+        if (!caller || index >= arguments.size()) {
+          complete = false;
+          continue;
+        }
+        auto [facts, inserted] = provenance.try_emplace(caller.getOperation());
+        if (inserted)
+          facts->second = provenanceAnalysis.derive(caller);
+        auto actual = facts->second.find(arguments[index]);
+        if (actual == facts->second.end()) {
+          complete = false;
+          continue;
+        }
+        const auto &target = actual->second;
+        if (target.resource == sim::ComputeResourceKind::Local)
+          continue;
+        if (target.resource != sim::ComputeResourceKind::Storage) {
+          complete = false;
+        } else if (target.descriptor) {
+          // Resolve physical roots, not combinations of call paths. Widen
+          // formal subranges within each root until an offset-sensitive call
+          // proof is available; unrelated roots stay independent.
+          emit(*target.descriptor,
+               sim::ComputeEffectAttr::get(
+                   design.getContext(), effect.getEffect(), target.resource,
+                   sim::ComputeTargetKind::Descriptor, *target.descriptor, 0,
+                   0, target.rootWidth, true, effect.getDeferred(),
+                   effect.getTrigger()));
+        } else if (target.formal) {
+          pending.push_back({caller.getSymNameAttr(), *target.formal});
+        } else {
+          complete = false;
+        }
+      }
+    }
+    return complete;
+  }
+
+private:
+  void index() {
+    indexed = true;
+    for (sim::SimFuncOp function :
+         design.getBody().front().getOps<sim::SimFuncOp>())
+      functions[function.getSymName()] = function;
+    design.walk([&](Operation *op) {
+      if (auto call = dyn_cast<sim::SimTaskCallOp>(op))
+        callers[call.getCallee()].push_back(op);
+      else if (auto call = dyn_cast<sim::SimCallOp>(op))
+        callers[call.getCallee()].push_back(op);
+      else if (auto spawn = dyn_cast<sim::SimSpawnOp>(op))
+        callers[spawn.getCallee()].push_back(op);
+      // Descriptor-dispatched call targets need their own complete binding
+      // inventory. A direct-call inventory cannot certify those mutations.
+      else if (isa<sim::SimClassVirtualTaskCallOp, sim::SimClassVirtualCallOp,
+                   sim::SimClassDirectCallOp>(op))
+        unsupportedCalls = true;
+    });
+  }
+
+  sim::SimDesignOp design;
+  const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis;
+  bool indexed = false;
+  bool unsupportedCalls = false;
+  llvm::StringMap<sim::SimFuncOp> functions;
+  llvm::StringMap<SmallVector<Operation *>> callers;
+  DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
+};
+
 } // namespace
 
 CombinationalFusionAnalysis::CombinationalFusionAnalysis(
@@ -218,84 +330,12 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
   });
   if (unsupported)
     return;
-  llvm::StringMap<sim::SimFuncOp> functions;
-  llvm::StringMap<SmallVector<Operation *>> callers;
-  DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
-  bool haveCallers = false;
+  FormalWriteResolver formals(design, provenanceAnalysis);
   auto resolveFormal = [&](StringAttr owner, sim::ComputeEffectAttr effect) {
-    if (!haveCallers) {
-      for (sim::SimFuncOp function :
-           design.getBody().front().getOps<sim::SimFuncOp>())
-        functions[function.getSymName()] = function;
-      design.walk([&](Operation *op) {
-        if (auto call = dyn_cast<sim::SimTaskCallOp>(op))
-          callers[call.getCallee()].push_back(op);
-        else if (auto call = dyn_cast<sim::SimCallOp>(op))
-          callers[call.getCallee()].push_back(op);
-        else if (auto spawn = dyn_cast<sim::SimSpawnOp>(op))
-          callers[spawn.getCallee()].push_back(op);
-        // Descriptor-dispatched call targets need their own complete binding
-        // inventory. A direct-call inventory cannot certify those mutations.
-        else if (isa<sim::SimClassVirtualTaskCallOp, sim::SimClassVirtualCallOp,
-                     sim::SimClassDirectCallOp>(op))
-          unsupported = true;
-      });
-      haveCallers = true;
-    }
-    using Formal = std::pair<StringAttr, unsigned>;
-    SmallVector<Formal> pending{
-        {owner, static_cast<unsigned>(effect.getFormal())}};
-    DenseSet<Formal> seen;
-    while (!pending.empty()) {
-      auto [name, index] = pending.pop_back_val();
-      if (!seen.insert({name, index}).second)
-        continue;
-      auto function = functions.lookup(name.getValue());
-      auto sites = callers.find(name.getValue());
-      if (!function || function->hasAttr("obelisk_sim.dpi_export") ||
-          sites == callers.end()) {
-        unsupported = true;
-        continue;
-      }
-      for (Operation *site : sites->second) {
-        ValueRange arguments = site->getOperands();
-        if (auto task = dyn_cast<sim::SimTaskCallOp>(site))
-          arguments = task.getArguments();
-        auto caller = site->getParentOfType<sim::SimFuncOp>();
-        if (!caller || index >= arguments.size()) {
-          unsupported = true;
-          continue;
-        }
-        auto [facts, inserted] = provenance.try_emplace(caller.getOperation());
-        if (inserted)
-          facts->second = provenanceAnalysis.derive(caller);
-        auto actual = facts->second.find(arguments[index]);
-        if (actual == facts->second.end()) {
-          unsupported = true;
-          continue;
-        }
-        const auto &target = actual->second;
-        if (target.resource == sim::ComputeResourceKind::Local)
-          continue;
-        if (target.resource != sim::ComputeResourceKind::Storage) {
-          unsupported = true;
-        } else if (target.descriptor) {
-          // Resolve physical roots, not combinations of call paths. Widen
-          // formal subranges within each root until an offset-sensitive call
-          // proof is available; unrelated roots stay independent.
-          auto resolved = sim::ComputeEffectAttr::get(
-              design.getContext(), effect.getEffect(), target.resource,
-              sim::ComputeTargetKind::Descriptor, *target.descriptor, 0, 0,
-              target.rootWidth, true, effect.getDeferred(),
-              effect.getTrigger());
-          storageWriters[*target.descriptor].push_back({owner, resolved});
-        } else if (target.formal) {
-          pending.push_back({caller.getSymNameAttr(), *target.formal});
-        } else {
-          unsupported = true;
-        }
-      }
-    }
+    unsupported |= !formals.resolve(
+        owner, effect, [&](uint64_t descriptor, sim::ComputeEffectAttr write) {
+          storageWriters[descriptor].push_back({owner, write});
+        });
   };
   for (Attribute attr : graph.getNodes()) {
     auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attr);
@@ -756,6 +796,15 @@ computeNBATransientObservers(sim::SimDesignOp design) {
       storageWriters;
   SmallVector<sim::SimFuncOp> functions;
   bool complete = true;
+  // Proofs that remove a root from `changeWatched` or skip an observer need
+  // every writer of a root. A write through a formal is attributed to the
+  // actuals its call sites pass (IEEE 1800-2023 13.5: output and inout
+  // actuals are written on return, ref actuals directly). A write that cannot
+  // be resolved leaves the inventory incomplete; that disables those proofs,
+  // not the whole analysis.
+  bool writersComplete = true;
+  analysis::DescriptorProvenanceAnalysis provenanceAnalysis(design);
+  FormalWriteResolver formals(design, provenanceAnalysis);
   design.walk([&](sim::SimFuncOp function) {
     functions.push_back(function);
     ArrayAttr summary = function.getEffectSummaryAttr();
@@ -770,15 +819,31 @@ computeNBATransientObservers(sim::SimDesignOp design) {
                        .wasInterrupted();
       return;
     }
-    for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>())
-      if (effect.getResource() == sim::ComputeResourceKind::Storage &&
-          (effect.getEffect() == sim::ComputeEffectKind::Write ||
-           effect.getEffect() == sim::ComputeEffectKind::NBA)) {
-        if (effect.getTarget() != sim::ComputeTargetKind::Descriptor)
-          complete = false;
+    for (auto effect : summary.getAsRange<sim::ComputeEffectAttr>()) {
+      if (effect.getEffect() != sim::ComputeEffectKind::Write &&
+          effect.getEffect() != sim::ComputeEffectKind::NBA)
+        continue;
+      // A write through an unresolved handle can reach any storage root.
+      if (effect.getResource() == sim::ComputeResourceKind::Unknown)
+        writersComplete = false;
+      if (effect.getResource() == sim::ComputeResourceKind::Storage) {
+        if (effect.getTarget() == sim::ComputeTargetKind::Formal) {
+          writersComplete &= formals.resolve(
+              function.getSymNameAttr(), effect,
+              [&](uint64_t descriptor, sim::ComputeEffectAttr write) {
+                storageWriters[descriptor].push_back(
+                    {function.getOperation(), write});
+              });
+          continue;
+        }
+        if (effect.getTarget() != sim::ComputeTargetKind::Descriptor) {
+          writersComplete = false;
+          continue;
+        }
         storageWriters[effect.getDescriptor()].push_back(
             {function.getOperation(), effect});
       }
+    }
   });
   design.walk([&](Operation *op) {
     complete &= !isa<sim::SimDPICallOp>(op);
@@ -801,7 +866,8 @@ computeNBATransientObservers(sim::SimDesignOp design) {
       if (effect.getEffect() == sim::ComputeEffectKind::Watch &&
           effect.getResource() != sim::ComputeResourceKind::Net)
         watches.push_back(effect);
-    if (watches.empty() || isIdempotentObserver(function, storageWriters))
+    if (watches.empty() ||
+        (writersComplete && isIdempotentObserver(function, storageWriters)))
       continue;
     // A process that waits only for a change of whole references wakes when
     // any update changes a watched bit. A merged commit reproduces exactly
@@ -896,14 +962,13 @@ computeNBATransientObservers(sim::SimDesignOp design) {
                 })
                 .wasInterrupted();
   };
-  if (processControl || result.changeWatched.empty())
+  if (processControl || !writersComplete || result.changeWatched.empty())
     return result;
   auto singleInstance = [&](sim::SimFuncOp function) {
     StringRef name = function.getSymName();
     return spawns.lookup(name) == 1 && !spawnedOutsideRoot.contains(name) &&
            !called.contains(name);
   };
-  analysis::DescriptorProvenanceAnalysis provenanceAnalysis(design);
   llvm::DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
   using Resource = std::pair<sim::ComputeResourceKind, uint64_t>;
   auto resourceOf = [&](sim::SimFuncOp function,
