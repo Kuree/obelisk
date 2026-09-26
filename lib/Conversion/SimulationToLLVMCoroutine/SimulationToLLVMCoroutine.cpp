@@ -3697,6 +3697,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (detailedTiming && runtimeOrderedEvalOwner)
       llvm::errs() << "partial eval disabled: runtime-ordered NBA owner\n";
     useAOT = false;
+    // The exact transition set belongs to the discarded eval fanout plan.
+    // Generic scheduling must check direct-state writes for transitions again.
+    stateLayout->transitionHandlesExact = false;
+    stateLayout->transitionHandles.clear();
     staticControl = false;
     staticFanout = false;
     staticNBA = false;
@@ -4354,6 +4358,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       return failure();
     }
     useAOT = false;
+    stateLayout->transitionHandlesExact = false;
+    stateLayout->transitionHandles.clear();
     staticControl = false;
     staticFanout = false;
     staticNBA = false;
