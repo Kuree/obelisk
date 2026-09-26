@@ -487,17 +487,18 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   proof.semanticRootSiteCount = semanticRootSites.size();
   proof.uniqueSemanticRootSite = site && semanticRootSites.size() == 1;
   // A root accumulator stores only the final value and publishes one
-  // old-to-final transition at the NBA barrier.  That is equivalent to the
-  // ordered NBA queue only when one semantic statement contributes and the
-  // statement executes at most once in this activation.  Otherwise an
-  // intermediate edge (for example 0 -> 1 -> 0) would be lost even though
-  // the final state is correct.
+  // old-to-final transition at the NBA barrier. Each staged write merges into
+  // it under its bit mask in execution order, so the final value is the one
+  // IEEE 1800-2023 4.6(b) and 10.4.2 require. What the accumulator drops is
+  // every intermediate update event, for example 0 -> 1 -> 0. A merge-safe
+  // root is one whose intermediate values no process can observe, or whose
+  // only observers wait for any change and are served by the accumulator's
+  // transient mask (9.4.2). For such a root any number of statements and
+  // executions may merge; any other root keeps the ordered queue below.
   bool mergeSafe = root != staticNBAPlan.siteRoots.end() &&
                    root->second < staticNBAPlan.mergeSafeRoots.size() &&
                    staticNBAPlan.mergeSafeRoots[root->second];
-  bool directAccumulator = directAccumulatorCandidate && mergeSafe &&
-                           proof.uniqueSemanticRootSite &&
-                           proof.siteExecutesAtMostOnce;
+  bool directAccumulator = directAccumulatorCandidate && mergeSafe;
   // The periodic fast loop owns the design-side NBA handoff only. Reactive
   // owners require the later Re-NBA phase, which remains runtime scheduled.
   // Disjoint site masks do not make separate update events interchangeable:
