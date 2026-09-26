@@ -331,7 +331,11 @@ target_include_directories(ObeliskNativePartitionTests PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
 target_link_libraries(ObeliskNativePartitionTests PRIVATE
+  MLIRLLVMDialect
+  MLIRParser
+  MLIRTransforms
   LLVMCore
+  LLVMipo
   LLVMExecutionEngine
   LLVMInterpreter
   LLVMSupport

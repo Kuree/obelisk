@@ -553,11 +553,14 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
                                            ? entry.site
                                            : origin->second);
   }
+  // The call closure is read-only; avoid one whole-design symbol scan per
+  // call while deriving every root's merge proof.
+  SymbolTableCollection callSymbols;
   llvm::SmallPtrSet<Operation *, 8> callees;
   module.walk([&](sim::SimCallOp call) {
     if (auto design = call->getParentOfType<sim::SimDesignOp>())
-      if (sim::SimFuncOp callee =
-              design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+      if (sim::SimFuncOp callee = callSymbols.lookupSymbolIn<sim::SimFuncOp>(
+              design, call.getCalleeAttr()))
         callees.insert(callee.getOperation());
   });
   llvm::DenseMap<Operation *, llvm::DenseMap<uint64_t, unsigned>> closureOps;
@@ -583,7 +586,8 @@ buildNativeStaticNBAPlan(ModuleOp module, const NativeStateLayout &stateLayout,
       if (design)
         current.walk([&](sim::SimCallOp call) {
           if (sim::SimFuncOp callee =
-                  design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+                  callSymbols.lookupSymbolIn<sim::SimFuncOp>(
+                      design, call.getCalleeAttr()))
             pending.push_back(callee);
         });
     }

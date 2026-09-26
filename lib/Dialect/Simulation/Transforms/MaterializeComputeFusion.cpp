@@ -167,17 +167,39 @@ struct BodyFusionCandidate {
   SmallVector<Value> threadedEntryValues;
 };
 
-std::optional<uint64_t> getCodeUnitScope(sim::SimDesignOp design,
-                                         sim::SimFuncOp function) {
-  std::optional<uint64_t> codeUnit = function.getCodeUnitId();
-  if (!codeUnit)
-    return std::nullopt;
-  for (sim::SimCodeUnitDeclOp declaration :
-       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
-    if (declaration.getId() == *codeUnit)
-      return declaration.getScopeId();
-  return std::nullopt;
-}
+class CodeUnitIndex {
+public:
+  explicit CodeUnitIndex(sim::SimDesignOp design) {
+    for (auto declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+      scopes.try_emplace(declaration.getId(), declaration.getScopeId());
+  }
+
+  std::optional<uint64_t> getScope(sim::SimFuncOp function) const {
+    std::optional<uint64_t> id = function.getCodeUnitId();
+    auto found = id ? scopes.find(*id) : scopes.end();
+    if (found == scopes.end())
+      return std::nullopt;
+    return found->second;
+  }
+
+  uint64_t allocate(uint64_t scope) {
+    while (scopes.contains(nextID))
+      ++nextID;
+    uint64_t id = nextID++;
+    scopes.try_emplace(id, scope);
+    return id;
+  }
+
+  void erase(uint64_t id) {
+    scopes.erase(id);
+    nextID = std::min(nextID, id);
+  }
+
+private:
+  DenseMap<uint64_t, uint64_t> scopes;
+  uint64_t nextID = 1;
+};
 
 bool isSupportedEntryKind(sim::EntryKind kind) {
   return kind == sim::EntryKind::Always || kind == sim::EntryKind::AlwaysFF;
@@ -208,11 +230,11 @@ bool isTypedSuspend(Operation *operation) {
 /// coroutine/fallback identity.  This is deliberately broad in eval mode: it
 /// is the experiment's Verilator-shaped executable body, not a production
 /// profitability decision.
-LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
-                                            SymbolTable &symbols,
-                                            sim::SimFuncOp function,
-                                            const DenseSet<uint64_t> &controlTargets,
-                                            bool foreignControl) {
+LogicalResult
+materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
+                              CodeUnitIndex &codeUnits, sim::SimFuncOp function,
+                              const DenseSet<uint64_t> &controlTargets,
+                              bool foreignControl) {
   if (function.isExternal() || function->hasAttr("obelisk.eval.body") ||
       function->hasAttr("obelisk.eval.borrowed_captures"))
     return success();
@@ -321,14 +343,8 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
       },
       evalCounter);
   OpBuilder builder = OpBuilder::atBlockEnd(&design.getBody().front());
-  llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
-  for (sim::SimCodeUnitDeclOp declaration :
-       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
-    usedCodeUnits.insert(declaration.getId());
-  uint64_t evalCodeUnit = 1;
-  while (usedCodeUnits.contains(evalCodeUnit))
-    ++evalCodeUnit;
-  uint64_t evalScope = getCodeUnitScope(design, function).value_or(0);
+  uint64_t evalScope = codeUnits.getScope(function).value_or(0);
+  uint64_t evalCodeUnit = codeUnits.allocate(evalScope);
   sim::SimCodeUnitDeclOp evalDeclaration = sim::SimCodeUnitDeclOp::create(
       builder, function.getLoc(), evalCodeUnit, evalScope,
       sim::EntryKind::Function, builder.getStringAttr(evalName),
@@ -350,6 +366,7 @@ LogicalResult materializeStandaloneEvalBody(sim::SimDesignOp design,
   // rejection and describe a symbol the design does not contain.
   auto abandon = [&] {
     symbols.erase(evalBody);
+    codeUnits.erase(evalDeclaration.getId());
     evalDeclaration.erase();
   };
   evalBody->setAttr("obelisk.eval.borrowed_captures", builder.getUnitAttr());
@@ -1510,7 +1527,7 @@ uint64_t shareStableBranchConditions(sim::SimFuncOp function,
 }
 
 FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
-    sim::SimDesignOp design, SymbolTable &symbols,
+    sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
     sim::ComputeFusionAttr fusion, sim::ComputeGraphAttr graph,
     const analysis::DescriptorProvenanceAnalysis &provenance,
     const CombinationalFusionAnalysis &combinational,
@@ -1633,8 +1650,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
              candidates.front().function.getDomain() ||
          candidate.function.getHomeRegion() !=
              candidates.front().function.getHomeRegion() ||
-         getCodeUnitScope(design, candidate.function) !=
-             getCodeUnitScope(design, candidates.front().function)))
+         codeUnits.getScope(candidate.function) !=
+             codeUnits.getScope(candidates.front().function)))
       return failure();
 
   SmallVector<Value> operands;
@@ -1730,8 +1747,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   auto bail = [&]() -> FailureOr<sim::SimFuncOp> {
     if (memberHelper)
       symbols.erase(memberHelper);
-    if (memberHelperDeclaration)
+    if (memberHelperDeclaration) {
+      codeUnits.erase(memberHelperDeclaration.getId());
       memberHelperDeclaration.erase();
+    }
     symbols.erase(kernel);
     return failure();
   };
@@ -2348,15 +2367,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
           },
           helperCounter);
     }
-    llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
-    for (sim::SimCodeUnitDeclOp declaration :
-         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
-      usedCodeUnits.insert(declaration.getId());
-    uint64_t helperCodeUnit = 1;
-    while (usedCodeUnits.contains(helperCodeUnit))
-      ++helperCodeUnit;
     uint64_t helperScope =
-        getCodeUnitScope(design, candidates.front().function).value_or(0);
+        codeUnits.getScope(candidates.front().function).value_or(0);
+    uint64_t helperCodeUnit = codeUnits.allocate(helperScope);
     memberHelperDeclaration = sim::SimCodeUnitDeclOp::create(
         helperBuilder, kernel.getLoc(), helperCodeUnit, helperScope,
         sim::EntryKind::Function, helperBuilder.getStringAttr(helperName),
@@ -2727,8 +2740,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
 }
 
 FailureOr<sim::SimFuncOp> materializeFusion(
-    sim::SimDesignOp design, SymbolTable &symbols, sim::ComputeFusionAttr fusion,
-    sim::ComputeGraphAttr graph,
+    sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
+    sim::ComputeFusionAttr fusion, sim::ComputeGraphAttr graph,
     const analysis::DescriptorProvenanceAnalysis &provenance,
     const DenseMap<uint32_t, uint32_t> &scheduleOrder,
     const DenseMap<uint32_t, uint32_t> &resumeTargets,
@@ -2804,7 +2817,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
     BodyFusionCandidate candidate;
     candidate.function = function;
-    candidate.instanceScope = getCodeUnitScope(design, function).value_or(0);
+    candidate.instanceScope = codeUnits.getScope(function).value_or(0);
     candidate.spawn = spawns->second.front();
     candidate.wait = wait;
     candidate.body = wait->getSuccessor(0);
@@ -3186,14 +3199,8 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         },
         evalCounter);
     builder.setInsertionPointToEnd(&design.getBody().front());
-    llvm::SmallDenseSet<uint64_t, 32> usedCodeUnits;
-    for (sim::SimCodeUnitDeclOp declaration :
-         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
-      usedCodeUnits.insert(declaration.getId());
-    uint64_t evalCodeUnit = 1;
-    while (usedCodeUnits.contains(evalCodeUnit))
-      ++evalCodeUnit;
     uint64_t evalScope = candidates.front().instanceScope;
+    uint64_t evalCodeUnit = codeUnits.allocate(evalScope);
     sim::SimCodeUnitDeclOp::create(
         builder, fused.getLoc(), evalCodeUnit, evalScope,
         sim::EntryKind::Function, builder.getStringAttr(evalName),
@@ -3368,6 +3375,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   // creations and rejected clones in sync so lookup is independent of the
   // total design size without retaining erased operations.
   SymbolTable symbols(design);
+  // Preserve smallest-free-ID allocation, including rejected helper rollback,
+  // without rebuilding the complete declaration inventory for each clone.
+  CodeUnitIndex codeUnits(design);
   // Fusion changes function bodies but never driver declarations. Reuse the
   // immutable driver-to-net index while deriving fresh per-body value facts.
   analysis::DescriptorProvenanceAnalysis provenance(design);
@@ -3449,8 +3459,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
          design.getBody().front().getOps<sim::SimFuncOp>())
       actors.push_back(function);
     for (sim::SimFuncOp function : actors)
-      if (failed(materializeStandaloneEvalBody(
-              design, symbols, function, controlTargets, foreignControl))) {
+      if (failed(materializeStandaloneEvalBody(design, symbols, codeUnits,
+                                               function, controlTargets,
+                                               foreignControl))) {
         if (prepareDormantTier1)
           finalizeDormantTier1Stores(design);
         signalPassFailure();
@@ -3528,9 +3539,10 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     bool primitiveContinuous =
         isPrimitiveContinuousFusion(symbols, fusion, graph);
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
-        design, symbols, fusion, graph, provenance, scheduleOrder, resumeTargets,
-        entryOrder, spawnsByCallee, evalScheduler, removedPolls, convertedNBAs,
-        sharedConditions, promotedStores, fusionAccessIndex, fusionRejections);
+        design, symbols, codeUnits, fusion, graph, provenance, scheduleOrder,
+        resumeTargets, entryOrder, spawnsByCallee, evalScheduler, removedPolls,
+        convertedNBAs, sharedConditions, promotedStores, fusionAccessIndex,
+        fusionRejections);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
     // the actor scheduler.  A primitive-only cohort is different: replacing
@@ -3539,9 +3551,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     // typed source owners preserve the original fine identities for eval
     // handoff.
     if (failed(fused) && (!evalScheduler || primitiveContinuous)) {
-      fused = materializeStraightLineKernel(design, symbols, fusion, graph,
-                                            provenance, combinational, firstResumeTargets,
-                                            spawnsByCallee);
+      fused = materializeStraightLineKernel(design, symbols, codeUnits, fusion,
+                                            graph, provenance, combinational,
+                                            firstResumeTargets, spawnsByCallee);
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.
@@ -3583,8 +3595,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       // Eligibility is entirely structural. Symbol spelling is an identity
       // and debugging concern; generated bodies must not depend on the
       // frontend's current `unit_N` naming convention.
-      if (failed(materializeStandaloneEvalBody(
-              design, symbols, function, controlTargets, foreignControl))) {
+      if (failed(materializeStandaloneEvalBody(design, symbols, codeUnits,
+                                               function, controlTargets,
+                                               foreignControl))) {
         if (prepareDormantTier1)
           finalizeDormantTier1Stores(design);
         signalPassFailure();

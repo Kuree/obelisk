@@ -80,6 +80,9 @@ private:
     if (!root || !root.getBody().hasOneBlock())
       return;
 
+    // This pass rewrites loads but never creates, erases, or renames symbols.
+    // Cache the design table once instead of rescanning its block per call.
+    SymbolTable symbols(design);
     DenseMap<Operation *, unsigned> callCounts;
     DenseSet<Operation *> initializedBeforeSpawn;
     SmallVector<sim::SimFuncOp> rootCalls;
@@ -87,17 +90,17 @@ private:
          design.getBody().front().getOps<sim::SimFuncOp>()) {
       function.walk([&](sim::SimCallOp call) {
         if (sim::SimFuncOp callee =
-                design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+                symbols.lookup<sim::SimFuncOp>(call.getCallee()))
           ++callCounts[callee.getOperation()];
       });
       function.walk([&](sim::SimSpawnOp spawn) {
         if (sim::SimFuncOp callee =
-                design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee()))
+                symbols.lookup<sim::SimFuncOp>(spawn.getCallee()))
           ++callCounts[callee.getOperation()];
       });
       function.walk([&](sim::SimTaskCallOp call) {
         if (sim::SimFuncOp callee =
-                design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+                symbols.lookup<sim::SimFuncOp>(call.getCallee()))
           ++callCounts[callee.getOperation()];
       });
     }
@@ -109,7 +112,7 @@ private:
         safePrefix = false;
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         sim::SimFuncOp callee =
-            design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+            symbols.lookup<sim::SimFuncOp>(call.getCallee());
         if (!callee)
           return;
         rootCalls.push_back(callee);
@@ -147,7 +150,7 @@ private:
         continue;
       function.walk([&](sim::SimCallOp call) {
         if (sim::SimFuncOp callee =
-                design.lookupSymbol<sim::SimFuncOp>(call.getCallee()))
+                symbols.lookup<sim::SimFuncOp>(call.getCallee()))
           rootCalls.push_back(callee);
       });
     }
@@ -176,13 +179,13 @@ private:
               continue;
             if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
               sim::SimFuncOp callee =
-                  design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+                  symbols.lookup<sim::SimFuncOp>(call.getCallee());
               unknownWrite |= !callee || callee.isExternal();
               continue;
             }
             if (auto call = dyn_cast<sim::SimTaskCallOp>(operation)) {
               sim::SimFuncOp callee =
-                  design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+                  symbols.lookup<sim::SimFuncOp>(call.getCallee());
               unknownWrite |= !callee || callee.isExternal();
               continue;
             }
@@ -236,11 +239,9 @@ private:
             else
               info.invalid = true;
           } else if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-            info.invalid |=
-                !design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+            info.invalid |= !symbols.lookup<sim::SimFuncOp>(call.getCallee());
           } else if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation)) {
-            info.invalid |=
-                !design.lookupSymbol<sim::SimFuncOp>(spawn.getCallee());
+            info.invalid |= !symbols.lookup<sim::SimFuncOp>(spawn.getCallee());
           } else {
             // Delayed writes, force/release, and opaque reference users are
             // not admitted by this exact proof.

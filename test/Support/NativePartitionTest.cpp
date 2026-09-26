@@ -1,8 +1,10 @@
 //===- NativePartitionTest.cpp - Physical definition cost boundaries ------===//
 
 #include "NativeExecutionCounts.h"
+#include "NativeModulePruning.h"
 #include "NativePartitionCost.h"
 
+#include "mlir/Parser/Parser.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/GenericValue.h"
 #include "llvm/ExecutionEngine/Interpreter.h"
@@ -16,6 +18,103 @@ using obelisk::driver::detail::estimateNativeGlobalWeight;
 using namespace llvm;
 
 namespace {
+
+TEST(NativeModulePruning, SymbolDCEKeepsCallbacksExportsAndLifecycleRoots) {
+  mlir::MLIRContext context;
+  context.loadDialect<mlir::LLVM::LLVMDialect>();
+  auto module = mlir::parseSourceString<mlir::ModuleOp>(R"mlir(
+    module attributes {test.inventory = [@dead_a, @dead_b]} {
+      llvm.func @register_callbacks(!llvm.ptr)
+      llvm.func @main() {
+        %table = llvm.mlir.addressof @callback_table : !llvm.ptr
+        llvm.call @register_callbacks(%table) : (!llvm.ptr) -> ()
+        llvm.return
+      }
+      llvm.mlir.global internal constant @callback_table() : !llvm.ptr {
+        %callback = llvm.mlir.addressof @callback : !llvm.ptr
+        llvm.return %callback : !llvm.ptr
+      }
+      llvm.func @callback() { llvm.return }
+      llvm.func @foreign_entry() { llvm.return }
+      llvm.func @dead_a() {
+        llvm.call @dead_b() : () -> ()
+        llvm.return
+      }
+      llvm.func @dead_b() {
+        llvm.call @dead_a() : () -> ()
+        llvm.return
+      }
+      llvm.mlir.global internal @__obelisk_current_context(0 : i64) : i64
+      llvm.mlir.global internal @__obelisk_state_value(0 : i64) : i64
+      llvm.mlir.global internal @__obelisk_state_unknown(0 : i64) : i64
+      llvm.mlir.global internal @__obelisk_execution_descriptor_v1(0 : i64) : i64
+      llvm.mlir.global internal @unused_data(0 : i64) : i64
+    }
+  )mlir",
+                                                        &context);
+  ASSERT_TRUE(module);
+  llvm::StringSet<> exports;
+  exports.insert("foreign_entry");
+  auto removed = obelisk::driver::detail::pruneNativeExecutableSymbols(
+      *module, exports, true);
+  ASSERT_TRUE(mlir::succeeded(removed));
+  EXPECT_EQ(removed->size(), 3u);
+  EXPECT_TRUE(removed->contains("dead_a"));
+  EXPECT_TRUE(removed->contains("dead_b"));
+  EXPECT_TRUE(removed->contains("unused_data"));
+  for (StringRef name :
+       {"main", "foreign_entry", "callback", "callback_table",
+        "__obelisk_current_context", "__obelisk_state_value",
+        "__obelisk_state_unknown", "__obelisk_execution_descriptor_v1"})
+    EXPECT_NE(module->lookupSymbol(name), nullptr) << name.str();
+  auto noLifecycle = obelisk::driver::detail::pruneNativeExecutableSymbols(
+      *module, exports, false);
+  ASSERT_TRUE(mlir::succeeded(noLifecycle));
+  EXPECT_EQ(noLifecycle->size(), 4u);
+}
+
+TEST(NativeModulePruning, PreservesExportsAndCallbacksButDropsDeadCycles) {
+  LLVMContext context;
+  Module module("model", context);
+  IRBuilder<> builder(context);
+  auto makeFunction = [&](StringRef name) {
+    auto *function =
+        Function::Create(FunctionType::get(builder.getVoidTy(), false),
+                         GlobalValue::ExternalLinkage, name, module);
+    builder.SetInsertPoint(BasicBlock::Create(context, "entry", function));
+    builder.CreateRetVoid();
+    return function;
+  };
+  auto *main = makeFunction("main");
+  auto *callback = makeFunction("callback");
+  auto *exported = makeFunction("foreign_entry");
+  auto *deadA = makeFunction("dead_a");
+  auto *deadB = makeFunction("dead_b");
+  builder.SetInsertPoint(deadA->getEntryBlock().getTerminator());
+  builder.CreateCall(deadB);
+  builder.SetInsertPoint(deadB->getEntryBlock().getTerminator());
+  builder.CreateCall(deadA);
+  auto *table = new GlobalVariable(module, callback->getType(), true,
+                                   GlobalValue::InternalLinkage, callback,
+                                   "callback_table");
+  auto registration = module.getOrInsertFunction(
+      "register_callbacks", builder.getVoidTy(), builder.getPtrTy());
+  builder.SetInsertPoint(main->getEntryBlock().getTerminator());
+  builder.CreateCall(registration, {table});
+  llvm::StringSet<> exports;
+  exports.insert("foreign_entry");
+  auto removed =
+      obelisk::driver::detail::pruneNativeExecutableModel(module, exports);
+  EXPECT_TRUE(removed.contains("dead_a"));
+  EXPECT_TRUE(removed.contains("dead_b"));
+  EXPECT_EQ(removed.size(), 2u);
+  EXPECT_NE(module.getFunction("callback"), nullptr);
+  EXPECT_NE(module.getNamedGlobal("callback_table"), nullptr);
+  EXPECT_FALSE(main->hasLocalLinkage());
+  EXPECT_FALSE(exported->hasLocalLinkage());
+  EXPECT_TRUE(callback->hasLocalLinkage());
+  EXPECT_FALSE(verifyModule(module, &errs()));
+}
 
 TEST(NativeExecutionCounts, RequiresMainWithoutMutatingLibraryModule) {
   LLVMContext context;

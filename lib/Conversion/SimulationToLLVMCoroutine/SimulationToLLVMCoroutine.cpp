@@ -3154,6 +3154,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
   if (analyzed.wasInterrupted())
     return failure();
   markTiming("frame analysis and state threading");
+  // AOT planning only reads design symbols. Share their lookup table across
+  // actor/body and transitive-call queries. Do not reuse it after lowering
+  // creates or replaces function symbols.
+  SymbolTableCollection planningSymbols;
   // Fixed root-spawn captures are useful independently of scheduler
   // selection: replacing a proven-unique storage capture with its context
   // lookup exposes a constant stable handle to direct-state lowering.  The
@@ -3250,7 +3254,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     for (auto [slot, attribute] : llvm::enumerate(actors)) {
       auto actor = dyn_cast<FlatSymbolRefAttr>(attribute);
       sim::SimFuncOp function =
-          actor ? metadataDesign.lookupSymbol<sim::SimFuncOp>(actor.getValue())
+          actor ? planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
+                                                                 actor)
                 : nullptr;
       auto planned =
           function
@@ -3368,8 +3373,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
         if (body)
           if (sim::SimFuncOp function =
-                  metadataDesign.lookupSymbol<sim::SimFuncOp>(
-                      body.getValue())) {
+                  planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
+                                                                 body)) {
             admittedBodies.push_back(function);
             auto bytecode = aotEligibility.getBytecodeFragments().find(
                 actor.getOperation());
@@ -3414,8 +3419,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         if (metadataDesign)
           current.walk([&](sim::SimCallOp call) {
             if (sim::SimFuncOp callee =
-                    metadataDesign.lookupSymbol<sim::SimFuncOp>(
-                        call.getCallee()))
+                    planningSymbols.lookupSymbolIn<sim::SimFuncOp>(
+                        metadataDesign, call.getCalleeAttr()))
               pending.push_back(callee);
           });
       }
@@ -3688,7 +3693,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         return;
       auto body = actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
       sim::SimFuncOp evalBody =
-          body ? metadataDesign.lookupSymbol<sim::SimFuncOp>(body.getValue())
+          body ? planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
+                                                                body)
                : nullptr;
       runtimeOrderedEvalOwner |=
           evalBody && evalBody->hasAttr(evalRuntimeNBARequiredAttr);

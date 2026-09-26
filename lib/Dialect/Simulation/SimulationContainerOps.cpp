@@ -896,17 +896,33 @@ bool getManagedHandleSlots(Type type,
         bool overlapping = isa<PackedUnionType>(nestedType);
         if (auto unpacked = dyn_cast<UnpackedUnionType>(nestedType))
           overlapping = !unpacked.getIsTagged();
-        for (unsigned index = 0; index < getAggregateNumElements(nestedType);
-             ++index) {
+        unsigned count = getAggregateNumElements(nestedType);
+        auto collectElement = [&](unsigned index) {
           std::optional<std::pair<uint64_t, uint64_t>> child =
               getAggregateProvenanceSubelement(nestedType, index);
           if (!child ||
               child->first > std::numeric_limits<uint64_t>::max() - baseOffset)
             return false;
-          if (!collect(getAggregateElementType(nestedType, index),
-                       baseOffset + child->first, conditional || overlapping))
+          return collect(getAggregateElementType(nestedType, index),
+                         baseOffset + child->first, conditional || overlapping);
+        };
+        unsigned first = 0;
+        if (count && isa<PackedArrayType, UnpackedArrayType>(nestedType)) {
+          size_t before = slots.size();
+          if (!collectElement(0))
             return false;
+          // Every array element has the same type. If the first has no
+          // managed roots, neither do the remaining elements: do not walk
+          // millions of RAM words to rediscover an empty trace layout.
+          // Check the other endpoint as well so the monotonic element offsets
+          // (including nested offsets) retain their overflow validation.
+          if (slots.size() == before)
+            return count == 1 || collectElement(count - 1);
+          first = 1;
         }
+        for (unsigned index = first; index < count; ++index)
+          if (!collectElement(index))
+            return false;
         return true;
       };
   size_t originalSize = slots.size();

@@ -12,6 +12,7 @@
 #include "BackendUtils.h"
 #include "NativeBackend.h"
 #include "NativeExecutionCounts.h"
+#include "NativeModulePruning.h"
 #include "NativePartitionCost.h"
 #include "WasmBackend.h"
 
@@ -1107,9 +1108,42 @@ LogicalResult emitTargetOutput(ModuleOp module,
       return failure();
     nativePartitionPlan = std::move(*plan);
   }
+  auto prunePartitionInventory = [&](const llvm::StringSet<> &removed) {
+    if (nativePartitionPlan)
+      for (NativePartition &partition : nativePartitionPlan->partitions) {
+        llvm::erase_if(partition.members, [&](const std::string &name) {
+          return removed.contains(name);
+        });
+        llvm::erase_if(partition.exports, [&](const std::string &name) {
+          return removed.contains(name);
+        });
+      }
+  };
 
   registerLLVMDialectTranslation(*module.getContext());
   registerBuiltinDialectTranslation(*module.getContext());
+  llvm::StringSet<> nativeExports;
+  module.walk([&](LLVM::LLVMFuncOp function) {
+    if (function->hasAttr("obelisk.dpi.export_id"))
+      nativeExports.insert(function.getSymName());
+  });
+  bool pruneModel = options.target == TargetKind::Native &&
+                    options.kind == NativeOutputKind::Executable &&
+                    options.optLevel > 0;
+  if (pruneModel) {
+    // The manifest is an ownership inventory, not a set of live entry points.
+    // It has been read above; retain only surviving members in the C++ plan.
+    module->removeAttr(obelisk::sim::metadata::nativePhysicalPartitionManifest);
+    auto removed = detail::pruneNativeExecutableSymbols(
+        module, nativeExports, options.vpi != "off" || requiresStateSync);
+    if (failed(removed))
+      return failure();
+    prunePartitionInventory(*removed);
+    if (options.timing)
+      errs() << "obelisk native pruning: MLIR symbols removed="
+             << removed->size() << '\n';
+    markBackendTiming("MLIR symbol dead-code elimination");
+  }
   llvm::LLVMContext llvmContext;
   std::unique_ptr<llvm::Module> llvmModule =
       translateModuleToLLVMIR(module, llvmContext, "obelisk");
@@ -1136,6 +1170,19 @@ LogicalResult emitTargetOutput(ModuleOp module,
       !detail::addNativeExecutionCounts(*llvmModule)) {
     errs() << "obelisk: error: execution counts require a generated main\n";
     return failure();
+  }
+  if (pruneModel) {
+    // Partitioning promotes implementation-local definitions to external
+    // linkage for cross-object references. Eliminate unreachable model code
+    // first, while the complete reference graph is available, rather than
+    // optimizing and code-generating bodies the final linker will discard.
+    llvm::StringSet<> removed =
+        detail::pruneNativeExecutableModel(*llvmModule, nativeExports);
+    prunePartitionInventory(removed);
+    if (options.timing)
+      errs() << "obelisk native pruning: LLVM symbols removed=" << removed.size()
+             << '\n';
+    markBackendTiming("generated model dead-code elimination");
   }
   bool splitModule = nativePartitionPlan &&
                      shouldSplitNativeModule(*llvmModule, *nativePartitionPlan);
