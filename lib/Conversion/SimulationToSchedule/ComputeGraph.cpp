@@ -1079,13 +1079,34 @@ bool hasProceduralControlCycle(
 SmallVector<SmallVector<uint32_t>>
 computeSCCSchedule(ArrayRef<uint32_t> nodes,
                    ArrayRef<schedule::ComputeEdgeAttr> edges,
-                   llvm::function_ref<unsigned(uint32_t)> priority = {}) {
+                   llvm::function_ref<unsigned(uint32_t)> priority = {},
+                   ArrayRef<analysis::StartupPhase> startupPhases = {}) {
   DenseMap<uint32_t, SmallVector<uint32_t>> adjacency;
   DenseSet<uint32_t> nodeSet(nodes.begin(), nodes.end());
   for (schedule::ComputeEdgeAttr edge : edges)
     if (isSchedulingEdge(edge.getKind()) && nodeSet.count(edge.getSource()) &&
         nodeSet.count(edge.getTarget()))
       adjacency[edge.getSource()].push_back(edge.getTarget());
+  // Virtual nodes exist only during scheduling. Drain a barrier as soon as
+  // it becomes ready, so it cannot perturb the real components' tie-breaks.
+  SmallVector<uint32_t> allNodes(nodes.begin(), nodes.end());
+  uint32_t nextVirtual = nodes.empty() ? 0 : *llvm::max_element(nodes) + 1;
+  for (const auto &phase : startupPhases) {
+    SmallVector<uint32_t> sources, targets;
+    for (uint32_t id : phase.startups)
+      if (nodeSet.contains(id))
+        sources.push_back(id);
+    for (uint32_t id : phase.initials)
+      if (nodeSet.contains(id))
+        targets.push_back(id);
+    if (sources.empty() || targets.empty())
+      continue;
+    uint32_t barrier = nextVirtual++;
+    allNodes.push_back(barrier);
+    for (uint32_t source : sources)
+      adjacency[source].push_back(barrier);
+    adjacency[barrier] = std::move(targets);
+  }
   for (auto &entry : adjacency) {
     llvm::sort(entry.second);
     entry.second.erase(std::unique(entry.second.begin(), entry.second.end()),
@@ -1093,7 +1114,7 @@ computeSCCSchedule(ArrayRef<uint32_t> nodes,
   }
 
   SmallVector<SmallVector<uint32_t>> components =
-      computeStronglyConnectedComponents<uint32_t>(nodes, adjacency);
+      computeStronglyConnectedComponents<uint32_t>(allNodes, adjacency);
 
   DenseMap<uint32_t, unsigned> componentOf;
   for (unsigned component = 0; component != components.size(); ++component)
@@ -1104,19 +1125,19 @@ computeSCCSchedule(ArrayRef<uint32_t> nodes,
   // re-ordered by the priority queue below.
   SmallVector<DenseSet<unsigned>> successors(components.size());
   SmallVector<unsigned> indegree(components.size());
-  for (schedule::ComputeEdgeAttr edge : edges) {
-    if (!isSchedulingEdge(edge.getKind()) ||
-        !componentOf.count(edge.getSource()) ||
-        !componentOf.count(edge.getTarget()))
-      continue;
-    unsigned source = componentOf[edge.getSource()];
-    unsigned target = componentOf[edge.getTarget()];
-    if (source != target && successors[source].insert(target).second)
-      ++indegree[target];
-  }
+  for (const auto &[node, targets] : adjacency)
+    for (uint32_t targetNode : targets) {
+      unsigned source = componentOf[node];
+      unsigned target = componentOf[targetNode];
+      if (source != target && successors[source].insert(target).second)
+        ++indegree[target];
+    }
+  for (auto &component : components)
+    llvm::erase_if(component,
+                   [&](uint32_t id) { return !nodeSet.contains(id); });
   // Break ties on the caller's semantic priority and then the lowest member so
   // repeated builds are identical.
-  using Ready = std::tuple<unsigned, uint32_t, unsigned>;
+  using Ready = std::tuple<bool, unsigned, uint32_t, unsigned>;
   std::priority_queue<Ready, std::vector<Ready>, std::greater<Ready>> ready;
   auto enqueue = [&](unsigned component) {
     unsigned componentPriority = 0;
@@ -1125,16 +1146,19 @@ computeSCCSchedule(ArrayRef<uint32_t> nodes,
       for (uint32_t member : components[component])
         componentPriority = std::min(componentPriority, priority(member));
     }
-    ready.emplace(componentPriority, components[component].front(), component);
+    bool real = !components[component].empty();
+    ready.emplace(real, componentPriority,
+                  real ? components[component].front() : 0, component);
   };
   for (unsigned component = 0; component != components.size(); ++component)
     if (indegree[component] == 0)
       enqueue(component);
   SmallVector<SmallVector<uint32_t>> schedule;
   while (!ready.empty()) {
-    unsigned component = std::get<2>(ready.top());
+    unsigned component = std::get<3>(ready.top());
     ready.pop();
-    schedule.push_back(components[component]);
+    if (!components[component].empty())
+      schedule.push_back(components[component]);
     for (unsigned successor : successors[component])
       if (--indegree[successor] == 0)
         enqueue(successor);
@@ -1218,6 +1242,7 @@ private:
   SmallVector<Fragment> fragments;
   DenseMap<Block *, uint32_t> fragmentForBlock;
   SmallVector<schedule::ComputeEdgeAttr> edges;
+  SmallVector<analysis::StartupPhase> startupPhases;
   EffectIndex watchedEffects;
   /// Process-order edges that close a loop already proven to terminate. They
   /// remain ordinary edges in the graph; only the control-loop classification
@@ -1556,40 +1581,14 @@ void ComputeGraphBuilder::buildControlEdges() {
       addEdge(fragment.id, fragmentForBlock.lookup(&target.getBody().front()),
               schedule::ComputeEdgeKind::Spawn);
     }
-
-    // Root spawn operations encode the deterministic time-zero startup order
-    // frozen by the prepare pass. Explicit/repeating infrastructure reaches
-    // its initial suspension (or publishes a one-shot port value) before user
-    // initial procedures. Runtime startup priority separately keeps both
-    // groups ahead of deferred always_comb/always_latch activation; expressing
-    // that global phase boundary as graph edges would introduce false cycles
-    // between otherwise independent top-level processes. A startup process the
-    // prepare pass marked as starting without waiting is spawned among the
-    // initial procedures instead of ahead of them, so it takes no such edge.
-    if (fragment.function.getEntryKind() == sim::EntryKind::RootInitializer) {
-      SmallVector<uint32_t> startupEntries;
-      SmallVector<uint32_t> initialEntries;
-      for (sim::SimSpawnOp spawn : fragment.block->getOps<sim::SimSpawnOp>()) {
-        auto callee = analysis.functionIndex.find(spawn.getCallee());
-        if (callee == analysis.functionIndex.end())
-          continue;
-        sim::SimFuncOp target = analysis.functions[callee->second].function;
-        if (target.getBody().empty())
-          continue;
-        uint32_t entry = fragmentForBlock.lookup(&target.getBody().front());
-        if (sim::isStartupEntryKind(target.getEntryKind()) &&
-            !::obelisk::schedule::has<sim::startupWithoutSuspensionAttrName>(
-                target)) {
-          startupEntries.push_back(entry);
-        } else if (target.getEntryKind() == sim::EntryKind::Initial) {
-          initialEntries.push_back(entry);
-        }
-      }
-      for (uint32_t startup : startupEntries)
-        for (uint32_t initial : initialEntries)
-          addEdge(startup, initial, schedule::ComputeEdgeKind::ProcessOrder);
-    }
   }
+  startupPhases = analysis::collectStartupPhases(
+      design, [&](sim::SimFuncOp function) -> std::optional<uint32_t> {
+        auto found = fragmentForBlock.find(&function.getBody().front());
+        if (found == fragmentForBlock.end())
+          return std::nullopt;
+        return found->second;
+      });
 }
 
 void ComputeGraphBuilder::buildDataEdges() {
@@ -1648,8 +1647,8 @@ void ComputeGraphBuilder::buildDataEdges() {
   for (Fragment &fragment : fragments)
     fragmentIds.push_back(fragment.id);
   auto settlingFirst = [&](uint32_t id) { return settles(id) ? 0u : 1u; };
-  SmallVector<SmallVector<uint32_t>> controlGroups =
-      computeSCCSchedule(fragmentIds, processEdges, settlingFirst);
+  SmallVector<SmallVector<uint32_t>> controlGroups = computeSCCSchedule(
+      fragmentIds, processEdges, settlingFirst, startupPhases);
   SmallVector<unsigned> controlGroupForFragment(fragments.size());
   for (auto [group, members] : llvm::enumerate(controlGroups))
     for (uint32_t member : members)
@@ -1670,8 +1669,8 @@ void ComputeGraphBuilder::buildDataEdges() {
            fragments[edge.getTarget()].function.getHomeRegion();
   });
   SmallVector<unsigned> activationRank(fragments.size(), 0);
-  for (auto [rank, members] : llvm::enumerate(
-           computeSCCSchedule(fragmentIds, activationEdges, settlingFirst)))
+  for (auto [rank, members] : llvm::enumerate(computeSCCSchedule(
+           fragmentIds, activationEdges, settlingFirst, startupPhases)))
     for (uint32_t member : members)
       activationRank[member] = static_cast<unsigned>(rank);
   SmallVector<unsigned> groupRank(controlGroups.size(),
@@ -2038,14 +2037,14 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   auto activePriority = [&](uint32_t id) {
     return isSettlingEntryKind(fragments[id].function.getEntryKind()) ? 0u : 1u;
   };
-  SmallVector<SmallVector<uint32_t>> activeGroups =
-      computeSCCSchedule(activeIds, schedulingEdges, activePriority);
+  SmallVector<SmallVector<uint32_t>> activeGroups = computeSCCSchedule(
+      activeIds, schedulingEdges, activePriority, startupPhases);
   SmallVector<SmallVector<uint32_t>> observedGroups =
-      computeSCCSchedule(observedIds, schedulingEdges);
+      computeSCCSchedule(observedIds, schedulingEdges, {}, startupPhases);
   SmallVector<SmallVector<uint32_t>> reactiveGroups =
-      computeSCCSchedule(reactiveIds, schedulingEdges);
+      computeSCCSchedule(reactiveIds, schedulingEdges, {}, startupPhases);
   SmallVector<SmallVector<uint32_t>> ordinaryPostponedGroups =
-      computeSCCSchedule(postponedIds, schedulingEdges);
+      computeSCCSchedule(postponedIds, schedulingEdges, {}, startupPhases);
   llvm::append_range(ordinaryPostponedGroups, postponedGroups);
   std::pair<schedule::ComputeRegionKind, ArrayRef<SmallVector<uint32_t>>>
       plans[] = {
@@ -2074,6 +2073,9 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
     return failure();
   orderStartupSpawns();
   buildControlEdges();
+  if (uint64_t(fragments.size()) + startupPhases.size() > maxNodeId + 1)
+    return design.emitOpError(
+        "startup scheduling exceeds the 32-bit node range");
   buildDataEdges();
   if (failed(buildSites(result)))
     return failure();

@@ -189,6 +189,10 @@ def SimComputeRegionAttr : ScheduleAttr<"ComputeRegion", "region"> {
 }
 
 def SimComputeGraphAttr : ScheduleAttr<"ComputeGraph", "graph"> {
+  // Root-initializer spawn blocks implicitly order startup entries before
+  // initial entries in the same event region (excluding starts_without_waiting).
+  // Schedule construction and rank refinement derive these phase constraints
+  // from the executable IR; `edges` does not store their Cartesian product.
   let parameters = (ins "uint32_t":$version,
       EnumParameter<SimComputeVPIMode>:$vpi, "uint32_t":$workers,
       "::mlir::ArrayAttr":$nodes, "::mlir::ArrayAttr":$edges,

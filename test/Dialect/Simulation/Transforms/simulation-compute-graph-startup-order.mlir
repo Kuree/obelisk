@@ -35,9 +35,13 @@ module {
     // CHECK-SAME: #schedule.fragment<id = [[PORT_INITIALIZE:[0-9]+]], function = @z_port_initialize
     // CHECK-SAME: #schedule.fragment<id = [[PORT_INPUT:[0-9]+]], function = @z_port_input
     // CHECK-SAME: kind = spawn
-    // CHECK-SAME: #schedule.edge<source = [[ALWAYS]], target = [[INITIAL]], kind = process_order>
-    // CHECK-SAME: #schedule.edge<source = [[PORT_INITIALIZE]], target = [[INITIAL]], kind = process_order>
-    // CHECK-SAME: #schedule.edge<source = [[PORT_INPUT]], target = [[INITIAL]], kind = process_order>
+    // CHECK-NOT: kind = process_order
+    // CHECK-SAME: regions = [#schedule.region<kind = active, groups = [
+    // CHECK-SAME: #schedule.group<fragments = [[[PORT_INPUT]]], schedule = acyclic
+    // CHECK-SAME: #schedule.group<fragments = [[[ROOT]]], schedule = acyclic
+    // CHECK-SAME: #schedule.group<fragments = [[[ALWAYS]]], schedule = acyclic
+    // CHECK-SAME: #schedule.group<fragments = [[[PORT_INITIALIZE]]], schedule = acyclic
+    // CHECK-SAME: #schedule.group<fragments = [[[INITIAL]]], schedule = acyclic
     simulation.func @root(
         %ctx: !simulation.context
             {simulation.capture_kind = 0 : i32})

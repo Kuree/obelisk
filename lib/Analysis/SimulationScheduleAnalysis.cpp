@@ -3,7 +3,6 @@
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Runtime/ActivationOrder.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -11,6 +10,7 @@
 #include "llvm/ADT/StringMap.h"
 
 #include <limits>
+#include <map>
 
 using namespace mlir;
 
@@ -41,6 +41,47 @@ bool isSettlingEntryKind(sim::EntryKind kind) {
          kind == sim::EntryKind::Continuous ||
          kind == sim::EntryKind::PortInput ||
          kind == sim::EntryKind::PortOutput;
+}
+
+SmallVector<StartupPhase> collectStartupPhases(
+    sim::SimDesignOp design,
+    llvm::function_ref<std::optional<uint32_t>(sim::SimFuncOp)> entryID) {
+  llvm::StringMap<sim::SimFuncOp> functions;
+  for (auto function : design.getBody().getOps<sim::SimFuncOp>())
+    functions[function.getSymName()] = function;
+  SmallVector<StartupPhase> phases;
+  for (auto root : design.getBody().getOps<sim::SimFuncOp>()) {
+    if (root.getEntryKind() != sim::EntryKind::RootInitializer)
+      continue;
+    for (Block &block : root.getBody()) {
+      // Cross-region dependencies are enforced by the event loop. Separate
+      // barriers also keep distinct root blocks from acquiring new ordering.
+      std::map<sim::EventRegion, StartupPhase> byRegion;
+      for (auto spawn : block.getOps<sim::SimSpawnOp>()) {
+        auto target = functions.lookup(spawn.getCallee());
+        if (!target || target.getBody().empty())
+          continue;
+        auto id = entryID(target);
+        if (!id)
+          continue;
+        if (sim::isStartupEntryKind(target.getEntryKind()) &&
+            !schedule::has<sim::startupWithoutSuspensionAttrName>(target))
+          byRegion[target.getHomeRegion()].startups.push_back(*id);
+        else if (target.getEntryKind() == sim::EntryKind::Initial)
+          byRegion[target.getHomeRegion()].initials.push_back(*id);
+      }
+      for (auto &[region, phase] : byRegion) {
+        if (phase.startups.empty() || phase.initials.empty())
+          continue;
+        for (auto *ids : {&phase.startups, &phase.initials}) {
+          llvm::sort(*ids);
+          ids->erase(std::unique(ids->begin(), ids->end()), ids->end());
+        }
+        phases.push_back(std::move(phase));
+      }
+    }
+  }
+  return phases;
 }
 
 SmallVector<schedule::ComputeEdgeAttr> projectActivationSchedulingEdges(
@@ -157,12 +198,82 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
           groupOf[edge.getSource()] != UINT32_MAX &&
           groupOf[edge.getSource()] == groupOf[edge.getTarget()])
         edges.emplace_back(edge.getSource(), edge.getTarget());
-    runtime::ActivationOrder order;
-    if (!runtime::ActivationOrder::build(nodes.size(), std::move(edges), order))
-      return design.emitOpError("invalid activation edge in schedule ranks");
+    llvm::StringMap<uint32_t> entries;
+    for (Attribute raw : nodes)
+      if (auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
+          fragment && fragment.getBlock() == 0)
+        entries[fragment.getFunction().getValue()] = fragment.getId();
+    auto phases = collectStartupPhases(
+        design, [&](sim::SimFuncOp function) -> std::optional<uint32_t> {
+          auto found = entries.find(function.getSymName());
+          return found == entries.end() ? std::nullopt
+                                        : std::optional(found->second);
+        });
+    SmallVector<StartupPhase> groupedPhases;
+    for (const auto &phase : phases) {
+      std::map<uint32_t, StartupPhase> byGroup;
+      for (uint32_t id : phase.startups)
+        if (groupOf[id] != UINT32_MAX)
+          byGroup[groupOf[id]].startups.push_back(id);
+      for (uint32_t id : phase.initials)
+        if (groupOf[id] != UINT32_MAX)
+          byGroup[groupOf[id]].initials.push_back(id);
+      for (const auto &[group, members] : byGroup) {
+        if (members.startups.empty() || members.initials.empty())
+          continue;
+        groupedPhases.push_back(members);
+      }
+    }
+    // Each refined group is already an activation SCC. ActivationOrder's
+    // within-SCC tie-break is reverse DFS finish order with sorted successors.
+    // Traverse the SAME logical successors here without expanding the phase
+    // product. A shared cursor skips targets already discovered by any source;
+    // skipped edges cannot affect DFS finish order. A virtual barrier's DFS
+    // order would instead move some initial entries ahead of startup entries.
+    SmallVector<SmallVector<uint32_t>> successors(nodes.size());
+    for (auto [source, target] : edges)
+      successors[source].push_back(target);
+    for (auto &targets : successors) {
+      llvm::sort(targets);
+      targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+    }
+    SmallVector<SmallVector<unsigned>> phasesForSource(nodes.size());
+    for (auto [index, phase] : llvm::enumerate(groupedPhases))
+      for (uint32_t source : phase.startups)
+        phasesForSource[source].push_back(index);
+    SmallVector<size_t> phaseCursor(groupedPhases.size(), 0);
+    SmallVector<bool> seen(nodes.size(), false);
+    SmallVector<std::pair<uint32_t, size_t>> walk;
     position.resize(nodes.size());
-    for (auto [rank, node] : llvm::enumerate(order.nodes))
-      position[node] = rank;
+    uint32_t remaining = nodes.size();
+    for (uint32_t root = 0; root < nodes.size(); ++root) {
+      if (seen[root])
+        continue;
+      seen[root] = true;
+      walk.emplace_back(root, 0);
+      while (!walk.empty()) {
+        auto &[node, cursor] = walk.back();
+        auto &targets = successors[node];
+        while (cursor < targets.size() && seen[targets[cursor]])
+          ++cursor;
+        uint32_t next = cursor < targets.size() ? targets[cursor] : UINT32_MAX;
+        for (unsigned phase : phasesForSource[node]) {
+          auto &initials = groupedPhases[phase].initials;
+          auto &index = phaseCursor[phase];
+          while (index < initials.size() && seen[initials[index]])
+            ++index;
+          if (index < initials.size())
+            next = std::min(next, initials[index]);
+        }
+        if (next == UINT32_MAX) {
+          position[node] = --remaining;
+          walk.pop_back();
+        } else {
+          seen[next] = true;
+          walk.emplace_back(next, 0);
+        }
+      }
+    }
   }
   uint32_t rank = 0;
   for (Attribute regionAttribute : graph.getRegions()) {

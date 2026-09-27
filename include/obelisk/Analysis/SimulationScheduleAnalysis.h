@@ -28,6 +28,19 @@ mlir::Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal);
 
 bool isSettlingEntryKind(sim::EntryKind kind);
 
+/// The implicit time-zero ordering for spawns in one root-initializer block
+/// and event region. Keeping the two sets avoids storing their Cartesian
+/// product as process_order edges. These are scheduling constraints, not CFG
+/// successors: they must not participate in continuation closures.
+struct StartupPhase {
+  llvm::SmallVector<uint32_t> startups;
+  llvm::SmallVector<uint32_t> initials;
+};
+
+llvm::SmallVector<StartupPhase> collectStartupPhases(
+    sim::SimDesignOp design,
+    llvm::function_ref<std::optional<uint32_t>(sim::SimFuncOp)> entryID);
+
 /// Include the work resumed by a settling publication in activation ordering.
 /// Resume/spawn edges themselves remain boundaries. The returned edges may
 /// contain duplicates; consumers normalize their own adjacency representation.
