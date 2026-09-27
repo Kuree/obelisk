@@ -4,6 +4,7 @@
 #ifndef OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 #define OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 
+#include "CanonicalPlane.h"
 #include "DesignBytecodeImage.h"
 #include "ExceptionSupport.h"
 #include "StrengthFormat.h"
@@ -1285,6 +1286,7 @@ struct SignalSubscriptionDiagnostics {
   uint64_t schedulerIterations = 0;
   uint64_t fallbackRescans = 0;
   uint64_t aotNodeExecutions = 0;
+  uint64_t evalDispatches = 0;
   uint64_t aotActorExecutions[64] = {};
   uint64_t aotRegionPasses = 0;
   uint64_t aotFanoutEntries = 0;
@@ -1985,10 +1987,12 @@ struct obelisk_rt_context {
   std::vector<uint64_t> nativeScheduleActorTokens;
   std::vector<size_t> nativeScheduleActorIndices;
   std::vector<obelisk_rt_native_schedule_node> nativeScheduleNodes;
+  const obelisk_rt_native_schedule_node *nativeScheduleNodeSource = nullptr;
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>>
       nativeScheduleActorNodes;
   obelisk::runtime::CursorReadySet nativeScheduleReadyNodes;
   std::vector<uint32_t> nativeScheduleFanoutNodes;
+  std::vector<uint64_t> nativeScheduleNodeIngress;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleFanoutRanges;
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
   bool nativeScheduleClockIngressPending = false;
@@ -2212,6 +2216,9 @@ struct obelisk_rt_context {
   bool preponedObserverPresent = false;
   uint64_t schedulerSlotProgress = 0;
   bool schedulerRunningFinals = false;
+  // IEEE 1800-2023 4.5: finish the Reactive through Re-NBA iteration
+  // before returning to Active. Retain this cursor across scheduler reentry.
+  bool schedulerDrainingReactive = false;
   bool schedulerFinishRequested = false;
   // An explicit termination request made while a final procedure is active
   // suppresses every remaining final procedure (IEEE 1800-2017 9.2.3).
@@ -2235,8 +2242,8 @@ struct obelisk_rt_context {
   // Live simulation state is owned by the context.  The planes use the same
   // little-endian limb representation as bytecode values and are never stored
   // in the immutable reflection image.
-  std::vector<uint64_t> stateValue;
-  std::vector<uint64_t> stateUnknown;
+  CanonicalPlane stateValue;
+  CanonicalPlane stateUnknown;
   // Canonical state captured once at entry to each time slot, before any
   // Active-region work. Sampled-value reads never consult the live planes.
   std::vector<uint64_t> preponedValue;

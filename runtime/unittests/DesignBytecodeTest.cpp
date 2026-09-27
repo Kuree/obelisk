@@ -13190,47 +13190,52 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(DesignBytecode, CachedDirectSignalCohortYieldsToSameSlotNBA) {
-  Fixture fixture;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_REACTIVE);
+TEST(DesignBytecode, CachedDirectSignalCohortRespectsReactiveIteration) {
+  for (bool enteredReactive : {false, true}) {
+    SCOPED_TRACE(enteredReactive);
+    Fixture fixture;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_REACTIVE);
 
-  bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
-                                           UINT64_MAX, &progress),
-            OBELISK_RT_OK);
-  ASSERT_TRUE(progress);
-  ASSERT_NE(context->designReadyCohort, nullptr);
-  ASSERT_TRUE(context->designReadyCohort->valid);
-  ASSERT_EQ(context->scheduledDesignTasks.size(), 16u);
+    bool progress = false;
+    ASSERT_EQ(obelisk_rt_run_one_design_task(
+                  context, enteredReactive ? UINT32_MAX : OBELISK_RT_REGION_REACTIVE,
+                  0, 0, &progress),
+              OBELISK_RT_OK);
+    ASSERT_EQ(progress, enteredReactive);
+    ASSERT_NE(context->designReadyCohort, nullptr);
+    ASSERT_TRUE(context->designReadyCohort->valid);
+    ASSERT_EQ(context->scheduledDesignTasks.size(), enteredReactive ? 16u : 17u);
 
-  ScheduledNBA nba;
-  nba.sequence = context->nextSchedulerSequence++;
-  nba.dueTime = context->schedulerTime;
-  nba.execRegion = OBELISK_RT_REGION_NBA;
-  nba.valuePlane = reinterpret_cast<uint8_t *>(context->stateValue.data());
-  nba.unknownPlane = reinterpret_cast<uint8_t *>(context->stateUnknown.data());
-  nba.planeBitCount = fixture.execution.state_bit_count;
-  nba.bitOffset =
-      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
-  nba.bitWidth = 1;
-  nba.inlinePacked = true;
-  nba.inlineValue = 1;
-  context->scheduledNBAs.push_back(std::move(nba));
-  context->nativeScheduleSingleStep = true;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
-  // The NBA barrier precedes every cached Reactive task, so single-step must
-  // commit it without consuming a cohort member.
-  EXPECT_EQ(context->stateValue.front() & 1, 1u);
-  EXPECT_EQ(context->scheduledDesignTasks.size(), 16u);
-  EXPECT_TRUE(context->designReadyCohort->valid);
-  context->nativeScheduleSingleStep = false;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
-  EXPECT_TRUE(context->scheduledDesignTasks.empty());
-  obelisk_rt_v1_context_destroy(context);
+    ScheduledNBA nba;
+    nba.sequence = context->nextSchedulerSequence++;
+    nba.dueTime = context->schedulerTime;
+    nba.execRegion = OBELISK_RT_REGION_NBA;
+    nba.valuePlane = reinterpret_cast<uint8_t *>(context->stateValue.data());
+    nba.unknownPlane = reinterpret_cast<uint8_t *>(context->stateUnknown.data());
+    nba.planeBitCount = fixture.execution.state_bit_count;
+    nba.bitOffset =
+        obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+    nba.bitWidth = 1;
+    nba.inlinePacked = true;
+    nba.inlineValue = 1;
+    context->scheduledNBAs.push_back(std::move(nba));
+    context->nativeScheduleSingleStep = true;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    // IEEE 1800-2023 4.5: NBA precedes entry into Reactive, but once that
+    // iteration starts it must wait for the remaining Reactive tasks to drain.
+    EXPECT_EQ(context->stateValue.front() & 1, enteredReactive ? 0u : 1u);
+    EXPECT_EQ(context->scheduledDesignTasks.size(), enteredReactive ? 15u : 17u);
+    EXPECT_EQ(context->designReadyCohort->valid, !enteredReactive);
+    context->nativeScheduleSingleStep = false;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    EXPECT_TRUE(context->scheduledDesignTasks.empty());
+    EXPECT_EQ(context->stateValue.front() & 1, 1u);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(DesignBytecode, CachedDirectSignalCohortInvalidatesForPriorityWake) {

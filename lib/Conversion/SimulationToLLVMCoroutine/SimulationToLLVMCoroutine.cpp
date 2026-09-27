@@ -2341,6 +2341,12 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       currentActors.push_back(actor);
   });
   for (sim::SimFuncOp actor : currentActors) {
+    // IEEE 1800-2023 4.5: this evaluator drains Active work. Reactive
+    // activations must retain their runtime identity and region arbitration
+    // through the entire Reactive/Re-Inactive/Re-NBA iteration, including
+    // program completion (24.7), rather than joining this Active closure.
+    if (actor.getHomeRegion() == sim::EventRegion::Reactive)
+      continue;
     std::optional<uint32_t> actorSlot = actorSlotFor(actor);
     IntegerAttr codeUnit = actor.getCodeUnitIdAttr();
     auto analyzed = codeUnit ? analyzedActors.find(codeUnit.getUInt())
@@ -2363,8 +2369,6 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           design.lookupSymbol<sim::SimFuncOp>(evalBodyRef.getValue());
       if (!evalBody)
         return actor.emitOpError("references a missing eval body");
-      if (evalBody->hasAttr(evalRuntimeNBARequiredAttr))
-        continue;
       auto continuation =
           evalBody->getAttrOfType<IntegerAttr>("obelisk.eval.continuation");
       uint32_t continuationID = 0;
@@ -2384,6 +2388,11 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           codeUnit && runtimeCheckpointContinuations.contains(
                           {codeUnit.getUInt(), continuationID});
       runtimeCheckpoint |= evalBody->hasAttr("obelisk.eval.checkpoint_only");
+      // IEEE 1800-2023 4.6(b), 10.4.2 require observable NBA updates to
+      // retain their enqueue order. Keep this activation on the runtime
+      // queue through a checkpoint; unrelated generated executors can still
+      // own the rest of the eval plan.
+      runtimeCheckpoint |= evalBody->hasAttr(evalRuntimeNBARequiredAttr);
       if (runtimeCheckpoint ||
           (bytecode != bytecodeContinuations.end() &&
            llvm::is_contained(bytecode->second, continuationID))) {
@@ -3339,22 +3348,195 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       });
     });
   }
+  if (staticFanoutMetadata) {
+    FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
+        module, *stateLayout, aotEligibility.getActorSlots(),
+        aotEligibility.getBytecodeFragments(),
+        aotEligibility.getRuntimeOwnedFanoutActors(), true, staticEvalIsland);
+    if (failed(fanout))
+      return failure();
+    staticFanoutPlan = std::move(*fanout);
+    staticFanoutMetadata &= staticFanoutPlan.exact;
+    staticFanout &= staticFanoutPlan.exact;
+    if (staticFanoutPlan.exact) {
+      stateLayout->transitionHandlesExact = true;
+      for (uint32_t staticState : staticFanoutPlan.runtimeTransitionStates)
+        stateLayout->transitionHandles.insert(staticState);
+      for (const obelisk_rt_static_fanout_entry &entry :
+           staticFanoutPlan.entries)
+        stateLayout->transitionHandles.insert(entry.static_state);
+      // Toggle coverage observes every committed transition even when the
+      // exact language-level fanout is empty. Keep a notification at covered
+      // roots; the runtime's static fast path records it before its fanout-only
+      // early return.
+      module.walk([&](Operation *operation) {
+        if (!operation->hasAttr(sim::metadata::coverageToggleObservable))
+          return;
+        const uint64_t *handle = nullptr;
+        if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+          auto found = stateLayout->storage.find(storage.getId());
+          if (found != stateLayout->storage.end())
+            handle = &found->second;
+        } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+          auto found = stateLayout->nets.find(net.getId());
+          if (found != stateLayout->nets.end())
+            handle = &found->second;
+        }
+        if (!handle)
+          return;
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (obelisk_rt_stable_handle_decode(*handle, &decoded) &&
+            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
+          stateLayout->transitionHandles.insert(decoded.id);
+      });
+    }
+  }
   // State, NBA, and fanout are independent capabilities. Direct access is
   // selected per operation by resolveDirectStaticStateRange; a wide or
   // otherwise generic root does not prevent an independent narrow root from
   // using generated planes.
+  if (nativeScheduler == sim::NativeSchedulerMode::Auto && metadataDesign) {
+    // An unpromoted automatic reference needs a runtime activation frame
+    // (IEEE 1800-2023 6.21). Keep its complete owner at a checkpoint before
+    // certifying NBA ownership; a helper's local packed temporary must not
+    // introduce allocation/load calls into the runtime-free eval closure.
+    analysis::DescriptorProvenanceAnalysis provenanceAnalysis(metadataDesign);
+    llvm::DenseSet<uint64_t> runtimeObservedNets;
+    for (const auto &net : stateLayout->netLayouts)
+      if (staticFanoutPlan.runtimeTransitionStates.contains(net.handleID))
+        runtimeObservedNets.insert(net.id);
+    for (const auto &[canonical, component] :
+         stateLayout->connectivityComponents) {
+      (void)canonical;
+      if (llvm::any_of(component, [&](const auto &bit) {
+            return runtimeObservedNets.contains(bit.net);
+          }))
+        for (const auto &bit : component)
+          runtimeObservedNets.insert(bit.net);
+    }
+    DenseMap<Operation *, bool> runtimeStateFunctions;
+    metadataDesign.walk([&](sim::SimFuncOp actor) {
+      if (!aotActorSlotFor(actor))
+        return;
+      auto body = actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
+      sim::SimFuncOp function =
+          body ? planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
+                                                                 body)
+               : sim::SimFuncOp{};
+      if (!function)
+        return;
+      bool runtimeLocal = false;
+      SmallVector<sim::SimFuncOp> pending{function};
+      llvm::SmallPtrSet<Operation *, 8> visited;
+      while (!pending.empty()) {
+        sim::SimFuncOp current = pending.pop_back_val();
+        if (!visited.insert(current.getOperation()).second)
+          continue;
+        auto [classification, inserted] =
+            runtimeStateFunctions.try_emplace(current.getOperation(), false);
+        if (inserted) {
+          auto provenance = provenanceAnalysis.derive(current);
+          auto runtimeStore = [&](Value destination,
+                                  bool requireStaticAccess = true) {
+            auto found = provenance.find(destination);
+            if (found == provenance.end() || !found->second.descriptor ||
+                (requireStaticAccess && found->second.dynamic))
+              return true;
+            // Runtime-owned waiters need publication while the original
+            // actor identity is active (IEEE 1800-2023 9.4.2). Generated
+            // ingress alone cannot wake that part of the fanout.
+            // Driver provenance is normalized to its net descriptor;
+            // include aliases whose resolved transition wakes a waiter.
+            if (found->second.resource == sim::ComputeResourceKind::Net)
+              return runtimeObservedNets.contains(*found->second.descriptor);
+            const auto &handles = stateLayout->storage;
+            auto handle = handles.find(*found->second.descriptor);
+            obelisk_rt_stable_handle_v1 decoded{};
+            return handle != handles.end() &&
+                   obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
+                   decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+                   staticFanoutPlan.runtimeTransitionStates.contains(decoded.id);
+          };
+          current.walk([&](Operation *operation) {
+            // Dynamic blocking stores still lower through the runtime's
+            // bounded, override-aware plane API. Preserve the complete
+            // source activation at a checkpoint (IEEE 1800-2023 4.6(a),
+            // 9.4.2, 11.5.1), including its transition publications.
+            if (isa<sim::SimRefAllocOp>(operation))
+              classification->second = true;
+            else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
+              classification->second |= runtimeStore(store.getReference());
+            else if (auto copy = dyn_cast<sim::SimRefCopyOp>(operation))
+              classification->second |= runtimeStore(copy.getDestination());
+            else if (auto store = dyn_cast<sim::SimNetWriteOp>(operation))
+              classification->second |= runtimeStore(store.getNet());
+            else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation))
+              classification->second |= runtimeStore(drive.getDriver());
+            else if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation))
+              classification->second |=
+                  staticEvalIsland &&
+                  runtimeStore(enqueue.getDestination(), false);
+          });
+        }
+        runtimeLocal |= classification->second;
+        current.walk([&](sim::SimCallOp call) {
+          if (sim::SimFuncOp callee =
+                  planningSymbols.lookupSymbolIn<sim::SimFuncOp>(
+                      metadataDesign, call.getCalleeAttr()))
+            pending.push_back(callee);
+        });
+      }
+      if (runtimeLocal)
+        function->setAttr("obelisk.eval.checkpoint_only",
+                          UnitAttr::get(module.getContext()));
+    });
+    bool hasObserver = false;
+    bool hasInactiveDelay = false;
+    metadataDesign.walk([&](sim::SimFuncOp function) {
+      hasObserver |= function.getEntryKind() == sim::EntryKind::Observer;
+    });
+    metadataDesign.walk([&](sim::SimSuspendDelayOp delay) {
+      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+      hasInactiveDelay |= !constant || constant.getValue() == 0;
+    });
+    auto execution =
+        module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+    uint64_t flags = execution ? execution.getUInt() : 0;
+    // IEEE 1800-2023 4.4, 4.6, 9.4.2: a runtime clock consumer prevents
+    // exclusive calendar ownership, not execution of an independent closure.
+    // The writer checkpoints above retain every required runtime publication;
+    // final call-closure verification certifies the remaining generated work.
+    // A coordinator currently drains its NBA queue as one transaction. A
+    // zero/dynamic delay could require an intervening Inactive region, so
+    // retain the original runtime path for those designs (LRM 4.4-4.5).
+    if (staticEvalIsland && staticFanoutPlan.exact && !hasObserver &&
+        !hasInactiveDelay &&
+        !(flags & (OBELISK_RT_EXECUTION_VPI_READ |
+                   OBELISK_RT_EXECUTION_VPI_WRITE |
+                   OBELISK_RT_EXECUTION_DPI_EXPORTS |
+                   OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)))
+      module->setAttr("obelisk.eval.runtime_calendar",
+                      UnitAttr::get(module.getContext()));
+  }
   if (staticNBA) {
     FailureOr<NativeStaticNBAPlan> plan =
         buildNativeStaticNBAPlan(module, *stateLayout, staticNBACommits, true);
     if (failed(plan))
       return failure();
     staticNBAPlan = std::move(*plan);
+    // IEEE 1800-2023 4.6(b), 9.4.2, 10.4.2: a runtime-owned calendar needs
+    // one ordered NBA queue, including updates exposed by cold checkpoints.
+    // The generated barrier publishes model ingress and cannot certify the
+    // ordering/notification of that mixed queue. Keep its NBA writers at
+    // runtime checkpoints; the independent Active closure still runs Tier 1.
+    if (module->hasAttr("obelisk.eval.runtime_calendar"))
+      llvm::fill(staticNBAPlan.mergeSafeRoots, false);
     staticNBA = !staticNBAPlan.roots.empty();
-    // A generated queue can order all executions of a <=64-bit NBA site on a
-    // wide root. Before packed lowering, retain the runtime owner if another
-    // semantic site on that root has no admitted Eval body, or any site needs
-    // a wider payload than the queue can hold. A late Eval decline cannot
-    // restore the original per-update runtime publications.
+    // The generated queue orders all executions of its certified NBA sites,
+    // splitting wide payloads into records. Before packed lowering, retain a
+    // runtime owner if another site on its root has no admitted Eval body or
+    // a payload cannot be queued. A late Eval decline cannot restore the
+    // original per-update runtime publications.
     SmallVector<llvm::SmallDenseSet<uint64_t, 4>> generatedOrigins(
         staticNBAPlan.roots.size());
     SmallVector<uint8_t> queuePayloadSupported(staticNBAPlan.roots.size(), 1);
@@ -3401,8 +3583,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               root->second >= generatedOrigins.size())
             return;
           // The generated accumulator publishes one old-to-final transition.
-          // Until ordered replay is available, an activation that can write a
-          // bit twice must use the ordered runtime NBA queue throughout.
+          // An activation with observable intermediate writes needs a closed
+          // ordered queue or a runtime checkpoint throughout.
           bodyNeedsOrderedNBA[index] |=
               !staticNBAPlan.mergeSafeRoots[root->second];
           if (staticNBAPlan.roots[root->second].bit_width > 64)
@@ -3488,9 +3670,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (site.root < orderedRootClosed.size() &&
           !generatedOrigins[site.root].contains(semanticOrigin(site.site)))
         orderedRootClosed[site.root] = 0;
-    // The ordered queue must hold every update whose order is observable.
+    // IEEE 1800-2023 4.6(b), 10.4.2: the ordered queue must hold every
+    // update whose order is observable.
     // A merge-safe root keeps its accumulator and cannot reveal that order.
-    bool everySiteGenerated = true;
+    bool everySiteGenerated =
+        !module->hasAttr("obelisk.eval.runtime_calendar");
     module.walk([&](sim::SimNBAEnqueueOp enqueue) {
       sim::NBASiteAttr site = enqueue.getSiteAttr();
       auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
@@ -3499,24 +3683,58 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
           root->second < staticNBAPlan.mergeSafeRoots.size() &&
           staticNBAPlan.mergeSafeRoots[root->second])
         return;
-      everySiteGenerated &=
+      bool supported =
           root != staticNBAPlan.siteRoots.end() &&
           root->second < orderedRootClosed.size() &&
           orderedRootClosed[root->second] &&
           queuePayloadSupported[root->second];
+      if (!supported && detailedTiming) {
+        auto function = enqueue->getParentOfType<sim::SimFuncOp>();
+        llvm::errs() << "ordered NBA boundary: function="
+                     << (function ? function.getSymName() : StringRef("?"))
+                     << " site=" << (site ? site.getId() : UINT64_MAX)
+                     << " root="
+                     << (root == staticNBAPlan.siteRoots.end() ? UINT32_MAX
+                                                               : root->second)
+                     << '\n';
+      }
+      everySiteGenerated &= supported;
     });
-    for (auto [index, function] : llvm::enumerate(admittedBodies))
-      if (bodyNeedsOrderedNBA[index] && everySiteGenerated)
-        function->setAttr("obelisk.eval.ordered_nba_queue",
-                          UnitAttr::get(module.getContext()));
-      else if (bodyNeedsOrderedNBA[index] ||
-               llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
-                 // A merge-safe root loses nothing if Eval later declines.
-                 return !staticNBAPlan.mergeSafeRoots[root] &&
-                        (!orderedRootClosed[root] ||
-                         !queuePayloadSupported[root]);
-               }))
+    // Wide roots have no scalar accumulator. Even merge-safe roots need a
+    // closed queue here; a runtime initializer can otherwise escape the NBA
+    // ownership proof. Moving one owner to a checkpoint also opens its other
+    // roots, so propagate the boundary before lowering any publications
+    // (IEEE 1800-2023 4.6(b), 10.4.2).
+    bool addedRuntimeOwner;
+    do {
+      addedRuntimeOwner = false;
+      for (auto [index, function] : llvm::enumerate(admittedBodies)) {
+        bool runtimeOwner =
+            function->hasAttr(evalRuntimeNBARequiredAttr) ||
+            function->hasAttr("obelisk.eval.checkpoint_only") ||
+            (bodyNeedsOrderedNBA[index] && !everySiteGenerated) ||
+            llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
+              return !orderedRootClosed[root] || !queuePayloadSupported[root];
+            });
+        if (!runtimeOwner)
+          continue;
         function->setAttr(evalRuntimeNBARequiredAttr,
+                          UnitAttr::get(module.getContext()));
+        if (bodyNeedsOrderedNBA[index] && everySiteGenerated) {
+          everySiteGenerated = false;
+          addedRuntimeOwner = true;
+        }
+        for (uint32_t root : bodyWideRoots[index])
+          if (orderedRootClosed[root]) {
+            orderedRootClosed[root] = 0;
+            addedRuntimeOwner = true;
+          }
+      }
+    } while (addedRuntimeOwner);
+    for (auto [index, function] : llvm::enumerate(admittedBodies))
+      if (bodyNeedsOrderedNBA[index] &&
+          !function->hasAttr(evalRuntimeNBARequiredAttr))
+        function->setAttr("obelisk.eval.ordered_nba_queue",
                           UnitAttr::get(module.getContext()));
     if (failed(materializeGeneratedNBAAccumulators(module, staticNBAPlan)))
       return failure();
@@ -3527,49 +3745,6 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
              staticNBAPlan.roots, staticNBAPlan.generatedAccumulators))
       if (!accumulator.empty())
         stateLayout->directHandles.insert(root.static_state);
-  }
-  if (staticFanoutMetadata) {
-    FailureOr<NativeStaticFanoutPlan> fanout = buildNativeStaticFanoutPlan(
-        module, *stateLayout, aotEligibility.getActorSlots(),
-        aotEligibility.getBytecodeFragments(),
-        aotEligibility.getRuntimeOwnedFanoutActors(), true, staticEvalIsland);
-    if (failed(fanout))
-      return failure();
-    staticFanoutPlan = std::move(*fanout);
-    staticFanoutMetadata &= staticFanoutPlan.exact;
-    staticFanout &= staticFanoutPlan.exact;
-    if (staticFanoutPlan.exact) {
-      stateLayout->transitionHandlesExact = true;
-      for (uint32_t staticState : staticFanoutPlan.runtimeTransitionStates)
-        stateLayout->transitionHandles.insert(staticState);
-      for (const obelisk_rt_static_fanout_entry &entry :
-           staticFanoutPlan.entries)
-        stateLayout->transitionHandles.insert(entry.static_state);
-      // Toggle coverage observes every committed transition even when the
-      // exact language-level fanout is empty. Keep a notification at covered
-      // roots; the runtime's static fast path records it before its fanout-only
-      // early return.
-      module.walk([&](Operation *operation) {
-        if (!operation->hasAttr(sim::metadata::coverageToggleObservable))
-          return;
-        const uint64_t *handle = nullptr;
-        if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-          auto found = stateLayout->storage.find(storage.getId());
-          if (found != stateLayout->storage.end())
-            handle = &found->second;
-        } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
-          auto found = stateLayout->nets.find(net.getId());
-          if (found != stateLayout->nets.end())
-            handle = &found->second;
-        }
-        if (!handle)
-          return;
-        obelisk_rt_stable_handle_v1 decoded{};
-        if (obelisk_rt_stable_handle_decode(*handle, &decoded) &&
-            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
-          stateLayout->transitionHandles.insert(decoded.id);
-      });
-    }
   }
   if (useAOT) {
     for (auto &entry : analyses) {
@@ -3685,28 +3860,11 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       break;
     }
   }
-  bool runtimeOrderedEvalOwner = false;
-  if (metadataDesign && nativeScheduler == sim::NativeSchedulerMode::Auto &&
-      !aotEligibility.isFullyEligible())
-    metadataDesign.walk([&](sim::SimFuncOp actor) {
-      if (!aotActorSlotFor(actor))
-        return;
-      auto body = actor->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
-      sim::SimFuncOp evalBody =
-          body ? planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
-                                                                body)
-               : nullptr;
-      runtimeOrderedEvalOwner |=
-          evalBody && evalBody->hasAttr(evalRuntimeNBARequiredAttr);
-    });
   // The packed NBA lowering below emits references to generated schedule
   // globals. Decide a partial Auto fallback before that irreversible rewrite.
   if (nativeScheduler == sim::NativeSchedulerMode::Auto &&
       !aotEligibility.isFullyEligible() &&
-      (!staticFanoutPlan.exact || runtimeOrderedEvalOwner ||
-       bytecodeFanoutOwner)) {
-    if (detailedTiming && runtimeOrderedEvalOwner)
-      llvm::errs() << "partial eval disabled: runtime-ordered NBA owner\n";
+      (!staticFanoutPlan.exact || bytecodeFanoutOwner)) {
     useAOT = false;
     // The exact transition set belongs to the discarded eval fanout plan.
     // Generic scheduling must check direct-state writes for transitions again.
@@ -4119,6 +4277,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         return module.emitError(unsupportedCheckpointOwner), failure();
       module.emitRemark("generated eval disabled: ")
           << unsupportedCheckpointOwner;
+      if (detailedTiming)
+        llvm::errs() << "generated eval disabled: "
+                     << unsupportedCheckpointOwner << '\n';
       evalScheduler = false;
     }
   }
@@ -4235,6 +4396,9 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         return module.emitError(invalidConvergenceOwnership), failure();
       module.emitRemark("generated eval disabled: ")
           << invalidConvergenceOwnership;
+      if (detailedTiming)
+        llvm::errs() << "generated eval disabled: "
+                     << invalidConvergenceOwnership << '\n';
       evalScheduler = false;
       for (NativeDirectFragment &direct : *directFragments)
         direct.tier2Convergence = false;
@@ -4288,6 +4452,15 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       const NativeEvalFanoutOwner &owner =
           evalOwnership.fanoutOwners[entryIndex];
       if (owner.kind == NativeEvalFanoutOwnerKind::PeriodicAlias)
+        continue;
+      // IEEE 1800-2023 4.5: Reactive actors deliberately remain runtime
+      // owners. Their subscriptions arbitrate against Re-Inactive/Re-NBA;
+      // they are not missing executors in the generated Active closure.
+      if (owner.kind == NativeEvalFanoutOwnerKind::Runtime &&
+          entry.actor_slot < actorsBySlot.size() &&
+          actorsBySlot[entry.actor_slot] &&
+          actorsBySlot[entry.actor_slot].getHomeRegion() ==
+              sim::EventRegion::Reactive)
         continue;
       const NativeDirectFragment *direct =
           owner.kind == NativeEvalFanoutOwnerKind::Direct &&
@@ -4541,6 +4714,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
       if (failed(evalPlan))
         return failure();
       if (!*evalPlan) {
+        if (detailedTiming)
+          llvm::errs() << "generated eval disabled: LLVM eligibility proof\n";
         // Direct fragments and their four-/two-state route shells are
         // materialized before the final LLVM-level eligibility proof.  A
         // declined proof therefore takes the same certified legacy handoff
@@ -4963,8 +5138,15 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                           word * sizeof(uint64_t)),
           8);
   };
-  builder.setInsertionPoint(tier2Handoff);
-  resetRoutePending(module.getLoc());
+  // IEEE 1800-2023 6.8: a variable retains its value between assignments.
+  // Returning from a runtime checkpoint does not itself change knownness.
+  // Plan installation invokes promotion_invalidate to seed routes and pending
+  // proofs, including when a fresh context reuses this plan. Clockless runs
+  // retain that state across re-entry; actual X/Z stores still invalidate it.
+  if (!clocklessEval) {
+    builder.setInsertionPoint(tier2Handoff);
+    resetRoutePending(module.getLoc());
+  }
   builder.setInsertionPointToStart(module.getBody());
   auto terminationRequested = module.lookupSymbol<LLVM::LLVMFuncOp>(
       "obelisk_rt_v1_scheduler_termination_requested");
@@ -5444,22 +5626,24 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         builder, route.twoState.getLoc(),
         LLVM::ZeroOp::create(builder, route.twoState.getLoc(), pointer));
 
-    // The Tier-2 handoff may invoke the generated coordinator while draining
-    // startup or event-driven ingress. Seed every route with its four-state
-    // body first. A periodic handoff can select from the initial state once it
-    // reaches quiescence; a clockless handoff promotes at coordinator exits.
-    builder.setInsertionPoint(tier2Handoff);
+    // Periodic preparation seeds routes before draining startup. Clockless
+    // runs use the installation-time invalidator and preserve selections at
+    // checkpoint re-entry (IEEE 1800-2023 6.8); they promote at coordinator
+    // exits and invalidate at actual canonical writes.
     StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
                          : route.fourStateFallback
                              ? route.fourStateFallback.getSymName()
                              : route.fourState.getSymName();
-    LLVM::StoreOp::create(
-        builder, route.twoState.getLoc(),
-        LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                  fallback),
-        LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                  route.globalName),
-        8);
+    if (!clocklessEval) {
+      builder.setInsertionPoint(tier2Handoff);
+      LLVM::StoreOp::create(
+          builder, route.twoState.getLoc(),
+          LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
+                                    fallback),
+          LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
+                                    route.globalName),
+          8);
+    }
     if (!route.pathKnownProbe && !route.ranges.empty())
       global->setAttr(
           "obelisk.eval.route_proof_dependencies",

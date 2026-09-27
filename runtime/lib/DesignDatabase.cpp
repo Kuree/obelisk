@@ -6491,7 +6491,8 @@ uint64_t packedMask(uint64_t width) {
   return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
 }
 
-uint64_t loadPackedState(const std::vector<uint64_t> &plane, uint64_t offset,
+template <typename Plane>
+uint64_t loadPackedState(const Plane &plane, uint64_t offset,
                          uint64_t width) {
   size_t word = static_cast<size_t>(offset / 64);
   unsigned shift = static_cast<unsigned>(offset % 64);
@@ -6501,7 +6502,8 @@ uint64_t loadPackedState(const std::vector<uint64_t> &plane, uint64_t offset,
   return result & packedMask(width);
 }
 
-void storePackedState(std::vector<uint64_t> &plane, uint64_t offset,
+template <typename Plane>
+void storePackedState(Plane &plane, uint64_t offset,
                       uint64_t width, uint64_t value) {
   size_t word = static_cast<size_t>(offset / 64);
   unsigned shift = static_cast<unsigned>(offset % 64);

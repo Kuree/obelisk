@@ -1079,6 +1079,35 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
         }
         if (!matches(*subscription))
           continue;
+        if (subscription->target == SignalSubscription::NativeDirectWait &&
+            subscription->latch && !subscription->latch->triggered &&
+            context->nativeSchedulePlan &&
+            (context->nativeSchedulePlan->flags &
+             OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+            !context->nativeStaticEvalIslandCertified &&
+            canUseStaticAOTFanout(context)) {
+          // IEEE 1800-2023 9.4.2: deliver this publication to both generated
+          // and runtime waiters. Route only a certified native continuation
+          // into generated ingress; leave every other subscription below.
+          ScheduledProcess *scheduled =
+              findScheduledProcess(context, subscription->waiterToken);
+          uint32_t node = scheduled && scheduled->instance
+                              ? findNativeAOTNodeUnlocked(
+                                    context, scheduled->aotActorSlot,
+                                    scheduled->instance->continuation)
+                              : UINT32_MAX;
+          if (node < context->nativeScheduleNodeIngress.size()) {
+            uint64_t index = context->nativeScheduleNodeIngress[node];
+            if (index < context->nativeScheduleFanoutEntryCount) {
+              const auto &entry = context->nativeScheduleFanoutEntries[index];
+              const auto &kernel =
+                  context->nativeSchedulePlan->clock_kernels[entry.kernel];
+              obelisk::runtime::publishClockKernelReady(kernel, entry.merged_bit);
+              context->nativeScheduleClockIngressPending = true;
+              continue;
+            }
+          }
+        }
         if (subscription->target == SignalSubscription::NativeDirectWait ||
             subscription->target == SignalSubscription::DesignDirectWait) {
           if (!subscription->latch || subscription->latch->triggered)
@@ -1682,10 +1711,7 @@ static bool publishSignalTransitionBatchImpl(
     const uint8_t *newUnknown) {
   if (!context || bitWidth == 0 || !changed || !posedge || !negedge)
     return context != nullptr;
-  bool anyChanged = false;
-  for (uint64_t bit = 0; bit != bitWidth; ++bit)
-    anyChanged |= byteBit(changed, edgeBitOffset + bit);
-  if (!anyChanged)
+  if (!anyPackedBits(changed, edgeBitOffset, bitWidth))
     return true;
   uint64_t sequence = 0;
   ClockConditionPublicationView sample{stableID, bitWidth, edgeBitOffset,
@@ -1728,6 +1754,17 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     if (publishStaticAOTSignalTransitionUnlocked(context, stableID, bitWidth,
                                                  changed, posedge, negedge,
                                                  &sequence, false)) {
+      // Generated waits may omit generic subscriptions altogether. Publish
+      // their exact fanout first, then retain the runtime subscriber walk for
+      // consumers outside that table (IEEE 1800-2023 9.4.2). The walk routes
+      // any already-armed native subscription to the same idempotent ingress
+      // bit, never to a duplicate framed activation.
+      if ((context->nativeSchedulePlan->flags &
+           OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+          !context->nativeStaticEvalIslandCertified)
+        return publishSignalTransitionBatchImpl(
+            context, stableID, bitWidth, changed, posedge, negedge, edgeBitOffset,
+            outSequence, oldValue, oldUnknown, newValue, newUnknown);
       if (!recordStaticClockingOutputOccurrencesUnlocked(
               context, stableID, bitWidth, changed, posedge, negedge,
               edgeBitOffset, sequence))
@@ -1915,26 +1952,36 @@ bool publishNativeSignalTransitionUnlocked(
     return false;
   uint64_t firstCanonicalBit = 0;
   uint64_t lastCanonicalBit = 0;
-  bool packedCanonical = bitWidth <= 64 && bitWidth != 0 &&
+  bool packedCanonical = bitWidth != 0 &&
                          canonicalBit(0, firstCanonicalBit) &&
                          canonicalBit(bitWidth - 1, lastCanonicalBit);
-  if (packedCanonical) {
-    // Preserve the publication-before-canonical ordering above, but merge a
-    // bounded payload with word operations instead of revisiting every bit.
-    uint64_t mask = loadPackedBytes(changed, 0, bitWidth);
-    uint64_t value = loadPackedBytes(newValue, 0, bitWidth);
-    uint64_t unknown =
-        newUnknown ? loadPackedBytes(newUnknown, 0, bitWidth) : 0;
-    storePackedBits(
-        context->stateValue, firstCanonicalBit, bitWidth,
-        (loadPackedBits(context->stateValue, firstCanonicalBit, bitWidth) &
-         ~mask) |
-            (value & mask));
-    storePackedBits(
-        context->stateUnknown, firstCanonicalBit, bitWidth,
-        (loadPackedBits(context->stateUnknown, firstCanonicalBit, bitWidth) &
-         ~mask) |
-            (unknown & mask));
+  // Shared storage is admitted only without source-order observer snapshots
+  // (IEEE 1800-2023 4.6(a), 9.4.2). The generated store already committed it;
+  // replaying an earlier publication must not rewind a later source store.
+  if (context->stateValue.shared()) {
+    // No separate publication image to advance.
+  } else if (packedCanonical) {
+    // IEEE 1800-2023 4.6(a), 9.4.2: preserve source-order publication and
+    // observation of this complete value change. Merge its bounded payload
+    // with word operations instead of revisiting every bit.
+    for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
+      uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
+      uint64_t mask = loadPackedBytes(changed, bit, width);
+      if (!mask)
+        continue;
+      uint64_t value = loadPackedBytes(newValue, bit, width);
+      uint64_t unknown =
+          newUnknown ? loadPackedBytes(newUnknown, bit, width) : 0;
+      uint64_t absolute = firstCanonicalBit + bit;
+      storePackedBits(
+          context->stateValue, absolute, width,
+          (loadPackedBits(context->stateValue, absolute, width) & ~mask) |
+              (value & mask));
+      storePackedBits(
+          context->stateUnknown, absolute, width,
+          (loadPackedBits(context->stateUnknown, absolute, width) & ~mask) |
+              (unknown & mask));
+    }
   } else
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       uint64_t absolute = 0;
@@ -2008,7 +2055,7 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
     ContextMutexLock lock(context);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return;
-    bool packedRange = bitWidth <= 64;
+    bool packedRange = true;
     uint32_t staticID = 0;
     int64_t staticOffset = 0;
     if (packedRange && decodeNativeStatic(bitOffset, staticID, staticOffset)) {
@@ -2020,7 +2067,7 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
     } else {
       packedRange = false;
     }
-    if (packedRange) {
+    if (packedRange && bitWidth <= 64) {
       uint64_t widthMask = packedWidthMask(bitWidth);
       uint64_t oldValueBits =
           loadPackedBytes(oldValue, 0, bitWidth) & widthMask;
@@ -2052,6 +2099,37 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
     }
     PackedSignalTransitionBuffer transitions(bitWidth);
     bool changed = false;
+    if (packedRange) {
+      // IEEE 1800-2023 9.4.2, Table 9-2: build the per-bit four-state edge
+      // masks before publishing. Publishing each word would split one SV
+      // assignment into several observable updates. Subscription matching
+      // still selects only the expression's LSB for posedge/negedge (9.4.2).
+      for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
+        uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
+        uint64_t mask = packedWidthMask(width);
+        uint64_t oldV = loadPackedBytes(oldValue, bit, width);
+        uint64_t oldU = oldUnknown ? loadPackedBytes(oldUnknown, bit, width) : 0;
+        uint64_t newV = loadPackedBytes(newValue, bit, width);
+        uint64_t newU = newUnknown ? loadPackedBytes(newUnknown, bit, width) : 0;
+        uint64_t delta = (oldV ^ newV) | (oldU ^ newU);
+        uint64_t oldZero = ~oldU & ~oldV;
+        uint64_t oldOne = ~oldU & oldV;
+        uint64_t newZero = ~newU & ~newV;
+        uint64_t newOne = ~newU & newV;
+        storePackedBytes(transitions.changed(), bit, width, delta);
+        storePackedBytes(transitions.posedge(), bit, width,
+                         ((oldZero & ~newZero) | (oldU & newOne)) & mask);
+        storePackedBytes(transitions.negedge(), bit, width,
+                         ((oldOne & ~newOne) | (oldU & newZero)) & mask);
+        changed |= delta != 0;
+      }
+      if (changed)
+        (void)publishNativeSignalTransitionUnlocked(
+            context, bitOffset, bitWidth, transitions.changed(),
+            transitions.posedge(), transitions.negedge(), oldValue, oldUnknown,
+            newValue, newUnknown, establishesOverride);
+      return;
+    }
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       bool oldValueBit = byteBit(oldValue, bit);
       bool oldUnknownBit = oldUnknown && byteBit(oldUnknown, bit);
@@ -2144,7 +2222,10 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   // The generated leaf is valid only while the installed exact-fanout plan is
   // the active clean AOT kernel. A mid-slot handover remains correct by
   // entering the ordinary transition path with the same scalar planes.
-  if (activeNativeAOTContext != context || !canUseStaticAOTFanout(context)) {
+  if (activeNativeAOTContext != context || !canUseStaticAOTFanout(context) ||
+      ((context->nativeSchedulePlan->flags &
+        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+       !context->nativeStaticEvalIslandCertified)) {
     uint64_t handle = obelisk_rt_stable_handle_encode(
         OBELISK_RT_STABLE_HANDLE_STATIC, staticState,
         static_cast<int64_t>(lowBit));

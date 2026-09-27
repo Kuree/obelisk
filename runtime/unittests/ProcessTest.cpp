@@ -1315,7 +1315,7 @@ TEST(RuntimeInternals, PackedPublicationPreservesUnchangedAndForcedBits) {
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 53, 128),
             OBELISK_RT_OK);
   uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
-  for (uint64_t width : {1, 7, 8, 31, 32, 63, 64})
+  for (uint64_t width : {1, 7, 8, 31, 32, 63, 64, 65, 97, 127, 128})
     for (bool forced : {false, true})
       for (bool establishesOverride : {false, true}) {
         context->stateValue.assign(4, UINT64_C(0x9696969696969696));
@@ -1323,7 +1323,7 @@ TEST(RuntimeInternals, PackedPublicationPreservesUnchangedAndForcedBits) {
         context->forceMask.assign(4, forced ? UINT64_C(0x2222222222222222) : 0);
         auto expectedValue = context->stateValue;
         auto expectedUnknown = context->stateUnknown;
-        std::array<uint8_t, 8> changed{}, value{}, unknown{};
+        std::array<uint8_t, 16> changed{}, value{}, unknown{};
         changed.fill(0x5a);
         value.fill(0xc3);
         unknown.fill(0x3c);
@@ -4480,6 +4480,32 @@ TEST(Scheduler, AOTStaticEvalIslandIsDistinctFromFullyStatic) {
   EXPECT_TRUE(canUseStaticAOTFanout(context));
   obelisk_rt_v1_context_destroy(context);
 
+  // A compile-time publication proof allows generated fanout during the
+  // runtime calendar/bootstrap without claiming whole-clock ownership
+  // (IEEE 1800-2023 4.4, 9.4.2). Dynamic observer demand still blocks it.
+  plan.flags |= OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  execution.flags = OBELISK_RT_EXECUTION_VPI_READ;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  execution.flags = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  EXPECT_FALSE(context->nativeStaticEvalIslandCertified);
+  EXPECT_TRUE(canUseStaticAOTFanout(context));
+  context->activeComputedObserverWaiterCount = 1;
+  EXPECT_FALSE(canUseStaticAOTFanout(context));
+  context->activeComputedObserverWaiterCount = 0;
+  context->forceMask.assign(1, 1);
+  EXPECT_FALSE(canUseStaticAOTFanout(context));
+  context->forceMask.clear();
+  context->nativeScheduleExternalWritePending = true;
+  EXPECT_FALSE(canUseStaticAOTFanout(context));
+  context->nativeScheduleExternalWritePending = false;
+  obelisk_rt_v1_context_destroy(context);
+
   // The island certifies only its residual eval closure. Claiming the
   // whole-design FULLY_STATIC invariant at the same time is rejected.
   plan.flags |= OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
@@ -5186,6 +5212,91 @@ TEST(Scheduler, KnownnessPublicationMatchesScalarBitTransitions) {
   plan.promotion_recheck_range = nullptr;
   publishNativeKnownnessChangeUnlocked(&plan, 0, 64, UINT64_MAX, 0);
   EXPECT_EQ(schedulerPromotionInvalidationCount, 3u);
+}
+
+TEST(Scheduler, SharedPlanesKeepInitializersTailAndKnownnessNotifications) {
+  // IEEE 1800-2023 6.8, 9.4.2: sharing must preserve compiler initial values
+  // and invalidate/recheck two-state proofs even after a runtime write has
+  // overwritten the old unknown bits in the authoritative storage.
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 67;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> value{0x1234, UINT64_MAX};
+  std::array<uint64_t, 2> unknown{0, UINT64_MAX};
+  auto *v = reinterpret_cast<uint8_t *>(value.data());
+  auto *u = reinterpret_cast<uint8_t *>(unknown.data());
+  for (uint32_t flags : {OBELISK_RT_EXECUTION_VPI_READ,
+                         OBELISK_RT_EXECUTION_VPI_WRITE,
+                         OBELISK_RT_EXECUTION_DPI_EXPORTS,
+                         OBELISK_RT_EXECUTION_COVERAGE_SCHEMA}) {
+    execution.flags = flags;
+    EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
+              OBELISK_RT_INVALID_LIFECYCLE);
+  }
+  execution.flags = 0;
+  execution.observer_count = 1;
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  execution.observer_count = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v + 1, u, 67),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
+            OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue.data(), value.data());
+  EXPECT_EQ(context->stateUnknown.data(), unknown.data());
+  EXPECT_EQ(value[0], 0x1234u);
+  EXPECT_EQ(value[1], 7u);
+  EXPECT_EQ(unknown[1], 7u);
+  EXPECT_TRUE(importNativeStatePlanesUnlocked(context, v, u, 67));
+  EXPECT_TRUE(exportNativeStatePlanesUnlocked(context, v, u, 67));
+  EXPECT_EQ(value[0], 0x1234u);
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 64, 3),
+            OBELISK_RT_OK);
+  static uint64_t lost, recovered;
+  lost = recovered = 0;
+  obelisk_rt_native_schedule_plan plan{};
+  plan.state_value = v;
+  plan.state_unknown = u;
+  plan.state_bit_count = 67;
+  plan.promotion_invalidate_range = [](uint64_t offset, uint64_t width) {
+    EXPECT_GE(offset, 64u);
+    EXPECT_LE(offset + width, 67u);
+    lost |= packedWidthMask(width) << (offset - 64);
+  };
+  plan.promotion_recheck_range = [](uint64_t offset, uint64_t width) {
+    EXPECT_GE(offset, 64u);
+    EXPECT_LE(offset + width, 67u);
+    recovered |= packedWidthMask(width) << (offset - 64);
+  };
+  context->nativeSchedulePlan = &plan;
+  context->stateUnknown[1] = 2;
+  obelisk_rt_sync_native_state_range_unlocked(context, 64, 3);
+  EXPECT_EQ(lost, 2u);
+  EXPECT_EQ(recovered, 5u);
+  lost = recovered = 0;
+  context->stateUnknown[1] = 0;
+  EXPECT_TRUE(storeNativeScheduleStateUnlocked(context, 64, 3, 4, 0));
+  EXPECT_EQ(lost, 0u);
+  EXPECT_EQ(recovered, 7u);
+  EXPECT_EQ(value[1], 4u);
+  EXPECT_EQ(unknown[1], 0u);
+  // IEEE 1800-2023 4.6(a): publishing an earlier source write must not
+  // restore its value over a subsequent store already in the shared plane.
+  uint8_t oldValue = 0, newValue = 1, known = 0;
+  obelisk_rt_v1_scheduler_signal_transition(
+      context, obelisk_rt_v1_native_state_static_handle(1), 3, &oldValue, &known,
+      &newValue, &known);
+  EXPECT_EQ(value[1], 4u);
+  std::array<uint8_t, 16> other{};
+  EXPECT_FALSE(importNativeStatePlanesUnlocked(context, other.data(), u, 67));
+  context->nativeSchedulePlan = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(value[0], 0x1234u);
 }
 
 TEST(Scheduler, AOTSpecializationFastFlagIsScopedAndInvalidated) {
@@ -7672,6 +7783,48 @@ TEST(Scheduler, DPIExportTemporarilyReleasesOuterExecutorSelection) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, ReactiveIterationSurvivesSingleStepReentry) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->nativeScheduleSingleStep = true;
+  auto enqueue = [&](uint64_t id, uint32_t region) {
+    ScheduledDesignEvent event;
+    event.stableID = id;
+    event.dueTime = 0;
+    event.sequence = context->nextSchedulerSequence++;
+    event.execRegion = region;
+    context->scheduledDesignEvents.push_back(event);
+  };
+  enqueue(1, OBELISK_RT_REGION_RE_NBA);
+  ASSERT_EQ(runScheduler(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->schedulerDrainingReactive);
+  EXPECT_EQ(context->events.count(1), 1u);
+
+  // IEEE 1800-2023 4.5: work published during the Reactive iteration
+  // cannot make a scheduler checkpoint resume the Active/NBA group early.
+  enqueue(2, OBELISK_RT_REGION_ACTIVE);
+  enqueue(3, OBELISK_RT_REGION_NBA);
+  enqueue(4, OBELISK_RT_REGION_RE_INACTIVE);
+  enqueue(5, OBELISK_RT_REGION_RE_NBA);
+  ASSERT_EQ(runScheduler(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->events.count(4), 1u);
+  EXPECT_EQ(context->events.count(2), 0u);
+  EXPECT_EQ(context->events.count(3), 0u);
+  EXPECT_EQ(context->events.count(5), 0u);
+  ASSERT_EQ(runScheduler(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->events.count(5), 1u);
+  EXPECT_EQ(context->events.count(2), 0u);
+  EXPECT_EQ(context->events.count(3), 0u);
+  ASSERT_EQ(runScheduler(context), OBELISK_RT_OK);
+  EXPECT_FALSE(context->schedulerDrainingReactive);
+  EXPECT_EQ(context->events.count(2), 1u);
+  EXPECT_EQ(context->events.count(3), 0u);
+  ASSERT_EQ(runScheduler(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->events.count(3), 1u);
+  EXPECT_EQ(context->schedulerTime, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
   // Cross both the leaf and summary boundaries; include stale generated
   // payloads, runtime stages, empty pages, and all iterative region choices.
@@ -7700,6 +7853,7 @@ TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
   context->staticNBAAccumulators.resize(rootCount);
   std::mt19937 random(0x18002023);
   for (unsigned trial = 0; trial != 100; ++trial) {
+    context->schedulerDrainingReactive = trial % 2 != 0;
     std::fill(dirty.begin(), dirty.end(), 0);
     std::fill(summary.begin(), summary.end(), 0);
     context->staticNBAAccumulatorsPending = false;
@@ -7718,9 +7872,13 @@ TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
       summary[root / 4096] |= uint64_t{1} << ((root / 64) % 64);
       if (random() % 2) {
         markStaticNBAAccumulatorPending(context, root, runtime);
-        expectedRuntime = std::min(expectedRuntime, runtime.execRegion);
+        if (!context->schedulerDrainingReactive ||
+            runtime.execRegion >= OBELISK_RT_REGION_REACTIVE)
+          expectedRuntime = std::min(expectedRuntime, runtime.execRegion);
       }
-      if (generated[root].valid)
+      if (generated[root].valid &&
+          (!context->schedulerDrainingReactive ||
+           generated[root].exec_region >= OBELISK_RT_REGION_REACTIVE))
         expectedGenerated =
             std::min(expectedGenerated, generated[root].exec_region);
     }
@@ -10148,13 +10306,13 @@ TEST(RuntimeInternals, PackedCanonicalReadMergesOnlyOverriddenBits) {
     for (uint32_t plane = 0; plane != 2; ++plane) {
       const auto &canonical =
           plane ? context->stateUnknown : context->stateValue;
-      for (uint32_t width = 1; width <= 64; ++width) {
+      for (uint32_t width = 1; width <= 130; ++width) {
         for (int64_t offset : {-3, 0, 1, 63, 129, 130}) {
           for (uint32_t fallback = 0; fallback != 2; ++fallback) {
             SCOPED_TRACE(testing::Message()
                          << masks << "," << plane << "," << width << ","
                          << offset << "," << fallback);
-            std::array<uint8_t, 8> actual{}, expected{};
+            std::array<uint8_t, 17> actual{}, expected{};
             for (uint32_t bit = 0; bit != width; ++bit) {
               int64_t coordinate = offset + bit;
               bool v = fallback;
@@ -10182,6 +10340,148 @@ TEST(RuntimeInternals, PackedCanonicalReadMergesOnlyOverriddenBits) {
     }
   }
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals, WidePlaneStoresPreserveBoundsMasksAndContinuousValues) {
+  // Include unaligned roots, a short final word, clipped writes, and both
+  // planes. Compare with bit semantics independently of the packed helpers.
+  for (bool canonical : {false, true})
+    for (bool continuous : {false, true})
+      for (bool forced : {false, true})
+        for (int64_t offset : {-3, 0, 1, 63, 129}) {
+          SCOPED_TRACE(testing::Message()
+                       << canonical << continuous << forced << ":" << offset);
+          obelisk_rt_execution_descriptor_v1 execution{};
+          execution.version = OBELISK_RT_VERSION;
+          execution.state_bit_count = 183;
+          obelisk_rt_context *context = nullptr;
+          ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+                    OBELISK_RT_OK);
+          ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 53,
+                                                               130),
+                    OBELISK_RT_OK);
+          context->observerForcesCanonicalPlane = canonical;
+          if (forced)
+            context->forceMask.assign(3, UINT64_C(0x2222222222222222));
+          for (uint32_t plane = 0; plane != 2; ++plane) {
+            std::array<uint8_t, 23> global;
+            global.fill(0x96);
+            auto expected = global;
+            auto &storage = plane ? context->stateUnknown : context->stateValue;
+            storage.assign(3, UINT64_C(0x9696969696969696));
+            auto expectedCanonical = storage;
+            std::array<uint8_t, 17> payload;
+            payload.fill(0x5a);
+            for (uint64_t bit = 0; bit < 130; ++bit) {
+              int64_t local = offset + bit;
+              if (local < 0 || local >= 130)
+                continue;
+              uint64_t absolute = 53 + local;
+              uint64_t mask = uint64_t{1} << (absolute % 64);
+              if (canonical && forced &&
+                  (context->forceMask[absolute / 64] & mask))
+                continue;
+              bool next = (payload[bit / 8] >> (bit % 8)) & 1;
+              uint8_t byteMask = uint8_t{1} << (absolute % 8);
+              expected[absolute / 8] = next
+                  ? expected[absolute / 8] | byteMask
+                  : expected[absolute / 8] & ~byteMask;
+              if (canonical) {
+                auto &limb = expectedCanonical[absolute / 64];
+                limb = next ? limb | mask : limb & ~mask;
+              }
+            }
+            uint64_t handle = obelisk_rt_v1_native_handle_offset(
+                obelisk_rt_v1_native_state_static_handle(1), offset);
+            auto store = continuous
+                ? obelisk_rt_v1_native_state_store_continuous_plane
+                : obelisk_rt_v1_native_state_store_plane;
+            bool expectChange = global != expected;
+            uint8_t changed = 0;
+            ASSERT_EQ(store(context, global.data(), 183, handle, 130, plane,
+                            payload.data(), &changed), OBELISK_RT_OK);
+            EXPECT_EQ(global, expected);
+            EXPECT_EQ(storage, expectedCanonical);
+            EXPECT_EQ(changed, expectChange);
+            ASSERT_EQ(store(context, global.data(), 183, handle, 130, plane,
+                            payload.data(), &changed), OBELISK_RT_OK);
+            EXPECT_EQ(changed, 0);
+            if (canonical && continuous) {
+              const auto &retained = plane ? context->continuousUnknown
+                                           : context->continuousValue;
+              for (uint64_t bit = 0; bit < 130; ++bit) {
+                int64_t local = offset + bit;
+                if (local < 0 || local >= 130)
+                  continue;
+                uint64_t absolute = 53 + local;
+                EXPECT_EQ((retained[absolute / 64] >> (absolute % 64)) & 1,
+                          (payload[bit / 8] >> (bit % 8)) & 1);
+                EXPECT_NE(context->continuousMask[absolute / 64] &
+                              (uint64_t{1} << (absolute % 64)), 0u);
+              }
+            }
+          }
+          obelisk_rt_v1_context_destroy(context);
+        }
+}
+
+TEST(Scheduler, WideNativeTransitionsFollowFourStateEdgeTable) {
+  // IEEE 1800-2023 9.4.2, Table 9-2. In our planes the state encodings are
+  // 0, 1, X, Z. Test subscribers in both full words and the partial tail.
+  constexpr bool posedge[4][4] = {
+      {false, true, true, true}, {false, false, false, false},
+      {false, true, false, false}, {false, true, false, false}};
+  constexpr bool negedge[4][4] = {
+      {false, false, false, false}, {true, false, true, true},
+      {true, false, false, false}, {true, false, false, false}};
+  for (unsigned oldState = 0; oldState < 4; ++oldState)
+    for (unsigned newState = 0; newState < 4; ++newState)
+      for (uint32_t edge : {OBELISK_RT_WAIT_EDGE_CHANGE,
+                            OBELISK_RT_WAIT_EDGE_POSEDGE,
+                            OBELISK_RT_WAIT_EDGE_NEGEDGE})
+        for (unsigned watchedBit : {0, 64, 129}) {
+          SCOPED_TRACE(testing::Message()
+                       << oldState << "->" << newState << ":" << edge
+                       << ":" << watchedBit);
+          obelisk_rt_execution_descriptor_v1 execution{};
+          execution.version = OBELISK_RT_VERSION;
+          execution.state_bit_count = 183;
+          obelisk_rt_context *context = nullptr;
+          ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+                    OBELISK_RT_OK);
+          ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 53,
+                                                               130),
+                    OBELISK_RT_OK);
+          SchedulerFixture fixture(77);
+          fixture.descriptor.execution = &execution;
+          uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+          schedulerWaitKind = OBELISK_RT_SUSPEND_EDGE;
+          schedulerWaitEdge = edge;
+          schedulerWaitHandle =
+              obelisk_rt_v1_native_handle_offset(root, watchedBit);
+          schedulerWaitWidth = 1;
+          schedulerResumeCount = 0;
+          ASSERT_EQ(obelisk_rt_v1_scheduler_add(
+                        context, makeSchedulerInstance(fixture), 0),
+                    OBELISK_RT_OK);
+          ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+          std::array<uint8_t, 17> oldV{}, oldU{}, newV{}, newU{};
+          oldV.fill(oldState & 1 ? 0xff : 0);
+          oldU.fill(oldState & 2 ? 0xff : 0);
+          newV.fill(newState & 1 ? 0xff : 0);
+          newU.fill(newState & 2 ? 0xff : 0);
+          obelisk_rt_v1_scheduler_signal_transition(
+              context, root, 130, oldV.data(), oldU.data(), newV.data(),
+              newU.data());
+          ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+          bool expected = edge == OBELISK_RT_WAIT_EDGE_CHANGE
+                              ? oldState != newState
+                          : edge == OBELISK_RT_WAIT_EDGE_POSEDGE
+                              ? posedge[oldState][newState]
+                              : negedge[oldState][newState];
+          EXPECT_EQ(schedulerResumeCount, expected ? 1u : 0u);
+          obelisk_rt_v1_context_destroy(context);
+        }
 }
 
 TEST(Scheduler, AutomaticStateAllocationsAreIsolatedAndBoundsChecked) {

@@ -93,7 +93,12 @@ bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
   return context && value && unknown && context->execution &&
          context->execution->state_bit_count == bitCount &&
          context->stateValue.size() == (bitCount + 63) / 64 &&
-         context->stateUnknown.size() == context->stateValue.size();
+         context->stateUnknown.size() == context->stateValue.size() &&
+         (!context->stateValue.shared() ||
+          (value ==
+               reinterpret_cast<const uint8_t *>(context->stateValue.data()) &&
+           unknown == reinterpret_cast<const uint8_t *>(
+                          context->stateUnknown.data())));
 }
 
 static bool executionHasBytecodeState(const obelisk_rt_context *context) {
@@ -113,6 +118,8 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
                                      uint64_t bitCount) {
   if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
     return false;
+  if (context->stateValue.shared())
+    return true;
   std::fill(context->stateValue.begin(), context->stateValue.end(), 0);
   std::fill(context->stateUnknown.begin(), context->stateUnknown.end(), 0);
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
@@ -160,6 +167,8 @@ bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                      uint64_t bitCount) {
   if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
     return false;
+  if (context->stateValue.shared())
+    return true;
   size_t byteCount = static_cast<size_t>((bitCount + 7) / 8);
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
     defined(_WIN32)
@@ -202,6 +211,11 @@ bool reconcileNativeRootToPlanesUnlocked(
     uint64_t oldUnknown = loadPackedBytes(plan->state_unknown, absolute, width);
     uint64_t newUnknown =
         loadPackedBits(context->stateUnknown, absolute, width);
+    // IEEE 1800-2023 6.8, 9.4.2: a runtime write may already have replaced
+    // the shared unknown bits. Conservatively invalidate unknown bits and
+    // request rechecking known bits rather than retaining a stale proof.
+    if (context->stateUnknown.shared())
+      oldUnknown = ~newUnknown;
     storePackedBytes(plan->state_value, absolute, width,
                      loadPackedBits(context->stateValue, absolute, width));
     storePackedBytes(plan->state_unknown, absolute, width, newUnknown);
@@ -262,6 +276,8 @@ void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
     uint64_t count = std::min<uint64_t>(64, end - bit);
     uint64_t oldUnknown = loadPackedBytes(context->nativeStateUnknown, bit, count);
     uint64_t newUnknown = loadPackedBits(context->stateUnknown, bit, count);
+    if (context->stateUnknown.shared())
+      oldUnknown = ~newUnknown;
     // Capture the delta before overwriting the native plane. A later deposit
     // reconciliation sees the new plane already and cannot recover this loss
     // of knownness (IEEE 1800-2023 6.8 and 38.34).
@@ -305,6 +321,8 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
   if (plan && plan->state_bit_count != 0) {
     uint64_t oldUnknown =
         loadPackedBytes(plan->state_unknown, bitOffset, bitWidth);
+    if (context->stateUnknown.shared())
+      oldUnknown = ~unknown;
     publishNativeKnownnessChangeUnlocked(plan, bitOffset, bitWidth, oldUnknown,
                                          unknown);
     storePackedBytes(plan->state_value, bitOffset, bitWidth, value);
@@ -831,12 +849,38 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         layoutMatches && (executionHasBytecodeState(context) ||
                           hasBoundNativeStatePlanes(context, globalBitCount) ||
                           context->observerForcesCanonicalPlane);
-    const std::vector<uint64_t> *canonicalPlane = nullptr;
+    const CanonicalPlane *canonicalPlane = nullptr;
     if (canonical) {
       canonicalPlane =
           unknownPlane ? &context->stateUnknown : &context->stateValue;
       if (canonicalPlane->size() != (globalBitCount + 63) / 64)
         return OBELISK_RT_INVALID_DESIGN;
+    }
+    // IEEE 1800-2023 7.4.1: packed arrays are contiguous vectors. Wide packed
+    // roots use the same plane layout as scalars. Avoid a bit
+    // loop for ordinary in-bounds reads (large RTL arrays exercise this on
+    // every activation). Keep the override/publication view below for reads
+    // whose source is selected per bit.
+    if (bitWidth > 64 && globalOffset >= 0 &&
+        static_cast<uint64_t>(globalOffset) <= rootWidth &&
+        bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset) &&
+        context->forceMask.empty() && context->assignMask.empty() &&
+        !(context->observerForcesCanonicalPlane &&
+          context->conditionPublication)) {
+      bool readGlobal = !canonical ||
+                        (!context->observerForcesCanonicalPlane &&
+                         isStaticControlAOT(context));
+      uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
+      for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
+        uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
+        uint64_t value = readGlobal
+                             ? loadPackedBytes(globalPlane, source + bit, width)
+                             : loadPackedBits(*canonicalPlane, source + bit,
+                                              width);
+        storePackedBytes(outValue, bit, width, value);
+      }
+      maskPadding();
+      return OBELISK_RT_OK;
     }
     if (canonical && bitWidth <= 64 && globalOffset >= 0 &&
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
@@ -982,7 +1026,7 @@ static obelisk_rt_status nativeStateStorePlane(
                      (executionHasBytecodeState(context) ||
                       hasBoundNativeStatePlanes(context, globalBitCount) ||
                       context->observerForcesCanonicalPlane);
-    std::vector<uint64_t> *canonicalPlane = nullptr;
+    CanonicalPlane *canonicalPlane = nullptr;
     if (canonical) {
       canonicalPlane =
           unknownPlane ? &context->stateUnknown : &context->stateValue;
@@ -993,6 +1037,37 @@ static obelisk_rt_status nativeStateStorePlane(
         context->continuousValue.assign(canonicalPlane->size(), 0);
         context->continuousUnknown.assign(canonicalPlane->size(), 0);
       }
+    }
+    // IEEE 1800-2023 9.4.2: an event observes a change in the expression's
+    // value. Keep one changed result for the complete write: its caller
+    // publishes one transition, even for a multi-word payload. This changes
+    // neither statement order (4.6(a)) nor NBA execution order (4.6(b)).
+    if (bitWidth > 64 && globalOffset >= 0 &&
+        static_cast<uint64_t>(globalOffset) <= rootWidth &&
+        bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset) &&
+        context->forceMask.empty() && context->assignMask.empty()) {
+      uint64_t destination = rootOffset + static_cast<uint64_t>(globalOffset);
+      for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
+        uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
+        uint64_t next = loadPackedBytes(value, bit, width);
+        uint64_t old = canonical
+                           ? loadPackedBits(*canonicalPlane, destination + bit,
+                                            width)
+                           : loadPackedBytes(globalPlane, destination + bit,
+                                             width);
+        *outChanged |= old != next;
+        if (canonical && continuous) {
+          auto &retained = unknownPlane ? context->continuousUnknown
+                                        : context->continuousValue;
+          storePackedBits(retained, destination + bit, width, next);
+          storePackedBits(context->continuousMask, destination + bit, width,
+                          packedWidthMask(width));
+        }
+        storePackedBytes(globalPlane, destination + bit, width, next);
+        if (canonical)
+          storePackedBits(*canonicalPlane, destination + bit, width, next);
+      }
+      return OBELISK_RT_OK;
     }
     if (canonical && bitWidth <= 64 && globalOffset >= 0 &&
         static_cast<uint64_t>(globalOffset) <= rootWidth &&

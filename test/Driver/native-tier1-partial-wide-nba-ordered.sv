@@ -8,7 +8,8 @@
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
 
 // Two statements overlap on a wide root, and the loop executes one site
-// repeatedly. The generated queue must retain every enqueue in source order.
+// repeatedly. The runtime-calendar queue must retain every enqueue in source
+// order (IEEE 1800-2023 4.6(b), 10.4.2), across generated actor checkpoints.
 module native_tier1_partial_wide_nba_ordered;
   logic clk = 0;
   logic [127:0] wide = 0;
@@ -37,7 +38,6 @@ module native_tier1_partial_wide_nba_ordered;
   end
 endmodule
 
-// LLVM: @__obelisk_eval_ordered_nba_queue_v1 = internal global
-// LLVM: call i32 @obelisk_rt_v1_eval_nba_reserve
-// LLVM: define i32 @__obelisk_eval_dispatch_v1
+// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
 // OUTPUT: ordered low=0 high=4 edges=4 loop_edges=4

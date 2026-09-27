@@ -82,14 +82,16 @@ uint32_t nextDueNativeNBABarrierRegionUnlocked(
     if (root < context->staticNBAAccumulators.size()) {
       const StaticNBAAccumulator &accumulator =
           context->staticNBAAccumulators[root];
-      if (accumulator.valid)
+      if (accumulator.valid &&
+          schedulerRegionEligible(context, accumulator.execRegion))
         region = std::min(region, accumulator.execRegion);
     }
     if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators &&
         root < context->nativeScheduleNBARootCount) {
       const auto *generated =
           context->nativeScheduleNBARoots[root].generated_accumulator;
-      if (generated && hasGeneratedNBAStages(*generated))
+      if (generated && hasGeneratedNBAStages(*generated) &&
+          schedulerRegionEligible(context, generated->exec_region))
         region = std::min(region, generated->exec_region);
     }
   };
@@ -691,7 +693,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     auto currentBit = [&](bool unknownBit, uint64_t bit) {
       uint64_t absolute = (boundedStatic ? state->bitOffset : 0) +
                           static_cast<uint64_t>(offset) + bit;
-      const std::vector<uint64_t> &plane =
+      const auto &plane =
           unknownBit ? context->stateUnknown : context->stateValue;
       if (absolute / 64 < plane.size())
         return ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
@@ -986,7 +988,7 @@ static obelisk_rt_status schedulerInertialPath(
         const uint8_t *plane = unknownBit ? unknownPlane : valuePlane;
         return plane && absolute < planeBitCount && byteBit(plane, absolute);
       }
-      const std::vector<uint64_t> &plane =
+      const auto &plane =
           unknownBit ? context->stateUnknown : context->stateValue;
       if (absolute / 64 < plane.size())
         return ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
@@ -1503,7 +1505,7 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
                           uint64_t bit) {
       uint64_t absolute = selection.state->bitOffset +
                           static_cast<uint64_t>(selection.offset) + bit;
-      const std::vector<uint64_t> &plane =
+      const auto &plane =
           unknown ? context->stateUnknown : context->stateValue;
       return absolute / 64 < plane.size() &&
              ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
@@ -1781,7 +1783,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
                           uint64_t bit) {
       uint64_t absolute = selection.state->bitOffset +
                           static_cast<uint64_t>(selection.offset) + bit;
-      const std::vector<uint64_t> &plane =
+      const auto &plane =
           unknown ? context->stateUnknown : context->stateValue;
       return absolute / 64 < plane.size() &&
              ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;

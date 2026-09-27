@@ -80,6 +80,14 @@ bool nativePeriodicAOTEnvironmentClean(const obelisk_rt_context *context) {
          context->designConditionalSignalWaiters.empty();
 }
 
+static bool canUseRuntimeCalendarEval(const obelisk_rt_context *context) {
+  return context && context->nativeSchedulePlan &&
+         (context->nativeSchedulePlan->flags &
+          OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+         !context->nativeScheduleStopAtCleanBoundary &&
+         nativeAOTTransientBoundaryClean(context);
+}
+
 bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
@@ -91,9 +99,13 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
   // IEEE 1800-2017 Clause 31.7 requires a timing condition to be sampled only
   // after its primary publication. Before periodic preparation proves that no
   // generated write can reach a runtime-owned primary, an eval island must use
-  // the publishing fallback. FULLY_STATIC plans retain their existing path.
+  // the publishing fallback. A compile-certified runtime-calendar closure
+  // instead checkpoints every runtime-observed writer (IEEE 1800-2023 4.6,
+  // 9.4.2), so independent generated work need not wait for exclusive clock
+  // ownership. FULLY_STATIC plans retain their existing path.
   if ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0 &&
-      !context->nativeStaticEvalIslandCertified)
+      !context->nativeStaticEvalIslandCertified &&
+      !canUseRuntimeCalendarEval(context))
     return false;
   // The activation guard's fast flag already represents this same clean
   // environment and is invalidated synchronously on every writable-VPI
@@ -130,7 +142,8 @@ bool canUseIndexedExternalAOTFanout(const obelisk_rt_context *context) {
       context ? context->nativeSchedulePlan : nullptr;
   return plan &&
          ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) == 0 ||
-          context->nativeStaticEvalIslandCertified) &&
+          context->nativeStaticEvalIslandCertified ||
+          canUseRuntimeCalendarEval(context)) &&
          (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
                          OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0 &&
          !context->nativeScheduleDeoptimized &&
@@ -572,6 +585,15 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
                                  const obelisk_rt_native_schedule_node *nodes,
                                  uint32_t nodeCount) {
   if (!context->nativeScheduleNodes.empty()) {
+    // A compiler-certified runtime-calendar plan owns an immutable node
+    // table for its lifetime. Checkpoint reentry uses that same table; its
+    // complete identities were already validated when installed.
+    if (context->nativeSchedulePlan &&
+        (context->nativeSchedulePlan->flags &
+         OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+        nodes == context->nativeScheduleNodeSource &&
+        context->nativeScheduleNodes.size() == nodeCount)
+      return OBELISK_RT_OK;
     if (context->nativeScheduleNodes.size() != nodeCount ||
         !std::equal(context->nativeScheduleNodes.begin(),
                     context->nativeScheduleNodes.end(), nodes,
@@ -619,6 +641,7 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
   }
   std::vector<uint32_t> fanoutNodes(context->nativeScheduleFanoutEntryCount,
                                     UINT32_MAX);
+  std::vector<uint64_t> nodeIngress(nodeCount, UINT64_MAX);
   for (uint64_t index = 0; index != context->nativeScheduleFanoutEntryCount;
        ++index) {
     const obelisk_rt_static_fanout_entry &entry =
@@ -631,10 +654,14 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
         node.continuation != entry.continuation)
       return OBELISK_RT_INVALID_CONTINUATION;
     fanoutNodes[index] = entry.compute_node;
+    if (fanoutRoute(entry) == OBELISK_RT_FANOUT_DIRECT)
+      nodeIngress[entry.compute_node] = index;
   }
   context->nativeScheduleNodes = std::move(installedNodes);
+  context->nativeScheduleNodeSource = nodes;
   context->nativeScheduleActorNodes = std::move(actorNodes);
   context->nativeScheduleFanoutNodes = std::move(fanoutNodes);
+  context->nativeScheduleNodeIngress = std::move(nodeIngress);
   context->nativeScheduleReadyNodes.resize(nodeCount);
   for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
        ++slot) {
@@ -658,8 +685,10 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
   if (status == OBELISK_RT_OK)
     return status;
   context->nativeScheduleNodes.clear();
+  context->nativeScheduleNodeSource = nullptr;
   context->nativeScheduleActorNodes.clear();
   context->nativeScheduleFanoutNodes.clear();
+  context->nativeScheduleNodeIngress.clear();
   context->nativeScheduleReadyNodes.resize(0);
   context->nativeScheduleDeadlineHeap.clear();
   std::fill(context->nativeScheduleDeadlines.begin(),
@@ -1306,12 +1335,14 @@ private:
 // Bootstrap and checkpoint work use the same actor/region arbitration as
 // ordinary execution. Restrict only calendar advancement, not executor tiers.
 obelisk_rt_status
-drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context) {
+drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
+                                 bool returnGeneratedIngress = false) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return OBELISK_RT_INVALID_LIFECYCLE;
   return runScheduler(context, {/*nativePlan=*/true,
-                                /*currentSlotOnly=*/true});
+                                /*currentSlotOnly=*/true,
+                                returnGeneratedIngress});
 }
 
 } // namespace
@@ -2446,13 +2477,22 @@ retryNativeSchedule:;
           } while (status == OBELISK_RT_OK);
           if (status != OBELISK_RT_OK)
             goto checkpointDone;
+          if (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) {
+            // A checkpoint consumes only its own owner bit. Other generated
+            // owners may remain ready even if this callback publishes no
+            // change. Resume that closure before advancing the calendar or
+            // crossing the NBA barrier (IEEE 1800-2023 4.4-4.5, 10.4.2).
+            ContextMutexLock lock(context);
+            context->nativeScheduleClockIngressPending = true;
+          }
           // IEEE 1800-2017 Clauses 31.7 and 31.9.1 require work exposed by a
           // primary publication, and a delayed transport child created by a
           // source monitor, to enter the same time-slot ordering cohort. The
           // checkpoint callback is intentionally only one actor activation;
           // drain the newly enabled runtime work before the generated island
           // can advance to another periodic edge.
-          status = drainNativeAOTCurrentSlotUnlocked(context);
+          status = drainNativeAOTCurrentSlotUnlocked(
+              context, /*returnGeneratedIngress=*/true);
           if (status != OBELISK_RT_OK)
             goto checkpointDone;
           if (finishing) {
@@ -2501,7 +2541,8 @@ retryNativeSchedule:;
       // Drain the checkpoint slot with generic ordering arbitration around
       // direct generated Tier-2 nodes. Future calendar entries remain owned
       // by run_until.
-      status = drainNativeAOTCurrentSlotUnlocked(context);
+      status = drainNativeAOTCurrentSlotUnlocked(
+          context, /*returnGeneratedIngress=*/true);
       if (status != OBELISK_RT_OK)
         return status;
       {
@@ -2763,8 +2804,10 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleActorTokens.clear();
   context->nativeScheduleActorIndices.clear();
   context->nativeScheduleNodes.clear();
+  context->nativeScheduleNodeSource = nullptr;
   context->nativeScheduleActorNodes.clear();
   context->nativeScheduleFanoutNodes.clear();
+  context->nativeScheduleNodeIngress.clear();
   context->nativeScheduleFanoutRanges.clear();
   context->nativeScheduleReadyNodes.resize(0);
   context->nativeScheduleDeadlines.clear();

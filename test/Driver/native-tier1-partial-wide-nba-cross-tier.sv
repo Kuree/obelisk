@@ -1,5 +1,5 @@
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
-// RUN: FileCheck %s --check-prefix=GENERIC < %t.ll
+// RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
@@ -9,7 +9,8 @@
 
 // The excluded testbench also enqueues to the overlapping root. Its writes
 // cannot be interleaved with the generated queue, so Auto keeps runtime NBA
-// ownership for this root.
+// ownership for this root through a checkpoint while retaining Tier-1 for
+// other actors (IEEE 1800-2023 4.6(b), 10.4.2).
 module native_tier1_partial_wide_nba_cross_tier;
   logic clk = 0;
   logic [127:0] wide = 0;
@@ -39,5 +40,7 @@ module native_tier1_partial_wide_nba_cross_tier;
   end
 endmodule
 
-// GENERIC-NOT: @__obelisk_eval_dispatch_v1
-// PROOF: partial eval disabled: runtime-ordered NBA owner
+// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// PROOF: ordered NBA boundary:
+// PROOF-NOT: partial eval disabled

@@ -3,6 +3,7 @@
 #ifndef OBELISK_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
 #define OBELISK_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
 
+#include "CanonicalPlane.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -133,6 +134,14 @@ Logic power(const Logic &base, const Logic &exponent);
 Logic replicate(const Logic &input, uint32_t resultWidth, uint64_t count);
 bool bit(const LimbVector &value, uint64_t index);
 void setBit(LimbVector &value, uint64_t index, bool enabled);
+inline bool bit(const CanonicalPlane &value, uint64_t index) {
+  return ((value[index / 64] >> (index % 64)) & 1) != 0;
+}
+inline void setBit(CanonicalPlane &value, uint64_t index, bool enabled) {
+  uint64_t mask = uint64_t{1} << (index % 64);
+  value[index / 64] = enabled ? value[index / 64] | mask
+                             : value[index / 64] & ~mask;
+}
 bool bit(const std::vector<uint64_t> &value, uint64_t index);
 void setBit(std::vector<uint64_t> &value, uint64_t index, bool enabled);
 std::pair<Logic, Logic> divide(const Logic &dividend, const Logic &divisor,

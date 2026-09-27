@@ -698,8 +698,11 @@ FailureOr<bool> makeNativeEvalPlan(
                        0;
           });
         });
-    if (unownedTransitionNeedsActiveSelfCheck)
+    if (unownedTransitionNeedsActiveSelfCheck) {
+      if (module->hasAttr("obelisk.debug.native_timing"))
+        llvm::errs() << "eval LLVM rejection: unowned active-self transition\n";
       return false;
+    }
     SmallVector<sim::SimFuncOp> evalClosure =
         collectGeneratedEvalCallClosure(module, selectedRawBodies);
     // The generated queue can order every execution of its own sites, but it
@@ -812,6 +815,9 @@ FailureOr<bool> makeNativeEvalPlan(
           // the runtime scheduler until an interprocedural path/count proof
           // and a private Eval clone both exist.
           needsRuntimeFallback = true;
+          if (module->hasAttr("obelisk.debug.native_timing"))
+            llvm::errs() << "eval LLVM rejection: NBA helper "
+                         << function.getSymName() << '\n';
           return;
         }
         FailureOr<DynamicEvalNBAProof> proof = proveDynamicEvalNBA(
@@ -820,7 +826,7 @@ FailureOr<bool> makeNativeEvalPlan(
           valid = failure();
           return;
         }
-        if (!proof->eligible)
+        if (!proof->eligible) {
           call.emitRemark("dynamic NBA is ineligible for generated eval")
               << " (commit-region=" << proof->commitRegion
               << ", periodic-entry=" << static_cast<bool>(proof->periodicRecord)
@@ -833,6 +839,21 @@ FailureOr<bool> makeNativeEvalPlan(
               << proof->periodicIngressTransitionConflicts
               << ", unique-semantic-root-site=" << proof->uniqueSemanticRootSite
               << ", site-once=" << proof->siteExecutesAtMostOnce << ")";
+          if (module->hasAttr("obelisk.debug.native_timing")) {
+            auto site = constantU64(call.getArgOperands()[1]);
+            auto root = site ? staticNBAPlan.siteRoots.find(*site)
+                             : staticNBAPlan.siteRoots.end();
+            llvm::errs() << "eval LLVM rejection: NBA function="
+                         << function.getSymName() << " site="
+                         << site.value_or(UINT64_MAX) << " root="
+                         << (root == staticNBAPlan.siteRoots.end()
+                                 ? UINT32_MAX : root->second)
+                         << " periodic=" << bool(proof->periodicRecord)
+                         << " exclusive=" << proof->exclusivePeriodicIngress
+                         << " once=" << proof->siteExecutesAtMostOnce
+                         << "\n";
+          }
+        }
         needsRuntimeFallback |= !proof->eligible;
         dynamicNBAProofs.try_emplace(call.getOperation(), std::move(*proof));
       });
@@ -2483,6 +2504,11 @@ FailureOr<bool> makeNativeEvalPlan(
           offsetCall.getArgOperands().size() != 2) {
         if (deferColdReference)
           continue;
+        if (module->hasAttr("obelisk.debug.native_timing")) {
+          llvm::errs() << "eval load rejection: function="
+                       << (owner ? owner.getSymName() : StringRef("?"))
+                       << " width=" << *width << '\n';
+        }
         return call.emitError(
                    "dynamic state load has no fixed-root handle offset"),
                failure();
@@ -3075,6 +3101,11 @@ FailureOr<bool> makeNativeEvalPlan(
     // trusted AOT node loop. Static fanout queues generated ingress there, so
     // the same coordinator below drains event-driven model work without the
     // legacy metadata-only schedule wrapper.
+    LLVM::StoreOp::create(
+        builder, location, runEntry->getArgument(0),
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  evalCheckpointMutableStateName),
+        8);
     Value nodes =
         LLVM::AddressOfOp::create(builder, location, pointer, nodesName);
     Value status = LLVM::CallOp::create(
@@ -3085,7 +3116,51 @@ FailureOr<bool> makeNativeEvalPlan(
                                   llvmConstant(builder, location, i32,
                                                executableNodes.size())})
                        .getResult();
-    LLVM::ReturnOp::create(builder, location, status);
+    Block *checkpoint = new Block;
+    Block *finished = new Block;
+    run.getBody().push_back(checkpoint);
+    run.getBody().push_back(finished);
+    finished->addArgument(i32, location);
+    Value needsCheckpoint = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, status,
+        llvmConstant(builder, location, i32,
+                     OBELISK_RT_AOT_GENERATED_CHECKPOINT));
+    cf::CondBranchOp::create(builder, location, needsCheckpoint, checkpoint,
+                             ValueRange{}, finished, ValueRange{status});
+    builder.setInsertionPointToStart(checkpoint);
+    // IEEE 1800-2023 4.6, 10.4.2: resume the exact suspended actor before
+    // downstream generated work, also when the runtime owns the calendar.
+    Value actor = LLVM::LoadOp::create(
+        builder, location, i32,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  evalCheckpointActorName),
+        4);
+    Value continuation = LLVM::LoadOp::create(
+        builder, location, i32,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  evalCheckpointContinuationName),
+        4);
+    Value callback = LLVM::LoadOp::create(
+        builder, location, pointer,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  evalCheckpointCallbackName),
+        8);
+    Value queued = LLVM::CallOp::create(
+                       builder, location, TypeRange{i32},
+                       SymbolRefAttr::get(
+                           context, "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
+                       ValueRange{runEntry->getArgument(1), actor, continuation,
+                                  callback})
+                       .getResult();
+    Value ok = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, queued,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    Value result = arith::SelectOp::create(
+        builder, location, ok,
+        llvmConstant(builder, location, i32, OBELISK_RT_AOT_CHECKPOINT), queued);
+    LLVM::ReturnOp::create(builder, location, result);
+    builder.setInsertionPointToStart(finished);
+    LLVM::ReturnOp::create(builder, location, finished->getArgument(0));
   } else {
     // One model-wide ready bit owns each direct fragment. Physical trigger
     // groups remain distinct and merely OR into that shared model mask, so a
@@ -4277,7 +4352,13 @@ FailureOr<bool> makeNativeEvalPlan(
                 runEntry->getArgument(1), nodes,
                 llvmConstant(builder, location, i32, executableNodes.size())})
             .getResult();
-    LLVM::ReturnOp::create(builder, location, fallbackStatus);
+    Value fallbackCheckpoint = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, fallbackStatus,
+        llvmConstant(builder, location, i32,
+                     OBELISK_RT_AOT_GENERATED_CHECKPOINT));
+    cf::CondBranchOp::create(builder, location, fallbackCheckpoint,
+                             executePrepareCheckpoint, ValueRange{}, failed,
+                             ValueRange{fallbackStatus});
 
     builder.setInsertionPointToStart(executePrepareCheckpoint);
     Value prepareCheckpointActor = LLVM::LoadOp::create(
@@ -5906,6 +5987,10 @@ FailureOr<bool> makeNativeEvalPlan(
                          : 0) |
                     (cleanSuperstepEnabled && staticEvalIsland
                          ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND
+                         : 0) |
+                    (cleanSuperstepEnabled && staticEvalIsland &&
+                             module->hasAttr("obelisk.eval.runtime_calendar")
+                         ? OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL
                          : 0) |
                     OBELISK_RT_NATIVE_SCHEDULE_EVAL),
             NativeSchedulePlanField::Flags);

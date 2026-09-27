@@ -137,6 +137,27 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
 // Scheduler queue maintenance (Process.cpp)
 //===----------------------------------------------------------------------===//
 
+inline bool isReactiveSchedulerRegion(uint32_t region) {
+  return region >= OBELISK_RT_REGION_REACTIVE &&
+         region <= OBELISK_RT_REGION_RE_NBA;
+}
+
+inline bool schedulerRegionEligible(const obelisk_rt_context *context,
+                                    uint32_t region) {
+  return !context->schedulerDrainingReactive ||
+         isReactiveSchedulerRegion(region);
+}
+
+inline void setSchedulerDrainingReactive(obelisk_rt_context *context,
+                                        bool draining) {
+  if (context->schedulerDrainingReactive == draining)
+    return;
+  context->schedulerDrainingReactive = draining;
+  // Both native and bytecode ready caches depend on region eligibility.
+  if (++context->schedulerSelectionGeneration == 0)
+    context->schedulerSelectionGeneration = 1;
+}
+
 bool nativeProcessReady(obelisk_rt_context &context,
                         const ScheduledProcess &process);
 inline const obelisk_rt_wait_record_v1 *
@@ -175,6 +196,9 @@ struct SchedulerRunOptions {
   // A generated boundary may retain future clock deadlines. This restricts
   // time advancement, not which runnable regions the shared loop drains.
   bool currentSlotOnly = false;
+  // Return checkpoint-generated ingress to the plan's continuation trampoline.
+  // Bootstrap drains must still settle that ingress before clock admission.
+  bool returnGeneratedIngress = false;
 };
 obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                SchedulerRunOptions options = {});

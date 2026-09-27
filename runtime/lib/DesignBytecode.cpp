@@ -4839,7 +4839,8 @@ inspectDesignTaskReadiness(obelisk_rt_context *context,
                            bool recordSchedulerEffects,
                            DesignTaskReadiness &result) {
   result = {};
-  if (task.phase != activePhase)
+  if (task.phase != activePhase ||
+      !schedulerRegionEligible(context, task.queuedRegion))
     return OBELISK_RT_OK;
 
   bool awaited = false;
@@ -5334,6 +5335,9 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           readyCohort->valid = false;
       }
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
+      if (!context->schedulerRunningFinals &&
+          isReactiveSchedulerRegion(task.queuedRegion))
+        setSchedulerDrainingReactive(context, true);
       bool resuming =
           task.started && task.suspendKind != OBELISK_RT_SUSPEND_NONE;
       if (!task.started)

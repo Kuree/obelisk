@@ -111,7 +111,8 @@ inline bool anyPackedBits(const uint8_t *plane, uint64_t bitOffset,
   return bitWidth && (*plane & packedWidthMask(bitWidth));
 }
 
-inline uint64_t loadPackedBits(const std::vector<uint64_t> &plane,
+template <typename Plane>
+inline uint64_t loadPackedBits(const Plane &plane,
                                uint64_t bitOffset, uint64_t bitWidth) {
   uint64_t limb = bitOffset / 64;
   uint32_t shift = bitOffset % 64;
@@ -166,7 +167,8 @@ inline uint64_t loadPackedBytes(const uint8_t *plane, uint64_t bitOffset,
   return static_cast<uint64_t>(bits >> shift) & packedWidthMask(bitWidth);
 }
 
-inline void storePackedBits(std::vector<uint64_t> &plane, uint64_t bitOffset,
+template <typename Plane>
+inline void storePackedBits(Plane &plane, uint64_t bitOffset,
                             uint64_t bitWidth, uint64_t value) {
   uint64_t limb = bitOffset / 64;
   uint32_t shift = bitOffset % 64;

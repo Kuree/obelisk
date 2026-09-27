@@ -421,6 +421,8 @@ template <bool RecordSchedulerEffects>
 __attribute__((always_inline)) static inline bool
 nativeProcessReadyImpl(obelisk_rt_context &context,
                        const ScheduledProcess &process) {
+  if (!schedulerRegionEligible(&context, process.queuedRegion))
+    return false;
   if (process.explicitlySuspended)
     return false;
   if (!process.started || process.suspendKind == OBELISK_RT_SUSPEND_NONE)
@@ -1359,6 +1361,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       ((cleanSuperstep || staticEvalIsland) && plan->clock_kernel_count != 0 &&
        plan->timeslot_coordinator && plan->promotion_invalidate &&
        plan->promotion_ready);
+  bool runtimeCalendarEvalValid =
+      !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
+      (staticEvalIsland && context->execution &&
+       context->execution->observer_count == 0 &&
+       !(context->execution->flags &
+         (OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
+          OBELISK_RT_EXECUTION_DPI_EXPORTS |
+          OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)));
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -1371,6 +1381,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       ((plan->promotion_invalidate_range || plan->promotion_recheck_range) &&
        !plan->promotion_invalidate) ||
       !cleanSuperstepValid || !staticEvalIslandValid || !evalSchedulerValid ||
+      !runtimeCalendarEvalValid ||
       (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
                        OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
@@ -1382,7 +1393,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                        OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION |
                        OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
                        OBELISK_RT_NATIVE_SCHEDULE_EVAL |
-                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 ||
+                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND |
+                       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL)) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   const obelisk_rt_static_nba_root *nbaRoots = plan->nba_roots;
@@ -1611,8 +1623,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       for (uint32_t index = 0; index != nbaRootCount; ++index)
         generatedWrites.insert(nbaRoots[index].static_state);
       context->nativeScheduleNodes.clear();
+      context->nativeScheduleNodeSource = nullptr;
       context->nativeScheduleActorNodes.clear();
       context->nativeScheduleFanoutNodes.clear();
+      context->nativeScheduleNodeIngress.clear();
       context->nativeScheduleFanoutRanges.clear();
       context->nativeScheduleReadyNodes.resize(0);
       context->nativeScheduleDeadlines.assign(plan->actor_capacity, UINT64_MAX);
@@ -2245,6 +2259,45 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
+                                     uint8_t *value, uint8_t *unknown,
+                                     uint64_t bitCount) {
+  if (!context || !value || !unknown || value == unknown ||
+      (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
+      (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  ContextMutexLock lock(context);
+  if (!context->execution || context->execution->observer_count ||
+      (context->execution->flags &
+       (OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
+        OBELISK_RT_EXECUTION_DPI_EXPORTS |
+        OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)) ||
+      context->nativeStateValue || context->nativeSchedulePlan ||
+      !context->nativeStaticStates.empty() ||
+      !context->scheduledProcesses.empty())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
+    return OBELISK_RT_LAYOUT_MISMATCH;
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || \
+    defined(_WIN32)
+  context->stateValue.bind(value, (bitCount + 63) / 64);
+  context->stateUnknown.bind(unknown, (bitCount + 63) / 64);
+  if (bitCount % 64) {
+    uint64_t mask = (uint64_t{1} << (bitCount % 64)) - 1;
+    context->stateValue.back() &= mask;
+    context->stateUnknown.back() &= mask;
+  }
+  context->nativeStateValue = value;
+  context->nativeStateUnknown = unknown;
+  context->nativeStateBitCount = bitCount;
+  return OBELISK_RT_OK;
+#else
+  return OBELISK_RT_TIER_UNAVAILABLE;
+#endif
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
                                 uint8_t *unknown, uint64_t bitCount) {
   if (!context || !value || !unknown)
@@ -2514,13 +2567,16 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   uint32_t barrierRegion = UINT32_MAX;
   auto considerBarrier = [&](const auto &entries) {
     for (const auto &entry : entries)
-      if (entry.dueTime <= context->schedulerTime)
+      if (entry.dueTime <= context->schedulerTime &&
+          schedulerRegionEligible(context, entry.execRegion))
         barrierRegion = std::min(barrierRegion, entry.execRegion);
   };
   for (const ScheduledNBA &entry : context->scheduledNBAs)
-    if (!entry.cancelled && entry.dueTime <= context->schedulerTime)
+    if (!entry.cancelled && entry.dueTime <= context->schedulerTime &&
+        schedulerRegionEligible(context, entry.execRegion))
       barrierRegion = std::min(barrierRegion, entry.execRegion);
-  if (!context->scheduledInertialPathNBAs.empty() &&
+  if (!context->schedulerDrainingReactive &&
+      !context->scheduledInertialPathNBAs.empty() &&
       context->scheduledInertialPathNBAs.begin()->first.first <=
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
@@ -2530,11 +2586,18 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   considerBarrier(context->scheduledDesignEvents);
   if (const ReplaceableEventFeatureState *replaceable =
           obelisk_rt_replaceable_events(context);
-      replaceable && !replaceable->calendar.empty() &&
-      replaceable->calendar.begin()->first.first <= context->schedulerTime)
-    barrierRegion = std::min(barrierRegion,
-                             replaceable->calendar.begin()->second.execRegion);
-  if (!context->scheduledPassSwitchEvents.empty() &&
+      replaceable && !replaceable->calendar.empty()) {
+    // An ineligible Active event at the front must not hide a due Re-NBA
+    // event later in the calendar (IEEE 1800-2023 4.5).
+    for (const auto &event : replaceable->calendar) {
+      if (event.first.first > context->schedulerTime)
+        break;
+      if (schedulerRegionEligible(context, event.second.execRegion))
+        barrierRegion = std::min(barrierRegion, event.second.execRegion);
+    }
+  }
+  if (!context->schedulerDrainingReactive &&
+      !context->scheduledPassSwitchEvents.empty() &&
       context->scheduledPassSwitchEvents.begin()->first.first <=
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
@@ -2907,9 +2970,21 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   // Generated execution can leave the descriptor candidate index dormant.
   // Rebuild once at this real boundary, then maintain it on publications and
   // returned actions rather than rescanning every actor after every action.
-  if (options.nativePlan)
+  // An ordinary runtime calendar never detaches those actors: its generated
+  // checkpoints return through the same indexed suspension/publication paths.
+  // Rebuilding every checkpoint needlessly reallocates the entire actor map.
+  // Periodic ownership still requires restoration of its detached deadlines
+  // before ordinary event arbitration (IEEE 1800-2023 4.4-4.5).
+  bool indexedRuntimeCalendar =
+      options.nativePlan &&
+      (context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+      !context->nativeStaticEvalIslandCertified &&
+      context->nativePeriodicClockActorSlots.empty();
+  if (options.nativePlan && !indexedRuntimeCalendar)
     rebuildNativeSchedulerIndexUnlocked(context);
   for (;;) {
+    bool deferredEvalIngress = false;
     {
       ContextMutexLock lock(context);
       if (context->destroyPending)
@@ -2994,6 +3069,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       }
       if (context->schedulerFinishRequested) {
         context->schedulerRunningFinals = true;
+        setSchedulerDrainingReactive(context, false);
         if (context->schedulerFinalsAborted)
           return context->schedulerFinishStatus;
       }
@@ -3010,20 +3086,28 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           return OBELISK_RT_LAYOUT_MISMATCH;
       }
       if (context->nativeScheduleClockIngressPending &&
-          !context->vpiTimeCallbackActive && !context->schedulerRunningFinals) {
+          !context->vpiTimeCallbackActive && !context->schedulerRunningFinals &&
+          !context->schedulerDrainingReactive) {
         const auto *plan = context->nativeSchedulePlan;
         if (!plan)
           return OBELISK_RT_INVALID_LIFECYCLE;
-        auto coordinator = plan->timeslot_coordinator;
-        if (!coordinator)
-          return OBELISK_RT_INVALID_LIFECYCLE;
-        context->nativeScheduleClockIngressPending = false;
-        NativeAOTContextScope aotScope(context);
-        NativeAOTMutexScope mutexScope(context);
-        obelisk_rt_status status = coordinator(plan->mutable_state, context);
-        if (status != OBELISK_RT_OK)
-          return status;
-        continue;
+        deferredEvalIngress =
+            (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+            !context->nativeStaticEvalIslandCertified;
+        if (!deferredEvalIngress) {
+          auto coordinator = plan->timeslot_coordinator;
+          if (!coordinator)
+            return OBELISK_RT_INVALID_LIFECYCLE;
+          context->nativeScheduleClockIngressPending = false;
+          NativeAOTContextScope aotScope(context);
+          NativeAOTMutexScope mutexScope(context);
+          if (context->signalDiagnosticsEnabled)
+            ++context->signalDiagnostics.evalDispatches;
+          obelisk_rt_status status = coordinator(plan->mutable_state, context);
+          if (status != OBELISK_RT_OK)
+            return status;
+          continue;
+        }
       }
     }
     uint32_t nativeRegion = UINT32_MAX;
@@ -3424,6 +3508,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       maximumInsertionSequence = 0;
     }
     bool designProgress = false;
+    if (deferredEvalIngress && maximumRegion > OBELISK_RT_REGION_ACTIVE) {
+      maximumRegion = OBELISK_RT_REGION_INACTIVE;
+      maximumRank = 0;
+      maximumInsertionSequence = 0;
+    }
     obelisk_rt_status designStatus = obelisk_rt_run_one_design_task(
         context, maximumRegion, maximumRank, maximumInsertionSequence,
         &designProgress);
@@ -3439,6 +3528,42 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         return status;
       if (context->nativeScheduleSingleStep)
         return OBELISK_RT_OK;
+      continue;
+    }
+    if (context->schedulerDrainingReactive && nativeRegion == UINT32_MAX &&
+        barrierRegion == UINT32_MAX) {
+      // IEEE 1800-2023 4.5: only an empty Reactive/Re-Inactive/Re-NBA
+      // group allows Active (including generated eval ingress) to resume.
+      ContextMutexLock lock(context);
+      setSchedulerDrainingReactive(context, false);
+      continue;
+    }
+    if (deferredEvalIngress && nativeRegion > OBELISK_RT_REGION_ACTIVE &&
+        barrierRegion > OBELISK_RT_REGION_ACTIVE) {
+      // IEEE 1800-2023 4.4, 4.5, 10.4.2: a generated coordinator includes its
+      // NBA drain. Finish current runtime Active work before invoking it, so
+      // a clocked testbench still reads the pre-NBA state of that edge.
+      if (cachedNativeSelection && cachedNativeReadyValid) {
+        pushCachedNativeReady(*cachedNativeSelection);
+        cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      }
+      // A checkpoint's current-slot drain has no generated continuation
+      // trampoline. Leave ingress pending for the outer plan entry, which
+      // can queue the next exact checkpoint before resuming the closure.
+      // Do not cross the NBA barrier in between (LRM 4.4-4.5, 10.4.2).
+      if (options.returnGeneratedIngress)
+        return OBELISK_RT_OK;
+      ContextMutexLock lock(context);
+      const auto *plan = context->nativeSchedulePlan;
+      context->nativeScheduleClockIngressPending = false;
+      NativeAOTContextScope aotScope(context);
+      NativeAOTMutexScope mutexScope(context);
+      if (context->signalDiagnosticsEnabled)
+        ++context->signalDiagnostics.evalDispatches;
+      obelisk_rt_status status =
+          plan->timeslot_coordinator(plan->mutable_state, context);
+      if (status != OBELISK_RT_OK)
+        return status;
       continue;
     }
     if (covergroupStrobePending &&
@@ -3603,6 +3728,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (cachedNativeSelection &&
             candidate.token != cachedNativeSelection->token)
           clearCachedNativeReady();
+        if (!context->schedulerRunningFinals &&
+            isReactiveSchedulerRegion(candidate.queuedRegion))
+          setSchedulerDrainingReactive(context, true);
         if (options.nativePlan && candidate.aotActorSlot != UINT32_MAX) {
           // The executor owns its frame/action ABI. Selection, updates, and
           // subsequent reactivation remain in this loop (1800-2023 4.5).
@@ -3669,6 +3797,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         clearCachedNativeReady();
       if (!selected && !context->schedulerRunningFinals &&
           barrierRegion != UINT32_MAX) {
+        if (isReactiveSchedulerRegion(barrierRegion))
+          setSchedulerDrainingReactive(context, true);
         bool changed = false;
         bool eventTriggered = false;
         obelisk_rt_status clockingStatus =
@@ -4085,7 +4215,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                          (plane[destinationByte] & destinationMask) != 0;
                 }
                 if (canonical) {
-                  const std::vector<uint64_t> &plane =
+                  const auto &plane =
                       unknown ? context->stateUnknown : context->stateValue;
                   return ((plane[planeBit / 64] >> (planeBit % 64)) & 1) != 0;
                 }
@@ -4124,7 +4254,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   plane[destinationByte] = next;
                 }
                 if (canonical) {
-                  std::vector<uint64_t> &storage =
+                  auto &storage =
                       unknown ? context->stateUnknown : context->stateValue;
                   uint64_t mask = uint64_t{1} << (planeBit % 64);
                   uint64_t &limb = storage[planeBit / 64];
@@ -4370,7 +4500,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           else
             --pending->second.remaining;
         };
-        auto planeBit = [](const std::vector<uint64_t> &plane, uint64_t bit) {
+        auto planeBit = [](const auto &plane, uint64_t bit) {
           return bit / 64 < plane.size() &&
                  ((plane[bit / 64] >> (bit % 64)) & 1) != 0;
         };
@@ -4428,7 +4558,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 (oldValue != newValue || oldUnknown != newUnknown);
             publicationBegin = std::min(publicationBegin, destination);
             publicationEnd = std::max(publicationEnd, destination + 1);
-            auto apply = [&](std::vector<uint64_t> &plane, bool value) {
+            auto apply = [&](auto &plane, bool value) {
               uint64_t old = plane[limb];
               uint64_t next = value ? old | mask : old & ~mask;
               changed |= !equalStringContents && old != next;
@@ -4587,12 +4717,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             ReplaceableEventCalendar::iterator replaceableEvent;
             if (replaceable) {
               replaceableEvent = replaceable->calendar.end();
-              auto event = replaceable->calendar.begin();
-              if (event != replaceable->calendar.end() &&
-                  event->first.first <= context->schedulerTime &&
-                  event->second.execRegion == barrierRegion) {
-                replaceableSequence = event->second.sequence;
-                replaceableEvent = event;
+              for (auto event = replaceable->calendar.begin();
+                   event != replaceable->calendar.end() &&
+                   event->first.first <= context->schedulerTime; ++event) {
+                if (event->second.execRegion == barrierRegion &&
+                    event->second.sequence < replaceableSequence) {
+                  replaceableSequence = event->second.sequence;
+                  replaceableEvent = event;
+                }
               }
             }
             uint64_t passSequence = UINT64_MAX;

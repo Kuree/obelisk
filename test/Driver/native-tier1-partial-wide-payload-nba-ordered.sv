@@ -3,7 +3,8 @@
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.auto > %t.auto.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
@@ -11,9 +12,9 @@
 // Two whole-root NBAs with a 128-bit payload write the same root in one
 // activation. IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order,
 // so bit 0 and bit 100 each see a 0 -> 1 -> 0 pulse that the edge watchers
-// count (9.4.2). The generated queue stages each payload as two 64-bit
-// records; bits 0 and 100 lie in different records, and every bit still sees
-// both of its updates in execution order.
+// count (9.4.2). The runtime calendar keeps this partial design's NBA queue
+// and complete payloads at checkpoints; the independent combinational chain
+// still executes through the generated evaluator.
 module native_tier1_partial_wide_payload_nba_ordered;
   logic clk = 0;
   logic [127:0] wide = 0;
@@ -46,7 +47,7 @@ module native_tier1_partial_wide_payload_nba_ordered;
 endmodule
 
 // TIER-NOT: partial eval disabled
-// LLVM: @__obelisk_eval_ordered_nba_queue_v1 = internal global
-// LLVM: call i32 @obelisk_rt_v1_eval_nba_reserve
-// LLVM: define i32 @__obelisk_eval_dispatch_v1
+// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// TRACE: eval_dispatches={{[1-9][0-9]*}}
 // OUTPUT: ordered top=4 low_edges=4 high_edges=4 mix=

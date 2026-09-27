@@ -1084,6 +1084,12 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
           effect.getWidth() > bound->width - effect.getLow())
         return terminator->emitError("static fanout range is out of bounds"),
                failure();
+      // IEEE 1800-2023 4.5, 9.4.2: preserve the static actor/continuation
+      // entry, but publish through the runtime for Reactive consumers.
+      // Their owner is outside the generated Active closure, so a generated
+      // ready bit alone cannot deliver the event in its proper region.
+      if (function.getHomeRegion() == sim::EventRegion::Reactive)
+        plan.runtimeTransitionStates.insert(decoded.id);
       uint32_t edge;
       switch (effect.getTrigger()) {
       case sim::ComputeTriggerKind::Change:

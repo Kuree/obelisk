@@ -67,7 +67,6 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       LLVM::LLVMFunctionType::get(i32, {i32, pointer}, false));
   Block *entry = main.addEntryBlock(builder);
   builder.setInsertionPointToStart(entry);
-  (void)directEval;
   Block *ready = new Block;
   Block *failed = new Block;
   main.getBody().push_back(ready);
@@ -103,10 +102,27 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   }
   bool shouldDumpCoverage = hasCoverage && coveragePersistenceMask != 0;
   bool hasDesignBytecode = false;
+  uint64_t executionFlags = 0;
   if (auto flags =
-          module->getAttrOfType<IntegerAttr>("obelisk.execution.flags"))
+          module->getAttrOfType<IntegerAttr>("obelisk.execution.flags")) {
+    executionFlags = flags.getValue().getZExtValue();
     hasDesignBytecode = (flags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
+  }
+  bool hasObserver = false;
+  module.walk([&](sim::SimFuncOp function) {
+    hasObserver |= function.getEntryKind() == sim::EntryKind::Observer;
+  });
+  // IEEE 1800-2023 4.6(a), 9.4.2: observers may require the canonical
+  // source-order publication image even after generated stores run ahead.
+  // Keep that image for observation-capable designs. A closed eval design
+  // without those readers can let all tiers address the generated storage.
+  bool sharedNativeState =
+      hasExecution && useAOT && directEval && stateLayout.bitCount &&
+      !hasObserver && !hasCoverage &&
+      !(executionFlags & (OBELISK_RT_EXECUTION_VPI_READ |
+                          OBELISK_RT_EXECUTION_VPI_WRITE |
+                          OBELISK_RT_EXECUTION_DPI_EXPORTS));
   uint64_t linePointCount = 0;
   uint64_t toggleBitCount = 0;
   if (hasCoverage) {
@@ -152,6 +168,24 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   builder.setInsertionPointToStart(ready);
   Value runtimeContext =
       LLVM::LoadOp::create(builder, location, pointer, outContext, 8);
+  if (sharedNativeState) {
+    Value value = LLVM::AddressOfOp::create(builder, location, pointer,
+                                           "__obelisk_state_value");
+    Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
+                                             "__obelisk_state_unknown");
+    Value status = LLVM::CallOp::create(
+                       builder, location, TypeRange{i32},
+                       SymbolRefAttr::get(
+                           context, "obelisk_rt_v1_native_state_bind_shared"),
+                       ValueRange{runtimeContext, value, unknown,
+                                  llvmConstant(builder, location, i64,
+                                               stateLayout.bitCount)})
+                       .getResult();
+    LLVM::CallOp::create(
+        builder, location, TypeRange{},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        ValueRange{runtimeContext, status});
+  }
   bool requiresDynamicScanFeature =
       module->hasAttr("obelisk.feature.dynamic_scan");
   bool requiresContainerBitstreamFeature =
@@ -326,7 +360,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           builder, location, TypeRange{},
           SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
           ValueRange{runtimeContext, rootStatus});
-      if (hasDesignBytecode) {
+      if (hasDesignBytecode && !sharedNativeState) {
         SmallVector<Value> designRootArguments{
             runtimeContext,
             llvmConstant(builder, location, i64, bound.offset + rootOffset),
@@ -669,6 +703,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (requiresNativeStateSync)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_sync", i32,
                              {pointer, pointer, pointer, i64});
+  if (sharedNativeState)
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_bind_shared",
+                             i32, {pointer, pointer, pointer, i64});
   if (bindGenericSpecialization)
     getOrDeclareLLVMFunction(module,
                              "obelisk_rt_v1_native_state_bind_specialization",
