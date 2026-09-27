@@ -1,6 +1,7 @@
 //===- SimulationWideIntegerLowering.cpp - Word-vector bitwise planes ----===//
 
 #include "SimulationPackedLowering.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/Pass.h"
@@ -170,7 +171,8 @@ struct NativeFunctionFinalizationPass
       else if (name.starts_with("__obelisk_fused_") &&
                name.contains("__obelisk_eval_body_"))
         alignment = 64;
-      else if (function->hasAttr("obelisk.eval.call_closure_root"))
+      else if (::obelisk::schedule::has<
+                   ::obelisk::schedule::Field::EvalCallClosureRoot>(function))
         alignment = 64;
       if (alignment)
         function.setAlignmentAttr(

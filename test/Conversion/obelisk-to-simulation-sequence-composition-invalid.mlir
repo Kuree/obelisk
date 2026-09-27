@@ -7,7 +7,7 @@
 // RUN: not obelisk-opt %t/nested-persistent-first-match.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=NESTED-PERSISTENT-FIRST-MATCH
 
 // COVER: obelisk_sim.func private @[[COVER_ACTION:[^(]+]](
-// COVER-SAME: obelisk_sim.concurrent_report
+// COVER-SAME: schedule.concurrent_report
 // COVER-LABEL: obelisk_sim.func private @unit_0(
 // COVER-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
 // COVER-SAME: obelisk_sim.cover_sequence_per_match

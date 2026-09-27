@@ -12,31 +12,31 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.func @foreign()
   llvm.func @escape(!llvm.ptr)
-  llvm.func @escaping_temporary() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @escaping_temporary() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %one = llvm.mlir.constant(1 : i64) : i64
     %temporary = llvm.alloca %one x i32 : (i64) -> !llvm.ptr
     llvm.call @escape(%temporary) : (!llvm.ptr) -> ()
     llvm.return
   }
-  llvm.func @self_candidate() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @self_candidate} {
+  llvm.func @self_candidate() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @self_candidate} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %value = llvm.load %base : !llvm.ptr -> i8
     llvm.store %value, %base : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @declaration() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready}
-  llvm.func @missing_body() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @declaration} {
+  llvm.func @declaration() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready}
+  llvm.func @missing_body() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @declaration} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %value = llvm.load %base : !llvm.ptr -> i8
     llvm.store %value, %base : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @group() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready} {
+  llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready} {
     llvm.return
   }
   // A transient candidate with an existing caller cannot be repurposed as
   // the group's cold helper. Preserve its callable body and symbol.
-  llvm.func @called_candidate() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @called_candidate() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %value = llvm.load %base : !llvm.ptr -> i8
     llvm.store %value, %base : i8, !llvm.ptr
@@ -46,7 +46,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.call @called_candidate() : () -> ()
     llvm.return
   }
-  llvm.func @division() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @division() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %value = llvm.load %base : !llvm.ptr -> i8
     %denominator = llvm.load %base : !llvm.ptr -> i8
@@ -54,7 +54,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %result, %base : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @remainder() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @remainder() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %value = llvm.load %base : !llvm.ptr -> i8
     %denominator = llvm.load %base : !llvm.ptr -> i8
@@ -62,7 +62,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %result, %base : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @overlap() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @overlap() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %byte = llvm.getelementptr %base[31] : (!llvm.ptr) -> !llvm.ptr, i8
     %value = llvm.load %base : !llvm.ptr -> i256
@@ -70,7 +70,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %low, %byte : i16, !llvm.ptr
     llvm.return
   }
-  llvm.func @loop() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @loop() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %one = llvm.mlir.constant(1 : i8) : i8
     llvm.br ^body
@@ -83,18 +83,18 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^done:
     llvm.return
   }
-  llvm.func @observer() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @observer() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     llvm.call @foreign() : () -> ()
     llvm.return
   }
-  llvm.func @opaque() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @opaque() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %one = llvm.mlir.constant(1 : i8) : i8
     %bits = llvm.mlir.constant(1 : i64) : i64
     %address = llvm.inttoptr %bits : i64 to !llvm.ptr
     llvm.store %one, %address : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @volatile_read() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @volatile_read() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %value = llvm.load volatile %base : !llvm.ptr -> i8
     llvm.store %value, %base : i8, !llvm.ptr

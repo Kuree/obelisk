@@ -1,6 +1,7 @@
 //===- StateDomainTestPass.cpp - Print whole-value state facts -----------===//
 
 #include "AnalysisTestPasses.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -74,9 +75,9 @@ private:
     for (const obelisk::InductiveStateRoot &root :
          analysis.getInductiveRoots()) {
       StringRef resource = "unknown";
-      if (root.resource == obelisk::sim::ComputeResourceKind::Storage)
+      if (root.resource == obelisk::schedule::ComputeResourceKind::Storage)
         resource = "storage";
-      else if (root.resource == obelisk::sim::ComputeResourceKind::Net)
+      else if (root.resource == obelisk::schedule::ComputeResourceKind::Net)
         resource = "net";
       llvm::errs() << "root " << resource << " " << root.descriptor
                    << ": inductive-two-state\n";

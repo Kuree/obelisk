@@ -19,8 +19,8 @@ module {
     obelisk_sim.code_unit.decl 5 in 0 initial hierarchy "carried"
 
     // CHECK-LABEL: obelisk_sim.func @brk
-    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {obelisk_sim.bounded_loop_header}
-    // CHECK: cf.br ^{{.*}}(%{{.*}} : i32) {obelisk_sim.bounded_loop_latch}
+    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {schedule.bounded_loop_header}
+    // CHECK: cf.br ^{{.*}}(%{{.*}} : i32) {schedule.bounded_loop_latch}
     // UNROLL-LABEL: obelisk_sim.func @brk
     // UNROLL: arith.cmpi slt
     // UNROLL: cf.cond_br
@@ -49,8 +49,8 @@ module {
     }
 
     // CHECK-LABEL: obelisk_sim.func @finish
-    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {obelisk_sim.bounded_loop_header}
-    // CHECK: cf.br ^{{.*}}(%{{.*}} : i32) {obelisk_sim.bounded_loop_latch}
+    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {schedule.bounded_loop_header}
+    // CHECK: cf.br ^{{.*}}(%{{.*}} : i32) {schedule.bounded_loop_latch}
     // UNROLL-LABEL: obelisk_sim.func @finish
     // UNROLL: arith.cmpi slt
     // UNROLL: obelisk_sim.termination.requested
@@ -78,7 +78,7 @@ module {
     // The inner sweep breaks out; once it is proven, the outer sweep over it
     // is a DAG apart from its own backedge.
     // CHECK-LABEL: obelisk_sim.func @nested
-    // CHECK-COUNT-2: {obelisk_sim.bounded_loop_latch}
+    // CHECK-COUNT-2: {schedule.bounded_loop_latch}
     obelisk_sim.func @nested(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %req: !obelisk_sim.ref<i4> {obelisk_sim.capture_kind = 1 : i32}, %sel: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^outer(%zero : i32)
@@ -141,8 +141,8 @@ module {
     }
 
     // CHECK-LABEL: obelisk_sim.func @carried
-    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {obelisk_sim.bounded_loop_header}
-    // CHECK: cf.br ^{{.*}}(%{{.*}}, %{{.*}} : i32, i8) {obelisk_sim.bounded_loop_latch}
+    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {schedule.bounded_loop_header}
+    // CHECK: cf.br ^{{.*}}(%{{.*}}, %{{.*}} : i32, i8) {schedule.bounded_loop_latch}
     // UNROLL-LABEL: obelisk_sim.func @carried
     // UNROLL: arith.cmpi slt
     obelisk_sim.func @carried(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %in: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 1 : i32}, %out: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {

@@ -59,7 +59,7 @@ module {
 // child loops over the event, then stages the already captured RHS.
 // CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
 // CHECK-SAME: %[[CHILD_COUNT:[a-zA-Z0-9_]+]]: i64
-// CHECK-SAME: obelisk_sim.detached_controls
+// CHECK-SAME: schedule.detached_controls
 // CHECK: cf.cond_br %{{.*}}, ^[[REPEAT_HEADER:[a-zA-Z0-9_]+]](%[[CHILD_COUNT]] {{.*}}), ^[[REPEAT_COMMIT:[a-zA-Z0-9_]+]]
 // CHECK: ^[[REPEAT_COMMIT]]:
 // CHECK: obelisk_sim.nba.enqueue

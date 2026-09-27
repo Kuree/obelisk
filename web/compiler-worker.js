@@ -130,6 +130,7 @@ async function compile({ source, args, stage, kind }) {
   const started = performance.now();
   let status = 0;
   try {
+    if (stage === 'schedule') argv.push('--schedule-format=json');
     status = mod.callMain(argv) ?? 0;
   } catch (error) {
     // emscripten throws ExitStatus for a non-zero exit.

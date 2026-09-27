@@ -4,12 +4,12 @@
 // and 4.9.3 requires a blocking update to enable dependent events. Preserve
 // the self-sensitivity edge for the outer wait so an update in one iteration
 // can enqueue the next iteration.
-// CHECK-LABEL: obelisk_sim.design @repeating_always attributes {compute_graph = #obelisk_sim.graph<
-// CHECK-SAME: #obelisk_sim.fragment<id = [[WAIT:[0-9]+]], function = @process, block = 1
+// CHECK-LABEL: obelisk_sim.design @repeating_always attributes {compute_graph = #schedule.graph<
+// CHECK-SAME: #schedule.fragment<id = [[WAIT:[0-9]+]], function = @process, block = 1
 // CHECK-SAME: effect = watch
-// CHECK-SAME: #obelisk_sim.fragment<id = [[BODY:[0-9]+]], function = @process, block = 2
+// CHECK-SAME: #schedule.fragment<id = [[BODY:[0-9]+]], function = @process, block = 2
 // CHECK-SAME: effect = write
-// CHECK-SAME: #obelisk_sim.edge<source = [[BODY]], target = [[WAIT]], kind = sensitivity
+// CHECK-SAME: #schedule.edge<source = [[BODY]], target = [[WAIT]], kind = sensitivity
 // CHECK-SAME: regions =
 module {
   obelisk_sim.design @repeating_always {
@@ -26,8 +26,8 @@ module {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %state to ^body {
-          obelisk_sim.procedural_event_wait,
-          obelisk_sim.repeating_always_wait
+          schedule.procedural_event_wait,
+          schedule.repeating_always_wait
         } : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^body:
       %value = obelisk_sim.ref.load %state :

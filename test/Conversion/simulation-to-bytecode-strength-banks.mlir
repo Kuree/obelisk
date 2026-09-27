@@ -37,7 +37,7 @@ module attributes {
           !obelisk_sim.driver<!obelisk_sim.logic<1>>
       %z = obelisk_sim.logic.constant true, true : !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %low = %z {
-        obelisk_sim.defer_net_resolution
+        schedule.defer_net_resolution
       } : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       %high = obelisk_sim.context.driver %ctx[1] :
           !obelisk_sim.driver<!obelisk_sim.logic<1>>

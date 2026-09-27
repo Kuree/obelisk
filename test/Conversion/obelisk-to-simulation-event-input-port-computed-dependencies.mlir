@@ -112,15 +112,15 @@ module {
 // CHECK: obelisk_sim.spawn @unit_8
 // CHECK: obelisk_sim.spawn @unit_3
 // CHECK: obelisk_sim.func private @unit_1
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // CHECK: obelisk_sim.func private @unit_4
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // CHECK: obelisk_sim.func private @unit_5
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // CHECK: obelisk_sim.func private @unit_6
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // CHECK: obelisk_sim.func private @unit_7
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // CHECK: obelisk_sim.func private @unit_8
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // CHECK-NOT: obelisk.sv.

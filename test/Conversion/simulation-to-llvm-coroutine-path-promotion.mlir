@@ -12,7 +12,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @path_promotion {
     obelisk_sim.scope.decl 0
@@ -62,8 +62,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 1>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 1>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -89,7 +89,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %clock to ^resume
-          {site = #obelisk_sim.continuation<id = 2>} :
+          {site = #schedule.continuation<id = 2>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^resume:
       %value = obelisk_sim.ref.load %source :
@@ -127,7 +127,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %clock to ^resume
-          {site = #obelisk_sim.continuation<id = 3>} :
+          {site = #schedule.continuation<id = 3>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^resume:
       %value = obelisk_sim.ref.load %source :
@@ -156,7 +156,7 @@ module attributes {
   }
 }
 
-// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK: module attributes {{.*}}schedule.eval.generated
 // CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_path_known
 // CHECK-NOT: llvm.store
 // CHECK-NOT: llvm.call

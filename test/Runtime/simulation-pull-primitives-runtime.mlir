@@ -98,7 +98,7 @@ module attributes {
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>>
             {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 7 : i32, code_unit_id = 9950001 : i64,
-                    obelisk_sim.primitive_name = "pullup",
+                    schedule.primitive_name = "pullup",
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>]} {
       obelisk.sv.expression.assignment attributes {
@@ -118,7 +118,7 @@ module attributes {
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>>
             {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 7 : i32, code_unit_id = 9950002 : i64,
-                    obelisk_sim.primitive_name = "pulldown",
+                    schedule.primitive_name = "pulldown",
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>]} {
       obelisk.sv.expression.assignment attributes {

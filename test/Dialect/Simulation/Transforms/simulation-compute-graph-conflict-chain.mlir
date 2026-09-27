@@ -2,9 +2,9 @@
 
 // Four mutually conflicting actors require an ordering, but the graph stores
 // its transitive chain rather than all six pairs.
-// CHECK: #obelisk_sim.edge<source = 0, target = 1, kind = conflict
-// CHECK: #obelisk_sim.edge<source = 1, target = 2, kind = conflict
-// CHECK: #obelisk_sim.edge<source = 2, target = 3, kind = conflict
+// CHECK: #schedule.edge<source = 0, target = 1, kind = conflict
+// CHECK: #schedule.edge<source = 1, target = 2, kind = conflict
+// CHECK: #schedule.edge<source = 2, target = 3, kind = conflict
 // CHECK-NOT: kind = conflict
 
 module {

@@ -4,7 +4,7 @@
 // order, forcing the generic settling sort to move them. The event-handle
 // producer and consumer must remain ahead of the wait while that happens.
 module {
-  obelisk_sim.design @event_startup_order attributes {obelisk_sim.computed_event_startup} {
+  obelisk_sim.design @event_startup_order attributes {schedule.computed_event_startup} {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     obelisk_sim.code_unit.decl 2 in 0 always hierarchy "wait"
@@ -57,21 +57,21 @@ module {
     }
 
     obelisk_sim.func @m_consumer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %middle: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %sink: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
-        attributes {entry_kind = 9 : i32, code_unit_id = 3 : i64, internal, obelisk_sim.computed_event_startup} {
+        attributes {entry_kind = 9 : i32, code_unit_id = 3 : i64, internal, schedule.computed_event_startup} {
       %event = obelisk_sim.ref.load %middle : !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.event
       obelisk_sim.ref.store %event to %sink : !obelisk_sim.event, !obelisk_sim.ref<!obelisk_sim.event>
       obelisk_sim.return
     }
 
     obelisk_sim.func @z_producer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %source: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %middle: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
-        attributes {entry_kind = 9 : i32, code_unit_id = 4 : i64, internal, obelisk_sim.computed_event_startup} {
+        attributes {entry_kind = 9 : i32, code_unit_id = 4 : i64, internal, schedule.computed_event_startup} {
       %event = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.event
       obelisk_sim.ref.store %event to %middle : !obelisk_sim.event, !obelisk_sim.ref<!obelisk_sim.event>
       obelisk_sim.return
     }
 
     obelisk_sim.func @selector_producer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %source: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 6 : i64}, %sink: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 7 : i64})
-        attributes {entry_kind = 9 : i32, code_unit_id = 5 : i64, internal, obelisk_sim.computed_event_startup} {
+        attributes {entry_kind = 9 : i32, code_unit_id = 5 : i64, internal, schedule.computed_event_startup} {
       %value = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.ref.store %value to %sink : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
       obelisk_sim.return

@@ -24,7 +24,7 @@
 // BLOCK-COUNT-2: obelisk_sim.covergroup.block_event.fire
 // BLOCK-DAG: obelisk_sim.covergroup.block_event.register
 // BLOCK-DAG: obelisk_sim.covergroup_block_event_sample_evaluator
-// BLOCK-NOT: obelisk_sim.covergroup_clocking_sampler
+// BLOCK-NOT: schedule.covergroup_clocking_sampler
 
 // REFERENCE-PATH: clocking-event covergroup constructor ref formal
 // REFERENCE-PATH-SAME: is bound through a dynamic reference path

@@ -4,11 +4,11 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_forbidden()
   llvm.func @__obelisk_eval_fast_coordinator_bad() attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_forbidden}}
     llvm.call @obelisk_rt_forbidden() : () -> ()
@@ -23,11 +23,11 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_v1_strength_resolve_kind(i16, i16, i32) -> i16
   llvm.func @__obelisk_eval_gate_kernel(%lhs: i16, %rhs: i16, %kind: i32)
-      attributes {obelisk.eval.call_closure_root} {
+      attributes {schedule.eval.call_closure_root} {
     %resolved = llvm.call @obelisk_rt_v1_strength_resolve_kind(
         %lhs, %rhs, %kind) : (i16, i16, i32) -> i16
     llvm.return
@@ -42,18 +42,18 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_v1_scheduler_termination_requested(!llvm.ptr) -> i32
   llvm.func @obelisk_rt_v1_scheduler_time(!llvm.ptr) -> i64
   llvm.func @__obelisk_eval_helper_poll(%ctx: !llvm.ptr) -> i32
-      attributes {obelisk.eval.call_closure_root} {
+      attributes {schedule.eval.call_closure_root} {
     %requested = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%ctx)
         : (!llvm.ptr) -> i32
     llvm.return %requested : i32
   }
   llvm.func @__obelisk_eval_helper_time(%ctx: !llvm.ptr) -> i64
-      attributes {obelisk.eval.call_closure_root} {
+      attributes {schedule.eval.call_closure_root} {
     %now = llvm.call @obelisk_rt_v1_scheduler_time(%ctx) : (!llvm.ptr) -> i64
     llvm.return %now : i64
   }
@@ -64,11 +64,11 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_v1_scheduler_finish(!llvm.ptr, i32) -> i32
   llvm.func @__obelisk_eval_helper_finish(%ctx: !llvm.ptr, %verbosity: i32)
-      attributes {obelisk.eval.call_closure_root} {
+      attributes {schedule.eval.call_closure_root} {
     // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_v1_scheduler_finish}}
     %status = llvm.call @obelisk_rt_v1_scheduler_finish(%ctx, %verbosity)
         : (!llvm.ptr, i32) -> i32
@@ -83,18 +83,18 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_v1_scheduler_run(!llvm.ptr) -> i32
   llvm.func @__obelisk_eval_fast_coordinator_checkpoint_mutation(%ctx: !llvm.ptr) attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     llvm.call @checkpoint_mutation(%ctx) : (!llvm.ptr) -> ()
     llvm.return
   }
   llvm.func @checkpoint_mutation(%ctx: !llvm.ptr) attributes {
-      obelisk.eval.checkpoint_safe,
-      obelisk.eval.may_terminate
+      schedule.eval.checkpoint_safe,
+      schedule.eval.may_terminate
   } {
     // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_v1_scheduler_run}}
     %status = llvm.call @obelisk_rt_v1_scheduler_run(%ctx) : (!llvm.ptr) -> i32
@@ -107,14 +107,14 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_forbidden()
   llvm.func @__obelisk_eval_fast_coordinator_indirect_runtime(%fn: !llvm.ptr) attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval indirect route targets runtime symbol obelisk_rt_forbidden}}
-    llvm.call %fn() {obelisk.eval.allowed_callees = [@obelisk_rt_forbidden]} :
+    llvm.call %fn() {schedule.eval.allowed_callees = [@obelisk_rt_forbidden]} :
         !llvm.ptr, () -> ()
     llvm.return
   }
@@ -127,12 +127,12 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @__obelisk_eval_fast_coordinator_indirect_model(%fn: !llvm.ptr) attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
-    llvm.call %fn() {obelisk.eval.allowed_callees = [@model_body]} :
+    llvm.call %fn() {schedule.eval.allowed_callees = [@model_body]} :
         !llvm.ptr, () -> ()
     llvm.return
   }
@@ -152,18 +152,18 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_v1_display()
   llvm.func @__obelisk_eval_fast_coordinator_checkpoint() attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     llvm.call @checkpoint_owner() : () -> ()
     llvm.return
   }
   llvm.func @checkpoint_owner() attributes {
-      obelisk.eval.checkpoint_safe,
-      obelisk.eval.may_terminate
+      schedule.eval.checkpoint_safe,
+      schedule.eval.may_terminate
   } {
     llvm.call @checkpoint_body() : () -> ()
     llvm.return
@@ -180,16 +180,16 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @obelisk_rt_hidden()
   llvm.func @__obelisk_eval_hybrid_coordinator_bad() attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     llvm.call @checkpoint_owner() : () -> ()
     llvm.return
   }
-  llvm.func @checkpoint_owner() attributes {obelisk.eval.may_terminate} {
+  llvm.func @checkpoint_owner() attributes {schedule.eval.may_terminate} {
     // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_hidden}}
     llvm.call @obelisk_rt_hidden() : () -> ()
     llvm.return
@@ -201,10 +201,10 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @__obelisk_eval_fast_coordinator_indirect(%fn: !llvm.ptr) attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval indirect call has no closed target set}}
     llvm.call %fn() : !llvm.ptr, () -> ()
@@ -217,13 +217,13 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @__obelisk_eval_fast_coordinator_malformed(%fn: !llvm.ptr) attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval indirect call has malformed allowed-callee metadata}}
-    llvm.call %fn() {obelisk.eval.allowed_callees = [42 : i32]} :
+    llvm.call %fn() {schedule.eval.allowed_callees = [42 : i32]} :
         !llvm.ptr, () -> ()
     llvm.return
   }
@@ -234,11 +234,11 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.eval.generated
+  schedule.eval.generated
 } {
   llvm.func @external_model_body()
   llvm.func @__obelisk_eval_periodic_two_state_coordinator_external() attributes {
-      obelisk.eval.call_closure_root
+      schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval hot closure calls external symbol external_model_body}}
     llvm.call @external_model_body() : () -> ()

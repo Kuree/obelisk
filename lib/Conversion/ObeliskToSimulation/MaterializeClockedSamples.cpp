@@ -1,6 +1,8 @@
 //===- MaterializeClockedSamples.cpp - Deferred clock samplers ------------===//
 
 #include "Detail.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 
@@ -43,10 +45,10 @@ public:
     bool invalid = false;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
-      auto propagateObserverRequest = [&](StringRef requestName,
-                                          StringRef targetName,
+      auto propagateObserverRequest = [&](schedule::Field requestName,
+                                          schedule::Field targetName,
                                           StringRef kind) {
-        auto requests = function->getAttrOfType<ArrayAttr>(requestName);
+        auto requests = schedule::get<ArrayAttr>(function, requestName);
         if (!requests)
           return;
         bool requestInvalid = false;
@@ -68,19 +70,21 @@ public:
             requestInvalid = invalid = true;
             continue;
           }
-          evaluator->setAttr(targetName, UnitAttr::get(design.getContext()));
-          evaluator->setAttr("obelisk_sim.detached_controls",
-                             UnitAttr::get(design.getContext()));
+          schedule::set(evaluator, targetName,
+                        UnitAttr::get(design.getContext()));
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::DetachedControls>(
+              evaluator, UnitAttr::get(design.getContext()));
         }
         if (!requestInvalid)
-          function->removeAttr(requestName);
+          schedule::remove(function, requestName);
       };
       propagateObserverRequest(
           simlowering::concurrentCancelObserverRequestAttrName,
-          "obelisk_sim.concurrent_cancel_observer", "cancel");
+          ::obelisk::schedule::Field::ConcurrentCancelObserver, "cancel");
       propagateObserverRequest(
           simlowering::concurrentAbortObserverRequestAttrName,
-          "obelisk_sim.concurrent_abort_observer", "abort");
+          ::obelisk::schedule::Field::ConcurrentAbortObserver, "abort");
     }
     if (invalid) {
       signalPassFailure();
@@ -125,9 +129,9 @@ public:
                                           current.getWidth(), current.getEdge(),
                                           current.getLoc()});
       });
-      auto plan = function->getAttrOfType<DictionaryAttr>(
-          "obelisk_sim.clocked_sample_plan");
-      auto key = plan ? plan.getAs<StringAttr>("key") : StringAttr{};
+      auto plan = ::obelisk::schedule::get<
+          ::obelisk::schedule::Field::ClockedSamplePlan>(function);
+      auto key = plan ? plan.getKey() : StringAttr{};
       if (key)
         planGroups[key.getValue()].push_back(function);
     }
@@ -179,10 +183,10 @@ public:
         return lhs.getSymName() < rhs.getSymName();
       });
       sim::SimFuncOp sampler = group.front();
-      DictionaryAttr plan = sampler->getAttrOfType<DictionaryAttr>(
-          "obelisk_sim.clocked_sample_plan");
-      auto id = plan.getAs<IntegerAttr>("id");
-      auto hierarchy = plan.getAs<StringAttr>("hierarchy");
+      auto plan = ::obelisk::schedule::get<
+          ::obelisk::schedule::Field::ClockedSamplePlan>(sampler);
+      auto id = plan.getId();
+      auto hierarchy = plan.getHierarchy();
       if (!id || !id.getValue().isStrictlyPositive() || !hierarchy) {
         sampler.emitError("malformed alternate-clock sample plan");
         invalid = true;
@@ -192,11 +196,10 @@ public:
       bool compatible = true;
       ArrayRef<sim::SimFuncOp> duplicates(group);
       for (sim::SimFuncOp duplicate : duplicates.drop_front()) {
-        DictionaryAttr duplicatePlan = duplicate->getAttrOfType<DictionaryAttr>(
-            "obelisk_sim.clocked_sample_plan");
+        auto duplicatePlan = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::ClockedSamplePlan>(duplicate);
         compatible &= duplicate.getFunctionType() == sampler.getFunctionType();
-        compatible &=
-            duplicatePlan && duplicatePlan.getAs<IntegerAttr>("id") == id;
+        compatible &= duplicatePlan && duplicatePlan.getId() == id;
         if (duplicate.getNumArguments() == sampler.getNumArguments())
           for (unsigned index = 0; index != sampler.getNumArguments(); ++index)
             compatible &= duplicate.getArgAttrDict(index) ==
@@ -222,7 +225,8 @@ public:
       for (sim::SimFuncOp duplicate : duplicates.drop_front())
         duplicate.erase();
       sampler->setAttr("code_unit_id", id);
-      sampler->removeAttr("obelisk_sim.clocked_sample_plan");
+      ::obelisk::schedule::remove<
+          ::obelisk::schedule::Field::ClockedSamplePlan>(sampler);
       sim::SimCodeUnitDeclOp::create(
           declarationBuilder, sampler.getLoc(), codeUnitID, uint64_t{0},
           sim::EntryKind::Always, hierarchy,

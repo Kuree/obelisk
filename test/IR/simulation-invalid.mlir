@@ -2253,14 +2253,14 @@ module {
           code_unit_id = 9000002 : i64,
           home_region = 10 : i32,
           internal,
-          obelisk_sim.concurrent_cancel,
-          obelisk_sim.detached_controls
+          schedule.concurrent_cancel,
+          schedule.detached_controls
         } {
       %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
       %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>) captures 1 : !obelisk_sim.observer<i1>
       %false = arith.constant false
       // expected-error @+1 {{concurrent cancel level-true suspension requires an internal detached priority concurrent-cancel fork in the reactive region}}
-      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {obelisk_sim.concurrent_cancel_level_true} : !obelisk_sim.observer<i1>, i1
+      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {schedule.concurrent_cancel_level_true} : !obelisk_sim.observer<i1>, i1
     ^resume:
       obelisk_sim.return
     }
@@ -2289,14 +2289,14 @@ module {
           code_unit_id = 9000002 : i64,
           home_region = 10 : i32,
           internal,
-          obelisk_sim.concurrent_abort,
-          obelisk_sim.detached_controls
+          schedule.concurrent_abort,
+          schedule.detached_controls
         } {
       %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
       %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>) captures 1 : !obelisk_sim.observer<i1>
       %false = arith.constant false
       // expected-error @+1 {{concurrent abort level-true suspension requires an internal detached priority concurrent-abort fork in the reactive region}}
-      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {obelisk_sim.concurrent_abort_level_true} : !obelisk_sim.observer<i1>, i1
+      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {schedule.concurrent_abort_level_true} : !obelisk_sim.observer<i1>, i1
     ^resume:
       obelisk_sim.return
     }
@@ -2316,12 +2316,12 @@ module {
           code_unit_id = 9000001 : i64,
           home_region = 10 : i32,
           internal,
-          obelisk_sim.concurrent_cancel,
-          obelisk_sim.detached_controls,
-          obelisk_sim.priority_signal_resume
+          schedule.concurrent_cancel,
+          schedule.detached_controls,
+          schedule.priority_signal_resume
         } {
       // expected-error @+1 {{requires at least one primary observer}}
-      "obelisk_sim.suspend.observe"()[^resume] {condition_count = 0 : i32, condition_indices = array<i32>, edges = array<i32>, obelisk_sim.concurrent_cancel_level_true} : () -> ()
+      "obelisk_sim.suspend.observe"()[^resume] {condition_count = 0 : i32, condition_indices = array<i32>, edges = array<i32>, schedule.concurrent_cancel_level_true} : () -> ()
     ^resume:
       obelisk_sim.return
     }

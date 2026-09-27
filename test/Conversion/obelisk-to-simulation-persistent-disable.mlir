@@ -206,13 +206,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The final unbounded delay owns two aggregate cells. Asynchronous disable
 // clears both cells plus the epoch update, and EOS reads both plus the epoch.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_cancel.18(
-// CHECK-SAME: obelisk_sim.concurrent_cancel
-// CHECK-SAME: obelisk_sim.detached_controls
+// CHECK-SAME: schedule.concurrent_cancel
+// CHECK-SAME: schedule.detached_controls
 // CHECK: obelisk_sim.suspend.observe
-// CHECK-SAME: obelisk_sim.concurrent_cancel_level_true
+// CHECK-SAME: schedule.concurrent_cancel_level_true
 // CHECK-COUNT-3: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.18.delay_weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_counted
+// CHECK-SAME: schedule.concurrent_eos_counted
 // CHECK-COUNT-3: obelisk_sim.ref.load
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-SAME: obelisk_sim.persistent_delay_monitor
@@ -223,7 +223,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // s_eventually[1:$] likewise owns its eligible count and warm-up age bitset.
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_cancel.38(
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK-COUNT-3: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.38.s_eventually(
 // CHECK-COUNT-3: obelisk_sim.ref.load
@@ -235,10 +235,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Strong until owns one live-attempt count; it now has strong EOS failure
 // completion, and disable clears that count plus the epoch.
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_cancel.56(
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK-COUNT-2: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.56.until_strong(
-// CHECK-SAME: obelisk_sim.concurrent_eos_counted
+// CHECK-SAME: schedule.concurrent_eos_counted
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-LABEL: obelisk_sim.func private @unit_2(
 // CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
@@ -249,7 +249,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The goto repetition DFA has four token cells. All four must be reset
 // together, not just the first cell inherited from the bounded implementation.
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_cancel.76(
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK-COUNT-5: obelisk_sim.ref.store
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.76.repetition_weak(
 // CHECK-COUNT-5: obelisk_sim.ref.load
@@ -259,4 +259,4 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.spawn @unit_3.$concurrent_cancel.76
 // CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_count.76.repetition_weak
 
-// CHECK-COUNT-4: obelisk_sim.concurrent_cancel_observer
+// CHECK-COUNT-4: schedule.concurrent_cancel_observer

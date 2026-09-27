@@ -48,7 +48,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
     // Derived event-primary monitors keep per-source snapshots. Their writes
     // must be visible to subsequent canonical reads in the same callback.
-    obelisk_sim.func private @monitor(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %scratch: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}) -> !logic attributes {entry_kind = 14 : i32, code_unit_id = 4 : i64, obelisk_sim.observer_result = 1 : i32, obelisk_sim.observer_width = 1 : i32, obelisk_sim.observer_four_state = true} {
+    obelisk_sim.func private @monitor(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %scratch: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}) -> !logic attributes {entry_kind = 14 : i32, code_unit_id = 4 : i64, obelisk_sim.observer_result = 1 : i32, schedule.observer_width = 1 : i32, schedule.observer_four_state = true} {
       %value = obelisk_sim.ref.load %data : !ref -> !logic
       obelisk_sim.ref.store %value to %scratch : !logic, !ref
       %snapshot = obelisk_sim.ref.load %scratch : !ref -> !logic

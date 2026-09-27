@@ -1,6 +1,8 @@
 //===- SimulationPromotionRangeIndex.cpp - Scoped proof invalidation -----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Runtime/PromotionRangeIndex.h"
 
@@ -34,9 +36,11 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
     bool nba = false;
   };
   SmallVector<Certificate> certificates;
-  constexpr StringLiteral kernelAttr = "obelisk.eval.kernel_proof_dependencies";
-  constexpr StringLiteral routeAttr = "obelisk.eval.route_proof_dependencies";
-  constexpr StringLiteral nbaAttr = "obelisk.eval.nba_proof_dependencies";
+  constexpr auto kernelAttr =
+      ::obelisk::schedule::Field::EvalKernelProofDependencies;
+  constexpr auto routeAttr =
+      ::obelisk::schedule::Field::EvalRouteProofDependencies;
+  constexpr auto nbaAttr = ::obelisk::schedule::Field::EvalNbaProofDependencies;
   auto pending = module.lookupSymbol<LLVM::GlobalOp>(
       "__obelisk_eval_promotion_pending_mask_v1");
   auto routePending = module.lookupSymbol<LLVM::GlobalOp>(
@@ -45,7 +49,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   // module scan for every fallback referenced by a route.
   SymbolTable symbols(module);
   for (auto global : module.getOps<LLVM::GlobalOp>()) {
-    if (auto kernels = global->getAttrOfType<ArrayAttr>(kernelAttr)) {
+    if (auto kernels = ::obelisk::schedule::get<kernelAttr>(global)) {
       auto latchType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
       auto pendingType =
           pending ? dyn_cast<LLVM::LLVMArrayType>(pending.getGlobalType())
@@ -55,13 +59,10 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
           !pendingType || !pendingType.getElementType().isInteger(64))
         return global.emitError("kernel proof index has invalid latch storage");
       for (Attribute attr : kernels) {
-        auto kernel = dyn_cast<DictionaryAttr>(attr);
-        auto latch =
-            kernel ? kernel.getAs<IntegerAttr>("latch") : IntegerAttr{};
-        auto bit =
-            kernel ? kernel.getAs<IntegerAttr>("pending_bit") : IntegerAttr{};
-        auto ranges = kernel ? kernel.getAs<DenseI64ArrayAttr>("ranges")
-                             : DenseI64ArrayAttr{};
+        auto kernel = dyn_cast<schedule::KernelProofDependencyAttr>(attr);
+        auto latch = kernel ? kernel.getLatch() : IntegerAttr{};
+        auto bit = kernel ? kernel.getPendingBit() : IntegerAttr{};
+        auto ranges = kernel ? kernel.getRanges() : DenseI64ArrayAttr{};
         if (!latch || !bit || !ranges ||
             latch.getUInt() >= latchType.getNumElements() ||
             bit.getUInt() / 64 >= pendingType.getNumElements())
@@ -70,30 +71,29 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
         certificates.push_back(
             {global, {}, latch.getUInt(), bit.getUInt(), ranges});
       }
-      global->removeAttr(kernelAttr);
+      ::obelisk::schedule::remove<kernelAttr>(global);
     }
-    if (auto roots = global->getAttrOfType<ArrayAttr>(nbaAttr)) {
+    if (auto roots = ::obelisk::schedule::get<nbaAttr>(global)) {
       auto wordType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
       if (global.getSymName() != "__obelisk_eval_fast_nba_roots_v1" ||
           !wordType || !wordType.getElementType().isInteger(64))
         return global.emitError(
             "NBA proof index has invalid knownness storage");
       for (Attribute attr : roots) {
-        auto root = dyn_cast<DictionaryAttr>(attr);
-        auto bit = root ? root.getAs<IntegerAttr>("bit") : IntegerAttr{};
-        auto ranges = root ? root.getAs<DenseI64ArrayAttr>("ranges")
-                           : DenseI64ArrayAttr{};
+        auto root = dyn_cast<schedule::NBAProofDependencyAttr>(attr);
+        auto bit = root ? root.getBit() : IntegerAttr{};
+        auto ranges = root ? root.getRanges() : DenseI64ArrayAttr{};
         if (!bit || !ranges || bit.getUInt() / 64 >= wordType.getNumElements())
           return global.emitError(
               "NBA proof index has invalid certificate identity");
         certificates.push_back({global, {}, bit.getUInt(), 0, ranges, true});
       }
-      global->removeAttr(nbaAttr);
+      ::obelisk::schedule::remove<nbaAttr>(global);
     }
-    if (auto route = global->getAttrOfType<DictionaryAttr>(routeAttr)) {
-      auto fallback = route.getAs<FlatSymbolRefAttr>("fallback");
-      auto ranges = route.getAs<DenseI64ArrayAttr>("ranges");
-      auto pendingBit = route.getAs<IntegerAttr>("pending_bit");
+    if (auto route = ::obelisk::schedule::get<routeAttr>(global)) {
+      auto fallback = route.getFallback();
+      auto ranges = route.getRanges();
+      auto pendingBit = route.getPendingBit();
       auto pendingType =
           routePending
               ? dyn_cast<LLVM::LLVMArrayType>(routePending.getGlobalType())
@@ -109,7 +109,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
             "route proof index has invalid fallback storage");
       certificates.push_back(
           {global, fallback, 0, pendingBit.getUInt(), ranges});
-      global->removeAttr(routeAttr);
+      ::obelisk::schedule::remove<routeAttr>(global);
     }
   }
   // Stable dense certificate IDs are independent of scheduler owner bits.
@@ -196,8 +196,8 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
       coverage.push_back(dependency.end);
     }
   }
-  dependencies->setAttr("obelisk.eval.proof_coverage",
-                        builder.getDenseI64ArrayAttr(coverage));
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalProofCoverage>(
+      dependencies, builder.getDenseI64ArrayAttr(coverage));
 
   // Pointer fields use the target LLVM layout; only packed bit positions and
   // uint64_t pending words have fixed byte offsets across native and wasm32.
@@ -343,16 +343,19 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   if (!hook || !dependencies) {
     parallelForEach(module.getContext(), functions, [](FunctionStores &work) {
       work.function.walk([](LLVM::StoreOp store) {
-        store->removeAttr("obelisk.eval.unknown_write_range");
+        ::obelisk::schedule::remove<
+            ::obelisk::schedule::Field::EvalUnknownWriteRange>(store);
       });
     });
     return success();
   }
-  auto coverage = dependencies->getAttrOfType<DenseI64ArrayAttr>(
-      "obelisk.eval.proof_coverage");
+  auto coverage =
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalProofCoverage>(
+          dependencies);
   if (!coverage || coverage.size() % 2)
     return dependencies.emitError("missing verified proof coverage");
-  dependencies->removeAttr("obelisk.eval.proof_coverage");
+  ::obelisk::schedule::remove<::obelisk::schedule::Field::EvalProofCoverage>(
+      dependencies);
   auto disjointRange = [&](uint64_t begin, uint64_t width) {
     if (width > UINT64_MAX - begin)
       return false;
@@ -372,9 +375,10 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   auto bits =
       module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
   auto disjointStore = [&](LLVM::StoreOp store) {
-    if (auto range = store->getAttrOfType<DenseI64ArrayAttr>(
-            "obelisk.eval.unknown_write_range")) {
-      store->removeAttr("obelisk.eval.unknown_write_range");
+    if (auto range = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::EvalUnknownWriteRange>(store)) {
+      ::obelisk::schedule::remove<
+          ::obelisk::schedule::Field::EvalUnknownWriteRange>(store);
       // The generated dynamic commit's clipped mask proves containment.
       // Missing or malformed evidence is conservative, never a guessed lane.
       if (bits && range.size() == 2 && range[0] >= 0 && range[1] > 0 &&

@@ -395,7 +395,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.16.strong(
 // CHECK: arith.subi
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_abort.16(
-// CHECK-SAME: obelisk_sim.concurrent_abort
+// CHECK-SAME: schedule.concurrent_abort
 // CHECK: obelisk_sim.observer.bind {{.*}} values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
 // CHECK: obelisk_sim.ref.load

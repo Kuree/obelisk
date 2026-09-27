@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- BytecodeWaitEncoding.cpp - Bytecode suspension encoding -----------===//
 
 #include "BytecodeEncoder.h"
@@ -182,8 +183,10 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       previousCursor += (uint64_t{widths[index]} + 63) / 64;
   }
   bool levelTrue =
-      operation->hasAttr("obelisk_sim.concurrent_cancel_level_true") ||
-      operation->hasAttr("obelisk_sim.concurrent_abort_level_true");
+      ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::ConcurrentCancelLevelTrue>(operation) ||
+      ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>(operation);
   for (uint32_t index = 0; index != primaryCount; ++index) {
     uint64_t clause =
         clausesOffset + uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
@@ -194,7 +197,8 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
                           : primaryCount + static_cast<uint32_t>(condition));
     write32(bytes, clause + 8, operation.getEdges()[index]);
     write32(bytes, clause + 12,
-            bindings[index]->hasAttr("obelisk_sim.event_primary")
+            ::obelisk::schedule::has<::obelisk::schedule::Field::EventPrimary>(
+                bindings[index])
                 ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
                 : (levelTrue ? OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE : 0));
   }

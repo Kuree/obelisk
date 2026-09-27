@@ -200,7 +200,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // LOWER-SAME: domain = 0 : i32
 // LOWER-SAME: home_region = 10 : i32
 // LOWER-SAME: obelisk_sim.concurrent_match_call
-// LOWER-SAME: obelisk_sim.detached_controls
+// LOWER-SAME: schedule.detached_controls
 // LOWER: %[[CALL0_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
 // LOWER: %[[KILL0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_KILL]], %arg5
 // LOWER: cf.cond_br %[[KILL0_CURRENT]], ^[[CHECK0_DISABLE:bb[0-9]+]], ^[[KILL0_CANCELED:bb[0-9]+]]

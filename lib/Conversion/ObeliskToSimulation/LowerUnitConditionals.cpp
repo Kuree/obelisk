@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- LowerUnitConditionals.cpp - Lower assertions and conditionals ---===//
 
 #include "LowerUnit.h"
@@ -294,8 +295,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
                         function.getContext(), sim::ExecutionDomain::Design));
       // A report is canceled by its ticket rules, not by treating its
       // evaluator as an ordinary child of every currently active named scope.
-      evaluator->setAttr("obelisk_sim.detached_controls",
-                         builder.getUnitAttr());
+      ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+          evaluator, builder.getUnitAttr());
       sim::SimSpawnOp::create(builder, location, evaluator.getSymNameAttr(),
                               callback->second, ArrayAttr{}, ArrayAttr{});
       return success();

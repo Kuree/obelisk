@@ -30,7 +30,7 @@ module {
             {obelisk_sim.capture_kind = 3 : i32,
              obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9914001 : i64,
-                    obelisk_sim.primitive_name = "buf",
+                    schedule.primitive_name = "buf",
                     obelisk_sim.propagation_delays = array<i64: 2, 3, 4>,
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.positive", argument = 1, kind = lvalue_only, copyOut = false>,
@@ -59,7 +59,7 @@ module {
             {obelisk_sim.capture_kind = 3 : i32,
              obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9914002 : i64,
-                    obelisk_sim.primitive_name = "not",
+                    schedule.primitive_name = "not",
                     obelisk_sim.propagation_delays = array<i64: 5, 6, 7>,
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.negative", argument = 1, kind = lvalue_only, copyOut = false>,

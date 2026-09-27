@@ -1,6 +1,8 @@
 //===- LowerUnitSystemCalls.cpp - Lower system-call semantics ----------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Runtime/Runtime.h"
 
@@ -244,16 +246,12 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
         outlineBuilder.getNamedAttr("domain",
                                     sim::ExecutionDomainAttr::get(
                                         context, sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(
-            "obelisk_sim.clocked_sample_plan",
-            outlineBuilder.getDictionaryAttr({
-                outlineBuilder.getNamedAttr("key",
-                                            outlineBuilder.getStringAttr(key)),
-                outlineBuilder.getNamedAttr(
-                    "id", outlineBuilder.getI64IntegerAttr(siteID)),
-                outlineBuilder.getNamedAttr(
-                    "hierarchy", outlineBuilder.getStringAttr(hierarchy)),
-            })),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::ClockedSamplePlan>(
+            schedule::ClockedSamplePlanAttr::get(
+                outlineBuilder.getContext(), outlineBuilder.getStringAttr(key),
+                outlineBuilder.getI64IntegerAttr(siteID),
+                outlineBuilder.getStringAttr(hierarchy))),
         outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                     outlineBuilder.getStringAttr(hierarchy)),
     };
@@ -277,18 +275,20 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     std::optional<unsigned> suspendConditionArgument =
         clockConditionArgument ? clockConditionArgument : gateArgument;
     if (suspendConditionArgument)
-      suspend = sim::SimSuspendEdgeIffOp::create(
-                    waitBuilder, location, static_cast<sim::EdgeKind>(edge),
-                    entry.getArgument(2),
-                    entry.getArgument(*suspendConditionArgument), ValueRange{},
-                    sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
-                    .getOperation();
+      suspend =
+          sim::SimSuspendEdgeIffOp::create(
+              waitBuilder, location, static_cast<sim::EdgeKind>(edge),
+              entry.getArgument(2),
+              entry.getArgument(*suspendConditionArgument), ValueRange{},
+              schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
+              .getOperation();
     else
-      suspend = sim::SimSuspendEdgeOp::create(
-                    waitBuilder, location, static_cast<sim::EdgeKind>(edge),
-                    entry.getArgument(2), ValueRange{},
-                    sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
-                    .getOperation();
+      suspend =
+          sim::SimSuspendEdgeOp::create(
+              waitBuilder, location, static_cast<sim::EdgeKind>(edge),
+              entry.getArgument(2), ValueRange{},
+              schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, sample)
+              .getOperation();
     // IEEE 1800-2017 16.9.3 selects samples from strictly prior time steps.
     // Updating in Postponed leaves an occurrence in the caller's current slot
     // invisible during concurrent assertion evaluation in Observed, while the

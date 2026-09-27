@@ -1,6 +1,9 @@
 //===- BytecodeSuspensionEncoding.cpp - Suspension instruction selection -===//
 
 #include "BytecodeEncoder.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 using namespace mlir;
 
@@ -8,9 +11,12 @@ namespace obelisk::bytecode {
 
 static uint32_t directSignalWaitFlags(Operation *operation) {
   bool suppressActiveSelf =
-      (operation->hasAttr(sim::metadata::topLevelWildcardWait) ||
-       operation->hasAttr(sim::metadata::proceduralEventWait)) &&
-      !operation->hasAttr(sim::metadata::repeatingAlwaysWait);
+      (::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
+           operation) ||
+       ::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+           operation)) &&
+      !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
+          operation);
   return suppressActiveSelf ? OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF
                             : OBELISK_RT_WAIT_FLAGS_NONE;
 }

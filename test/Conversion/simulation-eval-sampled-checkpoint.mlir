@@ -3,14 +3,14 @@
 // Preponed snapshots and sampled-history rings are runtime-owned. Each query
 // must independently create a checkpoint; neither may silently enter a hot
 // generated closure just because the surrounding output supports snapshots.
-// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK: module attributes {{.*}}schedule.eval.generated
 // CHECK-DAG: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
 // CHECK-DAG: llvm.call @obelisk_rt_v1_sampled_read
 // CHECK-DAG: llvm.call @obelisk_rt_v1_sampled_history
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @probe_alias {
     obelisk_sim.scope.decl 0

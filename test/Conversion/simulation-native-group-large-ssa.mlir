@@ -5,9 +5,9 @@
 // Runtime behavior is checked in ../Runtime/simulation-native-group-large-ssa.test.
 
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: obelisk.eval.ranked_members = array<i32: {{.*}}66, 68, 69,{{.*}}>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: {{.*}}66, 68, 69,{{.*}}>
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
-// PLAN-SAME: obelisk.eval.ssa_ready_words = 3 : i64
+// PLAN-SAME: schedule.eval.ssa_ready_words = 3 : i64
 
 // Only startup and the timed checker use node dispatch; clock work must
 // execute through the native coordinator at both optimization levels.

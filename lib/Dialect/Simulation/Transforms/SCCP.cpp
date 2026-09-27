@@ -3,8 +3,9 @@
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -637,8 +638,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
   // tri1 a pull, and 28.16.2 lets a trireg resolve retained charge, none of
   // which the component's one `driver.decl` accounts for.
   DenseMap<uint64_t, BoundaryFact> netFacts;
-  std::optional<sim::ComputeVPIMode> vpiMode =
-      sim::symbolizeComputeVPIMode(vpi);
+  std::optional<schedule::ComputeVPIMode> vpiMode =
+      schedule::symbolizeComputeVPIMode(vpi);
   if (!vpiMode) {
     design.emitOpError("VPI mode must be off, read, or full");
     return signalPassFailure();
@@ -700,7 +701,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
         bool externallyWritable =
             net.getObservability() &&
             *net.getObservability() ==
-                sim::ComputeObservabilityKind::ExternallyWritable;
+                schedule::ComputeObservabilityKind::ExternallyWritable;
         bool implicitlyHighImpedance = true;
         switch (net.getResolutionKind()) {
         case sim::NetResolutionKind::Tri0:

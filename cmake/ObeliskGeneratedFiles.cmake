@@ -47,3 +47,11 @@ obelisk_register_generated_file(
   INPUT include/obelisk/Coverage/CoverageDatabase.td
   ARGS -gen-obelisk-coverage-format-serializer
   DEPENDS utils/obelisk-tblgen/obelisk-tblgen.cpp)
+
+obelisk_register_generated_file(
+  NAME ScheduleFields
+  OUTPUT include/obelisk/Dialect/Schedule/ScheduleFields.h.inc
+  TOOL obelisk-tblgen
+  INPUT include/obelisk/Dialect/Schedule/ScheduleFields.td
+  ARGS -gen-schedule-fields
+  DEPENDS utils/obelisk-tblgen/obelisk-tblgen.cpp)

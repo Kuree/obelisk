@@ -9,17 +9,17 @@
 // value/mask bytes; later overlapping reads observe the updated slot. Distinct
 // snapshot/output ranges stay distinct. Byte order comes from the target.
 // CHECK-LABEL: llvm.func @group()
-// CHECK-SAME: obelisk.eval.coalesced_slots = 6 : i64
-// CHECK-SAME: obelisk.eval.dataflow_fallback = @group.fallback
-// CHECK-SAME: obelisk.eval.dataflow_slots = 9 : i64
-// CHECK-SAME: obelisk.eval.predicated_dataflow
+// CHECK-SAME: schedule.eval.coalesced_slots = 6 : i64
+// CHECK-SAME: schedule.eval.dataflow_fallback = @group.fallback
+// CHECK-SAME: schedule.eval.dataflow_slots = 9 : i64
+// CHECK-SAME: schedule.eval.predicated_dataflow
 // CHECK-NOT: llvm.alloca
 // CHECK: llvm.return
 // LE-DAG: llvm.mlir.constant(8 : i32)
 // LE-DAG: llvm.mlir.constant(-65281 : i32)
 // LE-DAG: llvm.mlir.constant(-65536 : i32)
 // BE-LABEL: llvm.func @group()
-// BE-SAME: obelisk.eval.coalesced_slots = 6 : i64
+// BE-SAME: schedule.eval.coalesced_slots = 6 : i64
 // BE-DAG: llvm.mlir.constant(16 : i32)
 // BE-DAG: llvm.mlir.constant(-16711681 : i32)
 // BE-DAG: llvm.mlir.constant(65535 : i32)
@@ -29,13 +29,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   llvm.mlir.global internal @ready(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.mlir.global internal @slow(0 : i32) : i32
-  llvm.func @group() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready} {
+  llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready} {
     %p = llvm.mlir.addressof @slow : !llvm.ptr
     %one = llvm.mlir.constant(1 : i32) : i32
     llvm.store %one, %p : i32, !llvm.ptr
     llvm.return
   }
-  llvm.func @dataflow() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @dataflow() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %count = llvm.mlir.constant(1 : i64) : i64
     %temporary = llvm.alloca %count x i32 : (i64) -> !llvm.ptr
     %value = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr

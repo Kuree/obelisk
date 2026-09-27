@@ -9,12 +9,12 @@
 // RUN:   | not obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=LIVE-ARG
-// RUN: sed -e 's/obelisk.native.region_body,/obelisk.native.region_body/' \
-// RUN:   -e '/obelisk.eval.reconstructs_continuation_args/d' %s \
+// RUN: sed -e 's/schedule.native.region_body,/schedule.native.region_body/' \
+// RUN:   -e '/schedule.eval.reconstructs_continuation_args/d' %s \
 // RUN:   | not obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=UNCERTIFIED-REGION
-// RUN: sed 's/{site = #obelisk_sim.continuation<id = 1>}/{obelisk_sim.procedural_event_wait, site = #obelisk_sim.continuation<id = 1>}/' %s \
+// RUN: sed 's/{site = #schedule.continuation<id = 1>}/{schedule.procedural_event_wait, site = #schedule.continuation<id = 1>}/' %s \
 // RUN:   | obelisk-opt - -o /dev/null \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)'
 
@@ -29,69 +29,69 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @direct_scc attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
-        #obelisk_sim.fragment<id = 0, function = @loop, block = 0,
+        #schedule.fragment<id = 0, function = @loop, block = 0,
           region = active, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 1, function = @loop, block = 1,
+        #schedule.fragment<id = 1, function = @loop, block = 1,
           region = active, action = suspend_change, tier = native, cost = 1,
           lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = watch, resource = storage,
+            #schedule.effect<effect = watch, resource = storage,
               target = descriptor, descriptor = 0, formal = 0, low = 0,
               width = 1, dynamic = false, deferred = false,
               trigger = change>]>,
-        #obelisk_sim.fragment<id = 2, function = @loop, block = 2,
+        #schedule.fragment<id = 2, function = @loop, block = 2,
           region = active, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = read, resource = storage,
+            #schedule.effect<effect = read, resource = storage,
               target = descriptor, descriptor = 0, formal = 0, low = 0,
               width = 1, dynamic = false, deferred = false, trigger = none>,
-            #obelisk_sim.effect<effect = write, resource = storage,
+            #schedule.effect<effect = write, resource = storage,
               target = descriptor, descriptor = 0, formal = 0, low = 0,
               width = 1, dynamic = false, deferred = false, trigger = none>]>,
-        #obelisk_sim.fragment<id = 3, function = @root, block = 0,
+        #schedule.fragment<id = 3, function = @root, block = 0,
           region = active, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 4, function = @reset, block = 0,
+        #schedule.fragment<id = 4, function = @reset, block = 0,
           region = active, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 5, function = @reset, block = 1,
+        #schedule.fragment<id = 5, function = @reset, block = 1,
           region = active, action = suspend_change, tier = native, cost = 1,
           lane = 0, twoState = true, effects = [
-            #obelisk_sim.effect<effect = watch, resource = storage,
+            #schedule.effect<effect = watch, resource = storage,
               target = descriptor, descriptor = 0, formal = 0, low = 0,
               width = 1, dynamic = false, deferred = false,
               trigger = change>]>,
-        #obelisk_sim.fragment<id = 6, function = @reset, block = 2,
+        #schedule.fragment<id = 6, function = @reset, block = 2,
           region = active, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>],
       edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = [
-          #obelisk_sim.group<fragments = [0], schedule = acyclic,
+        #schedule.region<kind = active, groups = [
+          #schedule.group<fragments = [0], schedule = acyclic,
             feedback = []>,
-          #obelisk_sim.group<fragments = [1, 2], schedule = convergence,
-            feedback = [#obelisk_sim.effect<effect = write,
+          #schedule.group<fragments = [1, 2], schedule = convergence,
+            feedback = [#schedule.effect<effect = write,
               resource = storage, target = descriptor, descriptor = 0,
               formal = 0, low = 0, width = 1, dynamic = false,
               deferred = false, trigger = none>]>,
-          #obelisk_sim.group<fragments = [3], schedule = acyclic,
+          #schedule.group<fragments = [3], schedule = acyclic,
             feedback = []>,
-          #obelisk_sim.group<fragments = [4], schedule = acyclic,
+          #schedule.group<fragments = [4], schedule = acyclic,
             feedback = []>,
-          #obelisk_sim.group<fragments = [5], schedule = acyclic,
+          #schedule.group<fragments = [5], schedule = acyclic,
             feedback = []>,
-          #obelisk_sim.group<fragments = [6], schedule = acyclic,
+          #schedule.group<fragments = [6], schedule = acyclic,
             feedback = []>]>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>]>
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>]>
   } {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "scc.root"
@@ -132,7 +132,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %state to ^done(%remaining : i1)
-          {site = #obelisk_sim.continuation<id = 3>} :
+          {site = #schedule.continuation<id = 3>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^done(%ignored: i1):
       obelisk_sim.return
@@ -144,8 +144,8 @@ module attributes {
             {obelisk_sim.capture_kind = 3 : i32,
              obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
-                    obelisk.native.region_body,
-                    obelisk.eval.reconstructs_continuation_args
+                    schedule.native.region_body,
+                    schedule.eval.reconstructs_continuation_args
         } {
       %carried = arith.constant true
       cf.br ^wait(%carried : i1)
@@ -154,7 +154,7 @@ module attributes {
       // so this actor-side block argument must not make the generated region
       // look like a Tier-3 coroutine continuation.
       obelisk_sim.suspend.change %state to ^resume(%keep : i1)
-          {site = #obelisk_sim.continuation<id = 1>} :
+          {site = #schedule.continuation<id = 1>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^resume(%ignored: i1):
       %value = obelisk_sim.ref.load %state :
@@ -176,8 +176,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 2>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 2>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %state :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -203,8 +203,8 @@ module attributes {
       obelisk_sim.suspend.delay %delay to ^publish(
           %value : !obelisk_sim.logic<1>)
           {resume_region = 2 : i32,
-           site = #obelisk_sim.continuation<id = 4>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+           site = #schedule.continuation<id = 4>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^publish(%delayed: !obelisk_sim.logic<1>):
       %state = obelisk_sim.context.storage %ctx[0] :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
@@ -225,7 +225,7 @@ module attributes {
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
 // CHECK-SAME: attributes {
-// CHECK-SAME: obelisk.eval.tier2_convergence
+// CHECK-SAME: schedule.eval.tier2_convergence
 // CHECK-NOT: llvm.call @obelisk_rt_
 // Invalidation retains owner-local pending state, with no periodic scan latch.
 // CHECK-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_v1

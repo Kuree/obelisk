@@ -96,12 +96,12 @@ module {
 // EARLY: obelisk_sim.code_unit.decl 3 in 0 function hierarchy "top.work"
 // EARLY-LABEL: obelisk_sim.func @work
 // EARLY-LABEL: obelisk_sim.func private @__obelisk_fused_0
-// EARLY: obelisk_sim.call @work{{.*}} {obelisk.eval.source_owner = {code_unit = 1 : i64, continuation = 2 : i32}}
-// EARLY: obelisk_sim.call @work{{.*}} {obelisk.eval.source_owner = {code_unit = 2 : i64, continuation = 5 : i32}}
+// EARLY: obelisk_sim.call @work{{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 1 : i64, continuation = 2 : i32>}
+// EARLY: obelisk_sim.call @work{{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 2 : i64, continuation = 5 : i32>}
 
 // LATE: obelisk_sim.code_unit.decl 3 in 0 function hierarchy "top.work"
 // LATE-LABEL: obelisk_sim.func @work
 // LATE-LABEL: obelisk_sim.func private @__obelisk_fused_0
 // LATE-NOT: obelisk_sim.call @work
-// LATE: arith.constant {obelisk.eval.source_owner = {code_unit = 1 : i64, continuation = 2 : i32}} 0 : i32
-// LATE: arith.constant {obelisk.eval.source_owner = {code_unit = 2 : i64, continuation = 5 : i32}} 0 : i32
+// LATE: arith.constant {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 1 : i64, continuation = 2 : i32>} 0 : i32
+// LATE: arith.constant {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 2 : i64, continuation = 5 : i32>} 0 : i32

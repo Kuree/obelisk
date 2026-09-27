@@ -9,15 +9,15 @@ module attributes {
   // A settling publication targets the wait fragment, but wakes the wait's
   // continuation. Keep that resumed procedural body after its producer even
   // when symbol order assigns the body a lower fragment ID.
-  // CHECK-LABEL: obelisk_sim.design @procedural_observer_order attributes {compute_graph = #obelisk_sim.graph<
-  // CHECK-SAME: #obelisk_sim.fragment<id = [[WAIT:[0-9]+]], function = @a_observer, block = 0
-  // CHECK-SAME: #obelisk_sim.fragment<id = [[BODY:[0-9]+]], function = @a_observer, block = 1
-  // CHECK-SAME: #obelisk_sim.fragment<id = [[PRODUCER:[0-9]+]], function = @z_producer, block = 0
-  // CHECK-SAME: #obelisk_sim.edge<source = [[PRODUCER]], target = [[WAIT]], kind = sensitivity
-  // CHECK-SAME: regions = [#obelisk_sim.region<kind = active, groups = [
-  // CHECK-SAME: #obelisk_sim.group<fragments = {{\[}}[[PRODUCER]]{{\]}}
-  // CHECK-SAME: #obelisk_sim.group<fragments = {{\[}}[[WAIT]]{{\]}}
-  // CHECK-SAME: #obelisk_sim.group<fragments = {{\[}}[[BODY]]{{\]}}
+  // CHECK-LABEL: obelisk_sim.design @procedural_observer_order attributes {compute_graph = #schedule.graph<
+  // CHECK-SAME: #schedule.fragment<id = [[WAIT:[0-9]+]], function = @a_observer, block = 0
+  // CHECK-SAME: #schedule.fragment<id = [[BODY:[0-9]+]], function = @a_observer, block = 1
+  // CHECK-SAME: #schedule.fragment<id = [[PRODUCER:[0-9]+]], function = @z_producer, block = 0
+  // CHECK-SAME: #schedule.edge<source = [[PRODUCER]], target = [[WAIT]], kind = sensitivity
+  // CHECK-SAME: regions = [#schedule.region<kind = active, groups = [
+  // CHECK-SAME: #schedule.group<fragments = {{\[}}[[PRODUCER]]{{\]}}
+  // CHECK-SAME: #schedule.group<fragments = {{\[}}[[WAIT]]{{\]}}
+  // CHECK-SAME: #schedule.group<fragments = {{\[}}[[BODY]]{{\]}}
   // Startup infrastructure carries bit 5 in the native scheduler flags.
   // NATIVE-LABEL: llvm.func @z_producer.__obelisk_spawn
   // NATIVE: %[[STARTUP:.*]] = llvm.mlir.constant(32 : i32)

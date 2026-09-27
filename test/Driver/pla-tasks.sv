@@ -133,5 +133,5 @@ endmodule
 // rereads or writes, so the process-frame lifetime extends past the call.
 // LIFETIME-LABEL: obelisk_sim.func private @unit_0.fork
 // LIFETIME-COUNT-4: obelisk_sim.automatic_reference_capture
-// LIFETIME-SAME: obelisk_sim.detached_controls
-// LIFETIME-SAME: obelisk_sim.prime_on_spawn
+// LIFETIME-SAME: schedule.detached_controls
+// LIFETIME-SAME: schedule.prime_on_spawn

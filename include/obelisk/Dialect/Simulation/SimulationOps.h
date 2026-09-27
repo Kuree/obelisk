@@ -4,6 +4,8 @@
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -121,13 +123,13 @@ bool isVPIVisibleEntryKind(EntryKind kind);
 /// rather than by waiting, so the prepare pass spawns it among the initial
 /// procedures instead of ahead of them. IEEE 1800-2017 9.2.2.1 leaves an
 /// always procedure with no timing control no suspension to reach.
-inline constexpr ::llvm::StringLiteral startupWithoutSuspensionAttrName =
-    "obelisk_sim.starts_without_waiting";
+inline constexpr auto startupWithoutSuspensionAttrName =
+    ::obelisk::schedule::Field::StartsWithoutWaiting;
 
 /// Marks a settling process whose root spawn belongs to a feature-local
 /// computed-event startup chain and must retain that frozen position.
-inline constexpr ::llvm::StringLiteral computedEventStartupAttrName =
-    "obelisk_sim.computed_event_startup";
+inline constexpr auto computedEventStartupAttrName =
+    ::obelisk::schedule::Field::ComputedEventStartup;
 
 /// Number of ordinary wait entries required by a suspension operation.
 /// Computed-observer waits use their own variable-sized record.

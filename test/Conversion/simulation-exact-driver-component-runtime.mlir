@@ -59,8 +59,8 @@ module attributes {
       %one = obelisk_sim.logic.constant true, false :
           !obelisk_sim.logic<1>
       %changed = obelisk_sim.driver.drive_changed %bit = %one {
-        obelisk_sim.exact_driver_id = 0 : i64,
-        obelisk_sim.exact_driver_low = 0 : i64
+        schedule.exact_driver_id = 0 : i64,
+        schedule.exact_driver_low = 0 : i64
       } : !obelisk_sim.driver<!obelisk_sim.logic<1>>,
           !obelisk_sim.logic<1>
       %source_value = obelisk_sim.net.read %source :

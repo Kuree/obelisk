@@ -4,23 +4,23 @@
 module {
   // The compute graph is a late analysis result attached to the design, not a
   // replacement gate/netlist IR. It contains all standard event-region plans.
-  // CHECK: compute_graph = #obelisk_sim.graph<version = 1, vpi = off, workers = 1
-  // CHECK-SAME: #obelisk_sim.fragment<
+  // CHECK: compute_graph = #schedule.graph<version = 1, vpi = off, workers = 1
+  // CHECK-SAME: #schedule.fragment<
   // CHECK-SAME: function = @unknown_div{{.*}}twoState = false
-  // CHECK-SAME: #obelisk_sim.nba_commit<id = [[COMMIT:[0-9]+]], slots = [0, 1, 2]
+  // CHECK-SAME: #schedule.nba_commit<id = [[COMMIT:[0-9]+]], slots = [0, 1, 2]
   // CHECK-SAME: accumulatorSites = [3, 4], frontierSites = [5]
-  // CHECK-SAME: #obelisk_sim.event_commit<
+  // CHECK-SAME: #schedule.event_commit<
   // CHECK-SAME: sites = [0, 1]
   // CHECK-SAME: kind = conflict
   // CHECK-SAME: kind = nba_stage
   // CHECK-SAME: kind = deferred_stage
-  // CHECK-SAME: #obelisk_sim.region<kind = active
+  // CHECK-SAME: #schedule.region<kind = active
   // CHECK-SAME: schedule = convergence, feedback = [
   // CHECK-SAME: schedule = control_loop, feedback = []
-  // CHECK-SAME: #obelisk_sim.region<kind = nba
-  // CHECK-SAME: #obelisk_sim.region<kind = observed
-  // CHECK-SAME: #obelisk_sim.region<kind = reactive
-  // CHECK-SAME: #obelisk_sim.region<kind = postponed
+  // CHECK-SAME: #schedule.region<kind = nba
+  // CHECK-SAME: #schedule.region<kind = observed
+  // CHECK-SAME: #schedule.region<kind = reactive
+  // CHECK-SAME: #schedule.region<kind = postponed
   obelisk_sim.design @graph {
     obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.graph.read_nibble.9000001"
     obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.graph.process.9000002"
@@ -43,7 +43,7 @@ module {
 
     // Formal-handle summaries are parametric and retain the selected range.
     // CHECK-LABEL: obelisk_sim.func @read_nibble
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = storage, target = formal, descriptor = 0, formal = 1, low = 4, width = 4
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = read, resource = storage, target = formal, descriptor = 0, formal = 1, low = 4, width = 4
     obelisk_sim.func @read_nibble(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %formal: !obelisk_sim.ref<!obelisk_sim.logic<16>> {obelisk_sim.capture_kind = 1 : i32})
@@ -55,7 +55,7 @@ module {
 
     // CHECK-LABEL: obelisk_sim.func @process
     // The callee formal is substituted with concrete storage #0.
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 4, width = 4
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 4, width = 4
     // A dynamic destination conservatively covers its input handle.
     // CHECK-SAME: effect = write, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 16, dynamic = true
     // A dynamic select through a static subhandle stays within that subhandle.
@@ -78,26 +78,26 @@ module {
       obelisk_sim.ref.store %value to %middle_dynamic : !obelisk_sim.logic<4>, !obelisk_sim.ref<!obelisk_sim.logic<4>>
       %nba_target = obelisk_sim.ref.extract %result from 0 : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 0, commit = [[COMMIT]], storage = fixed_slot>
+      // CHECK-SAME: site = #schedule.nba_site<id = 0, commit = [[COMMIT]], storage = fixed_slot>
       obelisk_sim.nba.enqueue %value to %nba_target : (!obelisk_sim.logic<4>, !obelisk_sim.ref<!obelisk_sim.logic<4>>) -> ()
       %overlap_target = obelisk_sim.ref.extract %result from 2 : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.ref<!obelisk_sim.logic<4>>
       // Overlapping destinations share one root journal and preserve site order.
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 1, commit = [[COMMIT]], storage = fixed_slot>
+      // CHECK-SAME: site = #schedule.nba_site<id = 1, commit = [[COMMIT]], storage = fixed_slot>
       obelisk_sim.nba.enqueue %value to %overlap_target : (!obelisk_sim.logic<4>, !obelisk_sim.ref<!obelisk_sim.logic<4>>) -> ()
       %delay = obelisk_sim.time.constant 5
       // A statically single-shot delayed NBA keeps a fixed staging slot and a
       // generated timing site.
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 2, commit = [[COMMIT]], storage = fixed_slot, timing = <id = 1, kind = delayed_nba>>
+      // CHECK-SAME: site = #schedule.nba_site<id = 2, commit = [[COMMIT]], storage = fixed_slot, timing = <id = 1, kind = delayed_nba>>
       obelisk_sim.nba.enqueue %value to %nba_target after %delay : (!obelisk_sim.logic<4>, !obelisk_sim.ref<!obelisk_sim.logic<4>>, !obelisk_sim.time) -> ()
       %event = obelisk_sim.context.event %ctx[0] : !obelisk_sim.event
       // CHECK: obelisk_sim.event.trigger
-      // CHECK-SAME: site = #obelisk_sim.event_site<id = 1, commit = {{[0-9]+}}>
+      // CHECK-SAME: site = #schedule.event_site<id = 1, commit = {{[0-9]+}}>
       obelisk_sim.event.trigger %event nonblocking = true
       // CHECK: obelisk_sim.suspend.delay
-      // CHECK-SAME: site = #obelisk_sim.continuation<id = [[CONT:[0-9]+]]>
-      // CHECK-SAME: timing = #obelisk_sim.timing_site<id = 2, kind = calendar>
+      // CHECK-SAME: site = #schedule.continuation<id = [[CONT:[0-9]+]]>
+      // CHECK-SAME: timing = #schedule.timing_site<id = 2, kind = calendar>
       obelisk_sim.suspend.delay %delay to ^resume
     ^resume:
       // A self-activation is represented as a convergence SCC.
@@ -155,7 +155,7 @@ module {
       cf.br ^loop
     ^loop:
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 3, commit = [[COMMIT]], storage = root_accumulator>
+      // CHECK-SAME: site = #schedule.nba_site<id = 3, commit = [[COMMIT]], storage = root_accumulator>
       obelisk_sim.nba.enqueue %value to %result : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       cf.br ^loop
     }
@@ -234,7 +234,7 @@ module {
       cf.br ^clock
     ^clock:
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 4, commit = [[COMMIT]], storage = root_accumulator>
+      // CHECK-SAME: site = #schedule.nba_site<id = 4, commit = [[COMMIT]], storage = root_accumulator>
       obelisk_sim.nba.enqueue %value to %result : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.suspend.change %result to ^clock : !obelisk_sim.ref<!obelisk_sim.logic<8>>
     }
@@ -252,7 +252,7 @@ module {
       cf.br ^loop
     ^loop:
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 5, commit = [[COMMIT]], storage = dynamic_frontier, timing = <id = 3, kind = delayed_nba>>
+      // CHECK-SAME: site = #schedule.nba_site<id = 5, commit = [[COMMIT]], storage = dynamic_frontier, timing = <id = 3, kind = delayed_nba>>
       obelisk_sim.nba.enqueue %value to %result after %delay : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>, !obelisk_sim.time) -> ()
       obelisk_sim.suspend.delay %tick to ^loop
     }

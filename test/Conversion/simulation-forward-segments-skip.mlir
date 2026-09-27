@@ -5,7 +5,7 @@
 // Runtime behavior is checked in ../Runtime/simulation-forward-segments-skip.test.
 
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: obelisk.eval.ranked_members = array<i32: 0, 1, 2, 3>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3>
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0
 

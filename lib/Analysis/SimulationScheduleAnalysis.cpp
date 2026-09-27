@@ -1,6 +1,8 @@
 //===- SimulationScheduleAnalysis.cpp - Shared schedule ranks ------------===//
 
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/ActivationOrder.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -19,14 +21,16 @@ bool isObserverCaptureBridge(Block &block) {
   if (block.getOperations().size() != 1)
     return false;
   auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
-  return branch && branch->hasAttr("obelisk_sim.observer_capture_bridge");
+  return branch &&
+         ::obelisk::schedule::has<
+             ::obelisk::schedule::Field::ObserverCaptureBridge>(branch);
 }
 
-bool isScheduledRegion(sim::ComputeRegionKind kind) {
-  return kind == sim::ComputeRegionKind::Active ||
-         kind == sim::ComputeRegionKind::Observed ||
-         kind == sim::ComputeRegionKind::Reactive ||
-         kind == sim::ComputeRegionKind::Postponed;
+bool isScheduledRegion(schedule::ComputeRegionKind kind) {
+  return kind == schedule::ComputeRegionKind::Active ||
+         kind == schedule::ComputeRegionKind::Observed ||
+         kind == schedule::ComputeRegionKind::Reactive ||
+         kind == schedule::ComputeRegionKind::Postponed;
 }
 
 } // namespace
@@ -39,26 +43,26 @@ bool isSettlingEntryKind(sim::EntryKind kind) {
          kind == sim::EntryKind::PortOutput;
 }
 
-SmallVector<sim::ComputeEdgeAttr> projectActivationSchedulingEdges(
-    ArrayRef<sim::ComputeEdgeAttr> edges,
+SmallVector<schedule::ComputeEdgeAttr> projectActivationSchedulingEdges(
+    ArrayRef<schedule::ComputeEdgeAttr> edges,
     llvm::function_ref<bool(uint32_t)> isSettlingSource) {
   // A sensitivity edge ends at the wait; execution starts at its resume
   // continuation. Project the publication, not the wait's repeating backedge.
   // This is shared with graph construction so rank refinement cannot omit
   // boundary consumers or invent a different activation graph.
-  SmallVector<sim::ComputeEdgeAttr> projected(edges.begin(), edges.end());
+  SmallVector<schedule::ComputeEdgeAttr> projected(edges.begin(), edges.end());
   DenseMap<uint32_t, SmallVector<uint32_t>> continuations;
   for (auto edge : edges)
-    if (edge.getKind() == sim::ComputeEdgeKind::Resume)
+    if (edge.getKind() == schedule::ComputeEdgeKind::Resume)
       continuations[edge.getSource()].push_back(edge.getTarget());
   for (auto edge : edges) {
-    if (edge.getKind() != sim::ComputeEdgeKind::Sensitivity ||
+    if (edge.getKind() != schedule::ComputeEdgeKind::Sensitivity ||
         !isSettlingSource(edge.getSource()))
       continue;
     for (uint32_t continuation : continuations[edge.getTarget()])
-      projected.push_back(sim::ComputeEdgeAttr::get(
+      projected.push_back(schedule::ComputeEdgeAttr::get(
           edge.getContext(), edge.getSource(), continuation,
-          sim::ComputeEdgeKind::Sensitivity, edge.getResource()));
+          schedule::ComputeEdgeKind::Sensitivity, edge.getResource()));
   }
   return projected;
 }
@@ -105,7 +109,7 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
       ++fallback;
   }
 
-  sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph)
     return result;
   ArrayAttr nodes = graph.getNodes();
@@ -114,16 +118,16 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
   // Region/group order, procedural control loops and ownership stay intact.
   SmallVector<uint32_t> groupOf, position;
   uint32_t nextGroup = 0;
-  auto refine = [](sim::ComputeGroupAttr group) {
-    return group.getSchedule() == sim::ComputeScheduleKind::Convergence &&
+  auto refine = [](schedule::ComputeGroupAttr group) {
+    return group.getSchedule() == schedule::ComputeScheduleKind::Convergence &&
            group.getFragments().size() > 1;
   };
   for (Attribute rawRegion : graph.getRegions()) {
-    auto region = cast<sim::ComputeRegionAttr>(rawRegion);
+    auto region = cast<schedule::ComputeRegionAttr>(rawRegion);
     if (!isScheduledRegion(region.getKind()))
       continue;
     for (Attribute rawGroup : region.getGroups()) {
-      auto group = cast<sim::ComputeGroupAttr>(rawGroup);
+      auto group = cast<schedule::ComputeGroupAttr>(rawGroup);
       if (!refine(group))
         continue;
       if (groupOf.empty())
@@ -134,12 +138,13 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
     }
   }
   if (nextGroup) {
-    SmallVector<sim::ComputeEdgeAttr> graphEdges;
+    SmallVector<schedule::ComputeEdgeAttr> graphEdges;
     for (Attribute raw : graph.getEdges())
-      graphEdges.push_back(cast<sim::ComputeEdgeAttr>(raw));
+      graphEdges.push_back(cast<schedule::ComputeEdgeAttr>(raw));
     auto projected =
         projectActivationSchedulingEdges(graphEdges, [&](uint32_t source) {
-          auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[source]);
+          auto fragment =
+              dyn_cast<schedule::ComputeFragmentAttr>(nodes[source]);
           auto function =
               fragment ? functions.lookup(fragment.getFunction().getValue())
                        : sim::SimFuncOp{};
@@ -147,8 +152,8 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
         });
     std::vector<std::pair<uint32_t, uint32_t>> edges;
     for (auto edge : projected)
-      if (edge.getKind() != sim::ComputeEdgeKind::Resume &&
-          edge.getKind() != sim::ComputeEdgeKind::Spawn &&
+      if (edge.getKind() != schedule::ComputeEdgeKind::Resume &&
+          edge.getKind() != schedule::ComputeEdgeKind::Spawn &&
           groupOf[edge.getSource()] != UINT32_MAX &&
           groupOf[edge.getSource()] == groupOf[edge.getTarget()])
         edges.emplace_back(edge.getSource(), edge.getTarget());
@@ -161,11 +166,11 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
   }
   uint32_t rank = 0;
   for (Attribute regionAttribute : graph.getRegions()) {
-    auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
+    auto region = dyn_cast<schedule::ComputeRegionAttr>(regionAttribute);
     if (!region || !isScheduledRegion(region.getKind()))
       continue;
     for (Attribute groupAttribute : region.getGroups()) {
-      auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
+      auto group = dyn_cast<schedule::ComputeGroupAttr>(groupAttribute);
       if (!group)
         continue;
       ArrayRef<int64_t> members = group.getFragments().asArrayRef();
@@ -181,7 +186,7 @@ SimulationScheduleAnalysis::compute(sim::SimDesignOp design) {
       for (int64_t member : members) {
         if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
           continue;
-        auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+        auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(
             nodes[static_cast<size_t>(member)]);
         if (!fragment)
           continue;

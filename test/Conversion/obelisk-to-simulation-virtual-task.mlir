@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// CHECK: #obelisk_sim.fragment<{{.*}}function = @unit_0
-// CHECK: #obelisk_sim.fragment<{{.*}}function = @unit_1
+// CHECK: #schedule.fragment<{{.*}}function = @unit_0
+// CHECK: #schedule.fragment<{{.*}}function = @unit_1
 // CHECK: obelisk_sim.func private @unit_0
 // CHECK-SAME: !obelisk_sim.ref<i32>
 // CHECK-SAME: !obelisk_sim.argument_ref<i32>

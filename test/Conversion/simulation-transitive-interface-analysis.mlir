@@ -108,7 +108,7 @@ module {
 // SCCP-LABEL: obelisk_sim.func @caller
 // SCCP: obelisk_sim.class.virtual_task_call
 
-// GRAPH: compute_graph = #obelisk_sim.graph<
+// GRAPH: compute_graph = #schedule.graph<
 // GRAPH-SAME: function = @c_run
-// GRAPH-SAME: #obelisk_sim.edge<source = 0, target = 2, kind = process_order>
-// GRAPH-SAME: #obelisk_sim.edge<source = 1, target = 0, kind = process_order>
+// GRAPH-SAME: #schedule.edge<source = 0, target = 2, kind = process_order>
+// GRAPH-SAME: #schedule.edge<source = 1, target = 0, kind = process_order>

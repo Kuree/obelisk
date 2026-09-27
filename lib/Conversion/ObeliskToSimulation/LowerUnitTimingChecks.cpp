@@ -1,6 +1,7 @@
 //===- LowerUnitTimingChecks.cpp - Lower system timing checks ------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -466,7 +467,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
           : builder.getDenseI32ArrayAttr(conditionPredicates),
       builder.getI64IntegerAttr(occurrenceSite),
       slotFinal ? builder.getUnitAttr() : UnitAttr{},
-      sim::ContinuationSiteAttr{},
+      schedule::ContinuationSiteAttr{},
       sim::EventRegionAttr::get(function.getContext(),
                                 sim::EventRegion::Observed),
       drain);
@@ -1058,7 +1059,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       // a permanent UINT64_MAX deadline rather than an early wrapped report.
       sim::SimEventTriggerOp::create(
           builder, location, timerEvent, timerDelay, builder.getBoolAttr(true),
-          sim::EventSiteAttr{}, builder.getUnitAttr());
+          schedule::EventSiteAttr{}, builder.getUnitAttr());
       cf::BranchOp::create(builder, location, timerContinue,
                            ValueRange{trueValue});
 
@@ -1072,7 +1073,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       setCurrent(timerCancel);
       sim::SimEventTriggerOp::create(
           builder, location, timerEvent, Value{}, builder.getBoolAttr(true),
-          sim::EventSiteAttr{}, builder.getUnitAttr());
+          schedule::EventSiteAttr{}, builder.getUnitAttr());
       cf::BranchOp::create(builder, location, timerContinue,
                            ValueRange{falseValue});
 

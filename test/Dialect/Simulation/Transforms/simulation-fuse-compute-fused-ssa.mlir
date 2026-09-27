@@ -17,7 +17,7 @@
 // FUSED-SSA-NOT: obelisk_sim.ref.store
 // READ-FUSED-SSA: obelisk_sim.func private @__obelisk_fused_
 // READ-FUSED-SSA-COUNT-2: obelisk_sim.ref.store
-// READ-FUSED-SSA-NOT: obelisk.eval.discardable_store
+// READ-FUSED-SSA-NOT: schedule.eval.discardable_store
 
 //--- fused-ssa.sv
 module fused_ssa;

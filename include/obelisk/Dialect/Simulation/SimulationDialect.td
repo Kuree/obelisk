@@ -8,7 +8,7 @@ include "mlir/IR/DialectBase.td"
 def ObeliskSimulationDialect : Dialect {
   let name = "obelisk_sim";
   let cppNamespace = "::obelisk::sim";
-  let dependentDialects = ["::mlir::arith::ArithDialect",
+  let dependentDialects = ["::obelisk::schedule::ScheduleDialect", "::mlir::arith::ArithDialect",
                            "::obelisk::runtime::ObeliskRuntimeDialect"];
   let summary = "Target-independent executable SystemVerilog simulation IR";
   let description = [{

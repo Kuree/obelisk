@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_TD
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_TD
 
+include "obelisk/Dialect/Schedule/ScheduleAttrs.td"
 include "obelisk/Dialect/Simulation/SimulationDialect.td"
 include "obelisk/Dialect/Simulation/SimulationEnums.td"
 include "obelisk/Dialect/Simulation/SimulationAttrs.td"

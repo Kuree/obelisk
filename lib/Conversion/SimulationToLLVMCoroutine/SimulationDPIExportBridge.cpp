@@ -1,6 +1,7 @@
 //===- SimulationDPIExportBridge.cpp - Scope-local DPI export bridges ----===//
 
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -295,7 +296,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
           builder, function.getLoc(),
           FlatSymbolRefAttr::get(module.getContext(), function.getSymName()),
           operands, builder.getI64IntegerAttr(operands.size()),
-          sim::ContinuationSiteAttr{}, continuation);
+          schedule::ContinuationSiteAttr{}, continuation);
       builder.setInsertionPointToStart(continuation);
       sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
     } else {

@@ -2,6 +2,7 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 using namespace mlir;
 
@@ -176,7 +177,8 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-    uint16_t flags = op->hasAttr("obelisk_sim.defer_net_resolution")
+    uint16_t flags = ::obelisk::schedule::has<
+                         ::obelisk::schedule::Field::DeferNetResolution>(op)
                          ? OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION
                          : 0;
     emit({StoreState, flags, 0, reg(plan, op.getDriver()),
@@ -193,7 +195,8 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
     uint16_t flags = OBELISK_RT_DB_STORE_STATE_CHANGED;
-    if (op->hasAttr("obelisk_sim.defer_net_resolution"))
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::DeferNetResolution>(op))
       flags |= OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION;
     emit({StoreState, flags, reg(plan, op.getChanged()),
           reg(plan, op.getDriver()), reg(plan, op.getValue())});

@@ -67,7 +67,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940001 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
-                    obelisk_sim.program_owner_id = 1001 : i64} {
+                    schedule.program_owner_id = 1001 : i64} {
       %descendant = obelisk_sim.spawn @exit_descendant(%ctx) :
           !obelisk_sim.context -> !obelisk_sim.process
       %hold = obelisk_sim.time.constant 20
@@ -84,7 +84,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940002 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
-                    obelisk_sim.program_owner_id = 1001 : i64} {
+                    schedule.program_owner_id = 1001 : i64} {
       %hold = obelisk_sim.time.constant 10
       obelisk_sim.suspend.delay %hold to ^failed
     ^failed:
@@ -99,7 +99,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9940003 : i64,
                     domain = 1 : i32, home_region = 10 : i32, internal,
-                    obelisk_sim.detached_controls} {
+                    schedule.detached_controls} {
       %delay = obelisk_sim.time.constant 3
       obelisk_sim.suspend.delay %delay to ^exit
     ^exit:
@@ -115,7 +115,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940004 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
-                    obelisk_sim.program_owner_id = 2002 : i64} {
+                    schedule.program_owner_id = 2002 : i64} {
       %delay = obelisk_sim.time.constant 5
       obelisk_sim.suspend.delay %delay to ^done
     ^done:
@@ -130,7 +130,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940005 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
-                    obelisk_sim.program_owner_id = 2002 : i64} {
+                    schedule.program_owner_id = 2002 : i64} {
       %descendant = obelisk_sim.spawn @survivor_descendant(%ctx) :
           !obelisk_sim.context -> !obelisk_sim.process
       obelisk_sim.return
@@ -140,7 +140,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9940006 : i64,
                     domain = 1 : i32, home_region = 10 : i32, internal,
-                    obelisk_sim.detached_controls} {
+                    schedule.detached_controls} {
       %delay = obelisk_sim.time.constant 7
       obelisk_sim.suspend.delay %delay to ^done
     ^done:

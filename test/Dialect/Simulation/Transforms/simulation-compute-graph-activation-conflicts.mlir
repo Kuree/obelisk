@@ -4,10 +4,10 @@
 // producer has a later source ID, and is not a settling process. Choosing the
 // opposite conflict edge creates a spurious two-member convergence group.
 // CHECK-LABEL: obelisk_sim.design @initial_producer
-// CHECK-SAME: #obelisk_sim.edge<source = 2, target = 1, kind = sensitivity
-// CHECK-SAME: #obelisk_sim.edge<source = 2, target = 1, kind = conflict
-// CHECK-SAME: #obelisk_sim.group<fragments = [2], schedule = acyclic
-// CHECK-SAME: #obelisk_sim.group<fragments = [1], schedule = acyclic
+// CHECK-SAME: #schedule.edge<source = 2, target = 1, kind = sensitivity
+// CHECK-SAME: #schedule.edge<source = 2, target = 1, kind = conflict
+// CHECK-SAME: #schedule.group<fragments = [2], schedule = acyclic
+// CHECK-SAME: #schedule.group<fragments = [1], schedule = acyclic
 module {
   obelisk_sim.design @initial_producer {
     obelisk_sim.scope.decl 0
@@ -37,11 +37,11 @@ module {
   // Sensitivity targets the wait block; the consumer's work is its resumed
   // block. The conflict choice and region SCCs must use this same projection.
   // CHECK-LABEL: obelisk_sim.design @resumed_consumer
-  // CHECK-SAME: #obelisk_sim.edge<source = 3, target = 1, kind = conflict
-  // CHECK-SAME: #obelisk_sim.edge<source = 3, target = 2, kind = sensitivity
-  // CHECK-SAME: #obelisk_sim.group<fragments = [3], schedule = acyclic
-  // CHECK-SAME: #obelisk_sim.group<fragments = [1], schedule = acyclic
-  // CHECK-SAME: #obelisk_sim.group<fragments = [2], schedule = acyclic
+  // CHECK-SAME: #schedule.edge<source = 3, target = 1, kind = conflict
+  // CHECK-SAME: #schedule.edge<source = 3, target = 2, kind = sensitivity
+  // CHECK-SAME: #schedule.group<fragments = [3], schedule = acyclic
+  // CHECK-SAME: #schedule.group<fragments = [1], schedule = acyclic
+  // CHECK-SAME: #schedule.group<fragments = [2], schedule = acyclic
   obelisk_sim.design @resumed_consumer {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 always_comb hierarchy "consumer"
@@ -71,7 +71,7 @@ module {
 
   // A real two-process feedback loop remains a convergence SCC.
   // CHECK-LABEL: obelisk_sim.design @feedback
-  // CHECK-SAME: #obelisk_sim.group<fragments = [1, 3], schedule = convergence
+  // CHECK-SAME: #schedule.group<fragments = [1, 3], schedule = convergence
   obelisk_sim.design @feedback {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 continuous hierarchy "a"
@@ -104,8 +104,8 @@ module {
   // not use a postponed fragment to serialize active-region work.
   // CHECK-LABEL: obelisk_sim.design @separate_regions
   // CHECK-NOT: kind = conflict
-  // CHECK-SAME: #obelisk_sim.region<kind = active
-  // CHECK-SAME: #obelisk_sim.region<kind = postponed
+  // CHECK-SAME: #schedule.region<kind = active
+  // CHECK-SAME: #schedule.region<kind = postponed
   // CHECK-NOT: kind = conflict
   obelisk_sim.design @separate_regions {
     obelisk_sim.scope.decl 0

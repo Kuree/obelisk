@@ -55,7 +55,7 @@ module {
 // CHECK-SAME: entry_kind = 3 : i32
 // CHECK-SAME: obelisk_sim.hierarchical_name = "wildcard_written_sensitivity"
 // CHECK: obelisk_sim.suspend.any %[[SOURCE:[a-zA-Z0-9_]+]], %[[SCRATCH:[a-zA-Z0-9_]+]] edges [0, 0]
-// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
+// CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: %[[VALUE:[0-9]+]] = obelisk_sim.ref.load %[[SOURCE]]
 // CHECK: obelisk_sim.ref.store %[[VALUE]] to %[[SCRATCH]]
 // CHECK: %[[FORWARD:[0-9]+]] = obelisk_sim.ref.load %[[SCRATCH]]

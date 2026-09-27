@@ -2,7 +2,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=BLOCK-ARGS
 
 // FUSED: obelisk_sim.design @fusion attributes {
-// FUSED-SAME: obelisk_sim.static_fusion = [#obelisk_sim.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
+// FUSED-SAME: schedule.static_fusion = [#schedule.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
 // BLOCK-ARGS: obelisk_sim.func private @__obelisk_fused_
 // BLOCK-ARGS: ^bb{{[0-9]+}}(%[[VALUE:.*]]: i32):
 // BLOCK-ARGS: arith.addi %[[VALUE]],

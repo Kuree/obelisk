@@ -60,9 +60,9 @@ endmodule
 
 // CHECK: LARGE PRIMITIVE PASS
 // KERNEL-COUNT-8: obelisk_sim.func private @__obelisk_region_kernel_
-// KERNEL-NOT: obelisk_sim.primitive_name = "and"
+// KERNEL-NOT: schedule.primitive_name = "and"
 // The acyclic graph keeps the input ranges in Tier-1. The dynamically changed
 // lane has distinct ownership from the two unchanged ranges.
-// AUTO: #obelisk_sim.scheduled_root<resource = storage, descriptor = 0, low = 0, width = 7, owner = {{[0-9]+}}, tier = tier1>
-// AUTO-SAME: #obelisk_sim.scheduled_root<resource = storage, descriptor = 0, low = 7, width = 1, owner = {{[0-9]+}}, tier = tier1>
-// AUTO-SAME: #obelisk_sim.scheduled_root<resource = storage, descriptor = 0, low = 8, width = 120, owner = {{[0-9]+}}, tier = tier1>
+// AUTO: #schedule.scheduled_root<resource = storage, descriptor = 0, low = 0, width = 7, owner = {{[0-9]+}}, tier = tier1>
+// AUTO-SAME: #schedule.scheduled_root<resource = storage, descriptor = 0, low = 7, width = 1, owner = {{[0-9]+}}, tier = tier1>
+// AUTO-SAME: #schedule.scheduled_root<resource = storage, descriptor = 0, low = 8, width = 120, owner = {{[0-9]+}}, tier = tier1>

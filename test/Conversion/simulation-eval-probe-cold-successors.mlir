@@ -4,12 +4,12 @@
 // dry-run predicate. A local temporary there cannot alias the hot publication.
 // Its sliced read also has a native_handle_offset, but is still an automatic
 // reference, not a dynamic selection from a statically certified design root.
-// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK: module attributes {{.*}}schedule.eval.generated
 // CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @probe_alias {
     obelisk_sim.scope.decl 0

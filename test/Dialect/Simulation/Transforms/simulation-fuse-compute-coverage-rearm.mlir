@@ -12,7 +12,7 @@
 // CHECK-NEXT: obelisk_sim.coverage.point_hit {{.*}}[1]
 // CHECK-NEXT: obelisk_sim.return
 
-module attributes {obelisk.coverage.line_point_count = 3 : i64, obelisk.native_scheduler = 3 : i32} {
+module attributes {obelisk.coverage.line_point_count = 3 : i64, schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @rearm {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 always hierarchy "rearm.actor"

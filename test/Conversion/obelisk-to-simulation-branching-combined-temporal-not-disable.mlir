@@ -107,7 +107,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_cancel.
 // CHECK-SAME: %arg9: !obelisk_sim.ref<i64>
 // CHECK-SAME: ) attributes
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK-COUNT-5: obelisk_sim.ref.store
 // CHECK: obelisk_sim.ref.load %arg9
 // CHECK: obelisk_sim.ref.store {{.*}} to %arg9

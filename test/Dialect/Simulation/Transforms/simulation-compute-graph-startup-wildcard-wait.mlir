@@ -10,14 +10,14 @@ module attributes {
   // fragments of one process.  Its own write precedes the terminal wait and
   // cannot activate it, but a write from another process must retain its
   // sensitivity edge.
-  // CHECK-LABEL: obelisk_sim.design @startup_wildcard_wait attributes {compute_graph = #obelisk_sim.graph<
-  // CHECK-SAME: #obelisk_sim.fragment<id = [[PRODUCER:[0-9]+]], function = @producer, block = 0
-  // CHECK-SAME: #obelisk_sim.fragment<id = [[WAIT:[0-9]+]], function = @wildcard, block = 1
+  // CHECK-LABEL: obelisk_sim.design @startup_wildcard_wait attributes {compute_graph = #schedule.graph<
+  // CHECK-SAME: #schedule.fragment<id = [[PRODUCER:[0-9]+]], function = @producer, block = 0
+  // CHECK-SAME: #schedule.fragment<id = [[WAIT:[0-9]+]], function = @wildcard, block = 1
   // CHECK-SAME: effect = watch
-  // CHECK-SAME: #obelisk_sim.fragment<id = [[SELF:[0-9]+]], function = @wildcard, block = 2
+  // CHECK-SAME: #schedule.fragment<id = [[SELF:[0-9]+]], function = @wildcard, block = 2
   // CHECK-SAME: effect = write
-  // CHECK-SAME: #obelisk_sim.edge<source = [[PRODUCER]], target = [[WAIT]], kind = sensitivity
-  // CHECK-NOT: #obelisk_sim.edge<source = [[SELF]], target = [[WAIT]], kind = sensitivity
+  // CHECK-SAME: #schedule.edge<source = [[PRODUCER]], target = [[WAIT]], kind = sensitivity
+  // CHECK-NOT: #schedule.edge<source = [[SELF]], target = [[WAIT]], kind = sensitivity
   // CHECK-SAME: regions =
   // The native wait record stores SUPPRESS_ACTIVE_SELF (bit 2) in its flags
   // word at byte offset 8.
@@ -61,7 +61,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %state to ^done
-          {obelisk_sim.top_level_wildcard_wait} :
+          {schedule.top_level_wildcard_wait} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^done:
       %value = obelisk_sim.ref.load %state :

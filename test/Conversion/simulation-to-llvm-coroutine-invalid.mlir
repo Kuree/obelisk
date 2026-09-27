@@ -69,11 +69,11 @@ module attributes {
         attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^second
-          {site = #obelisk_sim.continuation<id = 7>}
+          {site = #schedule.continuation<id = 7>}
     ^second:
       // expected-error @+1 {{continuation ID names multiple successor blocks}}
       obelisk_sim.suspend.delay %delay to ^done
-          {site = #obelisk_sim.continuation<id = 7>}
+          {site = #schedule.continuation<id = 7>}
     ^done:
       obelisk_sim.return
     }

@@ -17,6 +17,8 @@
 #include "PrepareTopology.h"
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
@@ -1885,7 +1887,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto design = sim::SimDesignOp::create(
       moduleBuilder, module.getLoc(), "design",
       moduleBuilder.getI64IntegerAttr(designPrecisionFs),
-      sim::ComputeGraphAttr{});
+      schedule::ComputeGraphAttr{});
   design.getBody().push_back(new Block());
   OpBuilder builder(context);
   builder.setInsertionPointToStart(&design.getBody().front());
@@ -2532,7 +2534,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder, getSemanticLocation(source), snapshot.id, snapshot.scopeId,
           snapshot.type, sim::Lifetime::Design, builder.getStringAttr(path),
           builder.getStringAttr("__obelisk_sample_default"),
-          sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+          schedule::ComputeObservabilityKindAttr{},
+          sim::VPITypeSemanticsAttr{});
     });
   });
   if (invalid)
@@ -2577,7 +2580,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder, getSemanticLocation(property), id, source->second.scopeId,
             i64, sim::Lifetime::Design, builder.getStringAttr(path),
             builder.getStringAttr(debugName),
-            sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+            schedule::ComputeObservabilityKindAttr{},
+            sim::VPITypeSemanticsAttr{});
       };
       addState(keyPath, "__obelisk_static_randc_key");
       addState(positionPath, "__obelisk_static_randc_position");
@@ -3307,7 +3311,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getStringAttr(path),
           builder.getStringAttr(
               "implicit negative timing-check delayed signal"),
-          sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+          schedule::ComputeObservabilityKindAttr{},
+          sim::VPITypeSemanticsAttr{});
     }
     for (NegativeTimingCheckPlan &check : negativeChecks) {
       auto indices = check.check->getAttrOfType<DenseI64ArrayAttr>(
@@ -4065,7 +4070,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               scopeId, snapshotType, sim::Lifetime::Design,
               builder.getStringAttr(snapshotPath),
               builder.getStringAttr("__obelisk_timing_path_snapshot"),
-              sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+              schedule::ComputeObservabilityKindAttr{},
+              sim::VPITypeSemanticsAttr{});
           snapshots.try_emplace(input.path, std::move(snapshotPath));
         }
       if (invalid)
@@ -4154,7 +4160,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 scopeId, type, sim::Lifetime::Design,
                 builder.getStringAttr(statePath),
                 builder.getStringAttr(debugName),
-                sim::ComputeObservabilityKindAttr{},
+                schedule::ComputeObservabilityKindAttr{},
                 sim::VPITypeSemanticsAttr{});
             return builder.getStringAttr(statePath);
           };
@@ -9833,7 +9839,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getI1Type(), sim::Lifetime::Design,
             builder.getStringAttr(hierarchy),
             builder.getStringAttr("timing-check timer deadline"),
-            sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+            schedule::ComputeObservabilityKindAttr{},
+            sim::VPITypeSemanticsAttr{});
         functionAttrs.push_back(
             builder.getNamedAttr("obelisk_sim.timing_timer_storage",
                                  builder.getI64IntegerAttr(timerStorageID)));
@@ -10103,9 +10110,11 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr(observerResultAttrName,
                                builder.getI32IntegerAttr(static_cast<uint32_t>(
                                    unit.observerResult))));
-    if (unit.source->hasAttr("obelisk_sim.override_evaluator"))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.override_evaluator", builder.getUnitAttr()));
+    if (::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+            unit.source))
+      functionAttrs.push_back(::obelisk::schedule::named<
+                              ::obelisk::schedule::Field::OverrideEvaluator>(
+          builder.getUnitAttr()));
     if (unit.entryKind == sim::EntryKind::Observer) {
       std::optional<unsigned> width =
           results.empty()
@@ -10117,10 +10126,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         continue;
       }
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.observer_width", builder.getI32IntegerAttr(*width)));
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.observer_four_state",
+      functionAttrs.push_back(
+          ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
+              builder.getI32IntegerAttr(*width)));
+      functionAttrs.push_back(::obelisk::schedule::named<
+                              ::obelisk::schedule::Field::ObserverFourState>(
           builder.getBoolAttr(isa<sim::LogicType>(results.front()))));
     }
     if (auto subroutine =
@@ -10202,7 +10212,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (auto primitive =
             unit.source->getAttrOfType<StringAttr>("primitive_name"))
       functionAttrs.push_back(
-          builder.getNamedAttr("obelisk_sim.primitive_name", primitive));
+          ::obelisk::schedule::named<::obelisk::schedule::Field::PrimitiveName>(
+              primitive));
     if (auto passSwitchIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
             "obelisk_sim.pass_switch_ids"))
       functionAttrs.push_back(
@@ -10272,8 +10283,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                  unit.entryKind == sim::EntryKind::AlwaysFF ||
                                  unit.entryKind == sim::EntryKind::AlwaysLatch;
     if (programDomain && programProceduralRoot && !hierarchy.empty())
-      functionAttrs.push_back(builder.getNamedAttr(
-          "obelisk_sim.program_owner_id",
+      functionAttrs.push_back(::obelisk::schedule::named<
+                              ::obelisk::schedule::Field::ProgramOwnerId>(
           builder.getI64IntegerAttr(stableCodeUnitID(hierarchy))));
     // Final procedures are held in the runtime's end-of-simulation phase; the
     // compute graph independently places their executable fragment in its
@@ -11018,7 +11029,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 entryBuilder, location, aggregateControlID);
             sim::SimControlBoundaryOp::create(
                 entryBuilder, location, controlActivation, ValueRange{},
-                sim::ContinuationSiteAttr{}, controlExit, callBlock);
+                schedule::ContinuationSiteAttr{}, controlExit, callBlock);
             OpBuilder exitBuilder = OpBuilder::atBlockEnd(controlExit);
             sim::SimReturnOp::create(exitBuilder, location, ValueRange{});
           }
@@ -11033,7 +11044,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               FlatSymbolRefAttr::get(context, provider.getSymName()),
               providerOperands,
               branchBuilder.getI64IntegerAttr(providerOperands.size()),
-              sim::ContinuationSiteAttr{}, continuation);
+              schedule::ContinuationSiteAttr{}, continuation);
           OpBuilder continuationBuilder = OpBuilder::atBlockEnd(continuation);
           if (controlActivation) {
             sim::SimControlLeaveOp::create(continuationBuilder, location,
@@ -11097,7 +11108,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           body.push_back(continuation);
           sim::SimSuspendJoinOp::create(
               bodyBuilder, location, sim::JoinKind::All, processes,
-              processes.size(), sim::ContinuationSiteAttr{},
+              processes.size(), schedule::ContinuationSiteAttr{},
               sim::EventRegionAttr{}, continuation);
           OpBuilder continuationBuilder = OpBuilder::atBlockEnd(continuation);
           sim::SimReturnOp::create(continuationBuilder, location, ValueRange{});
@@ -12246,14 +12257,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       } else if (driverHandles.size() == 1) {
         sim::SimSuspendChangeOp::create(
             resolverBuilder, net.getLoc(), driverHandles.front(), ValueRange{},
-            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
+            schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
       } else {
         SmallVector<int32_t> edges(driverHandles.size(),
                                    static_cast<int32_t>(sim::EdgeKind::Change));
         sim::SimSuspendAnyOp::create(
             resolverBuilder, net.getLoc(), driverHandles,
             resolverBuilder.getDenseI32ArrayAttr(edges),
-            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
+            schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loop);
       }
       generatedUnits.push_back({semanticRoot, codeUnitID,
                                 sim::EntryKind::Continuous, symbol, hierarchy,
@@ -12315,7 +12326,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (reactiveHandles.size() == 1) {
           sim::SimSuspendChangeOp::create(reactiveBuilder, net.getLoc(),
                                           reactiveHandles.front(), ValueRange{},
-                                          sim::ContinuationSiteAttr{},
+                                          schedule::ContinuationSiteAttr{},
                                           sim::EventRegionAttr{}, reactiveLoop);
         } else {
           SmallVector<int32_t> edges(
@@ -12324,7 +12335,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           sim::SimSuspendAnyOp::create(
               reactiveBuilder, net.getLoc(), reactiveHandles,
               reactiveBuilder.getDenseI32ArrayAttr(edges),
-              sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+              schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
               reactiveLoop);
         }
         generatedUnits.push_back({semanticRoot, reactiveCodeUnitID,
@@ -12442,7 +12453,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
       sim::SimSuspendEventOp::create(
           waitBuilder, location, entry.getArgument(1), ValueRange{},
-          sim::ContinuationSiteAttr{},
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(context, sim::EventRegion::Reactive),
           publish);
       OpBuilder publishBuilder = OpBuilder::atBlockEnd(publish);
@@ -12547,8 +12558,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             commitBuilder, location, sim::TimeType::get(context),
             commitBuilder.getI64IntegerAttr(terminal.delayTicks));
         sim::SimSuspendDelayOp::create(
-            commitBuilder, location, delay, sim::TimingSiteAttr{},
-            ValueRange{commitEntry.getArgument(1)}, sim::ContinuationSiteAttr{},
+            commitBuilder, location, delay, schedule::TimingSiteAttr{},
+            ValueRange{commitEntry.getArgument(1)},
+            schedule::ContinuationSiteAttr{},
             sim::EventRegionAttr::get(context, sim::EventRegion::Active),
             publish);
         OpBuilder publishBuilder = OpBuilder::atBlockEnd(publish);
@@ -12597,9 +12609,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       Value source = monitorEntry.getArgument(1);
       cf::BranchOp::create(monitorBuilder, location, wait);
       OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
-      sim::SimSuspendChangeOp::create(waitBuilder, location, source,
-                                      ValueRange{}, sim::ContinuationSiteAttr{},
-                                      sim::EventRegionAttr{}, changed);
+      sim::SimSuspendChangeOp::create(
+          waitBuilder, location, source, ValueRange{},
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, changed);
       OpBuilder changedBuilder = OpBuilder::atBlockEnd(changed);
       Value current = terminal.source.kind == DescriptorInfo::Kind::Net
                           ? Value(sim::SimNetReadOp::create(
@@ -12939,8 +12951,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     if (isRootSpawned(unit) && sim::isStartupEntryKind(unit.entryKind) &&
         !startsByWaiting(unit) && !propagatesConstantsAtTimeZero(unit))
-      unit.function->setAttr(sim::startupWithoutSuspensionAttrName,
-                             UnitAttr::get(context));
+      ::obelisk::schedule::set<sim::startupWithoutSuspensionAttrName>(
+          unit.function, UnitAttr::get(context));
   }
   if (!earlyEventInputs.empty()) {
     llvm::StringMap<unsigned> producerByPath;
@@ -13017,7 +13029,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (failed(spawnRootUnit(unit)))
           return abort();
   } else {
-    design->setAttr(sim::computedEventStartupAttrName, UnitAttr::get(context));
+    ::obelisk::schedule::set<sim::computedEventStartupAttrName>(
+        design, UnitAttr::get(context));
     llvm::DenseMap<PreparedUnit *, unsigned> unitOrder;
     for (auto [index, unit] : llvm::enumerate(units))
       unitOrder[&unit] = index;
@@ -13328,8 +13341,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (failed(spawnRootUnit(unit)))
           return abort();
     for (PreparedUnit *unit : startupOrder) {
-      unit->function->setAttr(sim::computedEventStartupAttrName,
-                              UnitAttr::get(context));
+      ::obelisk::schedule::set<sim::computedEventStartupAttrName>(
+          unit->function, UnitAttr::get(context));
       if (failed(spawnRootUnit(*unit)))
         return abort();
       featureSpawned.insert(unit);

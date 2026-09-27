@@ -153,7 +153,7 @@ module attributes {
       obelisk_sim.class.virtual_task_call
         %receiver[@MonoBase_run] slot 0 signature_id 81
         (%input, %continued) arguments 1 to ^done
-        {site = #obelisk_sim.continuation<id = 7>} :
+        {site = #schedule.continuation<id = 7>} :
         (!obelisk_sim.class_handle<@MonoBase>, i32, i64) -> ()
     ^done(%value: i64):
       obelisk_sim.return
@@ -216,11 +216,11 @@ module attributes {
 // CHECK: %[[CANONICAL_NULL:.*]] = obelisk_sim.class.null
 // CHECK-NEXT: obelisk_sim.class.virtual_task_call %[[CANONICAL_NULL]]
 // CHECK-SAME: arguments 1 to ^[[MONO_DONE:[a-zA-Z0-9_]+]]
-// CHECK-SAME: site = #obelisk_sim.continuation<id = 7>
+// CHECK-SAME: site = #schedule.continuation<id = 7>
 // CHECK: ^[[DIRECT_BLOCK]]:
 // CHECK: obelisk_sim.task.call @mono_run
 // CHECK-SAME: arguments 3 to ^[[MONO_DONE]]
-// CHECK-SAME: site = #obelisk_sim.continuation<id = 7>
+// CHECK-SAME: site = #schedule.continuation<id = 7>
 
 // CHECK-LABEL: obelisk_sim.func private @guarded_interface
 // CHECK: %[[INTERFACE_NULL:[a-zA-Z0-9_]+]] = obelisk_sim.managed.is_null %[[INTERFACE:[a-zA-Z0-9_]+]]

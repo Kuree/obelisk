@@ -19,7 +19,7 @@
 // Static-superstep planning uses the same structural certificate. The nested
 // registration spawn stays runtime-owned while its root-spawned initializer
 // and periodic clock retain exact generated identities.
-// SUPERSTEP: obelisk_sim.static_superstep
+// SUPERSTEP: schedule.static_superstep
 // SUPERSTEP-SAME: actors = [@root, @clock, @initialize]
 
 module {
@@ -104,9 +104,9 @@ module {
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 5 : i64,
                     domain = 0 : i32, home_region = 2 : i32, internal,
-                    obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %clock_ref = obelisk_sim.context.storage %ctx[0] :
           !obelisk_sim.ref<i1>
       %initial = obelisk_sim.ref.load %clock_ref :

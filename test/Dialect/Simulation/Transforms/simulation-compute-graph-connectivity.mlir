@@ -2,7 +2,7 @@
 
 // A publication expanded through a connected component still activates a
 // compact subscription on the consumer's original descriptor.
-// CHECK: edges = [#obelisk_sim.edge<source = 0, target = 2, kind = sensitivity, resource = <effect = watch, resource = net, target = descriptor, descriptor = 2
+// CHECK: edges = [#schedule.edge<source = 0, target = 2, kind = sensitivity, resource = <effect = watch, resource = net, target = descriptor, descriptor = 2
 
 module {
   obelisk_sim.design @connectivity_graph {
@@ -22,7 +22,7 @@ module {
     // One physical drive is expanded through the reversed and transitive
     // aliases while retaining every logical descriptor for diagnostics.
     // CHECK-LABEL: obelisk_sim.func @driver
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = drive, resource = net, target = descriptor, descriptor = 0, formal = 0, low = 1, width = 1
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = drive, resource = net, target = descriptor, descriptor = 0, formal = 0, low = 1, width = 1
     // CHECK-SAME: effect = drive, resource = net, target = descriptor, descriptor = 1, formal = 0, low = 2, width = 1
     // CHECK-SAME: effect = drive, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 1, width = 1
     obelisk_sim.func @driver(
@@ -40,7 +40,7 @@ module {
     // N-by-N summary for a net fanned out through N interface ports. Bits
     // outside the connected component remain dependencies of descriptor 2.
     // CHECK-LABEL: obelisk_sim.func @reader
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = read, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
     // CHECK-SAME: effect = watch, resource = net, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 4
     obelisk_sim.func @reader(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -55,7 +55,7 @@ module {
     // Adjacent compatible packed effects are represented once. This keeps a
     // bit-blasted lowering from producing four graph edges and publications.
     // CHECK-LABEL: obelisk_sim.func @packed_driver
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = drive, resource = net, target = descriptor, descriptor = 3, formal = 0, low = 0, width = 4
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = drive, resource = net, target = descriptor, descriptor = 3, formal = 0, low = 0, width = 4
     obelisk_sim.func @packed_driver(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %driver: !obelisk_sim.driver<!obelisk_sim.logic<4>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64})

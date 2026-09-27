@@ -53,7 +53,7 @@ module {
       %prefix = obelisk_sim.string.literal "n="
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^resume(%prefix : !obelisk_sim.string)
-          {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^resume(%text: !obelisk_sim.string):
       %found = "obelisk_sim.plusarg.test"(%ctx, %text) : (!obelisk_sim.context, !obelisk_sim.string) -> i32
       obelisk_sim.return

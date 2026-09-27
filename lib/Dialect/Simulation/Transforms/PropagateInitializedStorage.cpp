@@ -1,8 +1,9 @@
 //===- PropagateInitializedStorage.cpp -------------------------------------===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -62,7 +63,7 @@ private:
       if (storage.getLifetime() == sim::Lifetime::Design &&
           (!storage.getObservability() ||
            *storage.getObservability() !=
-               sim::ComputeObservabilityKind::ExternallyWritable) &&
+               schedule::ComputeObservabilityKind::ExternallyWritable) &&
           isa<IntegerType, sim::LogicType>(type))
         candidates.try_emplace(storage.getId(), StorageCandidate{type});
     }
@@ -197,11 +198,13 @@ private:
             continue;
           auto found = provenance.find(operand);
           if (found != provenance.end() &&
-              found->second.resource != sim::ComputeResourceKind::Storage &&
-              found->second.resource != sim::ComputeResourceKind::Unknown)
+              found->second.resource !=
+                  schedule::ComputeResourceKind::Storage &&
+              found->second.resource != schedule::ComputeResourceKind::Unknown)
             continue;
           if (found == provenance.end() || !found->second.descriptor ||
-              found->second.resource != sim::ComputeResourceKind::Storage) {
+              found->second.resource !=
+                  schedule::ComputeResourceKind::Storage) {
             // An unknown destination might alias any design storage. Local
             // references have a distinct provenance and do not reach here.
             if (!isa<sim::SimRefLoadOp, sim::SimSuspendChangeOp,

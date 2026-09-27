@@ -1,6 +1,7 @@
 //===- SimulationToRuntime.cpp - Lower simulation I/O to runtime calls ---===//
 
 #include "obelisk/Conversion/SimulationToRuntime.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Conversion/SimulationToStandard.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
@@ -142,7 +143,8 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op,
             "net output item did not convert to packed value and i64 handle");
       Value unknown = converted.size() == 2 ? converted[1] : Value();
-      if (op->hasAttr("obelisk.eval.direct_output")) {
+      if (::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalDirectOutput>(op)) {
         arguments.push_back(runtime::RTArgumentPackedOp::create(
             rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
             converted.front(), unknown,
@@ -357,8 +359,10 @@ public:
     auto display = runtime::RTDisplayOp::create(
         rewriter, loc, runtime::StatusType::get(rewriter.getContext()), context,
         fd, newline, output->first, output->second, radix);
-    if (op->hasAttr("obelisk.eval.direct_output"))
-      display->setAttr("obelisk.eval.direct_output", rewriter.getUnitAttr());
+    if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalDirectOutput>(
+            op))
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectOutput>(
+          display, rewriter.getUnitAttr());
     sim::SimStatusCheckOp::create(rewriter, loc, display.getStatus());
     rewriter.eraseOp(op);
     return success();

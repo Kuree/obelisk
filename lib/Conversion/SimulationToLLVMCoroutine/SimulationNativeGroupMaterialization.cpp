@@ -3,6 +3,9 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -59,7 +62,8 @@ std::optional<uint64_t> staticByteOffset(Value pointer) {
 LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
                                      SymbolTable &symbols, uint64_t &budget) {
   auto reference =
-      function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.group_ingress");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+          function);
   auto global = reference ? symbols.lookup<LLVM::GlobalOp>(reference.getValue())
                           : LLVM::GlobalOp{};
   auto array = global ? dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType())
@@ -175,8 +179,8 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
   if (failed(tryToPromoteMemorySlots(allocations, builder,
                                      DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group ready words in SSA");
-  function->setAttr("obelisk.eval.ssa_ready_words",
-                    builder.getI64IntegerAttr(words.size()));
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSsaReadyWords>(
+      function, builder.getI64IntegerAttr(words.size()));
   return success();
 }
 
@@ -241,7 +245,8 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
     if (address.getGlobalName() != name)
       return;
     auto owner =
-        operation->getAttrOfType<IntegerAttr>("obelisk.eval.group_owner");
+        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupOwner>(
+            operation);
     auto type = dyn_cast<IntegerType>(load ? load.getType()
                                            : store.getValue().getType());
     auto offset = staticByteOffset(pointer);
@@ -371,10 +376,10 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
   if (failed(tryToPromoteMemorySlots(allocations, builder,
                                      DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group state in SSA");
-  StringRef attribute = name == "__obelisk_state_value"
-                            ? "obelisk.eval.ssa_value_ranges"
-                            : "obelisk.eval.ssa_unknown_ranges";
-  function->setAttr(attribute, builder.getI64IntegerAttr(slots.size()));
+  auto attribute = name == "__obelisk_state_value"
+                       ? ::obelisk::schedule::Field::EvalSsaValueRanges
+                       : ::obelisk::schedule::Field::EvalSsaUnknownRanges;
+  schedule::set(function, attribute, builder.getI64IntegerAttr(slots.size()));
   return success();
 }
 
@@ -392,7 +397,8 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
 LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> groups;
   for (auto function : module.getOps<LLVM::LLVMFuncOp>())
-    if (function->hasAttr("obelisk.eval.ranked_members"))
+    if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRankedMembers>(
+            function))
       groups.push_back(function);
   if (groups.empty())
     return success();
@@ -406,18 +412,21 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
   // their callable interface. Inventory uses once, not once per group.
   DenseSet<Operation *> externallyUsedCandidates;
   if (llvm::any_of(groups, [](auto function) {
-        return function->hasAttr("obelisk.eval.dataflow_candidate");
+        return ::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
       })) {
     SymbolTableCollection tables;
     SymbolUserMap users(tables, module);
     for (auto function : groups)
-      if (function->hasAttr("obelisk.eval.dataflow_candidate") &&
+      if (::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalDataflowCandidate>(function) &&
           !users.useEmpty(function))
         externallyUsedCandidates.insert(function);
   }
 
   auto limit =
-      module->getAttrOfType<IntegerAttr>("obelisk.native.max_inline_ops");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::MaxInlineOps>(
+          module);
   uint64_t operationLimit = limit ? limit.getValue().getZExtValue() : 5000;
   if (!operationLimit)
     operationLimit = UINT64_MAX;
@@ -443,12 +452,14 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
   for (size_t index = 0; index < groups.size(); ++index) {
     auto function = groups[index];
     if (externallyUsedCandidates.contains(function)) {
-      function->removeAttr("obelisk.eval.dataflow_candidate");
+      ::obelisk::schedule::remove<
+          ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
       continue;
     }
     SmallVector<LLVM::CallOp> pending;
     function.walk([&](LLVM::CallOp call) {
-      if (call->hasAttr("obelisk.eval.group_member"))
+      if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupMember>(
+              call))
         pending.push_back(call);
     });
     std::reverse(pending.begin(), pending.end());
@@ -465,10 +476,14 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       auto callee = symbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
       if (!callee || callee == function || callee.isExternal() ||
           expanded.contains(callee) ||
-          !(call->hasAttr("obelisk.eval.group_domain_selected") ||
-            callee->hasAttr(sim::metadata::evalInfallible) ||
-            callee->hasAttr("obelisk.eval.four_state_source") ||
-            callee->hasAttr("obelisk.eval.conditionally_two_state")))
+          !(::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalGroupDomainSelected>(call) ||
+            ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+                callee) ||
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalFourStateSource>(callee) ||
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalConditionallyTwoState>(callee)))
         continue;
       auto [found, inserted] = costs.try_emplace(callee, 0);
       if (inserted)
@@ -479,7 +494,9 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       if (!cost || cost > remaining)
         continue;
       SmallVector<LLVM::CallOp> nested;
-      Attribute owner = call->getAttr("obelisk.eval.group_member");
+      auto owner =
+          ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupMember>(
+              call);
       auto clone = [&](OpBuilder &, Region *source, Block *inlineBlock,
                        Block *postInsertBlock, IRMapping &mapping,
                        bool shouldClone) {
@@ -489,10 +506,11 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
         for (Block &block : *source)
           for (Operation &operation : *mapping.lookup(&block)) {
             if (owner && isa<LLVM::LoadOp, LLVM::StoreOp>(operation))
-              operation.setAttr("obelisk.eval.group_owner", owner);
+              schedule::set<schedule::Field::EvalGroupOwner>(&operation, owner);
             if (auto child = dyn_cast<LLVM::CallOp>(operation)) {
               if (owner)
-                child->setAttr("obelisk.eval.group_member", owner);
+                ::obelisk::schedule::set<
+                    ::obelisk::schedule::Field::EvalGroupMember>(child, owner);
               nested.push_back(child);
             }
           }
@@ -512,15 +530,15 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       llvm::append_range(pending, nested);
     }
     if (materialized)
-      function->setAttr(
-          "obelisk.eval.materialized_group_calls",
-          IntegerAttr::get(IntegerType::get(module.getContext(), 64),
-                           materialized));
-    if (auto candidate = function->getAttrOfType<FlatSymbolRefAttr>(
-            "obelisk.eval.dataflow_candidate")) {
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalMaterializedGroupCalls>(
+          function, IntegerAttr::get(IntegerType::get(module.getContext(), 64),
+                                     materialized));
+    if (auto candidate = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::EvalDataflowCandidate>(function)) {
       auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
-      auto members = function->getAttrOfType<DenseI32ArrayAttr>(
-          "obelisk.eval.ranked_members");
+      auto members = ::obelisk::schedule::get<
+          ::obelisk::schedule::Field::EvalRankedMembers>(function);
       auto pendingGlobal = symbols.lookup<LLVM::GlobalOp>(
           "__obelisk_eval_promotion_pending_mask_v1");
       auto pendingType = pendingGlobal
@@ -529,14 +547,22 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
                              : LLVM::LLVMArrayType{};
       bool identitiesValid =
           original && original != function && !original.empty() &&
-          !original->hasAttr("obelisk.eval.dataflow_candidate") &&
-          !original->hasAttr("obelisk.eval.dataflow_executor") && members &&
-          !original->hasAttr("obelisk.eval.dataflow_fallback") &&
+          !::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalDataflowCandidate>(original) &&
+          !::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalDataflowExecutor>(original) &&
+          members &&
+          !::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalDataflowFallback>(original) &&
           !members.empty() &&
           original.getFunctionType() == function.getFunctionType() &&
-          original->getAttr("obelisk.eval.ranked_members") == members &&
-          original->getAttr("obelisk.eval.group_ingress") ==
-              function->getAttr("obelisk.eval.group_ingress") &&
+          ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::EvalRankedMembers>(original) ==
+              members &&
+          ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::EvalGroupIngress>(original) ==
+              ::obelisk::schedule::get<
+                  ::obelisk::schedule::Field::EvalGroupIngress>(function) &&
           pendingType && pendingType.getElementType().isInteger(64);
       llvm::SmallDenseSet<uint32_t> identities;
       if (identitiesValid)
@@ -593,9 +619,11 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
         // The parent owns this child's selection point. Keeping another
         // guarded wrapper on the fast path would add a call boundary which
         // physical native partitioning cannot reliably inline away.
-        original->setAttr("obelisk.eval.dataflow_executor",
-                           FlatSymbolRefAttr::get(function));
-        function->removeAttr("obelisk.eval.dataflow_candidate");
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalDataflowExecutor>(
+            original, FlatSymbolRefAttr::get(function));
+        ::obelisk::schedule::remove<
+            ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
         continue;
       }
       // Make computation the actual group entry before physical partitioning.
@@ -607,26 +635,28 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       fallbackBody.takeBody(original.getBody());
       original.getBody().takeBody(function.getBody());
       function.getBody().takeBody(fallbackBody);
-      for (StringRef name : {"obelisk.eval.materialized_group_calls",
-                             "obelisk.eval.ssa_ready_words",
-                             "obelisk.eval.ssa_value_ranges",
-                             "obelisk.eval.ssa_unknown_ranges",
-                             "obelisk.eval.predicated_dataflow",
-                             "obelisk.eval.dataflow_slots",
-                             "obelisk.eval.coalesced_slots",
-                             "obelisk.eval.cache_hint_words"}) {
-        Attribute slow = original->getAttr(name), fast = function->getAttr(name);
-        original->removeAttr(name);
-        function->removeAttr(name);
+      for (auto name : {::obelisk::schedule::Field::EvalMaterializedGroupCalls,
+                        ::obelisk::schedule::Field::EvalSsaReadyWords,
+                        ::obelisk::schedule::Field::EvalSsaValueRanges,
+                        ::obelisk::schedule::Field::EvalSsaUnknownRanges,
+                        ::obelisk::schedule::Field::EvalPredicatedDataflow,
+                        ::obelisk::schedule::Field::EvalDataflowSlots,
+                        ::obelisk::schedule::Field::EvalCoalescedSlots,
+                        ::obelisk::schedule::Field::EvalCacheHintWords}) {
+        Attribute slow = schedule::get<Attribute>(original, name),
+                  fast = schedule::get<Attribute>(function, name);
+        schedule::remove(original, name);
+        schedule::remove(function, name);
         if (fast)
-          original->setAttr(name, fast);
+          schedule::set(original, name, fast);
         if (slow)
-          function->setAttr(name, slow);
+          schedule::set(function, name, slow);
       }
       symbols.remove(function);
       function.setSymName(original.getSymName().str() + ".fallback");
       symbols.insert(function);
-      function->removeAttr("obelisk.eval.dataflow_candidate");
+      ::obelisk::schedule::remove<
+          ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
       OpBuilder builder(module.getContext());
       Location loc = function.getLoc();
       Block *oldEntry = &original.getBody().front();
@@ -664,8 +694,9 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       LLVM::CallOp::create(builder, loc, TypeRange{}, function.getSymName(),
                            guard->getArguments());
       LLVM::ReturnOp::create(builder, loc, ValueRange{});
-      original->setAttr("obelisk.eval.dataflow_fallback",
-                         FlatSymbolRefAttr::get(function));
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalDataflowFallback>(
+          original, FlatSymbolRefAttr::get(function));
       continue;
     }
     if (materialized || refinedChildren.contains(function)) {
@@ -675,8 +706,10 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
   }
   for (auto &refinement : llvm::reverse(refinements)) {
     bool useful = llvm::any_of(refinement.children, [](auto child) {
-      return child->hasAttr("obelisk.eval.dataflow_executor") ||
-             child->hasAttr("obelisk.eval.group_children");
+      return ::obelisk::schedule::has<
+                 ::obelisk::schedule::Field::EvalDataflowExecutor>(child) ||
+             ::obelisk::schedule::has<
+                 ::obelisk::schedule::Field::EvalGroupChildren>(child);
     });
     if (!useful) {
       for (auto child : refinement.children) {
@@ -694,8 +727,9 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
     OpBuilder builder(module.getContext());
     Block *entry = parent.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
-    auto ingress = parent->getAttrOfType<FlatSymbolRefAttr>(
-        "obelisk.eval.group_ingress");
+    auto ingress =
+        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+            parent);
     Value ready = LLVM::AddressOfOp::create(
         builder, parent.getLoc(), LLVM::LLVMPointerType::get(module.getContext()),
         ingress.getValue());
@@ -706,8 +740,10 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       // expressions. Pay for a collapsed child only when it owns pending work.
       // Reacquire after each child: an earlier child can publish a later one.
       std::map<unsigned, uint64_t> masks;
-      for (int32_t owner : child->getAttrOfType<DenseI32ArrayAttr>(
-               "obelisk.eval.ranked_members").asArrayRef())
+      for (int32_t owner :
+           ::obelisk::schedule::get<
+               ::obelisk::schedule::Field::EvalRankedMembers>(child)
+               .asArrayRef())
         masks[unsigned(owner) / 64] |= uint64_t{1} << (unsigned(owner) % 64);
       Value pending = llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0);
       for (auto [word, mask] : masks) {
@@ -725,8 +761,8 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       LLVM::CondBrOp::create(builder, parent.getLoc(), active, execute, ValueRange{},
                              next, ValueRange{});
       builder.setInsertionPointToStart(execute);
-      if (auto fast = child->getAttrOfType<FlatSymbolRefAttr>(
-              "obelisk.eval.dataflow_executor")) {
+      if (auto fast = ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::EvalDataflowExecutor>(child)) {
         Value proof = LLVM::AddressOfOp::create(
             builder, parent.getLoc(),
             LLVM::LLVMPointerType::get(module.getContext()),
@@ -759,8 +795,8 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       builder.setInsertionPointToStart(next);
     }
     LLVM::ReturnOp::create(builder, parent.getLoc(), ValueRange{});
-    parent->setAttr("obelisk.eval.group_children",
-                     builder.getArrayAttr(references));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupChildren>(
+        parent, builder.getArrayAttr(references));
     if (module->hasAttr("obelisk.debug.native_timing"))
       llvm::errs() << "obelisk group hierarchy: " << parent.getSymName()
                    << " children=" << refinement.children.size() << '\n';
@@ -770,7 +806,8 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
   llvm::erase_if(residuals, [&](const auto &residual) {
     auto function = residual.first;
     return discarded.contains(function) || finalized.contains(function) ||
-           function->hasAttr("obelisk.eval.group_children");
+           ::obelisk::schedule::has<
+               ::obelisk::schedule::Field::EvalGroupChildren>(function);
   });
   bool debugTiming = module->hasAttr("obelisk.debug.native_timing");
   SmallVector<std::string> diagnostics(residuals.size());
@@ -787,20 +824,22 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
               return failure();
             if (debugTiming) {
               llvm::raw_string_ostream diagnostic(diagnostics[index]);
-              auto count = [&](StringRef name) -> uint64_t {
-                auto value = function->getAttrOfType<IntegerAttr>(name);
+              auto count = [&](schedule::Field name) -> uint64_t {
+                auto value = schedule::get<IntegerAttr>(function, name);
                 return value ? value.getUInt() : 0;
               };
-              diagnostic << "obelisk native group: " << function.getSymName()
-                         << " expanded_calls="
-                         << count("obelisk.eval.materialized_group_calls")
-                         << " ready_words="
-                         << count("obelisk.eval.ssa_ready_words")
-                         << " value_ranges="
-                         << count("obelisk.eval.ssa_value_ranges")
-                         << " unknown_ranges="
-                         << count("obelisk.eval.ssa_unknown_ranges")
-                         << " remaining_budget=" << remaining << '\n';
+              diagnostic
+                  << "obelisk native group: " << function.getSymName()
+                  << " expanded_calls="
+                  << count(
+                         ::obelisk::schedule::Field::EvalMaterializedGroupCalls)
+                  << " ready_words="
+                  << count(::obelisk::schedule::Field::EvalSsaReadyWords)
+                  << " value_ranges="
+                  << count(::obelisk::schedule::Field::EvalSsaValueRanges)
+                  << " unknown_ranges="
+                  << count(::obelisk::schedule::Field::EvalSsaUnknownRanges)
+                  << " remaining_budget=" << remaining << '\n';
             }
             return success();
           })))

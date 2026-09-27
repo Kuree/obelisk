@@ -1,6 +1,9 @@
 //===- SimulationDriverLowering.cpp - Native driver patterns ------------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -422,7 +425,8 @@ public:
       // net leaves its driver unforced, but release needs the retained driver
       // contribution in canonical storage.
       if (cleanLayout && !op->hasAttr(guardedBulkDriveAttr) &&
-          !op->hasAttr("obelisk_sim.defer_net_resolution") &&
+          !::obelisk::schedule::has<
+              ::obelisk::schedule::Field::DeferNetResolution>(op) &&
           !op->hasAttr("obelisk_sim.user_net_raw_drive")) {
         auto id =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
@@ -545,7 +549,8 @@ public:
     // A conditional gate stores its complementary low-polarity bank before
     // its high-polarity bank. The first store deliberately stops here so the
     // second drive resolves and publishes one atomic logical transition.
-    bool deferResolution = op->hasAttr("obelisk_sim.defer_net_resolution");
+    bool deferResolution = ::obelisk::schedule::has<
+        ::obelisk::schedule::Field::DeferNetResolution>(op);
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       deferResolution = op.getDeferResolution();
     if (deferResolution) {
@@ -571,10 +576,12 @@ public:
                                       rewriter.getI32Type(), *sourceWidth),
                          save(oldRawValue), save(driveValue)});
         } else {
-          notifySignal(rewriter, op.getLoc(), adaptor.getDriver().front(),
-                       *sourceWidth, oldRawValue, oldRawUnknown, driveValue,
-                       driveUnknown, std::nullopt,
-                       op->getAttr(sim::metadata::evalSourceOwner));
+          notifySignal(
+              rewriter, op.getLoc(), adaptor.getDriver().front(), *sourceWidth,
+              oldRawValue, oldRawUnknown, driveValue, driveUnknown,
+              std::nullopt,
+              ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+                  op));
         }
       }
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
@@ -826,13 +833,13 @@ public:
                                  unknownChanged));
       }
       for (const BulkPublication &publication : bulkPublications)
-        notifySignal(rewriter, op.getLoc(), publication.handle,
-                     publication.net->width, publication.oldValue,
-                     publication.oldUnknown, publication.value,
-                     publication.net->fourState ? publication.unknown : Value{},
-                     resolveDirectStaticStateRange(
-                         publication.handle, publication.net->width, &layout),
-                     op->getAttr(sim::metadata::evalSourceOwner));
+        notifySignal(
+            rewriter, op.getLoc(), publication.handle, publication.net->width,
+            publication.oldValue, publication.oldUnknown, publication.value,
+            publication.net->fourState ? publication.unknown : Value{},
+            resolveDirectStaticStateRange(publication.handle,
+                                          publication.net->width, &layout),
+            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
         rewriter.replaceOp(op, changed);
       else
@@ -1170,19 +1177,20 @@ public:
       ArrayRef<Publication> run(publications.data() + begin, end - begin);
       if (run.size() == 1) {
         const Publication &publication = run.front();
-        notifySignal(rewriter, op.getLoc(), publication.handle, 1,
-                     publication.oldValue, publication.oldUnknown,
-                     publication.value,
-                     publication.fourState ? publication.unknown : Value{},
-                     publication.directRange,
-                     op->getAttr(sim::metadata::evalSourceOwner));
+        notifySignal(
+            rewriter, op.getLoc(), publication.handle, 1, publication.oldValue,
+            publication.oldUnknown, publication.value,
+            publication.fourState ? publication.unknown : Value{},
+            publication.directRange,
+            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
       } else {
-        notifySignal(rewriter, op.getLoc(), run.front().handle, run.size(),
-                     packBits(run, &Publication::oldValue),
-                     packBits(run, &Publication::oldUnknown),
-                     packBits(run, &Publication::value),
-                     packBits(run, &Publication::unknown), firstRange,
-                     op->getAttr(sim::metadata::evalSourceOwner));
+        notifySignal(
+            rewriter, op.getLoc(), run.front().handle, run.size(),
+            packBits(run, &Publication::oldValue),
+            packBits(run, &Publication::oldUnknown),
+            packBits(run, &Publication::value),
+            packBits(run, &Publication::unknown), firstRange,
+            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
       }
       begin = end;
     }
@@ -1209,10 +1217,8 @@ void annotateStaticDriverNets(ModuleOp module,
       drive->setAttr("obelisk.native.whole_driver",
                      UnitAttr::get(module.getContext()));
     std::optional<ExactStaticDriverTarget> exactTarget;
-    auto frozenID = drive->template getAttrOfType<IntegerAttr>(
-        "obelisk_sim.exact_driver_id");
-    auto frozenLow = drive->template getAttrOfType<IntegerAttr>(
-        "obelisk_sim.exact_driver_low");
+    auto frozenID = schedule::get<schedule::Field::ExactDriverId>(drive);
+    auto frozenLow = schedule::get<schedule::Field::ExactDriverLow>(drive);
     if (frozenID && frozenLow && !frozenID.getValue().isNegative() &&
         !frozenLow.getValue().isNegative() &&
         frozenID.getValue().getActiveBits() <= 64 &&

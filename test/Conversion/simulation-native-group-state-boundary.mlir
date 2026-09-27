@@ -13,7 +13,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   llvm.mlir.global internal @__obelisk_state_value(dense<[7, 0, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
   llvm.mlir.global internal @__obelisk_state_unknown(dense<[0, 0, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
 
-  llvm.func @writer() attributes {obelisk.eval.infallible} {
+  llvm.func @writer() attributes {schedule.eval.infallible} {
     %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
     %one = llvm.mlir.constant(1 : i8) : i8
@@ -26,7 +26,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %newx, %x : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @reader() attributes {obelisk.eval.infallible} {
+  llvm.func @reader() attributes {schedule.eval.infallible} {
     %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
     %outv = llvm.getelementptr %v[1] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -37,7 +37,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %unknown, %outx : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @after_mutation() attributes {obelisk.eval.infallible} {
+  llvm.func @after_mutation() attributes {schedule.eval.infallible} {
     %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
     %outv = llvm.getelementptr %v[2] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -67,8 +67,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 
   // CHECK-LABEL: llvm.func @group()
-  // CHECK-SAME: obelisk.eval.ssa_unknown_ranges = 1 : i64
-  // CHECK-SAME: obelisk.eval.ssa_value_ranges = 1 : i64
+  // CHECK-SAME: schedule.eval.ssa_unknown_ranges = 1 : i64
+  // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
   // CHECK: %[[X:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
   // CHECK: %[[XP:.*]] = llvm.getelementptr %[[X]][0]
   // CHECK: llvm.load %[[XP]]{{[ {]}}
@@ -80,11 +80,11 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   // CHECK-NEXT: {{.*}}llvm.call @mutate()
   // CHECK-NEXT: {{.*}}llvm.load %[[XP]]{{[ {]}}
   // CHECK-NEXT: {{.*}}llvm.load %[[VP]]{{[ {]}}
-  llvm.func @group() -> i1 attributes {obelisk.eval.ranked_members = array<i32: 0, 1>} {
-    llvm.call @writer() {obelisk.eval.group_member = 0 : i32} : () -> ()
-    llvm.call @reader() {obelisk.eval.group_member = 1 : i32} : () -> ()
+  llvm.func @group() -> i1 attributes {schedule.eval.ranked_members = array<i32: 0, 1>} {
+    llvm.call @writer() {schedule.eval.group_member = 0 : i32} : () -> ()
+    llvm.call @reader() {schedule.eval.group_member = 1 : i32} : () -> ()
     %ok = llvm.call @mutate() : () -> i1
-    llvm.call @after_mutation() {obelisk.eval.group_member = 2 : i32} : () -> ()
+    llvm.call @after_mutation() {schedule.eval.group_member = 2 : i32} : () -> ()
     llvm.return %ok : i1
   }
 
@@ -92,15 +92,15 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   // cannot be established inside the group. The later reader must observe
   // those mutations rather than the cached results from writer.
   // CHECK-LABEL: llvm.func @indirect_group(
-  // CHECK-SAME: obelisk.eval.ssa_unknown_ranges = 1 : i64
-  // CHECK-SAME: obelisk.eval.ssa_value_ranges = 1 : i64
-  llvm.func @indirect_group(%v: !llvm.ptr, %x: !llvm.ptr) attributes {obelisk.eval.ranked_members = array<i32: 0>} {
-    llvm.call @writer() {obelisk.eval.group_member = 0 : i32} : () -> ()
+  // CHECK-SAME: schedule.eval.ssa_unknown_ranges = 1 : i64
+  // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
+  llvm.func @indirect_group(%v: !llvm.ptr, %x: !llvm.ptr) attributes {schedule.eval.ranked_members = array<i32: 0>} {
+    llvm.call @writer() {schedule.eval.group_member = 0 : i32} : () -> ()
     %forty = llvm.mlir.constant(40 : i8) : i8
     %zero = llvm.mlir.constant(0 : i8) : i8
     llvm.store %forty, %v : i8, !llvm.ptr
     llvm.store %zero, %x : i8, !llvm.ptr
-    llvm.call @reader() {obelisk.eval.group_member = 1 : i32} : () -> ()
+    llvm.call @reader() {schedule.eval.group_member = 1 : i32} : () -> ()
     llvm.return
   }
   llvm.func @main() -> i32 {

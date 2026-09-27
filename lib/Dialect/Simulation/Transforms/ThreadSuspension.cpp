@@ -7,7 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Utils.h"
+#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
@@ -50,7 +51,8 @@ public:
     // capture. Narrow that wait here, after value optimization but before the
     // compute graph is frozen. This keeps generated gate arrays from waking
     // every instance for a change to one unrelated vector bit.
-    if (function->hasAttr("obelisk_sim.primitive_name")) {
+    if (::obelisk::schedule::has<::obelisk::schedule::Field::PrimitiveName>(
+            function)) {
       Block &entry = function.getBody().front();
       auto isStableDesignHandle = [&](Value handle) {
         while (Operation *definition = handle.getDefiningOp()) {
@@ -270,8 +272,9 @@ public:
       auto bridge = cf::BranchOp::create(
           builder, suspension->getLoc(), continuation,
           resume->getArguments().take_front(forwarded.size()));
-      bridge->setAttr("obelisk_sim.observer_capture_bridge",
-                      builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::ObserverCaptureBridge>(
+          bridge, builder.getUnitAttr());
     }
 
     // Apart from graph-transparent observer-capture bridges, threading only

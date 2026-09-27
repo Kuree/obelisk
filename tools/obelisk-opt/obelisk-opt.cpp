@@ -3,10 +3,12 @@
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
+#include "obelisk/Conversion/SimulationToSchedule.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/SDF/SDFDialect.h"
+#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
@@ -15,6 +17,7 @@
 #include "mlir/InitAllDialects.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
+#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 
 #ifdef OBELISK_INCLUDE_TESTS
 #include "AnalysisTestPasses.h"
@@ -26,6 +29,8 @@ int main(int argc, char **argv) {
   mlir::registerTransformsPasses();
   obelisk::registerObeliskConversionPasses();
   obelisk::registerObeliskSimulationPasses();
+  obelisk::registerObeliskSchedulePasses();
+  obelisk::registerSimulationToSchedulePipeline();
   obelisk::registerObeliskToSimulationPipeline();
 #ifdef OBELISK_INCLUDE_TESTS
   obelisk::registerManagedClassLayoutAnalysisTestPass();
@@ -43,6 +48,7 @@ int main(int argc, char **argv) {
   registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
                   obelisk::runtime::ObeliskRuntimeDialect,
                   obelisk::sdf::ObeliskSDFDialect,
+                  obelisk::schedule::ScheduleDialect,
                   obelisk::sim::ObeliskSimulationDialect>();
 
   return mlir::asMainReturnCode(

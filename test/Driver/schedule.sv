@@ -14,18 +14,18 @@ module schedule_smoke;
   always_comb destination = source;
 endmodule
 
-// CHECK: schedule @design #obelisk_sim.graph<version = 1, vpi = read, workers = 2
-// CHECK-SAME: nodes = [#obelisk_sim.fragment<
+// CHECK: schedule @design #schedule.graph<version = 1, vpi = read, workers = 2
+// CHECK-SAME: nodes = [#schedule.fragment<
 // CHECK-SAME: lane = 0
 // CHECK-SAME: edges = [
 // CHECK-SAME: kind = process_order
-// CHECK-SAME: #obelisk_sim.region<kind = active
-// CHECK-SAME: #obelisk_sim.region<kind = nba
-// CHECK-SAME: #obelisk_sim.region<kind = observed
-// CHECK-SAME: #obelisk_sim.region<kind = reactive
-// CHECK-SAME: #obelisk_sim.region<kind = postponed
+// CHECK-SAME: #schedule.region<kind = active
+// CHECK-SAME: #schedule.region<kind = nba
+// CHECK-SAME: #schedule.region<kind = observed
+// CHECK-SAME: #schedule.region<kind = reactive
+// CHECK-SAME: #schedule.region<kind = postponed
 
-// LOC: schedule @design #obelisk_sim.graph<
+// LOC: schedule @design #schedule.graph<
 // LOC-SAME: source_locations = [
 // LOC-SAME: #1 = "{{.*schedule.sv}}":14:3
 

@@ -15,7 +15,7 @@ module {
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %in: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64,
-                    obelisk_sim.primitive_name = "bad",
+                    schedule.primitive_name = "bad",
                     obelisk_sim.udp_metadata = {
                       is_edge_sensitive = false, is_sequential = false,
                       name = "bad", port_directions = array<i64: 0, 0>,
@@ -52,7 +52,7 @@ module {
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %in: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64,
-                    obelisk_sim.primitive_name = "seq",
+                    schedule.primitive_name = "seq",
                     obelisk_sim.udp_metadata = {
                       init_value = "1'bz", is_edge_sensitive = false,
                       is_sequential = true, name = "seq",
@@ -90,7 +90,7 @@ module {
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %in: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 3 : i64,
-                    obelisk_sim.primitive_name = "row",
+                    schedule.primitive_name = "row",
                     obelisk_sim.udp_metadata = {
                       is_edge_sensitive = false, is_sequential = false,
                       name = "row", port_directions = array<i64: 1, 0>,

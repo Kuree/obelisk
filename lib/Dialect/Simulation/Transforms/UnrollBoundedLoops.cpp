@@ -1,8 +1,11 @@
 //===- UnrollBoundedLoops.cpp - Expose bounded combinational CFGs --------===//
 
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -579,8 +582,10 @@ class ObeliskSimMarkBoundedLoopsPass
       return;
     // A repeated run must not retain proofs invalidated by intervening edits.
     function.walk([&](Operation *operation) {
-      operation->removeAttr(sim::metadata::boundedLoopLatch);
-      operation->removeAttr(sim::metadata::boundedLoopHeader);
+      ::obelisk::schedule::remove<schedule::metadata::boundedLoopLatch>(
+          operation);
+      ::obelisk::schedule::remove<schedule::metadata::boundedLoopHeader>(
+          operation);
     });
     UnitAttr marker = UnitAttr::get(&getContext());
     llvm::DenseSet<Operation *> provenBackedges;
@@ -595,8 +600,10 @@ class ObeliskSimMarkBoundedLoopsPass
         if (!loop || provenBackedges.contains(loop->latch.getOperation()))
           continue;
         provenBackedges.insert(loop->latch.getOperation());
-        loop->latch->setAttr(sim::metadata::boundedLoopLatch, marker);
-        loop->condition->setAttr(sim::metadata::boundedLoopHeader, marker);
+        ::obelisk::schedule::set<schedule::metadata::boundedLoopLatch>(
+            loop->latch, marker);
+        ::obelisk::schedule::set<schedule::metadata::boundedLoopHeader>(
+            loop->condition, marker);
         changed = true;
       }
     } while (changed);

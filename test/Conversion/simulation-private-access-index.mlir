@@ -3,7 +3,7 @@
 // roots can both promote during the same sweep. A second accessor blocks one
 // other root; passing an otherwise private root to a different spawn target
 // blocks another, even when that target does not currently load the reference.
-module attributes {obelisk.native_scheduler = 3 : i32} {
+module attributes {schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @access_index {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"

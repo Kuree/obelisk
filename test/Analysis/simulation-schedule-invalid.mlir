@@ -6,22 +6,22 @@
 
 module {
   obelisk_sim.design @schedule_invalid attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
-        #obelisk_sim.fragment<id = 0, function = @root, block = 1,
+        #schedule.fragment<id = 0, function = @root, block = 1,
           region = active, action = terminate, tier = native, cost = 0,
           lane = 0, twoState = true, effects = []>
       ],
       edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = [
-          #obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>
+        #schedule.region<kind = active, groups = [
+          #schedule.group<fragments = [0], schedule = acyclic, feedback = []>
         ]>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>
       ]>
   } {
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"

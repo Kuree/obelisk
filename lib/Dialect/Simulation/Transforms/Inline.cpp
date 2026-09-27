@@ -1,6 +1,8 @@
 //===- Inline.cpp - Obelisk-owned simulation inlining policy ------------===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
@@ -515,10 +517,10 @@ void ObeliskSimInlinePass::runOnOperation() {
           continue;
         Value actual = call.getOperand(index);
         auto provenance = actuals.find(actual);
-        bool concreteDescriptor =
-            provenance != actuals.end() &&
-            (provenance->second.descriptor ||
-             provenance->second.resource == sim::ComputeResourceKind::Local);
+        bool concreteDescriptor = provenance != actuals.end() &&
+                                  (provenance->second.descriptor ||
+                                   provenance->second.resource ==
+                                       schedule::ComputeResourceKind::Local);
         if (matchPattern(actual, m_Constant()) || concreteDescriptor) {
           specializes = true;
           break;
@@ -554,7 +556,8 @@ void ObeliskSimInlinePass::runOnOperation() {
     // callees have already passed the normal tiny/specialization threshold;
     // allow a bounded instance body to form while leaving genuinely large RTL
     // processes outlined.
-    if (caller->hasAttr("obelisk.eval.instance_coordinator"))
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalInstanceCoordinator>(caller))
       callerLimit = std::max(
           callerLimit,
           addSaturating(callerBaselines.lookup(caller.getOperation()), 4096));

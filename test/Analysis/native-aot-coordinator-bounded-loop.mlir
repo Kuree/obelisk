@@ -19,56 +19,56 @@
 
 module {
   obelisk_sim.design @bounded attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
-        #obelisk_sim.fragment<id = 0, function = @root, block = 0,
+        #schedule.fragment<id = 0, function = @root, block = 0,
           region = active, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 1, function = @coordinator, block = 0,
+        #schedule.fragment<id = 1, function = @coordinator, block = 0,
           region = observed, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 2, function = @coordinator, block = 1,
+        #schedule.fragment<id = 2, function = @coordinator, block = 1,
           region = observed, action = suspend_any, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 3, function = @ordinary, block = 0,
+        #schedule.fragment<id = 3, function = @ordinary, block = 0,
           region = observed, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 4, function = @ordinary, block = 1,
+        #schedule.fragment<id = 4, function = @ordinary, block = 1,
           region = observed, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 5, function = @ordinary, block = 2,
+        #schedule.fragment<id = 5, function = @ordinary, block = 2,
           region = observed, action = continue, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 6, function = @ordinary, block = 3,
+        #schedule.fragment<id = 6, function = @ordinary, block = 3,
           region = observed, action = terminate, tier = native, cost = 1,
           lane = 0, twoState = true, effects = []>
       ],
       edges = [
-        #obelisk_sim.edge<source = 0, target = 1, kind = spawn>,
-        #obelisk_sim.edge<source = 0, target = 3, kind = spawn>,
-        #obelisk_sim.edge<source = 1, target = 2, kind = process_order>,
-        #obelisk_sim.edge<source = 2, target = 3, kind = process_order>,
-        #obelisk_sim.edge<source = 3, target = 4, kind = process_order>,
-        #obelisk_sim.edge<source = 4, target = 5, kind = process_order>,
-        #obelisk_sim.edge<source = 4, target = 6, kind = process_order>,
-        #obelisk_sim.edge<source = 5, target = 4, kind = process_order>,
-        #obelisk_sim.edge<source = 6, target = 2, kind = process_order>
+        #schedule.edge<source = 0, target = 1, kind = spawn>,
+        #schedule.edge<source = 0, target = 3, kind = spawn>,
+        #schedule.edge<source = 1, target = 2, kind = process_order>,
+        #schedule.edge<source = 2, target = 3, kind = process_order>,
+        #schedule.edge<source = 3, target = 4, kind = process_order>,
+        #schedule.edge<source = 4, target = 5, kind = process_order>,
+        #schedule.edge<source = 4, target = 6, kind = process_order>,
+        #schedule.edge<source = 5, target = 4, kind = process_order>,
+        #schedule.edge<source = 6, target = 2, kind = process_order>
       ],
       regions = [
-        #obelisk_sim.region<kind = active, groups = [
-          #obelisk_sim.group<fragments = [0], schedule = acyclic,
+        #schedule.region<kind = active, groups = [
+          #schedule.group<fragments = [0], schedule = acyclic,
             feedback = []>
         ]>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = [
-          #obelisk_sim.group<fragments = [1], schedule = acyclic,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = [
+          #schedule.group<fragments = [1], schedule = acyclic,
             feedback = []>,
-          #obelisk_sim.group<fragments = [2, 3, 4, 5, 6],
+          #schedule.group<fragments = [2, 3, 4, 5, 6],
             schedule = control_loop, feedback = []>
         ]>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>
       ]>
   } {
     obelisk_sim.scope.decl 0
@@ -114,11 +114,11 @@ module {
     ^head(%i: i32):
       %limit = arith.constant 4 : i32
       %test = arith.cmpi slt, %i, %limit : i32
-      cf.cond_br %test, ^body, ^exit {obelisk_sim.bounded_loop_header}
+      cf.cond_br %test, ^body, ^exit {schedule.bounded_loop_header}
     ^body:
       %one = arith.constant 1 : i32
       %next = arith.addi %i, %one : i32
-      cf.br ^head(%next : i32) {obelisk_sim.bounded_loop_latch}
+      cf.br ^head(%next : i32) {schedule.bounded_loop_latch}
     ^exit:
       obelisk_sim.return
     }

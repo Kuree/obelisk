@@ -11,10 +11,10 @@
 // TRACE: obelisk eval dependency: owner=4 island=0 body=step1.__obelisk_eval_body_0 successors=0
 // TRACE: obelisk eval dependency: owner=0 island=0 body=step2.__obelisk_eval_body_0 successors=1
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: obelisk.eval.dataflow_fallback = @__obelisk_eval_ranked_group_0.fallback
-// PLAN-SAME: obelisk.eval.materialized_group_calls = 5 : i64
-// PLAN-SAME: obelisk.eval.predicated_dataflow
-// PLAN-SAME: obelisk.eval.ranked_members = array<i32: 4, 0, 1, 2, 3>
+// PLAN-SAME: schedule.eval.dataflow_fallback = @__obelisk_eval_ranked_group_0.fallback
+// PLAN-SAME: schedule.eval.materialized_group_calls = 5 : i64
+// PLAN-SAME: schedule.eval.predicated_dataflow
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 4, 0, 1, 2, 3>
 // PLAN: llvm.cond_br
 // PLAN-NOT: llvm.switch
 // PLAN-NOT: llvm.call %
@@ -27,13 +27,13 @@
 // PLAN: llvm.return
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0.fallback
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
-// PLAN-SAME: obelisk.eval.ssa_ready_words = 1 : i64
-// PLAN-SAME: obelisk.eval.ssa_value_ranges = 4 : i64
+// PLAN-SAME: schedule.eval.ssa_ready_words = 1 : i64
+// PLAN-SAME: schedule.eval.ssa_value_ranges = 4 : i64
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0
 !ref = !obelisk_sim.ref<i1>
 !vref = !obelisk_sim.ref<i8>
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = 3 : i32, obelisk.debug.native_timing} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, obelisk.debug.native_timing} {
   obelisk_sim.design @forward_chain {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i1 design
@@ -72,7 +72,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       cf.br ^wait
     ^wait:
       %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clk : !ref -> i1
       %one = arith.constant true
@@ -84,7 +84,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @step1(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %output: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %input to ^body {site = #obelisk_sim.continuation<id = 2>} : !ref
+      obelisk_sim.suspend.change %input to ^body {site = #schedule.continuation<id = 2>} : !ref
     ^body:
       %v = obelisk_sim.ref.load %input : !ref -> i1
       %wide = arith.extui %v : i1 to i8
@@ -96,7 +96,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @step2(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %output: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 4 : i64} {
       cf.br ^body
     ^wait:
-      obelisk_sim.suspend.change %input to ^body {site = #obelisk_sim.continuation<id = 3>} : !vref
+      obelisk_sim.suspend.change %input to ^body {site = #schedule.continuation<id = 3>} : !vref
     ^body:
       %v = obelisk_sim.ref.load %input : !vref -> i8
       %one = arith.constant 1 : i8
@@ -107,7 +107,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @step3(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}, %output: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 5 : i64} {
       cf.br ^body
     ^wait:
-      obelisk_sim.suspend.change %input to ^body {site = #obelisk_sim.continuation<id = 4>} : !vref
+      obelisk_sim.suspend.change %input to ^body {site = #schedule.continuation<id = 4>} : !vref
     ^body:
       %v = obelisk_sim.ref.load %input : !vref -> i8
       %one = arith.constant 1 : i8
@@ -118,7 +118,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @step4(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}, %output: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 6 : i64} {
       cf.br ^body
     ^wait:
-      obelisk_sim.suspend.change %input to ^body {site = #obelisk_sim.continuation<id = 5>} : !vref
+      obelisk_sim.suspend.change %input to ^body {site = #schedule.continuation<id = 5>} : !vref
     ^body:
       %v = obelisk_sim.ref.load %input : !vref -> i8
       %one = arith.constant 1 : i8
@@ -129,7 +129,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @step5(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}, %output: !vref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 5 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 7 : i64} {
       cf.br ^body
     ^wait:
-      obelisk_sim.suspend.change %input to ^body {site = #obelisk_sim.continuation<id = 6>} : !vref
+      obelisk_sim.suspend.change %input to ^body {site = #schedule.continuation<id = 6>} : !vref
     ^body:
       %v = obelisk_sim.ref.load %input : !vref -> i8
       %one = arith.constant 1 : i8

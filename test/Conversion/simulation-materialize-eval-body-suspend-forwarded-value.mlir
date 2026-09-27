@@ -4,7 +4,7 @@
 // control is evaluated before suspension. The forwarded value is coroutine
 // state and cannot be recomputed by a zero-time eval body after activation.
 
-module attributes {obelisk.native_scheduler = 3 : i32} {
+module attributes {schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @suspend_forwarded_value {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 always hierarchy "test.driver"
@@ -39,7 +39,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
           !obelisk_sim.logic<4>
       obelisk_sim.suspend.change %event to ^activation(
           %sampled : !obelisk_sim.logic<4>)
-          {site = #obelisk_sim.continuation<id = 1>} :
+          {site = #schedule.continuation<id = 1>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^activation(%value: !obelisk_sim.logic<4>):
       obelisk_sim.ref.store %value to %dst :

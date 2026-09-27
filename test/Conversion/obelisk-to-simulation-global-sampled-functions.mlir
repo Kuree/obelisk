@@ -8,8 +8,8 @@
 // CHECK-COUNT-1: debug "alternate-clock sampler"
 // CHECK-COUNT-1: obelisk_sim.assert.clocked_sample_update
 // CHECK-COUNT-5: obelisk_sim.assert.clocked_sample_read
-// CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}obelisk_sim.detached_controls{{.*}}obelisk_sim.global_future_resolver
-// CHECK-SAME: obelisk_sim.prime_on_spawn
+// CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}obelisk_sim.global_future_resolver{{.*}}schedule.detached_controls
+// CHECK-SAME: schedule.prime_on_spawn
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK-SAME: obelisk_sim.global_future_wait
 // CHECK-SAME: resume_region = 10 : i32

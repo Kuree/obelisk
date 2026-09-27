@@ -3,6 +3,7 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
 
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -93,7 +94,8 @@ void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                          bool guardedClaims, bool evalCeiling);
 mlir::FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
-    mlir::ArrayRef<sim::ComputeNBACommitAttr> orderedCommits, bool enabled);
+    mlir::ArrayRef<schedule::ComputeNBACommitAttr> orderedCommits,
+    bool enabled);
 mlir::LogicalResult
 materializeGeneratedNBAAccumulators(mlir::ModuleOp module,
                                     const NativeStaticNBAPlan &plan);

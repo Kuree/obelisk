@@ -31,7 +31,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 9000011 : i64, entry_kind = 8 : i32,
-                    fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = []>} {
+                    fragment_abi = #schedule.fragment_abi<version = 1, fragments = []>} {
       obelisk_sim.return %value : i32
     }
     obelisk_sim.func @caller(
@@ -53,7 +53,7 @@ module {
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 9000021 : i64, entry_kind = 8 : i32} {
       %site = "arith.constant"() {
-        test.site = #obelisk_sim.continuation<id = 1>, value = 0 : i32
+        test.site = #schedule.continuation<id = 1>, value = 0 : i32
       } : () -> i32
       obelisk_sim.return %site : i32
     }

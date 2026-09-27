@@ -221,13 +221,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: arith.cmpi ne, [[POPCOUNT_TOTAL]],
 // CHECK: obelisk_sim.spawn @unit_0.fork.18.0.0
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_abort.18(
-// CHECK-SAME: obelisk_sim.concurrent_abort
 // CHECK-SAME: obelisk_sim.concurrent_abort_counted
-// CHECK-SAME: obelisk_sim.priority_signal_resume
+// CHECK-SAME: schedule.concurrent_abort
+// CHECK-SAME: schedule.priority_signal_resume
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
-// CHECK-SAME: obelisk_sim.concurrent_abort_level_true
+// CHECK-SAME: schedule.concurrent_abort_level_true
 // CHECK: [[ASYNC_ZERO:%.*]] = arith.constant {{.*}} 0 : i64
 // CHECK: obelisk_sim.call @unit_0.$concurrent_abort_count.18.accept
 // CHECK-SAME: [[ASYNC_ZERO]])
@@ -317,8 +317,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Only the two asynchronous forms need observer evaluators; both evaluators
 // read the Preponed snapshot.
 // CHECK-LABEL: obelisk_sim.func private @observer_
-// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK-SAME: schedule.concurrent_abort_observer
 // CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1
 // CHECK-LABEL: obelisk_sim.func private @observer_
-// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK-SAME: schedule.concurrent_abort_observer
 // CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1

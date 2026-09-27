@@ -1,7 +1,9 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- BytecodeOperationEncoding.cpp - Bytecode instruction selection ----===//
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -249,10 +251,13 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     if (found->second > OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
       return op.emitOpError("spawn target index exceeds bytecode encoding");
     sim::EntryKind entryKind = callee.function.getEntryKind();
-    bool primeOnSpawn = callee.function->hasAttr("obelisk_sim.prime_on_spawn");
+    bool primeOnSpawn =
+        ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+            callee.function);
     if (primeOnSpawn &&
         (!callee.function->hasAttr("internal") ||
-         !callee.function->hasAttr("obelisk_sim.detached_controls") ||
+         !::obelisk::schedule::has<
+             ::obelisk::schedule::Field::DetachedControls>(callee.function) ||
          entryKind != sim::EntryKind::Fork))
       return op.emitOpError(
           "prime-on-spawn is reserved for internal detached waiters");
@@ -260,24 +265,29 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         sim::isStartupEntryKind(entryKind) ||
         (entryKind == sim::EntryKind::Initial &&
          callee.function.getHomeRegion() == sim::EventRegion::Active);
-    bool prioritySignalResume =
-        callee.function->hasAttr("obelisk_sim.priority_signal_resume");
+    bool prioritySignalResume = ::obelisk::schedule::has<
+        ::obelisk::schedule::Field::PrioritySignalResume>(callee.function);
     bool concurrentSignalObserver =
-        callee.function->hasAttr("obelisk_sim.concurrent_cancel") ||
-        callee.function->hasAttr("obelisk_sim.concurrent_abort");
+        ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentCancel>(
+            callee.function) ||
+        ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentAbort>(
+            callee.function);
     if (prioritySignalResume &&
         (!callee.function->hasAttr("internal") || !concurrentSignalObserver ||
-         !callee.function->hasAttr("obelisk_sim.detached_controls") ||
+         !::obelisk::schedule::has<
+             ::obelisk::schedule::Field::DetachedControls>(callee.function) ||
          entryKind != sim::EntryKind::Fork ||
          callee.function.getHomeRegion() != sim::EventRegion::Reactive))
       return op.emitOpError(
           "priority signal resume is reserved for internal concurrent "
           "cancellation or abort observers");
-    auto programOwner = callee.function->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.program_owner_id");
+    auto programOwner =
+        ::obelisk::schedule::get<::obelisk::schedule::Field::ProgramOwnerId>(
+            callee.function);
     uint32_t flags =
         found->second | (startup ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP : 0) |
-        (callee.function->hasAttr("obelisk_sim.detached_controls")
+        (::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+             callee.function)
              ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
              : 0) |
         (primeOnSpawn ? OBELISK_RT_INTRINSIC_SPAWN_PRIME : 0) |
@@ -313,13 +323,13 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       return emitIntrinsicRegisters(plan, kIntrinsicClockingNBA, inputRegisters,
                                     {});
     }
-    sim::NBASiteAttr site = op.getSiteAttr();
+    schedule::NBASiteAttr site = op.getSiteAttr();
     bool staticallyStaged =
         site && staticNBASites.contains(site.getId()) &&
         !isa<sim::StringType>(op.getValue().getType()) &&
         !sim::isManagedHandleType(op.getValue().getType()) && !op.getDelay() &&
         !site.getTiming() &&
-        site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
+        site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier;
     if (!staticallyStaged)
       return emitIntrinsic(plan, kIntrinsicNBA, inputs, {});
     uint32_t siteRegister = emitU64Constant(plan, site.getId());

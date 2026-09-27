@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- SimulationProcessOps.cpp - Process, call, and reference op verifiers
 //===//
 //
@@ -342,7 +343,8 @@ LogicalResult SimFuncOp::verify() {
     if (type.getNumResults() != 1)
       return emitOpError("observer entry must return one scalar result");
     Type result = type.getResult(0);
-    if (getOperation()->hasAttr("obelisk_sim.override_evaluator")) {
+    if (::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+            getOperation())) {
       if (!analysis::getSimulationStorageBitWidth(result))
         return emitOpError(
             "override evaluator must return one fixed executable result");
@@ -501,7 +503,8 @@ LogicalResult SimObserverBindOp::verify() {
       return emitOpError(
           "dependencies must be storage, argument-ref, net, named-event, or "
           "managed-watch handles");
-  if ((*this)->hasAttr("obelisk_sim.event_primary")) {
+  if (::obelisk::schedule::has<::obelisk::schedule::Field::EventPrimary>(
+          (*this))) {
     auto observer = cast<ObserverType>(getResult().getType());
     auto integer = dyn_cast<IntegerType>(observer.getResultType());
     if (!integer || integer.getWidth() != 1 ||

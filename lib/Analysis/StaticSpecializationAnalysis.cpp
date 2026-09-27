@@ -1,6 +1,9 @@
 //===- StaticSpecializationAnalysis.cpp - Validate static plans ----------===//
 
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
@@ -13,8 +16,9 @@ namespace obelisk::analysis {
 FailureOr<StaticSpecializationAnalysis>
 StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
   StaticSpecializationAnalysis result;
-  result.plan = design->getAttrOfType<sim::StaticSpecializationAttr>(
-      sim::metadata::staticSpecialization);
+  result.plan =
+      ::obelisk::schedule::get<schedule::metadata::staticSpecialization>(
+          design);
   if (!result.plan)
     return result;
 
@@ -24,7 +28,7 @@ StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
            failure();
 
   for (Attribute attribute : result.plan.getRoots()) {
-    auto root = dyn_cast<sim::StaticStateRootAttr>(attribute);
+    auto root = dyn_cast<schedule::StaticStateRootAttr>(attribute);
     if (!root || !result.roots.try_emplace(root.getDescriptor(), root).second)
       return design.emitOpError(
                  "static-specialization root inventory is malformed"),
@@ -57,12 +61,12 @@ StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
   ArrayAttr nodes = result.plan.getSourceGraph().getNodes();
   llvm::DenseSet<uint32_t> seenCommits;
   for (Attribute regionAttribute : result.plan.getSourceGraph().getRegions()) {
-    auto region = cast<sim::ComputeRegionAttr>(regionAttribute);
-    if (region.getKind() != sim::ComputeRegionKind::NBA)
+    auto region = cast<schedule::ComputeRegionAttr>(regionAttribute);
+    if (region.getKind() != schedule::ComputeRegionKind::NBA)
       continue;
     for (Attribute groupAttribute : region.getGroups()) {
-      auto group = cast<sim::ComputeGroupAttr>(groupAttribute);
-      if (group.getSchedule() != sim::ComputeScheduleKind::Acyclic)
+      auto group = cast<schedule::ComputeGroupAttr>(groupAttribute);
+      if (group.getSchedule() != schedule::ComputeScheduleKind::Acyclic)
         return design.emitOpError(
                    "static-specialization requires acyclic NBA groups"),
                failure();
@@ -72,7 +76,7 @@ StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
                      "static-specialization NBA group references an invalid "
                      "node"),
                  failure();
-        auto commit = dyn_cast<sim::ComputeNBACommitAttr>(
+        auto commit = dyn_cast<schedule::ComputeNBACommitAttr>(
             nodes[static_cast<size_t>(member)]);
         if (!commit)
           continue;
@@ -85,7 +89,7 @@ StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
     }
   }
   size_t commitCount = llvm::count_if(nodes, [](Attribute node) {
-    return isa<sim::ComputeNBACommitAttr>(node);
+    return isa<schedule::ComputeNBACommitAttr>(node);
   });
   if (result.orderedNBACommits.size() != commitCount)
     return design.emitOpError(
@@ -93,7 +97,7 @@ StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
            failure();
 
   llvm::DenseSet<uint64_t> foundRoots;
-  for (sim::ComputeNBACommitAttr commit : result.orderedNBACommits) {
+  for (schedule::ComputeNBACommitAttr commit : result.orderedNBACommits) {
     uint64_t descriptor = commit.getEffect().getDescriptor();
     if (!plannedNBARoots.contains(descriptor))
       continue;

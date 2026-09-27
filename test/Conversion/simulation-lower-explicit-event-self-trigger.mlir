@@ -17,7 +17,7 @@ module {
 
     // CHECK-LABEL: obelisk_sim.func @event_loop
     // CHECK: obelisk_sim.suspend.any
-    // CHECK-SAME: {obelisk_sim.procedural_event_wait, obelisk_sim.repeating_always_wait}
+    // CHECK-SAME: {schedule.procedural_event_wait, schedule.repeating_always_wait}
     obelisk_sim.func @event_loop(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %a: !obelisk_sim.ref<!obelisk_sim.logic<1>>

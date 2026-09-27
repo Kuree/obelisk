@@ -18,7 +18,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @persistent_clock_consumer {
     obelisk_sim.scope.decl 0 hierarchy "persistent_clock_consumer"
@@ -82,8 +82,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 1>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 1>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -112,7 +112,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %clock to ^resume
-          {site = #obelisk_sim.continuation<id = 2>} :
+          {site = #schedule.continuation<id = 2>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^resume:
       %low = obelisk_sim.ref.load %index :
@@ -148,7 +148,7 @@ module attributes {
       cf.cond_br %pending, ^waitClock, ^done
     ^waitClock:
       obelisk_sim.suspend.edge posedge %clock to ^next(%remaining : i64)
-          {obelisk_sim.procedural_event_wait} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {schedule.procedural_event_wait} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^next(%previous: i64):
       %oneCount = arith.constant 1 : i64
       %nextCount = arith.subi %previous, %oneCount : i64

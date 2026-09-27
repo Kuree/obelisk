@@ -1,6 +1,9 @@
 //===- SimulationWaitLowering.cpp - Runtime wait-record lowering ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -47,9 +50,12 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
       waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
   } else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
-  if ((operation->hasAttr(sim::metadata::topLevelWildcardWait) ||
-       operation->hasAttr(sim::metadata::proceduralEventWait)) &&
-      !operation->hasAttr(sim::metadata::repeatingAlwaysWait) &&
+  if ((::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
+           operation) ||
+       ::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+           operation)) &&
+      !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
+          operation) &&
       isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
           sim::SimSuspendEdgeIffOp, sim::SimSuspendAnyOp>(operation))
     waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;

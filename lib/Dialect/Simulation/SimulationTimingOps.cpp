@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/OutputItemFlags.h"
@@ -150,9 +151,12 @@ LogicalResult SimCovergroupClockEventRegisterOp::verify() {
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
       !function->hasAttr("internal") ||
-      !function->hasAttr("obelisk_sim.detached_controls") ||
-      !function->hasAttr("obelisk_sim.prime_on_spawn") ||
-      !function->hasAttr("obelisk_sim.covergroup_clocking_sampler") ||
+      !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+          function) ||
+      !::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+          function) ||
+      !::obelisk::schedule::has<
+          ::obelisk::schedule::Field::CovergroupClockingSampler>(function) ||
       function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
       function->hasAttr("obelisk_sim.timing_check_coordinator"))
     return emitOpError(
@@ -666,10 +670,10 @@ LogicalResult SimSuspendObserveOp::verify() {
   }
   if (llvm::is_contained(usedConditions, false))
     return emitOpError("contains an unreferenced condition observer");
-  bool concurrentCancel =
-      (*this)->hasAttr("obelisk_sim.concurrent_cancel_level_true");
-  bool concurrentAbort =
-      (*this)->hasAttr("obelisk_sim.concurrent_abort_level_true");
+  bool concurrentCancel = ::obelisk::schedule::has<
+      ::obelisk::schedule::Field::ConcurrentCancelLevelTrue>((*this));
+  bool concurrentAbort = ::obelisk::schedule::has<
+      ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>((*this));
   if (concurrentCancel && concurrentAbort)
     return emitOpError(
         "cannot be both a concurrent-cancel and concurrent-abort suspension");
@@ -677,10 +681,14 @@ LogicalResult SimSuspendObserveOp::verify() {
     auto function = (*this)->getParentOfType<SimFuncOp>();
     if (!function || !function->hasAttr("internal") ||
         !(concurrentCancel
-              ? function->hasAttr("obelisk_sim.concurrent_cancel")
-              : function->hasAttr("obelisk_sim.concurrent_abort")) ||
-        !function->hasAttr("obelisk_sim.detached_controls") ||
-        !function->hasAttr("obelisk_sim.priority_signal_resume") ||
+              ? ::obelisk::schedule::has<
+                    ::obelisk::schedule::Field::ConcurrentCancel>(function)
+              : ::obelisk::schedule::has<
+                    ::obelisk::schedule::Field::ConcurrentAbort>(function)) ||
+        !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+            function) ||
+        !::obelisk::schedule::has<
+            ::obelisk::schedule::Field::PrioritySignalResume>(function) ||
         function.getEntryKind() != EntryKind::Fork ||
         function.getHomeRegion() != EventRegion::Reactive)
       return emitOpError() << "concurrent "

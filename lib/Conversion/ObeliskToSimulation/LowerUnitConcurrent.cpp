@@ -8,6 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Solver/ConstraintSolver.h"
@@ -94,14 +97,15 @@ struct FixedSequence {
   bool currentTickConsequentStart = false;
 };
 
-static void appendObserverRequest(sim::SimFuncOp function, StringRef name,
+static void appendObserverRequest(sim::SimFuncOp function, schedule::Field name,
                                   FlatSymbolRefAttr evaluator) {
   SmallVector<Attribute, 2> requests;
-  if (auto existing = function->getAttrOfType<ArrayAttr>(name))
+  if (auto existing = schedule::get<ArrayAttr>(function, name))
     llvm::append_range(requests, existing);
   if (!llvm::is_contained(requests, evaluator))
     requests.push_back(evaluator);
-  function->setAttr(name, ArrayAttr::get(function.getContext(), requests));
+  schedule::set(function, name,
+                ArrayAttr::get(function.getContext(), requests));
 }
 
 struct BooleanMinimizationStats {
@@ -2889,7 +2893,7 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
     setCurrent(trigger);
     sim::SimEventTriggerOp::create(builder, location, endpoint, Value{},
                                    builder.getBoolAttr(false),
-                                   sim::EventSiteAttr{}, UnitAttr{});
+                                   schedule::EventSiteAttr{}, UnitAttr{});
     emitBranch(continuation);
     setCurrent(continuation);
   };
@@ -3112,7 +3116,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
   Block *resolve = addBlock();
   auto suspend = sim::SimSuspendEdgeOp::create(
       builder, location, static_cast<sim::EdgeKind>(firstEdge.getValue()),
-      *watched, ValueRange{}, sim::ContinuationSiteAttr{},
+      *watched, ValueRange{}, schedule::ContinuationSiteAttr{},
       sim::EventRegionAttr::get(function.getContext(),
                                 sim::EventRegion::Reactive),
       resolve);
@@ -3216,7 +3220,8 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
   sim::SimReturnOp::create(builder, location, ValueRange{});
   function->setAttr("obelisk_sim.global_future_resolver",
                     builder.getUnitAttr());
-  function->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
+  ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+      function, builder.getUnitAttr());
   function->setAttr("home_region",
                     sim::EventRegionAttr::get(function.getContext(),
                                               sim::EventRegion::Observed));
@@ -3346,7 +3351,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!proceduralAssertionEpoch) {
       llvm::SmallPtrSet<Block *, 2> flushTargets;
       function.walk([&](Operation *operation) {
-        if (!operation->hasAttr(sim::metadata::proceduralEventWait) ||
+        if (!::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+                operation) ||
             operation->getNumSuccessors() != 1)
           return;
         flushTargets.insert(operation->getSuccessor(0));
@@ -3588,7 +3594,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     Block *completedBlock = addBlock();
     sim::SimSuspendEventOp::create(
-        builder, location, completed, ValueRange{}, sim::ContinuationSiteAttr{},
+        builder, location, completed, ValueRange{},
+        schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Reactive),
         completedBlock);
@@ -4033,10 +4040,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return failure();
     resolver->first->setAttr("obelisk_sim.global_future_resolver",
                              builder.getUnitAttr());
-    resolver->first->setAttr("obelisk_sim.detached_controls",
-                             builder.getUnitAttr());
-    resolver->first->setAttr("obelisk_sim.prime_on_spawn",
-                             builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        resolver->first, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::PrimeOnSpawn>(
+        resolver->first, builder.getUnitAttr());
     resolver->first->setAttr(
         "home_region", sim::EventRegionAttr::get(function.getContext(),
                                                  sim::EventRegion::Observed));
@@ -5301,9 +5308,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         completeBuilder.getBoolAttr(true));
     sim::SimRefStoreOp::create(completeBuilder, location, nowComplete,
                                finalEntry.getArgument(3));
-    sim::SimEventTriggerOp::create(
-        completeBuilder, location, finalEntry.getArgument(1), Value{},
-        completeBuilder.getBoolAttr(false), sim::EventSiteAttr{}, UnitAttr{});
+    sim::SimEventTriggerOp::create(completeBuilder, location,
+                                   finalEntry.getArgument(1), Value{},
+                                   completeBuilder.getBoolAttr(false),
+                                   schedule::EventSiteAttr{}, UnitAttr{});
     sim::SimReturnOp::create(completeBuilder, location, ValueRange{});
     OpBuilder alreadyCompleteBuilder = OpBuilder::atBlockEnd(alreadyComplete);
     sim::SimReturnOp::create(alreadyCompleteBuilder, location, ValueRange{});
@@ -5689,7 +5697,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sim::SimRefStoreOp::create(builder, location, done, expectDoneStorage);
       sim::SimEventTriggerOp::create(builder, location, completed, Value{},
                                      builder.getBoolAttr(false),
-                                     sim::EventSiteAttr{}, UnitAttr{});
+                                     schedule::EventSiteAttr{}, UnitAttr{});
       sim::SimReturnOp::create(builder, location, ValueRange{});
     };
     finish(successBlock, !temporalNegation);
@@ -5979,10 +5987,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     callback->first->setAttr(
         "domain", sim::ExecutionDomainAttr::get(function.getContext(),
                                                 sim::ExecutionDomain::Design));
-    callback->first->setAttr("obelisk_sim.concurrent_report",
-                             builder.getUnitAttr());
-    callback->first->setAttr("obelisk_sim.detached_controls",
-                             builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::ConcurrentReport>(
+        callback->first, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        callback->first, builder.getUnitAttr());
     guardReactiveCallback(callback->first, callback->second, location,
                           "obelisk_sim.concurrent_report_kill_epoch");
     report.emplace(ReportCallback{callback->first, std::move(callback->second),
@@ -6085,10 +6093,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         FunctionType::get(function.getContext(), inputs, TypeRange{}),
         sim::EntryKind::Fork, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(cancel, SymbolTable::Visibility::Private);
-    cancel->setAttr("obelisk_sim.concurrent_cancel", builder.getUnitAttr());
-    cancel->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
-    cancel->setAttr("obelisk_sim.priority_signal_resume",
-                    builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::ConcurrentCancel>(
+        cancel, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        cancel, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::PrioritySignalResume>(
+        cancel, builder.getUnitAttr());
 
     Block &entry = cancel.getBody().front();
     Block *waitDisable = new Block;
@@ -6115,12 +6125,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     auto cancelWait = sim::SimSuspendObserveOp::create(
         waitBuilder, getSemanticLocation(disable), observed, 0,
         ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
-        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Reactive),
         cancelLiveAttempts);
-    cancelWait->setAttr("obelisk_sim.concurrent_cancel_level_true",
-                        builder.getUnitAttr());
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::ConcurrentCancelLevelTrue>(
+        cancelWait, builder.getUnitAttr());
 
     OpBuilder cancelBuilder = OpBuilder::atBlockEnd(cancelLiveAttempts);
     Value cancelZero = arith::ConstantOp::create(
@@ -6538,12 +6549,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::EntryKind::Final, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(coordinator,
                                      SymbolTable::Visibility::Private);
-    coordinator->setAttr("obelisk_sim.concurrent_eos_coordinator",
-                         builder.getUnitAttr());
-    coordinator->setAttr("obelisk_sim.concurrent_eos_counted",
-                         builder.getUnitAttr());
-    coordinator->setAttr("obelisk_sim.detached_controls",
-                         builder.getUnitAttr());
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+        coordinator, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::ConcurrentEosCounted>(
+        coordinator, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        coordinator, builder.getUnitAttr());
     if (identityTag.starts_with("multiclock_"))
       coordinator->setAttr("obelisk_sim.multiclock_sequence_eos_coordinator",
                            builder.getUnitAttr());
@@ -7023,11 +7035,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         FunctionType::get(function.getContext(), actorInputs, TypeRange{}),
         sim::EntryKind::Fork, actorAttributes, actorArgumentAttrs);
     SymbolTable::setSymbolVisibility(actor, SymbolTable::Visibility::Private);
-    actor->setAttr("obelisk_sim.concurrent_abort", builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::ConcurrentAbort>(
+        actor, builder.getUnitAttr());
     actor->setAttr("obelisk_sim.concurrent_abort_counted",
                    builder.getUnitAttr());
-    actor->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
-    actor->setAttr("obelisk_sim.priority_signal_resume", builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        actor, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::PrioritySignalResume>(
+        actor, builder.getUnitAttr());
 
     Block &actorEntry = actor.getBody().front();
     Block *waitAbort = new Block;
@@ -7054,12 +7069,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     auto abortWait = sim::SimSuspendObserveOp::create(
         waitBuilder, getSemanticLocation(abortCondition), observed, 0,
         ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
-        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Reactive),
         abortLiveAttempts);
-    abortWait->setAttr("obelisk_sim.concurrent_abort_level_true",
-                       builder.getUnitAttr());
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>(
+        abortWait, builder.getUnitAttr());
 
     OpBuilder abortBuilder = OpBuilder::atBlockEnd(abortLiveAttempts);
     SmallVector<Value> dispatcherOperands;
@@ -7344,16 +7360,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           sim::EntryKind::Final, attributes, argumentAttrs);
       SymbolTable::setSymbolVisibility(coordinator,
                                        SymbolTable::Visibility::Private);
-      coordinator->setAttr("obelisk_sim.concurrent_eos_coordinator",
-                           builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+          coordinator, builder.getUnitAttr());
       if (completionPassedOverride) {
         coordinator->setAttr("obelisk_sim.concurrent_eos_forced_completion",
                              builder.getUnitAttr());
         coordinator->setAttr("obelisk_sim.concurrent_eos_vacuous",
                              builder.getUnitAttr());
       }
-      coordinator->setAttr("obelisk_sim.detached_controls",
-                           builder.getUnitAttr());
+      ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+          coordinator, builder.getUnitAttr());
 
       Block *current = &coordinator.getBody().front();
       OpBuilder coordinatorBuilder = OpBuilder::atBlockEnd(current);
@@ -7616,9 +7633,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         FunctionType::get(function.getContext(), inputs, TypeRange{}),
         sim::EntryKind::Fork, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(actor, SymbolTable::Visibility::Private);
-    actor->setAttr("obelisk_sim.concurrent_abort", builder.getUnitAttr());
-    actor->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
-    actor->setAttr("obelisk_sim.priority_signal_resume", builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::ConcurrentAbort>(
+        actor, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        actor, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::PrioritySignalResume>(
+        actor, builder.getUnitAttr());
 
     Block &entry = actor.getBody().front();
     Block *waitAbort = new Block;
@@ -7645,12 +7665,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     auto abortWait = sim::SimSuspendObserveOp::create(
         waitBuilder, getSemanticLocation(abortCondition), observed, 0,
         ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Posedge)},
-        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Reactive),
         abortLiveAttempts);
-    abortWait->setAttr("obelisk_sim.concurrent_abort_level_true",
-                       builder.getUnitAttr());
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>(
+        abortWait, builder.getUnitAttr());
 
     Block *currentBlock = abortLiveAttempts;
     Value liveState;
@@ -9441,7 +9462,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder.getDenseI32ArrayAttr(edges),
         builder.getDenseI32ArrayAttr(conditionIndices), DenseI32ArrayAttr{},
         builder.getI64IntegerAttr(occurrenceSite), UnitAttr{},
-        sim::ContinuationSiteAttr{},
+        schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Observed),
         drain);
@@ -9958,12 +9979,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           sim::EntryKind::Final, attributes, argumentAttrs);
       SymbolTable::setSymbolVisibility(coordinator,
                                        SymbolTable::Visibility::Private);
-      coordinator->setAttr("obelisk_sim.concurrent_eos_coordinator",
-                           builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+          coordinator, builder.getUnitAttr());
       coordinator->setAttr("obelisk_sim.branching_antecedent_eos_coalescer",
                            builder.getUnitAttr());
-      coordinator->setAttr("obelisk_sim.detached_controls",
-                           builder.getUnitAttr());
+      ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+          coordinator, builder.getUnitAttr());
 
       Block *current = &coordinator.getBody().front();
       OpBuilder finalBuilder = OpBuilder::atBlockEnd(current);
@@ -11430,8 +11452,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                       outlineBuilder.getStringAttr(hierarchy)),
           outlineBuilder.getNamedAttr("obelisk_sim.concurrent_match_call_chain",
                                       outlineBuilder.getUnitAttr()),
-          outlineBuilder.getNamedAttr("obelisk_sim.detached_controls",
-                                      outlineBuilder.getUnitAttr()),
+          ::obelisk::schedule::named<
+              ::obelisk::schedule::Field::DetachedControls>(
+              outlineBuilder.getUnitAttr()),
       };
       auto coordinator = sim::SimFuncOp::create(
           outlineBuilder, calls.front().location,
@@ -11464,7 +11487,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         coordinator.getBody().push_back(nextCall);
         sim::SimSuspendAwaitOp::create(
             callBuilder, call.location, process, ValueRange{},
-            sim::ContinuationSiteAttr{},
+            schedule::ContinuationSiteAttr{},
             sim::EventRegionAttr::get(function.getContext(),
                                       sim::EventRegion::Reactive),
             nextCall);
@@ -11592,8 +11615,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                  sim::ExecutionDomain::Design));
           callback->first->setAttr("obelisk_sim.concurrent_match_call",
                                    builder.getUnitAttr());
-          callback->first->setAttr("obelisk_sim.detached_controls",
-                                   builder.getUnitAttr());
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::DetachedControls>(
+              callback->first, builder.getUnitAttr());
           guardReactiveCallback(callback->first, callback->second,
                                 getSemanticLocation(item),
                                 "obelisk_sim.concurrent_match_call_kill_epoch");

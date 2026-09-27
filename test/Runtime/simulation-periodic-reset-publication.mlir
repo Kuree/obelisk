@@ -27,7 +27,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @reset_publication {
     obelisk_sim.scope.decl 0
@@ -69,7 +69,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       %delay = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %s0 : !obelisk_sim.ref<i1> -> i1
       %one = arith.constant true
@@ -85,7 +85,7 @@ module attributes {
       %old = obelisk_sim.ref.load %s1 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %next = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
       obelisk_sim.ref.store %next to %s2 {obelisk_sim.continuous_store} : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.suspend.change %s1 to ^run {site = #obelisk_sim.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.change %s1 to ^run {site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
     obelisk_sim.func @second(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %s2: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64},
@@ -95,7 +95,7 @@ module attributes {
       %old = obelisk_sim.ref.load %s2 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %next = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
       obelisk_sim.ref.store %next to %s3 {obelisk_sim.continuous_store} : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.suspend.change %s2 to ^run {site = #obelisk_sim.continuation<id = 4>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.change %s2 to ^run {site = #schedule.continuation<id = 4>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
     obelisk_sim.func @sample(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %s0: !obelisk_sim.ref<i1> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
@@ -103,7 +103,7 @@ module attributes {
         %s4: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %s0 to ^run {site = #obelisk_sim.continuation<id = 5>} : !obelisk_sim.ref<i1>
+      obelisk_sim.suspend.edge posedge %s0 to ^run {site = #schedule.continuation<id = 5>} : !obelisk_sim.ref<i1>
     ^run:
       %value = obelisk_sim.ref.load %s3 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %value to %s4 : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
@@ -115,12 +115,12 @@ module attributes {
         %s3: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64},
         %s4: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
       %d0 = obelisk_sim.time.constant 4
-      obelisk_sim.suspend.delay %d0 to ^update {site = #obelisk_sim.continuation<id = 6>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %d0 to ^update {site = #schedule.continuation<id = 6>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^update:
       %one = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %one to %s1 : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
       %d1 = obelisk_sim.time.constant 10
-      obelisk_sim.suspend.delay %d1 to ^show {site = #obelisk_sim.continuation<id = 7>, timing = #obelisk_sim.timing_site<id = 2, kind = calendar>}
+      obelisk_sim.suspend.delay %d1 to ^show {site = #schedule.continuation<id = 7>, timing = #schedule.timing_site<id = 2, kind = calendar>}
     ^show:
       %v1 = obelisk_sim.ref.load %s1 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %v2 = obelisk_sim.ref.load %s2 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>

@@ -57,7 +57,7 @@ module {
 // CHECK: observer hierarchy "unit_1.$clocking_event_primary.14"
 // CHECK: obelisk_sim.event.triggered
 // CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: obelisk_sim.observer.bind {{.*}}obelisk_sim.event_primary
+// CHECK: obelisk_sim.observer.bind {{.*}}schedule.event_primary
 // CHECK: obelisk_sim.observer.bind
 // CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
 // CHECK-SAME: resume_region = 10 : i32

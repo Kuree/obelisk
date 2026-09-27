@@ -11,7 +11,7 @@
 // [64:1] change wait. Bit 64 crosses a word boundary; 1->X is a negedge and
 // X->1 is a posedge (IEEE 1800-2023 9.4.2). Vector changes coalesce per wait.
 // CHECK: counts 4 2 2
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = 2 : i32} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 2 : i32} {
   obelisk_sim.design @boundary {
     obelisk_sim.scope.decl 0 hierarchy "boundary"
     obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "boundary.root"
@@ -39,49 +39,49 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       cf.br ^step0
     ^step0:
       %d0 = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %d0 to ^store0 {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %d0 to ^store0 {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^store0:
       %v0 = obelisk_sim.logic.constant 1 : i130, 0 : i130 : !obelisk_sim.logic<130>
       obelisk_sim.ref.store %v0 to %data : !obelisk_sim.logic<130>, !obelisk_sim.ref<!obelisk_sim.logic<130>>
       cf.br ^step1
     ^step1:
       %d1 = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %d1 to ^store1 {site = #obelisk_sim.continuation<id = 2>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %d1 to ^store1 {site = #schedule.continuation<id = 2>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^store1:
       %v1 = obelisk_sim.logic.constant 18446744073709551617 : i130, 0 : i130 : !obelisk_sim.logic<130>
       obelisk_sim.ref.store %v1 to %data : !obelisk_sim.logic<130>, !obelisk_sim.ref<!obelisk_sim.logic<130>>
       cf.br ^step2
     ^step2:
       %d2 = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %d2 to ^store2 {site = #obelisk_sim.continuation<id = 3>, timing = #obelisk_sim.timing_site<id = 2, kind = calendar>}
+      obelisk_sim.suspend.delay %d2 to ^store2 {site = #schedule.continuation<id = 3>, timing = #schedule.timing_site<id = 2, kind = calendar>}
     ^store2:
       %v2 = obelisk_sim.logic.constant 55340232221128654849 : i130, 0 : i130 : !obelisk_sim.logic<130>
       obelisk_sim.ref.store %v2 to %data : !obelisk_sim.logic<130>, !obelisk_sim.ref<!obelisk_sim.logic<130>>
       cf.br ^step3
     ^step3:
       %d3 = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %d3 to ^store3 {site = #obelisk_sim.continuation<id = 4>, timing = #obelisk_sim.timing_site<id = 3, kind = calendar>}
+      obelisk_sim.suspend.delay %d3 to ^store3 {site = #schedule.continuation<id = 4>, timing = #schedule.timing_site<id = 3, kind = calendar>}
     ^store3:
       %v3 = obelisk_sim.logic.constant 55340232221128654849 : i130, 18446744073709551616 : i130 : !obelisk_sim.logic<130>
       obelisk_sim.ref.store %v3 to %data : !obelisk_sim.logic<130>, !obelisk_sim.ref<!obelisk_sim.logic<130>>
       cf.br ^step4
     ^step4:
       %d4 = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %d4 to ^store4 {site = #obelisk_sim.continuation<id = 5>, timing = #obelisk_sim.timing_site<id = 4, kind = calendar>}
+      obelisk_sim.suspend.delay %d4 to ^store4 {site = #schedule.continuation<id = 5>, timing = #schedule.timing_site<id = 4, kind = calendar>}
     ^store4:
       %v4 = obelisk_sim.logic.constant 55340232221128654849 : i130, 0 : i130 : !obelisk_sim.logic<130>
       obelisk_sim.ref.store %v4 to %data : !obelisk_sim.logic<130>, !obelisk_sim.ref<!obelisk_sim.logic<130>>
       cf.br ^step5
     ^step5:
       %d5 = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %d5 to ^store5 {site = #obelisk_sim.continuation<id = 6>, timing = #obelisk_sim.timing_site<id = 5, kind = calendar>}
+      obelisk_sim.suspend.delay %d5 to ^store5 {site = #schedule.continuation<id = 6>, timing = #schedule.timing_site<id = 5, kind = calendar>}
     ^store5:
       %v5 = obelisk_sim.logic.constant 36893488147419103233 : i130, 0 : i130 : !obelisk_sim.logic<130>
       obelisk_sim.ref.store %v5 to %data : !obelisk_sim.logic<130>, !obelisk_sim.ref<!obelisk_sim.logic<130>>
       cf.br ^finish
     ^finish:
       %last = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %last to ^print {site = #obelisk_sim.continuation<id = 7>, timing = #obelisk_sim.timing_site<id = 6, kind = calendar>}
+      obelisk_sim.suspend.delay %last to ^print {site = #schedule.continuation<id = 7>, timing = #schedule.timing_site<id = 6, kind = calendar>}
     ^print:
       %r1 = obelisk_sim.ref.load %c1 : !obelisk_sim.ref<i32> -> i32
       %r2 = obelisk_sim.ref.load %c2 : !obelisk_sim.ref<i32> -> i32
@@ -96,7 +96,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %part = obelisk_sim.ref.extract %data from 1 : !obelisk_sim.ref<!obelisk_sim.logic<130>> -> !obelisk_sim.ref<!obelisk_sim.logic<64>>
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %part to ^count {site = #obelisk_sim.continuation<id = 8>} : !obelisk_sim.ref<!obelisk_sim.logic<64>>
+      obelisk_sim.suspend.change %part to ^count {site = #schedule.continuation<id = 8>} : !obelisk_sim.ref<!obelisk_sim.logic<64>>
     ^count:
       %counter = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<i32>
       %old = obelisk_sim.ref.load %counter : !obelisk_sim.ref<i32> -> i32
@@ -109,7 +109,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %part = obelisk_sim.ref.extract %data from 64 : !obelisk_sim.ref<!obelisk_sim.logic<130>> -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %part to ^count {site = #obelisk_sim.continuation<id = 9>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %part to ^count {site = #schedule.continuation<id = 9>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^count:
       %counter = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<i32>
       %old = obelisk_sim.ref.load %counter : !obelisk_sim.ref<i32> -> i32
@@ -122,7 +122,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %part = obelisk_sim.ref.extract %data from 64 : !obelisk_sim.ref<!obelisk_sim.logic<130>> -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge negedge %part to ^count {site = #obelisk_sim.continuation<id = 10>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge negedge %part to ^count {site = #schedule.continuation<id = 10>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^count:
       %counter = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<i32>
       %old = obelisk_sim.ref.load %counter : !obelisk_sim.ref<i32> -> i32

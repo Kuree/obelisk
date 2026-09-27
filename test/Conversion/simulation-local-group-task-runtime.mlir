@@ -1,12 +1,12 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.group.mlir
-// RUN: sed 's/obelisk.native_scheduler = 1 : i32/obelisk.native_scheduler = 0 : i32/' %s > %t.auto.mlir
+// RUN: sed 's/schedule.native_scheduler = 1 : i32/schedule.native_scheduler = 0 : i32/' %s > %t.auto.mlir
 // RUN: obelisk-opt %t.auto.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
-// RUN: obelisk-opt %t.group.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
+// RUN: obelisk-opt %t.group.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir > %t.ll
 // RUN: FileCheck %s --check-prefix=NATIVE < %t.ll
 // RUN: sed 's/cf.br ^wait(%carry : i32)/cf.br ^wait(%next : i32)/g' %s > %t.changing.mlir
 // RUN: obelisk-opt %t.changing.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
-// RUN: sed 's/obelisk.native_scheduler = 1 : i32/obelisk.native_scheduler = 3 : i32/' %t.changing.mlir > %t.eval.mlir
+// RUN: sed 's/schedule.native_scheduler = 1 : i32/schedule.native_scheduler = 3 : i32/' %t.changing.mlir > %t.eval.mlir
 // RUN: obelisk-opt %t.eval.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
 // RUN: sed 's/cf.br ^wait(%carry : i32)/cf.cond_br %condition, ^wait(%carry : i32), ^wait(%carry : i32)/g' %s > %t.duplicate.mlir
 // RUN: obelisk-opt %t.duplicate.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
@@ -14,7 +14,7 @@
 // RUN: obelisk-opt %t.conflicting.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
 // RUN: sed '/^      %next = arith.addi %carry, %one : i32/a\      obelisk_sim.ref.store %condition to %clk : i1, !clockref' %s > %t.clock-write.mlir
 // RUN: obelisk-opt %t.clock-write.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
-// RUN: sed 's/obelisk_sim.design @local_group_task {/obelisk_sim.design @local_group_task attributes {obelisk_sim.static_body_fusion = [#obelisk_sim.fusion<id = 0, fragments = [2, 5]>]} {/' %t.clock-write.mlir > %t.clock-plan.mlir
+// RUN: sed 's/obelisk_sim.design @local_group_task {/obelisk_sim.design @local_group_task attributes {schedule.static_body_fusion = [#schedule.fusion<id = 0, fragments = [2, 5]>]} {/' %t.clock-write.mlir > %t.clock-plan.mlir
 // RUN: obelisk-opt %t.clock-plan.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHANGING
 
 // Runtime behavior is checked in ../Runtime/simulation-local-group-task-runtime.test.
@@ -38,7 +38,7 @@
 // GROUP: obelisk_sim.suspend.any
 // GROUP: obelisk_sim.nba.enqueue
 // GROUP: obelisk_sim.func private @__obelisk_fused_
-// GROUP-SAME: obelisk.native.region_body
+// GROUP-SAME: schedule.native.region_body
 // GROUP: obelisk_sim.suspend.edge posedge
 // GROUP: obelisk_sim.nba.enqueue
 // GROUP: obelisk_sim.nba.enqueue
@@ -67,7 +67,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 1 : i32
+  schedule.native_scheduler = 1 : i32
 } {
   obelisk_sim.design @local_group_task {
     obelisk_sim.scope.decl 0

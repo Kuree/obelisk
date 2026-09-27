@@ -144,9 +144,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.11.strong(
 // CHECK-SAME: obelisk_sim.concurrent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_report
+// CHECK-SAME: schedule.concurrent_report
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK-COUNT-2: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
@@ -163,9 +163,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.41.weak(
 // CHECK-SAME: obelisk_sim.concurrent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_report
+// CHECK-SAME: schedule.concurrent_report
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.41.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK-COUNT-1: obelisk_sim.spawn @unit_1.$concurrent_eos_report.41.weak
@@ -190,7 +190,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.fail
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch.71(
 // CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-3: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}

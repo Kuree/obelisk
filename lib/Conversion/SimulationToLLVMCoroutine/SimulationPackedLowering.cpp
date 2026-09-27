@@ -2,6 +2,7 @@
 
 #include "SimulationPackedLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
@@ -38,12 +39,12 @@ namespace obelisk::detail {
 
 namespace {
 
-constexpr StringLiteral inductiveTwoStateAccessAttr =
-    "obelisk.eval.inductive_two_state_access";
-constexpr StringLiteral inductiveTwoStateAttr =
-    "obelisk.eval.inductive_two_state";
-constexpr StringLiteral conditionalTwoStateAttr =
-    "obelisk.eval.conditionally_two_state";
+constexpr auto inductiveTwoStateAccessAttr =
+    ::obelisk::schedule::Field::EvalInductiveTwoStateAccess;
+constexpr auto inductiveTwoStateAttr =
+    ::obelisk::schedule::Field::EvalInductiveTwoState;
+constexpr auto conditionalTwoStateAttr =
+    ::obelisk::schedule::Field::EvalConditionallyTwoState;
 constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
     "obelisk.native.bulk_copy_source_assume_clean";
 
@@ -99,7 +100,7 @@ void fuseWideDynamicRefCopies(ModuleOp module,
     auto copy = sim::SimRefCopyOp::create(
         rewriter, store.getLoc(), load.getReference(), store.getReference());
     copy->setAttrs(store->getAttrDictionary());
-    if (load->hasAttr(assumeCleanSpecializationAttr))
+    if (::obelisk::schedule::has<assumeCleanSpecializationAttr>(load))
       copy->setAttr(bulkCopySourceAssumeCleanAttr, rewriter.getUnitAttr());
     nativeTwoStateOperations.erase(load.getOperation());
     rewriter.eraseOp(store);
@@ -297,8 +298,9 @@ LogicalResult lowerPackedSimulationOperations(
       if (function.isExternal())
         continue;
       ++functionCount;
-      bool guarded = function->hasAttr(inductiveTwoStateAttr);
-      bool conditional = function->hasAttr(conditionalTwoStateAttr);
+      bool guarded = ::obelisk::schedule::has<inductiveTwoStateAttr>(function);
+      bool conditional =
+          ::obelisk::schedule::has<conditionalTwoStateAttr>(function);
       needsInductiveFacts |= guarded && !conditional;
       needsKnownStateFacts |= conditional;
     }
@@ -326,8 +328,10 @@ LogicalResult lowerPackedSimulationOperations(
          design.getBody().front().getOps<sim::SimFuncOp>()) {
       if (function.isExternal())
         continue;
-      bool guardedTwoState = function->hasAttr(inductiveTwoStateAttr);
-      bool conditionalTwoState = function->hasAttr(conditionalTwoStateAttr);
+      bool guardedTwoState =
+          ::obelisk::schedule::has<inductiveTwoStateAttr>(function);
+      bool conditionalTwoState =
+          ::obelisk::schedule::has<conditionalTwoStateAttr>(function);
       const StateDomainAnalysis &guardedDomains =
           conditionalTwoState ? *knownStateDomains : *stateDomains;
       auto isTwoState = [&](Value value) {
@@ -366,14 +370,14 @@ LogicalResult lowerPackedSimulationOperations(
             continue;
           if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
             if (isPromotableAccess(load.getReference(), load.getResult()))
-              operation.setAttr(inductiveTwoStateAccessAttr,
-                                UnitAttr::get(context));
+              schedule::set<inductiveTwoStateAccessAttr>(
+                  &operation, UnitAttr::get(context));
             continue;
           }
           if (auto read = dyn_cast<sim::SimNetReadOp>(operation)) {
             if (isPromotableAccess(read.getNet(), read.getResult()))
-              operation.setAttr(inductiveTwoStateAccessAttr,
-                                UnitAttr::get(context));
+              schedule::set<inductiveTwoStateAccessAttr>(
+                  &operation, UnitAttr::get(context));
             continue;
           }
           Value destination;
@@ -394,8 +398,8 @@ LogicalResult lowerPackedSimulationOperations(
               !guardedDomains.isInductivelyTwoState(root->second.resource,
                                                     *root->second.descriptor))
             continue;
-          operation.setAttr(inductiveTwoStateAccessAttr,
-                            UnitAttr::get(context));
+          schedule::set<inductiveTwoStateAccessAttr>(&operation,
+                                                     UnitAttr::get(context));
         }
       }
     }
@@ -828,7 +832,8 @@ LogicalResult lowerPackedSimulationOperations(
     // consume captured automatic state. The waiting activation owns that
     // state across suspension and releases it on resumption or cancellation.
     if (function.getEntryKind() == sim::EntryKind::Observer ||
-        function->hasAttr("obelisk.eval.borrowed_captures"))
+        ::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
       return WalkResult::advance();
     unsigned physical = 0;
     for (BlockArgument argument : function.getBody().front().getArguments()) {
@@ -1045,8 +1050,9 @@ LogicalResult lowerPackedSimulationOperations(
   module.walk([&](sim::SimFuncOp function) {
     if (functionChunks.empty() ||
         functionChunks.back().size() == functionsPerChunk ||
-        functionChunks.back().front()->hasAttr(cleanEvalBodyAttr) !=
-            function->hasAttr(cleanEvalBodyAttr))
+        ::obelisk::schedule::has<cleanEvalBodyAttr>(
+            functionChunks.back().front()) !=
+            ::obelisk::schedule::has<cleanEvalBodyAttr>(function))
       functionChunks.emplace_back();
     functionChunks.back().push_back(function);
   });
@@ -1057,7 +1063,7 @@ LogicalResult lowerPackedSimulationOperations(
             RewritePatternSet workerPatterns(context);
             populatePackedPatterns(
                 workerConverter, workerPatterns,
-                functions.front()->hasAttr(cleanEvalBodyAttr));
+                ::obelisk::schedule::has<cleanEvalBodyAttr>(functions.front()));
             FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
             ConversionTarget workerTarget(*context);
             configurePackedTarget(workerTarget, workerConverter);

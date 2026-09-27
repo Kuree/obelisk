@@ -10,7 +10,7 @@ if mode == 'external-split':
     # The native and required-bytecode images use this same semantic input.
     text = text[text.index('module attributes {'):]
     text = text.replace('module attributes {',
-                        'module attributes {obelisk.native.max_inline_ops = 700 : i64,', 1)
+                        'module attributes {schedule.native.max_inline_ops = 700 : i64,', 1)
     text = text.replace('design hierarchy "external_clock.count"', 'design')
     start = text.index('    obelisk_sim.func @relay2(')
     end = text.index('\n    }\n', start) + len('\n    }\n')
@@ -82,8 +82,8 @@ obelisk_sim.ref.store %newcount to %count : i8, !vref
         end = text.index('obelisk_sim.func @step4(', start)
     text = text[:start] + body + text[end:]
 elif mode == 'budget':
-    text = text.replace('obelisk.native_scheduler = 3 : i32',
-                        'obelisk.native_scheduler = 3 : i32, obelisk.native.max_inline_ops = 1 : i64')
+    text = text.replace('schedule.native_scheduler = 3 : i32',
+                        'schedule.native_scheduler = 3 : i32, schedule.native.max_inline_ops = 1 : i64')
 elif mode == 'reconvergent':
     text = text.replace('@step3(%ctx, %s2, %s3)', '@step3(%ctx, %s1, %s3)')
     start = text.index('obelisk_sim.func @step3(')
@@ -146,8 +146,8 @@ elif mode in ('large', 'large-ssa'):
     text = text.replace('%output = obelisk_sim.context.storage %ctx[5] : !vref',
                         f'%output = obelisk_sim.context.storage %ctx[{count}] : !vref')
     if mode == 'large-ssa':
-        text = text.replace('obelisk.native_scheduler = 3 : i32',
-                            'obelisk.native_scheduler = 3 : i32, obelisk.native.max_inline_ops = 50000 : i64')
+        text = text.replace('schedule.native_scheduler = 3 : i32',
+                            'schedule.native_scheduler = 3 : i32, schedule.native.max_inline_ops = 50000 : i64')
 elif mode == 'four-state':
     text = text.replace('!vref = !obelisk_sim.ref<i8>', '!word = !obelisk_sim.logic<8>\n!vref = !obelisk_sim.ref<!word>')
     text = re.sub(r'(storage.decl [1-5] in 0 :) i8', r'\1 !word', text)

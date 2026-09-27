@@ -20,7 +20,7 @@ module {
       // A runtime choice between distinct constants is a variable deadline,
       // not a single compiled-calendar site.
       // CHECK: obelisk_sim.suspend.delay %{{.*}} to
-      // CHECK-SAME: timing = #obelisk_sim.timing_site<id = 0, kind = deadline_slot>
+      // CHECK-SAME: timing = #schedule.timing_site<id = 0, kind = deadline_slot>
       obelisk_sim.suspend.delay %delay to ^done
     ^done:
       obelisk_sim.return

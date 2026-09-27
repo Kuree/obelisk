@@ -11,14 +11,14 @@
 // SCCP: arith.constant 42 : i32
 // SCCP: obelisk_sim.class.virtual_task_call
 
-// GRAPH: compute_graph = #obelisk_sim.graph<
+// GRAPH: compute_graph = #schedule.graph<
 // GRAPH-SAME: function = @base_run
 // GRAPH-SAME: function = @caller
 // GRAPH-SAME: function = @derived_run
-// GRAPH-SAME: #obelisk_sim.edge<source = 0, target = 2, kind = process_order>
-// GRAPH-SAME: #obelisk_sim.edge<source = 1, target = 0, kind = process_order>
-// GRAPH-SAME: #obelisk_sim.edge<source = 1, target = 3, kind = process_order>
-// GRAPH-SAME: #obelisk_sim.edge<source = 3, target = 2, kind = process_order>
+// GRAPH-SAME: #schedule.edge<source = 0, target = 2, kind = process_order>
+// GRAPH-SAME: #schedule.edge<source = 1, target = 0, kind = process_order>
+// GRAPH-SAME: #schedule.edge<source = 1, target = 3, kind = process_order>
+// GRAPH-SAME: #schedule.edge<source = 3, target = 2, kind = process_order>
 
 // DOMAIN-LABEL: state-domain @virtual_analysis
 // DOMAIN-LABEL: func @base_run

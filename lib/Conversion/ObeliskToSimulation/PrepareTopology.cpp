@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrepareTopology.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "Detail.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -2720,9 +2721,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               builder, getSemanticLocation(op), id, scopeId, *type,
               sim::Lifetime::Design, leafPath,
               builder.getStringAttr((Twine(getDebugName(op)) + ".leaf").str()),
-              sim::ComputeObservabilityKindAttr{}, sim::NetResolutionKind::Wire,
-              DenseI64ArrayAttr{}, sim::StrengthAttr{}, UnitAttr{},
-              retainedVPIType, sourceNettype);
+              schedule::ComputeObservabilityKindAttr{},
+              sim::NetResolutionKind::Wire, DenseI64ArrayAttr{},
+              sim::StrengthAttr{}, UnitAttr{}, retainedVPIType, sourceNettype);
           declaration->setAttr(sim::metadata::coverageSourceAuthored,
                                builder.getUnitAttr());
           if (retainCoverageSourceTypes)
@@ -2803,7 +2804,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               : sim::Lifetime::Design;
       auto declaration = sim::SimStorageDeclOp::create(
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
-          hierarchy, debug, sim::ComputeObservabilityKindAttr{},
+          hierarchy, debug, schedule::ComputeObservabilityKindAttr{},
           retainedVPIType);
       declaration->setAttr(sim::metadata::coverageSourceAuthored,
                            builder.getUnitAttr());
@@ -2957,7 +2958,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     auto declaration = sim::SimNetDeclOp::create(
         builder, getSemanticLocation(op), id, scopeId, *type,
         sim::Lifetime::Design, hierarchy, debug,
-        sim::ComputeObservabilityKindAttr{}, resolution, propagationDelays,
+        schedule::ComputeObservabilityKindAttr{}, resolution, propagationDelays,
         resolution == sim::NetResolutionKind::TriReg
             ? sim::StrengthAttr::get(
                   builder.getContext(),
@@ -3051,7 +3052,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, getSemanticLocation(constraint), id, scopeId, type,
         sim::Lifetime::Design, builder.getStringAttr(hierarchy),
         builder.getStringAttr("__obelisk_constraint_mode"),
-        sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+        schedule::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
   });
 
   // A static random property has one rand_mode bit shared by all instances of
@@ -3088,7 +3089,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, getSemanticLocation(property), id, scopeId, type,
         sim::Lifetime::Design, builder.getStringAttr(hierarchy),
         builder.getStringAttr("__obelisk_rand_mode"),
-        sim::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+        schedule::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
   });
 
   for (Operation *op : designObjects) {

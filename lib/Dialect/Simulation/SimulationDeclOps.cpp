@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
@@ -4400,9 +4401,9 @@ LogicalResult SimDesignOp::verifyRegions() {
   // this symbol table with a cached SymbolTableCollection.
   llvm::DenseMap<uint64_t, SimFuncOp> executableCodeUnits;
   for (SimFuncOp function : functions) {
-    bool pendingClockedSamplePlan =
-        static_cast<bool>(function->getAttrOfType<DictionaryAttr>(
-            "obelisk_sim.clocked_sample_plan"));
+    bool pendingClockedSamplePlan = static_cast<bool>(
+        ::obelisk::schedule::get<::obelisk::schedule::Field::ClockedSamplePlan>(
+            function));
     if (!function.isExternal() &&
         function.getEntryKind() != EntryKind::RootInitializer &&
         !function.getCodeUnitIdAttr() && !pendingClockedSamplePlan)

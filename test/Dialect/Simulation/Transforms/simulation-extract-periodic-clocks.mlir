@@ -12,7 +12,7 @@
 // Runtime comparison with the untransformed IR is in Runtime/.
 // EXTRACT: obelisk_sim.spawn @__obelisk_periodic_tick_
 // EXTRACT-LABEL: obelisk_sim.func private @clock
-// EXTRACT-SAME: obelisk_sim.periodic_control
+// EXTRACT-SAME: schedule.periodic_control
 // EXTRACT: obelisk_sim.nba.enqueue
 // EXTRACT: obelisk_sim.suspend.edge both
 // EXTRACT: obelisk_sim.nba.enqueue
@@ -27,7 +27,7 @@
 // EXTRACT: obelisk_sim.ref.load
 // EXTRACT: arith.xori
 // EXTRACT: obelisk_sim.ref.store
-// VPI-NOT: obelisk_sim.periodic_control
+// VPI-NOT: schedule.periodic_control
 // VPI-NOT: __obelisk_periodic_tick_
 // PLAN: __obelisk_periodic_clock_plan_v1
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
@@ -35,7 +35,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @rsd_clock {
     obelisk_sim.scope.decl 0
@@ -85,12 +85,12 @@ module attributes {
       cf.br ^bb1
     ^bb1:  // 3 preds: ^bb0, ^bb3, ^bb4
       %5 = obelisk_sim.time.constant 8 {obelisk_sim.rematerialized}
-      obelisk_sim.suspend.delay %5 to ^bb2 {site = #obelisk_sim.continuation<id = 9361>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %5 to ^bb2 {site = #schedule.continuation<id = 9361>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^bb2:  // pred: ^bb1
       %6 = obelisk_sim.logic.constant false, false {obelisk_sim.rematerialized} : !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %6 to %arg2 : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
       %7 = obelisk_sim.time.constant 8 {obelisk_sim.rematerialized}
-      obelisk_sim.suspend.delay %7 to ^bb3 {site = #obelisk_sim.continuation<id = 9362>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %7 to ^bb3 {site = #schedule.continuation<id = 9362>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^bb3:  // pred: ^bb2
       %8 = obelisk_sim.logic.constant true, false {obelisk_sim.rematerialized} : !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %8 to %arg2 : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
@@ -193,12 +193,12 @@ module attributes {
       cf.br ^bb1
     ^bb1:  // 3 preds: ^bb0, ^bb3, ^bb4
       %5 = obelisk_sim.time.constant 5 {obelisk_sim.rematerialized}
-      obelisk_sim.suspend.delay %5 to ^bb2 {site = #obelisk_sim.continuation<id = 9361>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %5 to ^bb2 {site = #schedule.continuation<id = 9361>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^bb2:  // pred: ^bb1
       %6 = obelisk_sim.logic.constant false, false {obelisk_sim.rematerialized} : !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %6 to %arg2 : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
       %7 = obelisk_sim.time.constant 5 {obelisk_sim.rematerialized}
-      obelisk_sim.suspend.delay %7 to ^bb3 {site = #obelisk_sim.continuation<id = 9362>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %7 to ^bb3 {site = #schedule.continuation<id = 9362>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^bb3:  // pred: ^bb2
       %8 = obelisk_sim.logic.constant true, false {obelisk_sim.rematerialized} : !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %8 to %arg2 : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()

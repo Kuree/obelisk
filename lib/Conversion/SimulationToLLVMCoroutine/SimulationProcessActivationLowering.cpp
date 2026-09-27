@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- SimulationProcessActivationLowering.cpp - Activation helpers ---===//
 
 #include "SimulationProcessActivationLowering.h"
@@ -260,7 +261,9 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
   Block *createFailed = new Block;
   Block *added = new Block;
   Block *addFailed = new Block;
-  bool primeOnSpawn = function->hasAttr("obelisk_sim.prime_on_spawn");
+  bool primeOnSpawn =
+      ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+          function);
   Block *primed = primeOnSpawn ? new Block : nullptr;
   Block *primeFailed = primeOnSpawn ? new Block : nullptr;
   helper.getBody().push_back(created);
@@ -328,22 +331,27 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
   sim::EntryKind entryKind = function.getEntryKind();
-  if (primeOnSpawn && (!function->hasAttr("internal") ||
-                       !function->hasAttr("obelisk_sim.detached_controls") ||
-                       entryKind != sim::EntryKind::Fork))
+  if (primeOnSpawn &&
+      (!function->hasAttr("internal") ||
+       !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+           function) ||
+       entryKind != sim::EntryKind::Fork))
     return helper.emitError(
         "prime-on-spawn is reserved for internal detached waiters");
   bool startup = sim::isStartupEntryKind(entryKind) ||
                  (entryKind == sim::EntryKind::Initial &&
                   function.getHomeRegion() == sim::EventRegion::Active);
-  bool prioritySignalResume =
-      function->hasAttr("obelisk_sim.priority_signal_resume");
+  bool prioritySignalResume = ::obelisk::schedule::has<
+      ::obelisk::schedule::Field::PrioritySignalResume>(function);
   bool concurrentSignalObserver =
-      function->hasAttr("obelisk_sim.concurrent_cancel") ||
-      function->hasAttr("obelisk_sim.concurrent_abort");
+      ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentCancel>(
+          function) ||
+      ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentAbort>(
+          function);
   if (prioritySignalResume &&
       (!function->hasAttr("internal") || !concurrentSignalObserver ||
-       !function->hasAttr("obelisk_sim.detached_controls") ||
+       !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+           function) ||
        entryKind != sim::EntryKind::Fork ||
        function.getHomeRegion() != sim::EventRegion::Reactive))
     return helper.emitError(
@@ -354,7 +362,8 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
       (entryKind == sim::EntryKind::Final ? OBELISK_RT_SCHEDULE_FINAL : 0) |
       (entryKind == sim::EntryKind::Initial ? OBELISK_RT_SCHEDULE_INITIAL : 0) |
       (startup ? OBELISK_RT_SCHEDULE_STARTUP : 0) |
-      (function->hasAttr("obelisk_sim.detached_controls")
+      (::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+           function)
            ? OBELISK_RT_SCHEDULE_DETACHED_CONTROLS
            : 0) |
       (prioritySignalResume ? OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL : 0) |
@@ -444,8 +453,9 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
       arith::OrIOp::create(builder, location, token,
                            llvmConstant(builder, location, i64,
                                         OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG));
-  if (auto owner = function->getAttrOfType<IntegerAttr>(
-          "obelisk_sim.program_owner_id")) {
+  if (auto owner =
+          ::obelisk::schedule::get<::obelisk::schedule::Field::ProgramOwnerId>(
+              function)) {
     Value registerStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},

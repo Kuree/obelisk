@@ -36,7 +36,7 @@ module attributes {
             {obelisk_sim.capture_kind = 5 : i32,
              obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64,
-                    obelisk_sim.primitive_name = "udp_default_x",
+                    schedule.primitive_name = "udp_default_x",
                     obelisk_sim.udp_metadata = {
                       is_edge_sensitive = false, is_sequential = true,
                       name = "udp_default_x",

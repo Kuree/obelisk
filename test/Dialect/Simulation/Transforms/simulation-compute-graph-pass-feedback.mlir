@@ -4,8 +4,8 @@
 // switch-connected net. A control derived from that net is feedback: preserve
 // its change watch and self-resume edge so native scheduling can install
 // static fanout for changes produced while resolving the pass component.
-// CHECK: compute_graph = #obelisk_sim.graph<
-// CHECK: #obelisk_sim.fragment<id = [[CONTROL:[0-9]+]], function = @control, block = 1
+// CHECK: compute_graph = #schedule.graph<
+// CHECK: #schedule.fragment<id = [[CONTROL:[0-9]+]], function = @control, block = 1
 // CHECK-SAME: effect = watch, resource = net
 // CHECK-SAME: descriptor = 0
 // CHECK-SAME: trigger = change

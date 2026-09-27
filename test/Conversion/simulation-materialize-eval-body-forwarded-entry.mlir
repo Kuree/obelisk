@@ -9,7 +9,7 @@
 // a different activation and gets no body, and so does an entry that stores
 // before it branches: the eval body would repeat that time-zero store on every
 // activation.
-module attributes {obelisk.native_scheduler = 3 : i32} {
+module attributes {schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @forwarded {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i8 design
@@ -28,7 +28,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: obelisk_sim.func @folded(
-    // CHECK-SAME: obelisk.eval.body = @[[FOLDED:folded.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: schedule.eval.body = @[[FOLDED:folded.__obelisk_eval_body_[0-9]+]]
     obelisk_sim.func @folded(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %in: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
@@ -54,7 +54,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: obelisk_sim.func @different(
-    // CHECK-NOT: obelisk.eval.body
+    // CHECK-NOT: schedule.eval.body
     // CHECK: obelisk_sim.suspend.any
     obelisk_sim.func @different(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -81,7 +81,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: obelisk_sim.func @effectful(
-    // CHECK-NOT: obelisk.eval.body
+    // CHECK-NOT: schedule.eval.body
     // CHECK: obelisk_sim.suspend.any
     obelisk_sim.func @effectful(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},

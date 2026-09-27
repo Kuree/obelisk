@@ -4,6 +4,7 @@
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 
 #include "SimulationNBALowering.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
@@ -168,8 +169,9 @@ struct NativeThreeTierKernelPlan {
   uint32_t id = 0;
   uint32_t owner = 0;
   uint32_t readyBit = 0;
-  sim::SchedulerTierKind tier = sim::SchedulerTierKind::Tier3;
-  sim::ComputeScheduleKind schedule = sim::ComputeScheduleKind::Acyclic;
+  schedule::SchedulerTierKind tier = schedule::SchedulerTierKind::Tier3;
+  schedule::ComputeScheduleKind schedule =
+      schedule::ComputeScheduleKind::Acyclic;
   bool loweringReady = false;
   uint32_t memberCount = 0;
   llvm::SmallVector<uint32_t> memberIDs;
@@ -185,7 +187,7 @@ struct NativeThreeTierIngressPlan {
 
 struct NativeThreeTierPlan {
   uint32_t ownerCount = 0;
-  sim::ComputeGraphAttr sourceGraph;
+  schedule::ComputeGraphAttr sourceGraph;
   llvm::SmallVector<NativeThreeTierKernelPlan> kernels;
   llvm::SmallVector<NativeThreeTierIngressPlan> ingress;
 };
@@ -193,27 +195,12 @@ struct NativeThreeTierPlan {
 /// A structurally proven free-running clock.  The plan records physical state
 /// identity rather than a source-level name, so aliases are detected and
 /// multiple clocks can be ordered by their calendar deadlines.
-struct NativePeriodicClock {
-  uint32_t actorSlot = 0;
-  uint32_t continuation = 0;
-  uint32_t staticState = 0;
-  uint64_t bitOffset = 0;
-  uint64_t halfPeriod = 0;
-  llvm::SmallVector<uint64_t> coveragePoints;
-};
+using NativePeriodicClock = schedule::PeriodicClockAttr;
 
 /// A proven one-bit, single-driver port projection of a periodic source.  The
 /// generated loop updates both canonical driver and resolved-net planes and
 /// seeds the target fanout directly, avoiding a forwarding actor per edge.
-struct NativePeriodicAlias {
-  uint32_t sourceStaticState = 0;
-  uint32_t forwardingActorSlot = 0;
-  uint32_t forwardingContinuation = 0;
-  uint32_t targetStaticState = 0;
-  uint64_t sourceBitOffset = 0;
-  uint64_t targetBitOffset = 0;
-  uint64_t driverBitOffset = 0;
-};
+using NativePeriodicAlias = schedule::PeriodicAliasAttr;
 
 mlir::LogicalResult
 specializeNativeAOTCaptures(mlir::ModuleOp module,
@@ -246,7 +233,7 @@ mlir::FailureOr<ResolvedNativeEvalPlan> resolveNativeEvalPlan(
     const NativeStaticFanoutPlan &staticFanoutPlan,
     mlir::ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
-    sim::ComputeGraphAttr computeGraph,
+    schedule::ComputeGraphAttr computeGraph,
     mlir::ArrayRef<NativePeriodicClock> periodicClocks,
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases);
 mlir::LogicalResult materializeNativeEvalGroupBodies(mlir::ModuleOp module);
@@ -288,7 +275,7 @@ mlir::FailureOr<bool> makeNativeEvalPlan(
     mlir::ArrayRef<obelisk_rt_static_actor_root> actorRoots,
     mlir::ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
-    sim::ComputeGraphAttr computeGraph,
+    schedule::ComputeGraphAttr computeGraph,
     mlir::ArrayRef<NativePeriodicClock> periodicClocks,
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases, bool enableDirectState,
     bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,

@@ -1,6 +1,8 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- LowerUnitControlFlow.cpp - Lower loops, blocks, and forks -------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 
@@ -1366,7 +1368,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
       if (directWatches.size() == 1) {
         sim::SimSuspendChangeOp::create(
             waitBuilder, returnOp.getLoc(), directWatches.front(), ValueRange{},
-            sim::ContinuationSiteAttr{},
+            schedule::ContinuationSiteAttr{},
             sim::EventRegionAttr::get(function.getContext(),
                                       sim::EventRegion::Postponed),
             dispatch);
@@ -1376,7 +1378,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
         sim::SimSuspendAnyOp::create(
             waitBuilder, returnOp.getLoc(), directWatches,
             waitBuilder.getDenseI32ArrayAttr(edges),
-            sim::ContinuationSiteAttr{},
+            schedule::ContinuationSiteAttr{},
             sim::EventRegionAttr::get(function.getContext(),
                                       sim::EventRegion::Postponed),
             dispatch);
@@ -1393,7 +1395,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
         operands.push_back(observation.initial);
       sim::SimSuspendObserveOp::create(
           waitBuilder, returnOp.getLoc(), operands, uint32_t{0}, edges,
-          conditionIndices, sim::ContinuationSiteAttr{},
+          conditionIndices, schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Postponed),
           dispatch);
@@ -1401,14 +1403,14 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                watched.empty()) {
       sim::SimSuspendForeverOp::create(
           waitBuilder, returnOp.getLoc(), ValueRange{},
-          sim::ContinuationSiteAttr{},
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Postponed),
           dispatch);
     } else if (watched.size() == 1) {
       sim::SimSuspendChangeOp::create(
           waitBuilder, returnOp.getLoc(), watched.front(), ValueRange{},
-          sim::ContinuationSiteAttr{},
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Postponed),
           dispatch);
@@ -1417,7 +1419,8 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                                  static_cast<int32_t>(sim::EdgeKind::Change));
       sim::SimSuspendAnyOp::create(
           waitBuilder, returnOp.getLoc(), watched,
-          waitBuilder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
+          waitBuilder.getDenseI32ArrayAttr(edges),
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Postponed),
           dispatch);
@@ -1502,8 +1505,10 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
   // same activation. Priming executes this internal detached child only as
   // far as its initial wait, atomically installing the subscriptions before
   // the caller continues; it does not evaluate the PLA a second time.
-  callback->setAttr("obelisk_sim.detached_controls", builder.getUnitAttr());
-  callback->setAttr("obelisk_sim.prime_on_spawn", builder.getUnitAttr());
+  ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+      callback, builder.getUnitAttr());
+  ::obelisk::schedule::set<::obelisk::schedule::Field::PrimeOnSpawn>(
+      callback, builder.getUnitAttr());
 
   Block &entry = callback.getBody().front();
   SmallVector<Value> watched;
@@ -1538,15 +1543,15 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
   auto active = sim::EventRegionAttr::get(function.getContext(),
                                           sim::EventRegion::Active);
   if (watched.size() == 1) {
-    sim::SimSuspendChangeOp::create(waitBuilder, location, watched.front(),
-                                    ValueRange{}, sim::ContinuationSiteAttr{},
-                                    active, evaluate);
+    sim::SimSuspendChangeOp::create(
+        waitBuilder, location, watched.front(), ValueRange{},
+        schedule::ContinuationSiteAttr{}, active, evaluate);
   } else {
     SmallVector<int32_t> edges(watched.size(),
                                static_cast<int32_t>(sim::EdgeKind::Change));
-    sim::SimSuspendAnyOp::create(waitBuilder, location, watched,
-                                 waitBuilder.getDenseI32ArrayAttr(edges),
-                                 sim::ContinuationSiteAttr{}, active, evaluate);
+    sim::SimSuspendAnyOp::create(
+        waitBuilder, location, watched, waitBuilder.getDenseI32ArrayAttr(edges),
+        schedule::ContinuationSiteAttr{}, active, evaluate);
   }
 
   SmallVector<sim::SimReturnOp> returns;
@@ -1622,9 +1627,9 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
   sim::JoinKind joinKind = kind == semantic::SVStatementBlockKind::JoinAny
                                ? sim::JoinKind::Any
                                : sim::JoinKind::All;
-  sim::SimSuspendJoinOp::create(builder, location, joinKind, processes,
-                                processes.size(), sim::ContinuationSiteAttr{},
-                                sim::EventRegionAttr{}, continuation);
+  sim::SimSuspendJoinOp::create(
+      builder, location, joinKind, processes, processes.size(),
+      schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
   setCurrent(continuation);
   if (blockEventTargetID)
     emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
@@ -1726,9 +1731,9 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
                    function.getEntryKind() != sim::EntryKind::Observer;
   if (resumable) {
     Block *body = addBlock();
-    sim::SimControlBoundaryOp::create(builder, location, activation,
-                                      ValueRange{}, sim::ContinuationSiteAttr{},
-                                      exit, body);
+    sim::SimControlBoundaryOp::create(
+        builder, location, activation, ValueRange{},
+        schedule::ContinuationSiteAttr{}, exit, body);
     setCurrent(body);
   }
   controlScopes.push_back(

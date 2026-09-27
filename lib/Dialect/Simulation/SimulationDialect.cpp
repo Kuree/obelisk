@@ -1,6 +1,10 @@
 //===- SimulationDialect.cpp - Executable simulation dialect ------------===//
 
 #include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -116,8 +120,8 @@ bool containsLateInlineMetadata(SimDesignOp design) {
                static_cast<bool>(function.getFragmentAbiAttr());
     for (NamedAttribute named : operation->getAttrs())
       found |=
-          isa<ContinuationSiteAttr, TimingSiteAttr, NBASiteAttr, EventSiteAttr>(
-              named.getValue());
+          isa<schedule::ContinuationSiteAttr, schedule::TimingSiteAttr,
+              schedule::NBASiteAttr, schedule::EventSiteAttr>(named.getValue());
   });
   return found;
 }
@@ -125,7 +129,7 @@ bool containsLateInlineMetadata(SimDesignOp design) {
 bool hasUnknownInlineMetadata(Operation *operation) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if (!name.starts_with("obelisk_sim."))
+    if (!name.starts_with("obelisk_sim.") && !name.starts_with("schedule."))
       continue;
     if (metadata::isKnownOperation(name))
       continue;
@@ -143,7 +147,8 @@ bool hasUnknownInlineBoundaryMetadata(ArrayAttr dictionaries) {
       return true;
     for (NamedAttribute named : dictionary) {
       StringRef name = named.getName().strref();
-      if (name.starts_with("obelisk_sim.") && !metadata::isKnownBoundary(name))
+      if ((name.starts_with("obelisk_sim.") || name.starts_with("schedule.")) &&
+          !metadata::isKnownBoundary(name))
         return true;
     }
   }
@@ -469,7 +474,8 @@ struct ObeliskSimulationInlinerInterface final
   void processInlinedCallBlocks(
       Operation *call,
       iterator_range<Region::iterator> inlinedBlocks) const final {
-    Attribute sourceOwner = call->getAttr(metadata::evalSourceOwner);
+    auto sourceOwner =
+        ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(call);
     if (!sourceOwner)
       return;
     for (Block &block : inlinedBlocks)
@@ -478,17 +484,20 @@ struct ObeliskSimulationInlinerInterface final
         // the logical process from which it was cloned. Preserve that fact;
         // otherwise inherit the caller's identity through arbitrary helper
         // depth before the call operation is erased by the inliner.
-        if (operation->hasAttr(metadata::evalSourceOwner))
+        if (::obelisk::schedule::has<schedule::metadata::evalSourceOwner>(
+                operation))
           return;
         Attribute inheritedOwner = sourceOwner;
         for (Operation *parent = operation->getParentOp(); parent;
              parent = parent->getParentOp())
-          if (Attribute parentOwner =
-                  parent->getAttr(metadata::evalSourceOwner)) {
+          if (auto parentOwner =
+                  ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+                      parent)) {
             inheritedOwner = parentOwner;
             break;
           }
-        operation->setAttr(metadata::evalSourceOwner, inheritedOwner);
+        ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
+            operation, cast<schedule::SourceOwnerAttr>(inheritedOwner));
       });
   }
 };

@@ -1,6 +1,7 @@
 //===- SimulationFunctionBodyLowering.cpp - Native body rewrites ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -92,7 +93,8 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
   if (returnLowering != NativeReturnLowering::None)
     patterns.add<NativeReturnPattern>(root->getContext(), returnLowering);
   FrozenRewritePatternSet frozenPatterns(std::move(patterns));
-  if (root->hasAttr("obelisk.eval.path_known_predicate")) {
+  if (::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalPathKnownPredicate>(root)) {
     if (failed(applyPatternsGreedily(root, frozenPatterns)))
       return root->emitError("native function-body rewrite failed");
   } else {

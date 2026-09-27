@@ -8,6 +8,10 @@ target_link_libraries(obelisk-translate
   PRIVATE
     ObeliskFrontend
     ObeliskSDFIR
+    ObeliskScheduleIR
+    MLIRBuiltinToLLVMIRTranslation
+    MLIRLLVMToLLVMIRTranslation
+    MLIRTargetLLVMIRExport
     MLIRIR
     MLIRSupport
     MLIRTranslateLib

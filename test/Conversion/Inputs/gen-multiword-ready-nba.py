@@ -16,7 +16,7 @@ out(f'''!bit = !obelisk_sim.logic<1>
 !clockref = !obelisk_sim.ref<!bit>
 !data = !obelisk_sim.logic<{count}>
 !dataref = !obelisk_sim.ref<!data>
-module attributes {{llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = {3 if eval_mode else 2} : i32}} {{
+module attributes {{llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = {3 if eval_mode else 2} : i32}} {{
   obelisk_sim.design @multiword {{
     obelisk_sim.scope.decl 0 hierarchy "multiword"
     obelisk_sim.storage.decl 0 in 0 : !bit design
@@ -55,7 +55,7 @@ out('''      %check = obelisk_sim.spawn @check(%ctx, %data) : !obelisk_sim.conte
       cf.br ^wait
     ^wait:
       %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clk : !clockref -> !bit
       %new = obelisk_sim.logic.unary bit_not %old : (!bit) -> !bit
@@ -67,7 +67,7 @@ if forwarded:
     out(f'''    obelisk_sim.func @forward(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}}, %clk: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}}, %target: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}}) attributes {{entry_kind = 3 : i32, code_unit_id = {count + 4} : i64}} {{
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %clk to ^copy {{site = #obelisk_sim.continuation<id = {count + 5}>}} : !clockref
+      obelisk_sim.suspend.change %clk to ^copy {{site = #schedule.continuation<id = {count + 5}>}} : !clockref
     ^copy:
       %value = obelisk_sim.ref.load %clk : !clockref -> !bit
       obelisk_sim.ref.store %value to %target : !bit, !clockref
@@ -78,7 +78,7 @@ for i in range(count):
     out(f'''    obelisk_sim.func @writer{i}(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}}, %clk: !clockref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = {2 if forwarded else 0} : i64}}, %data: !dataref {{obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}}) attributes {{entry_kind = 3 : i32, code_unit_id = {i + 4} : i64}} {{
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %clk to ^update {{site = #obelisk_sim.continuation<id = {i + 2}>}} : !clockref
+      obelisk_sim.suspend.change %clk to ^update {{site = #schedule.continuation<id = {i + 2}>}} : !clockref
     ^update:
       %value = obelisk_sim.ref.load %clk : !clockref -> !bit
       %target = obelisk_sim.ref.extract %data from {i} : !dataref -> !clockref
@@ -101,15 +101,15 @@ out(f'''    obelisk_sim.func @check(%ctx: !obelisk_sim.context {{obelisk_sim.cap
       %stdout = arith.constant 1 : i32
       %one = obelisk_sim.time.constant 1
       %two = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %one to ^before {{site = #obelisk_sim.continuation<id = {count + 2}>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}}
+      obelisk_sim.suspend.delay %one to ^before {{site = #schedule.continuation<id = {count + 2}>, timing = #schedule.timing_site<id = 1, kind = calendar>}}
     ^before:
       %before = obelisk_sim.ref.load %data : !dataref -> !data
       obelisk_sim.display %ctx to %stdout(%format, %before) newline = true radix = 10 flags = [0, 0] : !obelisk_sim.bytes, !data
-      obelisk_sim.suspend.delay %two to ^after {{site = #obelisk_sim.continuation<id = {count + 3}>, timing = #obelisk_sim.timing_site<id = 2, kind = calendar>}}
+      obelisk_sim.suspend.delay %two to ^after {{site = #schedule.continuation<id = {count + 3}>, timing = #schedule.timing_site<id = 2, kind = calendar>}}
     ^after:
       %after = obelisk_sim.ref.load %data : !dataref -> !data
       obelisk_sim.display %ctx to %stdout(%format, %after) newline = true radix = 10 flags = [0, 0] : !obelisk_sim.bytes, !data
-      obelisk_sim.suspend.delay %two to ^again {{site = #obelisk_sim.continuation<id = {count + 4}>, timing = #obelisk_sim.timing_site<id = 3, kind = calendar>}}
+      obelisk_sim.suspend.delay %two to ^again {{site = #schedule.continuation<id = {count + 4}>, timing = #schedule.timing_site<id = 3, kind = calendar>}}
     ^again:
       %again = obelisk_sim.ref.load %data : !dataref -> !data
       obelisk_sim.display %ctx to %stdout(%format, %again) newline = true radix = 10 flags = [0, 0] : !obelisk_sim.bytes, !data

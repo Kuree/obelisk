@@ -2,6 +2,7 @@
 
 #include "SimulationProcessFunctionLowering.h"
 #include "SimulationProcessWrapperLowering.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Conversion/SimulationTimeLowering.h"
@@ -255,24 +256,31 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   for (Type type : functionType.getResults())
     resultTypes.push_back(convertProcessType(type, function.getContext()));
   uint32_t entryKind = static_cast<uint32_t>(function.getEntryKind());
-  bool observer = function.getEntryKind() == sim::EntryKind::Observer &&
-                  !function->hasAttr("obelisk_sim.override_evaluator");
+  bool observer =
+      function.getEntryKind() == sim::EntryKind::Observer &&
+      !::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+          function);
   auto observerWidth =
-      function->getAttrOfType<IntegerAttr>("obelisk_sim.observer_width");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::ObserverWidth>(
+          function);
   auto observerFourState =
-      function->getAttrOfType<BoolAttr>("obelisk_sim.observer_four_state");
-  Attribute evalFourStateSource =
-      function->getAttr("obelisk.eval.four_state_source");
-  Attribute evalPromotionRanges =
-      function->getAttr("obelisk.eval.local_promotion_ranges");
-  Attribute evalConditionallyTwoState =
-      function->getAttr("obelisk.eval.conditionally_two_state");
-  Attribute evalPathKnownProbe =
-      function->getAttr("obelisk.eval.path_known_probe");
-  Attribute evalPathKnownPredicate =
-      function->getAttr("obelisk.eval.path_known_predicate");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::ObserverFourState>(
+          function);
+  auto evalFourStateSource =
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalFourStateSource>(
+          function);
+  auto evalPromotionRanges = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::EvalLocalPromotionRanges>(function);
+  auto evalConditionallyTwoState = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::EvalConditionallyTwoState>(function);
+  auto evalPathKnownProbe =
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalPathKnownProbe>(
+          function);
+  auto evalPathKnownPredicate = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::EvalPathKnownPredicate>(function);
   ArrayAttr outlinedPassthrough;
-  if (function->hasAttr("obelisk_sim.outlined_primitive_member")) {
+  if (::obelisk::schedule::has<
+          ::obelisk::schedule::Field::OutlinedPrimitiveMember>(function)) {
     outlinedPassthrough = function->getAttrOfType<ArrayAttr>("passthrough");
     if (!outlinedPassthrough || outlinedPassthrough.size() != 1 ||
         outlinedPassthrough[0] !=
@@ -299,18 +307,23 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   if (outlinedPassthrough)
     replacement->setAttr("passthrough", outlinedPassthrough);
   if (evalFourStateSource)
-    replacement->setAttr("obelisk.eval.four_state_source", evalFourStateSource);
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFourStateSource>(
+        replacement, evalFourStateSource);
   if (evalPromotionRanges)
-    replacement->setAttr("obelisk.eval.local_promotion_ranges",
-                         evalPromotionRanges);
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalLocalPromotionRanges>(
+        replacement, evalPromotionRanges);
   if (evalConditionallyTwoState)
-    replacement->setAttr("obelisk.eval.conditionally_two_state",
-                         evalConditionallyTwoState);
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalConditionallyTwoState>(
+        replacement, evalConditionallyTwoState);
   if (evalPathKnownProbe)
-    replacement->setAttr("obelisk.eval.path_known_probe", evalPathKnownProbe);
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPathKnownProbe>(
+        replacement, evalPathKnownProbe);
   if (evalPathKnownPredicate)
-    replacement->setAttr("obelisk.eval.path_known_predicate",
-                         evalPathKnownPredicate);
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalPathKnownPredicate>(
+        replacement, evalPathKnownPredicate);
   replacement.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : replacement.getBody())

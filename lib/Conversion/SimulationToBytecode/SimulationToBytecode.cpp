@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToBytecode.h"
 #include "obelisk/Conversion/FunctionalCoverageSchemaVerification.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
 
@@ -112,9 +113,9 @@ planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
         return;
       }
       const auto *offsets =
-          found->second.resource == sim::ComputeResourceKind::Storage
+          found->second.resource == schedule::ComputeResourceKind::Storage
               ? &state.storageOffsets
-          : found->second.resource == sim::ComputeResourceKind::Net
+          : found->second.resource == schedule::ComputeResourceKind::Net
               ? &state.netOffsets
               : nullptr;
       auto base = offsets ? offsets->find(*found->second.descriptor)
@@ -803,8 +804,8 @@ uint32_t Encoder::getVPIProfile() {
   analysis::SimulationVPIAnalysis vpi =
       analysis::SimulationVPIAnalysis::compute(design);
   if (options.vpi != "auto") {
-    std::optional<sim::ComputeVPIMode> mode =
-        sim::symbolizeComputeVPIMode(options.vpi);
+    std::optional<schedule::ComputeVPIMode> mode =
+        schedule::symbolizeComputeVPIMode(options.vpi);
     if (!mode) {
       design.emitOpError(
           "bytecode VPI profile must be auto, off, read, or full");

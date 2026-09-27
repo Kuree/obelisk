@@ -1,6 +1,9 @@
 //===- SimulationGroupHierarchy.cpp - Refine collapsed execution groups ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/IR/IRMapping.h"
@@ -14,7 +17,7 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
-constexpr StringLiteral entryAttr = "obelisk.eval.activation_entry";
+constexpr auto entryAttr = ::obelisk::schedule::Field::EvalActivationEntry;
 
 bool reproducibleSetup(Operation *operation) {
   // Pure/speculatable alone does not authorize duplication: e.g. freeze of
@@ -30,7 +33,7 @@ SmallVector<Operation *> entries(LLVM::LLVMFuncOp function,
   DenseMap<int32_t, Operation *> indexed;
   bool valid = true;
   function.walk([&](Operation *operation) {
-    if (auto owner = operation->getAttrOfType<IntegerAttr>(entryAttr))
+    if (auto owner = ::obelisk::schedule::get<entryAttr>(operation))
       valid &= !owner.getValue().isNegative() &&
                owner.getValue().getActiveBits() <= 31 &&
                isa<LLVM::LoadOp>(operation) &&
@@ -76,7 +79,7 @@ LLVM::LLVMFuncOp outline(LLVM::LLVMFuncOp source,
       }
       // A bypass of the next entry would execute a different activation
       // sequence after outlining. Reject it, even if the graph is acyclic.
-      if (operation.hasAttr(entryAttr) && !allowed.contains(&operation))
+      if (schedule::has<entryAttr>(&operation) && !allowed.contains(&operation))
         return {};
       included.insert(&operation);
       if (isa<LLVM::ReturnOp>(operation) && stop)
@@ -108,16 +111,19 @@ LLVM::LLVMFuncOp outline(LLVM::LLVMFuncOp source,
   // SymbolTable owns unique names, including in user-authored pass fixtures.
   symbols.insert(child);
   auto members =
-      source->getAttrOfType<DenseI32ArrayAttr>("obelisk.eval.ranked_members");
-  child->setAttr("obelisk.eval.ranked_members",
-                 builder.getDenseI32ArrayAttr(
-                     members.asArrayRef().slice(begin, end - begin)));
-  for (StringRef attr :
-       {"obelisk.eval.group_ingress", "obelisk.eval.ready_word_count"})
-    if (Attribute value = source->getAttr(attr))
-      child->setAttr(attr, value);
-  child->setAttr(sim::metadata::evalCallClosureRoot, builder.getUnitAttr());
-  child->setAttr("obelisk.eval.group_parent", FlatSymbolRefAttr::get(source));
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalRankedMembers>(
+          source);
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
+      child, builder.getDenseI32ArrayAttr(
+                 members.asArrayRef().slice(begin, end - begin)));
+  for (auto attr : {::obelisk::schedule::Field::EvalGroupIngress,
+                    ::obelisk::schedule::Field::EvalReadyWordCount})
+    if (Attribute value = schedule::getAttribute(source, attr))
+      schedule::set(child, attr, value);
+  ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+      child, builder.getUnitAttr());
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupParent>(
+      child, FlatSymbolRefAttr::get(source));
   Block *entry = child.addEntryBlock(builder);
   builder.setInsertionPointToStart(entry);
   IRMapping mapping;
@@ -226,10 +232,12 @@ SmallVector<LLVM::LLVMFuncOp> splitNativeEvalGroup(LLVM::LLVMFuncOp original,
                                                    SymbolTable &symbols,
                                                    uint64_t &budget) {
   auto members =
-      original->getAttrOfType<DenseI32ArrayAttr>("obelisk.eval.ranked_members");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalRankedMembers>(
+          original);
   if (!members || members.size() < 2 ||
       !isa<LLVM::LLVMVoidType>(original.getFunctionType().getReturnType()) ||
-      original->hasAttr("obelisk.eval.group_children"))
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupChildren>(
+          original))
     return {};
   bool executionBoundary = false;
   candidate.walk([&](Operation *operation) {
@@ -280,10 +288,10 @@ SmallVector<LLVM::LLVMFuncOp> splitNativeEvalGroup(LLVM::LLVMFuncOp original,
       return {};
     }
     children.push_back(fast);
-    fast->setAttr("obelisk.eval.dataflow_candidate",
-                  FlatSymbolRefAttr::get(slow));
-    fast->setAttr("obelisk.eval.group_parent",
-                  FlatSymbolRefAttr::get(original));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDataflowCandidate>(
+        fast, FlatSymbolRefAttr::get(slow));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupParent>(
+        fast, FlatSymbolRefAttr::get(original));
   }
 
   cost = 0;

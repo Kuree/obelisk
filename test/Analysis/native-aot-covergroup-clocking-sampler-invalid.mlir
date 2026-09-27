@@ -83,9 +83,9 @@ module {
              obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 13 : i32, code_unit_id = 4 : i64,
                     domain = 0 : i32, home_region = 2 : i32, internal,
-                    obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %initial = obelisk_sim.ref.load %clock_ref :
           !obelisk_sim.ref<i1> -> i1
       %primary = obelisk_sim.observer.bind @primary

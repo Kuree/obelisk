@@ -34,8 +34,8 @@ module {
         %clock: !obelisk_sim.ref<i1>
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 2 : i64,
-                    internal, obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.covergroup_clocking_sampler,
+                    schedule.prime_on_spawn} {
       %sampler = obelisk_sim.observer.bind @evaluate
           values(%handle : !obelisk_sim.covergroup_handle<@cg>) captures 1
           : !obelisk_sim.observer<i1>
@@ -93,9 +93,9 @@ module {
         %clock: !obelisk_sim.ref<i1>
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 2 : i64,
-                    internal, obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %sampler = obelisk_sim.observer.bind @evaluate
           values(%handle, %clock : !obelisk_sim.covergroup_handle<@cg>,
                  !obelisk_sim.ref<i1>) captures 1
@@ -154,9 +154,9 @@ module {
         %clock: !obelisk_sim.ref<i8>
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 2 : i64,
-                    internal, obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %sampler = obelisk_sim.observer.bind @evaluate
           values(%handle : !obelisk_sim.covergroup_handle<@cg>) captures 1
           : !obelisk_sim.observer<i1>
@@ -213,9 +213,9 @@ module {
         %clock: !obelisk_sim.ref<i1>
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 2 : i64,
-                    internal, obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %sampler = obelisk_sim.observer.bind @evaluate
           values(%clock : !obelisk_sim.ref<i1>) captures 1
           : !obelisk_sim.observer<i1>
@@ -280,9 +280,9 @@ module {
         %clock: !obelisk_sim.ref<i1>
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 2 : i64,
-                    internal, obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %sampler = obelisk_sim.observer.bind @evaluate
           values(%handle, %clock : !obelisk_sim.covergroup_handle<@cg>,
                  !obelisk_sim.ref<i1>) captures 2
@@ -344,9 +344,9 @@ module {
         %clock: !obelisk_sim.ref<i1>
             {obelisk_sim.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 2 : i64,
-                    internal, obelisk_sim.covergroup_clocking_sampler,
-                    obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.covergroup_clocking_sampler,
+                    schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %sampler = obelisk_sim.observer.bind @evaluate
           values(%handle, %clock : !obelisk_sim.covergroup_handle<@cg>,
                  !obelisk_sim.ref<i1>) captures 2

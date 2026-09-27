@@ -30,8 +30,7 @@ module {
         %value: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
       %result = obelisk_sim.call @helper(%ctx, %value)
-          {obelisk.eval.source_owner = {code_unit = 9 : i64,
-                                        continuation = 7 : i32}}
+          {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 9 : i64, continuation = 7 : i32>}
           : (!obelisk_sim.context, i32) -> i32
       obelisk_sim.return %result : i32
     }
@@ -40,7 +39,7 @@ module {
 
 // CHECK-LABEL: obelisk_sim.func @caller
 // CHECK-NOT: obelisk_sim.call
-// CHECK: arith.constant {obelisk.eval.source_owner = {code_unit = 9 : i64, continuation = 7 : i32}} 1 : i32
+// CHECK: arith.constant {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 9 : i64, continuation = 7 : i32>} 1 : i32
 // CHECK: scf.if
-// CHECK: arith.addi {{.*}} {obelisk.eval.source_owner = {code_unit = 9 : i64, continuation = 7 : i32}} : i32
-// CHECK: } {obelisk.eval.source_owner = {code_unit = 9 : i64, continuation = 7 : i32}}
+// CHECK: arith.addi {{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 9 : i64, continuation = 7 : i32>} : i32
+// CHECK: } {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 9 : i64, continuation = 7 : i32>}

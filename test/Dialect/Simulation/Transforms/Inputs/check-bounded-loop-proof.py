@@ -75,7 +75,7 @@ assert len(functions) == len(cases), (len(functions), len(cases))
 marked_count = 0
 for index, body in functions:
     case = cases[int(index)]
-    marked = "obelisk_sim.bounded_loop_latch" in body
+    marked = "schedule.bounded_loop_latch" in body
     finite = terminates(*case)
     assert not marked or finite, f"Nonterminating loop incorrectly marked: {case}"
     # Equality reachability and zero-trip recognition should be complete.

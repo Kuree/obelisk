@@ -6,8 +6,8 @@
 
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN-NOT: llvm.call @__obelisk_eval_ranked_group_
-// PLAN-NOT: obelisk.eval.materialized_group_calls
-// PLAN-NOT: obelisk.eval.ssa_ready_words
+// PLAN-NOT: schedule.eval.materialized_group_calls
+// PLAN-NOT: schedule.eval.ssa_ready_words
 // PLAN: llvm.call @__obelisk_direct_fragment_
 
 // Only startup and the timed checker use node dispatch; clock work must

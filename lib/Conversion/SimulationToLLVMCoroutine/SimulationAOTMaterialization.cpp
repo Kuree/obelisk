@@ -4,6 +4,9 @@
 #include "SimulationEvalNBAQueue.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -46,13 +49,18 @@ static std::optional<uint64_t> constantU64(Value value) {
 static bool isGeneratedEvalBody(
     sim::SimFuncOp function,
     const llvm::StringSet<> *selectedRawBodies = nullptr) {
-  if (selectedRawBodies && function->hasAttr("obelisk.eval.raw_captures") &&
+  if (selectedRawBodies &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+          function) &&
       !selectedRawBodies->contains(function.getSymName()))
     return false;
-  return !function->hasAttr(evalRuntimeNBARequiredAttr) &&
-         (function->hasAttr("obelisk.eval.raw_captures") ||
-          function->hasAttr("obelisk.eval.path_known_predicate") ||
-          function->hasAttr("obelisk.eval.selected_two_state"));
+  return !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function) &&
+         (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+              function) ||
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalPathKnownPredicate>(function) ||
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalSelectedTwoState>(function));
 }
 
 static SmallVector<sim::SimFuncOp>
@@ -106,8 +114,8 @@ collectGeneratedTransitionRanges(ModuleOp module,
     if (failed(valid))
       break;
     unsigned directFragment = UINT_MAX;
-    if (auto identity = function->getAttrOfType<IntegerAttr>(
-            "obelisk.eval.direct_fragment");
+    if (auto identity = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::EvalDirectFragment>(function);
         identity && identity.getInt() >= 0 &&
         static_cast<uint64_t>(identity.getInt()) < fragments.size())
       directFragment = static_cast<unsigned>(identity.getUInt());
@@ -148,7 +156,7 @@ struct DynamicEvalNBAProofContext {
   ArrayRef<NativePeriodicClock> periodicClocks;
   ArrayRef<NativePeriodicAlias> periodicAliases;
   ArrayRef<GeneratedTransitionRange> generatedTransitionRanges;
-  sim::ComputeGraphAttr computeGraph;
+  schedule::ComputeGraphAttr computeGraph;
   ArrayRef<uint8_t> orderedRootClosed;
 };
 
@@ -201,8 +209,8 @@ static bool locallyExecutesAtMostOnce(Operation *operation,
 static uint32_t
 getDynamicNBACommitRegion(sim::SimFuncOp function,
                           const DynamicEvalNBAProofContext &proofContext) {
-  if (auto identity =
-          function->getAttrOfType<IntegerAttr>("obelisk.eval.direct_fragment");
+  if (auto identity = ::obelisk::schedule::get<
+          ::obelisk::schedule::Field::EvalDirectFragment>(function);
       identity && identity.getInt() >= 0 &&
       static_cast<uint64_t>(identity.getInt()) <
           proofContext.directFragments.size() &&
@@ -213,14 +221,14 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
     for (uint32_t fragmentID : direct.fragmentIDs) {
       if (fragmentID >= proofContext.computeGraph.getNodes().size())
         return UINT32_MAX;
-      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(
           proofContext.computeGraph.getNodes()[fragmentID]);
       if (!fragment)
         continue;
       uint32_t region = UINT32_MAX;
-      if (fragment.getRegion() == sim::ComputeRegionKind::Active)
+      if (fragment.getRegion() == schedule::ComputeRegionKind::Active)
         region = OBELISK_RT_REGION_ACTIVE;
-      else if (fragment.getRegion() == sim::ComputeRegionKind::Reactive)
+      else if (fragment.getRegion() == schedule::ComputeRegionKind::Reactive)
         region = OBELISK_RT_REGION_REACTIVE;
       if (region == UINT32_MAX)
         return UINT32_MAX;
@@ -234,7 +242,8 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
 
   uint32_t homeRegion = getRuntimeEventRegion(function.getHomeRegion());
   ArrayAttr owners =
-      function->getAttrOfType<ArrayAttr>("obelisk.eval.source_owners");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalSourceOwners>(
+          function);
   sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
   if (!owners || !design)
     return homeRegion == OBELISK_RT_REGION_ACTIVE ||
@@ -244,9 +253,8 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
 
   uint32_t semanticRegion = UINT32_MAX;
   for (Attribute attribute : owners) {
-    auto owner = dyn_cast<DictionaryAttr>(attribute);
-    auto codeUnit =
-        owner ? owner.getAs<IntegerAttr>("code_unit") : IntegerAttr{};
+    auto owner = dyn_cast<schedule::SourceOwnerAttr>(attribute);
+    auto codeUnit = owner ? owner.getCodeUnit() : IntegerAttr{};
     if (!codeUnit || codeUnit.getInt() < 0)
       return UINT32_MAX;
     sim::SimFuncOp source;
@@ -303,8 +311,8 @@ proveDynamicEvalNBA(LLVM::CallOp call,
                            ? getDynamicNBACommitRegion(enclosing, proofContext)
                            : UINT32_MAX;
   if (enclosing)
-    if (auto identity = enclosing->getAttrOfType<IntegerAttr>(
-            "obelisk.eval.direct_fragment");
+    if (auto identity = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::EvalDirectFragment>(enclosing);
         identity && identity.getInt() >= 0 &&
         static_cast<uint64_t>(identity.getInt()) <
             proofContext.directFragments.size()) {
@@ -344,15 +352,15 @@ proveDynamicEvalNBA(LLVM::CallOp call,
     bool clockIngress = llvm::any_of(
         proofContext.periodicClocks, [&](const NativePeriodicClock &clock) {
           std::optional<uint64_t> bit =
-              periodicLocalBit(clock.staticState, clock.bitOffset);
-          return bit && fanout.static_state == clock.staticState &&
+              periodicLocalBit(clock.getStaticState(), clock.getBitOffset());
+          return bit && fanout.static_state == clock.getStaticState() &&
                  periodicBitTouches(*bit);
         });
     bool aliasIngress = llvm::any_of(
         proofContext.periodicAliases, [&](const NativePeriodicAlias &alias) {
-          std::optional<uint64_t> bit =
-              periodicLocalBit(alias.targetStaticState, alias.targetBitOffset);
-          return bit && fanout.static_state == alias.targetStaticState &&
+          std::optional<uint64_t> bit = periodicLocalBit(
+              alias.getTargetStaticState(), alias.getTargetBitOffset());
+          return bit && fanout.static_state == alias.getTargetStaticState() &&
                  periodicBitTouches(*bit);
         });
     return clockIngress || aliasIngress;
@@ -396,15 +404,16 @@ proveDynamicEvalNBA(LLVM::CallOp call,
                   periodicKernelSource = llvm::any_of(
                       proofContext.periodicClocks,
                       [&](const NativePeriodicClock &clock) {
-                        return source.actorSlot == clock.actorSlot &&
-                               source.continuation == clock.continuation;
+                        return source.actorSlot == clock.getActorSlot() &&
+                               source.continuation == clock.getContinuation();
                       });
                   periodicKernelSource |= llvm::any_of(
                       proofContext.periodicAliases,
                       [&](const NativePeriodicAlias &alias) {
-                        return source.actorSlot == alias.forwardingActorSlot &&
+                        return source.actorSlot ==
+                                   alias.getForwardingActorSlot() &&
                                source.continuation ==
-                                   alias.forwardingContinuation;
+                                   alias.getForwardingContinuation();
                       });
                 }
                 if (periodicKernelSource)
@@ -610,8 +619,11 @@ static void normalizeGeneratedWideTransitions(
                      llvmConstant(builder, call.getLoc(), i64, bits),
                      load(args[3]), load(args[4]), load(args[5]),
                      load(args[6])});
-      if (auto owner = call->getAttr(sim::metadata::evalSourceOwner))
-        publication->setAttr(sim::metadata::evalSourceOwner, owner);
+      if (auto owner =
+              ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+                  call))
+        ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
+            publication, owner);
     }
     call.erase();
   }
@@ -626,7 +638,7 @@ FailureOr<bool> makeNativeEvalPlan(
     ArrayRef<obelisk_rt_static_actor_root> actorRoots,
     ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
-    sim::ComputeGraphAttr computeGraph,
+    schedule::ComputeGraphAttr computeGraph,
     ArrayRef<NativePeriodicClock> periodicClocks,
     ArrayRef<NativePeriodicAlias> periodicAliases, bool enableDirectState,
     bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
@@ -717,7 +729,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                                                : origin->second;
     };
     for (sim::SimFuncOp function : evalClosure) {
-      if (!function->hasAttr("obelisk.eval.direct_fragment"))
+      if (!::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalDirectFragment>(function))
         continue;
       function.walk([&](LLVM::CallOp call) {
         if (!call.getCallee() ||
@@ -804,7 +817,8 @@ FailureOr<bool> makeNativeEvalPlan(
     for (sim::SimFuncOp function : evalClosure) {
       if (failed(valid))
         break;
-      bool directBody = function->hasAttr("obelisk.eval.direct_fragment");
+      bool directBody = ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalDirectFragment>(function);
       function.walk([&](LLVM::CallOp call) {
         if (failed(valid) || !call.getCallee() ||
             *call.getCallee() != "obelisk_rt_v1_scheduler_static_nba")
@@ -863,7 +877,8 @@ FailureOr<bool> makeNativeEvalPlan(
     if (needsRuntimeFallback)
       return false;
   }
-  module->setAttr("obelisk.eval.generated", UnitAttr::get(module.getContext()));
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGenerated>(
+      module, UnitAttr::get(module.getContext()));
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
   ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
   SmallVector<obelisk_rt_static_fanout_entry> indexedFanoutEntries =
@@ -889,8 +904,8 @@ FailureOr<bool> makeNativeEvalPlan(
   llvm::BitVector nbaTaintedRecords = std::move(resolved->nbaTaintedRecords);
   bool prioritySignalHandoff = false;
   module.walk([&](sim::SimFuncOp function) {
-    prioritySignalHandoff |=
-        function->hasAttr("obelisk_sim.priority_signal_resume");
+    prioritySignalHandoff |= ::obelisk::schedule::has<
+        ::obelisk::schedule::Field::PrioritySignalResume>(function);
   });
   struct DynamicEvalNBA {
     uint32_t rootIndex;
@@ -934,8 +949,8 @@ FailureOr<bool> makeNativeEvalPlan(
            {StringRef(direct.wrapper), StringRef(direct.twoStateWrapper)})
         if (!name.empty())
           if (auto function = executorSymbols.lookup<LLVM::LLVMFuncOp>(name))
-            function->setAttr(sim::metadata::evalTier2Convergence,
-                              UnitAttr::get(context));
+            ::obelisk::schedule::set<schedule::metadata::evalTier2Convergence>(
+                function, UnitAttr::get(context));
   auto ownerMayTaintNBA = [&](unsigned recordIndex) {
     return recordIndex < nbaTaintedRecords.size() &&
            nbaTaintedRecords.test(recordIndex);
@@ -1149,15 +1164,14 @@ FailureOr<bool> makeNativeEvalPlan(
       encoded.push_back(range.bitOffset);
       encoded.push_back(range.bitWidth);
     }
-    promotionDependencies.push_back(builder.getDictionaryAttr(
-        {builder.getNamedAttr("latch", builder.getI64IntegerAttr(index)),
-         builder.getNamedAttr("pending_bit", builder.getI64IntegerAttr(
-                                                 mergedFragments[index].bit)),
-         builder.getNamedAttr("ranges",
-                              builder.getDenseI64ArrayAttr(encoded))}));
+    promotionDependencies.push_back(schedule::KernelProofDependencyAttr::get(
+        builder.getContext(), builder.getI64IntegerAttr(index),
+        builder.getI64IntegerAttr(mergedFragments[index].bit),
+        builder.getDenseI64ArrayAttr(encoded)));
   }
-  promotionKernelLatched->setAttr("obelisk.eval.kernel_proof_dependencies",
-                                  builder.getArrayAttr(promotionDependencies));
+  ::obelisk::schedule::set<
+      ::obelisk::schedule::Field::EvalKernelProofDependencies>(
+      promotionKernelLatched, builder.getArrayAttr(promotionDependencies));
 
   // Scan an outlined owner's exact canonical closure independently. A
   // dormant X-valued instance therefore cannot keep unrelated clock owners
@@ -1270,7 +1284,8 @@ FailureOr<bool> makeNativeEvalPlan(
   // participate in a model-wide controller promotion certificate.
   for (auto [index, name] : llvm::enumerate(mergedTwoStateExecutors))
     if (auto function = executorSymbols.lookup<LLVM::LLVMFuncOp>(name))
-      if (function->hasAttr(sim::metadata::evalPathGuardedTwoState))
+      if (::obelisk::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
+              function))
         pathGuardedOwnerMask.setBit(mergedFragments[index].bit);
 
   builder.setInsertionPointToEnd(module.getBody());
@@ -1677,10 +1692,11 @@ FailureOr<bool> makeNativeEvalPlan(
             *call.getCallee() != "obelisk_rt_v1_scheduler_static_transition")
           return;
         std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
-        if (auto owner = call->getAttrOfType<DictionaryAttr>(
-                sim::metadata::evalSourceOwner)) {
-          auto codeUnit = owner.getAs<IntegerAttr>("code_unit");
-          auto continuation = owner.getAs<IntegerAttr>("continuation");
+        if (auto owner =
+                ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+                    call)) {
+          auto codeUnit = owner.getCodeUnit();
+          auto continuation = owner.getContinuation();
           if (codeUnit && continuation && continuation.getInt() > 0 &&
               static_cast<uint64_t>(continuation.getInt()) <= UINT32_MAX) {
             auto exact = physicalSourceOwners.find(
@@ -1888,7 +1904,8 @@ FailureOr<bool> makeNativeEvalPlan(
     module.walk([&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
-      bool twoState = function->hasAttr("obelisk.eval.selected_two_state");
+      bool twoState = ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
       function.walk([&](LLVM::CallOp call) {
         if (!call.getCallee())
           return;
@@ -2428,7 +2445,8 @@ FailureOr<bool> makeNativeEvalPlan(
     module.walk([&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
-      bool twoState = function->hasAttr("obelisk.eval.selected_two_state");
+      bool twoState = ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
       function.walk([&](LLVM::CallOp call) {
         if (call.getCallee() &&
             *call.getCallee() == "obelisk_rt_v1_native_state_load_plane")
@@ -2484,12 +2502,20 @@ FailureOr<bool> makeNativeEvalPlan(
       // helper may be reachable only from a cold successor of its caller.
       // Predicates themselves never get this deferral.
       const bool deferColdReference =
-          owner && !owner->hasAttr("obelisk.eval.path_known_predicate") &&
-          ((!owner->hasAttr("obelisk.eval.raw_captures") &&
-            owner->hasAttr("obelisk.eval.selected_two_state")) ||
-           owner->hasAttr(sim::metadata::evalPathGuardedTwoState) ||
-           (owner->hasAttr("obelisk.eval.inherited_two_state_checkpoint") &&
-            owner->hasAttr(sim::metadata::evalTwoStateVariant)));
+          owner &&
+          !::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalPathKnownPredicate>(owner) &&
+          ((!::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalRawCaptures>(owner) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalSelectedTwoState>(owner)) ||
+           ::obelisk::schedule::has<
+               schedule::metadata::evalPathGuardedTwoState>(owner) ||
+           (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+                owner) &&
+            ::obelisk::schedule::has<schedule::metadata::evalTwoStateVariant>(
+                owner)));
       auto offsetCall = handle.getDefiningOp<LLVM::CallOp>();
       if (!offsetCall || !offsetCall.getCallee() ||
           *offsetCall.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
@@ -2979,9 +3005,10 @@ FailureOr<bool> makeNativeEvalPlan(
           for (auto [index, alias] : llvm::enumerate(periodicAliases)) {
             Value value = LLVM::ZeroOp::create(initializerBuilder, location,
                                                periodicAliasType);
-            const uint32_t fields[] = {
-                alias.sourceStaticState, alias.forwardingActorSlot,
-                alias.forwardingContinuation, alias.targetStaticState};
+            const uint32_t fields[] = {alias.getSourceStaticState(),
+                                       alias.getForwardingActorSlot(),
+                                       alias.getForwardingContinuation(),
+                                       alias.getTargetStaticState()};
             for (unsigned field = 0; field != std::size(fields); ++field)
               value = insertValue(initializerBuilder, location, value,
                                   llvmConstant(initializerBuilder, location,
@@ -2989,15 +3016,15 @@ FailureOr<bool> makeNativeEvalPlan(
                                   field);
             value = insertValue(initializerBuilder, location, value,
                                 llvmConstant(initializerBuilder, location, i64,
-                                             alias.sourceBitOffset),
+                                             alias.getSourceBitOffset()),
                                 4);
             value = insertValue(initializerBuilder, location, value,
                                 llvmConstant(initializerBuilder, location, i64,
-                                             alias.targetBitOffset),
+                                             alias.getTargetBitOffset()),
                                 5);
             value = insertValue(initializerBuilder, location, value,
                                 llvmConstant(initializerBuilder, location, i64,
-                                             alias.driverBitOffset),
+                                             alias.getDriverBitOffset()),
                                 6);
             aliases = LLVM::InsertValueOp::create(
                 initializerBuilder, location, aliases, value,
@@ -3187,10 +3214,14 @@ FailureOr<bool> makeNativeEvalPlan(
       // table is traversed once, so one outlined module-instance body still
       // executes exactly once in a multi-clock slot.
       bool directStatus =
-          executor && (executor->hasAttr(sim::metadata::evalInfallible) ||
-                       executor->hasAttr(sim::metadata::evalCheckpointSafe));
+          executor &&
+          (::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+               executor) ||
+           ::obelisk::schedule::has<schedule::metadata::evalCheckpointSafe>(
+               executor));
       return directStatus &&
-             !executor->hasAttr(sim::metadata::evalTier2Convergence);
+             !::obelisk::schedule::has<
+                 schedule::metadata::evalTier2Convergence>(executor);
     };
     auto periodicBitTouchesFanout =
         [](uint64_t bit, const obelisk_rt_static_fanout_entry &fanout) {
@@ -3203,17 +3234,17 @@ FailureOr<bool> makeNativeEvalPlan(
     auto clockTouchesFanout =
         [&](const NativePeriodicClock &clock,
             const obelisk_rt_static_fanout_entry &fanout) {
-          if (fanout.static_state != clock.staticState)
+          if (fanout.static_state != clock.getStaticState())
             return false;
           auto bound =
               llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-                return candidate.handleID == clock.staticState;
+                return candidate.handleID == clock.getStaticState();
               });
           if (bound == stateLayout.bounds.end() ||
-              clock.bitOffset < bound->offset ||
-              clock.bitOffset - bound->offset >= bound->width)
+              clock.getBitOffset() < bound->offset ||
+              clock.getBitOffset() - bound->offset >= bound->width)
             return false;
-          uint64_t localBit = clock.bitOffset - bound->offset;
+          uint64_t localBit = clock.getBitOffset() - bound->offset;
           return periodicBitTouchesFanout(localBit, fanout);
         };
     for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks))
@@ -3224,10 +3255,12 @@ FailureOr<bool> makeNativeEvalPlan(
           continue;
         if (llvm::any_of(
                 periodicAliases, [&](const NativePeriodicAlias &alias) {
-                  return alias.sourceStaticState == clock.staticState &&
-                         alias.sourceBitOffset == clock.bitOffset &&
-                         alias.forwardingActorSlot == fanout.actor_slot &&
-                         alias.forwardingContinuation == fanout.continuation;
+                  return alias.getSourceStaticState() ==
+                             clock.getStaticState() &&
+                         alias.getSourceBitOffset() == clock.getBitOffset() &&
+                         alias.getForwardingActorSlot() == fanout.actor_slot &&
+                         alias.getForwardingContinuation() ==
+                             fanout.continuation;
                 }))
           continue;
         uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
@@ -3249,26 +3282,28 @@ FailureOr<bool> makeNativeEvalPlan(
       }
     for (const NativePeriodicAlias &alias : periodicAliases) {
       auto clock = llvm::find_if(periodicClocks, [&](const auto &candidate) {
-        return candidate.staticState == alias.sourceStaticState &&
-               candidate.bitOffset == alias.sourceBitOffset;
+        return candidate.getStaticState() == alias.getSourceStaticState() &&
+               candidate.getBitOffset() == alias.getSourceBitOffset();
       });
       if (clock == periodicClocks.end())
         continue;
       size_t clockIndex = static_cast<size_t>(clock - periodicClocks.begin());
       auto targetBound =
           llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == alias.targetStaticState;
+            return candidate.handleID == alias.getTargetStaticState();
           });
       if (targetBound == stateLayout.bounds.end() ||
-          alias.targetBitOffset < targetBound->offset ||
-          alias.targetBitOffset - targetBound->offset >= targetBound->width)
+          alias.getTargetBitOffset() < targetBound->offset ||
+          alias.getTargetBitOffset() - targetBound->offset >=
+              targetBound->width)
         continue;
-      uint64_t targetLocalBit = alias.targetBitOffset - targetBound->offset;
+      uint64_t targetLocalBit =
+          alias.getTargetBitOffset() - targetBound->offset;
       for (auto [fanoutIndex, fanout] : llvm::enumerate(fanoutEntries)) {
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
-            (fanout.actor_slot == alias.forwardingActorSlot &&
-             fanout.continuation == alias.forwardingContinuation) ||
-            fanout.static_state != alias.targetStaticState ||
+            (fanout.actor_slot == alias.getForwardingActorSlot() &&
+             fanout.continuation == alias.getForwardingContinuation()) ||
+            fanout.static_state != alias.getTargetStaticState() ||
             !periodicBitTouchesFanout(targetLocalBit, fanout) ||
             fanout.kernel >= clockKernels.size())
           continue;
@@ -3365,7 +3400,9 @@ FailureOr<bool> makeNativeEvalPlan(
         LLVM::LLVMFuncOp executor =
             symbol.empty() ? LLVM::LLVMFuncOp{}
                            : executorSymbols.lookup<LLVM::LLVMFuncOp>(symbol);
-        return executor && executor->hasAttr(sim::metadata::evalMayTerminate);
+        return executor &&
+               ::obelisk::schedule::has<schedule::metadata::evalMayTerminate>(
+                   executor);
       };
       return mayTerminate(mergedExecutors[recordIndex]) ||
              mayTerminate(mergedTwoStateExecutors[recordIndex]);
@@ -3379,11 +3416,11 @@ FailureOr<bool> makeNativeEvalPlan(
             periodicClocks,
             [&](const NativePeriodicClock &clock) {
               return staticFanoutPlan.runtimeTransitionStates.contains(
-                  clock.staticState);
+                  clock.getStaticState());
             }) &&
         llvm::none_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
           return staticFanoutPlan.runtimeTransitionStates.contains(
-              alias.targetStaticState);
+              alias.getTargetStaticState());
         });
     bool canCompressSilentFall =
         periodicClocks.size() == 1 &&
@@ -3414,7 +3451,9 @@ FailureOr<bool> makeNativeEvalPlan(
                              ValueRange{}, prepareFailed, ValueRange{});
 
     builder.setInsertionPointToStart(preparedEntry);
-    bool forcedTwoState = module->hasAttr("obelisk.eval.force_two_state");
+    bool forcedTwoState =
+        ::obelisk::schedule::has<::obelisk::schedule::Field::EvalForceTwoState>(
+            module);
     if (forcedTwoState)
       LLVM::MemsetOp::create(
           builder, location,
@@ -3527,10 +3566,10 @@ FailureOr<bool> makeNativeEvalPlan(
                                                  "__obelisk_state_value");
     auto recordClockCoverage = [&](const NativePeriodicClock &clock,
                                    Value enabled) {
-      if (clock.coveragePoints.empty())
+      if (clock.getCoveragePoints().empty())
         return;
       Value flag = arith::ExtUIOp::create(builder, location, i32, enabled);
-      for (uint64_t point : clock.coveragePoints)
+      for (uint64_t point : clock.getCoveragePoints())
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_point_hit"),
@@ -3593,10 +3632,11 @@ FailureOr<bool> makeNativeEvalPlan(
       Value due = llvmConstant(builder, location, builder.getI1Type(), 1);
       Value noOverflow = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ule, edge,
-          llvmConstant(builder, location, i64, UINT64_MAX - clock.halfPeriod));
+          llvmConstant(builder, location, i64,
+                       UINT64_MAX - clock.getHalfPeriod()));
       Value advancedCandidate = arith::AddIOp::create(
           builder, location, edge,
-          llvmConstant(builder, location, i64, clock.halfPeriod));
+          llvmConstant(builder, location, i64, clock.getHalfPeriod()));
       Value advanced = arith::SelectOp::create(
           builder, location, noOverflow, advancedCandidate,
           llvmConstant(builder, location, i64, UINT64_MAX));
@@ -3606,10 +3646,10 @@ FailureOr<bool> makeNativeEvalPlan(
           edgeAddress, 8);
 
       Value byteAddress =
-          byteGEP(builder, location, stateValue, clock.bitOffset / 8);
+          byteGEP(builder, location, stateValue, clock.getBitOffset() / 8);
       Value oldByte = LLVM::LoadOp::create(builder, location,
                                            builder.getI8Type(), byteAddress, 1);
-      uint8_t bitMask = uint8_t{1} << (clock.bitOffset % 8);
+      uint8_t bitMask = uint8_t{1} << (clock.getBitOffset() % 8);
       Value oldSet = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne,
           arith::AndIOp::create(
@@ -3630,19 +3670,19 @@ FailureOr<bool> makeNativeEvalPlan(
               llvmConstant(builder, location, builder.getI1Type(), 1)),
           oldSet);
       recordClockCoverage(clock, due);
-      if (mlir::failed(publishRuntimeClockBit(clock.staticState,
-                                              clock.bitOffset, oldSet, newSet)))
+      if (mlir::failed(publishRuntimeClockBit(
+              clock.getStaticState(), clock.getBitOffset(), oldSet, newSet)))
         return failure();
 
       for (const NativePeriodicAlias &alias : periodicAliases) {
-        if (alias.sourceStaticState != clock.staticState ||
-            alias.sourceBitOffset != clock.bitOffset)
+        if (alias.getSourceStaticState() != clock.getStaticState() ||
+            alias.getSourceBitOffset() != clock.getBitOffset())
           continue;
         // The forwarding driver's canonical plane is not consumed inside the
         // closed generated loop. Keep the resolved net current for model
         // reads, and reconstruct the driver at a runtime/checkpoint handoff.
         // This avoids maintaining a checkpoint-only projection per edge.
-        for (uint64_t bitOffset : {alias.targetBitOffset}) {
+        for (uint64_t bitOffset : {alias.getTargetBitOffset()}) {
           Value aliasAddress =
               byteGEP(builder, location, stateValue, bitOffset / 8);
           Value aliasOld = LLVM::LoadOp::create(
@@ -3676,7 +3716,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                                  builder.getI8Type(),
                                                  aliasMask)),
               llvmConstant(builder, location, builder.getI8Type(), 0));
-          if (mlir::failed(publishRuntimeClockBit(alias.targetStaticState,
+          if (mlir::failed(publishRuntimeClockBit(alias.getTargetStaticState(),
                                                   bitOffset, aliasOldSet,
                                                   aliasNewSet)))
             return failure();
@@ -3933,8 +3973,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                  ValueRange{runEntry->getArgument(1)})
                 .getResult();
         if (!mergedTwoStateExecutors[recordIndex].empty())
-          status.getDefiningOp()->setAttr("obelisk.eval.proven_two_state_call",
-                                         builder.getUnitAttr());
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::EvalProvenTwoStateCall>(
+              status.getDefiningOp(), builder.getUnitAttr());
         clearDirectOwner(recordIndex);
         if (directOwnerNeedsStatusCheck(recordIndex)) {
           Block *nextOwner = new Block;
@@ -4042,8 +4083,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                    mergedTwoStateExecutors[recordIndex]),
                 ValueRange{runEntry->getArgument(1)})
                 .getResult();
-        twoStateStatus.getDefiningOp()->setAttr(
-            "obelisk.eval.proven_two_state_call", builder.getUnitAttr());
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalProvenTwoStateCall>(
+            twoStateStatus.getDefiningOp(), builder.getUnitAttr());
         clearDirectOwner(recordIndex);
         if (directOwnerNeedsStatusCheck(recordIndex)) {
           Value ok = arith::CmpIOp::create(
@@ -4149,8 +4191,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                    SymbolRefAttr::get(context, twoState),
                                    ValueRange{runEntry->getArgument(1)})
                   .getResult();
-          twoStateStatus.getDefiningOp()->setAttr(
-              "obelisk.eval.proven_two_state_call", builder.getUnitAttr());
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::EvalProvenTwoStateCall>(
+              twoStateStatus.getDefiningOp(), builder.getUnitAttr());
           clearDirectOwner(recordIndex);
           Value twoStateOK = arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::eq, twoStateStatus,
@@ -4204,7 +4247,8 @@ FailureOr<bool> makeNativeEvalPlan(
 
     builder.setInsertionPointToStart(completeStep);
     Value completedStatus = completeStep->getArgument(0);
-    if (module->hasAttr("obelisk.eval.runtime_calendar")) {
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
       // IEEE 1800-2023 4.5, 10.4.2: a mixed calendar commits generated
       // accumulators at the shared NBA
       // barrier. Hand off once after the whole Active batch, not per writer.
@@ -4274,10 +4318,10 @@ FailureOr<bool> makeNativeEvalPlan(
       recordClockCoverage(
           clock, llvmConstant(builder, location, builder.getI1Type(), 1));
       Value sourceAddress =
-          byteGEP(builder, location, stateValue, clock.bitOffset / 8);
+          byteGEP(builder, location, stateValue, clock.getBitOffset() / 8);
       Value source = LLVM::LoadOp::create(
           builder, location, builder.getI8Type(), sourceAddress, 1);
-      uint8_t sourceMask = uint8_t{1} << (clock.bitOffset % 8);
+      uint8_t sourceMask = uint8_t{1} << (clock.getBitOffset() % 8);
       LLVM::StoreOp::create(
           builder, location,
           arith::AndIOp::create(
@@ -4286,10 +4330,10 @@ FailureOr<bool> makeNativeEvalPlan(
                            static_cast<uint8_t>(~sourceMask))),
           sourceAddress, 1);
       for (const NativePeriodicAlias &alias : periodicAliases) {
-        if (alias.sourceStaticState != clock.staticState ||
-            alias.sourceBitOffset != clock.bitOffset)
+        if (alias.getSourceStaticState() != clock.getStaticState() ||
+            alias.getSourceBitOffset() != clock.getBitOffset())
           continue;
-        for (uint64_t bitOffset : {alias.targetBitOffset}) {
+        for (uint64_t bitOffset : {alias.getTargetBitOffset()}) {
           Value address = byteGEP(builder, location, stateValue, bitOffset / 8);
           Value old = LLVM::LoadOp::create(builder, location,
                                            builder.getI8Type(), address, 1);
@@ -4305,10 +4349,11 @@ FailureOr<bool> makeNativeEvalPlan(
       }
       Value noOverflow = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ule, fallTime,
-          llvmConstant(builder, location, i64, UINT64_MAX - clock.halfPeriod));
+          llvmConstant(builder, location, i64,
+                       UINT64_MAX - clock.getHalfPeriod()));
       Value nextRiseCandidate = arith::AddIOp::create(
           builder, location, fallTime,
-          llvmConstant(builder, location, i64, clock.halfPeriod));
+          llvmConstant(builder, location, i64, clock.getHalfPeriod()));
       Value nextRise = arith::SelectOp::create(
           builder, location, noOverflow, nextRiseCandidate,
           llvmConstant(builder, location, i64, UINT64_MAX));
@@ -4333,27 +4378,27 @@ FailureOr<bool> makeNativeEvalPlan(
                                                    "__obelisk_state_value");
     for (const NativePeriodicAlias &alias : periodicAliases) {
       auto source = llvm::find_if(periodicClocks, [&](const auto &clock) {
-        return clock.staticState == alias.sourceStaticState &&
-               clock.bitOffset == alias.sourceBitOffset;
+        return clock.getStaticState() == alias.getSourceStaticState() &&
+               clock.getBitOffset() == alias.getSourceBitOffset();
       });
       if (source == periodicClocks.end())
         continue;
       Value sourceAddress =
-          byteGEP(builder, location, handoffState, source->bitOffset / 8);
+          byteGEP(builder, location, handoffState, source->getBitOffset() / 8);
       Value sourceByte = LLVM::LoadOp::create(
           builder, location, builder.getI8Type(), sourceAddress, 1);
-      uint8_t sourceMask = uint8_t{1} << (source->bitOffset % 8);
+      uint8_t sourceMask = uint8_t{1} << (source->getBitOffset() % 8);
       Value sourceSet = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ne,
           arith::AndIOp::create(
               builder, location, sourceByte,
               llvmConstant(builder, location, builder.getI8Type(), sourceMask)),
           llvmConstant(builder, location, builder.getI8Type(), 0));
-      Value driverAddress =
-          byteGEP(builder, location, handoffState, alias.driverBitOffset / 8);
+      Value driverAddress = byteGEP(builder, location, handoffState,
+                                    alias.getDriverBitOffset() / 8);
       Value driverByte = LLVM::LoadOp::create(
           builder, location, builder.getI8Type(), driverAddress, 1);
-      uint8_t driverMask = uint8_t{1} << (alias.driverBitOffset % 8);
+      uint8_t driverMask = uint8_t{1} << (alias.getDriverBitOffset() % 8);
       Value driverValue = arith::SelectOp::create(
           builder, location, sourceSet,
           arith::OrIOp::create(
@@ -4364,8 +4409,8 @@ FailureOr<bool> makeNativeEvalPlan(
               llvmConstant(builder, location, builder.getI8Type(),
                            static_cast<uint8_t>(~driverMask))));
       LLVM::StoreOp::create(builder, location, driverValue, driverAddress, 1);
-      Value driverUnknownAddress =
-          byteGEP(builder, location, stateUnknown, alias.driverBitOffset / 8);
+      Value driverUnknownAddress = byteGEP(builder, location, stateUnknown,
+                                           alias.getDriverBitOffset() / 8);
       Value driverUnknown = LLVM::LoadOp::create(
           builder, location, builder.getI8Type(), driverUnknownAddress, 1);
       LLVM::StoreOp::create(
@@ -4593,8 +4638,8 @@ FailureOr<bool> makeNativeEvalPlan(
       ValueRange{handoffEntry->getArgument(0), handoffEntry->getArgument(1),
                  llvmConstant(builder, location, i32, 2),
                  handoffEntry->getArgument(2)});
-  fourStateCall->setAttr("obelisk.eval.keep_four_state_nba",
-                         builder.getUnitAttr());
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalKeepFourStateNba>(
+      fourStateCall, builder.getUnitAttr());
   LLVM::ReturnOp::create(builder, location, fourStateCall.getResult());
 
   builder.setInsertionPointToEnd(module.getBody());
@@ -4655,17 +4700,15 @@ FailureOr<bool> makeNativeEvalPlan(
     SmallVector<Attribute> rootDependencies;
     for (ArrayRef<uint32_t> roots : scalarRootsByWord)
       for (uint32_t index : roots)
-        rootDependencies.push_back(builder.getDictionaryAttr(
-            {builder.getNamedAttr("bit", builder.getI64IntegerAttr(index)),
-             builder.getNamedAttr(
-                 "ranges",
-                 builder.getDenseI64ArrayAttr(
-                     {static_cast<int64_t>(
-                          staticNBAPlan.generatedOffsets[index]),
-                      static_cast<int64_t>(nbaRoots[index].bit_width)}))}));
-    module.lookupSymbol<LLVM::GlobalOp>(evalFastNBARootsName)
-        ->setAttr("obelisk.eval.nba_proof_dependencies",
-                  builder.getArrayAttr(rootDependencies));
+        rootDependencies.push_back(schedule::NBAProofDependencyAttr::get(
+            builder.getContext(), builder.getI64IntegerAttr(index),
+            builder.getDenseI64ArrayAttr(
+                {static_cast<int64_t>(staticNBAPlan.generatedOffsets[index]),
+                 static_cast<int64_t>(nbaRoots[index].bit_width)})));
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalNbaProofDependencies>(
+        module.lookupSymbol<LLVM::GlobalOp>(evalFastNBARootsName),
+        builder.getArrayAttr(rootDependencies));
   }
   bool generateGroupedFanout =
       llvm::any_of(scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
@@ -4937,8 +4980,9 @@ FailureOr<bool> makeNativeEvalPlan(
         auto old =
             LLVM::LoadOp::create(builder, location, alignedType, address, 1);
         if (plane == stateUnknown)
-          old->setAttr("obelisk.eval.preserve_nba_unknown",
-                       builder.getUnitAttr());
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::EvalPreserveNbaUnknown>(
+              old, builder.getUnitAttr());
         LLVM::StoreOp::create(
             builder, location,
             resizeNativeInteger(builder, location, old, cast<IntegerType>(i64)),
@@ -4951,9 +4995,12 @@ FailureOr<bool> makeNativeEvalPlan(
             arith::SelectOp::create(builder, location, active, staged, old),
             address, 1);
         if (plane == stateUnknown) {
-          store->setAttr("obelisk.eval.preserve_nba_unknown",
-                         builder.getUnitAttr());
-          store->setAttr("obelisk.eval.unknown_write_range", publicationRange);
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::EvalPreserveNbaUnknown>(
+              store, builder.getUnitAttr());
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::EvalUnknownWriteRange>(
+              store, publicationRange);
         }
       };
       commitAlignedPlane(stateValue, entry.valueName, oldFieldValue);
@@ -5035,8 +5082,9 @@ FailureOr<bool> makeNativeEvalPlan(
       Value unknownAddress = planeAddress(stateUnknown);
       auto oldUnknown = LLVM::LoadOp::create(builder, location, windowType,
                                              unknownAddress, 1);
-      oldUnknown->setAttr("obelisk.eval.preserve_nba_unknown",
-                          builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalPreserveNbaUnknown>(
+          oldUnknown, builder.getUnitAttr());
       Value oldSelectedUnknown = arith::AndIOp::create(
           builder, location,
           arith::ShRUIOp::create(builder, location, oldUnknown, windowShift),
@@ -5074,11 +5122,14 @@ FailureOr<bool> makeNativeEvalPlan(
           arith::SelectOp::create(builder, location, active, mergedUnknown,
                                   oldUnknown),
           unknownAddress, 1);
-      store->setAttr("obelisk.eval.preserve_nba_unknown",
-                     builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalPreserveNbaUnknown>(
+          store, builder.getUnitAttr());
       // The clipped mask preserves every bit outside this canonical root,
       // including neighbors in the byte-rounded load/store window.
-      store->setAttr("obelisk.eval.unknown_write_range", publicationRange);
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalUnknownWriteRange>(store,
+                                                             publicationRange);
     } else
       LLVM::StoreOp::create(builder, location,
                             llvmConstant(builder, location, i64, 0),
@@ -5556,8 +5607,9 @@ FailureOr<bool> makeNativeEvalPlan(
         // loads and staged accumulator unknown data left by an earlier
         // four-state slot. Mark this semantic role explicitly instead of
         // reverse-engineering a byte GEP after LLVM lowering.
-        load->setAttr("obelisk.eval.two_state_zero_unknown",
-                      UnitAttr::get(context));
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalTwoStateZeroUnknown>(
+            load, UnitAttr::get(context));
         stagedUnknown = load;
       }
       Value writeMask =
@@ -6106,7 +6158,9 @@ FailureOr<bool> makeNativeEvalPlan(
                          ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND
                          : 0) |
                     (cleanSuperstepEnabled && staticEvalIsland &&
-                             module->hasAttr("obelisk.eval.runtime_calendar")
+                             ::obelisk::schedule::has<
+                                 ::obelisk::schedule::Field::
+                                     EvalRuntimeCalendar>(module)
                          ? OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL
                          : 0) |
                     OBELISK_RT_NATIVE_SCHEDULE_EVAL),

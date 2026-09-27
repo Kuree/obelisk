@@ -26,7 +26,7 @@ module {
         %data: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %control: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64,
-                    obelisk_sim.primitive_name = "bufif0",
+                    schedule.primitive_name = "bufif0",
                     obelisk_sim.propagation_delays = array<i64: 2, 3, 4>,
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
@@ -49,7 +49,7 @@ module {
         %data: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %control: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64,
-                    obelisk_sim.primitive_name = "bufif1",
+                    schedule.primitive_name = "bufif1",
                     obelisk_sim.propagation_delays = array<i64: 5>,
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
@@ -72,7 +72,7 @@ module {
         %data: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %control: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 3 : i64,
-                    obelisk_sim.primitive_name = "notif1",
+                    schedule.primitive_name = "notif1",
                     obelisk_sim.propagation_delays = array<i64: 7, 11>,
                     obelisk_sim.bindings = [
                       #obelisk_sim.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
@@ -97,7 +97,7 @@ module {
         %data_snapshot: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64},
         %control_snapshot: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 4 : i64,
-                    obelisk_sim.primitive_name = "bufif1",
+                    schedule.primitive_name = "bufif1",
                     obelisk_sim.timing_path_rules = [
                       {input = "top.data", snapshot = "top.data_snapshot", polarity = 1 : i32, delays = array<i64: 2, 3, 4>},
                       {input = "top.control", snapshot = "top.control_snapshot", polarity = 2 : i32, delays = array<i64: 5, 7, 11>}],

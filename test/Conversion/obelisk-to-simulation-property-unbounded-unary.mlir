@@ -150,7 +150,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.14.always(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK-SAME: obelisk_sim.concurrent_eos_counted
+// CHECK-SAME: schedule.concurrent_eos_counted
 // CHECK: obelisk_sim.ref.load
 // CHECK: cf.cond_br
 // CHECK: obelisk_sim.spawn @unit_0.fork.14.0.0

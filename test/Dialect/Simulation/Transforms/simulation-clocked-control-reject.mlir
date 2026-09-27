@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s
 // Do not share continuation storage across instances, conflate different
 // clocks, or lift references/managed values into scalar design slots.
-// CHECK-NOT: obelisk_sim.clocked_control
+// CHECK-NOT: schedule.clocked_control
 // CHECK-NOT: obelisk_sim.storage.decl 2
 // CHECK-LABEL: obelisk_sim.func @multiple
 // CHECK: obelisk_sim.suspend.edge
@@ -10,7 +10,7 @@
 // CHECK: obelisk_sim.suspend.edge posedge %arg2
 // CHECK-LABEL: obelisk_sim.func @live_ref
 // CHECK: obelisk_sim.suspend.edge
-// CHECK-NOT: obelisk_sim.clocked_control
+// CHECK-NOT: schedule.clocked_control
 
 module {
   obelisk_sim.design @reject {

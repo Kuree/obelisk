@@ -1,6 +1,7 @@
 //===- SimulationVPIAnalysisTestPass.cpp - Print VPI facts --------------===//
 
 #include "AnalysisTestPasses.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -31,19 +32,19 @@ public:
     getOperation().walk([&](obelisk::sim::SimDesignOp design) {
       obelisk::analysis::SimulationVPIAnalysis analysis =
           obelisk::analysis::SimulationVPIAnalysis::compute(design);
-      llvm::errs() << "vpi @" << design.getSymName() << " graph="
-                   << (analysis.hasComputeGraph() ? "true" : "false")
-                   << " mode="
-                   << obelisk::sim::stringifyComputeVPIMode(analysis.getMode())
-                   << " observability="
-                   << obelisk::sim::stringifyComputeObservabilityKind(
-                          analysis.getObservability())
-                   << " read=" << (analysis.allowsRead() ? "true" : "false")
-                   << " write=" << (analysis.allowsWrite() ? "true" : "false")
-                   << " static-dependencies="
-                   << (analysis.preservesStaticDependencies() ? "true"
-                                                              : "false")
-                   << "\n";
+      llvm::errs()
+          << "vpi @" << design.getSymName()
+          << " graph=" << (analysis.hasComputeGraph() ? "true" : "false")
+          << " mode="
+          << obelisk::schedule::stringifyComputeVPIMode(analysis.getMode())
+          << " observability="
+          << obelisk::schedule::stringifyComputeObservabilityKind(
+                 analysis.getObservability())
+          << " read=" << (analysis.allowsRead() ? "true" : "false")
+          << " write=" << (analysis.allowsWrite() ? "true" : "false")
+          << " static-dependencies="
+          << (analysis.preservesStaticDependencies() ? "true" : "false")
+          << "\n";
     });
     markAllAnalysesPreserved();
   }

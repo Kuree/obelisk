@@ -3,6 +3,9 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
@@ -28,7 +31,9 @@ materializeNativeRankedGroups(ModuleOp module,
   // have no runtime/status boundary. Unproved bodies keep their executor.
   auto bodyCost = [&](StringRef name) -> uint64_t {
     auto function = functions.lookup(name);
-    if (!function || !function->hasAttr("obelisk.eval.raw_captures") ||
+    if (!function ||
+        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+            function) ||
         !function.getFunctionType().getResults().empty())
       return 0;
     bool safe = true;
@@ -42,7 +47,8 @@ materializeNativeRankedGroups(ModuleOp module,
     return safe ? cost : 0;
   };
   auto limit =
-      module->getAttrOfType<IntegerAttr>("obelisk.native.max_inline_ops");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::MaxInlineOps>(
+          module);
   uint64_t budget = limit ? limit.getUInt() : 5000;
   if (!budget)
     budget = UINT64_MAX;
@@ -77,13 +83,14 @@ materializeNativeRankedGroups(ModuleOp module,
         builder, loc, name,
         LLVM::LLVMFunctionType::get(
             LLVM::LLVMVoidType::get(module.getContext()), {pointer}, false));
-    segment->setAttr(sim::metadata::evalCallClosureRoot, builder.getUnitAttr());
+    ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+        segment, builder.getUnitAttr());
     SmallVector<Attribute> helpers;
     for (const Chunk &chunk : chunks)
       helpers.push_back(
           FlatSymbolRefAttr::get(module.getContext(), chunk.name));
-    segment->setAttr("obelisk.eval.segment_helpers",
-                     builder.getArrayAttr(helpers));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSegmentHelpers>(
+        segment, builder.getArrayAttr(helpers));
     Block *entry = segment.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
     Value ready = LLVM::AddressOfOp::create(
@@ -150,15 +157,15 @@ materializeNativeRankedGroups(ModuleOp module,
       chunk.words.back().second |= uint64_t{1} << (owner % 64);
     }
     chunks.push_back(std::move(chunk));
-    group->setAttr("obelisk.eval.ranked_members",
-                   builder.getDenseI32ArrayAttr(identities));
-    group->setAttr("obelisk.eval.ready_word_count",
-                   builder.getI64IntegerAttr(readyLayout.counts[0]));
-    group->setAttr(
-        "obelisk.eval.group_ingress",
-        FlatSymbolRefAttr::get(module.getContext(),
-                               plan.clockKernels.front().ingressName));
-    group->setAttr(sim::metadata::evalCallClosureRoot, builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
+        group, builder.getDenseI32ArrayAttr(identities));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalReadyWordCount>(
+        group, builder.getI64IntegerAttr(readyLayout.counts[0]));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
+        group, FlatSymbolRefAttr::get(module.getContext(),
+                                      plan.clockKernels.front().ingressName));
+    ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+        group, builder.getUnitAttr());
     Block *entry = group.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
     Value ready = LLVM::AddressOfOp::create(
@@ -177,20 +184,22 @@ materializeNativeRankedGroups(ModuleOp module,
                       .getResult());
       auto call =
           func::CallOp::create(builder, loc, body, TypeRange{}, arguments);
-      call->setAttr("obelisk.eval.direct_call", builder.getUnitAttr());
-      call->setAttr("obelisk.eval.group_member",
-                    builder.getI32IntegerAttr(owner));
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectCall>(
+          call, builder.getUnitAttr());
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupMember>(
+          call, builder.getI32IntegerAttr(owner));
       // The group has selected this value-domain branch explicitly. Route
       // lowering must not introduce a mutable function pointer here.
-      call->setAttr("obelisk.eval.group_domain_selected",
-                    builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalGroupDomainSelected>(
+          call, builder.getUnitAttr());
     };
     for (const auto *node : members) {
       uint32_t owner = node->owner;
       Value bit = llvmConstant(builder, loc, i64, uint64_t{1} << (owner % 64));
       Value ingress = loadOwnerWord(builder, loc, ready, owner / 64);
-      ingress.getDefiningOp()->setAttr("obelisk.eval.activation_entry",
-                                      builder.getI32IntegerAttr(owner));
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalActivationEntry>(
+          ingress.getDefiningOp(), builder.getI32IntegerAttr(owner));
       Value dirty = arith::AndIOp::create(builder, loc, ingress, bit);
       Value pending =
           arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne, dirty,
@@ -271,16 +280,20 @@ materializeNativeRankedGroups(ModuleOp module,
           builder, loc, name + ".dataflow",
           LLVM::LLVMFunctionType::get(
               LLVM::LLVMVoidType::get(module.getContext()), {pointer}, false));
-      candidate->setAttr("obelisk.eval.ranked_members",
-                         builder.getDenseI32ArrayAttr(identities));
-      candidate->setAttr("obelisk.eval.group_ingress",
-                         group->getAttr("obelisk.eval.group_ingress"));
-      candidate->setAttr("obelisk.eval.ready_word_count",
-                         group->getAttr("obelisk.eval.ready_word_count"));
-      candidate->setAttr("obelisk.eval.dataflow_candidate",
-                         FlatSymbolRefAttr::get(module.getContext(), name));
-      candidate->setAttr(sim::metadata::evalCallClosureRoot,
-                         builder.getUnitAttr());
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
+          candidate, builder.getDenseI32ArrayAttr(identities));
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
+          candidate, ::obelisk::schedule::get<
+                         ::obelisk::schedule::Field::EvalGroupIngress>(group));
+      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalReadyWordCount>(
+          candidate,
+          ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::EvalReadyWordCount>(group));
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalDataflowCandidate>(
+          candidate, FlatSymbolRefAttr::get(module.getContext(), name));
+      ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+          candidate, builder.getUnitAttr());
       entry = candidate.addEntryBlock(builder);
       builder.setInsertionPointToStart(entry);
       ready = LLVM::AddressOfOp::create(builder, loc, pointer,
@@ -290,8 +303,9 @@ materializeNativeRankedGroups(ModuleOp module,
         Value bit =
             llvmConstant(builder, loc, i64, uint64_t{1} << (owner % 64));
         Value ingress = loadOwnerWord(builder, loc, ready, owner / 64);
-        ingress.getDefiningOp()->setAttr("obelisk.eval.activation_entry",
-                                        builder.getI32IntegerAttr(owner));
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalActivationEntry>(
+            ingress.getDefiningOp(), builder.getI32IntegerAttr(owner));
         Value dirty = arith::AndIOp::create(builder, loc, ingress, bit);
         Value active =
             arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne, dirty,

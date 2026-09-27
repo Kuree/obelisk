@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
@@ -603,7 +604,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   bool invalidObserver = false;
   module.walk([&](sim::SimFuncOp function) {
     if (function.getEntryKind() != sim::EntryKind::Observer ||
-        function->hasAttr("obelisk_sim.override_evaluator"))
+        ::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+            function))
       return;
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!codeUnitID || *codeUnitID <= 0 ||

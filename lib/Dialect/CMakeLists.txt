@@ -1,5 +1,6 @@
 add_subdirectory(Slang)
 add_subdirectory(Obelisk)
 add_subdirectory(Runtime)
+add_subdirectory(Schedule)
 add_subdirectory(Simulation)
 add_subdirectory(SDF)

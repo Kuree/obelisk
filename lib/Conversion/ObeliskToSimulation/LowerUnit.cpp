@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/OutputItemFlags.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -1120,7 +1122,8 @@ FailureOr<Value> UnitLowering::bindObserver(
       operands,
       builder.getI32IntegerAttr(static_cast<uint32_t>(captures.size())));
   if (*parsedResult == ObserverResult::Event)
-    binding->setAttr(observerEventPrimaryAttrName, builder.getUnitAttr());
+    ::obelisk::schedule::set<observerEventPrimaryAttrName>(
+        binding, builder.getUnitAttr());
   return binding.getResult();
 }
 
@@ -4768,12 +4771,12 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       if (localDependencies.size() == 1)
         sim::SimSuspendChangeOp::create(
             updateBuilder, location, localDependencies.front(), ValueRange{},
-            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
+            schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
       else
         sim::SimSuspendAnyOp::create(
             updateBuilder, location, localDependencies,
             updateBuilder.getDenseI32ArrayAttr(dependencyEdges),
-            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
+            schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
       evaluator->setAttr(sim::metadata::lowered, builder.getUnitAttr());
 
       SmallVector<Value> spawnOperands{
@@ -4922,7 +4925,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     sim::SimSuspendEventOrderOp::create(
         builder, location, events,
         builder.getI32IntegerAttr(static_cast<int32_t>(eventCount)),
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, resumed);
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, resumed);
 
     setCurrent(resumed);
     Value failedWait =
@@ -4954,7 +4957,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   if (isa<semantic::SVWaitForkStatementOp>(op)) {
     Block *continuation = addBlock();
     sim::SimSuspendChildrenOp::create(builder, location, ValueRange{},
-                                      sim::ContinuationSiteAttr{},
+                                      schedule::ContinuationSiteAttr{},
                                       sim::EventRegionAttr{}, continuation);
     setCurrent(continuation);
     return success();
@@ -6443,7 +6446,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     return failure();
   }
   auto primitive =
-      function->getAttrOfType<StringAttr>("obelisk_sim.primitive_name");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::PrimitiveName>(
+          function);
   llvm::SetVector<Value> implicitProcessWrites;
   llvm::SetVector<Value> *savedWrites = observedWrites;
   llvm::SetVector<Value> implicitProcessDependencies;
@@ -6734,7 +6738,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     sim::SimSuspendChangeOp::create(
         builder, function.getLoc(), sensitivity.front(),
         nextUdpInputs ? ValueRange{nextUdpInputs} : ValueRange{},
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loopHeader);
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, loopHeader);
     return success();
   }
   SmallVector<int32_t> edges(sensitivity.size(),
@@ -6744,7 +6748,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     waitValues.push_back(nextUdpInputs);
   sim::SimSuspendAnyOp::create(builder, function.getLoc(), waitValues,
                                builder.getDenseI32ArrayAttr(edges),
-                               sim::ContinuationSiteAttr{},
+                               schedule::ContinuationSiteAttr{},
                                sim::EventRegionAttr{}, loopHeader);
   return success();
 }

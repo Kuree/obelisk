@@ -1,8 +1,11 @@
 //===- SimulationAnalysis.cpp - Shared simulation optimization facts -----===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
@@ -21,14 +24,14 @@ std::optional<uint64_t> getPackedValueWidth(Type type) {
   return sim::getProvenanceSpan(type);
 }
 
-sim::ComputeResourceKind getHandleResourceKind(Type type) {
+schedule::ComputeResourceKind getHandleResourceKind(Type type) {
   if (isa<sim::RefType>(type))
-    return sim::ComputeResourceKind::Storage;
+    return schedule::ComputeResourceKind::Storage;
   if (isa<sim::NetType, sim::DriverType>(type))
-    return sim::ComputeResourceKind::Net;
+    return schedule::ComputeResourceKind::Net;
   if (isa<sim::EventType>(type))
-    return sim::ComputeResourceKind::Event;
-  return sim::ComputeResourceKind::Unknown;
+    return schedule::ComputeResourceKind::Event;
+  return schedule::ComputeResourceKind::Unknown;
 }
 
 DescriptorProvenance joinProvenance(DescriptorProvenance lhs,
@@ -61,14 +64,14 @@ DescriptorProvenance joinProvenance(DescriptorProvenance lhs,
 }
 
 DescriptorProvenance widenDynamic(DescriptorProvenance provenance) {
-  if (provenance.resource != sim::ComputeResourceKind::Unknown)
+  if (provenance.resource != schedule::ComputeResourceKind::Unknown)
     provenance.dynamic = true;
   return provenance;
 }
 
 DescriptorProvenance narrowProvenance(DescriptorProvenance provenance,
                                       uint64_t low, uint64_t width) {
-  if (provenance.resource == sim::ComputeResourceKind::Unknown)
+  if (provenance.resource == schedule::ComputeResourceKind::Unknown)
     return provenance;
   if (provenance.low > provenance.rootWidth ||
       low > provenance.rootWidth - provenance.low ||
@@ -181,9 +184,10 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
         index, sim::metadata::descriptorLow);
     auto descriptorRootType = function.getArgAttrOfType<TypeAttr>(
         index, sim::metadata::descriptorRootType);
-    sim::ComputeResourceKind kind = getHandleResourceKind(argument.getType());
+    schedule::ComputeResourceKind kind =
+        getHandleResourceKind(argument.getType());
     auto width = getPackedValueWidth(argument.getType());
-    if (kind == sim::ComputeResourceKind::Unknown || !width)
+    if (kind == schedule::ComputeResourceKind::Unknown || !width)
       continue;
     // User-defined net resolvers wait on raw driver storage, not on the
     // resolved net. Driver provenance is normally canonicalized to its net so
@@ -234,7 +238,7 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
                        ? driverNets().find(*provenance.descriptor)
                        : driverNets().end();
         if (net == driverNets().end()) {
-          provenance.resource = sim::ComputeResourceKind::Unknown;
+          provenance.resource = schedule::ComputeResourceKind::Unknown;
           provenance.descriptor.reset();
         } else {
           provenance.descriptor = net->second;
@@ -250,7 +254,7 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
       if (&block != &entry) {
         for (BlockArgument argument : block.getArguments()) {
           if (getHandleResourceKind(argument.getType()) ==
-              sim::ComputeResourceKind::Unknown)
+              schedule::ComputeResourceKind::Unknown)
             continue;
           bool allIncomingReady = true;
           bool hasIndependentIncoming = false;
@@ -279,7 +283,7 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
       }
 
       for (Operation &operation : block) {
-        auto declare = [&](Value result, sim::ComputeResourceKind resource,
+        auto declare = [&](Value result, schedule::ComputeResourceKind resource,
                            std::optional<uint64_t> descriptor) {
           auto width = getPackedValueWidth(result.getType());
           if (!width)
@@ -340,29 +344,29 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
         };
         llvm::TypeSwitch<Operation *>(&operation)
             .Case<sim::SimContextStorageOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Storage,
+              declare(op.getResult(), schedule::ComputeResourceKind::Storage,
                       op.getId());
             })
             .Case<sim::SimContextNetOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Net,
+              declare(op.getResult(), schedule::ComputeResourceKind::Net,
                       op.getId());
             })
             .Case<sim::SimContextDriverOp>([&](auto op) {
               auto net = driverNets().find(op.getId());
               declare(op.getResult(),
                       net == driverNets().end()
-                          ? sim::ComputeResourceKind::Unknown
-                          : sim::ComputeResourceKind::Net,
+                          ? schedule::ComputeResourceKind::Unknown
+                          : schedule::ComputeResourceKind::Net,
                       net == driverNets().end()
                           ? std::optional<uint64_t>{}
                           : std::optional<uint64_t>{net->second});
             })
             .Case<sim::SimContextEventOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Event,
+              declare(op.getResult(), schedule::ComputeResourceKind::Event,
                       op.getId());
             })
             .Case<sim::SimRefAllocOp>([&](auto op) {
-              declare(op.getResult(), sim::ComputeResourceKind::Local,
+              declare(op.getResult(), schedule::ComputeResourceKind::Local,
                       std::nullopt);
             })
             .Case<sim::SimRefExtractOp, sim::SimNetExtractOp,
@@ -385,7 +389,7 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
             .Default([&](Operation *op) {
               for (Value result : op->getResults())
                 if (getHandleResourceKind(result.getType()) !=
-                    sim::ComputeResourceKind::Unknown)
+                    schedule::ComputeResourceKind::Unknown)
                   setIfChanged(provenanceMap, result, DescriptorProvenance{},
                                changed);
             });
@@ -460,27 +464,29 @@ uint64_t getSimulationRegionCost(Region &region) {
 }
 
 NBAMergeSafety::NBAMergeSafety(sim::SimDesignOp design) {
-  auto observed = design ? design->getAttrOfType<DenseI64ArrayAttr>(
-                               sim::metadata::nbaTransientObservable)
-                         : DenseI64ArrayAttr{};
-  sim::ComputeGraphAttr graph =
-      design ? design.getComputeGraphAttr() : sim::ComputeGraphAttr{};
+  auto observed = design
+                      ? ::obelisk::schedule::get<
+                            schedule::metadata::nbaTransientObservable>(design)
+                      : DenseI64ArrayAttr{};
+  schedule::ComputeGraphAttr graph =
+      design ? design.getComputeGraphAttr() : schedule::ComputeGraphAttr{};
   if (!observed || !graph)
     return;
   known = true;
   for (int64_t descriptor : observed.asArrayRef())
     observable.insert(static_cast<uint64_t>(descriptor));
-  if (auto watched = design->getAttrOfType<DenseI64ArrayAttr>(
-          sim::metadata::nbaChangeWatched))
+  if (auto watched =
+          ::obelisk::schedule::get<schedule::metadata::nbaChangeWatched>(
+              design))
     for (int64_t descriptor : watched.asArrayRef())
       changeWatched.insert(static_cast<uint64_t>(descriptor));
   for (Attribute node : graph.getNodes()) {
-    auto commit = dyn_cast<sim::ComputeNBACommitAttr>(node);
+    auto commit = dyn_cast<schedule::ComputeNBACommitAttr>(node);
     if (!commit)
       continue;
-    sim::ComputeEffectAttr effect = commit.getEffect();
-    if (effect.getResource() == sim::ComputeResourceKind::Storage &&
-        effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
+    schedule::ComputeEffectAttr effect = commit.getEffect();
+    if (effect.getResource() == schedule::ComputeResourceKind::Storage &&
+        effect.getTarget() == schedule::ComputeTargetKind::Descriptor &&
         !effect.getDynamic())
       commitStorage.try_emplace(commit.getId(), effect.getDescriptor());
   }

@@ -38,8 +38,8 @@
 // SIM-SAME: entry_kind = 14
 // SIM: obelisk_sim.covergroup.sample
 // SIM: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
-// SIM-SAME: obelisk_sim.covergroup_clocking_sampler
-// SIM-SAME: obelisk_sim.prime_on_spawn
+// SIM-SAME: schedule.covergroup_clocking_sampler
+// SIM-SAME: schedule.prime_on_spawn
 // SIM: obelisk_sim.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
 // SIM: obelisk_sim.covergroup.clock_event.register
 // SIM-SAME: conditions 1 edges [1, 2] indices [0, -1]

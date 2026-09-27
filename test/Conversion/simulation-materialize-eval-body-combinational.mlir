@@ -6,7 +6,7 @@
 // that cannot be fused still needs an exact standalone Tier-1 body. In
 // particular, operations preceding the terminal implicit wait are part of
 // the activation; a false latch enable must not manufacture a store.
-module attributes {obelisk.native_scheduler = 3 : i32} {
+module attributes {schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @combinational {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i8 design
@@ -30,7 +30,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
       obelisk_sim.return
     }
     // CHECK-LABEL: obelisk_sim.func @comb(
-    // CHECK-SAME: obelisk.eval.body = @[[COMB:comb.__obelisk_eval_body_1]]
+    // CHECK-SAME: schedule.eval.body = @[[COMB:comb.__obelisk_eval_body_1]]
     // CHECK: obelisk_sim.suspend.any %{{.*}}, %{{.*}} edges [0, 0]
     obelisk_sim.func @comb(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -57,7 +57,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
       obelisk_sim.suspend.any %data, %enable edges [0, 0] to ^body : !obelisk_sim.ref<i8>, !obelisk_sim.ref<i1>
     }
     // CHECK-LABEL: obelisk_sim.func @latch(
-    // CHECK-SAME: obelisk.eval.body = @[[LATCH:latch.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: schedule.eval.body = @[[LATCH:latch.__obelisk_eval_body_[0-9]+]]
     obelisk_sim.func @latch(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %data: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},

@@ -1,6 +1,7 @@
 //===- RuntimeToLLVMPatterns.cpp - Typed runtime rewrite patterns --------===//
 
 #include "RuntimeToLLVMPatterns.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Runtime/RuntimeABI.h"
@@ -161,7 +162,8 @@ getOrCreateDeclaration(Operation *anchor, runtime::RuntimeCall call,
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   StringRef name = runtime::getRuntimeSymbol(call);
   if (call == runtime::RuntimeCall::Display &&
-      anchor->hasAttr("obelisk.eval.direct_output"))
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalDirectOutput>(
+          anchor))
     name = "obelisk_rt_v1_eval_display";
   LLVM::LLVMFunctionType expected = getFunctionType(call, abi);
   if (Operation *existing = SymbolTable::lookupSymbolIn(module, name)) {

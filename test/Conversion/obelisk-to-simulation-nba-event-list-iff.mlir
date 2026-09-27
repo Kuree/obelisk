@@ -49,8 +49,8 @@ module {
 }
 
 // CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
-// CHECK-SAME: obelisk_sim.detached_controls
-// CHECK-SAME: obelisk_sim.prime_on_spawn
+// CHECK-SAME: schedule.detached_controls
+// CHECK-SAME: schedule.prime_on_spawn
 // CHECK: %[[CLK:.*]] = obelisk_sim.observer.bind
 // CHECK: %[[ENABLE:.*]] = obelisk_sim.observer.bind
 // CHECK: %[[RESET:.*]] = obelisk_sim.observer.bind

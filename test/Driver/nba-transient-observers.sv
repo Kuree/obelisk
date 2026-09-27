@@ -12,8 +12,8 @@
 // waits watch. Storage ids follow declaration order: clk=0, pulse=1,
 // single=2, twice=3, pulsed=4, edged=5, then u.clk=10 and u.single=11.
 
-// CHECK-DAG: obelisk.nba.change_watched = array<i64: 3, 4>
-// CHECK-DAG: obelisk.nba.transient_observable = array<i64: 0, 1, 5, 10>
+// CHECK-DAG: schedule.nba.change_watched = array<i64: 3, 4>
+// CHECK-DAG: schedule.nba.transient_observable = array<i64: 0, 1, 5, 10>
 // CHECK-DAG: storage.decl 3 in {{[0-9]+}} : {{.*}} hierarchy "nba_transient_observers.twice"
 // CHECK-DAG: storage.decl 4 in {{[0-9]+}} : {{.*}} hierarchy "nba_transient_observers.pulsed"
 // CHECK-DAG: storage.decl 5 in {{[0-9]+}} : {{.*}} hierarchy "nba_transient_observers.edged"

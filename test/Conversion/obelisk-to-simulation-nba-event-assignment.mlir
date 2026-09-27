@@ -58,8 +58,8 @@ module attributes {
 // CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-SAME: obelisk_sim.detached_controls
-// CHECK-SAME: obelisk_sim.prime_on_spawn
+// CHECK-SAME: schedule.detached_controls
+// CHECK-SAME: schedule.prime_on_spawn
 // CHECK: %[[PRIMARY:.*]] = obelisk_sim.observer.bind
 // CHECK-SAME: captures 2
 // CHECK: obelisk_sim.suspend.observe %[[PRIMARY]]

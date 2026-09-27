@@ -28,8 +28,8 @@ module attributes {
         %signal: !obelisk_sim.ref<i64> {obelisk_sim.capture_kind = 3 : i32,
                                       obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9000012 : i64,
-                    obelisk.native.region_body,
-                    obelisk.eval.reconstructs_continuation_args} {
+                    schedule.native.region_body,
+                    schedule.eval.reconstructs_continuation_args} {
       %zero = arith.constant 0 : i64
       cf.br ^body(%zero : i64)
     ^body(%value: i64):

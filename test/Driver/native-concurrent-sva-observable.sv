@@ -79,7 +79,7 @@ endmodule
 // SIM-DAG: obelisk_sim.assert.sampled_read
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: home_region = 10 : i32
-// SIM-DAG: obelisk_sim.concurrent_report
-// SIM-DAG: obelisk_sim.detached_controls
+// SIM-DAG: schedule.concurrent_report
+// SIM-DAG: schedule.detached_controls
 // AOT: call i32 @obelisk_rt_v1_scheduler_add_aot
 // AOT: call i32 @obelisk_rt_v1_scheduler_run(

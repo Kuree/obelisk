@@ -6,8 +6,8 @@
 
 module {
   obelisk_sim.design @region_kernel attributes {
-      obelisk_sim.static_body_fusion =
-        [#obelisk_sim.fusion<id = 0, fragments = [4, 1]>]} {
+      schedule.static_body_fusion =
+        [#schedule.fusion<id = 0, fragments = [4, 1]>]} {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 continuous hierarchy "region_kernel.first"
     obelisk_sim.code_unit.decl 2 in 0 continuous hierarchy "region_kernel.second"

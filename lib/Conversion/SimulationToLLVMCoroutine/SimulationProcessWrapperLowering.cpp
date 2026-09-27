@@ -2,6 +2,9 @@
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationProcessRuntimeABI.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -291,20 +294,28 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
       builder, location, wrapperName,
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
   copyNativePartition(body, wrapper);
-  if (body->hasAttr("obelisk.eval.inductive_two_state") ||
-      body->hasAttr("obelisk.eval.selected_two_state") ||
-      body->hasAttr("obelisk.eval.four_state_source"))
-    wrapper->setAttr(sim::metadata::evalTwoStateVariant, builder.getUnitAttr());
-  if (body->hasAttr(sim::metadata::evalPathGuardedTwoState))
-    wrapper->setAttr(sim::metadata::evalPathGuardedTwoState,
-                     builder.getUnitAttr());
-  if (body->hasAttr(sim::metadata::evalPathGuardedKnownPreserving))
-    wrapper->setAttr(sim::metadata::evalPathGuardedKnownPreserving,
-                     builder.getUnitAttr());
-  if (auto unsupportedOwner = body->getAttrOfType<StringAttr>(
-          sim::metadata::evalUnsupportedCheckpointOwner))
-    wrapper->setAttr(sim::metadata::evalUnsupportedCheckpointOwner,
-                     unsupportedOwner);
+  if (::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalInductiveTwoState>(body) ||
+      ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalSelectedTwoState>(body) ||
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalFourStateSource>(
+          body))
+    ::obelisk::schedule::set<schedule::Field::EvalTwoStateWrapper>(
+        wrapper, builder.getUnitAttr());
+  if (::obelisk::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
+          body))
+    ::obelisk::schedule::set<schedule::metadata::evalPathGuardedTwoState>(
+        wrapper, builder.getUnitAttr());
+  if (::obelisk::schedule::has<
+          schedule::metadata::evalPathGuardedKnownPreserving>(body))
+    ::obelisk::schedule::set<
+        schedule::metadata::evalPathGuardedKnownPreserving>(
+        wrapper, builder.getUnitAttr());
+  if (auto unsupportedOwner = ::obelisk::schedule::get<
+          schedule::metadata::evalUnsupportedCheckpointOwner>(body))
+    ::obelisk::schedule::set<
+        schedule::metadata::evalUnsupportedCheckpointOwner>(wrapper,
+                                                            unsupportedOwner);
   bool mayTerminate = false;
   llvm::SmallPtrSet<Operation *, 8> visited;
   auto design = body->getParentOfType<sim::SimDesignOp>();
@@ -339,16 +350,22 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
   inspect(body);
   inspect(actor);
   if (mayTerminate) {
-    wrapper->setAttr(sim::metadata::evalMayTerminate, builder.getUnitAttr());
-    if (body->hasAttr("obelisk.eval.inherited_two_state_checkpoint") ||
-        actor->hasAttr("obelisk.eval.inherited_two_state_checkpoint"))
-      wrapper->setAttr(sim::metadata::evalCheckpointSafe,
-                       builder.getUnitAttr());
+    ::obelisk::schedule::set<schedule::metadata::evalMayTerminate>(
+        wrapper, builder.getUnitAttr());
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+            body) ||
+        ::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(actor))
+      ::obelisk::schedule::set<schedule::metadata::evalCheckpointSafe>(
+          wrapper, builder.getUnitAttr());
   }
   Block *entry = wrapper.addEntryBlock(builder);
-  if (body->hasAttr("obelisk.eval.raw_captures")) {
+  if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+          body)) {
     if (!mayTerminate)
-      wrapper->setAttr(sim::metadata::evalInfallible, builder.getUnitAttr());
+      ::obelisk::schedule::set<schedule::metadata::evalInfallible>(
+          wrapper, builder.getUnitAttr());
     wrapper->setAttr(
         "passthrough",
         builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
@@ -367,7 +384,8 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
     auto call = func::CallOp::create(
         builder, location, body.getSymName(),
         returnsStatus ? TypeRange{i32} : TypeRange{}, arguments);
-    call->setAttr("obelisk.eval.direct_call", builder.getUnitAttr());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectCall>(
+        call, builder.getUnitAttr());
     LLVM::ReturnOp::create(
         builder, location,
         returnsStatus ? call.getResult(0)
@@ -540,8 +558,10 @@ LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
   // delayed commit before generated periodic execution can advance time.
   // Publish an exact cold checkpoint without placing process creation or
   // scheduler calls in the generated evaluator's hot closure.
-  wrapper->setAttr(sim::metadata::evalMayTerminate, builder.getUnitAttr());
-  wrapper->setAttr(sim::metadata::evalCheckpointSafe, builder.getUnitAttr());
+  ::obelisk::schedule::set<schedule::metadata::evalMayTerminate>(
+      wrapper, builder.getUnitAttr());
+  ::obelisk::schedule::set<schedule::metadata::evalCheckpointSafe>(
+      wrapper, builder.getUnitAttr());
   wrapper->setAttr("passthrough", builder.getArrayAttr(
                                       {builder.getStringAttr("alwaysinline")}));
   Block *entry = wrapper.addEntryBlock(builder);

@@ -1,6 +1,7 @@
 //===- StaticSpecializationAnalysisTestPass.cpp - Print plan facts -------===//
 
 #include "AnalysisTestPasses.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -57,7 +58,7 @@ public:
       roots.push_back(descriptor);
     llvm::sort(roots);
     for (uint64_t descriptor : roots) {
-      obelisk::sim::StaticStateRootAttr policy =
+      obelisk::schedule::StaticStateRootAttr policy =
           analysis->getRoots().lookup(descriptor);
       llvm::errs() << "  root " << descriptor << " width=" << policy.getWidth()
                    << " direct=" << (policy.getDirect() ? "true" : "false")
@@ -71,7 +72,7 @@ public:
     llvm::sort(sites);
     for (uint64_t site : sites)
       llvm::errs() << "  nba-site " << site << "\n";
-    for (obelisk::sim::ComputeNBACommitAttr commit :
+    for (obelisk::schedule::ComputeNBACommitAttr commit :
          analysis->getOrderedNBACommits())
       llvm::errs() << "  nba-commit " << commit.getId()
                    << " descriptor=" << commit.getEffect().getDescriptor()

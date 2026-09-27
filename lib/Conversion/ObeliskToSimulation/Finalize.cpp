@@ -1,6 +1,8 @@
 //===- Finalize.cpp - Verify the executable simulation boundary ---------===//
 
 #include "Detail.h"
+#include "obelisk/Conversion/SimulationToSchedule.h"
+#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"

@@ -10,7 +10,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32, obelisk.debug.native_timing
+  schedule.native_scheduler = 3 : i32, obelisk.debug.native_timing
 } {
   obelisk_sim.design @state_read {
     obelisk_sim.scope.decl 0
@@ -80,7 +80,7 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32, obelisk.debug.native_timing
+  schedule.native_scheduler = 3 : i32, obelisk.debug.native_timing
 } {
   obelisk_sim.design @state_write {
     obelisk_sim.scope.decl 0
@@ -150,7 +150,7 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32, obelisk.debug.native_timing
+  schedule.native_scheduler = 3 : i32, obelisk.debug.native_timing
 } {
   obelisk_sim.design @recursive {
     obelisk_sim.scope.decl 0

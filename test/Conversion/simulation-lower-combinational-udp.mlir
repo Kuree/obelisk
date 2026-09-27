@@ -34,7 +34,7 @@ module {
         %a: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %b: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9200001 : i64,
-                    obelisk_sim.primitive_name = "udp_nonansi",
+                    schedule.primitive_name = "udp_nonansi",
                     obelisk_sim.propagation_delays = array<i64: 2, 3>,
                     obelisk_sim.udp_metadata = {
                       is_edge_sensitive = false,

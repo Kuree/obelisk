@@ -33,6 +33,8 @@ def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
   HelpText<"Emit executable obelisk_sim SSA MLIR">;
+def schedule_format_EQ : Joined<["--"], "schedule-format=">,
+  HelpText<"Schedule inspection format: mlir or json">;
 def emit_schedule : Flag<["-"], "emit-schedule">, Group<Action_Group>,
   HelpText<"Emit deterministic compute-graph and event-region diagnostics">;
 def c : Flag<["-"], "c">, Group<Action_Group>,

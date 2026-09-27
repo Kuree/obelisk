@@ -104,7 +104,7 @@ module {
 // CHECK-SAME: strength0 = 3 : i32
 // CHECK-SAME: strength1 = 5 : i32
 // CHECK: obelisk_sim.driver.drive
-// CHECK-SAME: obelisk_sim.defer_net_resolution
+// CHECK-SAME: schedule.defer_net_resolution
 // CHECK: obelisk_sim.driver.drive
 // CHECK: obelisk_sim.logic.constant true, false
 // CHECK: obelisk_sim.driver.drive

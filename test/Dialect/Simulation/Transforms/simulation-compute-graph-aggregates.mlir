@@ -34,7 +34,7 @@ module {
 
     // Packed fields use their declared packed offsets.
     // CHECK-LABEL: obelisk_sim.func @packed_payload
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 1, width = 4, dynamic = false
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 1, width = 4, dynamic = false
     obelisk_sim.func @packed_payload(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %record: !obelisk_sim.ref<!packed_record> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) -> !obelisk_sim.packed_array<3 : 0 x i1>
@@ -46,7 +46,7 @@ module {
 
     // Unpacked struct children occupy disjoint structural spans.
     // CHECK-LABEL: obelisk_sim.func @unpacked_valid
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 8, width = 1, dynamic = false
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 8, width = 1, dynamic = false
     obelisk_sim.func @unpacked_valid(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %record: !obelisk_sim.ref<!unpacked_record> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) -> i1

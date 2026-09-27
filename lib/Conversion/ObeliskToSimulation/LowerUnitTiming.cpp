@@ -1,6 +1,9 @@
 //===- LowerUnitTiming.cpp - Lower timing and event controls -----------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -244,20 +247,20 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
                         ValueRange operands, sim::EventRegionAttr resume = {}) {
     if (isa<sim::EventType>(watched.getType()))
       sim::SimSuspendEventOp::create(builder, location, watched, operands,
-                                     sim::ContinuationSiteAttr{}, resume,
+                                     schedule::ContinuationSiteAttr{}, resume,
                                      successor);
     else if (edge == sim::EdgeKind::Change) {
       auto suspend = sim::SimSuspendChangeOp::create(
-          builder, location, watched, operands, sim::ContinuationSiteAttr{},
-          resume, successor);
-      suspend->setAttr(sim::metadata::proceduralEventWait,
-                       builder.getUnitAttr());
+          builder, location, watched, operands,
+          schedule::ContinuationSiteAttr{}, resume, successor);
+      ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
     } else {
       auto suspend = sim::SimSuspendEdgeOp::create(
           builder, location, edge, watched, operands,
-          sim::ContinuationSiteAttr{}, resume, successor);
-      suspend->setAttr(sim::metadata::proceduralEventWait,
-                       builder.getUnitAttr());
+          schedule::ContinuationSiteAttr{}, resume, successor);
+      ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
     }
   };
   auto bindEventPrimary = [&](Value event,
@@ -312,10 +315,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
             observerResultAttrName,
             outlineBuilder.getI32IntegerAttr(
                 static_cast<uint32_t>(ObserverResult::Event))),
-        outlineBuilder.getNamedAttr("obelisk_sim.observer_width",
-                                    outlineBuilder.getI32IntegerAttr(1)),
-        outlineBuilder.getNamedAttr("obelisk_sim.observer_four_state",
-                                    outlineBuilder.getBoolAttr(false))};
+        ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
+            outlineBuilder.getI32IntegerAttr(1)),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::ObserverFourState>(
+            outlineBuilder.getBoolAttr(false))};
     sim::SimFuncOp evaluator = sim::SimFuncOp::create(
         outlineBuilder, location, identity,
         FunctionType::get(context,
@@ -336,7 +340,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     auto binding = sim::SimObserverBindOp::create(
         builder, location, sim::ObserverType::get(context, builder.getI1Type()),
         evaluator.getSymName(), ValueRange{event, event}, uint32_t{1});
-    binding->setAttr(observerEventPrimaryAttrName, builder.getUnitAttr());
+    ::obelisk::schedule::set<observerEventPrimaryAttrName>(
+        binding, builder.getUnitAttr());
     return binding.getResult();
   };
   auto evaluateInitial =
@@ -400,7 +405,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     llvm::append_range(values, continuationOperands);
     sim::SimSuspendObserveOp::create(
         builder, location, values, static_cast<uint32_t>(conditions.size()),
-        edges, conditionIndices, sim::ContinuationSiteAttr{},
+        edges, conditionIndices, schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr{}, continuation);
     return success();
   };
@@ -493,7 +498,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          ArrayRef<int32_t>{0}, schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Reactive),
           continuation);
@@ -598,7 +603,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          sim::ContinuationSiteAttr{},
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Reactive),
           continuation);
@@ -626,7 +631,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          sim::ContinuationSiteAttr{},
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(function.getContext(),
                                     sim::EventRegion::Reactive),
           continuation);
@@ -662,7 +667,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, values, 0,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{-1},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          continuation);
       return success();
     }
     if (!event.getHasIff()) {
@@ -720,7 +726,8 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          continuation);
       return success();
     }
     if (!isa<sim::RefType, sim::NetType>((*handle).getType()) ||
@@ -730,9 +737,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
     }
     auto suspend = sim::SimSuspendEdgeIffOp::create(
         builder, location, edge, *handle, *condition, continuationOperands,
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
-    suspend->setAttr(sim::metadata::proceduralEventWait,
-                     builder.getUnitAttr());
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+    ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+        suspend, builder.getUnitAttr());
     return success();
   }
 
@@ -795,8 +802,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   llvm::append_range(values, continuationOperands);
   auto suspend = sim::SimSuspendAnyOp::create(
       builder, location, values, builder.getDenseI32ArrayAttr(edges),
-      sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
-  suspend->setAttr(sim::metadata::proceduralEventWait, builder.getUnitAttr());
+      schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+      suspend, builder.getUnitAttr());
   return success();
 }
 
@@ -824,7 +832,7 @@ UnitLowering::lowerClockingEventMonitor(ArrayRef<Operation *> roots) {
   setCurrent(trigger);
   sim::SimEventTriggerOp::create(builder, location, event, Value{},
                                  builder.getBoolAttr(false),
-                                 sim::EventSiteAttr{}, UnitAttr{});
+                                 schedule::EventSiteAttr{}, UnitAttr{});
   cf::BranchOp::create(builder, location, wait);
   return success();
 }
@@ -953,20 +961,20 @@ UnitLowering::emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
       sim::SimSuspendObserveOp::create(
           waitBuilder, location, values, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          sim::ContinuationSiteAttr{}, reactive, successor);
+          schedule::ContinuationSiteAttr{}, reactive, successor);
       return success();
     }
     if (isa<sim::EventType>((*clock).getType()))
       sim::SimSuspendEventOp::create(waitBuilder, location, *clock, operands,
-                                     sim::ContinuationSiteAttr{}, reactive,
+                                     schedule::ContinuationSiteAttr{}, reactive,
                                      successor);
     else if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(waitBuilder, location, *clock, operands,
-                                      sim::ContinuationSiteAttr{}, reactive,
-                                      successor);
+                                      schedule::ContinuationSiteAttr{},
+                                      reactive, successor);
     else
       sim::SimSuspendEdgeOp::create(waitBuilder, location, edge, *clock,
-                                    operands, sim::ContinuationSiteAttr{},
+                                    operands, schedule::ContinuationSiteAttr{},
                                     reactive, successor);
     return success();
   };
@@ -1279,7 +1287,7 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
       // instead of rejecting the legal (and intentionally inert) process.
       setCurrent(waitBlock);
       sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
-                                       sim::ContinuationSiteAttr{},
+                                       schedule::ContinuationSiteAttr{},
                                        sim::EventRegionAttr{}, continuation);
       setCurrent(statementEnd);
       return success();
@@ -1290,22 +1298,23 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     if (dependencies.size() == 1) {
       auto suspend = sim::SimSuspendChangeOp::create(
           builder, location, dependencies.front(), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
-      suspend->setAttr(sim::metadata::proceduralEventWait,
-                       builder.getUnitAttr());
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          continuation);
+      ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
       if (control == topLevelWildcardControl)
-        suspend->setAttr(sim::metadata::topLevelWildcardWait,
-                         builder.getUnitAttr());
+        ::obelisk::schedule::set<schedule::metadata::topLevelWildcardWait>(
+            suspend, builder.getUnitAttr());
     } else {
       auto suspend = sim::SimSuspendAnyOp::create(
           builder, location, dependencies.getArrayRef(),
-          builder.getDenseI32ArrayAttr(edges), sim::ContinuationSiteAttr{},
+          builder.getDenseI32ArrayAttr(edges), schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr{}, continuation);
-      suspend->setAttr(sim::metadata::proceduralEventWait,
-                       builder.getUnitAttr());
+      ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
       if (control == topLevelWildcardControl)
-        suspend->setAttr(sim::metadata::topLevelWildcardWait,
-                         builder.getUnitAttr());
+        ::obelisk::schedule::set<schedule::metadata::topLevelWildcardWait>(
+            suspend, builder.getUnitAttr());
     }
     setCurrent(statementEnd);
     return success();
@@ -1328,8 +1337,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     if (failed(delay))
       return failure();
     sim::SimSuspendDelayOp::create(
-        builder, location, *delay, sim::TimingSiteAttr{}, ValueRange{},
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+        builder, location, *delay, schedule::TimingSiteAttr{}, ValueRange{},
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
   } else if (isa<semantic::SVOneStepDelayControlOp>(control)) {
     if (!children.empty()) {
       unsupported(control) << " (#1step inventory)";
@@ -1339,8 +1348,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
         builder, location, sim::TimeType::get(function.getContext()),
         builder.getI64IntegerAttr(1));
     sim::SimSuspendDelayOp::create(
-        builder, location, delay, sim::TimingSiteAttr{}, ValueRange{},
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+        builder, location, delay, schedule::TimingSiteAttr{}, ValueRange{},
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
   } else if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(control)) {
     if (failed(emitCycleDelaySuspend(cycle, continuation)))
       return failure();
@@ -1349,8 +1358,8 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     if (failed(emitEventSuspend(control, continuation)))
       return failure();
     if (control == topLevelAlwaysControl)
-      current->getTerminator()->setAttr(sim::metadata::repeatingAlwaysWait,
-                                        builder.getUnitAttr());
+      ::obelisk::schedule::set<schedule::metadata::repeatingAlwaysWait>(
+          current->getTerminator(), builder.getUnitAttr());
   } else {
     unsupported(control) << " (timing control)";
     return failure();
@@ -1492,7 +1501,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     if (!*truth) {
       setCurrent(suspendBlock);
       sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
-                                       sim::ContinuationSiteAttr{},
+                                       schedule::ContinuationSiteAttr{},
                                        sim::EventRegionAttr{}, bodyBlock);
     } else
       suspendBlock->erase();
@@ -1520,7 +1529,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     SmallVector<Value> values{*observer, *condition};
     sim::SimSuspendObserveOp::create(
         builder, location, values, 0, ArrayRef<int32_t>{0},
-        ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+        ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr{}, bodyBlock);
     setCurrent(bodyBlock);
     return lowerStatement(children[1]);
@@ -1536,7 +1545,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
                            ValueRange{}, suspendBlock, ValueRange{});
   setCurrent(suspendBlock);
   sim::SimSuspendLevelOp::create(builder, location, *watched, ValueRange{},
-                                 sim::ContinuationSiteAttr{},
+                                 schedule::ContinuationSiteAttr{},
                                  sim::EventRegionAttr{}, bodyBlock);
 
   setCurrent(bodyBlock);
@@ -1572,7 +1581,7 @@ UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
   }
   sim::SimEventTriggerOp::create(builder, location, *event, delay,
                                  builder.getBoolAttr(op.getIsNonblocking()),
-                                 sim::EventSiteAttr{}, UnitAttr{});
+                                 schedule::EventSiteAttr{}, UnitAttr{});
   return success();
 }
 

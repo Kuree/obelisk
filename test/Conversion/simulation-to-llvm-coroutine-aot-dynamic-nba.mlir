@@ -13,7 +13,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 2 : i32
+  schedule.native_scheduler = 2 : i32
 } {
   obelisk_sim.design @aot_dynamic_nba {
     obelisk_sim.scope.decl 0

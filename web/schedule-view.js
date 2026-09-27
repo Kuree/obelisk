@@ -1,6 +1,4 @@
-// Parser and renderer for `obelisk -emit-schedule`. The emitted graph is a
-// verified, versioned MLIR attribute, so a small balanced-delimiter reader is
-// enough here; regular expressions alone would break on nested effect attrs.
+// Renderer for the compiler-owned schedule JSON export.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -25,238 +23,38 @@ const EDGE_GROUPS = {
   deferred_activate: 'deferred',
 };
 
-function balancedEnd(text, start) {
-  const pairs = { '<': '>', '[': ']', '{': '}', '(': ')' };
-  const stack = [];
-  let quote = null;
-  let escaped = false;
-  for (let index = start; index < text.length; index++) {
-    const character = text[index];
-    if (quote) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === quote) quote = null;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      continue;
-    }
-    if (pairs[character]) stack.push(pairs[character]);
-    else if (stack.at(-1) === character) {
-      stack.pop();
-      if (stack.length === 0) return index;
+function prepareGraph(graph) {
+  const { nodes, regions } = graph;
+  let rank = 0;
+  const placed = new Set();
+  for (const region of regions) {
+    for (const group of region.groups) {
+      group.rank = rank++;
+      group.nodes = group.members.map((index) => nodes[index]).filter(Boolean);
+      for (const node of group.nodes) {
+        node.region = region.kind;
+        node.group = group;
+        placed.add(node.index);
+      }
     }
   }
-  return -1;
-}
-
-function splitTopLevel(text, delimiter = ',') {
-  const parts = [];
-  const pairs = { '<': '>', '[': ']', '{': '}', '(': ')' };
-  const stack = [];
-  let quote = null;
-  let escaped = false;
-  let start = 0;
-  for (let index = 0; index < text.length; index++) {
-    const character = text[index];
-    if (quote) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === quote) quote = null;
-      continue;
-    }
-    if (character === '"' || character === "'") quote = character;
-    else if (pairs[character]) stack.push(pairs[character]);
-    else if (stack.at(-1) === character) stack.pop();
-    else if (character === delimiter && stack.length === 0) {
-      parts.push(text.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  parts.push(text.slice(start).trim());
-  return parts.filter(Boolean);
-}
-
-function parseFields(text) {
-  const fields = new Map();
-  for (const part of splitTopLevel(text)) {
-    const equal = part.indexOf('=');
-    if (equal !== -1)
-      fields.set(part.slice(0, equal).trim(), part.slice(equal + 1).trim());
-  }
-  return fields;
-}
-
-function attributes(text, kinds) {
-  const wanted = new Set(Array.isArray(kinds) ? kinds : [kinds]);
-  const pattern = /#obelisk_sim\.([a-z_]+)</g;
-  const found = [];
-  for (const match of text.matchAll(pattern)) {
-    if (!wanted.has(match[1])) continue;
-    const open = match.index + match[0].length - 1;
-    const end = balancedEnd(text, open);
-    if (end === -1) throw new Error(`unterminated #obelisk_sim.${match[1]} attribute`);
-    found.push({ kind: match[1], start: match.index, end, body: text.slice(open + 1, end) });
-  }
-  return found;
-}
-
-function arrayNumbers(value = '[]') {
-  const body = value.trim().replace(/^\[/, '').replace(/\]$/, '');
-  if (!body.trim()) return [];
-  return splitTopLevel(body).map(Number).filter(Number.isFinite);
-}
-
-function number(fields, name, fallback = 0) {
-  const value = Number(fields.get(name));
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function word(fields, name, fallback = '') {
-  return fields.get(name)?.replace(/^@/, '').replace(/^"|"$/g, '') ?? fallback;
-}
-
-function countEffects(value = '[]') {
-  return attributes(value, 'effect').length;
-}
-
-function parseSourceLocations(text) {
-  const marker = /\bsource_locations\s*=\s*\[/.exec(text);
-  if (!marker) return new Map();
-  const open = marker.index + marker[0].length - 1;
-  const end = balancedEnd(text, open);
-  if (end === -1) throw new Error('unterminated schedule source location list');
-  const locations = new Map();
-  const entry = /#(\d+)\s*=\s*("(?:\\.|[^"\\])*"):(\d+):(\d+)/g;
-  for (const match of text.slice(open + 1, end).matchAll(entry)) {
-    let file;
-    try {
-      file = JSON.parse(match[2]);
-    } catch {
-      continue;
-    }
-    locations.set(Number(match[1]), {
-      file, line: Number(match[3]), column: Number(match[4]),
+  const unplaced = nodes.filter((node) => !placed.has(node.index));
+  if (unplaced.length) {
+    regions.push({
+      kind: 'unscheduled',
+      groups: unplaced.map((node) => ({
+        members: [node.index], nodes: [node], schedule: 'acyclic', feedback: 0, rank: rank++,
+      })),
     });
   }
-  return locations;
-}
-
-function parseNode(attribute, index) {
-  const fields = parseFields(attribute.body);
-  const node = { index, id: number(fields, 'id', index), type: attribute.kind };
-  if (attribute.kind === 'fragment') {
-    Object.assign(node, {
-      function: word(fields, 'function', '<anonymous>'),
-      block: number(fields, 'block'),
-      region: word(fields, 'region'),
-      action: word(fields, 'action'),
-      tier: word(fields, 'tier'),
-      cost: number(fields, 'cost'),
-      lane: number(fields, 'lane'),
-      twoState: word(fields, 'twoState') === 'true',
-      effects: countEffects(fields.get('effects')),
-    });
-  } else if (attribute.kind === 'nba_commit') {
-    Object.assign(node, {
-      slots: arrayNumbers(fields.get('slots')),
-      accumulatorSites: arrayNumbers(fields.get('accumulatorSites')),
-      frontierSites: arrayNumbers(fields.get('frontierSites')),
-      tier: 'generated',
-      action: 'commit',
-    });
-  } else {
-    Object.assign(node, {
-      sites: arrayNumbers(fields.get('sites')),
-      tier: 'generated',
-      action: 'commit',
-    });
-  }
-  return node;
-}
-
-function parseEdge(attribute) {
-  const fields = parseFields(attribute.body);
-  const resource = fields.get('resource') ?? '';
-  return {
-    source: number(fields, 'source', -1),
-    target: number(fields, 'target', -1),
-    kind: word(fields, 'kind', 'unknown'),
-    resource: resource.replace(/^</, '').replace(/>$/, ''),
-  };
-}
-
-function parseRegion(attribute) {
-  const fields = parseFields(attribute.body);
-  const groups = attributes(fields.get('groups') ?? '[]', 'group').map((group) => {
-    const groupFields = parseFields(group.body);
-    return {
-      members: arrayNumbers(groupFields.get('fragments')),
-      schedule: word(groupFields, 'schedule', 'acyclic'),
-      feedback: countEffects(groupFields.get('feedback')),
-    };
-  });
-  return { kind: word(fields, 'kind', 'unknown'), groups };
-}
-
-function scheduleName(text, graphStart, fallback) {
-  const prefix = text.slice(0, graphStart);
-  const matches = [...prefix.matchAll(/schedule\s+@(?:"([^"]+)"|([^\s]+))/g)];
-  const match = matches.at(-1);
-  return match?.[1] ?? match?.[2] ?? fallback;
+  return graph;
 }
 
 export function parseSchedules(text) {
-  const graphs = attributes(text, 'graph');
-  if (!graphs.length) throw new Error('schedule output contains no compute graph');
-
-  return graphs.map((graphAttribute, graphIndex) => {
-    const fields = parseFields(graphAttribute.body);
-    const nodeAttrs = attributes(fields.get('nodes') ?? '[]', [
-      'fragment', 'nba_commit', 'event_commit',
-    ]);
-    const nodes = nodeAttrs.map(parseNode);
-    const following = text.slice(
-      graphAttribute.end + 1,
-      graphs[graphIndex + 1]?.start ?? text.length,
-    );
-    const sourceLocations = parseSourceLocations(following);
-    for (const node of nodes) node.location = sourceLocations.get(node.id) ?? null;
-    const edges = attributes(fields.get('edges') ?? '[]', 'edge').map(parseEdge);
-    const regions = attributes(fields.get('regions') ?? '[]', 'region').map(parseRegion);
-    let rank = 0;
-    const placed = new Set();
-    for (const region of regions) {
-      for (const group of region.groups) {
-        group.rank = rank++;
-        group.nodes = group.members.map((index) => nodes[index]).filter(Boolean);
-        for (const node of group.nodes) {
-          node.region = region.kind;
-          node.group = group;
-          placed.add(node.index);
-        }
-      }
-    }
-    const unplaced = nodes.filter((node) => !placed.has(node.index));
-    if (unplaced.length) {
-      regions.push({
-        kind: 'unscheduled',
-        groups: unplaced.map((node) => ({
-          members: [node.index], nodes: [node], schedule: 'acyclic', feedback: 0, rank: rank++,
-        })),
-      });
-    }
-    return {
-      name: scheduleName(text, graphAttribute.start, `design-${graphIndex + 1}`),
-      version: number(fields, 'version'),
-      vpi: word(fields, 'vpi', 'off'),
-      workers: number(fields, 'workers', 1),
-      nodes,
-      edges,
-      regions,
-    };
-  });
+  const data = JSON.parse(text);
+  if (data.schema !== 'schedule' || data.version !== 1 || !Array.isArray(data.graphs))
+    throw new Error('unsupported schedule export schema');
+  return data.graphs.map(prepareGraph);
 }
 
 function svg(tag, attributes = {}, text = '') {

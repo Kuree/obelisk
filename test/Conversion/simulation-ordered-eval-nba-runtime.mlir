@@ -13,7 +13,7 @@
 !ref = !obelisk_sim.ref<!bit>
 !wide = !obelisk_sim.logic<65>
 !wref = !obelisk_sim.ref<!wide>
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native_scheduler = 3 : i32} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @ordered {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : !bit design
@@ -53,7 +53,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       cf.br ^wait
     ^wait:
       %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clk : !ref -> !bit
       %new = obelisk_sim.logic.unary bit_not %old : (!bit) -> !bit
@@ -63,7 +63,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @forward(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %clk: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %src: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %clk to ^copy {site = #obelisk_sim.continuation<id = 2>} : !ref
+      obelisk_sim.suspend.change %clk to ^copy {site = #schedule.continuation<id = 2>} : !ref
     ^copy:
       %value = obelisk_sim.ref.load %clk : !ref -> !bit
       obelisk_sim.ref.store %value to %src : !bit, !ref
@@ -72,7 +72,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @writer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %src: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %kick: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}, %data: !wref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %src to ^write {site = #obelisk_sim.continuation<id = 3>} : !ref
+      obelisk_sim.suspend.change %src to ^write {site = #schedule.continuation<id = 3>} : !ref
     ^write:
       %value = obelisk_sim.ref.load %src : !ref -> !bit
       %target = obelisk_sim.ref.extract %data from 0 : !wref -> !ref
@@ -83,7 +83,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @reset(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %kick: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}, %src: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.any %kick edges [1] to ^reset {site = #obelisk_sim.continuation<id = 4>} : !ref
+      obelisk_sim.suspend.any %kick edges [1] to ^reset {site = #schedule.continuation<id = 4>} : !ref
     ^reset:
       %zero = obelisk_sim.logic.constant false, false : !bit
       obelisk_sim.ref.store %zero to %src : !bit, !ref
@@ -92,7 +92,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     obelisk_sim.func @edge(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !wref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}, %seen: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 6 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.any %data edges [1] to ^edge {site = #obelisk_sim.continuation<id = 5>} : !wref
+      obelisk_sim.suspend.any %data edges [1] to ^edge {site = #schedule.continuation<id = 5>} : !wref
     ^edge:
       %one = obelisk_sim.logic.constant true, false : !bit
       obelisk_sim.ref.store %one to %seen : !bit, !ref
@@ -100,7 +100,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
     obelisk_sim.func @check(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %data: !wref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}, %seen: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 7 : i64} {
       %delay = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %delay to ^check {site = #obelisk_sim.continuation<id = 6>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^check {site = #schedule.continuation<id = 6>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^check:
       %value = obelisk_sim.ref.load %data : !wref -> !wide
       %edge = obelisk_sim.ref.load %seen : !ref -> !bit

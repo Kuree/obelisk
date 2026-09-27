@@ -31,7 +31,7 @@ module {
 // CHECK-LABEL: obelisk_sim.func private @unit_0(
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-NOT: obelisk_sim.program_owner_id
+// CHECK-NOT: schedule.program_owner_id
 // CHECK: obelisk_sim.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK-NOT: obelisk.sv.

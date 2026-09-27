@@ -10,7 +10,7 @@
 // initial process runs.
 
 module {
-  // NO-SUPERSTEP-NOT: obelisk_sim.static_superstep
+  // NO-SUPERSTEP-NOT: schedule.static_superstep
   // WORKER-REMARK: remark: static superstep not planned: static supersteps require one worker
   obelisk_sim.design @startup_order {
     obelisk_sim.code_unit.decl 9700001 in 0 root_initializer
@@ -25,19 +25,19 @@ module {
         hierarchy "z_port_input" {internal}
     obelisk_sim.scope.decl 0
 
-    // SUPERSTEP: obelisk_sim.static_superstep = #obelisk_sim.static_superstep<version = 1
+    // SUPERSTEP: schedule.static_superstep = #schedule.static_superstep<version = 1
     // SUPERSTEP-SAME: actors = [@root, @z_always, @a_initial, @z_port_initialize, @z_port_input]
-    // CHECK: compute_graph = #obelisk_sim.graph<
+    // CHECK: compute_graph = #schedule.graph<
     // CHECK-SAME: nodes = [
-    // CHECK-SAME: #obelisk_sim.fragment<id = [[INITIAL:[0-9]+]], function = @a_initial
-    // CHECK-SAME: #obelisk_sim.fragment<id = [[ROOT:[0-9]+]], function = @root
-    // CHECK-SAME: #obelisk_sim.fragment<id = [[ALWAYS:[0-9]+]], function = @z_always
-    // CHECK-SAME: #obelisk_sim.fragment<id = [[PORT_INITIALIZE:[0-9]+]], function = @z_port_initialize
-    // CHECK-SAME: #obelisk_sim.fragment<id = [[PORT_INPUT:[0-9]+]], function = @z_port_input
+    // CHECK-SAME: #schedule.fragment<id = [[INITIAL:[0-9]+]], function = @a_initial
+    // CHECK-SAME: #schedule.fragment<id = [[ROOT:[0-9]+]], function = @root
+    // CHECK-SAME: #schedule.fragment<id = [[ALWAYS:[0-9]+]], function = @z_always
+    // CHECK-SAME: #schedule.fragment<id = [[PORT_INITIALIZE:[0-9]+]], function = @z_port_initialize
+    // CHECK-SAME: #schedule.fragment<id = [[PORT_INPUT:[0-9]+]], function = @z_port_input
     // CHECK-SAME: kind = spawn
-    // CHECK-SAME: #obelisk_sim.edge<source = [[ALWAYS]], target = [[INITIAL]], kind = process_order>
-    // CHECK-SAME: #obelisk_sim.edge<source = [[PORT_INITIALIZE]], target = [[INITIAL]], kind = process_order>
-    // CHECK-SAME: #obelisk_sim.edge<source = [[PORT_INPUT]], target = [[INITIAL]], kind = process_order>
+    // CHECK-SAME: #schedule.edge<source = [[ALWAYS]], target = [[INITIAL]], kind = process_order>
+    // CHECK-SAME: #schedule.edge<source = [[PORT_INITIALIZE]], target = [[INITIAL]], kind = process_order>
+    // CHECK-SAME: #schedule.edge<source = [[PORT_INPUT]], target = [[INITIAL]], kind = process_order>
     obelisk_sim.func @root(
         %ctx: !obelisk_sim.context
             {obelisk_sim.capture_kind = 0 : i32})

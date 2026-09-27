@@ -7,6 +7,7 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONVPIANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONVPIANALYSIS_H
 
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 namespace obelisk::sim {
@@ -17,18 +18,18 @@ namespace obelisk::analysis {
 
 /// Semantic VPI capabilities for one simulation design.
 ///
-/// Consumers ask capability questions instead of interpreting ComputeVPIMode
-/// themselves. This keeps native lowering, bytecode encoding, and schedule
-/// specialization on the same policy.
+/// Consumers ask capability questions instead of interpreting
+/// schedule::ComputeVPIMode themselves. This keeps native lowering, bytecode
+/// encoding, and schedule specialization on the same policy.
 class SimulationVPIAnalysis {
 public:
   static SimulationVPIAnalysis compute(sim::SimDesignOp design);
-  static SimulationVPIAnalysis forMode(sim::ComputeVPIMode mode);
+  static SimulationVPIAnalysis forMode(schedule::ComputeVPIMode mode);
 
   bool hasComputeGraph() const { return computeGraph; }
-  sim::ComputeVPIMode getMode() const { return mode; }
+  schedule::ComputeVPIMode getMode() const { return mode; }
 
-  sim::ComputeObservabilityKind getObservability() const;
+  schedule::ComputeObservabilityKind getObservability() const;
   bool allowsRead() const;
   bool allowsWrite() const;
 
@@ -39,7 +40,7 @@ public:
   }
 
 private:
-  sim::ComputeVPIMode mode = sim::ComputeVPIMode::Off;
+  schedule::ComputeVPIMode mode = schedule::ComputeVPIMode::Off;
   bool computeGraph = false;
 };
 

@@ -4,6 +4,8 @@
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
 #include "SimulationProcessRuntimeABI.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
 
 #include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 
@@ -71,10 +73,10 @@ inline constexpr llvm::StringLiteral nativeMethodArgumentRootsAttr =
     "obelisk.native.method_argument_roots";
 inline constexpr llvm::StringLiteral nativeTransferredReferencesAttr =
     "obelisk.native.transferred_references";
-inline constexpr llvm::StringLiteral assumeCleanSpecializationAttr =
-    "obelisk.native.assume_clean_specialization";
-inline constexpr llvm::StringLiteral cleanEvalBodyAttr =
-    "obelisk.native.clean_eval_body";
+inline constexpr auto assumeCleanSpecializationAttr =
+    ::obelisk::schedule::Field::NativeAssumeCleanSpecialization;
+inline constexpr auto cleanEvalBodyAttr =
+    ::obelisk::schedule::Field::NativeCleanEvalBody;
 
 struct NativeStateLayout;
 NativeStateLayout makeCleanEvalStateLayout(const NativeStateLayout &layout);
@@ -88,10 +90,10 @@ inline constexpr llvm::StringLiteral evalCheckpointMutableStateName =
     "__obelisk_eval_checkpoint_mutable_state_v1";
 inline constexpr llvm::StringLiteral evalDispatchName =
     "__obelisk_eval_dispatch_v1";
-inline constexpr llvm::StringLiteral evalRuntimeNBARequiredAttr =
-    "obelisk.eval.runtime_nba_required";
-inline constexpr llvm::StringLiteral evalRuntimeNBAFallbackAttr =
-    "obelisk.eval.runtime_nba_fallback";
+inline constexpr auto evalRuntimeNBARequiredAttr =
+    ::obelisk::schedule::Field::EvalRuntimeNbaRequired;
+inline constexpr auto evalRuntimeNBAFallbackAttr =
+    ::obelisk::schedule::Field::EvalRuntimeNbaFallback;
 
 enum class NativeReturnLowering {
   None,
@@ -130,7 +132,8 @@ bool emitDirectDynamicPackedStore(mlir::ConversionPatternRewriter &rewriter,
                                   mlir::Value value, mlir::Value unknown,
                                   const NativeStateLayout *layout,
                                   bool assumeClean, bool continuous,
-                                  bool twoState, mlir::Attribute sourceOwner);
+                                  bool twoState,
+                                  schedule::SourceOwnerAttr sourceOwner);
 
 /// Compiler-side field indices for obelisk_rt_native_schedule_plan. Keep all
 /// LLVM literal construction and aggregate access tied to one named layout.
@@ -398,7 +401,7 @@ void notifySignal(
     mlir::Value handle, uint64_t width, mlir::Value oldValue,
     mlir::Value oldUnknown, mlir::Value newValue, mlir::Value newUnknown,
     std::optional<DirectStaticStateRange> directRange = std::nullopt,
-    mlir::Attribute sourceOwner = {});
+    schedule::SourceOwnerAttr sourceOwner = {});
 mlir::LogicalResult
 insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
 mlir::LogicalResult

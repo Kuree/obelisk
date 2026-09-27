@@ -568,7 +568,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.pass
 // CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch.71(
 // CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "fail", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
@@ -603,7 +603,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.101.fail
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_branch.101(
 // CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
@@ -638,7 +638,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.131.fail
 // CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_eos_branch.131(
 // CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
@@ -670,9 +670,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // age, oldest first.
 // CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos_report.171.weak(
 // CHECK-SAME: obelisk_sim.concurrent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_report
+// CHECK-SAME: schedule.concurrent_report
 // CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos.171.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-2: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK-COUNT-2: obelisk_sim.spawn @unit_5.$concurrent_eos_report.171.weak
@@ -701,9 +701,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // owns one weak EOS completion.
 // CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos_report.211.weak(
 // CHECK-SAME: obelisk_sim.concurrent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_report
+// CHECK-SAME: schedule.concurrent_report
 // CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos.211.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-1: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK-COUNT-1: obelisk_sim.spawn @unit_6.$concurrent_eos_report.211.weak
@@ -736,7 +736,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: @unit_7.$concurrent_eos_branch_report.251.fail
 // CHECK-LABEL: obelisk_sim.func private @unit_7.$concurrent_eos_branch.251(
 // CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK-COUNT-5: obelisk_sim.ref.load
 // CHECK-NOT: obelisk_sim.ref.load
 // CHECK-COUNT-2: obelisk_sim.spawn @unit_7.$concurrent_eos_branch_report.251.pass

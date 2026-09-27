@@ -13,16 +13,16 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   obelisk_sim.design @design attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
-      nodes = [#obelisk_sim.fragment<id = 0, function = @__obelisk_root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>],
+      nodes = [#schedule.fragment<id = 0, function = @__obelisk_root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>],
       edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = [#obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>]>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>
+        #schedule.region<kind = active, groups = [#schedule.group<fragments = [0], schedule = acyclic, feedback = []>]>,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>
       ]>,
     time_precision_fs = 1000000 : i64
   } {
@@ -36,7 +36,7 @@ module attributes {
       domain = 0 : i32,
       effect_summary = [],
       entry_kind = 0 : i32,
-      fragment_abi = #obelisk_sim.fragment_abi<version = 1, fragments = [0]>,
+      fragment_abi = #schedule.fragment_abi<version = 1, fragments = [0]>,
       home_region = 2 : i32
     } {
       obelisk_sim.return

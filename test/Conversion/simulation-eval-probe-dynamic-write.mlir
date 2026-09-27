@@ -1,6 +1,6 @@
 // RUN: obelisk-opt --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' %s | FileCheck %s
 
-// CHECK: module attributes {{.*}}obelisk.eval.generated
+// CHECK: module attributes {{.*}}schedule.eval.generated
 // CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
 
 // A dynamic write may be omitted from a predicate if its entire root is
@@ -9,7 +9,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @probe_alias {
     obelisk_sim.scope.decl 0

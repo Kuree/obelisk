@@ -1,6 +1,7 @@
 //===- SimulationManagedCoverageLowering.cpp - Covergroup patterns ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -184,7 +185,9 @@ public:
     // otherwise closed hot body; ordinary coroutine code keeps the defensive
     // status check below.
     auto function = op->getParentOfType<sim::SimFuncOp>();
-    if (!function || !function->hasAttr("obelisk.eval.raw_captures"))
+    if (!function ||
+        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+            function))
       reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
     return success();

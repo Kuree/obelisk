@@ -6,21 +6,21 @@
 
 module {
   obelisk_sim.design @native_region attributes {
-      obelisk.nba.transient_observable = array<i64>,
-      compute_graph = #obelisk_sim.graph<version = 1, vpi = off, workers = 1,
-        nodes = [#obelisk_sim.nba_commit<id = 7, slots = [],
+      schedule.nba.transient_observable = array<i64>,
+      compute_graph = #schedule.graph<version = 1, vpi = off, workers = 1,
+        nodes = [#schedule.nba_commit<id = 7, slots = [],
           accumulatorSites = [0, 1], frontierSites = [],
           effect = <effect = write, resource = storage, target = descriptor,
             descriptor = 0, formal = 0, low = 0, width = 8, dynamic = false,
             deferred = false, trigger = none>>],
         edges = [], regions = [
-          #obelisk_sim.region<kind = active, groups = []>,
-          #obelisk_sim.region<kind = nba, groups = [
-            #obelisk_sim.group<fragments = [7], schedule = acyclic,
+          #schedule.region<kind = active, groups = []>,
+          #schedule.region<kind = nba, groups = [
+            #schedule.group<fragments = [7], schedule = acyclic,
                                feedback = []>]>,
-          #obelisk_sim.region<kind = observed, groups = []>,
-          #obelisk_sim.region<kind = reactive, groups = []>,
-          #obelisk_sim.region<kind = postponed, groups = []>]>} {
+          #schedule.region<kind = observed, groups = []>,
+          #schedule.region<kind = reactive, groups = []>,
+          #schedule.region<kind = postponed, groups = []>]>} {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 always hierarchy "native_region.region"
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
@@ -36,7 +36,7 @@ module {
            obelisk_sim.descriptor_id = 1 : i64})
         attributes {entry_kind = 3 : i32,
                     code_unit_id = 1 : i64,
-                    obelisk.native.region_body} {
+                    schedule.native.region_body} {
       %initial = arith.constant 0 : i32
       cf.br ^wait(%initial : i32)
     ^wait(%carried: i32):
@@ -46,7 +46,7 @@ module {
       %first = obelisk_sim.logic.constant 1 : i8, 0 : i8 :
           !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %first to %target {
-        site = #obelisk_sim.nba_site<id = 0, commit = 7,
+        site = #schedule.nba_site<id = 0, commit = 7,
           storage = root_accumulator>
       } : (!obelisk_sim.logic<8>,
            !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
@@ -57,7 +57,7 @@ module {
       %last = obelisk_sim.logic.constant 2 : i8, 0 : i8 :
           !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %last to %target {
-        site = #obelisk_sim.nba_site<id = 1, commit = 7,
+        site = #schedule.nba_site<id = 1, commit = 7,
           storage = root_accumulator>
       } : (!obelisk_sim.logic<8>,
            !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()

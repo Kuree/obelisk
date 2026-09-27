@@ -117,7 +117,7 @@ module {
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT1]] : !obelisk_sim.event), ^{{.*}}
 // The additional iff remains a separate observer over the selected virtual
 // interface and gates the published clocking event.
-// CHECK: obelisk_sim.observer.bind {{.*}}obelisk_sim.event_primary
+// CHECK: obelisk_sim.observer.bind {{.*}}schedule.event_primary
 // CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
 // CHECK-SAME: resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

@@ -10,17 +10,17 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=PERIODIC
-// RUN: sed 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' %s \
+// RUN: sed 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' %s \
 // RUN:   | obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=TWO-STATE
-// RUN: sed -e 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' \
-// RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {obelisk.eval.inductive_two_state, entry_kind = 1 : i32/' %s \
+// RUN: sed -e 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' \
+// RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {schedule.eval.inductive_two_state, entry_kind = 1 : i32/' %s \
 // RUN:   | obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=TWO-STATE-STAGE
-// RUN: sed -e 's/obelisk.native_scheduler = 2/obelisk.native_scheduler = 3/' \
-// RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {obelisk.eval.selected_two_state, entry_kind = 1 : i32/' %s \
+// RUN: sed -e 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' \
+// RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {schedule.eval.selected_two_state, entry_kind = 1 : i32/' %s \
 // RUN:   | obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=SELECTED-STAGE
@@ -34,7 +34,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 2 : i32
+  schedule.native_scheduler = 2 : i32
 } {
   obelisk_sim.design @aot_nba {
     obelisk_sim.scope.decl 0
@@ -106,7 +106,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.change %source to ^resume
-          {site = #obelisk_sim.continuation<id = 1>} :
+          {site = #schedule.continuation<id = 1>} :
           !obelisk_sim.ref<!obelisk_sim.logic<8>>
     ^resume:
       cf.br ^wait
@@ -122,8 +122,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 3
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 2>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 2>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -144,8 +144,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 2
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 3>,
-           timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+          {site = #schedule.continuation<id = 3>,
+           timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -206,8 +206,8 @@ module attributes {
 // NBA specialization follows call-site intent across generated coordinator
 // variants; lowering consumes the marker attributes instead of keying on
 // coordinator symbol names.
-// TWO-STATE-NOT: obelisk.eval.use_fast_two_state_nba
-// TWO-STATE-NOT: obelisk.eval.use_canonical_two_state_nba
+// TWO-STATE-NOT: schedule.eval.use_fast_two_state_nba
+// TWO-STATE-NOT: schedule.eval.use_canonical_two_state_nba
 // Generated spawns are context-bound, so process construction reuses the
 // immutable design image validated by context creation instead of reparsing
 // it once per process.

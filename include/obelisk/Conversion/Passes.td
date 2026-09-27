@@ -275,4 +275,63 @@ def ConvertObeliskSimProcessesToLLVMCoroutinesPass
   ];
 }
 
+def ObeliskSimExtractPeriodicClocksPass
+    : Pass<"obelisk-sim-extract-periodic-clocks", "obelisk::sim::SimDesignOp"> {
+  let summary = "Extract private toggle clocks from uniform periodic processes";
+  let description = [{
+    Replaces equal positive constant delays in a singleton, nonterminating
+    process with waits on a private periodic clock. All original assignments,
+    including NBA publication and initialization, remain in the source process.
+    Runs before suspension threading and persistent compute-graph construction.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+  let options = [
+    Option<"vpi", "vpi", "std::string", "\"off\"",
+           "VPI observability mode: off, read, or full">
+  ];
+}
+
+def ObeliskSimMaterializeClockedControlPass
+    : Pass<"obelisk-sim-materialize-clocked-control",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Make singleton initial clock-control state explicit";
+  let description = [{
+    Coalesces same-edge waits in a statically spawned initial process into one
+    dispatch boundary. Scalar continuation operands and the resume phase live
+    in private design storage shared by native evaluation and coroutine fallback.
+    Startup side effects remain in the canonical process entry.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+}
+
+def ObeliskSimBuildComputeGraphPass
+    : Pass<"obelisk-sim-build-compute-graph", "obelisk::sim::SimDesignOp"> {
+  let summary = "Derive descriptor-range summaries and a deterministic schedule";
+  let description = [{
+    Propagates stable descriptor provenance through SSA and CFG edges, computes
+    interprocedural bit-range mod/ref summaries, assigns fixed continuation,
+    timing, and NBA sites, and derives the late fragment compute graph. The
+    graph is diagnostic compiler metadata, not the primary simulation IR.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+  let options = [
+    Option<"workers", "workers", "uint32_t", "1",
+           "Number of generated static worker lanes">,
+    Option<"vpi", "vpi", "std::string", "\"off\"",
+           "VPI observability mode: off, read, or full">
+  ];
+}
+
 #endif // OBELISK_CONVERSION_PASSES_TD

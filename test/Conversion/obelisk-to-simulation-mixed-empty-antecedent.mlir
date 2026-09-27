@@ -337,7 +337,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // epoch. It clears all three temporal cells and increments the epoch so queued
 // live/EOS reports are suppressed.
 // CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_cancel.
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK-COUNT-3: obelisk_sim.ref.store {{%.*}} to %arg{{[4-6]}}
 // CHECK: obelisk_sim.ref.load %arg7
 // CHECK: arith.addi

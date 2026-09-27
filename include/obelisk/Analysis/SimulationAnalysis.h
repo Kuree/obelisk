@@ -3,6 +3,8 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONANALYSIS_H
 
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 #include "mlir/IR/Value.h"
@@ -25,7 +27,8 @@ namespace obelisk::analysis {
 /// Absence from a map means no fact has reached the value; a present unknown
 /// fact means analysis proved that the value cannot retain concrete identity.
 struct DescriptorProvenance {
-  sim::ComputeResourceKind resource = sim::ComputeResourceKind::Unknown;
+  schedule::ComputeResourceKind resource =
+      schedule::ComputeResourceKind::Unknown;
   std::optional<uint64_t> descriptor;
   std::optional<unsigned> formal;
   uint64_t low = 0;
@@ -60,7 +63,7 @@ private:
 /// into one old-to-final transition. IEEE 1800-2017 4.6(b) performs each NBA
 /// in execution order and 9.4.2 detects an event on each resulting update, so
 /// a merge is sound only for a root whose intermediate values nothing can
-/// observe. The design's sim::metadata::nbaTransientObservable records the
+/// observe. The design's schedule::metadata::nbaTransientObservable records the
 /// observable roots; without it every root is treated as observable.
 class NBAMergeSafety {
 public:

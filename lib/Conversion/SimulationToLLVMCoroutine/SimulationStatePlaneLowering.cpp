@@ -1,6 +1,9 @@
 //===- SimulationStatePlaneLowering.cpp - Native state planes --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "obelisk/Runtime/Runtime.h"
@@ -23,7 +26,7 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
                   Value handle, uint64_t width, Value oldValue,
                   Value oldUnknown, Value newValue, Value newUnknown,
                   std::optional<DirectStaticStateRange> directRange,
-                  Attribute sourceOwner) {
+                  schedule::SourceOwnerAttr sourceOwner) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
@@ -71,7 +74,8 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
             llvmConstant(builder, location, i64, width), oldValueScalar,
             oldUnknownScalar, newValueScalar, newUnknownScalar});
     if (sourceOwner)
-      transition->setAttr(sim::metadata::evalSourceOwner, sourceOwner);
+      ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
+          transition, sourceOwner);
     cf::BranchOp::create(builder, location, continuation);
     builder.setInsertionPointToStart(continuation);
     return;
@@ -91,7 +95,8 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
                  save(oldValue), save(oldUnknown), save(newValue),
                  save(newUnknown)});
   if (sourceOwner)
-    transition->setAttr(sim::metadata::evalSourceOwner, sourceOwner);
+    ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(transition,
+                                                                  sourceOwner);
 }
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,
@@ -646,7 +651,8 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
                                   Value unknown,
                                   const NativeStateLayout *layout,
                                   bool assumeClean, bool continuous,
-                                  bool twoState, Attribute sourceOwner) {
+                                  bool twoState,
+                                  schedule::SourceOwnerAttr sourceOwner) {
   auto inputType = dyn_cast<IntegerType>(value.getType());
   if (!inputType || !layout || !layout->transitionHandlesExact)
     return false;

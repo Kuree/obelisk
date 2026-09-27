@@ -99,8 +99,8 @@ module attributes {
     obelisk_sim.func private @shared_observer(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
         attributes {entry_kind = 14 : i32, code_unit_id = 9000018 : i64,
-                    obelisk_sim.observer_width = 1 : i32,
-                    obelisk_sim.observer_four_state = false} {
+                    schedule.observer_width = 1 : i32,
+                    schedule.observer_four_state = false} {
       %false = arith.constant false
       obelisk_sim.return %false : i1
     }
@@ -141,7 +141,7 @@ module attributes {
         attributes {entry_kind = 1 : i32, code_unit_id = 9000005 : i64} {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^second
-          {site = #obelisk_sim.continuation<id = 4294967295>}
+          {site = #schedule.continuation<id = 4294967295>}
     ^second:
       obelisk_sim.suspend.delay %delay to ^done
     ^done:

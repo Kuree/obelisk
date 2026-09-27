@@ -99,13 +99,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_abort.11(
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-SAME: obelisk_sim.concurrent_abort
-// CHECK-SAME: obelisk_sim.detached_controls
+// CHECK-SAME: schedule.concurrent_abort
+// CHECK-SAME: schedule.detached_controls
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
-// CHECK-SAME: obelisk_sim.concurrent_abort_level_true
 // CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: schedule.concurrent_abort_level_true
 // CHECK: arith.andi
 // CHECK: cf.cond_br
 // CHECK: obelisk_sim.spawn @[[ASYNC_PASS]]
@@ -132,7 +132,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // then tears all attempts down. This callback is absent from accept_on above.
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_abort.31(
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-SAME: obelisk_sim.concurrent_abort
+// CHECK-SAME: schedule.concurrent_abort
 // CHECK: obelisk_sim.observer.bind
 // CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
 // CHECK: obelisk_sim.suspend.observe
@@ -152,8 +152,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Both observer evaluators read the global Preponed snapshot, never a raw
 // current value that may have changed later in the time slot.
 // CHECK-LABEL: obelisk_sim.func private @observer_
-// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK-SAME: schedule.concurrent_abort_observer
 // CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1
 // CHECK-LABEL: obelisk_sim.func private @observer_
-// CHECK-SAME: obelisk_sim.concurrent_abort_observer
+// CHECK-SAME: schedule.concurrent_abort_observer
 // CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1

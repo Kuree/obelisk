@@ -17,8 +17,8 @@ module pla_async_lowering;
 endmodule
 
 // CHECK-LABEL: obelisk_sim.func private @{{.*fork.*}}(
-// CHECK-SAME: obelisk_sim.detached_controls
-// CHECK-SAME: obelisk_sim.prime_on_spawn
+// CHECK-SAME: schedule.detached_controls
+// CHECK-SAME: schedule.prime_on_spawn
 // CHECK: cf.br ^[[WAIT:[a-zA-Z0-9_]+]]
 // CHECK: ^[[WAIT]]:
 // CHECK: obelisk_sim.suspend.any %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}} edges [0, 0, 0]

@@ -11,33 +11,30 @@ const { parseSchedules, renderSchedules } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 );
 
-const schedule = `schedule @test #obelisk_sim.graph<
-  version = 1, vpi = read, workers = 2,
-  nodes = [
-    #obelisk_sim.fragment<id = 0, function = @root, block = 0,
-      region = active, action = suspend_edge, tier = native, cost = 7,
-      lane = 1, twoState = true,
-      effects = [#obelisk_sim.effect<effect = watch, resource = net>]>,
-    #obelisk_sim.nba_commit<id = 1, slots = [2, 3], accumulatorSites = [4],
-      frontierSites = [], effect = <effect = write, resource = storage>>,
-    #obelisk_sim.event_commit<id = 2, sites = [5],
-      effect = <effect = trigger, resource = event>>],
-  edges = [
-    #obelisk_sim.edge<source = 0, target = 1, kind = nba_stage,
-      resource = <effect = nba, resource = storage>>,
-    #obelisk_sim.edge<source = 0, target = 2, kind = deferred_stage,
-      resource = <effect = trigger, resource = event>>],
-  regions = [
-    #obelisk_sim.region<kind = active, groups = [
-      #obelisk_sim.group<fragments = [0], schedule = convergence,
-        feedback = [#obelisk_sim.effect<effect = drive, resource = net>]>]>,
-    #obelisk_sim.region<kind = nba, groups = [
-      #obelisk_sim.group<fragments = [1], schedule = acyclic, feedback = []>]>,
-    #obelisk_sim.region<kind = observed, groups = []>,
-    #obelisk_sim.region<kind = reactive, groups = [
-      #obelisk_sim.group<fragments = [2], schedule = acyclic, feedback = []>]>,
-    #obelisk_sim.region<kind = postponed, groups = []>]>
-  source_locations = [#0 = "design.sv":7:3, #2 = "inc/worker.sv":11:5]`;
+const schedule = JSON.stringify({ schema: 'schedule', version: 1, graphs: [{
+  name: 'test', version: 1, vpi: 'read', workers: 2,
+  nodes: [
+    { index: 0, id: 0, type: 'fragment', function: 'root', block: 0,
+      region: 'active', action: 'suspend_edge', tier: 'native', cost: '7',
+      lane: 1, twoState: true, effects: 1,
+      location: { file: 'design.sv', line: 7, column: 3 } },
+    { index: 1, id: 1, type: 'nba_commit', slots: [2, 3], accumulatorSites: [4],
+      frontierSites: [], tier: 'generated', action: 'commit', location: null },
+    { index: 2, id: 2, type: 'event_commit', sites: [5], tier: 'generated',
+      action: 'commit', location: { file: 'inc/worker.sv', line: 11, column: 5 } },
+  ],
+  edges: [
+    { source: 0, target: 1, kind: 'nba_stage', resource: 'effect = nba, resource = storage' },
+    { source: 0, target: 2, kind: 'deferred_stage', resource: 'effect = trigger, resource = event' },
+  ],
+  regions: [
+    { kind: 'active', groups: [{ members: [0], schedule: 'convergence', feedback: 1 }] },
+    { kind: 'nba', groups: [{ members: [1], schedule: 'acyclic', feedback: 0 }] },
+    { kind: 'observed', groups: [] },
+    { kind: 'reactive', groups: [{ members: [2], schedule: 'acyclic', feedback: 0 }] },
+    { kind: 'postponed', groups: [] },
+  ],
+}] });
 
 const [graph] = parseSchedules(schedule);
 assert.equal(graph.name, 'test');
@@ -55,7 +52,7 @@ assert.deepEqual(graph.edges.map((edge) => edge.kind), ['nba_stage', 'deferred_s
 assert.deepEqual(graph.regions.map((region) => region.groups.length), [1, 1, 0, 1, 0]);
 assert.equal(graph.regions[0].groups[0].feedback, 1);
 
-// Keep this list in lockstep with SimulationEnums.td. Together with all node,
+// Keep this list in lockstep with ScheduleEnums.td. Together with all node,
 // tier, group, and region forms below, this covers the complete graph schema
 // emitted by `-emit-schedule`, rather than only the common counter shape.
 const actions = [
@@ -68,37 +65,35 @@ const edgeKinds = [
   'nba_activate', 'conflict', 'deferred_stage', 'deferred_activate',
 ];
 const resourceEdges = new Set(edgeKinds.slice(3));
-const fragments = actions.map((action, id) =>
-  `#obelisk_sim.fragment<id = ${id}, function = @fragment_${id}, block = ${id},
-    region = active, action = ${action}, tier = ${['native', 'bytecode', 'generated'][id % 3]},
-    cost = ${id + 1}, lane = ${id % 2}, twoState = ${id % 2 === 0}, effects = []>`,
-);
-const edges = edgeKinds.map((kind, index) =>
-  `#obelisk_sim.edge<source = ${index}, target = ${index + 1}, kind = ${kind}${
-    resourceEdges.has(kind) ? ', resource = <effect = drive, resource = net>' : ''}>`,
-);
-const completeSchedule = `schedule @complete #obelisk_sim.graph<
-  version = 1, vpi = full, workers = 2,
-  nodes = [${fragments.join(',')},
-    #obelisk_sim.nba_commit<id = 12, slots = [0], accumulatorSites = [],
-      frontierSites = [], effect = <effect = write, resource = storage>>,
-    #obelisk_sim.event_commit<id = 13, sites = [0],
-      effect = <effect = trigger, resource = event>>],
-  edges = [${edges.join(',')}],
-  regions = [
-    #obelisk_sim.region<kind = active, groups = [
-      #obelisk_sim.group<fragments = [0, 1, 2, 3], schedule = convergence,
-        feedback = [#obelisk_sim.effect<effect = drive, resource = net>]>,
-      #obelisk_sim.group<fragments = [4, 5, 6, 7], schedule = control_loop,
-        feedback = []>,
-      #obelisk_sim.group<fragments = [8, 9, 10, 11], schedule = acyclic,
-        feedback = []>]>,
-    #obelisk_sim.region<kind = nba, groups = [
-      #obelisk_sim.group<fragments = [12], schedule = acyclic, feedback = []>]>,
-    #obelisk_sim.region<kind = observed, groups = []>,
-    #obelisk_sim.region<kind = reactive, groups = [
-      #obelisk_sim.group<fragments = [13], schedule = acyclic, feedback = []>]>,
-    #obelisk_sim.region<kind = postponed, groups = []>]>`;
+const fragments = actions.map((action, id) => ({
+  index: id, id, type: 'fragment', function: `fragment_${id}`, block: id,
+  region: 'active', action, tier: ['native', 'bytecode', 'generated'][id % 3],
+  cost: String(id + 1), lane: id % 2, twoState: id % 2 === 0, effects: 0,
+}));
+const edges = edgeKinds.map((kind, index) => ({
+  source: index, target: index + 1, kind,
+  resource: resourceEdges.has(kind) ? 'effect = drive, resource = net' : '',
+}));
+const completeSchedule = JSON.stringify({ schema: 'schedule', version: 1, graphs: [{
+  name: 'complete', version: 1, vpi: 'full', workers: 2,
+  nodes: [...fragments,
+    { index: 12, id: 12, type: 'nba_commit', slots: [0], accumulatorSites: [],
+      frontierSites: [], tier: 'generated', action: 'commit' },
+    { index: 13, id: 13, type: 'event_commit', sites: [0], tier: 'generated', action: 'commit' },
+  ],
+  edges,
+  regions: [
+    { kind: 'active', groups: [
+      { members: [0, 1, 2, 3], schedule: 'convergence', feedback: 1 },
+      { members: [4, 5, 6, 7], schedule: 'control_loop', feedback: 0 },
+      { members: [8, 9, 10, 11], schedule: 'acyclic', feedback: 0 },
+    ] },
+    { kind: 'nba', groups: [{ members: [12], schedule: 'acyclic', feedback: 0 }] },
+    { kind: 'observed', groups: [] },
+    { kind: 'reactive', groups: [{ members: [13], schedule: 'acyclic', feedback: 0 }] },
+    { kind: 'postponed', groups: [] },
+  ],
+}] });
 
 const [complete] = parseSchedules(completeSchedule);
 assert.deepEqual(complete.nodes.slice(0, actions.length).map((node) => node.action), actions);

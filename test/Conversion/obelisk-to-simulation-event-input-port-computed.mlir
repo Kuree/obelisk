@@ -32,13 +32,13 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.design @design attributes {{.*}}obelisk_sim.computed_event_startup
+// CHECK: obelisk_sim.design @design attributes {{.*}}schedule.computed_event_startup
 // CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.event {{.*}} hierarchy "top.dut.wake"
 // CHECK: obelisk_sim.func private @unit_0(
 // CHECK-SAME: %[[TRUE_ARG:[^:]+]]: !obelisk_sim.event
 // CHECK-SAME: %[[FALSE_ARG:[^:]+]]: !obelisk_sim.event
 // CHECK-SAME: entry_kind = 9 : i32
-// CHECK-SAME: obelisk_sim.computed_event_startup
+// CHECK-SAME: schedule.computed_event_startup
 // The ABI evaluates and captures each arm once. IEEE 1800-2017 11.4.11 then
 // requires an unknown selector to publish the default null event even when
 // both captured values happen to name the same event object.

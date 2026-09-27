@@ -9,7 +9,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 2 : i32
+  schedule.native_scheduler = 2 : i32
 } {
   obelisk_sim.design @boundary {
     obelisk_sim.scope.decl 0 hierarchy "boundary"
@@ -32,7 +32,7 @@ module attributes {
       %one = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
       obelisk_sim.nba.enqueue %one to %ref : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
       %zero = obelisk_sim.time.constant 0
-      obelisk_sim.suspend.delay %zero to ^inactive {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %zero to ^inactive {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^inactive:
       %current = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %value = obelisk_sim.ref.load %current : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -40,7 +40,7 @@ module attributes {
       %message = obelisk_sim.bytes.constant "inactive value=%0d"
       obelisk_sim.display %ctx to %channel(%message, %value) newline = true radix = 10 flags = [0, 0] : !obelisk_sim.bytes, !obelisk_sim.logic<1>
       %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^later {site = #obelisk_sim.continuation<id = 2>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^later {site = #schedule.continuation<id = 2>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^later:
       %final = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %committed = obelisk_sim.ref.load %final : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>

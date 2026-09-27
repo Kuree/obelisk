@@ -3,7 +3,6 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationEvalDispatchMaterialization.cpp
   SimulationAOTMaterialization.cpp
   SimulationAOTMaterializationLegacy.cpp
-  SimulationAOTEvalAnalysis.cpp
   SimulationAOTPlanning.cpp
   SimulationPromotionRangeIndex.cpp
   SimulationControlLowering.cpp
@@ -26,7 +25,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationManagedRootSupport.cpp
   SimulationManagedStringLowering.cpp
   SimulationNBALowering.cpp
-  SimulationNBAPlanning.cpp
+  SimulationNBAPlanMaterialization.cpp
   SimulationNativeGroupMaterialization.cpp
   SimulationGroupDataflow.cpp
   SimulationGroupHierarchy.cpp
@@ -62,6 +61,8 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
 
   LINK_LIBS PUBLIC
   ObeliskCoverage
+  ObeliskSimulationToScheduleNative
+  ObeliskScheduleNativeTransforms
   ObeliskSimulationAnalysis
   ObeliskRuntimeIR
   ObeliskRuntimeToLLVM

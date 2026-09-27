@@ -23,7 +23,7 @@
 // CHECK: obelisk_sim.coverage.point_hit {{.*}}[4]
 // CHECK: obelisk_sim.return
 
-module attributes {obelisk.coverage.line_point_count = 6 : i64, obelisk.native_scheduler = 3 : i32} {
+module attributes {obelisk.coverage.line_point_count = 6 : i64, schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @fusion {
     obelisk_sim.coverage.keepalive @a
     obelisk_sim.coverage.keepalive @b

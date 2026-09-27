@@ -355,9 +355,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // two ranged exact traces. The asynchronous disable actor clears both exact
 // trace states, and the clock path checks the unsampled level before sampling.
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_cancel.31(
-// CHECK-SAME: obelisk_sim.concurrent_cancel
-// CHECK-SAME: obelisk_sim.detached_controls
-// CHECK-SAME: obelisk_sim.priority_signal_resume
+// CHECK-SAME: schedule.concurrent_cancel
+// CHECK-SAME: schedule.detached_controls
+// CHECK-SAME: schedule.priority_signal_resume
 // CHECK: [[CANCEL_ZERO0:%.*]] = arith.constant {{.*}} 0 : i64
 // CHECK-NEXT: obelisk_sim.ref.store [[CANCEL_ZERO0]] to %arg4
 // CHECK: [[CANCEL_ZERO1:%.*]] = arith.constant {{.*}} 0 : i64
@@ -367,7 +367,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: obelisk_sim.ref.load %arg1
 // CHECK: arith.cmpi eq
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.31.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK: [[EOS_ALT0:%.*]] = obelisk_sim.ref.load %arg1
 // CHECK: [[EOS_ALT1:%.*]] = obelisk_sim.ref.load %arg2
 // CHECK: [[EOS_LIVE:%.*]] = arith.ori [[EOS_ALT0]], [[EOS_ALT1]]
@@ -427,7 +427,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: %arg5: !obelisk_sim.ref<i64>
 // CHECK-SAME: %arg6: !obelisk_sim.ref<i64>
 // CHECK-SAME: %arg7: !obelisk_sim.ref<i64>
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK: [[ANT_ZERO0:%.*]] = arith.constant {{.*}} 0 : i64
 // CHECK-NEXT: obelisk_sim.ref.store [[ANT_ZERO0]] to %arg4
 // CHECK: [[ANT_ZERO1:%.*]] = arith.constant {{.*}} 0 : i64
@@ -477,7 +477,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // A ranged plain sequence uses the same cancellation contract and clears both
 // alternative state words before the monitor can start a disabled attempt.
 // CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_cancel.71(
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK: [[SEQ_ZERO0:%.*]] = arith.constant {{.*}} 0 : i64
 // CHECK-NEXT: obelisk_sim.ref.store [[SEQ_ZERO0]] to %arg4
 // CHECK: [[SEQ_ZERO1:%.*]] = arith.constant {{.*}} 0 : i64
@@ -493,7 +493,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // actor still advances its epoch, and the monitor level-gates both predicates.
 // CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_cancel.91(
 // CHECK-SAME: %arg4: !obelisk_sim.ref<i64>
-// CHECK-SAME: obelisk_sim.concurrent_cancel
+// CHECK-SAME: schedule.concurrent_cancel
 // CHECK-NOT: obelisk_sim.ref.store {{.*}} to %arg{{[0-3]}}
 // CHECK: obelisk_sim.ref.store {{.*}} to %arg4
 // CHECK-LABEL: obelisk_sim.func private @unit_4(

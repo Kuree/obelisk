@@ -5148,6 +5148,63 @@ mlir::GenRegistration coverageSerializerGen(
     "Generate Obelisk coverage serializer ordering descriptors",
     emitCoverageSerializer);
 
+// The field schema is shared by enum dispatch, typed accessors and name
+// classification. Names appear only in this generated serialization boundary.
+bool emitScheduleFields(const RecordKeeper &records, raw_ostream &os) {
+  auto fields =
+      llvm::to_vector(records.getAllDerivedDefinitions("ScheduleField"));
+  llvm::sort(fields, [](const Record *a, const Record *b) {
+    return a->getValueAsString("cppName") < b->getValueAsString("cppName");
+  });
+  os << "// Generated from ScheduleFields.td. Do not edit.\n"
+        "#ifdef GET_SCHEDULE_FIELD_ENUMS\n"
+        "#undef GET_SCHEDULE_FIELD_ENUMS\n"
+        "namespace obelisk::schedule {\n"
+        "enum class Field {\n";
+  for (const Record *field : fields)
+    os << "  " << field->getValueAsString("cppName") << ",\n";
+  os << "};\nllvm::StringRef getFieldName(Field field);\n"
+        "std::optional<Field> symbolizeField(llvm::StringRef name);\n"
+        "}\n#endif\n"
+        "#ifdef GET_SCHEDULE_FIELD_NAMES\n"
+        "#undef GET_SCHEDULE_FIELD_NAMES\n"
+        "namespace obelisk::schedule {\n"
+        "llvm::StringRef getFieldName(Field field) {\n"
+        "  switch (field) {\n";
+  for (const Record *field : fields)
+    os << "  case Field::" << field->getValueAsString("cppName")
+       << ": return \"" << field->getValueAsString("wireName") << "\";\n";
+  os << "  }\n  llvm_unreachable(\"invalid scheduling field\");\n}\n"
+        "std::optional<Field> symbolizeField(llvm::StringRef name) {\n";
+  for (const Record *field : fields)
+    os << "  if (name == \"" << field->getValueAsString("wireName")
+       << "\") return Field::" << field->getValueAsString("cppName") << ";\n";
+  os << "  return std::nullopt;\n}\n}\n#endif\n"
+        "#ifdef GET_SCHEDULE_FIELD_TRAITS\n"
+        "#undef GET_SCHEDULE_FIELD_TRAITS\n";
+  llvm::StringSet<> types;
+  for (const Record *field : fields) {
+    StringRef type = field->getValueAsString("attributeType");
+    if (type.starts_with("::mlir::") || !types.insert(type).second)
+      continue;
+    auto [ns, name] = type.rsplit("::");
+    os << "namespace " << ns.drop_front(2) << " { class " << name << "; }\n";
+  }
+  os << "namespace obelisk::schedule {\n"
+        "template<Field> struct FieldTraits;\n";
+  for (const Record *field : fields)
+    os << "template<> struct FieldTraits<Field::"
+       << field->getValueAsString("cppName")
+       << "> { using Type = " << field->getValueAsString("attributeType")
+       << "; };\n";
+  os << "}\n#endif\n";
+  return false;
+}
+mlir::GenRegistration
+    scheduleFieldsGen("gen-schedule-fields",
+                      "Generate typed scheduling field accessors",
+                      emitScheduleFields);
+
 } // namespace
 
 int main(int argc, char **argv) { return mlir::MlirTblgenMain(argc, argv); }

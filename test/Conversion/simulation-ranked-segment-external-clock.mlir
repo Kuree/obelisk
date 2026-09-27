@@ -8,7 +8,7 @@
 // and observes the final copy after the same shared-loop slot has settled.
 // The segment must preserve timed callbacks, termination and startup counts.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.segment(
-// PLAN-SAME: obelisk.eval.segment_helpers
+// PLAN-SAME: schedule.eval.segment_helpers
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_2(

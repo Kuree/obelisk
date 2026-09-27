@@ -472,6 +472,8 @@ metadata survives machine-level inlining.
 
 ### Derived compute graph and generated schedules
 
+The compiler representation is owned by the `schedule` dialect.
+
 The current planner materializes the typed graph, proven exact ranges,
 conservatively widened dynamic ranges, fixed site IDs, and event-region SCC
 plans described below. A graph-region materialization pass now derives stable

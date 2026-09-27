@@ -12,40 +12,40 @@ module {
   }
 
   obelisk_sim.design @off attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1, nodes = [], edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = []>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>]>
+        #schedule.region<kind = active, groups = []>,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>]>
   } {
     obelisk_sim.scope.decl 0
   }
 
   obelisk_sim.design @read attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = read, workers = 1, nodes = [], edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = []>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>]>
+        #schedule.region<kind = active, groups = []>,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>]>
   } {
     obelisk_sim.scope.decl 0
   }
 
   obelisk_sim.design @full attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = full, workers = 1, nodes = [], edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = []>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>]>
+        #schedule.region<kind = active, groups = []>,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>]>
   } {
     obelisk_sim.scope.decl 0
   }

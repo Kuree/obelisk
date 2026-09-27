@@ -88,6 +88,6 @@ module {
 // CHECK-DAG: entry_kind = 9 : i32{{.*}}internal
 // CHECK-DAG: entry_kind = 10 : i32{{.*}}internal
 // CHECK-DAG: obelisk_sim.continuous_store
-// CHECK-DAG: #obelisk_sim.effect<effect = write, resource = storage{{.*}}low = 0, width = 2
-// CHECK-DAG: #obelisk_sim.effect<effect = write, resource = storage{{.*}}low = 6, width = 2
+// CHECK-DAG: #schedule.effect<effect = write, resource = storage{{.*}}low = 0, width = 2
+// CHECK-DAG: #schedule.effect<effect = write, resource = storage{{.*}}low = 6, width = 2
 // CHECK-NOT: obelisk.sv.

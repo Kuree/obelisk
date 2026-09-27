@@ -26,7 +26,7 @@
 // GROUP-NOT: obelisk_sim.func @second(
 // GROUP: obelisk_sim.func private @__obelisk_region_kernel_
 // GROUP-SAME: entry_kind = 4 : i32
-// GROUP-SAME: obelisk.native.region_body
+// GROUP-SAME: schedule.native.region_body
 // GROUP-DAG: cf.cond_br
 // GROUP-DAG: obelisk_sim.suspend.any
 // NO-SNAPSHOTS: obelisk_sim.func private @__obelisk_region_kernel_
@@ -54,7 +54,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 1 : i32
+  schedule.native_scheduler = 1 : i32
 } {
   obelisk_sim.design @local_ranked {
     obelisk_sim.scope.decl 0

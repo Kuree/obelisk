@@ -26,7 +26,7 @@
 
 !ref = !obelisk_sim.ref<i32>
 !clock = !obelisk_sim.ref<i1>
-module attributes {obelisk.native_scheduler = 1 : i32} {
+module attributes {schedule.native_scheduler = 1 : i32} {
   obelisk_sim.design @storage_index {
     obelisk_sim.scope.decl 0
     obelisk_sim.storage.decl 0 in 0 : i1 design

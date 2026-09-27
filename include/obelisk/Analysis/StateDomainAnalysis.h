@@ -8,6 +8,7 @@
 #ifndef OBELISK_ANALYSIS_STATEDOMAINANALYSIS_H
 #define OBELISK_ANALYSIS_STATEDOMAINANALYSIS_H
 
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 #include "mlir/IR/Value.h"
@@ -84,7 +85,8 @@ struct StateDomainFact {
 /// specializing a kernel, and must invalidate that specialization across
 /// external mutation.
 struct InductiveStateRoot {
-  sim::ComputeResourceKind resource = sim::ComputeResourceKind::Unknown;
+  schedule::ComputeResourceKind resource =
+      schedule::ComputeResourceKind::Unknown;
   uint64_t descriptor = 0;
 
   bool operator==(const InductiveStateRoot &other) const {
@@ -129,7 +131,7 @@ public:
   /// established that every root in its inductive closure is known.
   StateDomainFact getWithInductiveRoots(mlir::Value value) const;
   bool isTwoStateWithInductiveRoots(mlir::Value value) const;
-  bool isInductivelyTwoState(sim::ComputeResourceKind resource,
+  bool isInductivelyTwoState(schedule::ComputeResourceKind resource,
                              uint64_t descriptor) const;
   mlir::ArrayRef<InductiveStateRoot> getInductiveRoots() const {
     return inductiveRoots;

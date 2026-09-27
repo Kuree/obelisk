@@ -16,7 +16,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @output {
     obelisk_sim.scope.decl 0
@@ -42,7 +42,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clock to ^print {site = #obelisk_sim.continuation<id = 1>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %clock to ^print {site = #schedule.continuation<id = 1>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^print:
       %fd = arith.constant 1 : i32
       %format = obelisk_sim.bytes.constant "value %%v %b"
@@ -57,7 +57,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clock to ^print {site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %clock to ^print {site = #schedule.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^print:
       %fd = arith.constant 1 : i32
       %format = obelisk_sim.bytes.constant "%V"
@@ -72,7 +72,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clock to ^print {site = #obelisk_sim.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %clock to ^print {site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^print:
       %fd = arith.constant 2 : i32
       %format = obelisk_sim.bytes.constant "%b"

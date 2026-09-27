@@ -50,14 +50,14 @@ module {
 module {
   // expected-error @below {{cannot eliminate dead captures after compute-graph metadata exists}}
   obelisk_sim.design @late_graph attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1, nodes = [], edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = []>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = []>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>]>
+        #schedule.region<kind = active, groups = []>,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = []>,
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>]>
   } {
     obelisk_sim.scope.decl 0
   }
@@ -91,7 +91,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %unused: i32 {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64,
-                    fragment_abi = #obelisk_sim.fragment_abi<
+                    fragment_abi = #schedule.fragment_abi<
                       version = 1, fragments = []>} {
       obelisk_sim.return
     }
@@ -110,7 +110,7 @@ module {
         %unused: i32 {obelisk_sim.capture_kind = 1 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
       %site = "arith.constant"() {
-        test.site = #obelisk_sim.continuation<id = 1>, value = 0 : i32
+        test.site = #schedule.continuation<id = 1>, value = 0 : i32
       } : () -> i32
       obelisk_sim.return %site : i32
     }

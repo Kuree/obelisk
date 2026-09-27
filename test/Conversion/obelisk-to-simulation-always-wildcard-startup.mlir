@@ -91,7 +91,7 @@ module {
 // CHECK: cf.br ^[[WAIT:bb[0-9]+]]
 // CHECK: ^[[WAIT]]:
 // CHECK: obelisk_sim.suspend.change {{.*}} to ^[[BODY:bb[0-9]+]]
-// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
+// CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: ^[[BODY]]:
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store
@@ -100,7 +100,7 @@ module {
 // CHECK: cf.br ^[[MULTI_WAIT:bb[0-9]+]]
 // CHECK: ^[[MULTI_WAIT]]:
 // CHECK: obelisk_sim.suspend.any {{.*}} to ^[[MULTI_BODY:bb[0-9]+]]
-// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
+// CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: ^[[MULTI_BODY]]:
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.load
@@ -113,7 +113,7 @@ module {
 // CHECK: ^[[LOCAL_WAIT]]:
 // CHECK-NOT: obelisk_sim.suspend.any
 // CHECK: obelisk_sim.suspend.change {{.*}} to ^[[LOCAL_BODY:bb[0-9]+]]
-// CHECK-SAME: obelisk_sim.top_level_wildcard_wait
+// CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: ^[[LOCAL_BODY]]:
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store

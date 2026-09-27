@@ -8,7 +8,7 @@ module {
     // Process formals are legal dynamic handles. Their stage effects retain
     // formal identity, while the shared commit root is conservatively unknown.
     // CHECK-LABEL: obelisk_sim.func @process
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = nba, resource = storage, target = formal
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = nba, resource = storage, target = formal
     // CHECK-SAME: effect = trigger, resource = event, target = formal
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
@@ -17,10 +17,10 @@ module {
         attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 0
+      // CHECK-SAME: site = #schedule.nba_site<id = 0
       obelisk_sim.nba.enqueue %value to %destination : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       // CHECK: obelisk_sim.event.trigger
-      // CHECK-SAME: site = #obelisk_sim.event_site<id = 0
+      // CHECK-SAME: site = #schedule.event_site<id = 0
       obelisk_sim.event.trigger %event nonblocking = true
       obelisk_sim.return
     }

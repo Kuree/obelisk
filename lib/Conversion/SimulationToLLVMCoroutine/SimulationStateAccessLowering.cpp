@@ -1,6 +1,9 @@
 //===- SimulationStateAccessLowering.cpp - Native state access patterns --===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -42,7 +45,8 @@ void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
 bool useTwoStateSpecialization(Operation *operation, bool moduleWide) {
   if (moduleWide)
     return true;
-  return operation->hasAttr("obelisk.eval.inductive_two_state_access");
+  return ::obelisk::schedule::has<
+      ::obelisk::schedule::Field::EvalInductiveTwoStateAccess>(operation);
 }
 
 Value allocateBulkPlane(ConversionPatternRewriter &rewriter, Location location,
@@ -234,7 +238,8 @@ public:
     if (!width || adaptor.getReference().size() != 1)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+    bool assumeClean =
+        ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
     Value guardedPermission;
     if (auto range = resolveDirectStaticStateRange(
             adaptor.getReference().front(), *width, directLayout);
@@ -293,7 +298,8 @@ public:
     if (!width)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+    bool assumeClean =
+        ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
     bool runtimePublication =
@@ -328,7 +334,8 @@ public:
         Operation *clone = rewriter.clone(*op);
         clone->setAttr(guardedRefStoreAttr, rewriter.getUnitAttr());
         if (clean)
-          clone->setAttr(assumeCleanSpecializationAttr, rewriter.getUnitAttr());
+          ::obelisk::schedule::set<assumeCleanSpecializationAttr>(
+              clone, rewriter.getUnitAttr());
         cf::BranchOp::create(rewriter, op.getLoc(), tail);
       }
       rewriter.setInsertionPointToEnd(head);
@@ -368,7 +375,8 @@ public:
             rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
             adaptor.getValue().size() == 2 ? adaptor.getValue()[1] : Value{},
             directLayout, assumeClean, continuous, twoState,
-            op->getAttr(sim::metadata::evalSourceOwner))) {
+            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+                op))) {
       rewriter.eraseOp(op);
       return success();
     }
@@ -485,15 +493,15 @@ public:
       // runtime-owned delayed-terminal coordinator. Select the generic
       // publication call while lowering this structurally certified cold
       // function; ordinary stores retain the branch-free static AOT call.
-      notifySignal(rewriter, op.getLoc(), adaptor.getReference().front(),
-                   *width, oldValue, oldUnknown, notificationValue,
-                   notificationUnknown,
-                   !runtimePublication && directRange &&
-                           (assumeClean || !directRange->guarded) &&
-                           directLayout && directLayout->transitionHandlesExact
-                       ? directRange
-                       : std::nullopt,
-                   op->getAttr(sim::metadata::evalSourceOwner));
+      notifySignal(
+          rewriter, op.getLoc(), adaptor.getReference().front(), *width,
+          oldValue, oldUnknown, notificationValue, notificationUnknown,
+          !runtimePublication && directRange &&
+                  (assumeClean || !directRange->guarded) && directLayout &&
+                  directLayout->transitionHandlesExact
+              ? directRange
+              : std::nullopt,
+          ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
     }
     rewriter.eraseOp(op);
     return success();
@@ -662,10 +670,11 @@ public:
                                   *width),
                      save(oldValue), save(newValue)});
     } else {
-      notifySignal(rewriter, op.getLoc(), handle, *width, oldValue, oldUnknown,
-                   newValue, containsLogic(valueType) ? newUnknown : Value{},
-                   resolveDirectStaticStateRange(handle, *width, directLayout),
-                   op->getAttr(sim::metadata::evalSourceOwner));
+      notifySignal(
+          rewriter, op.getLoc(), handle, *width, oldValue, oldUnknown, newValue,
+          containsLogic(valueType) ? newUnknown : Value{},
+          resolveDirectStaticStateRange(handle, *width, directLayout),
+          ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
     }
     rewriter.eraseOp(op);
     return success();

@@ -8,7 +8,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @eval_task_call {
     obelisk_sim.scope.decl 0
@@ -36,11 +36,11 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.edge posedge %clk to ^activation
-          {site = #obelisk_sim.continuation<id = 1>} :
+          {site = #schedule.continuation<id = 1>} :
           !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^activation:
       obelisk_sim.task.call @step(%ctx) arguments 1 to ^resume
-          {site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.context
+          {site = #schedule.continuation<id = 2>} : !obelisk_sim.context
     ^resume:
       cf.br ^wait
     }
@@ -50,8 +50,8 @@ module attributes {
         attributes {entry_kind = 12 : i32, code_unit_id = 2 : i64} {
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^resume
-          {site = #obelisk_sim.continuation<id = 3>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 3>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^resume:
       obelisk_sim.return
     }

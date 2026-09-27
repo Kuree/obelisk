@@ -1,6 +1,7 @@
 //===- LowerUnitCalls.cpp - Lower function and class calls ------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Solver/ConstraintSolver.h"
@@ -93,8 +94,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       setCurrent(wait);
       sim::SimSuspendSemaphoreOp::create(
           builder, location, wait->getArgument(0), wait->getArgument(1),
-          ValueRange{}, sim::ContinuationSiteAttr{}, sim::EventRegionAttr{},
-          done);
+          ValueRange{}, schedule::ContinuationSiteAttr{},
+          sim::EventRegionAttr{}, done);
       setCurrent(done);
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))
@@ -225,7 +226,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       sim::SimSuspendMailboxOp::create(
           builder, location, wait->getArgument(0),
           sim::MailboxWaitKind::NotFull, wait->getArguments(),
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
       setCurrent(done);
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))
@@ -372,7 +373,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         sim::SimSuspendMailboxOp::create(
             builder, location, wait->getArgument(0),
             sim::MailboxWaitKind::NotEmpty, wait->getArguments(),
-            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
+            schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
         setCurrent(check);
         FailureOr<Value> matches =
             boxMatches(check->getArgument(0), destinationType, children[1]);
@@ -441,7 +442,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       sim::SimSuspendMailboxOp::create(
           builder, location, wait->getArgument(0),
           sim::MailboxWaitKind::NotEmpty, wait->getArguments(),
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, retry);
       setCurrent(store);
       FailureOr<Value> converted =
           convert(cloneSequentialValue(store->getArgument(0), location),
@@ -593,7 +594,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       Block *continuation = addBlock();
       sim::SimSuspendAwaitOp::create(builder, location, *receiver, ValueRange{},
-                                     sim::ContinuationSiteAttr{},
+                                     schedule::ContinuationSiteAttr{},
                                      sim::EventRegionAttr{}, continuation);
       setCurrent(continuation);
       return dummyResult();
@@ -616,7 +617,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       Block *continuation = addBlock();
       sim::SimProcessControlOp::create(
           builder, location, *kind, *receiver, ValueRange{},
-          sim::ContinuationSiteAttr{}, continuation);
+          schedule::ContinuationSiteAttr{}, continuation);
       setCurrent(continuation);
       return dummyResult();
     }
@@ -1772,7 +1773,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         llvm::append_range(operands, arguments);
         sim::SimTaskCallOp::create(builder, location, target, operands,
                                    builder.getI64IntegerAttr(operands.size()),
-                                   sim::ContinuationSiteAttr{}, continuation);
+                                   schedule::ContinuationSiteAttr{},
+                                   continuation);
       };
       if (!op->hasAttr("obelisk_sim.class_virtual")) {
         emitTaskCall(callee, *receiver);
@@ -1789,7 +1791,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       sim::SimClassVirtualTaskCallOp::create(
           builder, location, *receiver, method, slot, signature, arguments,
           builder.getI64IntegerAttr(arguments.size()),
-          sim::ContinuationSiteAttr{}, continuation);
+          schedule::ContinuationSiteAttr{}, continuation);
       return finishTask();
     }
     ValueRange results;
@@ -2594,7 +2596,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (!virtualCallees) {
       sim::SimTaskCallOp::create(builder, location, callee, operands,
                                  builder.getI64IntegerAttr(operands.size()),
-                                 sim::ContinuationSiteAttr{}, continuation);
+                                 schedule::ContinuationSiteAttr{},
+                                 continuation);
     } else {
       for (Attribute candidateAttr : virtualCallees) {
         auto candidate = cast<DictionaryAttr>(candidateAttr);
@@ -2637,7 +2640,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             builder, location, candidate.getAs<FlatSymbolRefAttr>("callee"),
             candidateOperands,
             builder.getI64IntegerAttr(candidateOperands.size()),
-            sim::ContinuationSiteAttr{}, continuation);
+            schedule::ContinuationSiteAttr{}, continuation);
         setCurrent(next);
       }
       if (failed(emitRuntimeFatal(

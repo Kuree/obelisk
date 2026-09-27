@@ -5,7 +5,7 @@
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
   llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
 
-  llvm.func @wide() attributes {obelisk.eval.infallible} {
+  llvm.func @wide() attributes {schedule.eval.infallible} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %v = llvm.load %base {alignment = 1 : i64} : !llvm.ptr -> i16
     %one = llvm.mlir.constant(1 : i16) : i16
@@ -16,7 +16,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     llvm.store %narrow, %separate : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @overlapping() attributes {obelisk.eval.infallible} {
+  llvm.func @overlapping() attributes {schedule.eval.infallible} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %v = llvm.load %base {alignment = 1 : i64} : !llvm.ptr -> i16
     %partial = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -31,20 +31,20 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     llvm.return
   }
   // CHECK-LABEL: llvm.func @group()
-  // CHECK-SAME: obelisk.eval.ssa_value_ranges = 1 : i64
+  // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
   // CHECK: llvm.getelementptr {{.*}}[4]
-  // CHECK: llvm.load {{.*}}obelisk.eval.group_owner = 0{{.*}} -> i16
-  // CHECK: llvm.store {{.*}}obelisk.eval.group_owner = 0{{.*}} : i16
-  // CHECK-NOT: llvm.store {{.*}}obelisk.eval.group_owner = 0{{.*}} : i8
-  // CHECK: llvm.load {{.*}}obelisk.eval.group_owner = 1{{.*}} -> i16
-  // CHECK: llvm.load {{.*}}obelisk.eval.group_owner = 1{{.*}} -> i8
-  // CHECK: llvm.store {{.*}}obelisk.eval.group_owner = 1{{.*}} : i16
+  // CHECK: llvm.load {{.*}}schedule.eval.group_owner = 0{{.*}} -> i16
+  // CHECK: llvm.store {{.*}}schedule.eval.group_owner = 0{{.*}} : i16
+  // CHECK-NOT: llvm.store {{.*}}schedule.eval.group_owner = 0{{.*}} : i8
+  // CHECK: llvm.load {{.*}}schedule.eval.group_owner = 1{{.*}} -> i16
+  // CHECK: llvm.load {{.*}}schedule.eval.group_owner = 1{{.*}} -> i8
+  // CHECK: llvm.store {{.*}}schedule.eval.group_owner = 1{{.*}} : i16
   // CHECK-NOT: llvm.load
-  // CHECK-NOT: llvm.store {{.*}}obelisk.eval.group_owner = 1{{.*}} : i8
+  // CHECK-NOT: llvm.store {{.*}}schedule.eval.group_owner = 1{{.*}} : i8
   // CHECK: llvm.return
-  llvm.func @group() attributes {obelisk.eval.ranked_members = array<i32: 0>} {
-    llvm.call @wide() {obelisk.eval.group_member = 0 : i32} : () -> ()
-    llvm.call @overlapping() {obelisk.eval.group_member = 1 : i32} : () -> ()
+  llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0>} {
+    llvm.call @wide() {schedule.eval.group_member = 0 : i32} : () -> ()
+    llvm.call @overlapping() {schedule.eval.group_member = 1 : i32} : () -> ()
     llvm.return
   }
 }

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --obelisk-sim-extract-periodic-clocks | FileCheck %s --implicit-check-not=__obelisk_periodic_tick_ --implicit-check-not=obelisk_sim.periodic_control
+// RUN: obelisk-opt %s --split-input-file --obelisk-sim-extract-periodic-clocks | FileCheck %s --implicit-check-not=__obelisk_periodic_tick_ --implicit-check-not=schedule.periodic_control
 
 // CHECK: obelisk_sim.design @unequal
 module {

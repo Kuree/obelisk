@@ -39,7 +39,7 @@ module {
         %net: !obelisk_sim.net<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %out: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9220001 : i64,
-                    obelisk_sim.primitive_name = "udp_edge",
+                    schedule.primitive_name = "udp_edge",
                     obelisk_sim.udp_metadata = {
                       init_value = "1'b0", is_edge_sensitive = true,
                       is_sequential = true, name = "udp_edge",

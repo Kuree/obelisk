@@ -20,7 +20,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @nba_settle {
     obelisk_sim.scope.decl 0 hierarchy "nba_settle"
@@ -55,7 +55,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clk : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
@@ -68,7 +68,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clk to ^write {site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %clk to ^write {site = #schedule.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^write:
       %a = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %b = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
@@ -88,7 +88,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %a to ^write {site = #obelisk_sim.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.change %a to ^write {site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^write:
       %b = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %new = obelisk_sim.ref.load %a : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -102,7 +102,7 @@ module attributes {
     obelisk_sim.func @check(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
       %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^first {site = #obelisk_sim.continuation<id = 4>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^first {site = #schedule.continuation<id = 4>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^first:
       %a0 = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %b0 = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
@@ -113,7 +113,7 @@ module attributes {
       %fmt0 = obelisk_sim.bytes.constant "settled %0d %b %b"
       obelisk_sim.display %ctx to %ch0(%fmt0, %now0, %va0, %vb0) newline = true radix = 2 flags = [0, 0, 0, 0] : !obelisk_sim.bytes, i64, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
       %delay0 = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay0 to ^second {site = #obelisk_sim.continuation<id = 5>, timing = #obelisk_sim.timing_site<id = 2, kind = calendar>}
+      obelisk_sim.suspend.delay %delay0 to ^second {site = #schedule.continuation<id = 5>, timing = #schedule.timing_site<id = 2, kind = calendar>}
     ^second:
       %a1 = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %b1 = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
@@ -124,7 +124,7 @@ module attributes {
       %fmt1 = obelisk_sim.bytes.constant "settled %0d %b %b"
       obelisk_sim.display %ctx to %ch1(%fmt1, %now1, %va1, %vb1) newline = true radix = 2 flags = [0, 0, 0, 0] : !obelisk_sim.bytes, i64, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
       %delay1 = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay1 to ^third {site = #obelisk_sim.continuation<id = 6>, timing = #obelisk_sim.timing_site<id = 3, kind = calendar>}
+      obelisk_sim.suspend.delay %delay1 to ^third {site = #schedule.continuation<id = 6>, timing = #schedule.timing_site<id = 3, kind = calendar>}
     ^third:
       %a2 = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
       %b2 = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>

@@ -687,7 +687,7 @@ module {
   }
 }
 
-// OPTIONS: #obelisk_sim.graph<version = 1, vpi = read, workers = 2
+// OPTIONS: #schedule.graph<version = 1, vpi = read, workers = 2
 
 // SIM: obelisk_sim.design @design attributes {{.*}}time_precision_fs = 1000 : i64
 // SIM-DAG: obelisk_sim.scope.decl 0

@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=SSA < %t.mlir
-// RUN: sed 's/module attributes {/module attributes {obelisk.native.max_inline_ops = 1 : i64,/' %s | obelisk-opt --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
+// RUN: sed 's/module attributes {/module attributes {schedule.native.max_inline_ops = 1 : i64,/' %s | obelisk-opt --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-hierarchy.test.
 
@@ -11,20 +11,20 @@
 // The slow counters distinguish the selected paths, independently of values.
 //
 // CHECK-LABEL: llvm.func @group()
-// CHECK-SAME: obelisk.eval.group_children = [@group.child0, @group.child2]
+// CHECK-SAME: schedule.eval.group_children = [@group.child0, @group.child2]
 // CHECK-DAG: llvm.load
 // CHECK-DAG: llvm.cond_br
 // CHECK-DAG: llvm.call @group.child0.dataflow()
 // CHECK-DAG: llvm.call @group.child0()
 // CHECK-DAG: llvm.call @group.child2()
 // CHECK: llvm.return
-// CHECK-DAG: llvm.func @group.child0() attributes {{.*}}obelisk.eval.dataflow_executor = @group.child0.dataflow
-// CHECK-DAG: llvm.func @group.child2() attributes {{.*}}obelisk.eval.group_children = [@group.child2.child0, @group.child2.child1]
-// CHECK-DAG: llvm.func @group.child2.child1() attributes {{.*}}obelisk.eval.dataflow_executor = @group.child2.child1.dataflow
-// CHECK-DAG: llvm.func @group.child0.dataflow() attributes {{.*}}obelisk.eval.predicated_dataflow
-// CHECK-DAG: llvm.func @group.child2.child1.dataflow() attributes {{.*}}obelisk.eval.predicated_dataflow
+// CHECK-DAG: llvm.func @group.child0() attributes {{.*}}schedule.eval.dataflow_executor = @group.child0.dataflow
+// CHECK-DAG: llvm.func @group.child2() attributes {{.*}}schedule.eval.group_children = [@group.child2.child0, @group.child2.child1]
+// CHECK-DAG: llvm.func @group.child2.child1() attributes {{.*}}schedule.eval.dataflow_executor = @group.child2.child1.dataflow
+// CHECK-DAG: llvm.func @group.child0.dataflow() attributes {{.*}}schedule.eval.predicated_dataflow
+// CHECK-DAG: llvm.func @group.child2.child1.dataflow() attributes {{.*}}schedule.eval.predicated_dataflow
 // SSA-LABEL: llvm.func @group.child0.dataflow()
-// SSA-SAME: obelisk.eval.ranked_members = array<i32: 0, 3>
+// SSA-SAME: schedule.eval.ranked_members = array<i32: 0, 3>
 // SSA-COUNT-3: llvm.load
 // SSA-NOT: llvm.load
 // SSA-NOT: llvm.call
@@ -98,10 +98,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^done:
     llvm.return
   }
-  llvm.func @group() attributes {obelisk.eval.ranked_members = array<i32: 0, 3, 1, 2>, obelisk.eval.group_ingress = @ready} {
+  llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 3, 1, 2>, schedule.eval.group_ingress = @ready} {
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
     %zero = llvm.mlir.constant(0 : i64) : i64
-    %pending0 = llvm.load %ready {obelisk.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
+    %pending0 = llvm.load %ready {schedule.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
     %bit0 = llvm.mlir.constant(1 : i64) : i64
     %clear0 = llvm.mlir.constant(-2 : i64) : i64
     %selected0 = llvm.and %pending0, %bit0 : i64
@@ -113,7 +113,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.call @leaf0() : () -> ()
     llvm.br ^check3
   ^check3:
-    %pending3 = llvm.load %ready {obelisk.eval.activation_entry = 3 : i32} : !llvm.ptr -> i64
+    %pending3 = llvm.load %ready {schedule.eval.activation_entry = 3 : i32} : !llvm.ptr -> i64
     %bit3 = llvm.mlir.constant(8 : i64) : i64
     %clear3 = llvm.mlir.constant(-9 : i64) : i64
     %selected3 = llvm.and %pending3, %bit3 : i64
@@ -130,7 +130,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %value3, %destination3 : i8, !llvm.ptr
     llvm.br ^check1
   ^check1:
-    %pending1 = llvm.load %ready {obelisk.eval.activation_entry = 1 : i32} : !llvm.ptr -> i64
+    %pending1 = llvm.load %ready {schedule.eval.activation_entry = 1 : i32} : !llvm.ptr -> i64
     %bit1 = llvm.mlir.constant(2 : i64) : i64
     %clear1 = llvm.mlir.constant(-3 : i64) : i64
     %selected1 = llvm.and %pending1, %bit1 : i64
@@ -142,7 +142,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.call @boundary() : () -> ()
     llvm.br ^check2
   ^check2:
-    %pending2 = llvm.load %ready {obelisk.eval.activation_entry = 2 : i32} : !llvm.ptr -> i64
+    %pending2 = llvm.load %ready {schedule.eval.activation_entry = 2 : i32} : !llvm.ptr -> i64
     %bit2 = llvm.mlir.constant(4 : i64) : i64
     %clear2 = llvm.mlir.constant(-5 : i64) : i64
     %selected2 = llvm.and %pending2, %bit2 : i64
@@ -156,10 +156,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^done:
     llvm.return
   }
-  llvm.func @candidate() attributes {obelisk.eval.ranked_members = array<i32: 0, 3, 1, 2>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group} {
+  llvm.func @candidate() attributes {schedule.eval.ranked_members = array<i32: 0, 3, 1, 2>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
     %zero = llvm.mlir.constant(0 : i64) : i64
-    %pending0 = llvm.load %ready {obelisk.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
+    %pending0 = llvm.load %ready {schedule.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
     %bit0 = llvm.mlir.constant(1 : i64) : i64
     %clear0 = llvm.mlir.constant(-2 : i64) : i64
     %selected0 = llvm.and %pending0, %bit0 : i64
@@ -176,7 +176,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %value0, %destination0 : i8, !llvm.ptr
     llvm.br ^check3
   ^check3:
-    %pending3 = llvm.load %ready {obelisk.eval.activation_entry = 3 : i32} : !llvm.ptr -> i64
+    %pending3 = llvm.load %ready {schedule.eval.activation_entry = 3 : i32} : !llvm.ptr -> i64
     %bit3 = llvm.mlir.constant(8 : i64) : i64
     %clear3 = llvm.mlir.constant(-9 : i64) : i64
     %selected3 = llvm.and %pending3, %bit3 : i64
@@ -193,7 +193,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %value3, %destination3 : i8, !llvm.ptr
     llvm.br ^check1
   ^check1:
-    %pending1 = llvm.load %ready {obelisk.eval.activation_entry = 1 : i32} : !llvm.ptr -> i64
+    %pending1 = llvm.load %ready {schedule.eval.activation_entry = 1 : i32} : !llvm.ptr -> i64
     %bit1 = llvm.mlir.constant(2 : i64) : i64
     %clear1 = llvm.mlir.constant(-3 : i64) : i64
     %selected1 = llvm.and %pending1, %bit1 : i64
@@ -205,7 +205,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.call @boundary() : () -> ()
     llvm.br ^check2
   ^check2:
-    %pending2 = llvm.load %ready {obelisk.eval.activation_entry = 2 : i32} : !llvm.ptr -> i64
+    %pending2 = llvm.load %ready {schedule.eval.activation_entry = 2 : i32} : !llvm.ptr -> i64
     %bit2 = llvm.mlir.constant(4 : i64) : i64
     %clear2 = llvm.mlir.constant(-5 : i64) : i64
     %selected2 = llvm.and %pending2, %bit2 : i64

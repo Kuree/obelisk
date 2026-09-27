@@ -48,35 +48,35 @@ module {
       obelisk_sim.return
     }
 
-    obelisk_sim.func private @p0(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @p0(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %driver = %value : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
-    obelisk_sim.func private @p1(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @p1(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %driver = %value : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
-    obelisk_sim.func private @p2(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 2 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 3 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @p2(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 2 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 3 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %driver = %value : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
-    obelisk_sim.func private @p3(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 4 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @p3(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 4 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %driver = %value : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
-    obelisk_sim.func private @p4(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 5 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @p4(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 4 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 5 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -123,14 +123,14 @@ module {
       %p1 = obelisk_sim.spawn @child(%ctx, %input, %d1) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.driver<!obelisk_sim.logic<1>> -> !obelisk_sim.process
       obelisk_sim.return
     }
-    obelisk_sim.func private @parent(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @parent(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %driver = %value : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     }
-    obelisk_sim.func private @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64, obelisk_sim.primitive_name = "buf"} {
+    obelisk_sim.func private @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64, schedule.primitive_name = "buf"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -170,7 +170,7 @@ module attributes {
       %p1 = obelisk_sim.spawn @second(%ctx, %n0, %d1) : !obelisk_sim.context, !obelisk_sim.net<!obelisk_sim.logic<1>>, !obelisk_sim.driver<!obelisk_sim.logic<1>> -> !obelisk_sim.process
       obelisk_sim.return
     }
-    obelisk_sim.func private @first(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.net<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 1 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64, obelisk_sim.primitive_name = "not"} {
+    obelisk_sim.func private @first(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.net<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 1 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64, schedule.primitive_name = "not"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.net.read %input : !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
@@ -178,7 +178,7 @@ module attributes {
       obelisk_sim.driver.drive %driver = %inverted : !obelisk_sim.driver<!obelisk_sim.logic<1>>, !obelisk_sim.logic<1>
       obelisk_sim.suspend.change %input to ^body : !obelisk_sim.net<!obelisk_sim.logic<1>>
     }
-    obelisk_sim.func private @second(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.net<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64, obelisk_sim.primitive_name = "not"} {
+    obelisk_sim.func private @second(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !obelisk_sim.net<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64}, %driver: !obelisk_sim.driver<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 5 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64, schedule.primitive_name = "not"} {
       cf.br ^body
     ^body:
       %value = obelisk_sim.net.read %input : !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>

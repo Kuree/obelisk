@@ -4,14 +4,14 @@ module {
   // A trigger port connection has a sensitivity edge to the waiter, while the
   // independent data connection does not. Once both are ready, internal port
   // propagation must settle before the procedural waiter observes the trigger.
-  // CHECK: compute_graph = #obelisk_sim.graph<
-  // CHECK-SAME: regions = [#obelisk_sim.region<kind = active, groups = [
-  // CHECK-SAME: #obelisk_sim.group<fragments = [0]
-  // CHECK-SAME: #obelisk_sim.group<fragments = [1]
-  // CHECK-SAME: #obelisk_sim.group<fragments = [4]
-  // CHECK-SAME: #obelisk_sim.group<fragments = [5]
-  // CHECK-SAME: #obelisk_sim.group<fragments = [2]
-  // CHECK-SAME: #obelisk_sim.group<fragments = [3]
+  // CHECK: compute_graph = #schedule.graph<
+  // CHECK-SAME: regions = [#schedule.region<kind = active, groups = [
+  // CHECK-SAME: #schedule.group<fragments = [0]
+  // CHECK-SAME: #schedule.group<fragments = [1]
+  // CHECK-SAME: #schedule.group<fragments = [4]
+  // CHECK-SAME: #schedule.group<fragments = [5]
+  // CHECK-SAME: #schedule.group<fragments = [2]
+  // CHECK-SAME: #schedule.group<fragments = [3]
   obelisk_sim.design @settle_priority {
     obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "waiter"
     obelisk_sim.code_unit.decl 2 in 0 port_output hierarchy "trigger_port" {internal}

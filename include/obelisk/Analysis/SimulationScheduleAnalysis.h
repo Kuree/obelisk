@@ -7,6 +7,7 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONSCHEDULEANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONSCHEDULEANALYSIS_H
 
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -30,8 +31,8 @@ bool isSettlingEntryKind(sim::EntryKind kind);
 /// Include the work resumed by a settling publication in activation ordering.
 /// Resume/spawn edges themselves remain boundaries. The returned edges may
 /// contain duplicates; consumers normalize their own adjacency representation.
-llvm::SmallVector<sim::ComputeEdgeAttr> projectActivationSchedulingEdges(
-    llvm::ArrayRef<sim::ComputeEdgeAttr> edges,
+llvm::SmallVector<schedule::ComputeEdgeAttr> projectActivationSchedulingEdges(
+    llvm::ArrayRef<schedule::ComputeEdgeAttr> edges,
     llvm::function_ref<bool(uint32_t)> isSettlingSource);
 
 /// Deterministic scheduler ranks shared by native and bytecode execution.

@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -32,7 +33,8 @@ namespace {
 using RootKey = std::pair<unsigned, uint64_t>;
 using RootSet = DenseSet<RootKey>;
 
-RootKey getRootKey(sim::ComputeResourceKind resource, uint64_t descriptor) {
+RootKey getRootKey(schedule::ComputeResourceKind resource,
+                   uint64_t descriptor) {
   return {static_cast<unsigned>(resource), descriptor};
 }
 
@@ -1070,8 +1072,8 @@ getConcreteRoot(Value handle,
                 const analysis::DescriptorProvenanceMap &provenance) {
   auto found = provenance.find(handle);
   if (found == provenance.end() || !found->second.descriptor ||
-      (found->second.resource != sim::ComputeResourceKind::Storage &&
-       found->second.resource != sim::ComputeResourceKind::Net))
+      (found->second.resource != schedule::ComputeResourceKind::Storage &&
+       found->second.resource != schedule::ComputeResourceKind::Net))
     return std::nullopt;
   return getRootKey(found->second.resource, *found->second.descriptor);
 }
@@ -1130,14 +1132,14 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (isLogic(storage.getType()))
-        candidates.insert(
-            getRootKey(sim::ComputeResourceKind::Storage, storage.getId()));
+        candidates.insert(getRootKey(schedule::ComputeResourceKind::Storage,
+                                     storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
       if (isLogic(net.getType())) {
         candidates.insert(
-            getRootKey(sim::ComputeResourceKind::Net, net.getId()));
+            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
         if (std::optional<uint64_t> width =
                 sim::getProvenanceSpan(net.getType()))
           netWidths[net.getId()] = *width;
@@ -1201,7 +1203,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
     if (!partial && driverCount == 1 && fullDriver)
       continue;
     for (uint64_t member : component)
-      candidates.erase(getRootKey(sim::ComputeResourceKind::Net, member));
+      candidates.erase(getRootKey(schedule::ComputeResourceKind::Net, member));
   }
 
   DenseMap<Value, StateDomainFact> facts;
@@ -1229,14 +1231,14 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
             return;
           }
           auto found = provenance.find(destination);
-          sim::ComputeResourceKind resource =
-              found == provenance.end() ? sim::ComputeResourceKind::Unknown
+          schedule::ComputeResourceKind resource =
+              found == provenance.end() ? schedule::ComputeResourceKind::Unknown
                                         : found->second.resource;
           // Unknown destinations reject a resource class, not a different
           // set for every write. Union those demands now and expand them once
           // after the wave, avoiding O(unknown writes * candidate roots).
           // No candidate is removed until every write used the same facts.
-          if (resource == sim::ComputeResourceKind::Unknown)
+          if (resource == schedule::ComputeResourceKind::Unknown)
             rejectAllResources = true;
           else
             rejectedResources.insert(static_cast<unsigned>(resource));
@@ -1306,7 +1308,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
   inductiveRoots.reserve(candidates.size());
   for (RootKey root : candidates)
     inductiveRoots.push_back(
-        {static_cast<sim::ComputeResourceKind>(root.first), root.second});
+        {static_cast<schedule::ComputeResourceKind>(root.first), root.second});
   llvm::sort(inductiveRoots, [](const auto &lhs, const auto &rhs) {
     return std::tie(lhs.resource, lhs.descriptor) <
            std::tie(rhs.resource, rhs.descriptor);
@@ -1326,14 +1328,14 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (isLogic(storage.getType()))
-        assumedKnown.insert(
-            getRootKey(sim::ComputeResourceKind::Storage, storage.getId()));
+        assumedKnown.insert(getRootKey(schedule::ComputeResourceKind::Storage,
+                                       storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
       if (isLogic(net.getType()))
         assumedKnown.insert(
-            getRootKey(sim::ComputeResourceKind::Net, net.getId()));
+            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
   }
   ValueFactProgram program(design);
   FailureOr<DenseMap<Value, StateDomainFact>> guarded =
@@ -1348,7 +1350,7 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
   roots.reserve(assumedKnown.size());
   for (RootKey root : assumedKnown)
     roots.push_back(
-        {static_cast<sim::ComputeResourceKind>(root.first), root.second});
+        {static_cast<schedule::ComputeResourceKind>(root.first), root.second});
   llvm::sort(roots, [](const auto &lhs, const auto &rhs) {
     return std::tie(lhs.resource, lhs.descriptor) <
            std::tie(rhs.resource, rhs.descriptor);
@@ -1385,7 +1387,7 @@ bool StateDomainAnalysis::isTwoStateWithInductiveRoots(Value value) const {
 }
 
 bool StateDomainAnalysis::isInductivelyTwoState(
-    sim::ComputeResourceKind resource, uint64_t descriptor) const {
+    schedule::ComputeResourceKind resource, uint64_t descriptor) const {
   return llvm::is_contained(inductiveRoots,
                             InductiveStateRoot{resource, descriptor});
 }

@@ -67,7 +67,7 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %net: !obelisk_sim.net<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64})
         attributes {entry_kind = 13 : i32, code_unit_id = 9970002 : i64,
-                    home_region = 16 : i32, obelisk_sim.detached_controls,
+                    home_region = 16 : i32, schedule.detached_controls,
                     internal} {
       cf.br ^check
     ^check:

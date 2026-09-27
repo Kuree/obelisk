@@ -9,9 +9,9 @@
 // For input 7 the inactive assignment's shift produces poison. Its branch
 // condition must not poison the enclosing reconvergence or retained state.
 // CHECK-LABEL: llvm.func @group()
-// CHECK-SAME: obelisk.eval.cache_hint_words = 1 : i64
-// CHECK-SAME: obelisk.eval.dataflow_fallback = @group.fallback
-// CHECK-SAME: obelisk.eval.predicated_dataflow
+// CHECK-SAME: schedule.eval.cache_hint_words = 1 : i64
+// CHECK-SAME: schedule.eval.dataflow_fallback = @group.fallback
+// CHECK-SAME: schedule.eval.predicated_dataflow
 // CHECK: llvm.cond_br
 // CHECK-NOT: llvm.cond_br
 // CHECK-NOT: llvm.br
@@ -28,13 +28,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   llvm.mlir.global internal @ready(dense<[2, 1, 0]> : tensor<3xi64>) : !llvm.array<3 x i64>
   llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<2xi64>) : !llvm.array<2 x i64>
   llvm.mlir.global internal @slow_count(0 : i32) : i32
-  llvm.func @group() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.ready_word_count = 2 : i64} {
+  llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.ready_word_count = 2 : i64} {
     %p = llvm.mlir.addressof @slow_count : !llvm.ptr
     %one = llvm.mlir.constant(1 : i32) : i32
     llvm.store %one, %p : i32, !llvm.ptr
     llvm.return
   }
-  llvm.func @dataflow() attributes {obelisk.eval.ranked_members = array<i32: 0, 1>, obelisk.eval.group_ingress = @ready, obelisk.eval.dataflow_candidate = @group, obelisk.eval.ready_word_count = 2 : i64} {
+  llvm.func @dataflow() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group, schedule.eval.ready_word_count = 2 : i64} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
     %middle = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %output = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8

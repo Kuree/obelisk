@@ -8,6 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "TargetBackend.h"
+#include "obelisk/Conversion/SimulationToSchedule.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 
 #include "BackendUtils.h"
 #include "NativeBackend.h"
@@ -511,14 +515,15 @@ static bool formattedOutputMayReadNetStrength(ValueRange items,
   return false;
 }
 
-LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
-                          StringRef triple, bool bytecode, StringRef vpi,
-                          obelisk::sim::NativeSchedulerMode nativeScheduler,
-                          uint32_t optLevel, bool planSemanticPartitions,
-                          bool timing, bool &requiresStateSync,
-                          bool &resolveInitialDrivers) {
-  if (bytecode && nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto)
-    nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
+LogicalResult
+lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
+            bool bytecode, StringRef vpi,
+            obelisk::schedule::NativeSchedulerMode nativeScheduler,
+            uint32_t optLevel, bool planSemanticPartitions, bool timing,
+            bool &requiresStateSync, bool &resolveInitialDrivers) {
+  if (bytecode &&
+      nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto)
+    nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
   module->setAttr("llvm.target_triple",
                   StringAttr::get(module.getContext(), triple));
   module->setAttr(
@@ -574,17 +579,17 @@ LogicalResult lowerToLLVM(ModuleOp module, TargetMachine &targetMachine,
                       hasDelayedNet || hasInertialDriver ||
                       hasClockOccurrenceCondition;
   resolveInitialDrivers = hasInertialDriver;
-  module->setAttr("obelisk.native_scheduler",
-                  obelisk::sim::NativeSchedulerModeAttr::get(
-                      module.getContext(), nativeScheduler));
+  ::obelisk::schedule::set<::obelisk::schedule::Field::NativeScheduler>(
+      module, obelisk::schedule::NativeSchedulerModeAttr::get(
+                  module.getContext(), nativeScheduler));
   // Hybrid AOT keeps bytecode available as the canonical implementation for
   // fragments that cannot be scheduled statically and for writable VPI
   // transition stages. The shared process frame lets those fragments return
   // to native execution at a continuation boundary without copying state.
   bool evalScheduler =
-      nativeScheduler == obelisk::sim::NativeSchedulerMode::Eval;
+      nativeScheduler == obelisk::schedule::NativeSchedulerMode::Eval;
   bool needsHybridBytecode =
-      nativeScheduler != obelisk::sim::NativeSchedulerMode::Generic;
+      nativeScheduler != obelisk::schedule::NativeSchedulerMode::Generic;
   bool needsSampledStatePlan = false;
   module.walk(
       [&](obelisk::sim::SimSampledReadOp) { needsSampledStatePlan = true; });
@@ -1020,14 +1025,14 @@ LogicalResult emitTargetOutput(ModuleOp module,
   std::string targetError;
   bool graphRequiresBytecode = false;
   module.walk([&](obelisk::sim::SimDesignOp design) {
-    obelisk::sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+    obelisk::schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
     if (!graph)
       return;
     for (mlir::Attribute attribute : graph.getNodes())
       if (auto fragment =
-              mlir::dyn_cast<obelisk::sim::ComputeFragmentAttr>(attribute))
+              mlir::dyn_cast<obelisk::schedule::ComputeFragmentAttr>(attribute))
         graphRequiresBytecode |=
-            fragment.getTier() == obelisk::sim::ComputeTierKind::Bytecode;
+            fragment.getTier() == obelisk::schedule::ComputeTierKind::Bytecode;
   });
   bool useBytecode = options.bytecode || graphRequiresBytecode;
 
@@ -1048,8 +1053,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
   }
   bool requiresStateSync = false;
   bool resolveInitialDrivers = false;
-  std::optional<obelisk::sim::NativeSchedulerMode> nativeScheduler =
-      obelisk::sim::symbolizeNativeSchedulerMode(options.nativeScheduler);
+  std::optional<obelisk::schedule::NativeSchedulerMode> nativeScheduler =
+      obelisk::schedule::symbolizeNativeSchedulerMode(options.nativeScheduler);
   if (!nativeScheduler) {
     errs() << "obelisk: error: invalid native scheduler mode\n";
     return failure();
@@ -1060,10 +1065,10 @@ LogicalResult emitTargetOutput(ModuleOp module,
   // the generated periodic eval form is actually materializable.  Converting
   // Auto to Eval here would incorrectly make that later proof mandatory for
   // ordinary non-periodic designs.
-  if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto &&
+  if (*nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto &&
       useBytecode) {
-    *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
-  } else if (*nativeScheduler == obelisk::sim::NativeSchedulerMode::Auto &&
+    *nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
+  } else if (*nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto &&
              !useBytecode) {
     obelisk::analysis::NativeAOTAnalysis aot =
         obelisk::analysis::NativeAOTAnalysis::compute(module);
@@ -1088,7 +1093,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
                << '\n';
     }
     if (!aot.isEligible() || !aot.isAOTCostEffective())
-      *nativeScheduler = obelisk::sim::NativeSchedulerMode::Generic;
+      *nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
     // A structural periodic candidate is only a cheap pipeline-shaping hint.
     // Keep Auto through coroutine lowering, where physical aliases, exact
     // fanout, and direct-fragment coverage can be proved together. A false

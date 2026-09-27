@@ -2,10 +2,10 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VPI-BODY
 
 // VPI: obelisk_sim.design @fusion attributes {
-// VPI-SAME: obelisk_sim.static_fusion = [#obelisk_sim.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
+// VPI-SAME: schedule.static_fusion = [#schedule.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
 // VPI-BODY: obelisk_sim.spawn @__obelisk_fused_0
 // VPI-BODY: obelisk_sim.func private @__obelisk_fused_0
-// VPI-BODY-SAME: obelisk.native.guarded_specialization_body
+// VPI-BODY-SAME: schedule.native.guarded_specialization_body
 // VPI-BODY-NOT: obelisk_sim.func private @a
 // VPI-BODY-NOT: obelisk_sim.func private @b
 

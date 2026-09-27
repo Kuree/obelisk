@@ -86,14 +86,14 @@ module {
 }
 
 
-// CHECK: compute_graph = #obelisk_sim.graph<
+// CHECK: compute_graph = #schedule.graph<
 // The producer of `middle_inst.out` wakes its consumer ...
-// CHECK-SAME: #obelisk_sim.edge<source = 6, target = 4, kind = sensitivity
+// CHECK-SAME: #schedule.edge<source = 6, target = 4, kind = sensitivity
 // ... so the order chosen for the two conflicting writers runs it first.
-// CHECK-SAME: #obelisk_sim.edge<source = 6, target = 4, kind = conflict
+// CHECK-SAME: #schedule.edge<source = 6, target = 4, kind = conflict
 // CHECK-SAME: groups = [
-// CHECK-SAME: #obelisk_sim.group<fragments = [6], schedule = acyclic
-// CHECK-SAME: #obelisk_sim.group<fragments = [4], schedule = acyclic
+// CHECK-SAME: #schedule.group<fragments = [6], schedule = acyclic
+// CHECK-SAME: #schedule.group<fragments = [4], schedule = acyclic
 
 // The root initializer spawns the inner propagation (@unit_3, which drives
 // `middle_inst.out`) before the outer one (@unit_2, which reads it), so one

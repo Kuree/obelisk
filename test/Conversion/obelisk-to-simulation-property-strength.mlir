@@ -114,7 +114,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK: arith.constant 4 : i64
 // CHECK: arith.constant 2 : i64
 // CHECK: obelisk_sim.ref.load
@@ -136,7 +136,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.31.weak(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_report.31.weak
 // CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_report.31.weak
 // CHECK-LABEL: obelisk_sim.func private @unit_1(

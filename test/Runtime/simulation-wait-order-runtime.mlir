@@ -115,8 +115,8 @@ module attributes {
         %a: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %b: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930002 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       %carried = arith.constant 73 : i32
       obelisk_sim.suspend.event_order %a, %b, %carried events 2 to ^resumed :
           !obelisk_sim.event, !obelisk_sim.event, i32
@@ -146,8 +146,8 @@ module attributes {
         %a: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %b: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930003 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       obelisk_sim.suspend.event_order %a, %b events 2 to ^resumed :
           !obelisk_sim.event, !obelisk_sim.event
     ^resumed:
@@ -172,8 +172,8 @@ module attributes {
         %a: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %b: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930004 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       obelisk_sim.suspend.event_order %a, %b events 2 to ^resumed :
           !obelisk_sim.event, !obelisk_sim.event
     ^resumed:
@@ -198,8 +198,8 @@ module attributes {
         %a: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %b: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930005 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       obelisk_sim.suspend.event_order %a, %b events 2 to ^resumed :
           !obelisk_sim.event, !obelisk_sim.event
     ^resumed:
@@ -224,8 +224,8 @@ module attributes {
         %a: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %b: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930006 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       obelisk_sim.suspend.event_order %a, %b events 2 to ^resumed :
           !obelisk_sim.event, !obelisk_sim.event
     ^resumed:
@@ -249,8 +249,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %event: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930007 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       obelisk_sim.suspend.event_order %event events 1 to ^resumed :
           !obelisk_sim.event
     ^resumed:
@@ -275,8 +275,8 @@ module attributes {
         %a: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32},
         %b: !obelisk_sim.event {obelisk_sim.capture_kind = 1 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9930008 : i64,
-                    internal, obelisk_sim.detached_controls,
-                    obelisk_sim.prime_on_spawn} {
+                    internal, schedule.detached_controls,
+                    schedule.prime_on_spawn} {
       obelisk_sim.suspend.event_order %a, %b events 2 to ^resumed :
           !obelisk_sim.event, !obelisk_sim.event
     ^resumed:

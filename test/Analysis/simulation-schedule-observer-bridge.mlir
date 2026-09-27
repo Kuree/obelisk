@@ -12,26 +12,26 @@
 
 module {
   obelisk_sim.design @observer_bridge attributes {
-    compute_graph = #obelisk_sim.graph<
+    compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
-        #obelisk_sim.fragment<id = 0, function = @observer, block = 0,
+        #schedule.fragment<id = 0, function = @observer, block = 0,
           region = observed, action = continue, tier = native, cost = 0,
           lane = 0, twoState = true, effects = []>,
-        #obelisk_sim.fragment<id = 1, function = @observer, block = 1,
+        #schedule.fragment<id = 1, function = @observer, block = 1,
           region = observed, action = terminate, tier = native, cost = 0,
           lane = 0, twoState = true, effects = []>
       ],
       edges = [],
       regions = [
-        #obelisk_sim.region<kind = active, groups = []>,
-        #obelisk_sim.region<kind = nba, groups = []>,
-        #obelisk_sim.region<kind = observed, groups = [
-          #obelisk_sim.group<fragments = [0], schedule = acyclic, feedback = []>,
-          #obelisk_sim.group<fragments = [1], schedule = acyclic, feedback = []>
+        #schedule.region<kind = active, groups = []>,
+        #schedule.region<kind = nba, groups = []>,
+        #schedule.region<kind = observed, groups = [
+          #schedule.group<fragments = [0], schedule = acyclic, feedback = []>,
+          #schedule.group<fragments = [1], schedule = acyclic, feedback = []>
         ]>,
-        #obelisk_sim.region<kind = reactive, groups = []>,
-        #obelisk_sim.region<kind = postponed, groups = []>
+        #schedule.region<kind = reactive, groups = []>,
+        #schedule.region<kind = postponed, groups = []>
       ]>
   } {
     obelisk_sim.code_unit.decl 1 in 0 observer hierarchy "observer"
@@ -42,7 +42,7 @@ module {
         attributes {entry_kind = 14 : i32, code_unit_id = 1 : i64} {
       cf.br ^bridge
     ^bridge:
-      cf.br ^body {obelisk_sim.observer_capture_bridge}
+      cf.br ^body {schedule.observer_capture_bridge}
     ^body:
       %true = arith.constant true
       obelisk_sim.return %true : i1

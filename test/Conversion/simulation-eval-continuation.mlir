@@ -8,7 +8,7 @@
 // remapped to dense scheduler continuation 1; the scheduler must not recover
 // that identity from an operation pointer after fusion or CFG cleanup, and
 // eligibility must not depend on a unit_N symbol spelling.
-module attributes {obelisk.native_scheduler = 3 : i32} {
+module attributes {schedule.native_scheduler = 3 : i32} {
   obelisk_sim.design @eval_continuation {
     obelisk_sim.scope.decl 0
     obelisk_sim.code_unit.decl 1 in 0 continuous hierarchy "test.project_clock"
@@ -48,7 +48,7 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
           (!obelisk_sim.context, i1) -> i1
       obelisk_sim.ref.store %covered to %output : i1, !obelisk_sim.ref<i1>
       obelisk_sim.suspend.change %input to ^body
-          {site = #obelisk_sim.continuation<id = 42>} : !obelisk_sim.ref<i1>
+          {site = #schedule.continuation<id = 42>} : !obelisk_sim.ref<i1>
     }
 
     obelisk_sim.func private @forward_static(
@@ -116,9 +116,9 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
 }
 
 // CHECK-LABEL: obelisk_sim.func private @project_clock.__obelisk_eval_body_0
-// CHECK-SAME: obelisk.eval.borrowed_captures
-// CHECK-SAME: obelisk.eval.continuation = 1 : i32
-// CHECK-SAME: obelisk.eval.raw_captures
+// CHECK-SAME: schedule.eval.borrowed_captures
+// CHECK-SAME: schedule.eval.continuation = 1 : i32
+// CHECK-SAME: schedule.eval.raw_captures
 // CHECK: obelisk_sim.ref.load
 // CHECK: obelisk_sim.ref.store
 // CHECK: obelisk_sim.return
@@ -126,32 +126,32 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
 // OFF-NOT: obelisk_sim.ref.store
 // OFF-NOT: obelisk_sim.ref.load
 // OFF: obelisk_sim.return
-// OFF-NOT: obelisk.eval.discardable_store
+// OFF-NOT: schedule.eval.discardable_store
 // OFF-LABEL: obelisk_sim.func private @forward_coverage(
 // OFF: obelisk_sim.ref.store
 // OFF: obelisk_sim.ref.load
 // OFF: obelisk_sim.return
-// OFF-NOT: obelisk.eval.discardable_store
+// OFF-NOT: schedule.eval.discardable_store
 
 // READ-LABEL: obelisk_sim.func private @project_clock(
-// READ-SAME: obelisk.eval.body = @[[READ_BODY:[^, }]+]]
+// READ-SAME: schedule.eval.body = @[[READ_BODY:[^, }]+]]
 // READ-COUNT-1: obelisk_sim.ref.store
-// READ-NOT: obelisk.eval.discardable_store
+// READ-NOT: schedule.eval.discardable_store
 // READ-LABEL: obelisk_sim.func private @forward_static(
 // READ-COUNT-1: obelisk_sim.ref.store
-// READ-SAME: obelisk.eval.discardable_store
+// READ-SAME: schedule.eval.discardable_store
 // READ-NOT: obelisk_sim.ref.load
 // READ: obelisk_sim.return
 // READ-LABEL: obelisk_sim.func private @forward_coverage(
 // READ: obelisk_sim.ref.store
 // READ: obelisk_sim.ref.load
 // READ: obelisk_sim.return
-// READ-NOT: obelisk.eval.discardable_store
+// READ-NOT: schedule.eval.discardable_store
 // READ-LABEL: obelisk_sim.func private @project_clock.__obelisk_eval_body_{{[0-9]+}}(
 // READ-NOT: obelisk_sim.context.storage %{{.*}}[2]
 // READ-COUNT-1: obelisk_sim.ref.store
 // READ-NOT: obelisk_sim.ref.subelement
-// READ-NOT: obelisk.eval.discardable_store
+// READ-NOT: schedule.eval.discardable_store
 
 // OFF-LABEL: obelisk_sim.design @spawn_context_promotion
 // OFF-LABEL: obelisk_sim.func private @context_actor(
@@ -163,4 +163,4 @@ module attributes {obelisk.native_scheduler = 3 : i32} {
 // READ-LABEL: obelisk_sim.func private @context_actor(
 // READ-COUNT-1: obelisk_sim.ref.store
 // READ-NOT: obelisk_sim.ref.load
-// READ-NOT: obelisk.eval.discardable_store
+// READ-NOT: schedule.eval.discardable_store

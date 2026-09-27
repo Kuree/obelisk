@@ -7,6 +7,7 @@
 #ifndef OBELISK_ANALYSIS_STATICSPECIALIZATIONANALYSIS_H
 #define OBELISK_ANALYSIS_STATICSPECIALIZATIONANALYSIS_H
 
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Support/LLVM.h"
@@ -30,23 +31,24 @@ public:
   compute(sim::SimDesignOp design);
 
   explicit operator bool() const { return plan != nullptr; }
-  sim::StaticSpecializationAttr getPlan() const { return plan; }
+  schedule::StaticSpecializationAttr getPlan() const { return plan; }
 
-  const llvm::DenseMap<uint64_t, sim::StaticStateRootAttr> &getRoots() const {
+  const llvm::DenseMap<uint64_t, schedule::StaticStateRootAttr> &
+  getRoots() const {
     return roots;
   }
   mlir::ArrayRef<uint64_t> getNBARoots() const { return nbaRoots; }
   const llvm::DenseSet<uint64_t> &getNBASites() const { return nbaSites; }
-  mlir::ArrayRef<sim::ComputeNBACommitAttr> getOrderedNBACommits() const {
+  mlir::ArrayRef<schedule::ComputeNBACommitAttr> getOrderedNBACommits() const {
     return orderedNBACommits;
   }
 
 private:
-  sim::StaticSpecializationAttr plan;
-  llvm::DenseMap<uint64_t, sim::StaticStateRootAttr> roots;
+  schedule::StaticSpecializationAttr plan;
+  llvm::DenseMap<uint64_t, schedule::StaticStateRootAttr> roots;
   mlir::SmallVector<uint64_t> nbaRoots;
   llvm::DenseSet<uint64_t> nbaSites;
-  mlir::SmallVector<sim::ComputeNBACommitAttr> orderedNBACommits;
+  mlir::SmallVector<schedule::ComputeNBACommitAttr> orderedNBACommits;
 };
 
 } // namespace obelisk::analysis

@@ -12,7 +12,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 2 : i32
+  schedule.native_scheduler = 2 : i32
 } {
   obelisk_sim.design @vpi_write {
     obelisk_sim.scope.decl 0 hierarchy "vpi_write"
@@ -47,7 +47,7 @@ module attributes {
       cf.br ^wait
     ^wait:
       %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clk : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
@@ -59,7 +59,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clk to ^write {site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %clk to ^write {site = #schedule.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^write:
       %q = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<32>>
       %old = obelisk_sim.ref.load %q : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
@@ -73,7 +73,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %q to ^drive {site = #obelisk_sim.continuation<id = 6>} : !obelisk_sim.ref<!obelisk_sim.logic<32>>
+      obelisk_sim.suspend.change %q to ^drive {site = #schedule.continuation<id = 6>} : !obelisk_sim.ref<!obelisk_sim.logic<32>>
     ^drive:
       %value = obelisk_sim.ref.load %q : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
       %driver = obelisk_sim.context.driver %ctx[0] : !obelisk_sim.driver<!obelisk_sim.logic<32>>
@@ -84,7 +84,7 @@ module attributes {
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
       %zero = arith.constant 0 : i32
       %delay = obelisk_sim.time.constant 1000
-      obelisk_sim.suspend.delay %delay to ^mutate(%zero : i32) {site = #obelisk_sim.continuation<id = 3>, timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+      obelisk_sim.suspend.delay %delay to ^mutate(%zero : i32) {site = #schedule.continuation<id = 3>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^mutate(%phase: i32):
       %q = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<32>>
       %before = obelisk_sim.ref.load %q : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
@@ -103,10 +103,10 @@ module attributes {
       cf.cond_br %again, ^wait, ^settle
     ^wait:
       %step = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %step to ^mutate(%next : i32) {site = #obelisk_sim.continuation<id = 4>, timing = #obelisk_sim.timing_site<id = 2, kind = calendar>}
+      obelisk_sim.suspend.delay %step to ^mutate(%next : i32) {site = #schedule.continuation<id = 4>, timing = #schedule.timing_site<id = 2, kind = calendar>}
     ^settle:
       %long = obelisk_sim.time.constant 1000
-      obelisk_sim.suspend.delay %long to ^done {site = #obelisk_sim.continuation<id = 5>, timing = #obelisk_sim.timing_site<id = 3, kind = calendar>}
+      obelisk_sim.suspend.delay %long to ^done {site = #schedule.continuation<id = 5>, timing = #schedule.timing_site<id = 3, kind = calendar>}
     ^done:
       %finalRef = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<32>>
       %final = obelisk_sim.ref.load %finalRef : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>

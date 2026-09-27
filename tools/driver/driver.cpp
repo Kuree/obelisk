@@ -7,6 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeInputs.h"
+#include "obelisk/Conversion/SimulationToSchedule.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 #if OBELISK_HAS_NATIVE_BACKEND
 #include "HostCRuntime.h"
 #endif
@@ -20,6 +24,8 @@
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
+#include "obelisk/Dialect/Schedule/Export.h"
+#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
@@ -432,27 +438,37 @@ static bool expandCommandFiles(SmallVectorImpl<const char *> &argv,
 // inspector can still relate a fragment to the source location retained by
 // its control-flow boundary or owning code unit. Keep this provenance next to
 // the diagnostic instead of adding it to the versioned runtime graph schema.
-static void printScheduleSourceLocations(obelisk::sim::SimDesignOp design,
-                                         obelisk::sim::ComputeGraphAttr graph,
-                                         raw_ostream &output) {
+static FileLineColLoc
+scheduleSourceLocation(SymbolTable &symbols,
+                       obelisk::schedule::ComputeFragmentAttr fragment) {
+  auto function = symbols.lookup<obelisk::sim::SimFuncOp>(
+      fragment.getFunction().getValue());
+  if (!function)
+    return {};
+  Block *block =
+      obelisk::analysis::lookupComputeGraphBlock(function, fragment.getBlock());
+  Location source =
+      block ? block->getTerminator()->getLoc() : function.getLoc();
+  auto location = source->findInstanceOf<FileLineColLoc>();
+  if (!location)
+    location = function.getLoc()->findInstanceOf<FileLineColLoc>();
+  if (!location)
+    return {};
+  return location;
+}
+
+static void
+printScheduleSourceLocations(obelisk::sim::SimDesignOp design,
+                             obelisk::schedule::ComputeGraphAttr graph,
+                             raw_ostream &output) {
   SymbolTable symbols(design);
   bool first = true;
   output << " source_locations = [";
   for (Attribute node : graph.getNodes()) {
-    auto fragment = dyn_cast<obelisk::sim::ComputeFragmentAttr>(node);
+    auto fragment = dyn_cast<obelisk::schedule::ComputeFragmentAttr>(node);
     if (!fragment)
       continue;
-    auto function = symbols.lookup<obelisk::sim::SimFuncOp>(
-        fragment.getFunction().getValue());
-    if (!function)
-      continue;
-    Block *block = obelisk::analysis::lookupComputeGraphBlock(
-        function, fragment.getBlock());
-    Location source =
-        block ? block->getTerminator()->getLoc() : function.getLoc();
-    auto location = source->findInstanceOf<FileLineColLoc>();
-    if (!location)
-      location = function.getLoc()->findInstanceOf<FileLineColLoc>();
+    auto location = scheduleSourceLocation(symbols, fragment);
     if (!location)
       continue;
     if (!first)
@@ -1094,7 +1110,7 @@ static int executeCompilation(
   }
   StringRef nativeScheduler =
       args.getLastArgValue(OPT_native_scheduler_EQ, "auto");
-  if (!obelisk::sim::symbolizeNativeSchedulerMode(nativeScheduler)) {
+  if (!obelisk::schedule::symbolizeNativeSchedulerMode(nativeScheduler)) {
     emitDriverError(Twine("unsupported native scheduler '") + nativeScheduler +
                     "'; expected auto, generic, aot, or eval");
     valid = false;
@@ -1356,19 +1372,20 @@ static int executeCompilation(
                        ArrayAttr::get(&context, prefixMaps));
 
   if (native) {
-    obelisk::sim::NativeSchedulerMode pipelineScheduler =
-        *obelisk::sim::symbolizeNativeSchedulerMode(nativeScheduler);
-    if (pipelineScheduler == obelisk::sim::NativeSchedulerMode::Auto) {
+    obelisk::schedule::NativeSchedulerMode pipelineScheduler =
+        *obelisk::schedule::symbolizeNativeSchedulerMode(nativeScheduler);
+    if (pipelineScheduler == obelisk::schedule::NativeSchedulerMode::Auto) {
       if (!args.hasArg(OPT_execution_tier_EQ))
-        (*module)->setAttr("obelisk.native_scheduler.auto_requested",
-                           UnitAttr::get(&context));
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::NativeSchedulerAutoRequested>(
+            (*module), UnitAttr::get(&context));
       pipelineScheduler = executionTier == "bytecode"
-                              ? obelisk::sim::NativeSchedulerMode::Generic
-                              : obelisk::sim::NativeSchedulerMode::Eval;
+                              ? obelisk::schedule::NativeSchedulerMode::Generic
+                              : obelisk::schedule::NativeSchedulerMode::Eval;
     }
-    (*module)->setAttr("obelisk.native_scheduler",
-                       obelisk::sim::NativeSchedulerModeAttr::get(
-                           &context, pipelineScheduler));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeScheduler>(
+        (*module), obelisk::schedule::NativeSchedulerModeAttr::get(
+                       &context, pipelineScheduler));
   }
 
   if (!emitSlang && !emitBindings) {
@@ -1460,24 +1477,51 @@ static int executeCompilation(
     if (failed(writeDPIHeader(*module, output.os())))
       return 1;
   } else if (emitSchedule) {
+    StringRef format = args.getLastArgValue(OPT_schedule_format_EQ, "mlir");
+    if (format != "mlir" && format != "json") {
+      emitDriverError("schedule format must be mlir or json");
+      return 1;
+    }
+    llvm::json::Array graphs;
     for (obelisk::sim::SimDesignOp design :
          module->getBody()->getOps<obelisk::sim::SimDesignOp>()) {
-      output.os() << "schedule @" << design.getSymName() << ' ';
-      obelisk::sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
+      auto graph = design.getComputeGraphAttr();
       if (!graph) {
         emitDriverError("simulation lowering produced no compute graph");
         return 1;
       }
-      Attribute(graph).print(output.os());
+      if (format == "json") {
+        SymbolTable symbols(design);
+        graphs.push_back(obelisk::schedule::exportGraph(
+            graph, design.getSymName(), [&](auto fragment) {
+              return scheduleSourceLocation(symbols, fragment);
+            }));
+        continue;
+      }
+      output.os() << "schedule @" << design.getSymName() << ' ';
+      std::string assembly;
+      llvm::raw_string_ostream stream(assembly);
+      Attribute(graph).print(stream);
+      output.os() << assembly;
       if (args.hasArg(OPT_mlir_print_debuginfo))
         printScheduleSourceLocations(design, graph, output.os());
       output.os() << '\n';
     }
+    if (format == "json")
+      output.os() << llvm::json::Value(
+                         llvm::json::Object{{"schema", "schedule"},
+                                            {"version", 1},
+                                            {"graphs", std::move(graphs)}})
+                  << '\n';
+
   } else {
     OpPrintingFlags printingFlags;
     if (args.hasArg(OPT_mlir_print_debuginfo))
       printingFlags.enableDebugInfo();
-    module->print(output.os(), printingFlags);
+    std::string assembly;
+    llvm::raw_string_ostream stream(assembly);
+    module->print(stream, printingFlags);
+    output.os() << assembly;
     output.os() << '\n';
   }
   output.keep();

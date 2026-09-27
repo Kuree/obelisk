@@ -1,6 +1,8 @@
 //===- LowerUnitLValues.cpp - Lower assignments and port lvalues ------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1174,7 +1176,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       if (nonblocking)
         sim::SimNBAEnqueueOp::create(builder, location, published,
                                      destination.reference, delay,
-                                     sim::NBASiteAttr{}, IntegerAttr{});
+                                     schedule::NBASiteAttr{}, IntegerAttr{});
       else {
         auto store = sim::SimRefStoreOp::create(builder, location, published,
                                                 destination.reference);
@@ -1460,8 +1462,10 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         if (!drivenWidth)
           return function.emitError(
               "delayed drive value has no fixed packed width");
-        bool vectorDelay = !function->hasAttr("obelisk_sim.primitive_name") &&
-                           *drivenWidth != 1;
+        bool vectorDelay =
+            !::obelisk::schedule::has<
+                ::obelisk::schedule::Field::PrimitiveName>(function) &&
+            *drivenWidth != 1;
         if (nextInertialDriveComponent > UINT32_MAX)
           return function.emitError("too many delayed drive sites");
         Value riseDelay;
@@ -1505,8 +1509,9 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         auto drive = sim::SimDriverDriveOp::create(
             builder, location, destination.reference, published);
         if (deferDriverResolution || userRaw)
-          drive->setAttr("obelisk_sim.defer_net_resolution",
-                         builder.getUnitAttr());
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::DeferNetResolution>(
+              drive, builder.getUnitAttr());
         if (userRaw)
           drive->setAttr("obelisk_sim.user_net_raw_drive",
                          builder.getUnitAttr());
@@ -2784,12 +2789,13 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   auto saveObserverPlan = [&](Value observer) -> ObserverPlan {
     auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
     assert(binding && "bound observer must be produced by observer.bind");
-    ObserverPlan plan{binding.getEvaluatorAttr(),
-                      cast<sim::ObserverType>(observer.getType()),
-                      binding.getCaptureCountAttr(),
-                      SmallVector<Value>(binding.getValues()),
-                      {},
-                      binding->hasAttr(observerEventPrimaryAttrName)};
+    ObserverPlan plan{
+        binding.getEvaluatorAttr(),
+        cast<sim::ObserverType>(observer.getType()),
+        binding.getCaptureCountAttr(),
+        SmallVector<Value>(binding.getValues()),
+        {},
+        ::obelisk::schedule::has<observerEventPrimaryAttrName>(binding)};
     binding.erase();
     return plan;
   };
@@ -3079,8 +3085,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
                                                   plan.type, plan.evaluator,
                                                   operands, plan.captureCount);
     if (plan.eventPrimary)
-      binding->setAttr(observerEventPrimaryAttrName,
-                       entryBuilder.getUnitAttr());
+      ::obelisk::schedule::set<observerEventPrimaryAttrName>(
+          binding, entryBuilder.getUnitAttr());
     return binding.getResult();
   };
   Value localPrimaryObserver;
@@ -3142,20 +3148,20 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
           ValueRange{localCyclePrimaryObserver, initial,
                      localCycleConditionObserver, cycleWait->getArgument(0)},
           1, ArrayRef<int32_t>{static_cast<int32_t>(delayedEdge)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{}, reactive,
+          ArrayRef<int32_t>{0}, schedule::ContinuationSiteAttr{}, reactive,
           cycleResume);
     } else if (isa<sim::EventType>(cycleClock.getType())) {
       sim::SimSuspendEventOp::create(
           cycleWaitBuilder, location, entry.getArgument(*cycleClockIndex),
-          forwarded, sim::ContinuationSiteAttr{}, reactive, cycleResume);
+          forwarded, schedule::ContinuationSiteAttr{}, reactive, cycleResume);
     } else if (delayedEdge == sim::EdgeKind::Change) {
       sim::SimSuspendChangeOp::create(
           cycleWaitBuilder, location, entry.getArgument(*cycleClockIndex),
-          forwarded, sim::ContinuationSiteAttr{}, reactive, cycleResume);
+          forwarded, schedule::ContinuationSiteAttr{}, reactive, cycleResume);
     } else {
       sim::SimSuspendEdgeOp::create(cycleWaitBuilder, location, delayedEdge,
                                     entry.getArgument(*cycleClockIndex),
-                                    forwarded, sim::ContinuationSiteAttr{},
+                                    forwarded, schedule::ContinuationSiteAttr{},
                                     reactive, cycleResume);
     }
 
@@ -3212,21 +3218,23 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
           waitBuilder, location,
           ValueRange{localPrimaryObserver, initial, localConditionObserver}, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(occurrenceEdge)},
-          ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+          ArrayRef<int32_t>{0}, schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(context, sim::EventRegion::Reactive),
           afterOccurrence);
     } else if (isa<sim::EventType>(clock.getType())) {
-      sim::SimSuspendEventOp::create(
-          waitBuilder, location, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, afterOccurrence);
+      sim::SimSuspendEventOp::create(waitBuilder, location,
+                                     entry.getArgument(2), ValueRange{},
+                                     schedule::ContinuationSiteAttr{},
+                                     sim::EventRegionAttr{}, afterOccurrence);
     } else if (occurrenceEdge == sim::EdgeKind::Change) {
-      sim::SimSuspendChangeOp::create(
-          waitBuilder, location, entry.getArgument(2), ValueRange{},
-          sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, afterOccurrence);
+      sim::SimSuspendChangeOp::create(waitBuilder, location,
+                                      entry.getArgument(2), ValueRange{},
+                                      schedule::ContinuationSiteAttr{},
+                                      sim::EventRegionAttr{}, afterOccurrence);
     } else {
       sim::SimSuspendEdgeOp::create(waitBuilder, location, occurrenceEdge,
                                     entry.getArgument(2), ValueRange{},
-                                    sim::ContinuationSiteAttr{},
+                                    schedule::ContinuationSiteAttr{},
                                     sim::EventRegionAttr{}, afterOccurrence);
     }
   } else if (!cycleDelay) {
@@ -3236,10 +3244,10 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   }
   if (edgeWait) {
     OpBuilder edgeBuilder = OpBuilder::atBlockEnd(edgeWait);
-    sim::SimSuspendEdgeOp::create(edgeBuilder, location, edge,
-                                  entry.getArgument(*edgeSkewClockIndex),
-                                  ValueRange{}, sim::ContinuationSiteAttr{},
-                                  sim::EventRegionAttr{}, drive);
+    sim::SimSuspendEdgeOp::create(
+        edgeBuilder, location, edge, entry.getArgument(*edgeSkewClockIndex),
+        ValueRange{}, schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+        drive);
   }
   OpBuilder driveBuilder = OpBuilder::atBlockEnd(drive);
   Value delay;
@@ -3249,7 +3257,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
         driveBuilder.getI64IntegerAttr(delayTicks));
   sim::SimNBAEnqueueOp::create(
       driveBuilder, location, entry.getArgument(3), entry.getArgument(1), delay,
-      sim::NBASiteAttr{}, driveBuilder.getI64IntegerAttr(clockingOutputID));
+      schedule::NBASiteAttr{},
+      driveBuilder.getI64IntegerAttr(clockingOutputID));
   sim::SimReturnOp::create(driveBuilder, location, ValueRange{});
   driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
   Value processContext = function.getBody().front().getArgument(0);
@@ -4130,10 +4139,10 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
       outlineBuilder.getNamedAttr("code_unit_id",
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
-      outlineBuilder.getNamedAttr("obelisk_sim.detached_controls",
-                                  outlineBuilder.getUnitAttr()),
-      outlineBuilder.getNamedAttr("obelisk_sim.prime_on_spawn",
-                                  outlineBuilder.getUnitAttr()),
+      ::obelisk::schedule::named<::obelisk::schedule::Field::DetachedControls>(
+          outlineBuilder.getUnitAttr()),
+      ::obelisk::schedule::named<::obelisk::schedule::Field::PrimeOnSpawn>(
+          outlineBuilder.getUnitAttr()),
       outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                   hierarchyAttr),
   };
@@ -4350,8 +4359,8 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
       if (failed(delay))
         return failure();
       sim::SimSuspendDelayOp::create(
-          builder, location, *delay, sim::TimingSiteAttr{},
-          continuationOperands, sim::ContinuationSiteAttr{},
+          builder, location, *delay, schedule::TimingSiteAttr{},
+          continuationOperands, schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr{}, continuation);
       setCurrent(continuation);
     } else if (isa<semantic::SVRepeatedEventControlOp>(control)) {
@@ -4395,8 +4404,9 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
     Block *continuation = addBlock();
     continuation->addArgument((*value).getType(), location);
     sim::SimSuspendDelayOp::create(
-        builder, location, *delay, sim::TimingSiteAttr{}, ValueRange{*value},
-        sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+        builder, location, *delay, schedule::TimingSiteAttr{},
+        ValueRange{*value}, schedule::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, continuation);
     setCurrent(continuation);
     Value capturedValue = continuation->getArgument(0);
     if (failed(writeLValue(destination, capturedValue, false, false, location)))
@@ -4502,8 +4512,9 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
       auto drive = sim::SimDriverDriveOp::create(builder, location, destination,
                                                  *converted);
       if (isUserNetDriver(destination)) {
-        drive->setAttr("obelisk_sim.defer_net_resolution",
-                       builder.getUnitAttr());
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::DeferNetResolution>(
+            drive, builder.getUnitAttr());
         drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
       }
     }

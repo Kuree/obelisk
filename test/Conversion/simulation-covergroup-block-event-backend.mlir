@@ -31,8 +31,8 @@ module attributes {
         attributes {
           code_unit_id = 1 : i64, entry_kind = 14 : i32, internal,
           obelisk_sim.covergroup_block_event_sample_evaluator,
-          obelisk_sim.observer_width = 1 : i32,
-          obelisk_sim.observer_four_state = false,
+          schedule.observer_width = 1 : i32,
+          schedule.observer_four_state = false,
           obelisk_sim.this_argument = 2 : i32
         } {
       %true = arith.constant true

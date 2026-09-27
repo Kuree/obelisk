@@ -12,7 +12,7 @@ module {
     obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
 
     // CHECK-LABEL: obelisk_sim.func @stage
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = nba
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = nba
     obelisk_sim.func @stage(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %destination: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 1 : i32},
@@ -22,10 +22,10 @@ module {
       // A function body may run any number of times, so its staging site can
       // never own a fixed slot.
       // CHECK: obelisk_sim.nba.enqueue
-      // CHECK-SAME: site = #obelisk_sim.nba_site<id = 0, commit = {{[0-9]+}}, storage = dynamic_frontier>
+      // CHECK-SAME: site = #schedule.nba_site<id = 0, commit = {{[0-9]+}}, storage = dynamic_frontier>
       obelisk_sim.nba.enqueue %value to %destination : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       // CHECK: obelisk_sim.event.trigger
-      // CHECK-SAME: site = #obelisk_sim.event_site<id = 0
+      // CHECK-SAME: site = #schedule.event_site<id = 0
       obelisk_sim.event.trigger %event nonblocking = true
       obelisk_sim.return
     }
@@ -34,7 +34,7 @@ module {
     // until call-graph specialization clones it. Other effect kinds may still
     // specialize onto caller descriptors.
     // CHECK-LABEL: obelisk_sim.func @process
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = nba, resource = unknown
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = nba, resource = unknown
     obelisk_sim.func @process(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %storage: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
@@ -61,7 +61,7 @@ module {
     }
 
     // CHECK-LABEL: obelisk_sim.func @join_event
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = trigger, resource = unknown
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = trigger, resource = unknown
     obelisk_sim.func @join_event(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %condition: i1 {obelisk_sim.capture_kind = 2 : i32})

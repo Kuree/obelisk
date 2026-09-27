@@ -4,6 +4,9 @@
 #include "SimulationEvalNBAQueue.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -99,8 +102,8 @@ materializeNativeEvalDispatch(ModuleOp module,
   auto fastCoordinator = LLVM::LLVMFuncOp::create(
       builder, location, functionName,
       LLVM::LLVMFunctionType::get(i32, coordinatorArguments, false));
-  fastCoordinator->setAttr(sim::metadata::evalCallClosureRoot,
-                           builder.getUnitAttr());
+  ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+      fastCoordinator, builder.getUnitAttr());
   Block *fastEntry = fastCoordinator.addEntryBlock(builder);
   Block *dispatch = new Block;
   Block *commit = new Block;
@@ -349,9 +352,12 @@ materializeNativeEvalDispatch(ModuleOp module,
     auto twoStateExecutor = executorSymbols.lookup<LLVM::LLVMFuncOp>(
         mergedTwoStateExecutors[recordIndex]);
     bool convergenceOwner =
-        (executor && executor->hasAttr(sim::metadata::evalTier2Convergence)) ||
+        (executor &&
+         ::obelisk::schedule::has<schedule::metadata::evalTier2Convergence>(
+             executor)) ||
         (twoStateExecutor &&
-         twoStateExecutor->hasAttr(sim::metadata::evalTier2Convergence));
+         ::obelisk::schedule::has<schedule::metadata::evalTier2Convergence>(
+             twoStateExecutor));
     // A convergence owner consumes its old dirty bit before executing. Any
     // transition published by the activation then remains queued and drives
     // another local fixpoint iteration. Non-convergence owners retain the
@@ -408,8 +414,9 @@ materializeNativeEvalDispatch(ModuleOp module,
               SymbolRefAttr::get(context, mergedTwoStateExecutors[recordIndex]),
               ValueRange{fastEntry->getArgument(1)})
               .getResult();
-      twoStateStatus.getDefiningOp()->setAttr(
-          "obelisk.eval.proven_two_state_call", builder.getUnitAttr());
+      ::obelisk::schedule::set<
+          ::obelisk::schedule::Field::EvalProvenTwoStateCall>(
+          twoStateStatus.getDefiningOp(), builder.getUnitAttr());
       cf::BranchOp::create(builder, location, executeJoin,
                            ValueRange{twoStateStatus});
       builder.setInsertionPointToStart(executeJoin);
@@ -438,9 +445,12 @@ materializeNativeEvalDispatch(ModuleOp module,
         builder, location, arith::CmpIPredicate::eq, executeStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));
     bool mayTerminate =
-        (executor && executor->hasAttr(sim::metadata::evalMayTerminate)) ||
+        (executor &&
+         ::obelisk::schedule::has<schedule::metadata::evalMayTerminate>(
+             executor)) ||
         (twoStateExecutor &&
-         twoStateExecutor->hasAttr(sim::metadata::evalMayTerminate));
+         ::obelisk::schedule::has<schedule::metadata::evalMayTerminate>(
+             twoStateExecutor));
     // A convergence owner may republish itself indefinitely. Poll the
     // branch-only termination word after each member activation, before the
     // coordinator follows the dirty-mask backedge. Waiting for the commit
@@ -448,9 +458,12 @@ materializeNativeEvalDispatch(ModuleOp module,
     // boundary is reachable only after its ready bit becomes clear.
     mayTerminate |= convergenceOwner;
     bool infallible =
-        executor && executor->hasAttr(sim::metadata::evalInfallible) &&
+        executor &&
+        ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+            executor) &&
         (!twoStateExecutor ||
-         twoStateExecutor->hasAttr(sim::metadata::evalInfallible));
+         ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+             twoStateExecutor));
     if (infallible && !mayTerminate) {
       cf::BranchOp::create(builder, location, dispatch);
       continue;
@@ -506,7 +519,8 @@ materializeNativeEvalDispatch(ModuleOp module,
   };
 
   builder.setInsertionPointToStart(commit);
-  if (module->hasAttr("obelisk.eval.runtime_calendar")) {
+  if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module)) {
     // IEEE 1800-2023 4.4.2.2-4.4.2.4, 4.5, 10.4.2: finish generated
     // Active work as one batch. The shared scheduler owns
     // this mixed NBA barrier and must first drain runtime Active observers.
@@ -705,8 +719,9 @@ materializeNativeEvalDispatch(ModuleOp module,
         SymbolRefAttr::get(context, nbaCommitName),
         ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
                    llvmConstant(builder, location, i32, 2), changed});
-    fastTwoStateCall->setAttr("obelisk.eval.use_fast_two_state_nba",
-                              builder.getUnitAttr());
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(
+        fastTwoStateCall, builder.getUnitAttr());
     cf::BranchOp::create(builder, location, commitJoin,
                          ValueRange{fastTwoStateCall.getResult()});
     builder.setInsertionPointToStart(canonicalTwoStateCommit);
@@ -716,8 +731,9 @@ materializeNativeEvalDispatch(ModuleOp module,
         SymbolRefAttr::get(context, nbaCommitName),
         ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
                    llvmConstant(builder, location, i32, 2), changed});
-    canonicalTwoStateCall->setAttr("obelisk.eval.use_canonical_two_state_nba",
-                                   builder.getUnitAttr());
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalUseCanonicalTwoStateNba>(
+        canonicalTwoStateCall, builder.getUnitAttr());
     cf::BranchOp::create(builder, location, commitJoin,
                          ValueRange{canonicalTwoStateCall.getResult()});
     builder.setInsertionPointToStart(fourStateCommit);

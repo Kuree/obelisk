@@ -1,6 +1,9 @@
 //===- NativeAOTAnalysis.cpp - Native scheduler eligibility --------------===//
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -109,9 +112,12 @@ bool isPersistentMonitorActor(sim::SimFuncOp function) {
 /// control.
 bool isCovergroupClockingSamplerActorImpl(sim::SimFuncOp function) {
   if (!function ||
-      !function->hasAttr("obelisk_sim.covergroup_clocking_sampler") ||
-      !function->hasAttr("obelisk_sim.detached_controls") ||
-      !function->hasAttr("obelisk_sim.prime_on_spawn") ||
+      !::obelisk::schedule::has<
+          ::obelisk::schedule::Field::CovergroupClockingSampler>(function) ||
+      !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+          function) ||
+      !::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+          function) ||
       !function->hasAttr("internal") ||
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
@@ -219,7 +225,8 @@ bool isNegativeTimingDelayCommit(sim::SimFuncOp function) {
                    : dyn_cast<sim::SimSuspendDelayOp>(&*entryIt++);
   if (!constant || !delay || entryIt != entry.end() ||
       constant.getValue() == 0 || !delay.getTimingAttr() ||
-      delay.getTimingAttr().getKind() != sim::ComputeTimingKind::Calendar ||
+      delay.getTimingAttr().getKind() !=
+          schedule::ComputeTimingKind::Calendar ||
       delay.getResumeRegion() != sim::EventRegion::Active ||
       delay.getDelay() != constant.getResult() ||
       delay.getContinuation() != &publish ||
@@ -408,33 +415,51 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       return SymbolTable::getSymbolVisibility(function) ==
                  SymbolTable::Visibility::Private &&
              function->hasAttr("internal") &&
-             function->hasAttr("obelisk_sim.concurrent_eos_coordinator") &&
-             function->hasAttr("obelisk_sim.concurrent_eos_counted") &&
-             function->hasAttr("obelisk_sim.detached_controls") &&
+             ::obelisk::schedule::has<
+                 ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+                 function) &&
+             ::obelisk::schedule::has<
+                 ::obelisk::schedule::Field::ConcurrentEosCounted>(function) &&
+             ::obelisk::schedule::has<
+                 ::obelisk::schedule::Field::DetachedControls>(function) &&
              function.getEntryKind() == sim::EntryKind::Final &&
              function.getHomeRegion() == sim::EventRegion::Active &&
              function.getDomain() == sim::ExecutionDomain::Design;
     if (!function->hasAttr("internal"))
       return false;
-    return (function->hasAttr("obelisk_sim.concurrent_report") &&
-            function->hasAttr("obelisk_sim.detached_controls") &&
+    return (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::ConcurrentReport>(function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::DetachedControls>(function) &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
-           (function->hasAttr("obelisk_sim.concurrent_cancel") &&
-            function->hasAttr("obelisk_sim.detached_controls") &&
-            function->hasAttr("obelisk_sim.priority_signal_resume") &&
+           (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::ConcurrentCancel>(function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::DetachedControls>(function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::PrioritySignalResume>(function) &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
-           (function->hasAttr("obelisk_sim.concurrent_abort") &&
-            function->hasAttr("obelisk_sim.detached_controls") &&
-            function->hasAttr("obelisk_sim.priority_signal_resume") &&
+           (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::ConcurrentAbort>(function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::DetachedControls>(function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::PrioritySignalResume>(function) &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
-           (function->hasAttr("obelisk_sim.concurrent_cancel_observer") &&
-            function->hasAttr("obelisk_sim.detached_controls") &&
+           (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::ConcurrentCancelObserver>(
+                function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::DetachedControls>(function) &&
             function.getEntryKind() == sim::EntryKind::Observer) ||
-           (function->hasAttr("obelisk_sim.concurrent_abort_observer") &&
-            function->hasAttr("obelisk_sim.detached_controls") &&
+           (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::ConcurrentAbortObserver>(
+                function) &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::DetachedControls>(function) &&
             function.getEntryKind() == sim::EntryKind::Observer);
   };
   auto rejectPlan = [&](StringRef reason) {
@@ -498,7 +523,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     sim::SimSuspendDelayOp delay = delays.front();
     auto period = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
     if (!period || period.getValue() == 0 || !delay.getTimingAttr() ||
-        delay.getTimingAttr().getKind() != sim::ComputeTimingKind::Calendar ||
+        delay.getTimingAttr().getKind() !=
+            schedule::ComputeTimingKind::Calendar ||
         !delay.getContinuationOperands().empty())
       return;
     sim::SimRefLoadOp load = loads.front();
@@ -546,8 +572,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     auto found = functionsByName.find(name);
     return found == functionsByName.end() ? sim::SimFuncOp{} : found->second;
   };
-  sim::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  if (graph.getVersion() != sim::metadata::schemaVersion)
+  schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  if (graph.getVersion() != schedule::metadata::schemaVersion)
     rejectPlan("unsupported compute-graph version");
   if (graph.getWorkers() != 1)
     rejectPlan("AOT scheduling requires one worker");
@@ -558,7 +584,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   auto isBoundedLatchFragment = [&](uint32_t node) {
     if (node >= nodes.size())
       return false;
-    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(nodes[node]);
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(nodes[node]);
     sim::SimFuncOp function =
         fragment ? lookupFunction(fragment.getFunction().getValue())
                  : sim::SimFuncOp{};
@@ -566,15 +592,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         function ? lookupComputeGraphBlock(function, fragment.getBlock())
                  : nullptr;
     return block && block->mightHaveTerminator() &&
-           block->getTerminator()->hasAttr(sim::metadata::boundedLoopLatch);
+           ::obelisk::schedule::has<schedule::metadata::boundedLoopLatch>(
+               block->getTerminator());
   };
   DenseMap<uint32_t, bool> coldDeferredCommits;
   for (Attribute edgeAttribute : graph.getEdges()) {
-    auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
-    if (!edge || edge.getKind() != sim::ComputeEdgeKind::DeferredStage ||
+    auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
+    if (!edge || edge.getKind() != schedule::ComputeEdgeKind::DeferredStage ||
         edge.getSource() >= nodes.size())
       continue;
-    auto source = dyn_cast<sim::ComputeFragmentAttr>(nodes[edge.getSource()]);
+    auto source =
+        dyn_cast<schedule::ComputeFragmentAttr>(nodes[edge.getSource()]);
     sim::SimFuncOp function =
         source ? lookupFunction(source.getFunction().getValue())
                : sim::SimFuncOp{};
@@ -584,9 +612,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (!inserted)
       found->second &= cold;
   }
-  DenseMap<Block *, sim::ComputeFragmentAttr> fragmentsByBlock;
+  DenseMap<Block *, schedule::ComputeFragmentAttr> fragmentsByBlock;
   for (auto [index, attribute] : llvm::enumerate(nodes)) {
-    if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute)) {
+    if (auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute)) {
       if (fragment.getId() != index)
         rejectPlan("compute-fragment IDs do not match the node inventory");
       sim::SimFuncOp function =
@@ -598,7 +626,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         rejectPlan("compute graph references a stale function or block");
       else {
         fragmentsByBlock.try_emplace(block, fragment);
-        if (fragment.getTier() == sim::ComputeTierKind::Native)
+        if (fragment.getTier() == schedule::ComputeTierKind::Native)
           continue;
         result.reasons.emplace_back(
             "compute graph contains a bytecode-only fragment");
@@ -610,7 +638,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       }
       continue;
     }
-    if (auto commit = dyn_cast<sim::ComputeNBACommitAttr>(attribute)) {
+    if (auto commit = dyn_cast<schedule::ComputeNBACommitAttr>(attribute)) {
       if (commit.getId() != index)
         rejectPlan("NBA commit IDs do not match the node inventory");
       if (!commit.getFrontierSites().empty())
@@ -620,7 +648,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         onlyConcurrentColdBoundaries = false;
       continue;
     }
-    if (auto commit = dyn_cast<sim::ComputeEventCommitAttr>(attribute)) {
+    if (auto commit = dyn_cast<schedule::ComputeEventCommitAttr>(attribute)) {
       if (commit.getId() != index)
         rejectPlan("event commit IDs do not match the node inventory");
       if (!commit.getSites().empty())
@@ -662,7 +690,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   DenseSet<uint64_t> runtimeObservedStorage;
   DenseSet<uint64_t> runtimeObservedNets;
   for (Attribute attribute : nodes) {
-    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
     sim::SimFuncOp function =
         fragment ? lookupFunction(fragment.getFunction().getValue())
                  : sim::SimFuncOp{};
@@ -673,34 +701,34 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         !result.negativeTimingFanoutActors.contains(function.getOperation()))
       continue;
     for (Attribute effectAttribute : fragment.getEffects()) {
-      auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
-      if (effect.getEffect() == sim::ComputeEffectKind::Watch &&
-          effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
-          (effect.getResource() == sim::ComputeResourceKind::Storage ||
-           effect.getResource() == sim::ComputeResourceKind::Net) &&
+      auto effect = cast<schedule::ComputeEffectAttr>(effectAttribute);
+      if (effect.getEffect() == schedule::ComputeEffectKind::Watch &&
+          effect.getTarget() == schedule::ComputeTargetKind::Descriptor &&
+          (effect.getResource() == schedule::ComputeResourceKind::Storage ||
+           effect.getResource() == schedule::ComputeResourceKind::Net) &&
           !effect.getDynamic() && !effect.getDeferred() &&
           effect.getWidth() != 0)
-        (effect.getResource() == sim::ComputeResourceKind::Storage
+        (effect.getResource() == schedule::ComputeResourceKind::Storage
              ? runtimeObservedStorage
              : runtimeObservedNets)
             .insert(effect.getDescriptor());
     }
   }
-  auto overlapsRuntimeObservedSource = [&](sim::ComputeEffectAttr write) {
-    if (write.getEffect() != sim::ComputeEffectKind::Write ||
-        write.getTarget() != sim::ComputeTargetKind::Descriptor ||
-        (write.getResource() != sim::ComputeResourceKind::Storage &&
-         write.getResource() != sim::ComputeResourceKind::Net) ||
+  auto overlapsRuntimeObservedSource = [&](schedule::ComputeEffectAttr write) {
+    if (write.getEffect() != schedule::ComputeEffectKind::Write ||
+        write.getTarget() != schedule::ComputeTargetKind::Descriptor ||
+        (write.getResource() != schedule::ComputeResourceKind::Storage &&
+         write.getResource() != schedule::ComputeResourceKind::Net) ||
         write.getDynamic() || write.getDeferred() || write.getWidth() == 0)
       return false;
     const DenseSet<uint64_t> &descriptors =
-        write.getResource() == sim::ComputeResourceKind::Storage
+        write.getResource() == schedule::ComputeResourceKind::Storage
             ? runtimeObservedStorage
             : runtimeObservedNets;
     return descriptors.contains(write.getDescriptor());
   };
   for (Attribute attribute : nodes) {
-    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
     sim::SimFuncOp function =
         fragment ? lookupFunction(fragment.getFunction().getValue())
                  : sim::SimFuncOp{};
@@ -710,7 +738,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       continue;
     if (!llvm::any_of(fragment.getEffects(), [&](Attribute effect) {
           return overlapsRuntimeObservedSource(
-              cast<sim::ComputeEffectAttr>(effect));
+              cast<schedule::ComputeEffectAttr>(effect));
         }))
       continue;
     Block *block = lookupComputeGraphBlock(function, fragment.getBlock());
@@ -730,13 +758,13 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                               /*certifiedCold=*/true);
   }
 
-  auto isolatesConcurrentColdActors = [&](sim::ComputeGroupAttr group) {
+  auto isolatesConcurrentColdActors = [&](schedule::ComputeGroupAttr group) {
     llvm::DenseSet<uint32_t> nonColdMembers;
     bool hasConcurrentColdActor = false;
     for (int64_t member : group.getFragments().asArrayRef()) {
       if (member < 0 || static_cast<uint64_t>(member) >= nodes.size())
         continue;
-      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(
           nodes[static_cast<size_t>(member)]);
       sim::SimFuncOp function =
           fragment ? lookupFunction(fragment.getFunction().getValue())
@@ -752,9 +780,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     llvm::DenseMap<uint32_t, SmallVector<uint32_t>> successors;
     llvm::DenseMap<uint32_t, unsigned> indegree;
     for (Attribute edgeAttribute : graph.getEdges()) {
-      auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
-      if (!edge || edge.getKind() == sim::ComputeEdgeKind::Resume ||
-          edge.getKind() == sim::ComputeEdgeKind::Spawn ||
+      auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
+      if (!edge || edge.getKind() == schedule::ComputeEdgeKind::Resume ||
+          edge.getKind() == schedule::ComputeEdgeKind::Spawn ||
           !nonColdMembers.contains(edge.getSource()) ||
           !nonColdMembers.contains(edge.getTarget()))
         continue;
@@ -807,8 +835,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     for (uint32_t member : nonColdMembers)
       indegree.try_emplace(member, 0);
     for (Attribute edgeAttribute : graph.getEdges()) {
-      auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
-      if (!edge || edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
+      auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
+      if (!edge || edge.getKind() != schedule::ComputeEdgeKind::ProcessOrder ||
           isBoundedLatchFragment(edge.getSource()) ||
           !nonColdMembers.contains(edge.getSource()) ||
           !nonColdMembers.contains(edge.getTarget()) ||
@@ -872,13 +900,13 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   // contain.
   llvm::DenseMap<uint32_t, SmallVector<uint32_t>> processOrderSuccessors;
   for (Attribute edgeAttribute : graph.getEdges()) {
-    auto edge = dyn_cast<sim::ComputeEdgeAttr>(edgeAttribute);
-    if (!edge || edge.getKind() != sim::ComputeEdgeKind::ProcessOrder ||
+    auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
+    if (!edge || edge.getKind() != schedule::ComputeEdgeKind::ProcessOrder ||
         isBoundedLatchFragment(edge.getSource()))
       continue;
     processOrderSuccessors[edge.getSource()].push_back(edge.getTarget());
   }
-  auto proceduralControlResidue = [&](sim::ComputeGroupAttr group) {
+  auto proceduralControlResidue = [&](schedule::ComputeGroupAttr group) {
     llvm::DenseSet<uint32_t> members;
     for (int64_t member : group.getFragments().asArrayRef())
       if (member >= 0 && static_cast<uint64_t>(member) < nodes.size())
@@ -954,17 +982,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     return residue;
   };
   for (Attribute regionAttribute : graph.getRegions()) {
-    auto region = dyn_cast<sim::ComputeRegionAttr>(regionAttribute);
+    auto region = dyn_cast<schedule::ComputeRegionAttr>(regionAttribute);
     if (!region)
       continue;
     for (Attribute groupAttribute : region.getGroups()) {
-      auto group = dyn_cast<sim::ComputeGroupAttr>(groupAttribute);
+      auto group = dyn_cast<schedule::ComputeGroupAttr>(groupAttribute);
       if (!group)
         continue;
       StringRef reason;
       bool actorLocalColdLoop = false;
       std::optional<llvm::DenseSet<uint32_t>> controlResidue;
-      if (group.getSchedule() == sim::ComputeScheduleKind::ControlLoop) {
+      if (group.getSchedule() == schedule::ComputeScheduleKind::ControlLoop) {
         reason = "control-loop group requires bytecode scheduling";
         actorLocalColdLoop = isolatesConcurrentColdActors(group);
         // A process-order cycle never suspends, so it is a loop inside one
@@ -982,7 +1010,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // Native ready-node scheduling is itself a dirty-set fixpoint: a write
       // that wakes an earlier-ranked member restarts the scan at that member.
       // Convergence SCCs therefore need no bytecode handoff.
-      else if (group.getSchedule() == sim::ComputeScheduleKind::Convergence)
+      else if (group.getSchedule() ==
+               schedule::ComputeScheduleKind::Convergence)
         continue;
       else if (group.getFragments().size() > 1)
         reason = "multi-member compute group requires bytecode scheduling";
@@ -994,7 +1023,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         if (controlResidue &&
             !controlResidue->contains(static_cast<uint32_t>(member)))
           continue;
-        auto fragment = dyn_cast<sim::ComputeFragmentAttr>(
+        auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(
             nodes[static_cast<size_t>(member)]);
         if (!fragment)
           continue;
@@ -1187,17 +1216,18 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       unsigned watchCount = 0;
       if (fixed)
         for (Attribute effectAttribute : fragment->second.getEffects()) {
-          auto effect = cast<sim::ComputeEffectAttr>(effectAttribute);
-          if (effect.getEffect() != sim::ComputeEffectKind::Watch)
+          auto effect = cast<schedule::ComputeEffectAttr>(effectAttribute);
+          if (effect.getEffect() != schedule::ComputeEffectKind::Watch)
             continue;
           ++watchCount;
-          fixed &= effect.getTarget() == sim::ComputeTargetKind::Descriptor &&
-                   !effect.getDynamic() && !effect.getDeferred() &&
-                   effect.getWidth() != 0 &&
-                   (effect.getResource() == sim::ComputeResourceKind::Storage ||
-                    effect.getResource() == sim::ComputeResourceKind::Net) &&
-                   effect.getTrigger() != sim::ComputeTriggerKind::None &&
-                   effect.getTrigger() != sim::ComputeTriggerKind::Event;
+          fixed &=
+              effect.getTarget() == schedule::ComputeTargetKind::Descriptor &&
+              !effect.getDynamic() && !effect.getDeferred() &&
+              effect.getWidth() != 0 &&
+              (effect.getResource() == schedule::ComputeResourceKind::Storage ||
+               effect.getResource() == schedule::ComputeResourceKind::Net) &&
+              effect.getTrigger() != schedule::ComputeTriggerKind::None &&
+              effect.getTrigger() != schedule::ComputeTriggerKind::Event;
         }
       fixed &= watchCount != 0;
       if (!fixed) {
@@ -1221,24 +1251,26 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       excludeBytecodeActor(operation);
     } else if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation)) {
       auto timing = delay.getTimingAttr();
-      if (!timing || timing.getKind() != sim::ComputeTimingKind::Calendar) {
+      if (!timing ||
+          timing.getKind() != schedule::ComputeTimingKind::Calendar) {
         result.reasons.emplace_back("dynamic deadline");
         onlyConcurrentColdBoundaries = false;
       }
     } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
-      auto site = nba->getAttrOfType<sim::NBASiteAttr>("site");
+      auto site = nba->getAttrOfType<schedule::NBASiteAttr>("site");
       if (!site)
         requireBytecodeFragment(operation, "NBA site metadata is missing");
       else if (site.getTiming())
         requireBytecodeFragment(operation, "delayed NBA site");
-      else if (site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier)
+      else if (site.getStorage() ==
+               schedule::ComputeNBAStorageKind::DynamicFrontier)
         requireBytecodeFragment(operation,
                                 "NBA site requires DynamicFrontier storage");
       if (!site || site.getTiming() ||
-          site.getStorage() == sim::ComputeNBAStorageKind::DynamicFrontier)
+          site.getStorage() == schedule::ComputeNBAStorageKind::DynamicFrontier)
         excludeBytecodeActor(operation);
     } else if (isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation)) {
-      if (!operation->getAttrOfType<sim::ContinuationSiteAttr>("site"))
+      if (!operation->getAttrOfType<schedule::ContinuationSiteAttr>("site"))
         requireBytecodeFragment(operation,
                                 "continuation-site metadata is missing");
     }
@@ -1310,7 +1342,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   for (auto [index, name] : llvm::enumerate(reasonNames))
     attribution[index].reason = name;
   for (Attribute attribute : nodes) {
-    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
     if (!fragment)
       continue;
     uint64_t weight = std::max<uint64_t>(fragment.getCost(), 1);
@@ -1351,7 +1383,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   if (module->hasAttr("obelisk.debug.native_timing")) {
     llvm::StringMap<std::pair<uint64_t, uint32_t>> byFunction;
     for (Attribute attribute : nodes) {
-      auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
+      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
       if (!fragment)
         continue;
       sim::SimFuncOp function =
@@ -1413,7 +1445,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       (result.fullyEligible ||
        ((result.periodicClockCandidate || largeClocklessIsland) &&
         result.runtimeOwnedFanoutActors.empty() && !hasRuntimePathPublication &&
-        graph.getVpi() != sim::ComputeVPIMode::Full));
+        graph.getVpi() != schedule::ComputeVPIMode::Full));
   return result;
 }
 

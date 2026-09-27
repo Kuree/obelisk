@@ -6,13 +6,13 @@
 // The NBA counter feeds a two-actor native group before VPI observes count.
 // The model has no internal clock process. Every edge is a VPI deposit.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: obelisk.eval.ranked_members
+// PLAN-SAME: schedule.eval.ranked_members
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @external_clock {
     obelisk_sim.scope.decl 0 hierarchy "external_clock"
@@ -44,7 +44,7 @@ module attributes {
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clk to ^step {site = #obelisk_sim.continuation<id = 1>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      obelisk_sim.suspend.edge posedge %clk to ^step {site = #schedule.continuation<id = 1>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^step:
       %count = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<32>>
       %old = obelisk_sim.ref.load %count : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
@@ -59,7 +59,7 @@ module attributes {
         attributes {entry_kind = 4 : i32, code_unit_id = 3 : i64} {
       cf.br ^step
     ^wait:
-      obelisk_sim.suspend.change %input to ^step {site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<32>>
+      obelisk_sim.suspend.change %input to ^step {site = #schedule.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<32>>
     ^step:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
       obelisk_sim.ref.store %value to %output : !obelisk_sim.logic<32>, !obelisk_sim.ref<!obelisk_sim.logic<32>>
@@ -71,7 +71,7 @@ module attributes {
         attributes {entry_kind = 4 : i32, code_unit_id = 4 : i64} {
       cf.br ^step
     ^wait:
-      obelisk_sim.suspend.change %input to ^step {site = #obelisk_sim.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<32>>
+      obelisk_sim.suspend.change %input to ^step {site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<32>>
     ^step:
       %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
       obelisk_sim.ref.store %value to %output : !obelisk_sim.logic<32>, !obelisk_sim.ref<!obelisk_sim.logic<32>>

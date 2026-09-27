@@ -19,7 +19,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @private_packed_ssa {
     obelisk_sim.scope.decl 0
@@ -69,7 +69,7 @@ module attributes {
     // OFF-NOT: obelisk_sim.ref.
     // OFF: obelisk_sim.return %arg1
     // READ-LABEL: obelisk_sim.func private @whole(
-    // READ: obelisk_sim.ref.store {{.*}}obelisk.eval.discardable_store
+    // READ: obelisk_sim.ref.store {{.*}}schedule.eval.discardable_store
     // READ-NOT: obelisk_sim.ref.load
     // READ: obelisk_sim.return %arg1
     // FULL-LABEL: obelisk_sim.func private @whole(
@@ -108,7 +108,7 @@ module attributes {
     // OFF-NOT: obelisk_sim.ref.
     // OFF: obelisk_sim.return
     // READ-LABEL: obelisk_sim.func private @packed(
-    // READ: obelisk_sim.ref.store {{.*}}obelisk.eval.discardable_store
+    // READ: obelisk_sim.ref.store {{.*}}schedule.eval.discardable_store
     // READ-NOT: obelisk_sim.ref.load
     // READ: obelisk_sim.aggregate.extract
     // READ-NOT: obelisk_sim.ref.load

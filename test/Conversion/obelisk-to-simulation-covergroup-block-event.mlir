@@ -51,7 +51,7 @@
 // BASIC: obelisk_sim.covergroup.block_event.register
 // BASIC-SAME: event_kinds = array<i32: 0, 1>
 // BASIC-NOT: obelisk_sim.covergroup.block_event.plan
-// BASIC-NOT: obelisk_sim.covergroup_clocking_sampler
+// BASIC-NOT: schedule.covergroup_clocking_sampler
 // BASIC-NOT: obelisk_sim.suspend.forever
 
 // The target definition carries both boundaries at O0 and O3.  The runtime

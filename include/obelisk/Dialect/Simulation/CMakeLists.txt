@@ -26,6 +26,8 @@ mlir_tablegen(SimulationOps.h.inc -gen-op-decls
 mlir_tablegen(SimulationOpDefs.cpp.inc -gen-op-defs
               --op-shard-count=${OBELISK_OP_SHARD_COUNT})
 add_public_tablegen_target(ObeliskSimulationOpsIncGen)
+add_dependencies(ObeliskSimulationOpsIncGen ObeliskScheduleAttrsIncGen
+  ObeliskScheduleFieldsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS SimulationDialect.td)
 mlir_tablegen(SimulationDialect.h.inc -gen-dialect-decls

@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- PrepareUnits.cpp - Simulation code-unit planning -------------------===//
 
 #include "PrepareUnits.h"
@@ -1127,8 +1128,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         observerResultAttrName,
         builder.getI32IntegerAttr(static_cast<uint32_t>(candidate.result)));
     if (candidate.label == "override_rhs")
-      candidate.expression->setAttr("obelisk_sim.override_evaluator",
-                                    builder.getUnitAttr());
+      ::obelisk::schedule::set<::obelisk::schedule::Field::OverrideEvaluator>(
+          candidate.expression, builder.getUnitAttr());
     if (candidate.label == "abort" || candidate.sampled)
       candidate.expression->setAttr(sampledObserverAttrName,
                                     builder.getUnitAttr());

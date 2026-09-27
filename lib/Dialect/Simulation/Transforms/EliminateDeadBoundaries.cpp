@@ -1,7 +1,8 @@
 //===- EliminateDeadBoundaries.cpp - Prune simulation boundaries --------===//
 
 #include "EliminateDeadBoundaries.h"
-#include "Utils.h"
+#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
@@ -68,7 +69,7 @@ static bool hasUnknownOperationMetadata(Operation *operation,
                                         bool allowDPIExport = false) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if (name.starts_with("obelisk_sim.") &&
+    if ((name.starts_with("obelisk_sim.") || name.starts_with("schedule.")) &&
         !sim::metadata::isKnownOperation(name) &&
         !(allowDPIExport && isDPIExportMetadata(name)))
       return true;
@@ -156,8 +157,8 @@ getDPIOutputArguments(sim::SimFuncOp function) {
 
 static bool hasCompiledSiteMetadata(Operation *operation) {
   for (NamedAttribute named : operation->getAttrs())
-    if (isa<sim::ContinuationSiteAttr, sim::TimingSiteAttr, sim::NBASiteAttr,
-            sim::EventSiteAttr>(named.getValue()))
+    if (isa<schedule::ContinuationSiteAttr, schedule::TimingSiteAttr,
+            schedule::NBASiteAttr, schedule::EventSiteAttr>(named.getValue()))
       return true;
   return false;
 }

@@ -6,7 +6,7 @@
 // procedures use the runtime final-phase ABI and therefore retain an Active
 // process home. Their compute fragment is still planned in Postponed for
 // end-of-simulation execution.
-// CHECK: #obelisk_sim.fragment<{{.*}}function = @unit_1{{.*}}region = postponed
+// CHECK: #schedule.fragment<{{.*}}function = @unit_1{{.*}}region = postponed
 // CHECK-LABEL: obelisk_sim.func private @unit_0
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: entry_kind = 1 : i32

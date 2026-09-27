@@ -380,7 +380,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // A pending overlapped consequent is weak for assert-property and therefore
 // dispatches its pass action once for the one live consequent age.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.{{.*}}.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK: obelisk_sim.ref.load
 // CHECK-COUNT-1: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.weak
 // CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.weak
@@ -388,9 +388,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // An antecedent that is still live at EOS has no match. Implication therefore
 // completes vacuously true, independently of consequent strength.
 // CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.{{.*}}.pass.antecedent_no_match(
-// CHECK-SAME: obelisk_sim.concurrent_eos_coordinator
 // CHECK-SAME: obelisk_sim.concurrent_eos_forced_completion
 // CHECK-SAME: obelisk_sim.concurrent_eos_vacuous
+// CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK: obelisk_sim.ref.load
 // CHECK-COUNT-1: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.pass.antecedent_no_match
 // CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.pass.antecedent_no_match

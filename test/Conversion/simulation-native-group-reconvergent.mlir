@@ -8,7 +8,7 @@
 // Their adjacent owner numbers must not create a forward predicate scan.
 // The reconvergent consumer still runs under its actual ready predicate.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: obelisk.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0
 

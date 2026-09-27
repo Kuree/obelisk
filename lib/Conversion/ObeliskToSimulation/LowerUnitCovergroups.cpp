@@ -1,6 +1,8 @@
 //===- LowerUnitCovergroups.cpp - Lower covergroup semantics -------------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Coverage/CoverageDatabase.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -1607,12 +1609,14 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr("obelisk_sim.detached_controls",
-                                    outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr("obelisk_sim.prime_on_spawn",
-                                    outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr("obelisk_sim.covergroup_clocking_sampler",
-                                    outlineBuilder.getUnitAttr()),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::DetachedControls>(
+            outlineBuilder.getUnitAttr()),
+        ::obelisk::schedule::named<::obelisk::schedule::Field::PrimeOnSpawn>(
+            outlineBuilder.getUnitAttr()),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::CovergroupClockingSampler>(
+            outlineBuilder.getUnitAttr()),
         outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                     outlineBuilder.getStringAttr(hierarchy))};
     if (classOwnerCapture >= 0)
@@ -1639,10 +1643,11 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
             observerResultAttrName,
             outlineBuilder.getI32IntegerAttr(
                 static_cast<uint32_t>(ObserverResult::Truth))),
-        outlineBuilder.getNamedAttr("obelisk_sim.observer_width",
-                                    outlineBuilder.getI32IntegerAttr(1)),
-        outlineBuilder.getNamedAttr("obelisk_sim.observer_four_state",
-                                    outlineBuilder.getBoolAttr(false))};
+        ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
+            outlineBuilder.getI32IntegerAttr(1)),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::ObserverFourState>(
+            outlineBuilder.getBoolAttr(false))};
     if (classOwnerCapture >= 0)
       evaluatorAttributes.push_back(outlineBuilder.getNamedAttr(
           sim::metadata::thisArgument,
@@ -1755,9 +1760,9 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
         nested.builder.getDenseI32ArrayAttr(edges),
         nested.builder.getDenseI32ArrayAttr(conditionIndices));
     Block *parked = nested.addBlock();
-    sim::SimSuspendForeverOp::create(nested.builder, plan.getLoc(),
-                                     ValueRange{}, sim::ContinuationSiteAttr{},
-                                     sim::EventRegionAttr{}, parked);
+    sim::SimSuspendForeverOp::create(
+        nested.builder, plan.getLoc(), ValueRange{},
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, parked);
     nested.setCurrent(parked);
     sim::SimReturnOp::create(nested.builder, plan.getLoc(), ValueRange{});
     sampler->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
@@ -1880,10 +1885,11 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
             observerResultAttrName,
             outlineBuilder.getI32IntegerAttr(
                 static_cast<uint32_t>(ObserverResult::Truth))),
-        outlineBuilder.getNamedAttr("obelisk_sim.observer_width",
-                                    outlineBuilder.getI32IntegerAttr(1)),
-        outlineBuilder.getNamedAttr("obelisk_sim.observer_four_state",
-                                    outlineBuilder.getBoolAttr(false))};
+        ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
+            outlineBuilder.getI32IntegerAttr(1)),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::ObserverFourState>(
+            outlineBuilder.getBoolAttr(false))};
     if (classOwnerCapture >= 0)
       attributes.push_back(outlineBuilder.getNamedAttr(
           sim::metadata::thisArgument,

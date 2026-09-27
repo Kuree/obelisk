@@ -18,8 +18,8 @@ module {
           entry_kind = 14 : i32,
           code_unit_id = 1 : i64,
           obelisk_sim.observer_result = 99 : i32,
-          obelisk_sim.observer_width = 8 : i32,
-          obelisk_sim.observer_four_state = true
+          schedule.observer_width = 8 : i32,
+          schedule.observer_four_state = true
         } {
       obelisk.sv.expression.integer_literal attributes {
           node_id = 1 : i64, constant_value = "8'h5a",

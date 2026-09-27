@@ -18,7 +18,7 @@ module attributes {
     obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
 
     // CHECK-LABEL: obelisk_sim.func @drive
-    // CHECK-SAME: effect_summary = [#obelisk_sim.effect<effect = drive, resource = net, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = drive, resource = net, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1
     // CHECK-SAME: effect = drive, resource = net, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1
     obelisk_sim.func @drive(
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},

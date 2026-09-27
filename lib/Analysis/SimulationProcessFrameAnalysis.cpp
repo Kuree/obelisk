@@ -1,6 +1,7 @@
 //===- SimulationProcessFrameAnalysis.cpp - Process frame facts --------===//
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -347,7 +348,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
   uint64_t maxWaitSize = kWaitHeaderSize;
   for (Operation *operation : suspensionOps) {
     if (auto site =
-            operation->getAttrOfType<sim::ContinuationSiteAttr>("site")) {
+            operation->getAttrOfType<schedule::ContinuationSiteAttr>("site")) {
       if (site.getId() == 0) {
         operation->emitError("requires a nonzero continuation ID");
         return failure();
@@ -396,7 +397,8 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
 
   for (Operation *operation : suspensionOps) {
     uint32_t id;
-    if (auto site = operation->getAttrOfType<sim::ContinuationSiteAttr>("site"))
+    if (auto site =
+            operation->getAttrOfType<schedule::ContinuationSiteAttr>("site"))
       id = site.getId();
     else {
       while (nextID <= std::numeric_limits<uint32_t>::max() &&

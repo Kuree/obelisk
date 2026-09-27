@@ -58,5 +58,5 @@ module {
 // CHECK: %[[LOW:.*]] = arith.select %[[DATA_IS_Z]], %{{.*}}, %[[LOW_RANGE]]
 // CHECK: %[[HIGH:.*]] = arith.select %[[DATA_IS_Z]], %{{.*}}, %[[HIGH_RANGE]]
 // CHECK: obelisk_sim.driver.drive {{.*}} = %[[LOW]]
-// CHECK-SAME: obelisk_sim.defer_net_resolution
+// CHECK-SAME: schedule.defer_net_resolution
 // CHECK: obelisk_sim.driver.drive {{.*}} = %[[HIGH]]

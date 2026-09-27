@@ -10,7 +10,7 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
 // RUN:   | FileCheck %s --check-prefix=FUSION
-// RUN: sed 's/native_scheduler = 0 : i32/native_scheduler = 3 : i32, obelisk.native_scheduler.auto_requested/' %s \
+// RUN: sed 's/native_scheduler = 0 : i32/native_scheduler = 3 : i32, schedule.native_scheduler.auto_requested/' %s \
 // RUN:   | obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
 // RUN:   | FileCheck %s --check-prefix=FUSION
@@ -33,7 +33,7 @@
 // LOWERING-NOT: llvm.call @obelisk_rt_v1_scheduler_run_aot(
 
 module attributes {
-  obelisk.native_scheduler = 0 : i32,
+  schedule.native_scheduler = 0 : i32,
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {

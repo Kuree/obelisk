@@ -7,7 +7,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @multiclock {
     obelisk_sim.scope.decl 0
@@ -44,8 +44,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 3
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 1>,
-           timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 1>,
+           timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
@@ -61,8 +61,8 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 5
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 2>,
-           timing = #obelisk_sim.timing_site<id = 1, kind = calendar>}
+          {site = #schedule.continuation<id = 2>,
+           timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
@@ -75,11 +75,11 @@ module attributes {
         %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
         %source: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64},
         %target: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
-        attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64, obelisk.eval.body = @body0, obelisk.native.region_body} {
+        attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64, schedule.eval.body = @body0, schedule.native.region_body} {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.edge posedge %clock to ^sample
-          {site = #obelisk_sim.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^sample:
       %crossing = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %crossing to %target : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
@@ -91,11 +91,11 @@ module attributes {
         %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64},
         %source: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64},
         %target: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64})
-        attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64, obelisk.eval.body = @body1, obelisk.native.region_body} {
+        attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64, schedule.eval.body = @body1, schedule.native.region_body} {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.edge posedge %clock to ^sample
-          {site = #obelisk_sim.continuation<id = 4>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {site = #schedule.continuation<id = 4>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^sample:
       %value = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %value to %target : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
@@ -109,9 +109,9 @@ module attributes {
         %source: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64},
         %target: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
         attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64,
-          obelisk.eval.borrowed_captures, obelisk.eval.raw_captures,
-          obelisk.eval.continuation = 9 : i32,
-          obelisk.eval.source_owners = [{code_unit = 4 : i64, continuation = 9 : i32}]} {
+          schedule.eval.borrowed_captures, schedule.eval.raw_captures,
+          schedule.eval.continuation = 9 : i32,
+          schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 4 : i64, continuation = 9 : i32>]} {
       %crossing = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %crossing to %target : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.return
@@ -124,9 +124,9 @@ module attributes {
         %source: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64},
         %target: !obelisk_sim.ref<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64})
         attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64,
-          obelisk.eval.borrowed_captures, obelisk.eval.raw_captures,
-          obelisk.eval.continuation = 12 : i32,
-          obelisk.eval.source_owners = [{code_unit = 5 : i64, continuation = 12 : i32}]} {
+          schedule.eval.borrowed_captures, schedule.eval.raw_captures,
+          schedule.eval.continuation = 12 : i32,
+          schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 5 : i64, continuation = 12 : i32>]} {
       %value = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
       obelisk_sim.nba.enqueue %value to %target : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
       obelisk_sim.return

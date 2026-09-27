@@ -3,6 +3,9 @@
 #include "SimulationProcessCoroutineLowering.h"
 #include "SimulationProcessRuntimeABI.h"
 #include "SimulationProcessWrapperLowering.h"
+#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -632,10 +635,14 @@ prepareSuspendableProcess(sim::SimFuncOp function,
   // fragment fallback; ordinary activation entries are needed by groups that
   // execute under descriptor scheduling without that evaluator.
   bool directActivation =
-      unmanagedNative && !function->hasAttr("obelisk.eval.body") &&
+      unmanagedNative &&
+      !::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
+          function) &&
       (taskCaller ||
-       (function->hasAttr(sim::metadata::nativeRegionBody) &&
-        function->hasAttr(sim::metadata::evalReconstructsContinuationArgs) &&
+       (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
+            function) &&
+        ::obelisk::schedule::has<
+            schedule::metadata::evalReconstructsContinuationArgs>(function) &&
         analysis.getSuspensions().size() == 1));
   if (directActivation)
     function.walk([&](Operation *operation) {

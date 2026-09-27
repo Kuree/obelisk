@@ -1,6 +1,7 @@
 //===- SimulationGroupDataflow.cpp - Predicated native computation --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/ReadySet.h"
 
 #include "mlir/IR/Dominance.h"
@@ -64,7 +65,8 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
     return false;
   };
   auto ingress =
-      function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.group_ingress");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+          function);
   if (!ingress || function.empty())
     return false;
   struct Slot {
@@ -366,8 +368,9 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   // this finite group has already consumed. Advance that lower bound only
   // through exact, final SSA words proved empty. Missing words stop progress;
   // no ready bit is consumed and no additional state load is introduced.
-  auto rawCount = function->getAttrOfType<IntegerAttr>(
-      "obelisk.eval.ready_word_count");
+  auto rawCount =
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalReadyWordCount>(
+          function);
   if (rawCount && rawCount.getUInt() > 1 &&
       rawCount.getUInt() <= runtime::ReadySetLayout::flatWordLimit) {
     uint64_t count = rawCount.getUInt();
@@ -403,8 +406,9 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
       if (hints) {
         final[cacheID] = lower;
         slots[cacheID].written = true;
-        function->setAttr("obelisk.eval.cache_hint_words",
-                           builder.getI64IntegerAttr(hints));
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalCacheHintWords>(
+            function, builder.getI64IntegerAttr(hints));
       }
     }
   }
@@ -417,12 +421,13 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   if (entry->getOperations().size() > budget)
     return reject("materialization budget");
   function.getBody().takeBody(replacement);
-  function->setAttr("obelisk.eval.predicated_dataflow", builder.getUnitAttr());
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPredicatedDataflow>(
+      function, builder.getUnitAttr());
   if (mergedRanges)
-    function->setAttr("obelisk.eval.coalesced_slots",
-                       builder.getI64IntegerAttr(mergedRanges));
-  function->setAttr("obelisk.eval.dataflow_slots",
-                    builder.getI64IntegerAttr(slots.size()));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalCoalescedSlots>(
+        function, builder.getI64IntegerAttr(mergedRanges));
+  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDataflowSlots>(
+      function, builder.getI64IntegerAttr(slots.size()));
   return true;
 }
 

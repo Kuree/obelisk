@@ -424,7 +424,7 @@ function showIr(text, language = MLIR_LANGUAGE_ID) {
 function showSchedule(text) {
   scheduleText = text;
   if (scheduleRaw) {
-    showIr(text);
+    showIr(text, text.trimStart().startsWith('{') ? 'json' : MLIR_LANGUAGE_ID);
     ui.scheduleToggle.hidden = false;
     ui.scheduleToggle.textContent = 'View graph';
     return;

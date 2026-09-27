@@ -62,7 +62,7 @@ module {
 // Named events with iff use the same monitor path; the event pulse is the
 // primary occurrence and the condition gates publication.
 // CHECK: obelisk_sim.func private @unit_1({{.*}}obelisk_sim.clocking_event_monitor_path = "top.cb_named"
-// CHECK: obelisk_sim.observer.bind {{.*}}obelisk_sim.event_primary
+// CHECK: obelisk_sim.observer.bind {{.*}}schedule.event_primary
 // CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
 // CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
 

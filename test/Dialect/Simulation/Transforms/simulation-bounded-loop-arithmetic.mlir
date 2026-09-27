@@ -112,8 +112,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @negative_stride(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @negative_stride(
     // UNROLL-NOT: cf.
@@ -135,8 +135,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @subtract_negative(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @subtract_negative(
     // UNROLL-NOT: cf.
@@ -158,8 +158,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @reversed(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @reversed(
     // UNROLL-NOT: cf.
@@ -181,8 +181,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @exact_ne(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @exact_ne(
     // UNROLL-NOT: cf.
@@ -226,8 +226,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @modular_ne(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @modular_ne(
     // UNROLL-NOT: cf.
@@ -249,8 +249,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @one_eq(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @one_eq(
     // UNROLL-NOT: cf.
@@ -272,8 +272,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @zero_trip_zero_stride(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @zero_trip_zero_stride(
     // UNROLL-NOT: cf.
@@ -317,8 +317,8 @@ module {
     }
 
     // MARK-LABEL: obelisk_sim.func @last_representable(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // MARK: obelisk_sim.return
     // UNROLL-LABEL: obelisk_sim.func @last_representable(
     // UNROLL-NOT: cf.
@@ -339,8 +339,8 @@ module {
       obelisk_sim.return
     }
     // MARK-LABEL: obelisk_sim.func @accumulator(
-    // MARK: {obelisk_sim.bounded_loop_header}
-    // MARK: {obelisk_sim.bounded_loop_latch}
+    // MARK: {schedule.bounded_loop_header}
+    // MARK: {schedule.bounded_loop_latch}
     // UNROLL-LABEL: obelisk_sim.func @accumulator(
     // UNROLL: %[[SIX:.*]] = arith.constant 6 : i32
     // UNROLL-NOT: cf.

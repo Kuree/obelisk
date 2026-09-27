@@ -36,7 +36,7 @@ module {
   }
 }
 
-// FINAL: compute_graph = #obelisk_sim.graph
+// FINAL: compute_graph = #schedule.graph
 // FINAL: obelisk_sim.func @__obelisk_root
 
 // A post-graph SymbolDCE removes the graph-only process symbol and leaves its

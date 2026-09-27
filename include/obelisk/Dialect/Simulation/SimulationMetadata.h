@@ -9,24 +9,14 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONMETADATA_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONMETADATA_H
 
+#include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
 
 namespace obelisk::sim::metadata {
 
-/// All transient late-lowering metadata is revision-coupled and uses one
-/// schema. Consumers reject stale IR instead of maintaining parallel readers.
-inline constexpr uint32_t schemaVersion = 1;
-inline constexpr uint32_t maxDirectStaticStateBits = 64;
-
-/// Process whose same-edge waits have one explicit, storage-backed
-/// phase dispatcher. Its entry is cold startup, not an eval activation preamble.
-inline constexpr llvm::StringLiteral clockedControl =
-    "obelisk_sim.clocked_control";
-/// Uniform delay process normalized to private periodic clock activations.
-inline constexpr llvm::StringLiteral periodicControl =
-    "obelisk_sim.periodic_control";
 
 /// Transient function attribute containing ArgumentBindingAttr,
 /// LocalBindingAttr, and ConstantBindingAttr entries.
@@ -206,63 +196,13 @@ inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
     "obelisk.feature.class_bitstream_source";
 inline constexpr llvm::StringLiteral thisArgument = "obelisk_sim.this_argument";
 inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
-/// Storage descriptors whose intermediate NBA updates are observable, as a
-/// sorted i64 array on the design. Every other storage root may merge its
-/// NBA updates to one final transition. Absence means every root is
-/// observable. Computed once, before body fusion changes process shapes.
-inline constexpr llvm::StringLiteral nbaTransientObservable =
-    "obelisk.nba.transient_observable";
-/// Storage descriptors watched only by waits for any change, as a sorted i64
-/// array beside nbaTransientObservable. These may merge NBA updates only when
-/// every merge also records rewritten bits in a transient mask. Absence with
-/// nbaTransientObservable present means none.
-inline constexpr llvm::StringLiteral nbaChangeWatched =
-    "obelisk.nba.change_watched";
-inline constexpr llvm::StringLiteral staticBodyFusion =
-    "obelisk_sim.static_body_fusion";
-inline constexpr llvm::StringLiteral staticFusion = "obelisk_sim.static_fusion";
-/// Termination proof for a constant-induction, non-suspending CFG loop. Set on
-/// the latch branch that closes the loop and on the header's conditional branch.
-/// Carries no iteration count: it records only that the loop provably exits, so
-/// schedule-group classification need not treat the backedge as an unbounded
-/// control loop. Independent of whether the unroller replicated the body.
-inline constexpr llvm::StringLiteral boundedLoopLatch =
-    "obelisk_sim.bounded_loop_latch";
-inline constexpr llvm::StringLiteral boundedLoopHeader =
-    "obelisk_sim.bounded_loop_header";
-inline constexpr llvm::StringLiteral computeKernels =
-    "obelisk_sim.compute_kernels";
-inline constexpr llvm::StringLiteral threeTierSchedule =
-    "obelisk_sim.three_tier_schedule";
-inline constexpr llvm::StringLiteral staticSpecialization =
-    "obelisk_sim.static_specialization";
-inline constexpr llvm::StringLiteral staticSuperstep =
-    "obelisk_sim.static_superstep";
-/// Marks the outer implicit wait of an `always @*` process.
-inline constexpr llvm::StringLiteral topLevelWildcardWait =
-    "obelisk_sim.top_level_wildcard_wait";
-/// Marks a source-language procedural event control. Its controlled statement
-/// executes after the wait and cannot reactivate that same wait from within
-/// the active logical process.
-inline constexpr llvm::StringLiteral proceduralEventWait =
-    "obelisk_sim.procedural_event_wait";
-/// Marks an outer explicit event control of a general-purpose `always`
-/// procedure. The procedure returns to this wait after every iteration, so an
-/// event enabled by its body can enqueue the next iteration.
-inline constexpr llvm::StringLiteral repeatingAlwaysWait =
-    "obelisk_sim.repeating_always_wait";
-/// Logical DPI output-formal indices whose unused internal copy-in operands
-/// were removed while preserving the externally visible DPI signature.
+
 inline constexpr llvm::StringLiteral dpiElidedInputs =
     "obelisk_sim.dpi_elided_inputs";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
-inline constexpr llvm::StringLiteral nativeGuardedSpecializationBody =
-    "obelisk.native.guarded_specialization_body";
 /// Marks an AOT region body whose bytecode fallback may be frozen before
 /// native-only next-state and publication rewrites consume the annotation.
-inline constexpr llvm::StringLiteral nativeRegionBody =
-    "obelisk.native.region_body";
 /// Stable semantic partition assigned before native lowering.  The value is
 /// independent of worker count and is retained on generated LLVM functions so
 /// object emission and incremental caches share one ownership boundary.
@@ -283,62 +223,10 @@ inline constexpr llvm::StringLiteral nativePartitionManifests =
 inline constexpr llvm::StringLiteral nativePhysicalPartitionManifest =
     "obelisk.native.physical_partition_manifest";
 
-// Revision-coupled eval facts shared by planning and LLVM materialization.
-// These affect scheduling correctness and must not drift as ad-hoc strings
-// between producer and consumer modules.
-inline constexpr llvm::StringLiteral evalTier2Convergence =
-    "obelisk.eval.tier2_convergence";
-inline constexpr llvm::StringLiteral evalMayTerminate =
-    "obelisk.eval.may_terminate";
-inline constexpr llvm::StringLiteral evalInfallible = "obelisk.eval.infallible";
-/// A status-returning owner whose nonzero result is a fractured cold
-/// checkpoint. The periodic prefix may call it directly when it checks that
-/// status before running any downstream owner.
-inline constexpr llvm::StringLiteral evalCheckpointSafe =
-    "obelisk.eval.checkpoint_safe";
-inline constexpr llvm::StringLiteral evalTwoStateVariant =
-    "obelisk.eval.two_state_variant";
-inline constexpr llvm::StringLiteral evalPathGuardedTwoState =
-    "obelisk.eval.path_guarded_two_state";
-/// A path-guarded owner whose complete persistent state closure is known-
-/// preserving. Once its recorded promotion ranges are known, the dispatcher
-/// only needs to retain the checkpoint-path probe.
-inline constexpr llvm::StringLiteral evalPathGuardedKnownPreserving =
-    "obelisk.eval.path_guarded_known_preserving";
-/// An owner whose route probe was declined, so no path predicate guards its
-/// runtime leaf. Its four-state body calls the runtime inline and must stay
-/// runtime-owned.
-inline constexpr llvm::StringLiteral evalUnsupportedCheckpointOwner =
-    "obelisk.eval.unsupported_checkpoint_owner";
-inline constexpr llvm::StringLiteral evalCallClosureRoot =
-    "obelisk.eval.call_closure_root";
-inline constexpr llvm::StringLiteral evalCheckpointRoutes =
-    "obelisk.eval.checkpoint_routes";
-/// Producer certificate for a generated region activation that reconstructs
-/// actor-side continuation arguments from canonical state on every entry.
-inline constexpr llvm::StringLiteral evalReconstructsContinuationArgs =
-    "obelisk.eval.reconstructs_continuation_args";
-/// Per-NBA conversion certificate that the selected generated owner may use
-/// its fixed root/region metadata.  Attach this before dialect conversion;
-/// conversion patterns must not rediscover the fact from a parent function
-/// that another pattern may already have replaced.
-inline constexpr llvm::StringLiteral evalCompactNBAMetadata =
-    "obelisk.eval.compact_nba_metadata";
-/// Stable logical process identity attached to operations cloned into a
-/// fused eval body.  The inliner propagates a call-site identity through
-/// helper bodies so active-self suppression does not depend on the physical
-/// coordinator that happens to contain the operation.
-inline constexpr llvm::StringLiteral evalSourceOwner =
-    "obelisk.eval.source_owner";
-/// Inter-pass proof marker for a read-observable canonical store that a
-/// dormant Tier-1 eval specialization may omit.  MaterializeComputeFusion
-/// attaches it only after proving private dominating-store promotion;
-/// SimulationToLLVMCoroutine consumes it while cloning the eval-private call
-/// closure and removes it before dialect lowering.
-inline constexpr llvm::StringLiteral evalDiscardableStore =
-    "obelisk.eval.discardable_store";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
+  if (auto field = schedule::symbolizeField(name))
+    return !schedule::metadata::requiresOperationScope(*field);
   return name == captureKind || name == descriptorId ||
          name == descriptorRootType || name == descriptorLow ||
          name == descriptorIndices || name == descriptorAggregateType ||
@@ -346,6 +234,8 @@ inline bool isKnownBoundary(llvm::StringRef name) {
 }
 
 inline bool isKnownOperation(llvm::StringRef name) {
+  if (auto field = schedule::symbolizeField(name))
+    return !schedule::metadata::pinsOperationBoundary(*field);
   return isKnownBoundary(name) || name == bindings || name == delayScale ||
          name == delayQuantum || name == hierarchicalName ||
          name == returnVariablePath || name == lowered ||
@@ -353,12 +243,18 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == randomVariableKind || name == randomVariableSigned ||
          name == randomCycleKeyField || name == randomCyclePositionField ||
          name == randomModeField || name == classBitstreamMember ||
-         name == classBitstreamVisibility || name == staticBodyFusion ||
-         name == evalDiscardableStore || name == staticFusion ||
-         name == computeKernels || name == threeTierSchedule ||
-         name == staticSpecialization || name == staticSuperstep ||
-         name == topLevelWildcardWait || name == proceduralEventWait ||
-         name == repeatingAlwaysWait || name == dpiElidedInputs;
+         name == classBitstreamVisibility ||
+         name == schedule::metadata::staticBodyFusion ||
+         name == schedule::metadata::evalDiscardableStore ||
+         name == schedule::metadata::staticFusion ||
+         name == schedule::metadata::computeKernels ||
+         name == schedule::metadata::threeTierSchedule ||
+         name == schedule::metadata::staticSpecialization ||
+         name == schedule::metadata::staticSuperstep ||
+         name == schedule::metadata::topLevelWildcardWait ||
+         name == schedule::metadata::proceduralEventWait ||
+         name == schedule::metadata::repeatingAlwaysWait ||
+         name == dpiElidedInputs;
 }
 
 } // namespace obelisk::sim::metadata

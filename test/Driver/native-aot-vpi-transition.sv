@@ -145,7 +145,7 @@ endmodule
 
 // MIXED-NBA: mixed=0123456789abcdeffedcba98deadbeef
 // MIXED-IR: obelisk_sim.func private @__obelisk_fused_
-// MIXED-IR-SAME: obelisk.native.guarded_specialization_body
+// MIXED-IR-SAME: schedule.native.guarded_specialization_body
 
 //--- plugin.c
 #include "vpi_user.h"

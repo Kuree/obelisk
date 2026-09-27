@@ -51,7 +51,7 @@ module attributes {
       %value = obelisk_sim.ref.load %input :
           !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       obelisk_sim.driver.drive %driver = %value {
-        obelisk_sim.defer_net_resolution
+        schedule.defer_net_resolution
       } :
           !obelisk_sim.driver<!obelisk_sim.logic<1>>,
           !obelisk_sim.logic<1>
@@ -92,9 +92,9 @@ module attributes {
 // CHECK: obelisk_sim.suspend.any
 // CHECK-SAME: edges [0, 0]
 // CHECK: obelisk_sim.driver.drive_changed
-// CHECK-SAME: obelisk_sim.defer_net_resolution
+// CHECK-SAME: schedule.defer_net_resolution
 // CHECK: obelisk_sim.driver.drive_changed
-// CHECK-NOT: obelisk_sim.defer_net_resolution
+// CHECK-NOT: schedule.defer_net_resolution
 // CHECK-NOT: obelisk_sim.func private @first
 // CHECK-NOT: obelisk_sim.func private @second
 

@@ -2,6 +2,9 @@
 
 #include "SimulationNBALowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -592,7 +595,7 @@ public:
         exactDestinationValidity = false;
       }
     }
-    sim::NBASiteAttr site = op.getSiteAttr();
+    schedule::NBASiteAttr site = op.getSiteAttr();
     bool mappedSite =
         site && staticPlan && staticPlan->siteRoots.contains(site.getId());
     uint32_t plannedRoot =
@@ -601,7 +604,7 @@ public:
         !op.getClockingOutputAttr() && staticSitesEnabled && staticPlan &&
         mappedSite && staticPlan->mergeSafeRoots[plannedRoot] &&
         adaptor.getDelay().empty() && !site.getTiming() &&
-        site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
+        site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier;
 
     uint32_t rootIndex = UINT32_MAX;
     if (staticallyStaged) {
@@ -620,8 +623,9 @@ public:
         auto owner =
             dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
         if (!owner || argument.getOwner() != &owner.getBody().front() ||
-            !owner->hasAttr("obelisk.eval.raw_captures") || !stateLayout ||
-            rootIndex == UINT32_MAX || !staticPlan ||
+            !::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalRawCaptures>(owner) ||
+            !stateLayout || rootIndex == UINT32_MAX || !staticPlan ||
             rootIndex >= staticPlan->roots.size())
           return std::nullopt;
         auto descriptor = owner.getArgAttrOfType<IntegerAttr>(
@@ -871,7 +875,8 @@ public:
 
     Block *guardContinuation = nullptr;
     if (directGeneratedStage) {
-      bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+      bool assumeClean =
+          ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
       bool useGuardedClaim = !assumeClean && guardedClaims;
       if (!useGuardedClaim) {
         emitDirectGeneratedStage();
@@ -999,8 +1004,8 @@ public:
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     bool driverDestination =
         isa<sim::DriverType>(op.getDestination().getType());
-    bool inductiveTwoStateAccess =
-        op->hasAttr("obelisk.eval.inductive_two_state_access");
+    bool inductiveTwoStateAccess = ::obelisk::schedule::has<
+        ::obelisk::schedule::Field::EvalInductiveTwoStateAccess>(op);
     // Selected eval bodies execute only after their complete closure crosses
     // a known quiescent boundary, so they can use fixed root/region metadata.
     // That function-level fact does not prove exclusive ownership of an NBA
@@ -1010,12 +1015,14 @@ public:
     // IEEE 1800-2023 4.4.2.4, 4.5: a shared runtime NBA barrier must see
     // validity, masks and region even when all payload bits are known.
     bool compactEvalMetadata =
-        !op->getParentOfType<ModuleOp>()->hasAttr(
-            "obelisk.eval.runtime_calendar") &&
+        !::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalRuntimeCalendar>(
+            op->getParentOfType<ModuleOp>()) &&
         (inductiveTwoStateAccess ||
-         op->hasAttr(sim::metadata::evalCompactNBAMetadata));
+         ::obelisk::schedule::has<schedule::metadata::evalCompactNBAMetadata>(
+             op));
 
-    sim::NBASiteAttr site = op.getSiteAttr();
+    schedule::NBASiteAttr site = op.getSiteAttr();
     auto staticRoot =
         site && staticPlan
             ? staticPlan->siteRoots.find(site.getId())
@@ -1029,7 +1036,7 @@ public:
         staticRoot->second < staticPlan->roots.size() &&
         staticPlan->mergeSafeRoots[staticRoot->second] &&
         adaptor.getDelay().empty() && !site.getTiming() &&
-        site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier &&
+        site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier &&
         *width <= 64 && destinationValue &&
         obelisk_rt_stable_handle_decode(*destinationValue, &decoded) &&
         decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
@@ -1047,11 +1054,14 @@ public:
     // Wide Eval sites need the per-site ordering/ingress preflight in AOT
     // materialization. Preserve their site identity in the static NBA ABI;
     // the ordinary actor still uses the existing accumulator/claim route.
-    bool wideEvalSite = packedStaticStage && function &&
-                        function->hasAttr("obelisk.eval.raw_captures") &&
-                        staticPlan->roots[staticRoot->second].bit_width > 64;
+    bool wideEvalSite =
+        packedStaticStage && function &&
+        ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+            function) &&
+        staticPlan->roots[staticRoot->second].bit_width > 64;
     if (packedStaticStage && !wideEvalSite) {
-      bool assumeClean = op->hasAttr(assumeCleanSpecializationAttr);
+      bool assumeClean =
+          ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
       StringRef generatedAccumulator =
           staticRoot->second < staticPlan->generatedAccumulators.size()
               ? staticPlan->generatedAccumulators[staticRoot->second]
@@ -1433,13 +1443,15 @@ public:
       uint32_t rootIndex =
           mappedSite ? staticPlan->siteRoots.lookup(site.getId()) : UINT32_MAX;
       bool orderedEvalQueue =
-          function && function->hasAttr("obelisk.eval.ordered_nba_queue");
+          function &&
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalOrderedNbaQueue>(function);
       bool staticallyStaged =
           !op.getClockingOutputAttr() && !driverDestination &&
           staticSitesEnabled && mappedSite &&
           (staticPlan->mergeSafeRoots[rootIndex] || orderedEvalQueue) &&
           adaptor.getDelay().empty() && !site.getTiming() &&
-          site.getStorage() != sim::ComputeNBAStorageKind::DynamicFrontier;
+          site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier;
       SmallVector<Value> arguments{
           runtimeContext,
           valuePlane,

@@ -1,6 +1,8 @@
 //===- LowerUnitExpressions.cpp - Lower values and selections ---------===//
 
 #include "LowerUnit.h"
+#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -2584,13 +2586,14 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     auto binding = observer.getDefiningOp<sim::SimObserverBindOp>();
     if (!binding)
       return failure();
-    ObserverPlan plan{binding.getEvaluatorAttr(),
-                      cast<sim::ObserverType>(observer.getType()),
-                      binding.getCaptureCountAttr(),
-                      SmallVector<Value>(binding.getValues()),
-                      {},
-                      {},
-                      binding->hasAttr(observerEventPrimaryAttrName)};
+    ObserverPlan plan{
+        binding.getEvaluatorAttr(),
+        cast<sim::ObserverType>(observer.getType()),
+        binding.getCaptureCountAttr(),
+        SmallVector<Value>(binding.getValues()),
+        {},
+        {},
+        ::obelisk::schedule::has<observerEventPrimaryAttrName>(binding)};
     for (Value operand : plan.values) {
       FailureOr<DictionaryAttr> attrs = captureAttrs(operand);
       if (failed(attrs)) {
@@ -2696,8 +2699,9 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
           commitBuilder, location, sim::TimeType::get(context),
           commitBuilder.getI64IntegerAttr(skewTicks));
       sim::SimSuspendDelayOp::create(
-          commitBuilder, location, delay, sim::TimingSiteAttr{},
-          ValueRange{commitEntry.getArgument(1)}, sim::ContinuationSiteAttr{},
+          commitBuilder, location, delay, schedule::TimingSiteAttr{},
+          ValueRange{commitEntry.getArgument(1)},
+          schedule::ContinuationSiteAttr{},
           sim::EventRegionAttr::get(context, sim::EventRegion::Postponed),
           publish);
       OpBuilder publishBuilder = OpBuilder::atBlockEnd(publish);
@@ -2746,16 +2750,13 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
           outlineBuilder.getNamedAttr(
               "domain", sim::ExecutionDomainAttr::get(
                             context, sim::ExecutionDomain::Design)),
-          outlineBuilder.getNamedAttr(
-              "obelisk_sim.clocked_sample_plan",
-              outlineBuilder.getDictionaryAttr(
-                  {outlineBuilder.getNamedAttr(
-                       "key", outlineBuilder.getStringAttr(delayKey)),
-                   outlineBuilder.getNamedAttr(
-                       "id", outlineBuilder.getI64IntegerAttr(delayedSiteID)),
-                   outlineBuilder.getNamedAttr(
-                       "hierarchy",
-                       outlineBuilder.getStringAttr(monitorHierarchy))})),
+          ::obelisk::schedule::named<
+              ::obelisk::schedule::Field::ClockedSamplePlan>(
+              schedule::ClockedSamplePlanAttr::get(
+                  outlineBuilder.getContext(),
+                  outlineBuilder.getStringAttr(delayKey),
+                  outlineBuilder.getI64IntegerAttr(delayedSiteID),
+                  outlineBuilder.getStringAttr(monitorHierarchy))),
           outlineBuilder.getNamedAttr(
               sim::metadata::hierarchicalName,
               outlineBuilder.getStringAttr(monitorHierarchy))};
@@ -2818,12 +2819,12 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
             waitBuilder, location,
             ValueRange{localSourceObserver, encounterValue}, 0,
             ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
-            ArrayRef<int32_t>{-1}, sim::ContinuationSiteAttr{},
+            ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
             sim::EventRegionAttr{}, changed);
       } else {
         sim::SimSuspendChangeOp::create(
             waitBuilder, location, monitorEntry.getArgument(1), ValueRange{},
-            sim::ContinuationSiteAttr{}, sim::EventRegionAttr{}, changed);
+            schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, changed);
       }
       OpBuilder changedBuilder = OpBuilder::atBlockEnd(changed);
       Value current;
@@ -2920,15 +2921,12 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
         outlineBuilder.getNamedAttr("domain",
                                     sim::ExecutionDomainAttr::get(
                                         context, sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(
-            "obelisk_sim.clocked_sample_plan",
-            outlineBuilder.getDictionaryAttr(
-                {outlineBuilder.getNamedAttr("key",
-                                             outlineBuilder.getStringAttr(key)),
-                 outlineBuilder.getNamedAttr(
-                     "id", outlineBuilder.getI64IntegerAttr(siteID)),
-                 outlineBuilder.getNamedAttr(
-                     "hierarchy", outlineBuilder.getStringAttr(hierarchy))})),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::ClockedSamplePlan>(
+            schedule::ClockedSamplePlanAttr::get(
+                outlineBuilder.getContext(), outlineBuilder.getStringAttr(key),
+                outlineBuilder.getI64IntegerAttr(siteID),
+                outlineBuilder.getStringAttr(hierarchy))),
         outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                     outlineBuilder.getStringAttr(hierarchy))};
     sim::SimFuncOp sampler = sim::SimFuncOp::create(
@@ -2950,8 +2948,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
           entryBuilder, location, plan.type, plan.evaluator, operands,
           plan.captureCount);
       if (plan.eventPrimary)
-        binding->setAttr(observerEventPrimaryAttrName,
-                         entryBuilder.getUnitAttr());
+        ::obelisk::schedule::set<observerEventPrimaryAttrName>(
+            binding, entryBuilder.getUnitAttr());
       return binding.getResult();
     };
     Value localPrimaryObserver;
@@ -2999,19 +2997,19 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
               waitBuilder, location,
               ValueRange{localPrimaryObserver, initial, localConditionObserver},
               1, ArrayRef<int32_t>{static_cast<int32_t>(edge)},
-              ArrayRef<int32_t>{0}, sim::ContinuationSiteAttr{},
+              ArrayRef<int32_t>{0}, schedule::ContinuationSiteAttr{},
               sim::EventRegionAttr{}, sample)
               .getOperation();
     } else if (isa<sim::EventType>(clock.getType())) {
       suspend = sim::SimSuspendEventOp::create(
                     waitBuilder, location, entry.getArgument(clockIndex),
-                    ValueRange{}, sim::ContinuationSiteAttr{},
+                    ValueRange{}, schedule::ContinuationSiteAttr{},
                     sim::EventRegionAttr{}, sample)
                     .getOperation();
     } else {
       suspend = sim::SimSuspendEdgeOp::create(
                     waitBuilder, location, edge, entry.getArgument(clockIndex),
-                    ValueRange{}, sim::ContinuationSiteAttr{},
+                    ValueRange{}, schedule::ContinuationSiteAttr{},
                     sim::EventRegionAttr{}, sample)
                     .getOperation();
     }

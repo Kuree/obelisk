@@ -26,7 +26,7 @@
 // STATE: obelisk_sim.storage.decl 3 in 0 : i64 design {observability = 0 : i32}
 // STATE: obelisk_sim.storage.decl 4 in 0 : i64 design {observability = 0 : i32}
 // STATE-LABEL: obelisk_sim.func @z_consumer
-// STATE-SAME: obelisk_sim.clocked_control
+// STATE-SAME: schedule.clocked_control
 // STATE: obelisk_sim.ref.store
 // STATE-COUNT-1: obelisk_sim.suspend.edge posedge
 // STATE-NOT: obelisk_sim.suspend.edge
@@ -82,7 +82,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native_scheduler = 3 : i32
+  schedule.native_scheduler = 3 : i32
 } {
   obelisk_sim.design @clocked_control {
     obelisk_sim.scope.decl 0 hierarchy "clocked_control"
@@ -112,7 +112,7 @@ module attributes {
     ^wait:
       %delay = obelisk_sim.time.constant 1
       obelisk_sim.suspend.delay %delay to ^toggle
-          {site = #obelisk_sim.continuation<id = 1>, timing = #obelisk_sim.timing_site<id = 0, kind = calendar>}
+          {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
       %old = obelisk_sim.ref.load %clock : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
@@ -130,7 +130,7 @@ module attributes {
       cf.br ^first(%count : i64)
     ^first(%n: i64):
       obelisk_sim.suspend.edge posedge %clock to ^firstNext(%n : i64)
-          {obelisk_sim.procedural_event_wait, site = #obelisk_sim.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {schedule.procedural_event_wait, site = #schedule.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^firstNext(%previous: i64):
       %one = arith.constant 1 : i64
       %zeroCount = arith.constant 0 : i64
@@ -145,7 +145,7 @@ module attributes {
       cf.br ^second(%largeCount : i64)
     ^second(%m: i64):
       obelisk_sim.suspend.edge posedge %clock to ^secondNext(%m : i64)
-          {obelisk_sim.procedural_event_wait, site = #obelisk_sim.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {schedule.procedural_event_wait, site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^secondNext(%oldCount: i64):
       %step = arith.constant 1 : i64
       %end = arith.constant 0 : i64
@@ -168,11 +168,11 @@ module attributes {
       cf.br ^wait
     ^wait:
       obelisk_sim.suspend.edge posedge %clock to ^tick
-          {site = #obelisk_sim.continuation<id = 4>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          {site = #schedule.continuation<id = 4>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
     ^tick:
       %old = obelisk_sim.ref.load %bit : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
       %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.nba.enqueue %new to %bit {site = #obelisk_sim.nba_site<id = 0, commit = 0, storage = fixed_slot>} : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
+      obelisk_sim.nba.enqueue %new to %bit {site = #schedule.nba_site<id = 0, commit = 0, storage = fixed_slot>} : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
       %print = obelisk_sim.logic.is_true %old : !obelisk_sim.logic<1>
       cf.cond_br %print, ^report, ^wait
     ^report:
