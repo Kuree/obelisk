@@ -53,15 +53,46 @@ static Value createPackedCaseComparison(OpBuilder &builder, Location location,
                                         kind, lhs, rhs);
 }
 
-static void retargetCoverageKeepalives(sim::SimFuncOp source,
-                                       sim::SimFuncOp replacement) {
-  auto design = source->getParentOfType<sim::SimDesignOp>();
-  for (auto keepalive :
-       design.getBody().front().getOps<sim::SimCoverageKeepaliveOp>())
-    if (keepalive.getFunction() == source.getSymName())
+// Frozen graph membership and source identities are shared by all cohorts.
+// Coverage links are mutable: move their index entries when an actor is fused.
+struct FusionInputIndex {
+  FusionInputIndex(sim::SimDesignOp design, sim::ComputeGraphAttr graph) {
+    for (auto [index, attribute] : llvm::enumerate(graph.getNodes()))
+      if (auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute))
+        fragments[fragment.getFunction().getAttr()].push_back(index);
+    for (Attribute attribute : graph.getEdges()) {
+      auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+      outgoingEdges[edge.getSource()].push_back(edge);
+    }
+    for (Operation &operation : design.getBody().front()) {
+      if (auto keepalive = dyn_cast<sim::SimCoverageKeepaliveOp>(operation))
+        keepalives[keepalive.getFunctionAttr().getAttr()].push_back(keepalive);
+      if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+        if (auto body =
+                function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body"))
+          sourceCodeUnits.try_emplace(body.getAttr(),
+                                      function.getCodeUnitIdAttr());
+    }
+  }
+
+  void retargetCoverageKeepalives(sim::SimFuncOp source,
+                                  sim::SimFuncOp replacement) {
+    auto found = keepalives.find(source.getSymNameAttr());
+    if (found == keepalives.end())
+      return;
+    auto links = std::move(found->second);
+    keepalives.erase(found);
+    for (auto keepalive : links)
       keepalive.setFunctionAttr(
           FlatSymbolRefAttr::get(replacement.getSymNameAttr()));
-}
+    llvm::append_range(keepalives[replacement.getSymNameAttr()], links);
+  }
+
+  DenseMap<StringAttr, SmallVector<uint32_t>> fragments;
+  DenseMap<uint32_t, SmallVector<sim::ComputeEdgeAttr>> outgoingEdges;
+  DenseMap<StringAttr, IntegerAttr> sourceCodeUnits;
+  DenseMap<StringAttr, SmallVector<sim::SimCoverageKeepaliveOp>> keepalives;
+};
 
 constexpr StringLiteral evalOriginNBASiteAttr = "obelisk.eval.origin_nba_site";
 static void preserveEvalNBASiteOrigins(sim::SimFuncOp body) {
@@ -1527,7 +1558,8 @@ uint64_t shareStableBranchConditions(sim::SimFuncOp function,
 
 FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
-    sim::ComputeFusionAttr fusion, sim::ComputeGraphAttr graph,
+    FusionInputIndex &inputIndex, sim::ComputeFusionAttr fusion,
+    sim::ComputeGraphAttr graph,
     const analysis::DescriptorProvenanceAnalysis &provenance,
     const CombinationalFusionAnalysis &combinational,
     const DenseMap<int64_t, int64_t> &resumeTargets,
@@ -1876,7 +1908,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     for (Candidate &candidate : candidates)
       candidate.spawn.erase();
     for (Candidate &candidate : candidates) {
-      retargetCoverageKeepalives(candidate.function, kernel);
+      inputIndex.retargetCoverageKeepalives(candidate.function, kernel);
       symbols.erase(candidate.function);
     }
     return kernel;
@@ -2105,7 +2137,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     for (Candidate &candidate : candidates)
       candidate.spawn.erase();
     for (Candidate &candidate : candidates) {
-      retargetCoverageKeepalives(candidate.function, kernel);
+      inputIndex.retargetCoverageKeepalives(candidate.function, kernel);
       symbols.erase(candidate.function);
     }
     return kernel;
@@ -2732,7 +2764,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   for (Candidate &candidate : candidates)
     candidate.spawn.erase();
   for (Candidate &candidate : candidates) {
-    retargetCoverageKeepalives(candidate.function, kernel);
+    inputIndex.retargetCoverageKeepalives(candidate.function, kernel);
     symbols.erase(candidate.function);
   }
   return kernel;
@@ -2740,7 +2772,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
 
 FailureOr<sim::SimFuncOp> materializeFusion(
     sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
-    sim::ComputeFusionAttr fusion, sim::ComputeGraphAttr graph,
+    FusionInputIndex &inputIndex, sim::ComputeFusionAttr fusion,
+    sim::ComputeGraphAttr graph,
     const analysis::DescriptorProvenanceAnalysis &provenance,
     const DenseMap<uint32_t, uint32_t> &scheduleOrder,
     const DenseMap<uint32_t, uint32_t> &resumeTargets,
@@ -2873,27 +2906,28 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   // Collapsing their rearm points would lose that activation. NBA edges are
   // different: commits occur only after all Active work has returned.
   llvm::SmallDenseSet<uint32_t> candidateFragments;
-  llvm::SmallDenseSet<StringAttr> candidateFunctions;
-  for (BodyFusionCandidate &candidate : candidates)
-    candidateFunctions.insert(candidate.function.getSymNameAttr());
-  for (auto [index, attribute] : llvm::enumerate(graph.getNodes())) {
-    auto fragment = dyn_cast<sim::ComputeFragmentAttr>(attribute);
-    if (!fragment ||
-        !candidateFunctions.contains(fragment.getFunction().getAttr()))
+  for (BodyFusionCandidate &candidate : candidates) {
+    auto found = inputIndex.fragments.find(candidate.function.getSymNameAttr());
+    if (found == inputIndex.fragments.end())
       continue;
-    if (fragment.getTier() != sim::ComputeTierKind::Native)
-      return rejectEval("non-native member fragment");
-    candidateFragments.insert(static_cast<uint32_t>(index));
+    for (uint32_t index : found->second) {
+      auto fragment = cast<sim::ComputeFragmentAttr>(graph.getNodes()[index]);
+      if (fragment.getTier() != sim::ComputeTierKind::Native)
+        return rejectEval("non-native member fragment");
+      candidateFragments.insert(index);
+    }
   }
-  for (Attribute attribute : graph.getEdges()) {
-    auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-    if (!candidateFragments.contains(edge.getSource()))
+  for (uint32_t fragment : candidateFragments) {
+    auto outgoing = inputIndex.outgoingEdges.find(fragment);
+    if (outgoing == inputIndex.outgoingEdges.end())
       continue;
-    if (edge.getKind() == sim::ComputeEdgeKind::Spawn)
-      return rejectEval("spawn within cohort");
-    if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&
-        candidateFragments.contains(edge.getTarget()))
-      return rejectEval("cohort changes its own trigger");
+    for (sim::ComputeEdgeAttr edge : outgoing->second) {
+      if (edge.getKind() == sim::ComputeEdgeKind::Spawn)
+        return rejectEval("spawn within cohort");
+      if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity &&
+          candidateFragments.contains(edge.getTarget()))
+        return rejectEval("cohort changes its own trigger");
+    }
   }
 
   // Pure entry preambles and unobserved root-spawn handles allow the common
@@ -2972,16 +3006,11 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       site = suspend.getSiteAttr();
     if (!site)
       return rejectEval("source owner has no stable continuation");
-    sim::SimFuncOp sourceFunction = candidate.function;
-    for (sim::SimFuncOp function :
-         design.getBody().front().getOps<sim::SimFuncOp>())
-      if (auto evalBody =
-              function->getAttrOfType<FlatSymbolRefAttr>("obelisk.eval.body");
-          evalBody && evalBody.getValue() == candidate.function.getSymName()) {
-        sourceFunction = function;
-        break;
-      }
-    IntegerAttr codeUnit = sourceFunction.getCodeUnitIdAttr();
+    auto source =
+        inputIndex.sourceCodeUnits.find(candidate.function.getSymNameAttr());
+    IntegerAttr codeUnit = source == inputIndex.sourceCodeUnits.end()
+                               ? candidate.function.getCodeUnitIdAttr()
+                               : source->second;
     if (!codeUnit)
       return rejectEval("source owner has no stable code unit");
     sourceOwners.push_back(builder.getDictionaryAttr(
@@ -3155,7 +3184,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   for (BodyFusionCandidate &candidate : candidates) {
     if (accessIndex)
       accessIndex->erase(candidate.function);
-    retargetCoverageKeepalives(candidate.function, fused);
+    inputIndex.retargetCoverageKeepalives(candidate.function, fused);
     symbols.erase(candidate.function);
   }
 
@@ -3531,6 +3560,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   std::unique_ptr<PrivateStaticAccessIndex> fusionAccessIndex;
   llvm::StringMap<uint64_t> fusionRejections;
   CombinationalFusionAnalysis combinational(design, provenance);
+  FusionInputIndex inputIndex(design, graph);
   for (Attribute attribute : fusions) {
     auto fusion = dyn_cast<sim::ComputeFusionAttr>(attribute);
     if (!fusion)
@@ -3538,10 +3568,10 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     bool primitiveContinuous =
         isPrimitiveContinuousFusion(symbols, fusion, graph);
     FailureOr<sim::SimFuncOp> fused = materializeFusion(
-        design, symbols, codeUnits, fusion, graph, provenance, scheduleOrder,
-        resumeTargets, entryOrder, spawnsByCallee, evalScheduler, removedPolls,
-        convertedNBAs, sharedConditions, promotedStores, fusionAccessIndex,
-        fusionRejections);
+        design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
+        scheduleOrder, resumeTargets, entryOrder, spawnsByCallee, evalScheduler,
+        removedPolls, convertedNBAs, sharedConditions, promotedStores,
+        fusionAccessIndex, fusionRejections);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
     // the actor scheduler.  A primitive-only cohort is different: replacing
@@ -3550,9 +3580,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     // typed source owners preserve the original fine identities for eval
     // handoff.
     if (failed(fused) && (!evalScheduler || primitiveContinuous)) {
-      fused = materializeStraightLineKernel(design, symbols, codeUnits, fusion,
-                                            graph, provenance, combinational,
-                                            firstResumeTargets, spawnsByCallee);
+      fused = materializeStraightLineKernel(
+          design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
+          combinational, firstResumeTargets, spawnsByCallee);
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.

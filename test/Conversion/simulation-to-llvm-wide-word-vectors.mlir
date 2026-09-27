@@ -1,4 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.parallel
+// RUN: FileCheck %s < %t.parallel
+// RUN: obelisk-opt %s --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial
+// RUN: diff %t.parallel %t.serial
 // Exercise the final native legalization boundary directly. All vector
 // memory accesses keep the original byte alignment and footprint.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {

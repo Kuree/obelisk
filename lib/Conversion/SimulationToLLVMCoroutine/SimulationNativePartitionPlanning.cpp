@@ -6,8 +6,10 @@
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
@@ -434,22 +436,39 @@ LogicalResult finalizeNativePartitionManifest(ModuleOp module) {
   for (auto [index, partition] : llvm::enumerate(partitions))
     partitionIndices[partition.id] = index;
 
-  for (const SymbolRecord &source : symbols) {
-    unsigned sourcePartition = partitionIndices.lookup(source.partition);
-    std::optional<SymbolTable::UseRange> uses =
-        SymbolTable::getSymbolUses(source.operation);
-    if (!uses)
-      return source.operation->emitError(
-          "cannot enumerate physical partition symbol uses");
-    for (const SymbolTable::SymbolUse &use : *uses) {
-      StringRef targetName = use.getSymbolRef().getRootReference().getValue();
-      auto targetIt = symbolIndices.find(targetName);
-      if (targetIt == symbolIndices.end())
-        continue;
-      const SymbolRecord &target = symbols[targetIt->second];
-      unsigned targetPartition = partitionIndices.lookup(target.partition);
-      if (sourcePartition == targetPartition)
-        continue;
+  // Inventory each definition independently while the symbol namespace is
+  // frozen. Repeated calls to one target contribute one dependency, not one
+  // string-set insertion per call. Merge in source order after workers finish.
+  SmallVector<unsigned> symbolPartitions;
+  for (const auto &symbol : symbols)
+    symbolPartitions.push_back(partitionIndices.lookup(symbol.partition));
+  SmallVector<SmallVector<unsigned>> referencedSymbols(symbols.size());
+  if (failed(failableParallelForEach(
+          module.getContext(), llvm::seq<size_t>(0, symbols.size()),
+          [&](size_t index) -> LogicalResult {
+            const SymbolRecord &source = symbols[index];
+            std::optional<SymbolTable::UseRange> uses =
+                SymbolTable::getSymbolUses(source.operation);
+            if (!uses)
+              return source.operation->emitError(
+                  "cannot enumerate physical partition symbol uses");
+            llvm::SmallDenseSet<unsigned> uniqueTargets;
+            for (const SymbolTable::SymbolUse &use : *uses) {
+              StringRef name = use.getSymbolRef().getRootReference().getValue();
+              auto target = symbolIndices.find(name);
+              if (target != symbolIndices.end() &&
+                  symbolPartitions[index] != symbolPartitions[target->second] &&
+                  uniqueTargets.insert(target->second).second)
+                referencedSymbols[index].push_back(target->second);
+            }
+            return success();
+          })))
+    return failure();
+  for (auto [index, references] : llvm::enumerate(referencedSymbols)) {
+    unsigned sourcePartition = symbolPartitions[index];
+    for (unsigned targetIndex : references) {
+      const SymbolRecord &target = symbols[targetIndex];
+      unsigned targetPartition = symbolPartitions[targetIndex];
       partitions[sourcePartition].imports.insert(target.name);
       partitions[sourcePartition].dependencies.insert(target.partition);
       partitions[targetPartition].exports.insert(target.name);

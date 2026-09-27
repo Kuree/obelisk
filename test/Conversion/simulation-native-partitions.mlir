@@ -1,7 +1,11 @@
 // RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions | FileCheck %s
 // RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s --check-prefix=LOWERED
+// RUN:   -o %t.parallel
+// RUN: FileCheck %s --check-prefix=LOWERED < %t.parallel
+// RUN: obelisk-opt %s --mlir-disable-threading --obelisk-sim-plan-native-partitions \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial
+// RUN: diff %t.parallel %t.serial
 
 // Native partition identity follows semantic ownership, not source order.
 // The mutually recursive ordinary functions remain one semantic SCC, each

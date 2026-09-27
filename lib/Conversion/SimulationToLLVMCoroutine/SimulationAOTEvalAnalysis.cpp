@@ -545,45 +545,67 @@ resolveNativeEvalPlan(ModuleOp module,
       }
     }
 
+    // Index outgoing dependencies once. An NBA stage reaches only activation
+    // edges from its target resource node, and still needs the exact packed
+    // range/descriptor overlap proof below (IEEE 1800-2023 4.4, 10.4.2).
+    DenseMap<uint32_t, SmallVector<sim::ComputeEdgeAttr>> outgoingEdges;
+    DenseMap<uint32_t, SmallVector<sim::ComputeEdgeAttr>> nbaActivations;
+    for (Attribute attribute : computeGraph.getEdges()) {
+      auto edge = cast<sim::ComputeEdgeAttr>(attribute);
+      switch (edge.getKind()) {
+      case sim::ComputeEdgeKind::Sensitivity:
+      case sim::ComputeEdgeKind::Resume:
+      case sim::ComputeEdgeKind::NBAStage:
+        outgoingEdges[edge.getSource()].push_back(edge);
+        break;
+      case sim::ComputeEdgeKind::NBAActivate:
+        nbaActivations[edge.getSource()].push_back(edge);
+        break;
+      default:
+        break;
+      }
+    }
     llvm::SmallDenseSet<uint32_t, 64> reachableNodes;
+    SmallVector<uint32_t> pendingNodes;
+    auto reachNode = [&](uint32_t node) {
+      if (reachableNodes.insert(node).second)
+        pendingNodes.push_back(node);
+    };
     for (unsigned owner : closure)
       for (uint32_t fragment : ownerFragments[owner])
-        reachableNodes.insert(fragment);
+        reachNode(fragment);
     auto reachOwner = [&](uint32_t fragment) {
       auto target = fragmentOwners.find(fragment);
       if (target == fragmentOwners.end() ||
           !closure.insert(target->second).second)
-        return false;
+        return;
       for (uint32_t owned : ownerFragments[target->second])
-        reachableNodes.insert(owned);
-      return true;
+        reachNode(owned);
     };
-    bool changed;
-    do {
-      changed = false;
-      for (Attribute attribute : computeGraph.getEdges()) {
-        auto edge = cast<sim::ComputeEdgeAttr>(attribute);
-        if (!reachableNodes.contains(edge.getSource()))
-          continue;
-        if (edge.getKind() == sim::ComputeEdgeKind::Sensitivity ||
-            edge.getKind() == sim::ComputeEdgeKind::Resume) {
-          changed |= reachableNodes.insert(edge.getTarget()).second;
-          changed |= reachOwner(edge.getTarget());
+    // Each newly reachable fragment is visited once, including other fragments
+    // admitted through its owner. Cycles and duplicate edges cannot repeatedly
+    // enqueue nodes; reaching an owner is independent of reaching its node.
+    while (!pendingNodes.empty()) {
+      auto outgoing = outgoingEdges.find(pendingNodes.pop_back_val());
+      if (outgoing == outgoingEdges.end())
+        continue;
+      for (sim::ComputeEdgeAttr edge : outgoing->second) {
+        if (edge.getKind() != sim::ComputeEdgeKind::NBAStage) {
+          reachNode(edge.getTarget());
+          reachOwner(edge.getTarget());
           continue;
         }
-        if (edge.getKind() != sim::ComputeEdgeKind::NBAStage)
+        auto activations = nbaActivations.find(edge.getTarget());
+        if (activations == nbaActivations.end())
           continue;
-        for (Attribute candidate : computeGraph.getEdges()) {
-          auto activation = cast<sim::ComputeEdgeAttr>(candidate);
-          if (activation.getKind() != sim::ComputeEdgeKind::NBAActivate ||
-              activation.getSource() != edge.getTarget() ||
-              !rangesOverlap(edge.getResource(), activation.getResource()))
+        for (sim::ComputeEdgeAttr activation : activations->second) {
+          if (!rangesOverlap(edge.getResource(), activation.getResource()))
             continue;
-          changed |= reachableNodes.insert(activation.getTarget()).second;
-          changed |= reachOwner(activation.getTarget());
+          reachNode(activation.getTarget());
+          reachOwner(activation.getTarget());
         }
       }
-    } while (changed);
+    }
     // Tier-1 execution contains these exact Tier-2 bodies, but generated
     // transitions still publish their exact identities.  Keep them in the
     // periodic promotion/transition closure while leaving only the complete

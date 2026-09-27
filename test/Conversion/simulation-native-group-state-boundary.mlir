@@ -1,5 +1,7 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
+// RUN: obelisk-opt %s --mlir-disable-threading --obelisk-materialize-native-eval-groups -o %t.serial
+// RUN: diff %t.mlir %t.serial
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-state-boundary.test.
 

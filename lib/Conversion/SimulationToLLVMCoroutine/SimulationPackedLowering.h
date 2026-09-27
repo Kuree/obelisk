@@ -6,10 +6,15 @@
 #include "SimulationNBALowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+namespace mlir {
+class Pass;
+}
+
 namespace obelisk::detail {
 
-void lowerWideNativeBitwiseIntegers(mlir::ModuleOp module,
-                                    const llvm::DataLayout &dataLayout);
+std::unique_ptr<mlir::Pass>
+createNativeFunctionFinalizationPass(const llvm::DataLayout &dataLayout,
+                                     uint64_t inlineOperationLimit);
 
 mlir::LogicalResult lowerPackedSimulationOperations(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,

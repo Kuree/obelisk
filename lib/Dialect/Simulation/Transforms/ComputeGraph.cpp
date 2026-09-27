@@ -998,25 +998,32 @@ bool isSchedulingEdge(sim::ComputeEdgeKind kind) {
 using analysis::isSettlingEntryKind;
 
 void normalizeEdges(SmallVectorImpl<sim::ComputeEdgeAttr> &edges) {
-  llvm::sort(edges, [](sim::ComputeEdgeAttr lhs, sim::ComputeEdgeAttr rhs) {
-    auto key = [](sim::ComputeEdgeAttr edge) {
-      auto resource = edge.getResource();
-      return std::tuple<uint32_t, uint32_t, unsigned, unsigned, unsigned,
-                        unsigned, uint64_t, uint32_t, uint64_t, uint64_t, bool,
-                        bool, unsigned>(
-          edge.getSource(), edge.getTarget(),
-          static_cast<unsigned>(edge.getKind()), resource ? 1u : 0u,
-          resource ? static_cast<unsigned>(resource.getEffect()) : 0u,
-          resource ? static_cast<unsigned>(resource.getResource()) : 0u,
-          resource ? resource.getDescriptor() : 0,
-          resource ? resource.getFormal() : 0, resource ? resource.getLow() : 0,
-          resource ? resource.getWidth() : 0,
-          resource ? resource.getDynamic() : false,
-          resource ? resource.getDeferred() : false,
-          resource ? static_cast<unsigned>(resource.getTrigger()) : 0u);
-    };
-    return key(lhs) < key(rhs);
+  auto key = [](sim::ComputeEdgeAttr edge) {
+    auto resource = edge.getResource();
+    return std::tuple<uint32_t, uint32_t, unsigned, unsigned, unsigned,
+                      unsigned, uint64_t, uint32_t, uint64_t, uint64_t, bool,
+                      bool, unsigned>(
+        edge.getSource(), edge.getTarget(),
+        static_cast<unsigned>(edge.getKind()), resource ? 1u : 0u,
+        resource ? static_cast<unsigned>(resource.getEffect()) : 0u,
+        resource ? static_cast<unsigned>(resource.getResource()) : 0u,
+        resource ? resource.getDescriptor() : 0,
+        resource ? resource.getFormal() : 0, resource ? resource.getLow() : 0,
+        resource ? resource.getWidth() : 0,
+        resource ? resource.getDynamic() : false,
+        resource ? resource.getDeferred() : false,
+        resource ? static_cast<unsigned>(resource.getTrigger()) : 0u);
+  };
+  using Key = decltype(key(sim::ComputeEdgeAttr{}));
+  SmallVector<std::pair<Key, sim::ComputeEdgeAttr>> keyedEdges;
+  keyedEdges.reserve(edges.size());
+  for (sim::ComputeEdgeAttr edge : edges)
+    keyedEdges.emplace_back(key(edge), edge);
+  llvm::sort(keyedEdges, [](const auto &lhs, const auto &rhs) {
+    return lhs.first < rhs.first;
   });
+  for (auto [index, entry] : llvm::enumerate(keyedEdges))
+    edges[index] = entry.second;
   edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
 }
 

@@ -1,4 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.serial
+// RUN: diff %t.mlir %t.serial
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=RANGE < %t.mlir
 // RUN: FileCheck %s --check-prefix=STORE < %t.mlir
@@ -13,7 +15,7 @@
 // CHECK: llvm.load
 // CHECK: llvm.icmp "eq"
 
-// RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_dependencies_v1
+// RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_dependencies_v1(dense<{{.*}}> : tensor<{{[0-9]+}}x4xi64>)
 // RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_certificates_v1
 // RANGE-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_range_v1
 // RANGE: llvm.call @obelisk_rt_v1_native_promotion_invalidate_ranges

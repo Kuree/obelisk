@@ -53,6 +53,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -295,6 +296,7 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
     bool nativeObject = false;
   };
   SmallVector<SplitUnit> units;
+  uint64_t instructionCount = 0;
   for (llvm::GlobalValue &value : module.global_values()) {
     if (value.isDeclaration())
       continue;
@@ -307,12 +309,14 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
     unit.key.append(value.getName());
     unit.value = &value;
     if (auto *function = dyn_cast<llvm::Function>(&value)) {
-      unit.weight = std::max<uint64_t>(1, function->getInstructionCount());
+      uint64_t instructions = function->getInstructionCount();
+      instructionCount += instructions;
+      unit.weight = std::max<uint64_t>(1, instructions);
       // Keep only genuinely exceptional bodies out of ThinLTO. Medium-sized
       // generated functions still benefit from importing small helpers, and
       // the wide-packed RMW patterns that previously poisoned instruction
       // selection are removed before translation.
-      unit.nativeObject = function->getInstructionCount() > 20000;
+      unit.nativeObject = instructions > 20000;
     } else if (auto *global = dyn_cast<llvm::GlobalVariable>(&value))
       unit.weight = detail::estimateNativeGlobalWeight(*global);
   }
@@ -322,7 +326,15 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
     return lhs.weight != rhs.weight ? lhs.weight > rhs.weight
                                     : lhs.key < rhs.key;
   });
-  unsigned groupCount = std::min<unsigned>(maxGroups, units.size());
+  // Worker count controls concurrency, but must not collapse a large design
+  // into two enormous optimization units when compiling on one thread. LLVM
+  // can otherwise inline far more code and spend minutes optimizing/codegening
+  // bodies that stay small with eight workers. Keep a size-based minimum queue;
+  // cap this floor to avoid multiplying the serial clone/serialization cost.
+  unsigned sizeGroups = static_cast<unsigned>(std::min<uint64_t>(
+      16, llvm::divideCeil(instructionCount, UINT64_C(100000))));
+  unsigned groupCount =
+      std::min<unsigned>(std::max(maxGroups, sizeGroups), units.size());
   SmallVector<uint64_t> groupWeights(groupCount, 0);
   llvm::DenseMap<const llvm::GlobalValue *, unsigned> assignments;
   llvm::DenseSet<unsigned> nativeObjectGroups;
@@ -1230,7 +1242,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
   if (splitModule) {
     // LPT balancing removes the generated-function outliers before this
     // point, so two physical groups per requested hardware thread absorb the
-    // remaining backend variance without multiplying serial cloning work.
+    // remaining backend variance. The planner also retains a size-based
+    // minimum for large designs compiled with fewer workers.
     // ThinLTO, not this planner, owns cross-shard importing and optimization.
     unsigned physicalGroups = std::min<uint32_t>(
         256, std::max<uint32_t>(2, options.compileThreads * 2));

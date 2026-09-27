@@ -2,6 +2,7 @@
 // RUN: obelisk-opt %s --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines > %t.serial
 // RUN: diff %t.threaded %t.serial
 // RUN: FileCheck %s < %t.threaded
+// RUN: FileCheck %s --check-prefix=CALLS < %t.threaded
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -738,327 +739,397 @@ module attributes {
 
   }
 
+  // Resolve a forward callee from more than one 64-function conversion chunk.
+  // The final wrapper conversion replaces these func.func symbols only after
+  // all body workers have finished using the shared lookup index.
+  func.func private @external_helper()
+
   func.func private @worker_0() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 0 : i32
     return
   }
 
   func.func private @worker_1() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 1 : i32
     return
   }
 
   func.func private @worker_2() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 2 : i32
     return
   }
 
   func.func private @worker_3() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 3 : i32
     return
   }
 
   func.func private @worker_4() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 4 : i32
     return
   }
 
   func.func private @worker_5() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 5 : i32
     return
   }
 
   func.func private @worker_6() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 6 : i32
     return
   }
 
   func.func private @worker_7() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 7 : i32
     return
   }
 
   func.func private @worker_8() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 8 : i32
     return
   }
 
   func.func private @worker_9() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 9 : i32
     return
   }
 
   func.func private @worker_10() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 10 : i32
     return
   }
 
   func.func private @worker_11() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 11 : i32
     return
   }
 
   func.func private @worker_12() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 12 : i32
     return
   }
 
   func.func private @worker_13() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 13 : i32
     return
   }
 
   func.func private @worker_14() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 14 : i32
     return
   }
 
   func.func private @worker_15() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 15 : i32
     return
   }
 
   func.func private @worker_16() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 16 : i32
     return
   }
 
   func.func private @worker_17() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 17 : i32
     return
   }
 
   func.func private @worker_18() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 18 : i32
     return
   }
 
   func.func private @worker_19() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 19 : i32
     return
   }
 
   func.func private @worker_20() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 20 : i32
     return
   }
 
   func.func private @worker_21() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 21 : i32
     return
   }
 
   func.func private @worker_22() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 22 : i32
     return
   }
 
   func.func private @worker_23() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 23 : i32
     return
   }
 
   func.func private @worker_24() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 24 : i32
     return
   }
 
   func.func private @worker_25() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 25 : i32
     return
   }
 
   func.func private @worker_26() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 26 : i32
     return
   }
 
   func.func private @worker_27() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 27 : i32
     return
   }
 
   func.func private @worker_28() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 28 : i32
     return
   }
 
   func.func private @worker_29() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 29 : i32
     return
   }
 
   func.func private @worker_30() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 30 : i32
     return
   }
 
   func.func private @worker_31() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 31 : i32
     return
   }
 
   func.func private @worker_32() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 32 : i32
     return
   }
 
   func.func private @worker_33() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 33 : i32
     return
   }
 
   func.func private @worker_34() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 34 : i32
     return
   }
 
   func.func private @worker_35() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 35 : i32
     return
   }
 
   func.func private @worker_36() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 36 : i32
     return
   }
 
   func.func private @worker_37() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 37 : i32
     return
   }
 
   func.func private @worker_38() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 38 : i32
     return
   }
 
   func.func private @worker_39() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 39 : i32
     return
   }
 
   func.func private @worker_40() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 40 : i32
     return
   }
 
   func.func private @worker_41() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 41 : i32
     return
   }
 
   func.func private @worker_42() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 42 : i32
     return
   }
 
   func.func private @worker_43() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 43 : i32
     return
   }
 
   func.func private @worker_44() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 44 : i32
     return
   }
 
   func.func private @worker_45() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 45 : i32
     return
   }
 
   func.func private @worker_46() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 46 : i32
     return
   }
 
   func.func private @worker_47() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 47 : i32
     return
   }
 
   func.func private @worker_48() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 48 : i32
     return
   }
 
   func.func private @worker_49() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 49 : i32
     return
   }
 
   func.func private @worker_50() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 50 : i32
     return
   }
 
   func.func private @worker_51() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 51 : i32
     return
   }
 
   func.func private @worker_52() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 52 : i32
     return
   }
 
   func.func private @worker_53() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 53 : i32
     return
   }
 
   func.func private @worker_54() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 54 : i32
     return
   }
 
   func.func private @worker_55() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 55 : i32
     return
   }
 
   func.func private @worker_56() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 56 : i32
     return
   }
 
   func.func private @worker_57() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 57 : i32
     return
   }
 
   func.func private @worker_58() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 58 : i32
     return
   }
 
   func.func private @worker_59() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 59 : i32
     return
   }
 
   func.func private @worker_60() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 60 : i32
     return
   }
 
   func.func private @worker_61() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 61 : i32
     return
   }
 
   func.func private @worker_62() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 62 : i32
     return
   }
 
   func.func private @worker_63() {
+    func.call @worker_64() : () -> ()
     %c = arith.constant 63 : i32
     return
   }
 
   func.func private @worker_64() {
+    func.call @external_helper() : () -> ()
     %c = arith.constant 64 : i32
     return
   }
@@ -1068,3 +1139,5 @@ module attributes {
 // CHECK: llvm.mlir.global internal constant @__obelisk_string_literal.0("occupied")
 // CHECK-COUNT-65: llvm.func @packed_
 // CHECK-COUNT-65: llvm.func @worker_
+// CALLS-COUNT-64: llvm.call @worker_64()
+// CALLS: llvm.call @external_helper()

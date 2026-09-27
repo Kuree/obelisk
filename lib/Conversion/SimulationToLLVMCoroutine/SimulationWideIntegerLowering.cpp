@@ -3,6 +3,7 @@
 #include "SimulationPackedLowering.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/DataLayout.h"
@@ -10,6 +11,7 @@
 using namespace mlir;
 
 namespace obelisk::detail {
+namespace {
 
 // Very wide LLVM integers cause expensive recursive SelectionDAG integer
 // legalization, even for loads, stores and bitwise operations. These closed
@@ -18,7 +20,7 @@ namespace obelisk::detail {
 // directly. The storage footprint and publication boundaries are unchanged.
 // This preserves the independent per-bit truth tables of IEEE 1800-2023
 // 11.4.8 and full-width equality of 11.4.5, after sizing and X/Z lowering.
-void lowerWideNativeBitwiseIntegers(ModuleOp module,
+void lowerWideNativeBitwiseIntegers(LLVM::LLVMFuncOp function,
                                     const llvm::DataLayout &dataLayout) {
   if (!dataLayout.isLittleEndian())
     return;
@@ -46,12 +48,10 @@ void lowerWideNativeBitwiseIntegers(ModuleOp module,
   };
 
   SmallVector<Value> seeds;
-  module.walk([&](LLVM::LLVMFuncOp function) {
-    function.walk([&](Operation *op) {
-      for (Value result : op->getResults())
-        if (wideType(result.getType()))
-          seeds.push_back(result);
-    });
+  function.walk([&](Operation *op) {
+    for (Value result : op->getResults())
+      if (wideType(result.getType()))
+        seeds.push_back(result);
   });
   DenseSet<Value> visited;
   for (Value seed : seeds) {
@@ -88,7 +88,7 @@ void lowerWideNativeBitwiseIntegers(ModuleOp module,
     if (!eligible)
       continue;
     int64_t words = integer.getWidth() / 64;
-    auto word = IntegerType::get(module.getContext(), 64);
+    auto word = IntegerType::get(function.getContext(), 64);
     auto vector = VectorType::get({words}, word);
     for (Operation *op : operations) {
       // An omitted alignment means the integer's ABI alignment, not the
@@ -133,6 +133,98 @@ void lowerWideNativeBitwiseIntegers(ModuleOp module,
       compare.erase();
     }
   }
+}
+
+struct NativeFunctionFinalizationPass
+    : PassWrapper<NativeFunctionFinalizationPass,
+                  OperationPass<LLVM::LLVMFuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NativeFunctionFinalizationPass)
+
+  NativeFunctionFinalizationPass(const llvm::DataLayout &dataLayout,
+                                 uint64_t inlineOperationLimit)
+      : dataLayout(dataLayout), inlineOperationLimit(inlineOperationLimit) {}
+
+  StringRef getArgument() const final {
+    return "obelisk-native-finalize-function";
+  }
+  StringRef getDescription() const final {
+    return "Legalize wide bitwise planes and finalize native function policy";
+  }
+
+  void runOnOperation() override {
+    auto function = getOperation();
+    if (function.isExternal())
+      return;
+    lowerWideNativeBitwiseIntegers(function, dataLayout);
+    // Keep the generated eval loop's hottest call boundaries on an I-cache
+    // line regardless of unrelated runtime/string table growth. These bodies
+    // are deliberately retained as calls by the large-function policy below;
+    // leaving their placement at the target's minimum function alignment
+    // makes steady-state throughput depend on incidental section size.
+    Builder alignmentBuilder(function.getContext());
+    {
+      StringRef name = function.getSymName();
+      uint64_t alignment = 0;
+      if (name.starts_with("__obelisk_aot_static_nba_commit_two_state"))
+        alignment = 128;
+      else if (name.starts_with("__obelisk_fused_") &&
+               name.contains("__obelisk_eval_body_"))
+        alignment = 64;
+      else if (function->hasAttr("obelisk.eval.call_closure_root"))
+        alignment = 64;
+      if (alignment)
+        function.setAlignmentAttr(
+            alignmentBuilder.getI64IntegerAttr(alignment));
+    }
+
+    // ThinLTO may otherwise import a mechanically expanded helper into many
+    // shards and optimize the same large body repeatedly.  Keep full local
+    // optimization enabled, but make sufficiently large definitions a hard
+    // call boundary.  This avoids the old optnone tradeoff: every body still
+    // receives the requested O2/O3 pipeline exactly once.
+    if (inlineOperationLimit) {
+      uint64_t operations = 0;
+      function.walk([&](Operation *operation) {
+        operations += operation != function.getOperation();
+        return operations > inlineOperationLimit ? WalkResult::interrupt()
+                                                 : WalkResult::advance();
+      });
+      if (operations <= inlineOperationLimit)
+        return;
+      function.setAlwaysInline(false);
+      function.setInlineHint(false);
+      function.setNoInline(true);
+      SmallVector<Attribute> retained;
+      if (ArrayAttr passthrough = function.getPassthroughAttr()) {
+        for (Attribute attribute : passthrough) {
+          StringAttr name = dyn_cast<StringAttr>(attribute);
+          if (!name)
+            if (auto pair = dyn_cast<ArrayAttr>(attribute);
+                pair && !pair.empty())
+              name = dyn_cast<StringAttr>(pair.getValue()[0]);
+          if (name && name.getValue() == "alwaysinline")
+            continue;
+          retained.push_back(attribute);
+        }
+      }
+      if (retained.empty())
+        function->removeAttr("passthrough");
+      else
+        function.setPassthroughAttr(
+            ArrayAttr::get(function.getContext(), retained));
+    }
+  }
+
+  llvm::DataLayout dataLayout;
+  uint64_t inlineOperationLimit;
+};
+} // namespace
+
+std::unique_ptr<Pass>
+createNativeFunctionFinalizationPass(const llvm::DataLayout &dataLayout,
+                                     uint64_t inlineOperationLimit) {
+  return std::make_unique<NativeFunctionFinalizationPass>(dataLayout,
+                                                          inlineOperationLimit);
 }
 
 } // namespace obelisk::detail

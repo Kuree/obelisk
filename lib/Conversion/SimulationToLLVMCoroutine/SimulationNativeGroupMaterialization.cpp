@@ -13,6 +13,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/InliningUtils.h"
@@ -764,32 +765,48 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       llvm::errs() << "obelisk group hierarchy: " << parent.getSymName()
                    << " children=" << refinement.children.size() << '\n';
   }
-  for (auto [function, remaining] : residuals) {
-    if (discarded.contains(function) || finalized.contains(function) ||
-        function->hasAttr("obelisk.eval.group_children"))
-      continue;
-    if (failed(promoteGroupReadyWords(function, symbols, remaining)))
-      return failure();
-    if ((failed(promoteGroupState(function, symbols, "__obelisk_state_value",
-                                  remaining)) ||
-         failed(promoteGroupState(function, symbols, "__obelisk_state_unknown",
-                                  remaining))))
-      return failure();
-    if (module->hasAttr("obelisk.debug.native_timing")) {
-      auto count = [&](StringRef name) -> uint64_t {
-        auto value = function->getAttrOfType<IntegerAttr>(name);
-        return value ? value.getUInt() : 0;
-      };
-      llvm::errs() << "obelisk native group: " << function.getSymName()
-                   << " expanded_calls="
-                   << count("obelisk.eval.materialized_group_calls")
-                   << " ready_words=" << count("obelisk.eval.ssa_ready_words")
-                   << " value_ranges=" << count("obelisk.eval.ssa_value_ranges")
-                   << " unknown_ranges="
-                   << count("obelisk.eval.ssa_unknown_ranges")
-                   << " remaining_budget=" << remaining << '\n';
-    }
-  }
+  // Group refinement and symbol creation are complete. Residual promotion
+  // only rewrites its own function and reads globals through a frozen table.
+  llvm::erase_if(residuals, [&](const auto &residual) {
+    auto function = residual.first;
+    return discarded.contains(function) || finalized.contains(function) ||
+           function->hasAttr("obelisk.eval.group_children");
+  });
+  bool debugTiming = module->hasAttr("obelisk.debug.native_timing");
+  SmallVector<std::string> diagnostics(residuals.size());
+  if (failed(failableParallelForEach(
+          module.getContext(), llvm::seq<size_t>(0, residuals.size()),
+          [&](size_t index) -> LogicalResult {
+            auto [function, remaining] = residuals[index];
+            if (failed(promoteGroupReadyWords(function, symbols, remaining)))
+              return failure();
+            if ((failed(promoteGroupState(
+                     function, symbols, "__obelisk_state_value", remaining)) ||
+                 failed(promoteGroupState(
+                     function, symbols, "__obelisk_state_unknown", remaining))))
+              return failure();
+            if (debugTiming) {
+              llvm::raw_string_ostream diagnostic(diagnostics[index]);
+              auto count = [&](StringRef name) -> uint64_t {
+                auto value = function->getAttrOfType<IntegerAttr>(name);
+                return value ? value.getUInt() : 0;
+              };
+              diagnostic << "obelisk native group: " << function.getSymName()
+                         << " expanded_calls="
+                         << count("obelisk.eval.materialized_group_calls")
+                         << " ready_words="
+                         << count("obelisk.eval.ssa_ready_words")
+                         << " value_ranges="
+                         << count("obelisk.eval.ssa_value_ranges")
+                         << " unknown_ranges="
+                         << count("obelisk.eval.ssa_unknown_ranges")
+                         << " remaining_budget=" << remaining << '\n';
+            }
+            return success();
+          })))
+    return failure();
+  for (const auto &diagnostic : diagnostics)
+    llvm::errs() << diagnostic;
   return success();
 }
 

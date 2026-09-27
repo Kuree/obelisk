@@ -10,11 +10,13 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <string>
@@ -85,54 +87,29 @@ static bool containsForbiddenType(Type type) {
   return forbidden;
 }
 
-class ObeliskSimFinalizePass
-    : public impl::ObeliskSimFinalizePassBase<ObeliskSimFinalizePass> {
-public:
-  void runOnOperation() override;
-};
-
-void ObeliskSimFinalizePass::runOnOperation() {
-  ModuleOp module = getOperation();
+// Attribute and type storage is immutable. Verify each distinct value once
+// per subtree, retaining the original per-operation diagnostics for failures.
+// Function workers share only the frozen inventory of executable symbols.
+static LogicalResult
+verifyExecutableSubtree(Operation *root, ModuleOp module,
+                        const llvm::StringSet<> &executableSymbols,
+                        bool skipFunctions) {
   bool invalid = false;
-
-  // Coverage keepalives are explicit SymbolUser edges needed only until the
-  // final symbol-pruning pass. They are compiler inventory markers rather than
-  // executable runtime operations.
-  SmallVector<sim::SimCoverageKeepaliveOp> coverageKeepalives;
-  module.walk([&](sim::SimCoverageKeepaliveOp op) {
-    coverageKeepalives.push_back(op);
-  });
-  for (sim::SimCoverageKeepaliveOp op : coverageKeepalives)
-    op.erase();
-
-  // This is deliberately a module pass: operation passes must never mutate
-  // ancestors or siblings, and design passes may execute concurrently.
-  SmallVector<Operation *> obsoleteSemanticRoots;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<sim::SimDesignOp>(op))
+  DenseMap<Type, bool> types;
+  auto forbiddenType = [&](Type type) {
+    auto [entry, inserted] = types.try_emplace(type, false);
+    if (inserted)
+      entry->second = containsForbiddenType(type);
+    return entry->second;
+  };
+  struct AttributeInventory {
+    SmallVector<Type, 1> forbiddenTypes;
+    SmallVector<SymbolRefAttr, 1> references;
+  };
+  DenseMap<Attribute, AttributeInventory> attributes;
+  root->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (skipFunctions && isa<sim::SimFuncOp>(op))
       return WalkResult::skip();
-    if (!isSemanticOp(op))
-      return WalkResult::advance();
-    obsoleteSemanticRoots.push_back(op);
-    return WalkResult::skip();
-  });
-  for (Operation *op : obsoleteSemanticRoots)
-    op->erase();
-
-  llvm::StringSet<> executableSymbols;
-  module.walk([&](Operation *op) {
-    if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
-             sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
-             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
-             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
-             sim::SimFuncOp>(op))
-      return;
-    if (auto name =
-            op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
-      executableSymbols.insert(name.getValue());
-  });
-
-  module.walk([&](Operation *op) {
     if (isa<sim::SimCovergroupClockingSpawnOp,
             sim::SimCovergroupBlockEventPlanOp>(op)) {
       op->emitError("deferred covergroup sampler survived its design-level "
@@ -146,34 +123,42 @@ void ObeliskSimFinalizePass::runOnOperation() {
       invalid = true;
     }
     for (Type type : op->getOperandTypes())
-      if (containsForbiddenType(type)) {
+      if (forbiddenType(type)) {
         op->emitError() << "operand contains a forbidden semantic type "
                         << type;
         invalid = true;
       }
     for (Type type : op->getResultTypes())
-      if (containsForbiddenType(type)) {
+      if (forbiddenType(type)) {
         op->emitError() << "result contains a forbidden semantic type " << type;
         invalid = true;
       }
     for (Region &region : op->getRegions())
       for (Block &block : region)
         for (BlockArgument argument : block.getArguments())
-          if (containsForbiddenType(argument.getType())) {
+          if (forbiddenType(argument.getType())) {
             op->emitError()
                 << "region block argument contains a forbidden semantic type "
                 << argument.getType();
             invalid = true;
           }
     for (NamedAttribute named : op->getAttrs()) {
-      named.getValue().walk([&](Type type) {
-        if (containsForbiddenType(type)) {
-          op->emitError() << "attribute contains a forbidden semantic type "
-                          << type;
-          invalid = true;
-        }
-      });
-      named.getValue().walk([&](SymbolRefAttr reference) {
+      auto [entry, inserted] = attributes.try_emplace(named.getValue());
+      if (inserted) {
+        named.getValue().walk([&](Type type) {
+          if (forbiddenType(type))
+            entry->second.forbiddenTypes.push_back(type);
+        });
+        named.getValue().walk([&](SymbolRefAttr reference) {
+          entry->second.references.push_back(reference);
+        });
+      }
+      for (Type type : entry->second.forbiddenTypes) {
+        op->emitError() << "attribute contains a forbidden semantic type "
+                        << type;
+        invalid = true;
+      }
+      for (SymbolRefAttr reference : entry->second.references) {
         bool callTarget =
             isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimSpawnOp>(op) &&
             named.getName() == sim::SimCallOp::getCalleeAttrName(op->getName());
@@ -231,7 +216,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;
         }
-      });
+      }
     }
     if (isa<sim::ObeliskSimulationDialect>(op->getDialect()) &&
         !isa<MemoryEffectOpInterface>(op) &&
@@ -239,16 +224,77 @@ void ObeliskSimFinalizePass::runOnOperation() {
       op->emitError("core operation has no precise memory-effect interface");
       invalid = true;
     }
+    return WalkResult::advance();
+  });
+  return failure(invalid);
+}
+
+class ObeliskSimFinalizePass
+    : public impl::ObeliskSimFinalizePassBase<ObeliskSimFinalizePass> {
+public:
+  void runOnOperation() override;
+};
+
+void ObeliskSimFinalizePass::runOnOperation() {
+  ModuleOp module = getOperation();
+  bool invalid = false;
+
+  // Coverage keepalives are explicit SymbolUser edges needed only until the
+  // final symbol-pruning pass. They are compiler inventory markers rather than
+  // executable runtime operations.
+  SmallVector<sim::SimCoverageKeepaliveOp> coverageKeepalives;
+  module.walk([&](sim::SimCoverageKeepaliveOp op) {
+    coverageKeepalives.push_back(op);
+  });
+  for (sim::SimCoverageKeepaliveOp op : coverageKeepalives)
+    op.erase();
+
+  // This is deliberately a module pass: operation passes must never mutate
+  // ancestors or siblings, and design passes may execute concurrently.
+  SmallVector<Operation *> obsoleteSemanticRoots;
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isa<sim::SimDesignOp>(op))
+      return WalkResult::skip();
+    if (!isSemanticOp(op))
+      return WalkResult::advance();
+    obsoleteSemanticRoots.push_back(op);
+    return WalkResult::skip();
+  });
+  for (Operation *op : obsoleteSemanticRoots)
+    op->erase();
+
+  llvm::StringSet<> executableSymbols;
+  module.walk([&](Operation *op) {
+    if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
+             sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
+             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
+             sim::SimFuncOp>(op))
+      return;
+    if (auto name =
+            op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
+      executableSymbols.insert(name.getValue());
   });
 
-  module.walk([&](sim::SimFuncOp function) {
-    function->removeAttr(bindingsAttrName);
-    function->removeAttr(delayScaleAttrName);
-    function->removeAttr(delayQuantumAttrName);
-    function->removeAttr(sim::metadata::lowered);
-    function->removeAttr(sim::metadata::thisArgument);
-    function->removeAttr("obelisk_sim.constructor");
-  });
+  // Module cleanup and symbol discovery are complete. Verify module metadata
+  // once, then verify and clean each isolated function independently.
+  invalid |= failed(verifyExecutableSubtree(module, module, executableSymbols,
+                                            /*skipFunctions=*/true));
+  SmallVector<sim::SimFuncOp> functions;
+  module.walk([&](sim::SimFuncOp function) { functions.push_back(function); });
+
+  invalid |= failed(failableParallelForEach(
+      module.getContext(), functions, [&](sim::SimFuncOp function) {
+        LogicalResult verified = verifyExecutableSubtree(
+            function, module, executableSymbols, /*skipFunctions=*/false);
+        function->removeAttr(bindingsAttrName);
+        function->removeAttr(delayScaleAttrName);
+        function->removeAttr(delayQuantumAttrName);
+        function->removeAttr(sim::metadata::lowered);
+        function->removeAttr(sim::metadata::thisArgument);
+        function->removeAttr("obelisk_sim.constructor");
+        return verified;
+      }));
 
   if (invalid)
     signalPassFailure();
