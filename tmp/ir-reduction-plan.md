@@ -1,8 +1,8 @@
 # Plan: cut IR generated before LLVM
 
 Status: revised 2026-09-27 after implementation and LRM review. W1's
-startup-product reduction is implemented and validated; its optional attribute
-storage work and W2–W11 remain outstanding. W2 is next. Paths use the current
+startup-product reduction and W2 are implemented and validated. W1's optional
+attribute storage work and W3–W11 remain outstanding. W6a and W4 are next. Paths use the current
 Schedule dialect layout; historical line numbers below are navigation hints,
 not stable references. This existing plan is updated in place.
 
@@ -72,6 +72,52 @@ fixtures and 60 seeded randomized cases preserve groups/ranks. W1 did not
 collect fresh LLVM-line buckets or hardware counters; binary identity supports
 unchanged generated execution, not a measured runtime speed improvement.
 
+## Current W2 results
+
+W2 is implemented in the coroutine lowering and native wrapper. The first
+suspend precedes capture loading and continuation dispatch. Frame creation
+immediately joins the resume path in the same native_execute invocation;
+requirements queries and direct-activation functions retain their behavior.
+No new semantic wait, continuation ID, or scheduler event is introduced.
+
+Measurements and reproducible commands are in `tmp/ir-reduction-w2/`:
+
+| Metric | W1 baseline | W2 |
+| --- | ---: | ---: |
+| PicoRV O3 LLVM lines | 100,054 | 81,986 |
+| PicoRV coroutine ramp lines (48 functions) | 21,270 | 1,392 |
+| PicoRV coroutine resume lines (48 functions) | 19,454 | 20,745 |
+| RSD executable bytes | 158,371,400 | 153,452,440 |
+| RSD .text bytes | 22,555,871 | 18,424,623 |
+| ibex executable bytes | 22,843,288 | 22,041,608 |
+| ibex .text bytes | 7,728,671 | 7,086,095 |
+| PicoRV executable bytes | 7,933,848 | 7,858,120 |
+| RSD native compile, fresh control/repeat | 142.69 s | 140.62 s |
+| ibex native compile (single run) | 26.46 s | 26.25 s |
+| PicoRV native compile (single run) | 2.94 s | 2.79 s |
+
+An initial W2 RSD compile took 207.42 s, with large increases in unchanged
+upstream passes. A saved-W1 control and W2 repeat took 142.69/140.62 s; the
+repeat produced the same W2 binary. Keep the outlier in the recorded results;
+these measurements establish code-size reduction, not a large compile speedup.
+Bytecode and .data section sizes remain unchanged for all three designs.
+
+PicoRV's five-run perf averages were 1,438,892,072/1,445,431,628 cycles and
+3,510,660,435/3,522,231,485 instructions before/after (increases of 0.45%/0.33%).
+Elapsed time was 0.29785/0.300114 s; branch/cache misses fell. An earlier
+interleaved wall-time sample showed a larger ~3% difference. Do not claim a
+runtime speedup. Optimized wrapper IR eliminates the redundant handle reload
+on the hot resume path.
+
+RSD's architectural oracle and PicoRV's baseline output comparison pass. Ibex
+still exits with its pre-existing status 14. The full suite passed 2908 tests
+with 17 expected failures and three LLVM print-order check failures. Those
+checks assumed coroutine bodies preceded other function definitions; runtime
+checks already passed. They were corrected without weakening their call or
+noinline requirements, and all four affected tests on rerun passed. The new
+regressions verify split-ramp side-effect absence and safe destruction before
+first activation, alongside existing native/bytecode reconstruction tests.
+
 ## LRM correctness review
 
 - Sections 4.3 and 4.7 permit different algorithms and interleavings only when
@@ -86,10 +132,12 @@ unchanged generated execution, not a measured runtime speed improvement.
   order, and runtime region transitions. Phase edges cannot close a purely
   procedural cycle through a function entry, but can close a scheduling cycle
   through sensitivity edges; both cases are covered by the implementation.
-- W2's first coroutine suspend must be an internal implementation boundary:
+- W2's first coroutine suspend is an internal implementation boundary:
   resume immediately in the same native_execute call, without enqueuing a
   scheduler event, advancing time, publishing a wait, or changing continuation.
-  Destruction of an unstarted frame must not release uninitialized captures.
+  Destruction of an unstarted frame only clears the native handle and does not
+  release uninitialized captures. The LLVM suspend is not the language-level
+  process suspend/resume operation described in §9.7.
 - Sections 4.9.1/4.9.6 and 23.3.3.2 require continuous-assignment semantics for
   variable ports, including time-zero evaluation. Section 4.8's single race
   example is not a general proof of storage aliasing. W6b is restricted to
@@ -182,27 +230,25 @@ Record these before and after each workstream:
 
 ### W2. Coroutine ramp: initial suspend
 
-- **Where:** `SimulationProcessCoroutineLowering.cpp` around line 964. The ramp
+- **Before W2:** `SimulationProcessCoroutineLowering.cpp` around line 964. The ramp
   starts with a dynamic dispatch on `instance->continuation`, which bytecode
   needs so it can hand back to native at any continuation. Because of that,
   LLVM's coroutine split puts the whole body into both the ramp and `.resume`.
-- **Change:**
+- **Implemented change:**
   - After `coro.begin` and moving the allocas, suspend immediately.
   - Move the continuation dispatch to the first resume.
   - `native_execute` already resumes through the handle when one exists.
-    The current creation branch returns after the ramp call: change it to
-    load the newly stored handle and resume it once before returning status.
+    The creation branch now loads the newly stored handle and joins the resume
+    block before returning status.
   - Keep requirements queries and direct-activation functions unchanged.
     Position the first suspend before capture loads and continuation dispatch;
-    hoisted allocation addresses must remain available after resume. Audit the
-    initial destroy edge separately from ordinary initialized-frame cleanup.
+    hoisted allocation addresses remain available after resume. The initial
+    destroy edge uses handle-only cleanup and has a runtime regression.
 - **Keeps:** bytecode → native reconstruction at any continuation.
 - **Validation:** coroutine lit tests, the tier-handoff tests, and RSD/ibex
   functional runs.
-- **Hypothesis to measure:** the historical PicoRV dump suggested about 20%
-  fewer LLVM lines. Take a fresh W1 baseline; verify ramp/resume buckets, scratch
-  size, output, and compile/runtime costs rather than assuming that saving.
-  The ibex status-14 baseline must be distinguished from a W2 regression.
+- **Measured:** 18.1% fewer PicoRV LLVM lines and 18.3% less RSD .text.
+  See the current W2 results for timing, runtime counters, and limitations.
 
 ### W3. Coroutine-free processes
 
@@ -447,7 +493,7 @@ and exercise X injection and recovery in the middle of a run.
 ## Sequencing
 
 1. W1 startup-product reduction: implemented. Optional attribute storage work is deferred.
-2. W2, which is independent and small.
+2. W2 initial suspend: implemented and validated.
 3. W6a and W4, which remove process count and wrappers with no semantic change.
 4. W3, which needs the ABI addition, then W7, which uses W3's continuation-entry
    model and adds the internal-range record from fusion.

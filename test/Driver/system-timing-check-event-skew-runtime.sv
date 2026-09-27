@@ -214,9 +214,10 @@ endmodule
 // SIM-NOT: timing_check_table
 // SIM-NOT: timing_check_timer
 // AOT: @__obelisk_aot_schedule_plan_v1
-// AOT: call i64 @obelisk_rt_v1_clock_occurrence_consume
-// AOT: call i32 @obelisk_rt_v1_scheduler_install_aot
-// AOT: call i32 @obelisk_rt_v1_scheduler_run_aot
+// Coroutine splitting can place the observer body after scheduler installation.
+// AOT-DAG: call i64 @obelisk_rt_v1_clock_occurrence_consume
+// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
+// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot
 // CHECK-DAG: timeskew-unarmed 0
 // CHECK-DAG: timeskew-endpoint 0
 // CHECK-DAG: timeskew-first-late 1

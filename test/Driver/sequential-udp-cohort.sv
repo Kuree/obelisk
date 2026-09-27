@@ -135,6 +135,7 @@ endmodule
 // CHECK: SEQUENTIAL UDP COHORT PASS
 
 // The outlined member is a hard optimization boundary even at O3.
-// LLVM: call {{.*}}@__obelisk_region_kernel_{{.*}}.__member
-// LLVM: define {{.*}}@__obelisk_region_kernel_{{.*}}.__member{{.*}}#[[NOINLINE:[0-9]+]] {
+// Calls can reside in coroutine resume functions printed after the members.
+// LLVM-DAG: call {{.*}}@__obelisk_region_kernel_{{.*}}.__member
+// LLVM-DAG: define {{.*}}@__obelisk_region_kernel_{{.*}}.__member{{.*}}#[[NOINLINE:[0-9]+]] {
 // LLVM: attributes #[[NOINLINE]] = { noinline{{.*}} }

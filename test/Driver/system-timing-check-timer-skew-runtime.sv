@@ -241,9 +241,10 @@ module system_timing_check_timer_skew_runtime;
 endmodule
 
 // AOT: @__obelisk_aot_schedule_plan_v1
-// AOT: call void @obelisk_rt_v1_scheduler_event_replace_after
-// AOT: call i32 @obelisk_rt_v1_scheduler_install_aot
-// AOT: call i32 @obelisk_rt_v1_scheduler_run_aot
+// Coroutine splitting can place the timer body after scheduler installation.
+// AOT-DAG: call void @obelisk_rt_v1_scheduler_event_replace_after
+// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
+// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot
 // CHECK-DAG: timer-timeskew-expire 1
 // CHECK-DAG: timer-timeskew-equality 0
 // CHECK-DAG: timer-timeskew-stale 0

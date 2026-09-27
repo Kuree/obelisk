@@ -141,7 +141,10 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
     cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
                              resume, ValueRange{});
     builder.setInsertionPointToStart(resume);
-    LLVM::CoroResumeOp::create(builder, location, handle);
+    // The start path joins here after publishing its newly created handle.
+    Value resumeHandle = loadAt(builder, location, instance,
+                                kInstanceNativeHandleField, pointer, 0);
+    LLVM::CoroResumeOp::create(builder, location, resumeHandle);
     cf::BranchOp::create(builder, location, done);
   }
   if (directActivation)
@@ -151,7 +154,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   Value nullOut = LLVM::ZeroOp::create(builder, location, pointer);
   LLVM::CallOp::create(builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
                        ValueRange{instance, modeExecute, nullOut, nullOut});
-  cf::BranchOp::create(builder, location, done);
+  cf::BranchOp::create(builder, location, directActivation ? done : resume);
   builder.setInsertionPointToStart(done);
   Value status =
       loadAt(builder, location, instance, kInstanceStatusField, i32, 4);

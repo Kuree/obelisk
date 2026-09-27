@@ -809,6 +809,28 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   if (blocks.terminate)
     ramp.getBody().push_back(blocks.terminate);
 
+  Block *activation = execute;
+  if (!process.directActivation) {
+    // Creation only establishes the native frame. The wrapper resumes it in
+    // the same invocation, before the event loop can observe an action. Keep
+    // capture loads and arbitrary-continuation dispatch behind this suspend
+    // so coroutine splitting does not clone the process body into the ramp.
+    activation = new Block;
+    ramp.getBody().push_back(activation);
+    builder.setInsertionPointToEnd(execute);
+    Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
+    Value save = LLVM::CoroSaveOp::create(
+        builder, location, LLVM::LLVMTokenType::get(context), handle);
+    Value state = LLVM::CoroSuspendOp::create(builder, location,
+                                              builder.getI8Type(), save, final);
+    SmallVector<Block *> destinations{activation, blocks.cleanup};
+    SmallVector<ValueRange> destinationOperands(2);
+    SmallVector<APInt> caseValues{APInt(8, 0), APInt(8, 1)};
+    LLVM::SwitchOp::create(builder, location, state, blocks.suspendReturn,
+                           ValueRange{}, caseValues, destinations,
+                           destinationOperands, ArrayRef<int32_t>{});
+  }
+
   llvm::SetVector<Block *> continuationBlocks;
   for (Block &block : ramp.getBody())
     if (!block.empty() && sim::isSuspensionOp(block.getTerminator()))
@@ -886,7 +908,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     cf::BranchOp::create(builder, location, continuation, loaded);
   }
 
-  builder.setInsertionPointToEnd(execute);
+  builder.setInsertionPointToEnd(activation);
   SmallVector<Value> entryArguments;
   Value frame =
       loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);

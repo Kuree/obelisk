@@ -19,6 +19,9 @@
 
 extern "C" const obelisk_rt_process_descriptor_v1
     generatedDescriptor asm("execution_process.__obelisk_process_descriptor");
+extern "C" void
+generatedRamp(obelisk_rt_process_instance_v1 *, uint32_t, uint64_t *,
+              uint64_t *) asm("execution_process.__obelisk_coro_ramp");
 extern "C" const obelisk_rt_process_descriptor_v1
     failingDescriptor asm("failing_process.__obelisk_process_descriptor");
 extern "C" const obelisk_rt_process_descriptor_v1 orchestrationDescriptor asm(
@@ -126,6 +129,36 @@ struct DualTierDescriptor {
     descriptor.design_bytecode = nullptr;
   }
 };
+
+TEST(GeneratedProcess, UnstartedNativeFrameDoesNotPublishAndCanBeDestroyed) {
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&generatedDescriptor, &instance),
+      OBELISK_RT_OK);
+  auto *frame = static_cast<uint8_t *>(instance->frame);
+  std::vector<uint8_t> savedFrame(
+      frame, frame + generatedDescriptor.frame_layout->frame_size);
+  auto lifecycle = instance->lifecycle;
+  obelisk_rt_fragment_action_v1 action{};
+  instance->action = &action;
+  auto savedAction = action;
+
+  // The ordinary wrapper immediately resumes this implementation suspend.
+  // Exercise destruction before that resume without running any source code,
+  // loading captures, or publishing a semantic wait/continuation.
+  generatedRamp(instance, 1, nullptr, nullptr);
+  EXPECT_NE(instance->native_handle, nullptr);
+  EXPECT_EQ(instance->continuation, 0u);
+  EXPECT_EQ(instance->lifecycle, lifecycle);
+  EXPECT_EQ(std::memcmp(&action, &savedAction, sizeof(action)), 0);
+  EXPECT_TRUE(std::equal(savedFrame.begin(), savedFrame.end(), frame));
+
+  generatedDescriptor.native_destroy(instance);
+  EXPECT_EQ(instance->native_handle, nullptr);
+  EXPECT_EQ(instance->continuation, 0u);
+  EXPECT_TRUE(std::equal(savedFrame.begin(), savedFrame.end(), frame));
+  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+}
 
 TEST(GeneratedProcess, NativeResumeTerminateAndSuspendedDestroy) {
   size_t before = alignedAllocationCount.load();
