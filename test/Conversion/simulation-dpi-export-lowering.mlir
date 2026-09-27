@@ -63,7 +63,7 @@ module attributes {
             abi_signature = [], is_context = true, is_pure = false,
             is_task = false, source_column = 1 : i32,
             source_file = "dpi-export-runtime.mlir", source_line = 1 : i32
-          } : () -> !obelisk_rt.status
+          } : () -> !runtime.status
       obelisk_sim.return
     }
 
@@ -253,7 +253,7 @@ module attributes {
             is_context = true, is_pure = false, is_task = false,
             source_column = 1 : i32, source_file = "dpi-export-runtime.mlir",
             source_line = 2 : i32
-          } : () -> (!obelisk_sim.string, !obelisk_rt.status)
+          } : () -> (!obelisk_sim.string, !runtime.status)
       obelisk_sim.return %nested#0 : !obelisk_sim.string
     }
 

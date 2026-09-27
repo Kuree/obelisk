@@ -18,8 +18,8 @@ module {
             {obelisk_sim.capture_kind = 0 : i32},
         %value: i32 {obelisk_sim.capture_kind = 2 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %status = obelisk_rt.status.from_bits %value :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %value :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return %value : i32
     }
@@ -48,8 +48,8 @@ module {
         %status_bits: i32 {obelisk_sim.capture_kind = 2 : i32},
         %value: f64 {obelisk_sim.capture_kind = 2 : i32}) -> f64
         attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
-      %status = obelisk_rt.status.from_bits %status_bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %status_bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return %value : f64
     }
@@ -59,8 +59,8 @@ module {
         %this: !obelisk_sim.class_handle<@Box> {obelisk_sim.capture_kind = 1 : i32},
         %bits: i32 {obelisk_sim.capture_kind = 2 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return %bits : i32
     }
@@ -86,8 +86,8 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
         %bits: i32 {obelisk_sim.capture_kind = 2 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 10 : i64} {
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return %bits : i32
     }
@@ -124,16 +124,16 @@ module {
 
 // CHECK-LABEL: obelisk_sim.func private @leaf(
 // CHECK-SAME: -> (i32, i32)
-// CHECK: %[[LEAF_OK:.*]] = obelisk_rt.status.is %{{.*}}, 0
+// CHECK: %[[LEAF_OK:.*]] = runtime.status.is %{{.*}}, <ok>
 // CHECK: cf.cond_br %[[LEAF_OK]],
 // CHECK: obelisk_sim.return %{{.*}}, %{{.*}} : i32, i32
 
 // CHECK-LABEL: obelisk_sim.func private @caller(
 // CHECK-SAME: -> (i32, i32)
 // CHECK: %[[CALL_RESULTS:.*]]:2 = obelisk_sim.call @leaf
-// CHECK: %[[CALL_STATUS:.*]] = obelisk_rt.status.from_bits
+// CHECK: %[[CALL_STATUS:.*]] = runtime.status.from_bits
 // CHECK-SAME: %[[CALL_RESULTS]]#1
-// CHECK: %[[CALL_OK:.*]] = obelisk_rt.status.is %[[CALL_STATUS]], 0
+// CHECK: %[[CALL_OK:.*]] = runtime.status.is %[[CALL_STATUS]], <ok>
 // CHECK: cf.cond_br %[[CALL_OK]],
 // CHECK: obelisk_sim.return %[[CALL_RESULTS]]#0, %{{.*}} :
 // CHECK-SAME: i32, i32
@@ -143,7 +143,7 @@ module {
 
 // CHECK-LABEL: obelisk_sim.func private @real_leaf(
 // CHECK-SAME: -> (f64, i32)
-// CHECK: %[[REAL_OK:.*]] = obelisk_rt.status.is %{{.*}}, 0
+// CHECK: %[[REAL_OK:.*]] = runtime.status.is %{{.*}}, <ok>
 // CHECK: cf.cond_br %[[REAL_OK]],
 // CHECK: arith.constant 0.000000e+00 : f64
 // CHECK: obelisk_sim.return %{{.*}}, %{{.*}} : f64, i32
@@ -153,7 +153,7 @@ module {
 // CHECK-LABEL: obelisk_sim.func private @method_caller(
 // CHECK-SAME: -> (i32, i32)
 // CHECK: %[[METHOD_RESULTS:.*]]:2 = obelisk_sim.class.direct_call @method
-// CHECK: obelisk_rt.status.from_bits %[[METHOD_RESULTS]]#1
+// CHECK: runtime.status.from_bits %[[METHOD_RESULTS]]#1
 
 // CHECK-LABEL: obelisk_sim.design @failing_scope
 // CHECK-LABEL: obelisk_sim.func private @scoped_leaf(

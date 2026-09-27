@@ -91,8 +91,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -101,8 +101,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 3 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -111,8 +111,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 4 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -121,8 +121,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 5 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -131,8 +131,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 6 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -141,8 +141,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 7 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -151,8 +151,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 8 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -161,8 +161,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 9 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -171,8 +171,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 10 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -181,8 +181,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 11 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -191,8 +191,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 12 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -201,8 +201,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 13 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -211,8 +211,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 14 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -221,8 +221,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 15 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -231,8 +231,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 16 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -241,8 +241,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 17 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -251,8 +251,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 18 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -261,8 +261,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 19 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -271,8 +271,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 20 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -281,8 +281,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 21 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -291,8 +291,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 22 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -301,8 +301,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 23 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -311,8 +311,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 24 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -321,8 +321,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 25 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -331,8 +331,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 26 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -341,8 +341,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 27 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -351,8 +351,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 28 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -361,8 +361,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 29 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -371,8 +371,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 30 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -381,8 +381,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 31 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -391,8 +391,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 32 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -401,8 +401,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 33 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -411,8 +411,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 34 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -421,8 +421,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 35 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -431,8 +431,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 36 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -441,8 +441,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 37 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -451,8 +451,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 38 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -461,8 +461,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 39 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -471,8 +471,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 40 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -481,8 +481,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 41 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -491,8 +491,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 42 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -501,8 +501,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 43 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -511,8 +511,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 44 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -521,8 +521,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 45 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -531,8 +531,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 46 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -541,8 +541,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 47 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -551,8 +551,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 48 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -561,8 +561,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 49 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -571,8 +571,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 50 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -581,8 +581,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 51 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -591,8 +591,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 52 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -601,8 +601,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 53 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -611,8 +611,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 54 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -621,8 +621,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 55 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -631,8 +631,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 56 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -641,8 +641,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 57 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -651,8 +651,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 58 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -661,8 +661,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 59 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -671,8 +671,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 60 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -681,8 +681,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 61 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -691,8 +691,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 62 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -701,8 +701,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 63 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -711,8 +711,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 64 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -721,8 +721,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 65 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }
@@ -731,8 +731,8 @@ module attributes {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
         attributes {code_unit_id = 66 : i64, entry_kind = 8 : i32} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits :
-          (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits :
+          (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return
     }

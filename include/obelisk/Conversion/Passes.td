@@ -187,7 +187,7 @@ def ConvertObeliskSimToRuntimePass
   let summary = "Lower precise simulation display and file I/O to runtime calls";
   let description = [{
     Lowers literal bytes, display/write, and the supported packed file service
-    subset to typed obelisk_rt calls and target-independent materializers. It
+    subset to typed runtime calls and target-independent materializers. It
     also lowers four-state packed arguments to value/unknown planes, while
     leaving context projection and fragment status propagation as explicit
     hooks for native fragment lowering.
@@ -228,17 +228,31 @@ def EncodeObeliskSimToBytecodePass
   ];
 }
 
-def ConvertObeliskRuntimeToLLVMPass
-    : Pass<"convert-obelisk-runtime-to-llvm", "mlir::ModuleOp"> {
-  let summary = "Lower typed Obelisk runtime calls to the in-tree LLVM C ABI";
+def PrepareRuntimeToLLVMPass
+    : Pass<"prepare-runtime-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Prepare runtime ownership, embedded design, and LLVM byte globals";
   let description = [{
-    Validates the selected 64-bit little-endian target layout and linear runtime
-    buffer ownership, converts runtime and function/CFG boundary types, and
-    materializes exact external C declarations plus ABI out-parameter storage.
+    Validates the explicit little-endian 32-bit or 64-bit target layout and
+    runtime buffer ownership, materializes embedded design descriptors, and
+    reserves deterministic byte-global symbols. Runtime operations and types
+    remain available for inspection. Run before convert-runtime-to-llvm.
   }];
   let dependentDialects = [
+    "obelisk::runtime::ObeliskRuntimeDialect",
     "mlir::LLVM::LLVMDialect"
   ];
+}
+
+def ConvertRuntimeToLLVMPass
+    : Pass<"convert-runtime-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Convert prepared runtime operations and types to the LLVM C ABI";
+  let description = [{
+    Converts runtime operations and function/CFG boundary types, and emits
+    exact external C declarations and ABI out-parameter storage. Requires
+    prepare-runtime-to-llvm. The convert-obelisk-runtime-to-llvm pipeline
+    composes preparation and conversion for callers that need both stages.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
 }
 
 def MaterializeObeliskNativeEvalGroupsPass

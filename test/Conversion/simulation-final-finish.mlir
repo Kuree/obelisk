@@ -14,6 +14,6 @@ module {
 
 // CHECK-LABEL: func.func @shared_finish
 // CHECK: %[[VERBOSITY:.*]] = arith.constant 0 : i32
-// CHECK: %[[STATUS:.*]] = obelisk_rt.finish %{{.*}}, %[[VERBOSITY]]
+// CHECK: %[[STATUS:.*]] = runtime.finish %{{.*}}, %[[VERBOSITY]]
 // CHECK-NEXT: obelisk_sim.status.check %[[STATUS]]
 // CHECK-NEXT: return

@@ -14,6 +14,7 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -357,7 +358,8 @@ LogicalResult materializeEvalTwoStateVariants(
           runtimeFree = false;
           checkpointSafe = false;
         }
-        if (operation->getName().getDialectNamespace() == "obelisk_rt") {
+        if (isa_and_nonnull<runtime::ObeliskRuntimeDialect>(
+                operation->getDialect())) {
           preserving = false;
           runtimeFree = false;
           checkpointSafe = false;

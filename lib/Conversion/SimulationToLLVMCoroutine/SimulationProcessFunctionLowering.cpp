@@ -203,7 +203,8 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
     body.getBody().push_back(failure);
     rewriter.setInsertionPoint(check);
     Value ok = runtime::RTStatusIsOp::create(
-        rewriter, check.getLoc(), rewriter.getI1Type(), check.getStatus(), 0);
+        rewriter, check.getLoc(), rewriter.getI1Type(), check.getStatus(),
+        runtime::StatusCode::Ok);
     cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();

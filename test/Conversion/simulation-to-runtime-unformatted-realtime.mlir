@@ -12,9 +12,9 @@ module {
 }
 
 // CHECK-LABEL: func.func @display_realtime
-// CHECK: %[[ARG:.*]] = obelisk_rt.argument.real %arg1 {is_time = true}
-// CHECK: obelisk_rt.argument.array %[[ARG]]
-// CHECK: obelisk_rt.format.environment
+// CHECK: %[[ARG:.*]] = runtime.argument.real %arg1 {is_time = true}
+// CHECK: runtime.argument.array %[[ARG]]
+// CHECK: runtime.format.environment
 // CHECK-SAME: time_multiplier = 1000 : i64
 // CHECK-SAME: time_precision = -12 : i32
-// CHECK: obelisk_rt.display
+// CHECK: runtime.display

@@ -1,4 +1,5 @@
 // RUN: obelisk-opt --convert-obelisk-runtime-to-llvm %S/../IR/runtime.mlir | FileCheck %s
+// RUN: obelisk-opt --prepare-runtime-to-llvm --convert-runtime-to-llvm %S/../IR/runtime.mlir | FileCheck %s
 
 // CHECK-DAG: llvm.func @obelisk_rt_v1_context_create(!llvm.ptr) -> i32
 // CHECK-DAG: llvm.func @obelisk_rt_v1_context_destroy(!llvm.ptr)

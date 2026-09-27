@@ -1065,7 +1065,8 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     ramp.getBody().push_back(failure);
     builder.setInsertionPoint(check);
     Value ok = runtime::RTStatusIsOp::create(
-        builder, check.getLoc(), builder.getI1Type(), check.getStatus(), 0);
+        builder, check.getLoc(), builder.getI1Type(), check.getStatus(),
+        runtime::StatusCode::Ok);
     cf::CondBranchOp::create(builder, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();

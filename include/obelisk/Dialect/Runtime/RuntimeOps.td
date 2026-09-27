@@ -158,7 +158,7 @@ def RTFileDescriptorToBitsOp : RTOp<"file_descriptor.to_bits", [Pure]> {
 }
 
 def RTStatusIsOp : RTOp<"status.is", [Pure]> {
-  let arguments = (ins RTStatusType:$status, I32Attr:$value);
+  let arguments = (ins RTStatusType:$status, RTStatusCodeAttr:$value);
   let results = (outs I1:$result);
   let assemblyFormat = "$status `,` $value attr-dict";
 }
@@ -275,7 +275,7 @@ def RTStringOutputFormatOp : RTOp<"string_output_format", [
   let arguments = (ins RTContextType:$context,
                        RTArgumentArrayType:$items,
                        RTFormatEnvironmentType:$environment,
-                       RTRadix:$default_radix);
+                       RTRadixAttr:$default_radix);
   let results = (outs RTStatusType:$status, AnyType:$string);
 }
 
@@ -286,7 +286,7 @@ def RTDisplayOp : RTOp<"display", [
   let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
                        I1:$append_newline, RTArgumentArrayType:$items,
                        RTFormatEnvironmentType:$environment,
-                       RTRadix:$default_radix);
+                       RTRadixAttr:$default_radix);
   let results = (outs RTStatusType:$status);
 }
 

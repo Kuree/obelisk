@@ -96,113 +96,113 @@ module {
 }
 
 // CHECK-LABEL: func.func @io(
-// CHECK: %[[TEXT:.*]] = obelisk_rt.bytes.constant "%m %l value=%0h"
-// CHECK: %[[PATH:.*]] = obelisk_rt.bytes.constant "input.bin"
-// CHECK: %[[MODE:.*]] = obelisk_rt.bytes.constant "rb"
+// CHECK: %[[TEXT:.*]] = runtime.bytes.constant "%m %l value=%0h"
+// CHECK: %[[PATH:.*]] = runtime.bytes.constant "input.bin"
+// CHECK: %[[MODE:.*]] = runtime.bytes.constant "rb"
 // CHECK: %[[TIME_INPUT:.*]] = arith.constant 1.250000e+00 : f64
 // CHECK: %[[TIME_MULTIPLIER:.*]] = arith.constant 1000 : i64
 // CHECK: %[[TIME_PRECISION:.*]] = arith.constant -12 : i32
-// CHECK: obelisk_rt.time.scan_scale {{.*}}, %[[TIME_INPUT]], %[[TIME_MULTIPLIER]], %[[TIME_PRECISION]]
+// CHECK: runtime.time.scan_scale {{.*}}, %[[TIME_INPUT]], %[[TIME_MULTIPLIER]], %[[TIME_PRECISION]]
 // CHECK: obelisk_sim.context.runtime
-// CHECK: obelisk_rt.file_descriptor.from_bits
-// CHECK: obelisk_rt.argument.bytes %[[TEXT]] {is_format_string = true}
-// CHECK: obelisk_rt.argument.empty
-// CHECK: obelisk_rt.argument.packed %{{.*}}, %{{.*}} {is_signed = true}
-// CHECK: obelisk_rt.argument.array
-// CHECK: obelisk_rt.format.environment {library_cell = "work.io", scope = "top.io.named", time_multiplier = 1000 : i64}
-// CHECK: obelisk_rt.display
+// CHECK: runtime.file_descriptor.from_bits
+// CHECK: runtime.argument.bytes %[[TEXT]] {is_format_string = true}
+// CHECK: runtime.argument.empty
+// CHECK: runtime.argument.packed %{{.*}}, %{{.*}} {is_signed = true}
+// CHECK: runtime.argument.array
+// CHECK: runtime.format.environment {library_cell = "work.io", scope = "top.io.named", time_multiplier = 1000 : i64}
+// CHECK: runtime.display
 // CHECK: obelisk_sim.status.check
-// CHECK: obelisk_rt.argument.bytes %[[TEXT]] {is_format_string = true}
-// CHECK: obelisk_rt.argument.packed %{{.*}}, %{{.*}} {is_signed = true}
-// CHECK: obelisk_rt.format.environment {library_cell = "work.io", scope = "top.io.named", time_multiplier = 1000 : i64}
-// CHECK: %[[FORMAT_STATUS:.*]], %[[FORMATTED:.*]] = obelisk_rt.string_output_format
+// CHECK: runtime.argument.bytes %[[TEXT]] {is_format_string = true}
+// CHECK: runtime.argument.packed %{{.*}}, %{{.*}} {is_signed = true}
+// CHECK: runtime.format.environment {library_cell = "work.io", scope = "top.io.named", time_multiplier = 1000 : i64}
+// CHECK: %[[FORMAT_STATUS:.*]], %[[FORMATTED:.*]] = runtime.string_output_format
 // CHECK-NEXT: obelisk_sim.status.check %[[FORMAT_STATUS]]
-// CHECK: obelisk_rt.argument.bytes %[[TEXT]] {{.*}}designated_format = true
-// CHECK: %[[DESIGNATED_STATUS:.*]], %[[DESIGNATED:.*]] = obelisk_rt.string_output_format
+// CHECK: runtime.argument.bytes %[[TEXT]] {{.*}}designated_format = true
+// CHECK: %[[DESIGNATED_STATUS:.*]], %[[DESIGNATED:.*]] = runtime.string_output_format
 // CHECK-NEXT: obelisk_sim.status.check %[[DESIGNATED_STATUS]]
-// CHECK: %[[MCD_STATUS:.*]], %[[MCD_FD:.*]] = obelisk_rt.file.open_mcd
-// CHECK: %[[MCD_BITS:.*]] = obelisk_rt.file_descriptor.to_bits %[[MCD_FD]]
+// CHECK: %[[MCD_STATUS:.*]], %[[MCD_FD:.*]] = runtime.file.open_mcd
+// CHECK: %[[MCD_BITS:.*]] = runtime.file_descriptor.to_bits %[[MCD_FD]]
 // CHECK: %[[OPEN_ZERO:.*]] = arith.constant 0 : i32
-// CHECK: %[[MCD_OK:.*]] = obelisk_rt.status.is %[[MCD_STATUS]], 0
+// CHECK: %[[MCD_OK:.*]] = runtime.status.is %[[MCD_STATUS]], <ok>
 // CHECK: arith.select %[[MCD_OK]], %[[MCD_BITS]], %[[OPEN_ZERO]] : i32
-// CHECK: %[[OPEN_STATUS:.*]], %[[OPEN_FD:.*]] = obelisk_rt.file.open {{.*}}, %[[PATH]], %[[MODE]]
-// CHECK: %[[OPEN_BITS:.*]] = obelisk_rt.file_descriptor.to_bits %[[OPEN_FD]]
+// CHECK: %[[OPEN_STATUS:.*]], %[[OPEN_FD:.*]] = runtime.file.open {{.*}}, %[[PATH]], %[[MODE]]
+// CHECK: %[[OPEN_BITS:.*]] = runtime.file_descriptor.to_bits %[[OPEN_FD]]
 // CHECK: %[[OPEN_FAILURE:.*]] = arith.constant 0 : i32
-// CHECK: %[[OPEN_OK:.*]] = obelisk_rt.status.is %[[OPEN_STATUS]], 0
+// CHECK: %[[OPEN_OK:.*]] = runtime.status.is %[[OPEN_STATUS]], <ok>
 // CHECK: arith.select %[[OPEN_OK]], %[[OPEN_BITS]], %[[OPEN_FAILURE]] : i32
-// CHECK: %[[CLOSE_STATUS:.*]] = obelisk_rt.file.close
-// CHECK: %[[FLUSH_STATUS:.*]] = obelisk_rt.file.flush
-// CHECK: %[[GETC_STATUS:.*]], %[[BYTE:.*]] = obelisk_rt.file.getc
+// CHECK: %[[CLOSE_STATUS:.*]] = runtime.file.close
+// CHECK: %[[FLUSH_STATUS:.*]] = runtime.file.flush
+// CHECK: %[[GETC_STATUS:.*]], %[[BYTE:.*]] = runtime.file.getc
 // CHECK: %[[BYTE_I32:.*]] = arith.extui %[[BYTE]] : i8 to i32
 // CHECK: %[[GETC_FAILURE:.*]] = arith.constant -1 : i32
-// CHECK: %[[GETC_OK:.*]] = obelisk_rt.status.is %[[GETC_STATUS]], 0
+// CHECK: %[[GETC_OK:.*]] = runtime.status.is %[[GETC_STATUS]], <ok>
 // CHECK: arith.select %[[GETC_OK]], %[[BYTE_I32]], %[[GETC_FAILURE]] : i32
-// CHECK: %[[UNGETC_STATUS:.*]] = obelisk_rt.file.ungetc
+// CHECK: %[[UNGETC_STATUS:.*]] = runtime.file.ungetc
 // CHECK: %[[UNGETC_SUCCESS:.*]] = arith.constant 0 : i32
 // CHECK: %[[UNGETC_FAILURE:.*]] = arith.constant -1 : i32
-// CHECK: %[[UNGETC_OK:.*]] = obelisk_rt.status.is %[[UNGETC_STATUS]], 0
+// CHECK: %[[UNGETC_OK:.*]] = runtime.status.is %[[UNGETC_STATUS]], <ok>
 // CHECK: arith.select %[[UNGETC_OK]], %[[UNGETC_SUCCESS]], %[[UNGETC_FAILURE]] : i32
 // CHECK: %[[LINE_LIMIT:.*]] = arith.constant 1 : i64
-// CHECK: %[[LINE_STATUS:.*]], %[[LINE:.*]] = obelisk_rt.file.getline {{.*}}, %[[LINE_LIMIT]]
-// CHECK: %[[LINE_SIZE:.*]] = obelisk_rt.bytes.size %[[LINE]]
-// CHECK: obelisk_rt.bytes.to_packed {{.*}} {high_alignment = false}
-// CHECK: obelisk_rt.buffer.release %[[LINE]]
+// CHECK: %[[LINE_STATUS:.*]], %[[LINE:.*]] = runtime.file.getline {{.*}}, %[[LINE_LIMIT]]
+// CHECK: %[[LINE_SIZE:.*]] = runtime.bytes.size %[[LINE]]
+// CHECK: runtime.bytes.to_packed {{.*}} {high_alignment = false}
+// CHECK: runtime.buffer.release %[[LINE]]
 // CHECK: %[[LINE_COUNT:.*]] = arith.trunci %[[LINE_SIZE]] : i64 to i32
 // CHECK: %[[LINE_FAILURE:.*]] = arith.constant 0 : i32
-// CHECK: %[[LINE_OK:.*]] = obelisk_rt.status.is %[[LINE_STATUS]], 0
+// CHECK: %[[LINE_OK:.*]] = runtime.status.is %[[LINE_STATUS]], <ok>
 // CHECK: arith.select %[[LINE_OK]], %[[LINE_COUNT]], %[[LINE_FAILURE]] : i32
-// CHECK: obelisk_rt.bytes.scratch 2
-// CHECK: %[[READ_STATUS:.*]], %[[READ_COUNT:.*]] = obelisk_rt.file.read
-// CHECK: obelisk_rt.bytes.to_packed {{.*}} {high_alignment = true}
+// CHECK: runtime.bytes.scratch 2
+// CHECK: %[[READ_STATUS:.*]], %[[READ_COUNT:.*]] = runtime.file.read
+// CHECK: runtime.bytes.to_packed {{.*}} {high_alignment = true}
 // CHECK: %[[READ_COUNT_I32:.*]] = arith.trunci %[[READ_COUNT]] : i64 to i32
 // CHECK: %[[READ_FAILURE:.*]] = arith.constant 0 : i32
-// CHECK: %[[READ_OK:.*]] = obelisk_rt.status.is %[[READ_STATUS]], 0
+// CHECK: %[[READ_OK:.*]] = runtime.status.is %[[READ_STATUS]], <ok>
 // CHECK: arith.select %[[READ_OK]], %[[READ_COUNT_I32]], %[[READ_FAILURE]] : i32
-// CHECK: %[[TOKEN_VALUE_SCRATCH:.*]] = obelisk_rt.bytes.scratch 2
-// CHECK: %[[TOKEN_UNKNOWN_SCRATCH:.*]] = obelisk_rt.bytes.scratch 2
-// CHECK: %[[TOKEN_STATUS:.*]], %[[TOKEN_KIND:.*]], %[[TOKEN_ADDRESS:.*]] = obelisk_rt.file.readmem_token
+// CHECK: %[[TOKEN_VALUE_SCRATCH:.*]] = runtime.bytes.scratch 2
+// CHECK: %[[TOKEN_UNKNOWN_SCRATCH:.*]] = runtime.bytes.scratch 2
+// CHECK: %[[TOKEN_STATUS:.*]], %[[TOKEN_KIND:.*]], %[[TOKEN_ADDRESS:.*]] = runtime.file.readmem_token
 // CHECK-NEXT: obelisk_sim.status.check %[[TOKEN_STATUS]]
-// CHECK: obelisk_rt.bytes.to_packed %[[TOKEN_VALUE_SCRATCH]]
-// CHECK: obelisk_rt.bytes.to_packed %[[TOKEN_UNKNOWN_SCRATCH]]
+// CHECK: runtime.bytes.to_packed %[[TOKEN_VALUE_SCRATCH]]
+// CHECK: runtime.bytes.to_packed %[[TOKEN_UNKNOWN_SCRATCH]]
 // A descriptor that is not open can never deliver a byte, so IEEE 1800-2017
 // 21.3.6's "non-zero when EOF has been detected" is the honest answer for one:
 // $feof reports end of file rather than the zero that means more is coming.
-// CHECK: %[[EOF_STATUS:.*]], %[[EOF_VALUE:.*]] = obelisk_rt.file.eof
+// CHECK: %[[EOF_STATUS:.*]], %[[EOF_VALUE:.*]] = runtime.file.eof
 // CHECK: %[[EOF_FAILURE:.*]] = arith.constant 1 : i32
-// CHECK: %[[EOF_OK:.*]] = obelisk_rt.status.is %[[EOF_STATUS]], 0
+// CHECK: %[[EOF_OK:.*]] = runtime.status.is %[[EOF_STATUS]], <ok>
 // CHECK: arith.select %[[EOF_OK]], %[[EOF_VALUE]], %[[EOF_FAILURE]] : i32
-// CHECK: %[[SEEK_STATUS:.*]] = obelisk_rt.file.seek
+// CHECK: %[[SEEK_STATUS:.*]] = runtime.file.seek
 // CHECK: %[[SEEK_SUCCESS:.*]] = arith.constant 0 : i32
 // CHECK: %[[SEEK_FAILURE:.*]] = arith.constant -1 : i32
-// CHECK: %[[SEEK_OK:.*]] = obelisk_rt.status.is %[[SEEK_STATUS]], 0
+// CHECK: %[[SEEK_OK:.*]] = runtime.status.is %[[SEEK_STATUS]], <ok>
 // CHECK: arith.select %[[SEEK_OK]], %[[SEEK_SUCCESS]], %[[SEEK_FAILURE]] : i32
-// CHECK: %[[TELL_STATUS:.*]], %[[OFFSET:.*]] = obelisk_rt.file.tell
+// CHECK: %[[TELL_STATUS:.*]], %[[OFFSET:.*]] = runtime.file.tell
 // CHECK: %[[TELL_FAILURE:.*]] = arith.constant -1 : i64
-// CHECK: %[[TELL_OK:.*]] = obelisk_rt.status.is %[[TELL_STATUS]], 0
+// CHECK: %[[TELL_OK:.*]] = runtime.status.is %[[TELL_STATUS]], <ok>
 // CHECK: arith.select %[[TELL_OK]], %[[OFFSET]], %[[TELL_FAILURE]] : i64
-// CHECK: %[[REWIND_STATUS:.*]] = obelisk_rt.file.rewind
+// CHECK: %[[REWIND_STATUS:.*]] = runtime.file.rewind
 // CHECK: %[[REWIND_SUCCESS:.*]] = arith.constant 0 : i32
 // CHECK: %[[REWIND_FAILURE:.*]] = arith.constant -1 : i32
-// CHECK: %[[REWIND_OK:.*]] = obelisk_rt.status.is %[[REWIND_STATUS]], 0
+// CHECK: %[[REWIND_OK:.*]] = runtime.status.is %[[REWIND_STATUS]], <ok>
 // CHECK: arith.select %[[REWIND_OK]], %[[REWIND_SUCCESS]], %[[REWIND_FAILURE]] : i32
-// CHECK: %[[FINISH_STATUS:.*]] = obelisk_rt.finish
+// CHECK: %[[FINISH_STATUS:.*]] = runtime.finish
 // CHECK-NEXT: obelisk_sim.status.check %[[FINISH_STATUS]]
-// CHECK: %[[STOP_STATUS:.*]] = obelisk_rt.stop
+// CHECK: %[[STOP_STATUS:.*]] = runtime.stop
 // CHECK-NEXT: obelisk_sim.status.check %[[STOP_STATUS]]
-// CHECK: %[[FATAL_STATUS:.*]] = obelisk_rt.fatal
+// CHECK: %[[FATAL_STATUS:.*]] = runtime.fatal
 // CHECK-NEXT: obelisk_sim.status.check %[[FATAL_STATUS]]
-// CHECK: %[[ERROR_STATUS:.*]] = obelisk_rt.error
+// CHECK: %[[ERROR_STATUS:.*]] = runtime.error
 // CHECK-NEXT: obelisk_sim.status.check %[[ERROR_STATUS]]
-// CHECK: %[[TERMINATION_REQUESTED:.*]] = obelisk_rt.termination.requested
+// CHECK: %[[TERMINATION_REQUESTED:.*]] = runtime.termination.requested
 
 // CHECK-LABEL: func.func @aggregate_io(
 // CHECK-SAME: %{{.*}}: i80, %{{.*}}: i80) -> (i80, i80)
-// CHECK: obelisk_rt.argument.packed {{.*}}, {{.*}} {is_signed = false}
-// CHECK: obelisk_rt.display
-// CHECK: obelisk_rt.file.read
+// CHECK: runtime.argument.packed {{.*}}, {{.*}} {is_signed = false}
+// CHECK: runtime.display
+// CHECK: runtime.file.read
 // CHECK-NOT: obelisk_sim.packed.
 
 // CHECK-LABEL: func.func @virtual_interface_io(
 // CHECK: %[[VIF_ID:.*]] = obelisk_sim.virtual_interface.scope %{{.*}}
-// CHECK: obelisk_rt.argument.virtual_interface %[[VIF_ID]]
-// CHECK: obelisk_rt.display
+// CHECK: runtime.argument.virtual_interface %[[VIF_ID]]
+// CHECK: runtime.display

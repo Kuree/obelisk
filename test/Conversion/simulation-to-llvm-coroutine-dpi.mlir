@@ -111,7 +111,7 @@ module attributes {
             source_column = 3 : i32,
             source_file = "dpi.mlir",
             source_line = 12 : i32
-          } : (i32) -> (i32, !obelisk_rt.status)
+          } : (i32) -> (i32, !runtime.status)
       %void_status = obelisk_sim.dpi.call "notify" id 18 scope 0
           context %context : !obelisk_sim.context(%value) {
             abi_signature = [
@@ -124,7 +124,7 @@ module attributes {
             source_column = 4 : i32,
             source_file = "dpi.mlir",
             source_line = 13 : i32
-          } : (i32) -> !obelisk_rt.status
+          } : (i32) -> !runtime.status
       %text = obelisk_sim.string.literal "hello"
       %echoed:2 = obelisk_sim.dpi.call "echo" id 19 scope 0
           context %context : !obelisk_sim.context(%text) {
@@ -142,7 +142,7 @@ module attributes {
             source_column = 5 : i32,
             source_file = "dpi.mlir",
             source_line = 14 : i32
-          } : (!obelisk_sim.string) -> (!obelisk_sim.string, !obelisk_rt.status)
+          } : (!obelisk_sim.string) -> (!obelisk_sim.string, !runtime.status)
       %handle = obelisk_sim.chandle.null : !obelisk_sim.chandle
       %bounced:2 = obelisk_sim.dpi.call "bounce_handle" id 20 scope 0
           context %context : !obelisk_sim.context(%handle) {
@@ -160,7 +160,7 @@ module attributes {
             source_column = 6 : i32,
             source_file = "dpi.mlir",
             source_line = 15 : i32
-          } : (!obelisk_sim.chandle) -> (!obelisk_sim.chandle, !obelisk_rt.status)
+          } : (!obelisk_sim.chandle) -> (!obelisk_sim.chandle, !runtime.status)
       %mutated:2 = obelisk_sim.dpi.call "mutate" id 21 scope 0
           context %context : !obelisk_sim.context(%text) {
             abi_signature = [
@@ -177,7 +177,7 @@ module attributes {
             source_column = 7 : i32,
             source_file = "dpi.mlir",
             source_line = 16 : i32
-          } : (!obelisk_sim.string) -> (!obelisk_sim.string, !obelisk_rt.status)
+          } : (!obelisk_sim.string) -> (!obelisk_sim.string, !runtime.status)
       %real = arith.constant 2.500000e+00 : f64
       %short = arith.constant 1.500000e+00 : f32
       %short_zero = arith.constant 0.000000e+00 : f32
@@ -215,7 +215,7 @@ module attributes {
             source_file = "dpi.mlir",
             source_line = 17 : i32
           } : (f64, f32, f32, f64) ->
-              (f32, f32, f64, !obelisk_rt.status)
+              (f32, f32, f64, !runtime.status)
       obelisk_sim.return
     }
   }

@@ -8,4 +8,7 @@
 
 #include "obelisk/Dialect/Runtime/RuntimeEnums.h.inc"
 
+#define GET_ATTRDEF_CLASSES
+#include "obelisk/Dialect/Runtime/RuntimeAttrs.h.inc"
+
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEATTRS_H

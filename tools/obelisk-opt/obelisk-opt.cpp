@@ -28,6 +28,7 @@ int main(int argc, char **argv) {
   // be able to run them directly on obelisk_sim IR.
   mlir::registerTransformsPasses();
   obelisk::registerObeliskConversionPasses();
+  obelisk::registerRuntimeToLLVMPipeline();
   obelisk::registerSimulationToLLVMCoroutinePipeline();
   obelisk::registerObeliskSimulationPasses();
   obelisk::registerObeliskSchedulePasses();

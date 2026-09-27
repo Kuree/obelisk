@@ -2,6 +2,7 @@
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationProcessRuntimeABI.h"
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -329,8 +330,8 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
       // crossed the typed runtime dialect boundary.  Treat any such operation
       // conservatively: a generated hot owner must have a closed, runtime-free
       // call graph before it can bypass coordinator status handling.
-      mayTerminate |=
-          operation->getName().getDialectNamespace() == "obelisk_rt";
+      mayTerminate |= isa_and_nonnull<runtime::ObeliskRuntimeDialect>(
+          operation->getDialect());
       mayTerminate |=
           isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
               sim::SimProgramExitOp, sim::SimErrorOp,

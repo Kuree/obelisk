@@ -16,8 +16,8 @@ namespace obelisk::runtime {
     ::llvm::StringRef getName() final { return Text; }                         \
   }
 
-OBELISK_RT_RESOURCE(RuntimeResource, "obelisk_rt.runtime");
-OBELISK_RT_RESOURCE(IOResource, "obelisk_rt.io");
+OBELISK_RT_RESOURCE(RuntimeResource, "runtime.runtime");
+OBELISK_RT_RESOURCE(IOResource, "runtime.io");
 
 #undef OBELISK_RT_RESOURCE
 

@@ -104,5 +104,5 @@ module attributes {
 // CHECK: llvm.cond_br
 // CHECK-NOT: obelisk_sim.packed.
 // CHECK-NOT: obelisk_sim.
-// CHECK-NOT: obelisk_rt.
+// CHECK-NOT: runtime.
 // CHECK-NOT: unrealized_conversion_cast

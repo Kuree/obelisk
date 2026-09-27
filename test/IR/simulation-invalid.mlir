@@ -400,7 +400,7 @@ module {
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 0 : i32
       // expected-error @+1 {{DPI formal copy-out must match its input ABI entry}}
-      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = byte, direction = output, width = 8, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = true, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i8, !obelisk_rt.status)
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = byte, direction = output, width = 8, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = true, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i8, !runtime.status)
       obelisk_sim.return
     }
   }
@@ -417,7 +417,7 @@ module {
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1 : i32
       // expected-error @+1 {{a DPI function signature must place its result first}}
-      %call:3 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i32, i32, !obelisk_rt.status)
+      %call:3 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i32, i32, !runtime.status)
       obelisk_sim.return
     }
   }
@@ -434,7 +434,7 @@ module {
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1 : i16
       // expected-error @+1 {{logical operand or result type disagrees with its DPI ABI entry}}
-      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i16) -> (i32, !obelisk_rt.status)
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i16) -> (i32, !runtime.status)
       obelisk_sim.return
     }
   }
@@ -451,7 +451,7 @@ module {
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1.000000e+00 : f64
       // expected-error @+1 {{shortreal DPI ABI entry requires an f32 value}}
-      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>, #obelisk_sim.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (f64) -> (f64, !obelisk_rt.status)
+      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>, #obelisk_sim.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (f64) -> (f64, !runtime.status)
       obelisk_sim.return
     }
   }

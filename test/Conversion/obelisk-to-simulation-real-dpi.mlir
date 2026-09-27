@@ -46,5 +46,5 @@ module {
 // CHECK-SAME: #obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>
 // CHECK-SAME: #obelisk_sim.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>
 // CHECK: obelisk_sim.dpi.call "pass_real"
-// CHECK-SAME: ({{.*}}, {{.*}}) -> (f64, !obelisk_rt.status)
+// CHECK-SAME: ({{.*}}, {{.*}}) -> (f64, !runtime.status)
 // CHECK-NOT: obelisk.sv.

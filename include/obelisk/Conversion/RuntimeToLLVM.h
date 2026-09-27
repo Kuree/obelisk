@@ -11,6 +11,7 @@
 
 namespace mlir {
 class LLVMTypeConverter;
+class OpPassManager;
 class MLIRContext;
 class Type;
 class ModuleOp;
@@ -24,7 +25,14 @@ class DataLayout;
 namespace obelisk {
 
 inline constexpr llvm::StringLiteral preparedRuntimeByteGlobalsAttr =
-    "obelisk_rt.llvm_byte_globals";
+    "runtime.llvm_byte_globals";
+
+inline constexpr llvm::StringLiteral preparedRuntimeLLVMAttr =
+    "runtime.llvm_prepared";
+
+/// Compose independently runnable preparation and conversion passes.
+void buildRuntimeToLLVMPipeline(mlir::OpPassManager &manager);
+void registerRuntimeToLLVMPipeline();
 
 /// LLVM type shared by process descriptor declarations and definitions.
 mlir::Type getNativeProcessDescriptorType(mlir::MLIRContext *context);

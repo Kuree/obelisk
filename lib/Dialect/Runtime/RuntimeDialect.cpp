@@ -6,6 +6,8 @@
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/DialectImplementation.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -13,6 +15,9 @@ using namespace mlir;
 
 #include "obelisk/Dialect/Runtime/RuntimeDialect.cpp.inc"
 #include "obelisk/Dialect/Runtime/RuntimeEnums.cpp.inc"
+
+#define GET_ATTRDEF_CLASSES
+#include "obelisk/Dialect/Runtime/RuntimeAttrs.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "obelisk/Dialect/Runtime/RuntimeTypes.cpp.inc"
@@ -228,9 +233,55 @@ RT_ENUM_EQ(BytecodeService, FileError, OBELISK_RT_BC_SERVICE_FILE_ERROR);
 RT_ENUM_EQ(BytecodeService, FileSeek, OBELISK_RT_BC_SERVICE_FILE_SEEK);
 RT_ENUM_EQ(BytecodeService, FileTell, OBELISK_RT_BC_SERVICE_FILE_TELL);
 RT_ENUM_EQ(BytecodeService, FileRewind, OBELISK_RT_BC_SERVICE_FILE_REWIND);
+RT_ENUM_EQ(StatusCode, Ok, OBELISK_RT_OK);
+RT_ENUM_EQ(StatusCode, Eof, OBELISK_RT_EOF);
+RT_ENUM_EQ(StatusCode, InvalidArgument, OBELISK_RT_INVALID_ARGUMENT);
+RT_ENUM_EQ(StatusCode, InvalidHandle, OBELISK_RT_INVALID_HANDLE);
+RT_ENUM_EQ(StatusCode, IoError, OBELISK_RT_IO_ERROR);
+RT_ENUM_EQ(StatusCode, OutOfMemory, OBELISK_RT_OUT_OF_MEMORY);
+RT_ENUM_EQ(StatusCode, OutOfResources, OBELISK_RT_OUT_OF_RESOURCES);
+RT_ENUM_EQ(StatusCode, FormatError, OBELISK_RT_FORMAT_ERROR);
+RT_ENUM_EQ(StatusCode, ArgumentMismatch, OBELISK_RT_ARGUMENT_MISMATCH);
+RT_ENUM_EQ(StatusCode, InvalidBytecode, OBELISK_RT_INVALID_BYTECODE);
+RT_ENUM_EQ(StatusCode, StepLimit, OBELISK_RT_STEP_LIMIT);
+RT_ENUM_EQ(StatusCode, LayoutMismatch, OBELISK_RT_LAYOUT_MISMATCH);
+RT_ENUM_EQ(StatusCode, InvalidContinuation, OBELISK_RT_INVALID_CONTINUATION);
+RT_ENUM_EQ(StatusCode, TierUnavailable, OBELISK_RT_TIER_UNAVAILABLE);
+RT_ENUM_EQ(StatusCode, InvalidLifecycle, OBELISK_RT_INVALID_LIFECYCLE);
+RT_ENUM_EQ(StatusCode, InvalidFrame, OBELISK_RT_INVALID_FRAME);
+RT_ENUM_EQ(StatusCode, InvalidDesign, OBELISK_RT_INVALID_DESIGN);
+RT_ENUM_EQ(StatusCode, PermissionDenied, OBELISK_RT_PERMISSION_DENIED);
+RT_ENUM_EQ(StatusCode, DpiDisableUnsupported,
+           OBELISK_RT_DPI_DISABLE_UNSUPPORTED);
+RT_ENUM_EQ(StatusCode, Fatal, OBELISK_RT_FATAL);
+RT_ENUM_EQ(StatusCode, AotCheckpoint, OBELISK_RT_AOT_CHECKPOINT);
+RT_ENUM_EQ(StatusCode, AotTimedCheckpoint, OBELISK_RT_AOT_TIMED_CHECKPOINT);
+RT_ENUM_EQ(StatusCode, AotGeneratedCheckpoint,
+           OBELISK_RT_AOT_GENERATED_CHECKPOINT);
+RT_ENUM_EQ(ArgumentKind, Empty, OBELISK_RT_ARG_EMPTY);
+RT_ENUM_EQ(ArgumentKind, Logic, OBELISK_RT_ARG_LOGIC);
+RT_ENUM_EQ(ArgumentKind, String, OBELISK_RT_ARG_STRING);
+RT_ENUM_EQ(ArgumentKind, Real, OBELISK_RT_ARG_REAL);
+RT_ENUM_EQ(ArgumentKind, Time, OBELISK_RT_ARG_TIME);
+RT_ENUM_EQ(ArgumentKind, ManagedString, OBELISK_RT_ARG_MANAGED_STRING);
+RT_ENUM_EQ(ArgumentKind, ManagedContainer, OBELISK_RT_ARG_MANAGED_CONTAINER);
+RT_ENUM_EQ(ArgumentKind, ManagedObject, OBELISK_RT_ARG_MANAGED_OBJECT);
+RT_ENUM_EQ(ArgumentKind, VirtualInterface, OBELISK_RT_ARG_VIRTUAL_INTERFACE);
+RT_ENUM_EQ(ArgumentKind, Process, OBELISK_RT_ARG_PROCESS);
+RT_ENUM_EQ(ArgumentKind, Enum, OBELISK_RT_ARG_ENUM);
+RT_ENUM_EQ(ArgumentKind, Net, OBELISK_RT_ARG_NET);
+RT_ENUM_EQ(ArgumentKind, RawAggregate, OBELISK_RT_ARG_RAW_AGGREGATE);
+RT_ENUM_EQ(ArgumentFlags, Signed, OBELISK_RT_ARG_SIGNED);
+RT_ENUM_EQ(ArgumentFlags, FormatString, OBELISK_RT_ARG_FORMAT_STRING);
+RT_ENUM_EQ(ArgumentFlags, DesignatedFormat, OBELISK_RT_ARG_DESIGNATED_FORMAT);
+RT_ENUM_EQ(ArgumentFlags, RealTime, OBELISK_RT_ARG_REAL_TIME);
 #undef RT_ENUM_EQ
 
 void ObeliskRuntimeDialect::initialize() {
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "obelisk/Dialect/Runtime/RuntimeAttrs.cpp.inc"
+      >();
   addTypes<
 #define GET_TYPEDEF_LIST
 #include "obelisk/Dialect/Runtime/RuntimeTypes.cpp.inc"

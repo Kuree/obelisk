@@ -3,6 +3,7 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -40,9 +41,10 @@ materializeNativeRankedGroups(ModuleOp module,
     uint64_t cost = 0;
     function.walk([&](Operation *op) {
       ++cost;
-      safe &= op->getName().getDialectNamespace() != "obelisk_rt" &&
-              !isa<sim::SimCallOp, sim::SimStatusCheckOp, LLVM::CallOp,
-                   func::CallOp>(op);
+      safe &=
+          !isa_and_nonnull<runtime::ObeliskRuntimeDialect>(op->getDialect()) &&
+          !isa<sim::SimCallOp, sim::SimStatusCheckOp, LLVM::CallOp,
+               func::CallOp>(op);
     });
     return safe ? cost : 0;
   };

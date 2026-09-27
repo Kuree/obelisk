@@ -18,14 +18,20 @@ def RTDescriptorKind : I32EnumAttr<"DescriptorKind", "runtime descriptor kind", 
   RTDescriptorInvalid, RTDescriptorScope, RTDescriptorStorage, RTDescriptorNet,
   RTDescriptorDriver, RTDescriptorEvent, RTDescriptorProcess,
   RTDescriptorFragment, RTDescriptorFunction
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTActionContinue : I32EnumAttrCase<"Continue", 0, "continue">;
 def RTActionSuspend : I32EnumAttrCase<"Suspend", 1, "suspend">;
 def RTActionTerminate : I32EnumAttrCase<"Terminate", 2, "terminate">;
 def RTActionKind : I32EnumAttr<"ActionKind", "fragment action kind", [
   RTActionContinue, RTActionSuspend, RTActionTerminate
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTSuspendNone : I32EnumAttrCase<"None", 0, "none">;
 def RTSuspendDelay : I32EnumAttrCase<"Delay", 1, "delay">;
@@ -41,7 +47,10 @@ def RTSuspensionKind : I32EnumAttr<"SuspensionKind", "fragment suspension kind",
   RTSuspendNone, RTSuspendDelay, RTSuspendChange, RTSuspendEdge, RTSuspendEvent,
   RTSuspendAwait, RTSuspendJoin, RTSuspendForever, RTSuspendFrontier,
   RTSuspendEventOrder
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTRadixBinary : I32EnumAttrCase<"Binary", 2, "binary">;
 def RTRadixOctal : I32EnumAttrCase<"Octal", 8, "octal">;
@@ -49,20 +58,29 @@ def RTRadixDecimal : I32EnumAttrCase<"Decimal", 10, "decimal">;
 def RTRadixHex : I32EnumAttrCase<"Hex", 16, "hex">;
 def RTRadix : I32EnumAttr<"Radix", "default display radix", [
   RTRadixBinary, RTRadixOctal, RTRadixDecimal, RTRadixHex
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTSeekSet : I32EnumAttrCase<"Set", 0, "set">;
 def RTSeekCurrent : I32EnumAttrCase<"Current", 1, "current">;
 def RTSeekEnd : I32EnumAttrCase<"End", 2, "end">;
 def RTSeekOrigin : I32EnumAttr<"SeekOrigin", "file seek origin", [
   RTSeekSet, RTSeekCurrent, RTSeekEnd
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTCodeNative : I32EnumAttrCase<"Native", 0, "native">;
 def RTCodeBytecode : I32EnumAttrCase<"Bytecode", 1, "bytecode">;
 def RTCodeKind : I32EnumAttr<"CodeKind", "fragment code representation", [
   RTCodeNative, RTCodeBytecode
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTBCTypeNone : I32EnumAttrCase<"None", 0, "none">;
 def RTBCTypeU64 : I32EnumAttrCase<"U64", 1, "u64">;
@@ -73,7 +91,10 @@ def RTBCTypeResource : I32EnumAttrCase<"Resource", 5, "resource">;
 def RTBytecodeValueKind : I32EnumAttr<"BytecodeValueKind", "bytecode register type", [
   RTBCTypeNone, RTBCTypeU64, RTBCTypeI64, RTBCTypeBool, RTBCTypeStatus,
   RTBCTypeResource
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTBCNop : I32EnumAttrCase<"Nop", 0, "nop">;
 def RTBCConst : I32EnumAttrCase<"Const", 1, "const">;
@@ -102,7 +123,10 @@ def RTBytecodeOpcode : I32EnumAttr<"BytecodeOpcode", "bytecode opcode", [
   RTBCXor, RTBCNot, RTBCEq, RTBCUlt, RTBCSlt, RTBCLoadFrame, RTBCStoreFrame,
   RTBCJump, RTBCBranchZero, RTBCContinue, RTBCSuspend, RTBCTerminate,
   RTBCCallService, RTBCFail
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTBCOperandImmediate : I32EnumAttrCase<"Immediate", 0, "immediate">;
 def RTBCOperandRegister : I32EnumAttrCase<"Register", 1, "register">;
@@ -113,7 +137,10 @@ def RTBytecodeOperandKind : I32EnumAttr<
     "BytecodeOperandKind", "bytecode service operand location", [
   RTBCOperandImmediate, RTBCOperandRegister, RTBCOperandFrame,
   RTBCOperandConstant, RTBCOperandResource
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTBCOperandInput : I32EnumAttrCase<"Input", 0, "input">;
 def RTBCOperandOutput : I32EnumAttrCase<"Output", 1, "output">;
@@ -121,7 +148,10 @@ def RTBCOperandInOut : I32EnumAttrCase<"InOut", 2, "inout">;
 def RTBytecodeOperandDirection : I32EnumAttr<
     "BytecodeOperandDirection", "bytecode service operand direction", [
   RTBCOperandInput, RTBCOperandOutput, RTBCOperandInOut
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTBCServiceValueNone : I32EnumAttrCase<"None", 0, "none">;
 def RTBCServiceValueU8 : I32EnumAttrCase<"U8", 1, "u8">;
@@ -156,7 +186,10 @@ def RTBytecodeServiceValueKind : I32EnumAttr<
   RTBCServiceValueBuffer, RTBCServiceValueArgumentEmpty,
   RTBCServiceValueArgumentLogic, RTBCServiceValueArgumentString,
   RTBCServiceValueArgumentReal, RTBCServiceValueArgumentTime
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 def RTBCServiceFormat : I32EnumAttrCase<"Format", 1, "format">;
 def RTBCServiceDisplay : I32EnumAttrCase<"Display", 2, "display">;
@@ -187,6 +220,121 @@ def RTBytecodeService : I32EnumAttr<
   RTBCServiceFileGetc, RTBCServiceFileUngetc, RTBCServiceFileGetline,
   RTBCServiceFileEof, RTBCServiceFileError, RTBCServiceFileSeek,
   RTBCServiceFileTell, RTBCServiceFileRewind
-]> { let cppNamespace = "::obelisk::runtime"; }
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
+
+// Status values remain symbolic until C ABI conversion.
+def RTStatusOk : I32EnumAttrCase<"Ok", 0, "ok">;
+def RTStatusEof : I32EnumAttrCase<"Eof", 1, "eof">;
+def RTStatusInvalidArgument :
+    I32EnumAttrCase<"InvalidArgument", 2, "invalid_argument">;
+def RTStatusInvalidHandle :
+    I32EnumAttrCase<"InvalidHandle", 3, "invalid_handle">;
+def RTStatusIoError : I32EnumAttrCase<"IoError", 4, "io_error">;
+def RTStatusOutOfMemory : I32EnumAttrCase<"OutOfMemory", 5, "out_of_memory">;
+def RTStatusOutOfResources :
+    I32EnumAttrCase<"OutOfResources", 6, "out_of_resources">;
+def RTStatusFormatError : I32EnumAttrCase<"FormatError", 7, "format_error">;
+def RTStatusArgumentMismatch :
+    I32EnumAttrCase<"ArgumentMismatch", 8, "argument_mismatch">;
+def RTStatusInvalidBytecode :
+    I32EnumAttrCase<"InvalidBytecode", 9, "invalid_bytecode">;
+def RTStatusStepLimit : I32EnumAttrCase<"StepLimit", 10, "step_limit">;
+def RTStatusLayoutMismatch :
+    I32EnumAttrCase<"LayoutMismatch", 11, "layout_mismatch">;
+def RTStatusInvalidContinuation :
+    I32EnumAttrCase<"InvalidContinuation", 12, "invalid_continuation">;
+def RTStatusTierUnavailable :
+    I32EnumAttrCase<"TierUnavailable", 13, "tier_unavailable">;
+def RTStatusInvalidLifecycle :
+    I32EnumAttrCase<"InvalidLifecycle", 14, "invalid_lifecycle">;
+def RTStatusInvalidFrame : I32EnumAttrCase<"InvalidFrame", 15, "invalid_frame">;
+def RTStatusInvalidDesign :
+    I32EnumAttrCase<"InvalidDesign", 16, "invalid_design">;
+def RTStatusPermissionDenied :
+    I32EnumAttrCase<"PermissionDenied", 17, "permission_denied">;
+def RTStatusDpiDisableUnsupported :
+    I32EnumAttrCase<"DpiDisableUnsupported", 18, "dpi_disable_unsupported">;
+def RTStatusFatal : I32EnumAttrCase<"Fatal", 19, "fatal">;
+def RTStatusAotCheckpoint :
+    I32EnumAttrCase<"AotCheckpoint", 20, "aot_checkpoint">;
+def RTStatusAotTimedCheckpoint :
+    I32EnumAttrCase<"AotTimedCheckpoint", 21, "aot_timed_checkpoint">;
+def RTStatusAotGeneratedCheckpoint :
+    I32EnumAttrCase<"AotGeneratedCheckpoint", 22, "aot_generated_checkpoint">;
+def RTStatusCode : I32EnumAttr<"StatusCode", "runtime status code", [
+  RTStatusOk,
+  RTStatusEof,
+  RTStatusInvalidArgument,
+  RTStatusInvalidHandle,
+  RTStatusIoError,
+  RTStatusOutOfMemory,
+  RTStatusOutOfResources,
+  RTStatusFormatError,
+  RTStatusArgumentMismatch,
+  RTStatusInvalidBytecode,
+  RTStatusStepLimit,
+  RTStatusLayoutMismatch,
+  RTStatusInvalidContinuation,
+  RTStatusTierUnavailable,
+  RTStatusInvalidLifecycle,
+  RTStatusInvalidFrame,
+  RTStatusInvalidDesign,
+  RTStatusPermissionDenied,
+  RTStatusDpiDisableUnsupported,
+  RTStatusFatal,
+  RTStatusAotCheckpoint,
+  RTStatusAotTimedCheckpoint,
+  RTStatusAotGeneratedCheckpoint
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
+
+// Runtime argument tags are encoded only at the LLVM ABI boundary.
+def RTArgumentEmpty : I32EnumAttrCase<"Empty", 0, "empty">;
+def RTArgumentLogic : I32EnumAttrCase<"Logic", 1, "logic">;
+def RTArgumentString : I32EnumAttrCase<"String", 2, "string">;
+def RTArgumentReal : I32EnumAttrCase<"Real", 3, "real">;
+def RTArgumentTime : I32EnumAttrCase<"Time", 4, "time">;
+def RTArgumentManagedString :
+    I32EnumAttrCase<"ManagedString", 5, "managed_string">;
+def RTArgumentManagedContainer :
+    I32EnumAttrCase<"ManagedContainer", 6, "managed_container">;
+def RTArgumentManagedObject :
+    I32EnumAttrCase<"ManagedObject", 7, "managed_object">;
+def RTArgumentVirtualInterface :
+    I32EnumAttrCase<"VirtualInterface", 8, "virtual_interface">;
+def RTArgumentProcess : I32EnumAttrCase<"Process", 9, "process">;
+def RTArgumentEnum : I32EnumAttrCase<"Enum", 10, "enum">;
+def RTArgumentNet : I32EnumAttrCase<"Net", 11, "net">;
+def RTArgumentRawAggregate :
+    I32EnumAttrCase<"RawAggregate", 12, "raw_aggregate">;
+def RTArgumentKind : I32EnumAttr<"ArgumentKind", "runtime argument kind", [
+  RTArgumentEmpty, RTArgumentLogic, RTArgumentString, RTArgumentReal,
+  RTArgumentTime, RTArgumentManagedString, RTArgumentManagedContainer,
+  RTArgumentManagedObject, RTArgumentVirtualInterface, RTArgumentProcess,
+  RTArgumentEnum, RTArgumentNet, RTArgumentRawAggregate
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
+
+def RTArgumentFlagNone : I32BitEnumAttrCaseNone<"None">;
+def RTArgumentFlagSigned : I32BitEnumAttrCaseBit<"Signed", 0, "signed">;
+def RTArgumentFlagFormatString :
+    I32BitEnumAttrCaseBit<"FormatString", 1, "format_string">;
+def RTArgumentFlagDesignatedFormat :
+    I32BitEnumAttrCaseBit<"DesignatedFormat", 2, "designated_format">;
+def RTArgumentFlagRealTime : I32BitEnumAttrCaseBit<"RealTime", 3, "real_time">;
+def RTArgumentFlags : I32BitEnumAttr<"ArgumentFlags", "runtime argument flags", [
+  RTArgumentFlagNone, RTArgumentFlagSigned, RTArgumentFlagFormatString,
+  RTArgumentFlagDesignatedFormat, RTArgumentFlagRealTime
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
 
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEENUMS_TD

@@ -76,7 +76,7 @@ module {
         %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
       %bits = arith.constant 0 : i32
-      %status = obelisk_rt.status.from_bits %bits : (i32) -> !obelisk_rt.status
+      %status = runtime.status.from_bits %bits : (i32) -> !runtime.status
       obelisk_sim.status.check %status
       obelisk_sim.return %bits : i32
     }

@@ -194,7 +194,7 @@ LogicalResult threadRuntimeStatuses(ModuleOp module) {
                 localRewriter.setInsertionPoint(check);
                 Value ok = runtime::RTStatusIsOp::create(
                     localRewriter, check.getLoc(), localRewriter.getI1Type(),
-                    check.getStatus(), 0);
+                    check.getStatus(), runtime::StatusCode::Ok);
                 cf::CondBranchOp::create(localRewriter, check.getLoc(), ok,
                                          continuation, ValueRange{}, failure,
                                          ValueRange{});

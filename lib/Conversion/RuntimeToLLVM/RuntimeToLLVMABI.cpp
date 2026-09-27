@@ -135,7 +135,7 @@ ABIAlignments getABIAlignments(const llvm::DataLayout &layout) {
 bool containsRuntimeType(Type type) {
   bool found = false;
   type.walk([&](Type nested) {
-    if (nested.getDialect().getNamespace() == "obelisk_rt")
+    if (isa<runtime::ObeliskRuntimeDialect>(nested.getDialect()))
       found = true;
   });
   return found;

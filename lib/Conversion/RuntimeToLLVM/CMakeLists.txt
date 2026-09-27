@@ -1,5 +1,6 @@
 add_mlir_library(ObeliskRuntimeToLLVM
   EmbeddedDesign.cpp
+  PrepareRuntimeToLLVM.cpp
   RuntimeToLLVM.cpp
   RuntimeToLLVMABI.cpp
   RuntimeToLLVMPatterns.cpp

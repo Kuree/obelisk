@@ -17,9 +17,9 @@ module {
 
 // CHECK-LABEL: func.func @readmem_token_results
 // CHECK-SAME: -> (i24, i24, i32, i64)
-// CHECK: %[[VALUE_SCRATCH:.*]] = obelisk_rt.bytes.scratch 3
-// CHECK: %[[UNKNOWN_SCRATCH:.*]] = obelisk_rt.bytes.scratch 3
-// CHECK: %[[STATUS:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_rt.file.readmem_token
-// CHECK: %[[VALUE:.*]] = obelisk_rt.bytes.to_packed %[[VALUE_SCRATCH]]{{.*}}least_significant_byte_first = true
-// CHECK: %[[UNKNOWN:.*]] = obelisk_rt.bytes.to_packed %[[UNKNOWN_SCRATCH]]{{.*}}least_significant_byte_first = true
+// CHECK: %[[VALUE_SCRATCH:.*]] = runtime.bytes.scratch 3
+// CHECK: %[[UNKNOWN_SCRATCH:.*]] = runtime.bytes.scratch 3
+// CHECK: %[[STATUS:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = runtime.file.readmem_token
+// CHECK: %[[VALUE:.*]] = runtime.bytes.to_packed %[[VALUE_SCRATCH]]{{.*}}least_significant_byte_first = true
+// CHECK: %[[UNKNOWN:.*]] = runtime.bytes.to_packed %[[UNKNOWN_SCRATCH]]{{.*}}least_significant_byte_first = true
 // CHECK: return %[[VALUE]], %[[UNKNOWN]], %[[KIND]], %[[ADDRESS]] : i24, i24, i32, i64

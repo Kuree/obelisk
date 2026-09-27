@@ -10,4 +10,4 @@
 // CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"1e-999999
 // CHECK-COUNT-126: obelisk_sdf.path_delay
 // CHECK-NOT: obelisk_sim
-// CHECK-NOT: obelisk_rt
+// CHECK-NOT: runtime

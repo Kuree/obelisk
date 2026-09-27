@@ -40,4 +40,4 @@
 // CHECK-NEXT: }
 
 // CHECK-NOT: obelisk_sim
-// CHECK-NOT: obelisk_rt
+// CHECK-NOT: runtime

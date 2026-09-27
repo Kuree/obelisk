@@ -63,14 +63,14 @@ static Value descriptorBits(ConversionPatternRewriter &rewriter, Location loc,
 }
 
 static Value statusIs(ConversionPatternRewriter &rewriter, Location loc,
-                      Value status, uint32_t value) {
+                      Value status, runtime::StatusCode value) {
   return runtime::RTStatusIsOp::create(rewriter, loc, rewriter.getI1Type(),
                                        status, value);
 }
 
 static Value sentinel(ConversionPatternRewriter &rewriter, Location loc,
                       Value status, Value success, Value failure) {
-  Value ok = statusIs(rewriter, loc, status, 0);
+  Value ok = statusIs(rewriter, loc, status, runtime::StatusCode::Ok);
   return arith::SelectOp::create(rewriter, loc, ok, success, failure);
 }
 

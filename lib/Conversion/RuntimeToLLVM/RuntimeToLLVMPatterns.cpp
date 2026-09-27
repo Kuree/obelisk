@@ -198,6 +198,13 @@ static Value llvmIntegerConstant(OpBuilder &builder, Location location,
                                   builder.getIntegerAttr(type, value));
 }
 
+template <typename Enum>
+static Value llvmEnumConstant(OpBuilder &builder, Location location, Type type,
+                              Enum value) {
+  return llvmIntegerConstant(builder, location, type,
+                             static_cast<uint32_t>(value));
+}
+
 static Value insertStructValue(OpBuilder &builder, Location location,
                                Value aggregate, Value value, int64_t index) {
   return LLVM::InsertValueOp::create(builder, location, aggregate, value,
@@ -504,14 +511,17 @@ public:
         unknown = *stored;
       }
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
-      argument = insertStructValue(
-          rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, 1), 0);
       argument =
           insertStructValue(rewriter, location, argument,
-                            llvmIntegerConstant(rewriter, location, abi.i32,
-                                                op.getIsSigned() ? 1 : 0),
-                            1);
+                            llvmEnumConstant(rewriter, location, abi.i32,
+                                             runtime::ArgumentKind::Logic),
+                            0);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           op.getIsSigned() ? runtime::ArgumentFlags::Signed
+                                            : runtime::ArgumentFlags::None),
+          1);
       argument = insertStructValue(
           rewriter, location, argument,
           llvmIntegerConstant(rewriter, location, abi.i64, width), 2);
@@ -560,8 +570,9 @@ public:
           llvmIntegerConstant(rewriter, location, abi.i64, width), 0);
       descriptor = insertStructValue(
           rewriter, location, descriptor,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           op.getIsSigned() ? runtime::ArgumentFlags::Signed
+                                            : runtime::ArgumentFlags::None),
           1);
       descriptor = insertStructValue(rewriter, location, descriptor, *data, 3);
       descriptor =
@@ -575,14 +586,16 @@ public:
       LLVM::StoreOp::create(rewriter, location, descriptor, *descriptorAddress,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument =
+          insertStructValue(rewriter, location, argument,
+                            llvmEnumConstant(rewriter, location, abi.i32,
+                                             runtime::ArgumentKind::Enum),
+                            0);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, OBELISK_RT_ARG_ENUM),
-          0);
-      argument = insertStructValue(
-          rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           op.getIsSigned() ? runtime::ArgumentFlags::Signed
+                                            : runtime::ArgumentFlags::None),
           1);
       argument = insertStructValue(rewriter, location, argument,
                                    *descriptorAddress, 3);
@@ -629,8 +642,9 @@ public:
           llvmIntegerConstant(rewriter, location, abi.i64, width), 0);
       descriptor = insertStructValue(
           rewriter, location, descriptor,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           op.getIsSigned() ? runtime::ArgumentFlags::Signed
+                                            : runtime::ArgumentFlags::None),
           1);
       descriptor = insertStructValue(
           rewriter, location, descriptor,
@@ -647,14 +661,15 @@ public:
       LLVM::StoreOp::create(rewriter, location, descriptor, *descriptorAddress,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument = insertStructValue(rewriter, location, argument,
+                                   llvmEnumConstant(rewriter, location, abi.i32,
+                                                    runtime::ArgumentKind::Net),
+                                   0);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, OBELISK_RT_ARG_NET),
-          0);
-      argument = insertStructValue(
-          rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              op.getIsSigned() ? OBELISK_RT_ARG_SIGNED : 0),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           op.getIsSigned() ? runtime::ArgumentFlags::Signed
+                                            : runtime::ArgumentFlags::None),
           1);
       argument = insertStructValue(rewriter, location, argument,
                                    *descriptorAddress, 3);
@@ -675,11 +690,11 @@ public:
       LLVM::StoreOp::create(rewriter, location, descriptor, *descriptorAddress,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
-      argument =
-          insertStructValue(rewriter, location, argument,
-                            llvmIntegerConstant(rewriter, location, abi.i32,
-                                                OBELISK_RT_ARG_RAW_AGGREGATE),
-                            0);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           runtime::ArgumentKind::RawAggregate),
+          0);
       argument = insertStructValue(rewriter, location, argument,
                                    *descriptorAddress, 3);
       rewriter.replaceOp(operation, argument);
@@ -695,13 +710,16 @@ public:
       LLVM::StoreOp::create(rewriter, location, operands[0], *data,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument =
+          insertStructValue(rewriter, location, argument,
+                            llvmEnumConstant(rewriter, location, abi.i32,
+                                             runtime::ArgumentKind::Real),
+                            0);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, 3), 0);
-      argument = insertStructValue(
-          rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              op.getIsTime() ? OBELISK_RT_ARG_REAL_TIME : 0),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           op.getIsTime() ? runtime::ArgumentFlags::RealTime
+                                          : runtime::ArgumentFlags::None),
           1);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
@@ -710,14 +728,20 @@ public:
     case RuntimeMaterializer::ArgumentBytes: {
       auto op = cast<runtime::RTArgumentBytesOp>(operation);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
+      argument =
+          insertStructValue(rewriter, location, argument,
+                            llvmEnumConstant(rewriter, location, abi.i32,
+                                             runtime::ArgumentKind::String),
+                            0);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32, 2), 0);
-      argument = insertStructValue(
-          rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              (op.getIsFormatString() ? 2 : 0) |
-                                  (op.getDesignatedFormat() ? 4 : 0)),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           (op.getIsFormatString()
+                                ? runtime::ArgumentFlags::FormatString
+                                : runtime::ArgumentFlags::None) |
+                               (op.getDesignatedFormat()
+                                    ? runtime::ArgumentFlags::DesignatedFormat
+                                    : runtime::ArgumentFlags::None)),
           1);
       argument = insertStructValue(rewriter, location, argument,
                                    extract(operands[0], 1), 2);
@@ -736,16 +760,20 @@ public:
       LLVM::StoreOp::create(rewriter, location, operands[0], *data,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
-      argument =
-          insertStructValue(rewriter, location, argument,
-                            llvmIntegerConstant(rewriter, location, abi.i32,
-                                                OBELISK_RT_ARG_MANAGED_STRING),
-                            0);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              (op.getIsFormatString() ? 2 : 0) |
-                                  (op.getDesignatedFormat() ? 4 : 0)),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           runtime::ArgumentKind::ManagedString),
+          0);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           (op.getIsFormatString()
+                                ? runtime::ArgumentFlags::FormatString
+                                : runtime::ArgumentFlags::None) |
+                               (op.getDesignatedFormat()
+                                    ? runtime::ArgumentFlags::DesignatedFormat
+                                    : runtime::ArgumentFlags::None)),
           1);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
@@ -762,8 +790,8 @@ public:
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              OBELISK_RT_ARG_MANAGED_CONTAINER),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           runtime::ArgumentKind::ManagedContainer),
           0);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
@@ -778,11 +806,11 @@ public:
       LLVM::StoreOp::create(rewriter, location, operands[0], *data,
                             abi.alignments.i64);
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
-      argument =
-          insertStructValue(rewriter, location, argument,
-                            llvmIntegerConstant(rewriter, location, abi.i32,
-                                                OBELISK_RT_ARG_MANAGED_OBJECT),
-                            0);
+      argument = insertStructValue(
+          rewriter, location, argument,
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           runtime::ArgumentKind::ManagedObject),
+          0);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
       return success();
@@ -799,11 +827,10 @@ public:
       Value argument = LLVM::ZeroOp::create(rewriter, location, abi.argument);
       argument = insertStructValue(
           rewriter, location, argument,
-          llvmIntegerConstant(rewriter, location, abi.i32,
-                              materializer ==
-                                      RuntimeMaterializer::ArgumentProcess
-                                  ? OBELISK_RT_ARG_PROCESS
-                                  : OBELISK_RT_ARG_VIRTUAL_INTERFACE),
+          llvmEnumConstant(rewriter, location, abi.i32,
+                           materializer == RuntimeMaterializer::ArgumentProcess
+                               ? runtime::ArgumentKind::Process
+                               : runtime::ArgumentKind::VirtualInterface),
           0);
       argument = insertStructValue(rewriter, location, argument, *data, 3);
       rewriter.replaceOp(operation, argument);
@@ -890,7 +917,7 @@ public:
     case RuntimeMaterializer::StatusIs: {
       auto op = cast<runtime::RTStatusIsOp>(operation);
       Value expected =
-          llvmIntegerConstant(rewriter, location, abi.i32, op.getValue());
+          llvmEnumConstant(rewriter, location, abi.i32, op.getValue());
       rewriter.replaceOp(operation,
                          LLVM::ICmpOp::create(rewriter, location,
                                               LLVM::ICmpPredicate::eq,

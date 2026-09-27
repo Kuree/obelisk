@@ -16,4 +16,4 @@
 // CHECK: obelisk_sdf.path_delay
 // CHECK-SAME: delays = [#obelisk_sdf.delay_value<form = triple, min = <"1.25">, typ = <"2.5">, max = <"3.75">>, #obelisk_sdf.delay_value<form = triple, max = <"6">>]
 // CHECK-NOT: obelisk_sim
-// CHECK-NOT: obelisk_rt
+// CHECK-NOT: runtime

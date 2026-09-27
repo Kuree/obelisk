@@ -2,6 +2,7 @@ add_mlir_library(ObeliskRuntimeIR
   RuntimeDialect.cpp
 
   DEPENDS
+  ObeliskRuntimeAttrsIncGen
   ObeliskRuntimeDialectIncGen
   ObeliskRuntimeEnumsIncGen
   ObeliskRuntimeOpsIncGen

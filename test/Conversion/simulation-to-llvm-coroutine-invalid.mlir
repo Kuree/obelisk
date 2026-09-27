@@ -98,7 +98,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   // expected-error @+1 {{owned runtime buffers cannot be function arguments}}
-  func.func @invalid_owned_buffer(%buffer: !obelisk_rt.buffer) {
+  func.func @invalid_owned_buffer(%buffer: !runtime.buffer) {
     return
   }
 }

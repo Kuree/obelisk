@@ -3,45 +3,45 @@
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
-  func.func @materializers(%status: !obelisk_rt.status, %bits: i32,
+  func.func @materializers(%status: !runtime.status, %bits: i32,
       %value: i13, %unknown: i13, %count: i64) -> (i13, i13, i1, i32) {
-    %bytes = obelisk_rt.bytes.constant "abc"
-    %size = obelisk_rt.bytes.size %bytes : (!obelisk_rt.bytes) -> i64
-    %low = obelisk_rt.bytes.to_packed %bytes, %count
-        {high_alignment = false} : (!obelisk_rt.bytes, i64) -> i13
-    %scratch = obelisk_rt.bytes.scratch 2
-    %high = obelisk_rt.bytes.to_packed %scratch, %count
-        {high_alignment = true} : (!obelisk_rt.mut_bytes, i64) -> i13
-    %packed_arg = obelisk_rt.argument.packed %value, %unknown
-        {is_signed = true} : (i13, i13) -> !obelisk_rt.arg
-    %empty_arg = obelisk_rt.argument.empty : () -> !obelisk_rt.arg
-    %bytes_arg = obelisk_rt.argument.bytes %bytes
-        {is_format_string = true} : (!obelisk_rt.bytes) -> !obelisk_rt.arg
-    %args = obelisk_rt.argument.array %packed_arg, %empty_arg, %bytes_arg :
-        (!obelisk_rt.arg, !obelisk_rt.arg, !obelisk_rt.arg) ->
-        !obelisk_rt.args
-    %env = obelisk_rt.format.environment {
+    %bytes = runtime.bytes.constant "abc"
+    %size = runtime.bytes.size %bytes : (!runtime.bytes) -> i64
+    %low = runtime.bytes.to_packed %bytes, %count
+        {high_alignment = false} : (!runtime.bytes, i64) -> i13
+    %scratch = runtime.bytes.scratch 2
+    %high = runtime.bytes.to_packed %scratch, %count
+        {high_alignment = true} : (!runtime.mut_bytes, i64) -> i13
+    %packed_arg = runtime.argument.packed %value, %unknown
+        {is_signed = true} : (i13, i13) -> !runtime.arg
+    %empty_arg = runtime.argument.empty : () -> !runtime.arg
+    %bytes_arg = runtime.argument.bytes %bytes
+        {is_format_string = true} : (!runtime.bytes) -> !runtime.arg
+    %args = runtime.argument.array %packed_arg, %empty_arg, %bytes_arg :
+        (!runtime.arg, !runtime.arg, !runtime.arg) ->
+        !runtime.args
+    %env = runtime.format.environment {
       scope = "top", library_cell = "work.top", time_width = 4 : i32,
       time_suffix = "ns", time_multiplier = 1000 : i64
     }
-    %fd = obelisk_rt.file_descriptor.from_bits %bits :
-        (i32) -> !obelisk_rt.fd
-    %roundtrip = obelisk_rt.file_descriptor.to_bits %fd :
-        (!obelisk_rt.fd) -> i32
-    %status_bits = obelisk_rt.status.to_bits %status :
-        (!obelisk_rt.status) -> i32
-    %roundtrip_status = obelisk_rt.status.from_bits %status_bits :
-        (i32) -> !obelisk_rt.status
-    %ok = obelisk_rt.status.is %roundtrip_status, 0
+    %fd = runtime.file_descriptor.from_bits %bits :
+        (i32) -> !runtime.fd
+    %roundtrip = runtime.file_descriptor.to_bits %fd :
+        (!runtime.fd) -> i32
+    %status_bits = runtime.status.to_bits %status :
+        (!runtime.status) -> i32
+    %roundtrip_status = runtime.status.from_bits %status_bits :
+        (i32) -> !runtime.status
+    %ok = runtime.status.is %roundtrip_status, <ok>
     return %low, %high, %ok, %roundtrip : i13, i13, i1, i32
   }
 
   func.func @loop_scratch(%again: i1, %count: i64) -> i13 {
     cf.br ^loop
   ^loop:
-    %scratch = obelisk_rt.bytes.scratch 2
-    %packed = obelisk_rt.bytes.to_packed %scratch, %count
-        {high_alignment = false} : (!obelisk_rt.mut_bytes, i64) -> i13
+    %scratch = runtime.bytes.scratch 2
+    %packed = runtime.bytes.to_packed %scratch, %count
+        {high_alignment = false} : (!runtime.mut_bytes, i64) -> i13
     cf.cond_br %again, ^loop, ^exit(%packed : i13)
   ^exit(%result: i13):
     return %result : i13
@@ -50,28 +50,28 @@ module attributes {
   func.func @edge_materializers(%wide: i80, %count: i64) -> i8 {
     // A byte-wide destination already spans exactly one byte, so assembling it
     // must not widen the loaded byte.
-    %byte_scratch = obelisk_rt.bytes.scratch 1
-    %byte = obelisk_rt.bytes.to_packed %byte_scratch, %count
-        {high_alignment = false} : (!obelisk_rt.mut_bytes, i64) -> i8
-    %empty_bytes = obelisk_rt.bytes.constant ""
-    %empty_bytes_arg = obelisk_rt.argument.bytes %empty_bytes
-        {is_format_string = false} : (!obelisk_rt.bytes) -> !obelisk_rt.arg
-    %wide_arg = obelisk_rt.argument.packed %wide
-        {is_signed = false} : (i80) -> !obelisk_rt.arg
-    %empty_args = obelisk_rt.argument.array : () -> !obelisk_rt.args
-    %args = obelisk_rt.argument.array %empty_bytes_arg, %wide_arg :
-        (!obelisk_rt.arg, !obelisk_rt.arg) -> !obelisk_rt.args
+    %byte_scratch = runtime.bytes.scratch 1
+    %byte = runtime.bytes.to_packed %byte_scratch, %count
+        {high_alignment = false} : (!runtime.mut_bytes, i64) -> i8
+    %empty_bytes = runtime.bytes.constant ""
+    %empty_bytes_arg = runtime.argument.bytes %empty_bytes
+        {is_format_string = false} : (!runtime.bytes) -> !runtime.arg
+    %wide_arg = runtime.argument.packed %wide
+        {is_signed = false} : (i80) -> !runtime.arg
+    %empty_args = runtime.argument.array : () -> !runtime.args
+    %args = runtime.argument.array %empty_bytes_arg, %wide_arg :
+        (!runtime.arg, !runtime.arg) -> !runtime.args
     return %byte : i8
   }
 
   // $readmemb and $readmemh produce numeric planes with their least
   // significant byte first, unlike file reads whose bytes retain stream order.
-  func.func @least_significant_byte_first(%scratch: !obelisk_rt.mut_bytes)
+  func.func @least_significant_byte_first(%scratch: !runtime.mut_bytes)
       -> i24 {
     %count = arith.constant 3 : i64
-    %packed = obelisk_rt.bytes.to_packed %scratch, %count
+    %packed = runtime.bytes.to_packed %scratch, %count
         {high_alignment = false, least_significant_byte_first = true} :
-        (!obelisk_rt.mut_bytes, i64) -> i24
+        (!runtime.mut_bytes, i64) -> i24
     return %packed : i24
   }
 }
