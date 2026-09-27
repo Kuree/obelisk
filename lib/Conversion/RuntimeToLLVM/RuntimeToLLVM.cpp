@@ -1,6 +1,7 @@
 //===- RuntimeToLLVM.cpp - Lower typed runtime operations to C ABI calls -===//
 
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "RuntimeToLLVMABI.h"
 #include "RuntimeToLLVMPatterns.h"
@@ -249,6 +250,7 @@ public:
 
     ConversionTarget target(getContext());
     target.addIllegalDialect<runtime::ObeliskRuntimeDialect>();
+    target.addIllegalOp<schedule::NativeScratchOp>();
     target.addLegalDialect<LLVM::LLVMDialect>();
     target.addLegalOp<ModuleOp>();
     target.addDynamicallyLegalDialect<func::FuncDialect>(

@@ -269,6 +269,7 @@ mlir::FailureOr<bool> makeNativeEvalPlan(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     uint32_t actorCount,
     mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    const ResolvedNativeEvalPlan &resolvedPlan,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,

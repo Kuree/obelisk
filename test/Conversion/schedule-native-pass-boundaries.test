@@ -1,0 +1,10 @@
+// Native preparation must produce verified, printable IR at each pass boundary.
+// RUN: obelisk-opt %S/simulation-to-llvm-coroutine.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-actors,schedule-specialize-native-captures,convert-simulation-to-native-schedule,prepare-native-managed-roots,schedule-mark-clean-native-nba,schedule-specialize-native-eval,schedule-annotate-compact-nba,prepare-native-fragments)' | obelisk-opt | FileCheck %s
+// RUN: not obelisk-opt %S/simulation-to-llvm-coroutine.mlir --schedule-plan-native-state 2>&1 | FileCheck %s --check-prefix=ORDER
+// CHECK: schedule.suspend.delay
+// CHECK: schedule.native.continuation
+// CHECK: schedule.suspend.change
+// CHECK: schedule.suspend.edge
+// CHECK: schedule.observer
+// CHECK: schedule.suspend.observe
+// ORDER: schedule-plan-native-state requires the native preparation pipeline analysis

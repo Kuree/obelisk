@@ -1,6 +1,7 @@
 //===- SimulationFunctionTypeLowering.cpp - Function type rewrites -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -76,12 +77,25 @@ public:
       zeroUnknownAttr.push_back(rewriter.getDenseI64ArrayAttr(indices));
     SmallVector<Attribute> argAttrs(entry.getConvertedTypes().size(),
                                     rewriter.getDictionaryAttr({}));
+    // A packed signature carries physical values, not descriptor-typed
+    // semantic captures. The canonical frame analysis retains the original
+    // capture ABI for fallback; keep the prepared function's metadata honest.
+    for (auto [index, type] : llvm::enumerate(entry.getConvertedTypes())) {
+      auto kind =
+          index == 0 ? sim::CaptureKind::Context : sim::CaptureKind::Value;
+      argAttrs[index] = rewriter.getDictionaryAttr({rewriter.getNamedAttr(
+          sim::metadata::captureKind,
+          sim::CaptureKindAttr::get(rewriter.getContext(), kind))});
+    }
     SmallVector<Attribute> resultAttrs(results.size(),
                                        rewriter.getDictionaryAttr({}));
     rewriter.modifyOpInPlace(function, [&] {
       function.setType(FunctionType::get(rewriter.getContext(),
                                          entry.getConvertedTypes(), results));
       function.setArgAttrsAttr(rewriter.getArrayAttr(argAttrs));
+      // Binding providers describe semantic descriptors, consumed by packed
+      // conversion. They do not describe the resulting physical arguments.
+      function->removeAttr(sim::metadata::bindings);
       if (!resultAttrs.empty())
         function.setResAttrsAttr(rewriter.getArrayAttr(resultAttrs));
       function->setAttr(nativeTwoStateBlockUnknownsAttr,
@@ -210,7 +224,8 @@ public:
          llvm::zip_equal(operation.getOperands(), adaptor.getOperands()))
       if (isa<sim::RefType>(operand.getType()) && converted.size() == 1)
         emitNativeStateRetain(rewriter, operation.getLoc(), converted.front());
-    OperationState state(operation.getLoc(), operation->getName());
+    OperationState state(operation.getLoc(),
+                         schedule::NativeTaskCallOp::getOperationName());
     state.addOperands(flatten(adaptor.getOperands()));
     state.addSuccessors(operation->getSuccessors());
     state.addAttributes(operation->getAttrs());
@@ -242,7 +257,9 @@ public:
          llvm::zip_equal(operation.getValues(), adaptor.getValues()))
       if (isa<sim::RefType>(operand.getType()) && converted.size() == 1)
         emitNativeStateRetain(rewriter, operation.getLoc(), converted.front());
-    OperationState state(operation.getLoc(), operation->getName());
+    OperationState state(
+        operation.getLoc(),
+        schedule::NativeClassVirtualTaskCallOp::getOperationName());
     state.addOperands(flatten(adaptor.getOperands()));
     state.addSuccessors(operation->getSuccessors());
     state.addAttributes(operation->getAttrs());

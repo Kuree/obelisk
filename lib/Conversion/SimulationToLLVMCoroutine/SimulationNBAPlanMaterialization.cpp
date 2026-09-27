@@ -34,6 +34,21 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
   Location location = module.getLoc();
   Type storageType = LLVM::LLVMArrayType::get(
       builder.getI8Type(), sizeof(obelisk_rt_generated_nba_accumulator_256));
+  // Packed NBA staging references these arrays before coordinator emission.
+  // Their sizes are already fixed by the native NBA plan.
+  uint64_t words = (plan.roots.size() + 63) / 64;
+  for (auto [name, count] :
+       {std::pair<StringRef, uint64_t>{"__obelisk_aot_nba_dirty_roots_v1",
+                                       words},
+        {"__obelisk_aot_nba_dirty_summary_v1", (words + 63) / 64}}) {
+    if (!count)
+      continue;
+    builder.setInsertionPointToStart(module.getBody());
+    LLVM::GlobalOp::create(
+        builder, location,
+        LLVM::LLVMArrayType::get(builder.getI64Type(), count), false,
+        LLVM::Linkage::External, name, Attribute{}, 8);
+  }
   for (StringRef name : plan.generatedAccumulators) {
     if (name.empty())
       continue;

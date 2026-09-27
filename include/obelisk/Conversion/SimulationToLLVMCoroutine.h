@@ -3,7 +3,6 @@
 #ifndef OBELISK_CONVERSION_SIMULATIONTOLLVMCOROUTINE_H
 #define OBELISK_CONVERSION_SIMULATIONTOLLVMCOROUTINE_H
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 
 #include "mlir/Transforms/DialectConversion.h"
@@ -15,6 +14,7 @@ class DataLayout;
 namespace mlir {
 class LLVMTypeConverter;
 class ModuleOp;
+class OpPassManager;
 class RewritePatternSet;
 } // namespace mlir
 
@@ -24,18 +24,11 @@ namespace obelisk {
 /// exported function. This must run before bytecode encoding.
 mlir::LogicalResult materializeDPIExportBridges(mlir::ModuleOp module);
 
-/// Normalize packed and suspension-live state, then analyze and construct
-/// process ramps, continuation shims, descriptors, and native hooks before the
-/// terminal LLVM dialect conversion.
-mlir::LogicalResult
-prepareSimulationProcessesToLLVMCoroutines(mlir::ModuleOp module,
-                                           const llvm::DataLayout &dataLayout);
+/// Append each native planning, specialization and lowering pass in ABI order.
+void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager);
+void registerSimulationToLLVMCoroutinePipeline();
 
-/// Add the Runtime, function, arithmetic, and control-flow patterns used after
-/// coroutine process construction. Packed-value normalization is performed by
-/// prepareSimulationProcessesToLLVMCoroutines. Call
-/// prepareSimulationProcessesToLLVMCoroutines first when composing the full
-/// process conversion outside the registered pass.
+/// Add terminal conversion patterns after the native preparation pipeline.
 void populateSimulationCoroutineToLLVMPatterns(
     const mlir::LLVMTypeConverter &converter,
     mlir::RewritePatternSet &patterns);

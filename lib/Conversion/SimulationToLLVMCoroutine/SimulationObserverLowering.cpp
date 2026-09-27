@@ -1,7 +1,8 @@
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- SimulationObserverLowering.cpp - Native observer lowering ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -110,24 +111,11 @@ LogicalResult makeNativeObserverThunk(ModuleOp module,
 } // namespace
 
 Operation *getConvertedObserverBinding(Value value) {
-  Operation *binding = value.getDefiningOp();
-  if (isa_and_nonnull<sim::SimObserverBindOp>(binding))
-    return binding;
-  auto bridge = dyn_cast_or_null<UnrealizedConversionCastOp>(binding);
-  if (!bridge || !binding->hasAttr("obelisk.coro.observer_id") ||
-      !binding->hasAttr("capture_count"))
-    return nullptr;
-  return binding;
+  return value.getDefiningOp<schedule::NativeObserverOp>();
 }
 
 uint32_t getConvertedObserverCaptureCount(Operation *binding) {
-  if (auto semantic = dyn_cast<sim::SimObserverBindOp>(binding))
-    return semantic.getCaptureCount();
-  auto count = binding->getAttrOfType<IntegerAttr>("capture_count");
-  if (!count || count.getValue().isNegative())
-    return 0;
-  return static_cast<uint32_t>(std::min<uint64_t>(
-      count.getValue().getZExtValue(), binding->getNumOperands()));
+  return cast<schedule::NativeObserverOp>(binding).getCaptureCount();
 }
 
 Operation::operand_range getConvertedObserverCaptures(Operation *binding) {
@@ -170,10 +158,10 @@ LogicalResult serializeComputedObserverRecord(
           "converted observer inventory exceeds v1 count fields");
     captureCountWide += captures;
     dependencyCountWide += dependencies;
-    auto width =
-        binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_width");
-    auto fourState =
-        binding->getAttrOfType<BoolAttr>("obelisk.coro.observer_four_state");
+    auto width = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::NativeObserverWidth>(binding);
+    auto fourState = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::NativeObserverFourState>(binding);
     if (!width || !fourState || width.getValue().isNegative() ||
         width.getValue().isZero() || width.getValue().getActiveBits() > 32)
       return binding->emitOpError(
@@ -244,13 +232,14 @@ LogicalResult serializeComputedObserverRecord(
   llvm::SetVector<Operation *> uniqueBindings;
   for (auto [index, binding] : llvm::enumerate(bindings)) {
     auto observerID =
-        binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id");
-    auto dependencyKinds = binding->getAttrOfType<DenseI32ArrayAttr>(
-        "obelisk.coro.dependency_kinds");
-    auto dependencyWidths = binding->getAttrOfType<DenseI32ArrayAttr>(
-        "obelisk.coro.dependency_widths");
-    auto dependencyCaptureIndices = binding->getAttrOfType<DenseI32ArrayAttr>(
-        "obelisk.coro.dependency_capture_indices");
+        ::obelisk::schedule::get<::obelisk::schedule::Field::NativeObserverId>(
+            binding);
+    auto dependencyKinds = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::NativeDependencyKinds>(binding);
+    auto dependencyWidths = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::NativeDependencyWidths>(binding);
+    auto dependencyCaptureIndices = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::NativeDependencyCaptureIndices>(binding);
     if (!observerID || !dependencyKinds || !dependencyWidths ||
         !dependencyCaptureIndices ||
         static_cast<size_t>(dependencyKinds.size()) !=
@@ -367,14 +356,14 @@ LogicalResult
 serializeComputedObserverWait(Operation *operation, Value wait,
                               uint64_t waitSize, OpBuilder &builder,
                               SmallVectorImpl<Operation *> &observerBindings) {
-  auto observe = dyn_cast<sim::SimSuspendObserveOp>(operation);
+  auto observe = dyn_cast<schedule::NativeSuspendObserveOp>(operation);
   if (!observe)
     return operation->emitError("expected an observer suspension");
   const uint32_t primaryCount = observe.getEdges().size();
-  auto planeCounts = operation->getAttrOfType<DenseI32ArrayAttr>(
-      "obelisk.coro.initial_plane_counts");
-  auto conditionBegin = operation->getAttrOfType<IntegerAttr>(
-      "obelisk.coro.condition_operand_begin");
+  auto planeCounts = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::NativeInitialPlaneCounts>(operation);
+  auto conditionBegin = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::NativeConditionOperandBegin>(operation);
   if (!planeCounts || planeCounts.size() != primaryCount || !conditionBegin)
     return operation->emitError("missing converted observer operand metadata");
   SmallVector<Operation *> bindings;

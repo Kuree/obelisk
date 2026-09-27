@@ -254,8 +254,8 @@ def MaterializeObeliskNativeEvalGroupsPass
   let dependentDialects = ["mlir::LLVM::LLVMDialect"];
 }
 
-def ConvertObeliskSimProcessesToLLVMCoroutinesPass
-    : Pass<"convert-obelisk-sim-processes-to-llvm-coroutines",
+def ConvertPreparedSimProcessesToLLVMCoroutinesPass
+    : Pass<"convert-prepared-sim-processes-to-llvm-coroutines",
            "mlir::ModuleOp"> {
   let summary = "Lower simulation processes to switched-resume LLVM coroutines";
   let description = [{
@@ -331,6 +331,184 @@ def ObeliskSimBuildComputeGraphPass
            "Number of generated static worker lanes">,
     Option<"vpi", "vpi", "std::string", "\"off\"",
            "VPI observability mode: off, read, or full">
+  ];
+}
+
+def PrepareNativeScheduleInputsPass : Pass<"prepare-native-schedule-inputs", "mlir::ModuleOp"> {
+  let summary = "prepare native schedule inputs";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Empty phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PrepareNativeProcessFramesPass : Pass<"prepare-native-process-frames", "mlir::ModuleOp"> {
+  let summary = "prepare native process frames";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    State phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PrepareNativeManagedRootsPass : Pass<"prepare-native-managed-roots", "mlir::ModuleOp"> {
+  let summary = "prepare native managed roots";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Schedule phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PrepareNativeFragmentsPass : Pass<"prepare-native-fragments", "mlir::ModuleOp"> {
+  let summary = "prepare native fragments";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    EvalVariants phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PlanNativeExecutableNodesPass : Pass<"schedule-plan-native-executable-nodes", "mlir::ModuleOp"> {
+  let summary = "plan native executable schedule nodes";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Ownership phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def MaterializeNativeProcessesPass : Pass<"materialize-native-processes", "mlir::ModuleOp"> {
+  let summary = "materialize native processes";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Resolved phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+
+def PlanNativeStatePass : Pass<"schedule-plan-native-state", "mlir::ModuleOp"> {
+  let summary = "schedule plan native state";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Inputs phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PlanNativeActorsPass : Pass<"schedule-plan-native-actors", "mlir::ModuleOp"> {
+  let summary = "schedule plan native actors";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Frames phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PlanNativeSchedulePass : Pass<"convert-simulation-to-native-schedule", "mlir::ModuleOp"> {
+  let summary = "convert simulation to native schedule";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Captures phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def PlanNativeEvalOwnershipPass : Pass<"schedule-plan-native-eval-ownership", "mlir::ModuleOp"> {
+  let summary = "schedule plan native eval ownership";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Fragments phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def ResolveNativeEvalSchedulePass : Pass<"schedule-resolve-native-eval", "mlir::ModuleOp"> {
+  let summary = "schedule resolve native eval";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    ExecutableNodes phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
   ];
 }
 

@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -379,11 +380,14 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
               : LLVM::PoisonOp::create(builder, location, converted)
                     .getResult());
     }
-    bool returnsStatus = false;
+    bool returnsStatus = body.getFunctionType().getNumResults() != 0;
     body.walk([&](sim::SimStatusCheckOp) { returnsStatus = true; });
-    auto call = func::CallOp::create(
-        builder, location, body.getSymName(),
-        returnsStatus ? TypeRange{i32} : TypeRange{}, arguments);
+    auto call = schedule::NativeExecuteOp::create(
+        builder, location, returnsStatus ? TypeRange{i32} : TypeRange{},
+        SymbolRefAttr::get(
+            body->getParentOfType<sim::SimDesignOp>().getSymNameAttr(),
+            {FlatSymbolRefAttr::get(context, body.getSymName())}),
+        arguments, returnsStatus ? builder.getUnitAttr() : UnitAttr{});
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectCall>(
         call, builder.getUnitAttr());
     LLVM::ReturnOp::create(
@@ -494,8 +498,12 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
   if (arguments.size() != body.getFunctionType().getNumInputs())
     return actor.emitError(
         "direct fragment continuation layout disagrees with body entry");
-  func::CallOp::create(builder, location, body.getSymName(), TypeRange{},
-                       arguments);
+  schedule::NativeExecuteOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(
+          body->getParentOfType<sim::SimDesignOp>().getSymNameAttr(),
+          {FlatSymbolRefAttr::get(context, body.getSymName())}),
+      arguments, UnitAttr{});
   Value leaveStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},

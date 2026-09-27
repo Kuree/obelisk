@@ -2,6 +2,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -26,6 +27,10 @@ static FailureOr<SmallVector<uint64_t>> parseCoveragePoints(AsmParser &parser) {
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.cpp.inc"
 namespace obelisk::schedule {
 void ScheduleDialect::initialize() {
+  addOperations<
+#define GET_OP_LIST
+#include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"
+      >();
   addAttributes<
 #define GET_ATTRDEF_LIST
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.cpp.inc"

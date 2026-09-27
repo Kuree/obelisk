@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -49,13 +50,24 @@ using namespace mlir;
 namespace obelisk::sim {
 
 bool isSuspensionOp(Operation *operation) {
-  return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
-             SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
-             SimSuspendClockSetOp, SimSuspendEventOp, SimSuspendEventOrderOp,
-             SimSuspendMailboxOp, SimSuspendSemaphoreOp, SimSuspendForeverOp,
-             SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp,
-             SimSuspendObserveOp, SimTaskCallOp, SimClassVirtualTaskCallOp,
-             SimProcessControlOp, SimControlBoundaryOp>(operation);
+  return isa<
+      SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
+      SimSuspendEdgeIffOp, SimSuspendLevelOp, SimSuspendAnyOp,
+      SimSuspendClockSetOp, SimSuspendEventOp, SimSuspendEventOrderOp,
+      SimSuspendMailboxOp, SimSuspendSemaphoreOp, SimSuspendForeverOp,
+      SimSuspendAwaitOp, SimSuspendJoinOp, SimSuspendChildrenOp,
+      SimSuspendObserveOp, SimTaskCallOp, SimClassVirtualTaskCallOp,
+      SimProcessControlOp, SimControlBoundaryOp, schedule::NativeSuspendDelayOp,
+      schedule::NativeSuspendChangeOp, schedule::NativeSuspendEdgeOp,
+      schedule::NativeSuspendEdgeIffOp, schedule::NativeSuspendLevelOp,
+      schedule::NativeSuspendAnyOp, schedule::NativeSuspendClockSetOp,
+      schedule::NativeSuspendEventOp, schedule::NativeSuspendEventOrderOp,
+      schedule::NativeSuspendMailboxOp, schedule::NativeSuspendSemaphoreOp,
+      schedule::NativeSuspendForeverOp, schedule::NativeSuspendAwaitOp,
+      schedule::NativeSuspendJoinOp, schedule::NativeSuspendChildrenOp,
+      schedule::NativeSuspendObserveOp, schedule::NativeProcessControlOp,
+      schedule::NativeControlBoundaryOp, schedule::NativeTaskCallOp,
+      schedule::NativeClassVirtualTaskCallOp>(operation);
 }
 
 bool isStartupEntryKind(EntryKind kind) {

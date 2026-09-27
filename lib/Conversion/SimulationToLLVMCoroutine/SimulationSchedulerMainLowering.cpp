@@ -29,7 +29,8 @@ static constexpr llvm::StringLiteral kTimePrecisionAccessorName =
 
 LogicalResult makeSchedulerMain(ModuleOp module,
                                 const NativeStateLayout &stateLayout,
-                                bool useAOT, bool directEval) {
+                                bool useAOT, bool directEval,
+                                bool hasObserver) {
   if (module.lookupSymbol("main"))
     return success();
   sim::SimFuncOp root;
@@ -109,10 +110,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     hasDesignBytecode = (flags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
   }
-  bool hasObserver = false;
-  module.walk([&](sim::SimFuncOp function) {
-    hasObserver |= function.getEntryKind() == sim::EntryKind::Observer;
-  });
+  // Observer capability is a source-level scheduling fact retained by the
+  // plan even after evaluator functions acquire their native signatures.
   // IEEE 1800-2023 4.6(a), 9.4.2: observers may require the canonical
   // source-order publication image even after generated stores run ahead.
   // Keep that image for observation-capable designs. A closed eval design

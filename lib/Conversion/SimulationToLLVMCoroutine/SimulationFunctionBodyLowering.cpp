@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -40,11 +41,12 @@ private:
   NativeCallResultLowering lowering;
 };
 
-class NativeSpawnPattern final : public OpRewritePattern<sim::SimSpawnOp> {
+class NativeSpawnPattern final
+    : public OpRewritePattern<schedule::NativeSpawnOp> {
 public:
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(sim::SimSpawnOp operation,
+  LogicalResult matchAndRewrite(schedule::NativeSpawnOp operation,
                                 PatternRewriter &rewriter) const override {
     auto call = LLVM::CallOp::create(
         rewriter, operation.getLoc(), TypeRange{rewriter.getI64Type()},
@@ -104,7 +106,7 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
   }
   Operation *illegalOperation = nullptr;
   WalkResult leftovers = root->walk([&](Operation *operation) {
-    bool illegal = isa<sim::SimCallOp, sim::SimSpawnOp>(operation) ||
+    bool illegal = isa<sim::SimCallOp, schedule::NativeSpawnOp>(operation) ||
                    (returnLowering != NativeReturnLowering::None &&
                     isa<sim::SimReturnOp>(operation));
     if (illegal)

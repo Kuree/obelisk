@@ -3,6 +3,7 @@
 include "mlir/IR/DialectBase.td"
 def ScheduleDialect : Dialect {
   let name = "schedule";
+  let usePropertiesForAttributes = 0;
   let cppNamespace = "::obelisk::schedule";
   let summary = "Verified simulation execution plans";
   let description = [{

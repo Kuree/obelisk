@@ -22,9 +22,12 @@ add_mlir_library(ObeliskSimulationToSchedule
 # derivation; LLVM globals, runtime calls and ABI emission stay in the backend.
 add_mlir_library(ObeliskSimulationToScheduleNative
   PARTIAL_SOURCES_INTENDED
+  NativeSchedulePasses.cpp
   NativeEvalPlanning.cpp
   NativePlanning.cpp
   NativeNBAPlanning.cpp
+  DEPENDS
+  ObeliskConversionPassIncGen
   LINK_LIBS PUBLIC
   ObeliskSimulationIR
   ObeliskSimulationAnalysis

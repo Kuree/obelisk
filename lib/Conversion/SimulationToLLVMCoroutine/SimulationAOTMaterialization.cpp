@@ -632,6 +632,7 @@ static void normalizeGeneratedWideTransitions(
 FailureOr<bool> makeNativeEvalPlan(
     ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
     ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    const ResolvedNativeEvalPlan &resolvedPlan,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
@@ -669,12 +670,7 @@ FailureOr<bool> makeNativeEvalPlan(
   if (failed(materializeEvalCheckpointHandoffGlobals(module)))
     return failure();
 
-  FailureOr<ResolvedNativeEvalPlan> resolved =
-      resolveNativeEvalPlan(module, executableNodes, stateLayout, staticNBAPlan,
-                            staticFanoutPlan, directFragments, evalOwnership,
-                            computeGraph, periodicClocks, periodicAliases);
-  if (failed(resolved))
-    return failure();
+  const ResolvedNativeEvalPlan *resolved = &resolvedPlan;
   // All input executors exist before plan materialization. Only their bodies
   // and attributes change below; newly emitted plan helpers are not executors.
   // Keep this snapshot local rather than retaining a table across IR phases.
@@ -1468,6 +1464,15 @@ FailureOr<bool> makeNativeEvalPlan(
   uint32_t nbaDirtySummaryWordCount = (nbaDirtyWordCount + 63) / 64;
   if (nbaDirtyWordCount != 0) {
     Type dirtyType = LLVM::LLVMArrayType::get(i64, nbaDirtyWordCount);
+    if (auto declaration =
+            module.lookupSymbol<LLVM::GlobalOp>(nbaDirtyRootsName)) {
+      if (!declaration.getInitializerRegion().empty() ||
+          declaration.getValue() || declaration.getGlobalType() != dirtyType)
+        return declaration.emitError(
+                   "incompatible native NBA state declaration"),
+               failure();
+      declaration.erase();
+    }
     builder.setInsertionPointToStart(module.getBody());
     auto dirty = LLVM::GlobalOp::create(builder, location, dirtyType, false,
                                         LLVM::Linkage::Internal,
@@ -1480,6 +1485,15 @@ FailureOr<bool> makeNativeEvalPlan(
   }
   if (nbaDirtySummaryWordCount != 0) {
     Type summaryType = LLVM::LLVMArrayType::get(i64, nbaDirtySummaryWordCount);
+    if (auto declaration =
+            module.lookupSymbol<LLVM::GlobalOp>(nbaDirtySummaryName)) {
+      if (!declaration.getInitializerRegion().empty() ||
+          declaration.getValue() || declaration.getGlobalType() != summaryType)
+        return declaration.emitError(
+                   "incompatible native NBA state declaration"),
+               failure();
+      declaration.erase();
+    }
     builder.setInsertionPointToStart(module.getBody());
     auto summary = LLVM::GlobalOp::create(builder, location, summaryType, false,
                                           LLVM::Linkage::Internal,

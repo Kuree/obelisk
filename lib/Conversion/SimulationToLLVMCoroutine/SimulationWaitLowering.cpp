@@ -4,6 +4,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -33,22 +34,23 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
   storeAt(builder, location, wait, 4,
           llvmConstant(builder, location, i32, kind), 4);
   uint32_t waitFlags = 0;
-  if (auto join = dyn_cast<sim::SimSuspendJoinOp>(operation))
+  if (auto join = dyn_cast<schedule::NativeSuspendJoinOp>(operation))
     waitFlags = static_cast<uint32_t>(join.getKind());
-  else if (isa<sim::SimSuspendLevelOp>(operation))
+  else if (isa<schedule::NativeSuspendLevelOp>(operation))
     waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
-  else if (isa<sim::SimSuspendEdgeIffOp>(operation))
+  else if (isa<schedule::NativeSuspendEdgeIffOp>(operation))
     waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
-  else if (isa<sim::SimSuspendClockSetOp>(operation)) {
+  else if (isa<schedule::NativeSuspendClockSetOp>(operation)) {
     waitFlags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
-    if (operation->hasAttr("slot_final"))
+    if (cast<schedule::NativeSuspendClockSetOp>(operation).getSlotFinal())
       waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
-    auto clocks = cast<sim::SimSuspendClockSetOp>(operation);
+    auto clocks = cast<schedule::NativeSuspendClockSetOp>(operation);
     if (llvm::any_of(clocks.getConditions(), [](Value condition) {
           return getConvertedObserverBinding(condition) != nullptr;
         }))
       waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
-  } else if (auto mailbox = dyn_cast<sim::SimSuspendMailboxOp>(operation))
+  } else if (auto mailbox =
+                 dyn_cast<schedule::NativeSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
   if ((::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
            operation) ||
@@ -56,23 +58,25 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
            operation)) &&
       !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
           operation) &&
-      isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
-          sim::SimSuspendEdgeIffOp, sim::SimSuspendAnyOp>(operation))
+      isa<schedule::NativeSuspendChangeOp, schedule::NativeSuspendEdgeOp,
+          schedule::NativeSuspendEdgeIffOp, schedule::NativeSuspendAnyOp>(
+          operation))
     waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
   storeAt(builder, location, wait, 8,
           llvmConstant(builder, location, i32, waitFlags), 4);
   storeAt(builder, location, wait, 12,
           llvmConstant(builder, location, i32, count), 4);
   Value payload = llvmConstant(builder, location, i64, 0);
-  if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation))
+  if (auto delay = dyn_cast<schedule::NativeSuspendDelayOp>(operation))
     payload = asI64(builder, location, delay.getDelay());
-  else if (auto semaphore = dyn_cast<sim::SimSuspendSemaphoreOp>(operation))
+  else if (auto semaphore =
+               dyn_cast<schedule::NativeSuspendSemaphoreOp>(operation))
     payload = asI64(builder, location, semaphore.getKeys());
-  else if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation))
+  else if (auto clocks = dyn_cast<schedule::NativeSuspendClockSetOp>(operation))
     payload = llvmConstant(builder, location, i64, clocks.getOccurrenceSite());
   storeAt(builder, location, wait, 16, payload, 8);
   uint64_t auxiliary = 0;
-  if (auto clocks = dyn_cast<sim::SimSuspendClockSetOp>(operation))
+  if (auto clocks = dyn_cast<schedule::NativeSuspendClockSetOp>(operation))
     for (auto [index, condition] :
          llvm::enumerate(clocks.getConditionIndices()))
       if (condition >= 0)
@@ -83,30 +87,30 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
   SmallVector<Value> watched;
   SmallVector<uint32_t> watchedEdges;
   TypeSwitch<Operation *>(operation)
-      .Case<sim::SimSuspendChangeOp>([&](auto op) {
+      .Case<schedule::NativeSuspendChangeOp>([&](auto op) {
         watched.push_back(op.getWatched());
         watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
       })
-      .Case<sim::SimSuspendLevelOp>([&](auto op) {
+      .Case<schedule::NativeSuspendLevelOp>([&](auto op) {
         watched.push_back(op.getWatched());
         watchedEdges.push_back(static_cast<uint32_t>(sim::EdgeKind::Change));
       })
-      .Case<sim::SimSuspendEdgeOp>([&](auto op) {
+      .Case<schedule::NativeSuspendEdgeOp>([&](auto op) {
         watched.push_back(op.getWatched());
         watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
       })
-      .Case<sim::SimSuspendEdgeIffOp>([&](auto op) {
+      .Case<schedule::NativeSuspendEdgeIffOp>([&](auto op) {
         watched.push_back(op.getWatched());
         watchedEdges.push_back(static_cast<uint32_t>(op.getEdge()));
         watched.push_back(op.getCondition());
         watchedEdges.push_back(noEdge);
       })
-      .Case<sim::SimSuspendAnyOp>([&](auto op) {
+      .Case<schedule::NativeSuspendAnyOp>([&](auto op) {
         llvm::append_range(watched, op.getWatched());
         for (int32_t edge : op.getEdges())
           watchedEdges.push_back(static_cast<uint32_t>(edge));
       })
-      .Case<sim::SimSuspendClockSetOp>([&](auto op) {
+      .Case<schedule::NativeSuspendClockSetOp>([&](auto op) {
         llvm::append_range(watched, op.getPrimaries());
         for (int32_t edge : op.getEdges())
           watchedEdges.push_back(static_cast<uint32_t>(edge));
@@ -123,34 +127,35 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
                          : noEdge));
         }
       })
-      .Case<sim::SimSuspendEventOp>([&](auto op) {
+      .Case<schedule::NativeSuspendEventOp>([&](auto op) {
         watched.push_back(op.getEvent());
         watchedEdges.push_back(noEdge);
       })
-      .Case<sim::SimSuspendEventOrderOp>([&](auto op) {
+      .Case<schedule::NativeSuspendEventOrderOp>([&](auto op) {
         llvm::append_range(watched, op.getEvents());
         watchedEdges.append(op.getEvents().size(), noEdge);
       })
-      .Case<sim::SimSuspendMailboxOp>([&](auto op) {
+      .Case<schedule::NativeSuspendMailboxOp>([&](auto op) {
         watched.push_back(op.getMailbox());
         watchedEdges.push_back(noEdge);
       })
-      .Case<sim::SimSuspendSemaphoreOp>([&](auto op) {
+      .Case<schedule::NativeSuspendSemaphoreOp>([&](auto op) {
         watched.push_back(op.getSemaphore());
         watchedEdges.push_back(noEdge);
       })
-      .Case<sim::SimSuspendAwaitOp>([&](auto op) {
+      .Case<schedule::NativeSuspendAwaitOp>([&](auto op) {
         watched.push_back(op.getProcess());
         watchedEdges.push_back(noEdge);
       })
-      .Case<sim::SimSuspendJoinOp>([&](auto op) {
+      .Case<schedule::NativeSuspendJoinOp>([&](auto op) {
         llvm::append_range(watched, op.getProcesses());
         watchedEdges.append(op.getProcesses().size(), noEdge);
       });
   if (watched.size() != watchedEdges.size())
     return operation->emitError("wait handle and edge inventories disagree");
   auto waitWidths =
-      operation->getAttrOfType<DenseI32ArrayAttr>("obelisk.coro.wait_widths");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeWaitWidths>(
+          operation);
   if (!watched.empty() &&
       (!waitWidths || static_cast<size_t>(waitWidths.size()) != watched.size()))
     return operation->emitError("wait handle and width inventories disagree");
@@ -160,8 +165,8 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
     uint64_t entryOffset = waitHeaderSize + index * waitEntrySize;
     Operation *binding = getConvertedObserverBinding(value);
     if (binding) {
-      auto observerID =
-          binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id");
+      auto observerID = ::obelisk::schedule::get<
+          ::obelisk::schedule::Field::NativeObserverId>(binding);
       auto captures = getConvertedObserverCaptures(binding);
       if (!observerID || captures.size() > UINT32_MAX)
         return binding->emitOpError("has malformed clock-condition metadata");

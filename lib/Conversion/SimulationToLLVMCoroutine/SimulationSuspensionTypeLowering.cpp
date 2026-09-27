@@ -1,6 +1,8 @@
 //===- SimulationSuspensionTypeLowering.cpp - Suspension type rewrites ----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -192,28 +194,30 @@ public:
       dependencyCaptureIndices.push_back(-1);
     }
 
-    // IEEE 1800-2017 31.7 makes this a zero-time condition descriptor, not a
-    // process value. End its semantic lifetime at the type-conversion
-    // boundary and retain only a standard conversion bridge until the
-    // suspension serializer consumes the descriptor and its captures. This
-    // avoids manufacturing an integer-typed sim.observer.bind operation.
-    auto bridge = UnrealizedConversionCastOp::create(
-        rewriter, operation.getLoc(), results, flatten(adaptor.getOperands()));
-    bridge->setAttrs(operation->getAttrs());
-    bridge->setAttr("obelisk.coro.observer_id",
-                    rewriter.getI64IntegerAttr(
-                        static_cast<uint64_t>(*evaluator.getCodeUnitId())));
-    bridge->setAttr("obelisk.coro.observer_width",
-                    rewriter.getI32IntegerAttr(*resultWidth));
-    bridge->setAttr("obelisk.coro.observer_four_state",
-                    rewriter.getBoolAttr(isa<sim::LogicType>(observerType)));
-    bridge->setAttr("obelisk.coro.dependency_kinds",
-                    rewriter.getDenseI32ArrayAttr(dependencyKinds));
-    bridge->setAttr("obelisk.coro.dependency_widths",
-                    rewriter.getDenseI32ArrayAttr(dependencyWidths));
-    bridge->setAttr("obelisk.coro.dependency_capture_indices",
-                    rewriter.getDenseI32ArrayAttr(dependencyCaptureIndices));
-    rewriter.replaceOp(operation, bridge.getResults());
+    auto bridge = schedule::NativeObserverOp::create(
+        rewriter, operation.getLoc(), results.front(),
+        flatten(adaptor.getOperands()),
+        rewriter.getI64IntegerAttr(operation.getCaptureCount()));
+    for (NamedAttribute attribute : operation->getAttrs())
+      if (auto field = schedule::symbolizeField(attribute.getName().getValue()))
+        schedule::set(bridge, *field, attribute.getValue());
+    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeObserverId>(
+        bridge, rewriter.getI64IntegerAttr(
+                    static_cast<uint64_t>(*evaluator.getCodeUnitId())));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeObserverWidth>(
+        bridge, rewriter.getI32IntegerAttr(*resultWidth));
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::NativeObserverFourState>(
+        bridge, rewriter.getBoolAttr(isa<sim::LogicType>(observerType)));
+    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeDependencyKinds>(
+        bridge, rewriter.getDenseI32ArrayAttr(dependencyKinds));
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::NativeDependencyWidths>(
+        bridge, rewriter.getDenseI32ArrayAttr(dependencyWidths));
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::NativeDependencyCaptureIndices>(
+        bridge, rewriter.getDenseI32ArrayAttr(dependencyCaptureIndices));
+    rewriter.replaceOp(operation, bridge.getResult());
     return success();
   }
 };
@@ -256,16 +260,23 @@ public:
          index != converted.size(); ++index)
       llvm::append_range(operands, converted[index]);
 
-    OperationState state(operation.getLoc(), operation->getName());
+    OperationState state(operation.getLoc(),
+                         schedule::NativeSuspendObserveOp::getOperationName());
     state.addOperands(operands);
     state.addSuccessors(operation->getSuccessors());
     state.addAttributes(operation->getAttrs());
-    state.addAttribute("obelisk.coro.initial_plane_counts",
-                       rewriter.getDenseI32ArrayAttr(initialPlaneCounts));
-    state.addAttribute("obelisk.coro.condition_operand_begin",
-                       rewriter.getI64IntegerAttr(conditionBegin));
-    state.addAttribute("obelisk.coro.continuation_operand_begin",
-                       rewriter.getI64IntegerAttr(continuationBegin));
+    state.addAttribute(
+        ::obelisk::schedule::getFieldName(
+            ::obelisk::schedule::Field::NativeInitialPlaneCounts),
+        rewriter.getDenseI32ArrayAttr(initialPlaneCounts));
+    state.addAttribute(
+        ::obelisk::schedule::getFieldName(
+            ::obelisk::schedule::Field::NativeConditionOperandBegin),
+        rewriter.getI64IntegerAttr(conditionBegin));
+    state.addAttribute(
+        ::obelisk::schedule::getFieldName(
+            ::obelisk::schedule::Field::NativeContinuationOperandBegin),
+        rewriter.getI64IntegerAttr(continuationBegin));
     rewriter.replaceOp(operation, rewriter.create(state));
     return success();
   }
@@ -284,7 +295,8 @@ public:
     if (activation.size() != 1)
       return operation.emitOpError(
           "control activation must lower to one value");
-    OperationState state(operation.getLoc(), operation->getName());
+    OperationState state(operation.getLoc(),
+                         schedule::NativeControlBoundaryOp::getOperationName());
     state.addOperands(activation);
     state.addOperands(resume);
     state.addSuccessors(operation->getSuccessors());
@@ -295,7 +307,7 @@ public:
   }
 };
 
-template <typename Op>
+template <typename Op, typename NativeOp>
 class SimSuspendTypeConversion final : public OpConversionPattern<Op> {
 public:
   using OpConversionPattern<Op>::OpConversionPattern;
@@ -304,13 +316,14 @@ public:
   matchAndRewrite(Op operation,
                   typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    OperationState state(operation.getLoc(), operation->getName());
+    OperationState state(operation.getLoc(), NativeOp::getOperationName());
     state.addOperands(flatten(adaptor.getOperands()));
     state.addSuccessors(operation->getSuccessors());
     state.addAttributes(operation->getAttrs());
     SmallVector<int32_t> waitWidths = suspensionWaitWidths(operation);
     if (!waitWidths.empty())
-      state.addAttribute("obelisk.coro.wait_widths",
+      state.addAttribute(::obelisk::schedule::getFieldName(
+                             ::obelisk::schedule::Field::NativeWaitWidths),
                          rewriter.getDenseI32ArrayAttr(waitWidths));
     rewriter.replaceOp(operation, rewriter.create(state));
     return success();
@@ -323,22 +336,38 @@ void populateSuspensionTypeConversionPatterns(RewritePatternSet &patterns,
                                               TypeConverter &converter) {
   patterns.add<SimObserverBindTypeConversion, SimSuspendObserveTypeConversion,
                SimControlBoundaryTypeConversion,
-               SimSuspendTypeConversion<sim::SimSuspendDelayOp>,
-               SimSuspendTypeConversion<sim::SimSuspendChangeOp>,
-               SimSuspendTypeConversion<sim::SimSuspendEdgeOp>,
-               SimSuspendTypeConversion<sim::SimSuspendEdgeIffOp>,
-               SimSuspendTypeConversion<sim::SimSuspendLevelOp>,
-               SimSuspendTypeConversion<sim::SimSuspendAnyOp>,
-               SimSuspendTypeConversion<sim::SimSuspendClockSetOp>,
-               SimSuspendTypeConversion<sim::SimSuspendEventOp>,
-               SimSuspendTypeConversion<sim::SimSuspendEventOrderOp>,
-               SimSuspendTypeConversion<sim::SimSuspendMailboxOp>,
-               SimSuspendTypeConversion<sim::SimSuspendSemaphoreOp>,
-               SimSuspendTypeConversion<sim::SimSuspendForeverOp>,
-               SimSuspendTypeConversion<sim::SimSuspendAwaitOp>,
-               SimSuspendTypeConversion<sim::SimSuspendJoinOp>,
-               SimSuspendTypeConversion<sim::SimSuspendChildrenOp>,
-               SimSuspendTypeConversion<sim::SimProcessControlOp>>(
+               SimSuspendTypeConversion<sim::SimSuspendDelayOp,
+                                        schedule::NativeSuspendDelayOp>,
+               SimSuspendTypeConversion<sim::SimSuspendChangeOp,
+                                        schedule::NativeSuspendChangeOp>,
+               SimSuspendTypeConversion<sim::SimSuspendEdgeOp,
+                                        schedule::NativeSuspendEdgeOp>,
+               SimSuspendTypeConversion<sim::SimSuspendEdgeIffOp,
+                                        schedule::NativeSuspendEdgeIffOp>,
+               SimSuspendTypeConversion<sim::SimSuspendLevelOp,
+                                        schedule::NativeSuspendLevelOp>,
+               SimSuspendTypeConversion<sim::SimSuspendAnyOp,
+                                        schedule::NativeSuspendAnyOp>,
+               SimSuspendTypeConversion<sim::SimSuspendClockSetOp,
+                                        schedule::NativeSuspendClockSetOp>,
+               SimSuspendTypeConversion<sim::SimSuspendEventOp,
+                                        schedule::NativeSuspendEventOp>,
+               SimSuspendTypeConversion<sim::SimSuspendEventOrderOp,
+                                        schedule::NativeSuspendEventOrderOp>,
+               SimSuspendTypeConversion<sim::SimSuspendMailboxOp,
+                                        schedule::NativeSuspendMailboxOp>,
+               SimSuspendTypeConversion<sim::SimSuspendSemaphoreOp,
+                                        schedule::NativeSuspendSemaphoreOp>,
+               SimSuspendTypeConversion<sim::SimSuspendForeverOp,
+                                        schedule::NativeSuspendForeverOp>,
+               SimSuspendTypeConversion<sim::SimSuspendAwaitOp,
+                                        schedule::NativeSuspendAwaitOp>,
+               SimSuspendTypeConversion<sim::SimSuspendJoinOp,
+                                        schedule::NativeSuspendJoinOp>,
+               SimSuspendTypeConversion<sim::SimSuspendChildrenOp,
+                                        schedule::NativeSuspendChildrenOp>,
+               SimSuspendTypeConversion<sim::SimProcessControlOp,
+                                        schedule::NativeProcessControlOp>>(
       converter, patterns.getContext());
 }
 

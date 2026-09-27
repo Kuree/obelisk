@@ -1,8 +1,8 @@
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -27,6 +27,15 @@
 using namespace mlir;
 
 namespace obelisk {
+Type getNativeProcessDescriptorType(MLIRContext *context) {
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = IntegerType::get(context, 32);
+  Type i64 = IntegerType::get(context, 64);
+  auto handle = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64});
+  return LLVM::LLVMStructType::getLiteral(
+      context, {handle, i32, i32, i32, i32, pointer, pointer, pointer, pointer,
+                pointer, pointer, pointer});
+}
 namespace {
 
 constexpr StringLiteral kMaterializedAttr = "obelisk.execution.materialized";
@@ -702,6 +711,22 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   if (module->hasAttr("obelisk_sim.has_dpi_exports") &&
       failed(collectDPIExports(module, bytecodeOnly, pointer, i32, exports)))
     return failure();
+
+  // The activation table and process bodies are materialized by separate
+  // passes. Declare the exact descriptor ABI before taking its address.
+  if (!bytecodeOnly) {
+    OpBuilder builder(context);
+    builder.setInsertionPointToStart(module.getBody());
+    for (const ActivationInfo &activation : activations) {
+      std::string name = activation.symbol + ".__obelisk_process_descriptor";
+      if (module.lookupSymbol(name))
+        return module.emitError("duplicate native process descriptor symbol: ")
+               << name;
+      LLVM::GlobalOp::create(builder, module.getLoc(),
+                             getNativeProcessDescriptorType(context), true,
+                             LLVM::Linkage::External, name, Attribute{}, 8);
+    }
+  }
 
   Type activationType =
       LLVM::LLVMStructType::getLiteral(context, {i64, pointer, i32, i32});

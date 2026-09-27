@@ -143,4 +143,56 @@ def ObeliskSimOptimizeNativeRegionsPass
 }
 
 
+def AnnotateCompactNativeNBAPass : Pass<"schedule-annotate-compact-nba", "mlir::ModuleOp"> {
+  let summary = "Propagate selected native NBA proofs to their consuming operations";
+}
+def SpecializeNativeCapturesPass : Pass<"schedule-specialize-native-captures", "mlir::ModuleOp"> {
+  let summary = "schedule specialize native captures";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Actors phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def MarkCleanNativeNBAPass : Pass<"schedule-mark-clean-native-nba", "mlir::ModuleOp"> {
+  let summary = "schedule mark clean native nba";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    Roots phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+def SpecializeNativeEvalPass : Pass<"schedule-specialize-native-eval", "mlir::ModuleOp"> {
+  let summary = "schedule specialize native eval";
+  let description = [{
+    Runs as a module pass in the native scheduling pipeline. Requires the
+    CleanNBA phase of the preserved native frame and schedule analysis; this
+    preserves the canonical fallback ABI across native-only rewrites.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect",
+    "obelisk::runtime::ObeliskRuntimeDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+    "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+  ];
+}
+
 #endif

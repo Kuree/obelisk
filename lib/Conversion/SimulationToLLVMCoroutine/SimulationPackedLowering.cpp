@@ -2,7 +2,9 @@
 
 #include "SimulationPackedLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
@@ -1014,6 +1016,7 @@ LogicalResult lowerPackedSimulationOperations(
                       sim::SimUnionExtractOp, sim::SimUnionIsActiveOp>();
     target.addLegalDialect<runtime::ObeliskRuntimeDialect>();
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
+    target.addLegalDialect<schedule::ScheduleDialect>();
     target.addDynamicallyLegalOp<sim::SimFuncOp>([&](sim::SimFuncOp function) {
       return c.isSignatureLegal(function.getFunctionType()) &&
              c.isLegal(&function.getBody());
@@ -1039,6 +1042,16 @@ LogicalResult lowerPackedSimulationOperations(
     });
     target.addDynamicallyLegalOp<cf::BranchOp, cf::CondBranchOp>(
         [&](Operation *operation) { return c.isLegal(operation); });
+    target.addIllegalOp<
+        sim::SimSuspendDelayOp, sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+        sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp, sim::SimSuspendAnyOp,
+        sim::SimSuspendClockSetOp, sim::SimSuspendEventOp,
+        sim::SimSuspendEventOrderOp, sim::SimSuspendMailboxOp,
+        sim::SimSuspendSemaphoreOp, sim::SimSuspendObserveOp,
+        sim::SimSuspendForeverOp, sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
+        sim::SimSuspendChildrenOp, sim::SimSpawnOp>();
+    target.addIllegalOp<sim::SimProcessControlOp, sim::SimControlBoundaryOp,
+                        sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>();
     target.addDynamicallyLegalOp<ModuleOp>(hasNoLogic);
     target.markUnknownOpDynamicallyLegal(hasNoLogic);
   };
@@ -1142,6 +1155,16 @@ LogicalResult lowerPackedSimulationOperations(
   if (specializedBlockArguments.wasInterrupted())
     return failure();
   markTiming("two-state block specialization");
+  SmallVector<runtime::RTScratchOp> scratchBuffers;
+  module.walk(
+      [&](runtime::RTScratchOp scratch) { scratchBuffers.push_back(scratch); });
+  for (auto scratch : scratchBuffers) {
+    OpBuilder builder(scratch);
+    auto native = schedule::NativeScratchOp::create(
+        builder, scratch.getLoc(), scratch.getType(), scratch.getSizeAttr());
+    scratch.replaceAllUsesWith(native.getResult());
+    scratch.erase();
+  }
   if (failed(threadRuntimeStatuses(module)))
     return failure();
   markTiming("runtime status threading");

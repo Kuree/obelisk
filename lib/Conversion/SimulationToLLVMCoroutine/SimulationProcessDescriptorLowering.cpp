@@ -1,6 +1,7 @@
 //===- SimulationProcessDescriptorLowering.cpp - Process ABI globals -----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -76,9 +77,7 @@ LogicalResult makeProcessDescriptor(
   auto layoutType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, pointer, i32, i32, pointer, i64});
   auto handleType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64});
-  auto descriptorType = LLVM::LLVMStructType::getLiteral(
-      context, {handleType, i32, i32, i32, i32, pointer, pointer, pointer,
-                pointer, pointer, pointer, pointer});
+  Type descriptorType = getNativeProcessDescriptorType(context);
 
   std::string fieldsName = (baseName + ".__obelisk_frame_fields").str();
   std::string continuationsName = (baseName + ".__obelisk_continuations").str();
@@ -178,6 +177,13 @@ LogicalResult makeProcessDescriptor(
             builder, location, layout,
             llvmConstant(builder, location, i64, analysis.getChecksum()), 8);
       });
+  if (auto declaration = module.lookupSymbol<LLVM::GlobalOp>(descriptorName)) {
+    if (!declaration.getInitializerRegion().empty() || declaration.getValue() ||
+        declaration.getGlobalType() != descriptorType)
+      return declaration.emitError(
+          "incompatible native process descriptor definition");
+    declaration.erase();
+  }
   makeConstantGlobal(
       module, location, descriptorType, descriptorName, LLVM::Linkage::External,
       8, [&](OpBuilder &builder) {

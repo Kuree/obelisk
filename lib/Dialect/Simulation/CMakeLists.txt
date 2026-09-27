@@ -15,6 +15,7 @@ add_mlir_library(ObeliskSimulationIR
 
   DEPENDS
   ObeliskScheduleAttrsIncGen
+  ObeliskScheduleOpsIncGen
   ObeliskScheduleDialectIncGen
   ObeliskSimulationDialectIncGen
   ObeliskSimulationEnumsIncGen
@@ -24,7 +25,6 @@ add_mlir_library(ObeliskSimulationIR
   ObeliskVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskScheduleIR
   ObeliskRuntimeIR
   MLIRCallInterfaces
   MLIRArithDialect
@@ -36,6 +36,8 @@ add_mlir_library(ObeliskSimulationIR
   MLIRSideEffectInterfaces
   MLIRViewLikeInterface
 )
+
+target_link_libraries(ObeliskSimulationIR PUBLIC ObeliskScheduleIR)
 
 target_include_directories(ObeliskSimulationIR PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"

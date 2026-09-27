@@ -438,6 +438,19 @@ prepareManagedClassInventory(ModuleOp module,
   bool bytecodeOnly =
       executionFlags && (executionFlags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+  if (!bytecodeOnly) {
+    OpBuilder builder(context);
+    builder.setInsertionPointToStart(module.getBody());
+    for (auto method : methods) {
+      if (!method.getImplementation() || !method.getIsVirtual())
+        continue;
+      LLVM::LLVMFuncOp::create(
+          builder, method.getLoc(), managedMethodThunkName(method.getSymName()),
+          LLVM::LLVMFunctionType::get(
+              i32, {pointer, pointer, pointer, pointer, i32, pointer, i64},
+              false));
+    }
+  }
   llvm::StringMap<uint32_t> bytecodeFunctions;
   module.walk([&](sim::SimFuncOp function) {
     if (auto index =

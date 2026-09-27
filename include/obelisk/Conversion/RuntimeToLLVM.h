@@ -11,6 +11,8 @@
 
 namespace mlir {
 class LLVMTypeConverter;
+class MLIRContext;
+class Type;
 class ModuleOp;
 class RewritePatternSet;
 } // namespace mlir
@@ -23,6 +25,9 @@ namespace obelisk {
 
 inline constexpr llvm::StringLiteral preparedRuntimeByteGlobalsAttr =
     "obelisk_rt.llvm_byte_globals";
+
+/// LLVM type shared by process descriptor declarations and definitions.
+mlir::Type getNativeProcessDescriptorType(mlir::MLIRContext *context);
 
 /// Materialize the always-present execution descriptor and any encoded
 /// simulation bytecode/design database attributes as immutable LLVM globals.

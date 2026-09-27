@@ -672,7 +672,7 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   if (planSemanticPartitions)
     manager.nest<obelisk::sim::SimDesignOp>().addPass(
         createObeliskSimPlanNativePartitionsPass());
-  manager.addPass(createConvertObeliskSimProcessesToLLVMCoroutinesPass());
+  buildSimulationToLLVMCoroutinePipeline(manager);
   if (failed(manager.run(module)))
     return failure();
   return addMinimalMain(module);

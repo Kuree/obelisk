@@ -577,9 +577,9 @@ public:
     Value convertedSampler = adaptor.getValues().back().front();
     Operation *binding = getConvertedObserverBinding(convertedSampler);
     auto observerID =
-        binding
-            ? binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id")
-            : IntegerAttr{};
+        binding ? ::obelisk::schedule::get<
+                      ::obelisk::schedule::Field::NativeObserverId>(binding)
+                : IntegerAttr{};
     if (!binding || !observerID ||
         !getConvertedObserverDependencies(binding).empty())
       return failure();
@@ -632,8 +632,8 @@ public:
       eventCaptureCount += captures;
       dependencyCount += dependencies;
       if (index < primaryCount) {
-        auto width = eventBinding->getAttrOfType<IntegerAttr>(
-            "obelisk.coro.observer_width");
+        auto width = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::NativeObserverWidth>(eventBinding);
         if (!width || width.getValue().isNegative() ||
             width.getValue().isZero() || width.getValue().getActiveBits() > 32)
           return eventBinding->emitOpError("missing converted observer width");
@@ -718,9 +718,9 @@ public:
     Operation *binding =
         getConvertedObserverBinding(adaptor.getSampler().front());
     auto observerID =
-        binding
-            ? binding->getAttrOfType<IntegerAttr>("obelisk.coro.observer_id")
-            : IntegerAttr{};
+        binding ? ::obelisk::schedule::get<
+                      ::obelisk::schedule::Field::NativeObserverId>(binding)
+                : IntegerAttr{};
     if (!binding || !observerID ||
         !getConvertedObserverDependencies(binding).empty())
       return failure();

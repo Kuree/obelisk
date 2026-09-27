@@ -183,6 +183,15 @@ LogicalResult makeNativeAOTPlanLegacy(
   uint32_t nbaDirtySummaryWordCount = (nbaDirtyWordCount + 63) / 64;
   if (nbaDirtyWordCount != 0) {
     Type dirtyType = LLVM::LLVMArrayType::get(i64, nbaDirtyWordCount);
+    if (auto declaration =
+            module.lookupSymbol<LLVM::GlobalOp>(nbaDirtyRootsName)) {
+      if (!declaration.getInitializerRegion().empty() ||
+          declaration.getValue() || declaration.getGlobalType() != dirtyType)
+        return declaration.emitError(
+                   "incompatible native NBA state declaration"),
+               failure();
+      declaration.erase();
+    }
     builder.setInsertionPointToStart(module.getBody());
     auto dirty = LLVM::GlobalOp::create(builder, location, dirtyType, false,
                                         LLVM::Linkage::Internal,
@@ -195,6 +204,15 @@ LogicalResult makeNativeAOTPlanLegacy(
   }
   if (nbaDirtySummaryWordCount != 0) {
     Type summaryType = LLVM::LLVMArrayType::get(i64, nbaDirtySummaryWordCount);
+    if (auto declaration =
+            module.lookupSymbol<LLVM::GlobalOp>(nbaDirtySummaryName)) {
+      if (!declaration.getInitializerRegion().empty() ||
+          declaration.getValue() || declaration.getGlobalType() != summaryType)
+        return declaration.emitError(
+                   "incompatible native NBA state declaration"),
+               failure();
+      declaration.erase();
+    }
     builder.setInsertionPointToStart(module.getBody());
     auto summary = LLVM::GlobalOp::create(builder, location, summaryType, false,
                                           LLVM::Linkage::Internal,

@@ -728,16 +728,6 @@ Operation::operand_range SimSuspendObserveOp::getInitialValues() {
 }
 
 Operation::operand_range SimSuspendObserveOp::getConditions() {
-  if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
-          "obelisk.coro.condition_operand_begin")) {
-    size_t begin = std::min<uint64_t>(converted.getValue().getZExtValue(),
-                                      getNumOperands());
-    size_t count =
-        getConditionCountAttr().getValue().isNegative()
-            ? 0
-            : std::min<uint64_t>(getConditionCount(), getNumOperands() - begin);
-    return getValues().slice(begin, count);
-  }
   size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
   size_t count =
@@ -748,12 +738,6 @@ Operation::operand_range SimSuspendObserveOp::getConditions() {
 }
 
 Operation::operand_range SimSuspendObserveOp::getContinuationOperands() {
-  if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
-          "obelisk.coro.continuation_operand_begin")) {
-    size_t begin = std::min<uint64_t>(converted.getValue().getZExtValue(),
-                                      getNumOperands());
-    return getValues().drop_front(begin);
-  }
   size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
   if (!getConditionCountAttr().getValue().isNegative())
@@ -762,12 +746,6 @@ Operation::operand_range SimSuspendObserveOp::getContinuationOperands() {
 }
 
 MutableOperandRange SimSuspendObserveOp::getContinuationOperandsMutable() {
-  if (auto converted = (*this)->getAttrOfType<IntegerAttr>(
-          "obelisk.coro.continuation_operand_begin")) {
-    size_t begin = std::min<uint64_t>(converted.getValue().getZExtValue(),
-                                      getNumOperands());
-    return MutableOperandRange(getOperation(), begin, getNumOperands() - begin);
-  }
   size_t primaryCount = std::min<size_t>(getEdges().size(), getNumOperands());
   size_t begin = std::min<size_t>(getNumOperands(), primaryCount * 2);
   if (!getConditionCountAttr().getValue().isNegative())

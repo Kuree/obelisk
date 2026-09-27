@@ -1,6 +1,7 @@
 //===- SimulationSchedulerLowering.cpp - Native scheduler support -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -23,7 +24,8 @@ public:
          llvm::zip_equal(op.getOperands(), adaptor.getOperands()))
       if (isa<sim::RefType>(operand.getType()) && converted.size() == 1)
         emitNativeStateRetain(rewriter, op.getLoc(), converted.front());
-    OperationState state(op.getLoc(), op->getName());
+    OperationState state(op.getLoc(),
+                         schedule::NativeSpawnOp::getOperationName());
     state.addOperands(flatten(adaptor.getOperands()));
     state.addTypes(rewriter.getI64Type());
     state.addAttributes(op->getAttrs());

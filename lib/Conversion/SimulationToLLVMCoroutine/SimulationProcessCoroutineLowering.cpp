@@ -6,6 +6,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -34,29 +35,30 @@ namespace {
 
 uint32_t suspensionKind(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
-      .Case<sim::SimSuspendDelayOp>(
+      .Case<schedule::NativeSuspendDelayOp>(
           [](auto) { return OBELISK_RT_SUSPEND_DELAY; })
-      .Case<sim::SimSuspendChangeOp, sim::SimSuspendLevelOp>(
+      .Case<schedule::NativeSuspendChangeOp, schedule::NativeSuspendLevelOp>(
           [](auto) { return OBELISK_RT_SUSPEND_CHANGE; })
-      .Case<sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-            sim::SimSuspendAnyOp, sim::SimSuspendClockSetOp>(
+      .Case<schedule::NativeSuspendEdgeOp, schedule::NativeSuspendEdgeIffOp,
+            schedule::NativeSuspendAnyOp, schedule::NativeSuspendClockSetOp>(
           [](auto) { return OBELISK_RT_SUSPEND_EDGE; })
-      .Case<sim::SimSuspendEventOp>(
+      .Case<schedule::NativeSuspendEventOp>(
           [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
-      .Case<sim::SimSuspendEventOrderOp>(
+      .Case<schedule::NativeSuspendEventOrderOp>(
           [](auto) { return OBELISK_RT_SUSPEND_EVENT_ORDER; })
-      .Case<sim::SimSuspendMailboxOp>(
+      .Case<schedule::NativeSuspendMailboxOp>(
           [](auto) { return OBELISK_RT_SUSPEND_MAILBOX; })
-      .Case<sim::SimSuspendSemaphoreOp>(
+      .Case<schedule::NativeSuspendSemaphoreOp>(
           [](auto) { return OBELISK_RT_SUSPEND_SEMAPHORE; })
-      .Case<sim::SimSuspendAwaitOp>(
+      .Case<schedule::NativeSuspendAwaitOp>(
           [](auto) { return OBELISK_RT_SUSPEND_AWAIT; })
-      .Case<sim::SimSuspendJoinOp>([](auto) { return OBELISK_RT_SUSPEND_JOIN; })
-      .Case<sim::SimSuspendForeverOp>(
+      .Case<schedule::NativeSuspendJoinOp>(
+          [](auto) { return OBELISK_RT_SUSPEND_JOIN; })
+      .Case<schedule::NativeSuspendForeverOp>(
           [](auto) { return OBELISK_RT_SUSPEND_FOREVER; })
-      .Case<sim::SimSuspendChildrenOp>(
+      .Case<schedule::NativeSuspendChildrenOp>(
           [](auto) { return OBELISK_RT_SUSPEND_CHILDREN; })
-      .Case<sim::SimSuspendObserveOp>(
+      .Case<schedule::NativeSuspendObserveOp>(
           [](auto) { return OBELISK_RT_SUSPEND_OBSERVER; })
       .Default([](Operation *) { return OBELISK_RT_SUSPEND_NONE; });
 }
@@ -130,11 +132,14 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   Location location = operation->getLoc();
   auto branch = cast<BranchOpInterface>(operation);
   auto continuationAttr =
-      operation->getAttrOfType<IntegerAttr>("obelisk.coro.continuation");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeContinuation>(
+          operation);
   auto waitOffsetAttr =
-      operation->getAttrOfType<IntegerAttr>("obelisk.coro.wait_offset");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeWaitOffset>(
+          operation);
   auto waitSizeAttr =
-      operation->getAttrOfType<IntegerAttr>("obelisk.coro.wait_size");
+      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeWaitSize>(
+          operation);
   if (!continuationAttr || !waitOffsetAttr || !waitSizeAttr)
     return operation->emitError("missing coroutine frame analysis metadata");
   uint32_t continuationID = continuationAttr.getInt();
@@ -164,7 +169,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     return operation->emitError(
         "converted continuation arity disagrees with frame analysis");
 
-  if (auto control = dyn_cast<sim::SimProcessControlOp>(operation)) {
+  if (auto control = dyn_cast<schedule::NativeProcessControlOp>(operation)) {
     Type i32 = builder.getI32Type();
     Type i64 = builder.getI64Type();
     Value disposition = entryAlloca(builder, location, i32, 1, 4);
@@ -265,7 +270,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     return success();
   }
 
-  if (auto boundary = dyn_cast<sim::SimControlBoundaryOp>(operation)) {
+  if (auto boundary = dyn_cast<schedule::NativeControlBoundaryOp>(operation)) {
     auto [context, lane] = managedContextAndLane(builder, location);
     (void)lane;
     Value status =
@@ -286,7 +291,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     return success();
   }
 
-  if (auto task = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+  if (auto task = dyn_cast<schedule::NativeClassVirtualTaskCallOp>(operation)) {
     Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
     Type i32 = builder.getI32Type();
     Type i64 = builder.getI64Type();
@@ -404,7 +409,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
         lane, managedObjectPointer(builder, location, task.getReceiver())};
     StringRef activationName = "obelisk_rt_v1_method_task_activate";
     auto method =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+        SymbolTable::lookupNearestSymbolFrom<schedule::NativeMethodOp>(
             task, task.getMethodAttr());
     auto owner =
         method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -502,7 +507,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     return success();
   }
 
-  if (auto task = dyn_cast<sim::SimTaskCallOp>(operation)) {
+  if (auto task = dyn_cast<schedule::NativeTaskCallOp>(operation)) {
     Type i32 = builder.getI32Type();
     Type i64 = builder.getI64Type();
     storeAt(builder, location, instance, kInstanceContinuationField,
@@ -545,12 +550,12 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   uint64_t waitOffset = waitOffsetAttr.getInt();
   uint64_t waitSize = waitSizeAttr.getInt();
   uint32_t kind = suspensionKind(operation);
-  uint32_t count = sim::getWaitEntryCount(operation);
+  uint32_t count = schedule::getNativeWaitEntryCount(operation);
   Value wait = byteGEP(builder, location, frame, waitOffset);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   SmallVector<Operation *> observerBindings;
-  if (isa<sim::SimSuspendObserveOp>(operation)) {
+  if (isa<schedule::NativeSuspendObserveOp>(operation)) {
     if (failed(serializeComputedObserverWait(operation, wait, waitSize, builder,
                                              observerBindings)))
       return failure();
@@ -630,7 +635,7 @@ prepareSuspendableProcess(sim::SimFuncOp function,
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
   bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
   bool taskCaller = false;
-  function.walk([&](sim::SimTaskCallOp) { taskCaller = true; });
+  function.walk([&](schedule::NativeTaskCallOp) { taskCaller = true; });
   // Closed evaluators already have a direct group executor. Preserve their
   // fragment fallback; ordinary activation entries are needed by groups that
   // execute under descriptor scheduling without that evaluator.
@@ -648,9 +653,9 @@ prepareSuspendableProcess(sim::SimFuncOp function,
     function.walk([&](Operation *operation) {
       if (!sim::isSuspensionOp(operation))
         return;
-      if (!isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
-               sim::SimSuspendAnyOp, sim::SimSuspendDelayOp,
-               sim::SimTaskCallOp>(operation)) {
+      if (!isa<schedule::NativeSuspendChangeOp, schedule::NativeSuspendEdgeOp,
+               schedule::NativeSuspendAnyOp, schedule::NativeSuspendDelayOp,
+               schedule::NativeTaskCallOp>(operation)) {
         directActivation = false;
         return;
       }
@@ -796,9 +801,8 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   blocks.cleanup = new Block;
   bool canTerminate = false;
   ramp.walk([&](Operation *operation) {
-    canTerminate |=
-        isa<sim::SimReturnOp, sim::SimStatusCheckOp, sim::SimProcessControlOp>(
-            operation);
+    canTerminate |= isa<sim::SimReturnOp, sim::SimStatusCheckOp,
+                        schedule::NativeProcessControlOp>(operation);
   });
   blocks.terminate = canTerminate ? new Block : nullptr;
   ramp.getBody().push_back(blocks.cleanup);
@@ -821,8 +825,9 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     size_t argumentIndex = 0;
     uint32_t continuationID = 0;
     for (Block *predecessor : continuation->getPredecessors())
-      if (auto id = predecessor->getTerminator()->getAttrOfType<IntegerAttr>(
-              "obelisk.coro.continuation")) {
+      if (auto id = ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::NativeContinuation>(
+              predecessor->getTerminator())) {
         uint32_t idValue = id.getInt();
         if (continuationID == 0)
           continuationID = idValue;

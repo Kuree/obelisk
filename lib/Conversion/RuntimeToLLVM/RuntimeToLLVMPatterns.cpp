@@ -2,6 +2,7 @@
 
 #include "RuntimeToLLVMPatterns.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Runtime/RuntimeABI.h"
@@ -359,8 +360,10 @@ public:
       return success();
     }
     case RuntimeMaterializer::Scratch: {
-      auto op = cast<runtime::RTScratchOp>(operation);
-      uint64_t size = op.getSize();
+      uint64_t size =
+          isa<runtime::RTScratchOp>(operation)
+              ? cast<runtime::RTScratchOp>(operation).getSize()
+              : cast<schedule::NativeScratchOp>(operation).getSize();
       auto arrayType = LLVM::LLVMArrayType::get(abi.i8, size);
       FailureOr<Value> address = allocateAtFunctionEntry(
           operation, rewriter, abi, arrayType, 1, abi.alignments.i8, true);
@@ -1202,6 +1205,9 @@ void populateRuntimePatterns(const TypeConverter &converter,
       context, abi)
   OBELISK_RUNTIME_MATERIALIZER(RTBytesConstantOp, BytesConstant);
   OBELISK_RUNTIME_MATERIALIZER(RTScratchOp, Scratch);
+  patterns.add<RuntimeMaterializerLowering>(
+      converter, schedule::NativeScratchOp::getOperationName(),
+      RuntimeMaterializer::Scratch, context, abi);
   OBELISK_RUNTIME_MATERIALIZER(RTBytesSizeOp, BytesSize);
   OBELISK_RUNTIME_MATERIALIZER(RTPackedFromBytesOp, PackedFromBytes);
   OBELISK_RUNTIME_MATERIALIZER(RTArgumentEmptyOp, ArgumentEmpty);

@@ -1,6 +1,7 @@
 //===- SimulationManagedLowering.cpp - Managed runtime lowering -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
@@ -670,8 +671,8 @@ private:
 LogicalResult
 materializeManagedMethodThunks(ModuleOp module,
                                const llvm::DataLayout &dataLayout) {
-  SmallVector<sim::SimClassMethodDeclOp> methods;
-  module.walk([&](sim::SimClassMethodDeclOp method) {
+  SmallVector<schedule::NativeMethodOp> methods;
+  module.walk([&](schedule::NativeMethodOp method) {
     if (method.getImplementation() && method.getIsVirtual())
       methods.push_back(method);
   });
@@ -679,17 +680,20 @@ materializeManagedMethodThunks(ModuleOp module,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
-  llvm::StringSet<> existingSymbols;
-  for (Operation &operation : *module.getBody())
-    if (StringAttr name = SymbolTable::getSymbolName(&operation))
-      existingSymbols.insert(name.getValue());
+
   SymbolTableCollection symbolTables;
   llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
   llvm::LLVMContext llvmContext;
-  for (sim::SimClassMethodDeclOp method : methods) {
+  for (schedule::NativeMethodOp method : methods) {
     std::string thunkName = managedMethodThunkName(method.getSymName());
-    if (!existingSymbols.insert(thunkName).second)
-      continue;
+    if (auto declaration = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName)) {
+      auto expected = LLVM::LLVMFunctionType::get(
+          i32, {pointer, pointer, pointer, pointer, i32, pointer, i64}, false);
+      if (!declaration.isExternal() ||
+          declaration.getFunctionType() != expected)
+        return declaration.emitError("incompatible native method declaration");
+      declaration.erase();
+    }
     OpBuilder builder(context);
     if (method.getIsTask()) {
       auto implementation =

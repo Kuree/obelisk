@@ -232,3 +232,18 @@ def ConcurrentCancelObserver : ScheduleField<"ConcurrentCancelObserver", "schedu
 def ConcurrentAbortObserver : ScheduleField<"ConcurrentAbortObserver", "schedule.concurrent_abort_observer", "::mlir::UnitAttr">;
 def ConcurrentCancelObserverRequest : ScheduleField<"ConcurrentCancelObserverRequest", "schedule.concurrent_cancel_observer_request", "::mlir::ArrayAttr">;
 def ConcurrentAbortObserverRequest : ScheduleField<"ConcurrentAbortObserverRequest", "schedule.concurrent_abort_observer_request", "::mlir::ArrayAttr">;
+
+// Physical scheduling metadata retained across native representation conversion.
+def NativeConditionOperandBegin : ScheduleField<"NativeConditionOperandBegin", "schedule.native.condition_operand_begin", "::mlir::IntegerAttr">;
+def NativeContinuation : ScheduleField<"NativeContinuation", "schedule.native.continuation", "::mlir::IntegerAttr">;
+def NativeContinuationOperandBegin : ScheduleField<"NativeContinuationOperandBegin", "schedule.native.continuation_operand_begin", "::mlir::IntegerAttr">;
+def NativeDependencyCaptureIndices : ScheduleField<"NativeDependencyCaptureIndices", "schedule.native.dependency_capture_indices", "::mlir::DenseI32ArrayAttr">;
+def NativeDependencyKinds : ScheduleField<"NativeDependencyKinds", "schedule.native.dependency_kinds", "::mlir::DenseI32ArrayAttr">;
+def NativeDependencyWidths : ScheduleField<"NativeDependencyWidths", "schedule.native.dependency_widths", "::mlir::DenseI32ArrayAttr">;
+def NativeInitialPlaneCounts : ScheduleField<"NativeInitialPlaneCounts", "schedule.native.initial_plane_counts", "::mlir::DenseI32ArrayAttr">;
+def NativeObserverFourState : ScheduleField<"NativeObserverFourState", "schedule.native.observer_four_state", "::mlir::BoolAttr">;
+def NativeObserverId : ScheduleField<"NativeObserverId", "schedule.native.observer_id", "::mlir::IntegerAttr">;
+def NativeObserverWidth : ScheduleField<"NativeObserverWidth", "schedule.native.observer_width", "::mlir::IntegerAttr">;
+def NativeWaitOffset : ScheduleField<"NativeWaitOffset", "schedule.native.wait_offset", "::mlir::IntegerAttr">;
+def NativeWaitSize : ScheduleField<"NativeWaitSize", "schedule.native.wait_size", "::mlir::IntegerAttr">;
+def NativeWaitWidths : ScheduleField<"NativeWaitWidths", "schedule.native.wait_widths", "::mlir::DenseI32ArrayAttr">;

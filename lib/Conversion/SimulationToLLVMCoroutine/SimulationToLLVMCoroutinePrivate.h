@@ -446,7 +446,8 @@ mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
                                       const NativeStateLayout &stateLayout,
-                                      bool useAOT, bool directEval);
+                                      bool useAOT, bool directEval,
+                                      bool hasObserver);
 void declareNativeRuntimeABI(mlir::ModuleOp module);
 mlir::FailureOr<NativeStateLayout>
 buildNativeStateLayout(mlir::ModuleOp module);

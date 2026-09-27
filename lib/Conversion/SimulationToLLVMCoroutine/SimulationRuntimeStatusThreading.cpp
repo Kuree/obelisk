@@ -1,6 +1,7 @@
 //===- SimulationRuntimeStatusThreading.cpp - Thread runtime statuses ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -51,8 +52,8 @@ LogicalResult threadRuntimeStatuses(ModuleOp module) {
   for (sim::SimFuncOp function : orderedFunctions) {
     bool hasCheck = false;
     function.walk([&](Operation *operation) {
-      hasCheck |=
-          isa<sim::SimStatusCheckOp, sim::SimProcessControlOp>(operation);
+      hasCheck |= isa<sim::SimStatusCheckOp, sim::SimProcessControlOp,
+                      schedule::NativeProcessControlOp>(operation);
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         calls.push_back(call);
         if (sim::SimFuncOp callee =

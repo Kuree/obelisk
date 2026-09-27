@@ -24,9 +24,12 @@ add_mlir_library(ObeliskScheduleTransforms
 
 add_mlir_library(ObeliskScheduleNativeTransforms
   PARTIAL_SOURCES_INTENDED
+  NativeSpecializationPasses.cpp
   MarkCleanStaticNBA.cpp
   NativeEvalSpecialization.cpp
   SpecializeNativeCaptures.cpp
+  DEPENDS
+  ObeliskSchedulePassIncGen
   LINK_LIBS PUBLIC
   ObeliskSimulationIR
   ObeliskSimulationAnalysis

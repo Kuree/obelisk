@@ -3,6 +3,7 @@
 #include "SimulationProcessFunctionLowering.h"
 #include "SimulationProcessWrapperLowering.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Conversion/SimulationTimeLowering.h"
@@ -28,9 +29,10 @@ namespace {
 // available, return a checked lifecycle failure instead of miscompiling the
 // continuation. Bytecode retains the complete callable-control behavior.
 LogicalResult lowerCallableProcessControls(func::FuncOp function) {
-  SmallVector<sim::SimProcessControlOp> controls;
-  function.walk(
-      [&](sim::SimProcessControlOp control) { controls.push_back(control); });
+  SmallVector<schedule::NativeProcessControlOp> controls;
+  function.walk([&](schedule::NativeProcessControlOp control) {
+    controls.push_back(control);
+  });
   if (controls.empty())
     return success();
   if (function.getResultTypes().empty() ||
@@ -56,7 +58,7 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
     return success();
   };
 
-  for (sim::SimProcessControlOp control : controls) {
+  for (schedule::NativeProcessControlOp control : controls) {
     Location location = control.getLoc();
     Value controlledProcess = control.getProcess();
     sim::ProcessControlKind controlKind = control.getKind();
