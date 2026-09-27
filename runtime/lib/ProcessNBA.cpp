@@ -78,6 +78,10 @@ static void recordStaticNBATransient(StaticNBAAccumulator &accumulator,
 uint32_t nextDueNativeNBABarrierRegionUnlocked(
     const obelisk_rt_context *context, bool includeGenerated) {
   uint32_t region = UINT32_MAX;
+  // IEEE 1800-2023 4.4.2.4, 4.4.2.8, 4.5: static accumulators commit
+  // only in NBA or Re-NBA. Once the earliest eligible region is found,
+  // scanning the rest of a generated batch cannot change the barrier.
+  const uint32_t earliest = nativeNBABarrierLowerBound(context);
   auto inspectRoot = [&](uint32_t root) {
     if (root < context->staticNBAAccumulators.size()) {
       const StaticNBAAccumulator &accumulator =
@@ -117,6 +121,8 @@ uint32_t nextDueNativeNBABarrierRegionUnlocked(
           if (root >= plan->nba_root_count)
             break;
           inspectRoot(static_cast<uint32_t>(root));
+          if (region == earliest)
+            return region;
         }
       }
     }
@@ -126,8 +132,11 @@ uint32_t nextDueNativeNBABarrierRegionUnlocked(
                        : 0;
     if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators)
       count = std::max(count, size_t{context->nativeScheduleNBARootCount});
-    for (size_t root = 0; root < count; ++root)
+    for (size_t root = 0; root < count; ++root) {
       inspectRoot(static_cast<uint32_t>(root));
+      if (region == earliest)
+        return region;
+    }
   }
   return region;
 }

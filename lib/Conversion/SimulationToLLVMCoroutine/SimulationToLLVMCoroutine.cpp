@@ -3437,7 +3437,8 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
         if (inserted) {
           auto provenance = provenanceAnalysis.derive(current);
           auto runtimeStore = [&](Value destination,
-                                  bool requireStaticAccess = true) {
+                                  bool requireStaticAccess = true,
+                                  bool requireStaticNBA = false) {
             auto found = provenance.find(destination);
             if (found == provenance.end() || !found->second.descriptor ||
                 (requireStaticAccess && found->second.dynamic))
@@ -3455,7 +3456,10 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
             return handle != handles.end() &&
                    obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
                    decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
-                   staticFanoutPlan.runtimeTransitionStates.contains(decoded.id);
+                   (staticFanoutPlan.runtimeTransitionStates.contains(
+                        decoded.id) ||
+                    (requireStaticNBA &&
+                     !stateLayout->nbaHandles.contains(decoded.id)));
           };
           current.walk([&](Operation *operation) {
             // Dynamic blocking stores still lower through the runtime's
@@ -3472,10 +3476,14 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
               classification->second |= runtimeStore(store.getNet());
             else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation))
               classification->second |= runtimeStore(drive.getDriver());
-            else if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation))
+            else if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
+              // LRM 4.6(b), 10.4.2: roots excluded from static NBA
+              // specialization (including delayed/immediate mixtures)
+              // keep their complete owner at the ordered runtime queue.
               classification->second |=
                   staticEvalIsland &&
-                  runtimeStore(enqueue.getDestination(), false);
+                  runtimeStore(enqueue.getDestination(), false, true);
+            }
           });
         }
         runtimeLocal |= classification->second;
@@ -3524,13 +3532,16 @@ LogicalResult prepareSimulationProcessesForLLVMCoroutinesImpl(
     if (failed(plan))
       return failure();
     staticNBAPlan = std::move(*plan);
-    // IEEE 1800-2023 4.6(b), 9.4.2, 10.4.2: a runtime-owned calendar needs
-    // one ordered NBA queue, including updates exposed by cold checkpoints.
-    // The generated barrier publishes model ingress and cannot certify the
-    // ordering/notification of that mixed queue. Keep its NBA writers at
-    // runtime checkpoints; the independent Active closure still runs Tier 1.
+    // IEEE 1800-2023 4.4.2.4, 4.5, 4.6(b), 10.4.2: a runtime calendar
+    // shares the NBA barrier with generated Active work. Preserve execution
+    // order whenever intermediate updates are observable (9.4.2).
+    // Scalar merge-safe accumulators are visible to that barrier, so their
+    // writers need no checkpoint. Wide eval latches and ordered queues are
+    // private to the generated barrier and retain runtime ownership here.
     if (module->hasAttr("obelisk.eval.runtime_calendar"))
-      llvm::fill(staticNBAPlan.mergeSafeRoots, false);
+      for (auto [index, root] : llvm::enumerate(staticNBAPlan.roots))
+        if (root.bit_width > 64)
+          staticNBAPlan.mergeSafeRoots[index] = false;
     staticNBA = !staticNBAPlan.roots.empty();
     // The generated queue orders all executions of its certified NBA sites,
     // splitting wide payloads into records. Before packed lowering, retain a
@@ -5080,8 +5091,6 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     }
     return run.emitError("eval function routes have no Tier-2 handoff");
   }
-  Operation *tier2Handoff =
-      prepare ? prepare.getOperation() : eventDrivenRun.getOperation();
   // Periodic wrappers also contain a Tier-2 node-loop fallback. The presence
   // of that fallback does not change their periodic promotion contract.
   bool clocklessEval = !prepare && static_cast<bool>(eventDrivenRun);
@@ -5141,12 +5150,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // IEEE 1800-2023 6.8: a variable retains its value between assignments.
   // Returning from a runtime checkpoint does not itself change knownness.
   // Plan installation invokes promotion_invalidate to seed routes and pending
-  // proofs, including when a fresh context reuses this plan. Clockless runs
-  // retain that state across re-entry; actual X/Z stores still invalidate it.
-  if (!clocklessEval) {
-    builder.setInsertionPoint(tier2Handoff);
-    resetRoutePending(module.getLoc());
-  }
+  // proofs, including when a fresh context reuses this plan. Both periodic
+  // and clockless runs retain that state across checkpoint re-entry; actual
+  // X/Z stores still invalidate it.
   builder.setInsertionPointToStart(module.getBody());
   auto terminationRequested = module.lookupSymbol<LLVM::LLVMFuncOp>(
       "obelisk_rt_v1_scheduler_termination_requested");
@@ -5626,24 +5632,13 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         builder, route.twoState.getLoc(),
         LLVM::ZeroOp::create(builder, route.twoState.getLoc(), pointer));
 
-    // Periodic preparation seeds routes before draining startup. Clockless
-    // runs use the installation-time invalidator and preserve selections at
-    // checkpoint re-entry (IEEE 1800-2023 6.8); they promote at coordinator
-    // exits and invalidate at actual canonical writes.
+    // Installation seeds routes before draining startup. Checkpoint re-entry
+    // preserves selections (IEEE 1800-2023 6.8); promotion follows successful
+    // preparation/coordinator exits and invalidation follows canonical writes.
     StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
                          : route.fourStateFallback
                              ? route.fourStateFallback.getSymName()
                              : route.fourState.getSymName();
-    if (!clocklessEval) {
-      builder.setInsertionPoint(tier2Handoff);
-      LLVM::StoreOp::create(
-          builder, route.twoState.getLoc(),
-          LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                    fallback),
-          LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                    route.globalName),
-          8);
-    }
     if (!route.pathKnownProbe && !route.ranges.empty())
       global->setAttr(
           "obelisk.eval.route_proof_dependencies",
@@ -5653,62 +5648,12 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                     builder.getI64IntegerAttr(routeIndex)),
                builder.getNamedAttr(
                    "fallback", FlatSymbolRefAttr::get(context, fallback))}));
-    if (prepare) {
-      builder.setInsertionPointAfter(prepare);
-      Location location = route.twoState.getLoc();
-      Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                "__obelisk_state_unknown");
-      Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
-      ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
-      if ((encoded.size() & 1) != 0)
-        return route.twoState.emitError("malformed local promotion ranges");
-      for (size_t index = 0; index != encoded.size(); index += 2) {
-        if (encoded[index] < 0 || encoded[index + 1] <= 0)
-          return route.twoState.emitError("invalid local promotion range");
-        uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
-        uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
-        uint64_t firstByte = bitOffset / 8;
-        uint64_t lastBit = bitOffset + bitWidth;
-        uint64_t lastByte = (lastBit + 7) / 8;
-        for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
-          uint8_t mask = UINT8_MAX;
-          if (byte == firstByte && bitOffset % 8 != 0)
-            mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
-          if (byte + 1 == lastByte && lastBit % 8 != 0)
-            mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
-          Value bits = LLVM::LoadOp::create(
-              builder, location, i8,
-              detail::byteGEP(builder, location, unknown, byte), 1);
-          if (mask != UINT8_MAX)
-            bits = LLVM::AndOp::create(
-                builder, location, bits,
-                detail::llvmConstant(builder, location, i8, mask));
-          anyUnknown = LLVM::OrOp::create(builder, location, anyUnknown, bits);
-        }
-      }
-      Value known =
-          encoded.empty()
-              ? detail::llvmConstant(builder, location, builder.getI1Type(),
-                                     route.independentEntry)
-              : LLVM::ICmpOp::create(
-                    builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
-                    detail::llvmConstant(builder, location, i8, 0));
-      Value selected =
-          route.pathKnownProbe
-              ? LLVM::AddressOfOp::create(builder, location, pointer, fallback)
-                    .getResult()
-              : LLVM::SelectOp::create(
-                    builder, location, known,
-                    LLVM::AddressOfOp::create(builder, location, pointer,
-                                              route.twoState.getSymName()),
-                    LLVM::AddressOfOp::create(builder, location, pointer,
-                                              fallback))
-                    .getResult();
-      LLVM::StoreOp::create(builder, location, selected,
-                            LLVM::AddressOfOp::create(
-                                builder, location, pointer, route.globalName),
-                            8);
-    }
+    ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
+    if ((encoded.size() & 1) != 0)
+      return route.twoState.emitError("malformed local promotion ranges");
+    for (size_t index = 0; index != encoded.size(); index += 2)
+      if (encoded[index] < 0 || encoded[index + 1] <= 0)
+        return route.twoState.emitError("invalid local promotion range");
   }
 
   // Actual canonical unknown-plane changes request a boundary scan through
@@ -5872,40 +5817,32 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   LLVM::ReturnOp::create(builder, module.getLoc(),
                          boundaryEntry->getArgument(0));
 
-  llvm::SmallDenseSet<StringRef, 1> coordinatorNames{detail::evalDispatchName};
-  if (clocklessEval) {
-    SmallVector<LLVM::ReturnOp> coordinatorReturns;
-    for (StringRef name : coordinatorNames)
-      if (LLVM::LLVMFuncOp coordinator =
-              module.lookupSymbol<LLVM::LLVMFuncOp>(name))
-        coordinator.walk([&](LLVM::ReturnOp returnOp) {
-          if (returnOp.getNumOperands() == 1)
-            coordinatorReturns.push_back(returnOp);
-        });
-    for (LLVM::ReturnOp returnOp : coordinatorReturns) {
-      builder.setInsertionPoint(returnOp);
-      auto boundaryCall = LLVM::CallOp::create(
-          builder, returnOp.getLoc(), routePromotionBoundary,
-          ValueRange{returnOp.getOperand(0)});
-      returnOp->setOperand(0, boundaryCall.getResult());
-    }
-  } else {
-    SmallVector<LLVM::CallOp> coordinatorCalls;
-    run.walk([&](LLVM::CallOp call) {
-      if (call.getNumResults() == 1 && call.getCallee() &&
-          coordinatorNames.contains(*call.getCallee()))
-        coordinatorCalls.push_back(call);
+  // Periodic preparation may drain startup or a checkpoint. Scan only the
+  // proofs invalidated by actual writes, and only after a successful boundary.
+  // A failed preparation must not rescan every route on each checkpoint retry.
+  if (prepare) {
+    builder.setInsertionPointAfter(prepare);
+    auto boundaryCall =
+        LLVM::CallOp::create(builder, prepare.getLoc(), routePromotionBoundary,
+                             ValueRange{prepare.getResult()});
+    for (OpOperand &use :
+         llvm::make_early_inc_range(prepare.getResult().getUses()))
+      if (use.getOwner() != boundaryCall.getOperation())
+        use.set(boundaryCall.getResult());
+  }
+  SmallVector<LLVM::ReturnOp> coordinatorReturns;
+  if (LLVM::LLVMFuncOp coordinator =
+          module.lookupSymbol<LLVM::LLVMFuncOp>(detail::evalDispatchName))
+    coordinator.walk([&](LLVM::ReturnOp returnOp) {
+      if (returnOp.getNumOperands() == 1)
+        coordinatorReturns.push_back(returnOp);
     });
-    for (LLVM::CallOp call : coordinatorCalls) {
-      builder.setInsertionPointAfter(call);
-      auto boundaryCall =
-          LLVM::CallOp::create(builder, call.getLoc(), routePromotionBoundary,
-                               ValueRange{call.getResult()});
-      for (OpOperand &use :
-           llvm::make_early_inc_range(call.getResult().getUses()))
-        if (use.getOwner() != boundaryCall.getOperation())
-          use.set(boundaryCall.getResult());
-    }
+  for (LLVM::ReturnOp returnOp : coordinatorReturns) {
+    builder.setInsertionPoint(returnOp);
+    auto boundaryCall =
+        LLVM::CallOp::create(builder, returnOp.getLoc(), routePromotionBoundary,
+                             ValueRange{returnOp.getOperand(0)});
+    returnOp->setOperand(0, boundaryCall.getResult());
   }
 
   llvm::StringMap<Route *> routesByFunction;

@@ -2602,9 +2602,15 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
                              static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
-  barrierRegion = std::min(
-      barrierRegion, nextDueNativeNBABarrierRegionUnlocked(context,
-                                                          includeGenerated));
+  // IEEE 1800-2023 4.4.2.4, 4.4.2.8, 4.5: generated/static NBA roots
+  // cannot precede an already selected NBA (or eligible Re-NBA) barrier.
+  // Checkpoints within a large Active batch must not rescan every staged
+  // root just to rediscover the same synchronization boundary.
+  uint32_t earliestNative = nativeNBABarrierLowerBound(context);
+  if (barrierRegion > earliestNative)
+    barrierRegion = std::min(
+        barrierRegion,
+        nextDueNativeNBABarrierRegionUnlocked(context, includeGenerated));
   return barrierRegion;
 }
 
@@ -2973,14 +2979,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   // An ordinary runtime calendar never detaches those actors: its generated
   // checkpoints return through the same indexed suspension/publication paths.
   // Rebuilding every checkpoint needlessly reallocates the entire actor map.
-  // Periodic ownership still requires restoration of its detached deadlines
-  // before ordinary event arbitration (IEEE 1800-2023 4.4-4.5).
+  // Periodic handoff restores detached clock deadlines in both calendars, so
+  // a runtime-calendar plan retains this index across that boundary as well
+  // (IEEE 1800-2023 4.4-4.5).
   bool indexedRuntimeCalendar =
       options.nativePlan &&
       (context->nativeSchedulePlan->flags &
        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-      !context->nativeStaticEvalIslandCertified &&
-      context->nativePeriodicClockActorSlots.empty();
+      !context->nativeStaticEvalIslandCertified;
   if (options.nativePlan && !indexedRuntimeCalendar)
     rebuildNativeSchedulerIndexUnlocked(context);
   for (;;) {
@@ -3091,9 +3097,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         const auto *plan = context->nativeSchedulePlan;
         if (!plan)
           return OBELISK_RT_INVALID_LIFECYCLE;
+        // A periodic checkpoint can leave other coincident owners pending,
+        // too. Its drain must return to the generated checkpoint trampoline
+        // before executing those owners, regardless of calendar ownership.
         deferredEvalIngress =
-            (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-            !context->nativeStaticEvalIslandCertified;
+            options.returnGeneratedIngress ||
+            ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+             !context->nativeStaticEvalIslandCertified);
         if (!deferredEvalIngress) {
           auto coordinator = plan->timeslot_coordinator;
           if (!coordinator)

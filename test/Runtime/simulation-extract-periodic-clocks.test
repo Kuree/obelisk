@@ -1,0 +1,20 @@
+// RUN: obelisk-opt %S/../Dialect/Simulation/Transforms/simulation-extract-periodic-clocks.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-extract-periodic-clocks,obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe --execution-tier=native | FileCheck %s
+// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diagnostics
+// RUN: FileCheck %s < %t.out
+// RUN: FileCheck %s --check-prefix=TIER < %t.diagnostics
+// RUN: obelisk-opt %S/../Dialect/Simulation/Transforms/simulation-extract-periodic-clocks.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.original.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.original.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.original.o
+// RUN: %llvm_dist/bin/clang++ %t.original.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.original.exe
+// RUN: %t.original.exe --execution-tier=native > %t.original.out
+// RUN: diff -u %t.original.out %t.out
+
+// TIER: periodic_preparations={{[1-9][0-9]*}}
+// TIER-SAME: periodic_clocks_high_water=2
+// CHECK: t=9 clock=0 cycle=0 kanata=1 sampled=x
+// CHECK-NEXT: t=17 clock=1 cycle=1 kanata=2 sampled=1
+// CHECK-NEXT: t=33 clock=1 cycle=2 kanata=3 sampled=2
+// CHECK-NEXT: t=65 clock=1 cycle=4 kanata=5 sampled=4

@@ -883,8 +883,6 @@ FailureOr<bool> makeNativeEvalPlan(
       std::move(resolved->periodicOwnerBits);
   SmallVector<APInt> ownerSubsumptionMasks =
       std::move(resolved->ownerSubsumptionMasks);
-  SmallVector<unsigned> periodicClosureRecords =
-      std::move(resolved->periodicClosureRecords);
   uint32_t nbaTaintWordCount = resolved->nbaTaintWordCount;
   SmallVector<SmallVector<uint64_t>> recordNBATaintMasks =
       std::move(resolved->recordNBATaintMasks);
@@ -1664,15 +1662,12 @@ FailureOr<bool> makeNativeEvalPlan(
     }
     struct GeneratedTransition {
       LLVM::CallOp call;
-      bool periodicTwoState = false;
       APInt activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
     };
     SmallVector<GeneratedTransition> transitions;
     for (sim::SimFuncOp function :
          collectGeneratedEvalCallClosure(module, selectedRawBodies)) {
-      bool periodicTwoState =
-          function->hasAttr("obelisk.eval.selected_two_state");
       auto activeOwner = activeOwnerBits.find(function.getSymName());
       APInt activeOwnerMask = activeOwner == activeOwnerBits.end()
                                   ? APInt(ownerCount, 0)
@@ -1699,8 +1694,7 @@ FailureOr<bool> makeNativeEvalPlan(
                 physicalSourceOwner = unique->second;
           }
         }
-        transitions.push_back(
-            {call, periodicTwoState, activeOwnerMask, physicalSourceOwner});
+        transitions.push_back({call, activeOwnerMask, physicalSourceOwner});
       });
     }
     auto packedMask = [](uint64_t width) {
@@ -1708,7 +1702,6 @@ FailureOr<bool> makeNativeEvalPlan(
     };
     for (const GeneratedTransition &transition : transitions) {
       LLVM::CallOp call = transition.call;
-      bool periodicTwoState = transition.periodicTwoState;
       const APInt &activeOwnerMask = transition.activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner =
           transition.physicalSourceOwner;
@@ -1758,10 +1751,9 @@ FailureOr<bool> makeNativeEvalPlan(
             std::min(rangeEnd, entry.low_bit + entry.bit_width);
         if (overlapLow >= overlapHigh)
           continue;
-        if (periodicTwoState && !periodicClosureRecords.empty() &&
-            !llvm::is_contained(periodicClosureRecords,
-                                static_cast<unsigned>(entry.merged_bit)))
-          continue;
+        // Two-state bodies also execute during bootstrap and checkpoint
+        // ingress. Their publications must reach owners outside the periodic
+        // clock closure, including reset and port-forwarding logic.
         if (fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
             entry.kernel >= clockKernels.size())
           continue;
@@ -3378,18 +3370,28 @@ FailureOr<bool> makeNativeEvalPlan(
       return mayTerminate(mergedExecutors[recordIndex]) ||
              mayTerminate(mergedTwoStateExecutors[recordIndex]);
     };
+    // With no runtime observer of a source or its aliases, an edge which
+    // produces no generated ingress needs only its physical clock update.
+    // Keep those updates in calendar order: another domain may sample the
+    // clock level even when it has no sensitivity to that edge.
+    bool canSkipSilentSlot =
+        llvm::none_of(
+            periodicClocks,
+            [&](const NativePeriodicClock &clock) {
+              return staticFanoutPlan.runtimeTransitionStates.contains(
+                  clock.staticState);
+            }) &&
+        llvm::none_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
+          return staticFanoutPlan.runtimeTransitionStates.contains(
+              alias.targetStaticState);
+        });
     bool canCompressSilentFall =
         periodicClocks.size() == 1 &&
         llvm::all_of(clockMasks.front(),
                      [](const auto &masks) { return masks.second == 0; }) &&
         llvm::all_of(clockDirectMasks.front(),
                      [](const auto &masks) { return masks.second == 0; }) &&
-        !staticFanoutPlan.runtimeTransitionStates.contains(
-            periodicClocks.front().staticState) &&
-        llvm::none_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
-          return staticFanoutPlan.runtimeTransitionStates.contains(
-              alias.targetStaticState);
-        });
+        canSkipSilentSlot;
     if (canCompressSilentFall) {
       silentFall = new Block;
       advanceSilentFall = new Block;
@@ -3567,16 +3569,28 @@ FailureOr<bool> makeNativeEvalPlan(
       Value edgeAddress = byteGEP(builder, location, nextEdges,
                                   uint64_t{clockIndex} * sizeof(uint64_t));
       Value edge = LLVM::LoadOp::create(builder, location, i64, edgeAddress, 8);
-      // With one periodic source, nextTime is this source's edge by
-      // construction. Materialize that proof as a constant so canonicalize
-      // and LLVM can remove the otherwise redundant due/select chain. The
-      // general equality-based path remains for coincident multi-clock edges.
-      Value due;
-      if (periodicClocks.size() == 1)
-        due = llvmConstant(builder, location, builder.getI1Type(), 1);
-      else
-        due = arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                    edge, step->getArgument(0));
+      // Inactive domains do not touch clock/alias storage or ready words.
+      // Carry the accumulated owner masks across this branch so coincident
+      // clocks still union their ingress before any Active owner executes.
+      Block *afterClock = nullptr;
+      if (periodicClocks.size() != 1) {
+        Block *toggleClock = new Block;
+        afterClock = new Block;
+        run.getBody().push_back(toggleClock);
+        run.getBody().push_back(afterClock);
+        afterClock->addArgument(builder.getI1Type(), location);
+        for (unsigned word = 0; word != directReady.size(); ++word)
+          afterClock->addArgument(i64, location);
+        SmallVector<Value> unchanged{hasIngress};
+        llvm::append_range(unchanged, directReady);
+        Value due =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  edge, step->getArgument(0));
+        cf::CondBranchOp::create(builder, location, due, toggleClock,
+                                 ValueRange{}, afterClock, unchanged);
+        builder.setInsertionPointToStart(toggleClock);
+      }
+      Value due = llvmConstant(builder, location, builder.getI1Type(), 1);
       Value noOverflow = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::ule, edge,
           llvmConstant(builder, location, i64, UINT64_MAX - clock.halfPeriod));
@@ -3728,12 +3742,20 @@ FailureOr<bool> makeNativeEvalPlan(
                                     llvmConstant(builder, location, i64, 0)));
         }
       }
+      if (afterClock) {
+        SmallVector<Value> updated{hasIngress};
+        llvm::append_range(updated, directReady);
+        cf::BranchOp::create(builder, location, afterClock, updated);
+        builder.setInsertionPointToStart(afterClock);
+        hasIngress = afterClock->getArgument(0);
+        for (unsigned word = 0; word != directReady.size(); ++word)
+          directReady[word] = afterClock->getArgument(word + 1);
+      }
     }
-    // A cold checkpoint can return with the clock high. Its next edge is
-    // then a silent falling edge, even though steady execution normally
-    // consumes that edge in silentFall. Do not run the constant rising-owner
-    // sequence on re-entry until an actual rising edge has produced ingress.
-    if (canCompressSilentFall)
+    // This also handles silent edges after checkpoint re-entry. All due
+    // clocks and aliases have been updated before skipping dispatch, including
+    // coincident edges; a later CDC consumer sees the correct physical levels.
+    if (canSkipSilentSlot)
       cf::CondBranchOp::create(builder, location, hasIngress, dispatchStep,
                                ValueRange{}, loop, ValueRange{});
     else
@@ -3795,11 +3817,36 @@ FailureOr<bool> makeNativeEvalPlan(
       return APInt::getOneBitSet(ownerCount, mergedFragments[recordIndex].bit) |
              ownerSubsumptionMasks[recordIndex];
     };
-    if (canCompressSilentFall && !directOwnerRecords.empty()) {
-      // The only generated step is now the rising phase of one proven
-      // periodic source. Its direct owner set is a compile-time constant, so
-      // outline the fully promoted path as a straight-line instance sequence.
-      // The transient prefix selects each instance independently.
+    auto clearDirectOwner = [&](unsigned recordIndex) {
+      // Preserve coordinator fixpoint semantics between owners.  A
+      // preceding owner may republish an earlier clock owner; clearing
+      // the whole initial mask after the sequence would erase that
+      // required retrigger.  Clear only the owner just executed, exactly
+      // where the bitset coordinator would consume it. Consume it on a
+      // checkpoint return as well: the queued callback owns that activation,
+      // so retaining its ingress would replay it after the handoff.
+      APInt consumed = directOwnerConsumedMask(recordIndex);
+      for (const NativeEvalClockKernel &kernel : clockKernels) {
+        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  kernel.ingressName);
+        updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true,
+                        {}, &readyLayout);
+      }
+    };
+    // A shared proof is valid for coincident domains when every direct owner
+    // has an inductive two-state body. Such a body cannot invalidate a later
+    // owner's knownness. Mixed/path-guarded owners retain the per-owner check
+    // below because a blocking CDC write can invalidate a later consumer.
+    bool canShareDirectProof =
+        canCompressSilentFall ||
+        llvm::all_of(directOwnerRecords, [&](unsigned index) {
+          return !mergedTwoStateExecutors[index].empty() &&
+                 !pathGuardedOwnerMask[mergedFragments[index].bit];
+        });
+    if (canShareDirectProof && !directOwnerRecords.empty()) {
+      // Single-clock ingress is constant; multiple clocks select a subset of
+      // the same ranked instance sequence. Test the participating proofs once
+      // and keep all per-owner scanners out of the promoted path.
       Block *prepareDirectHybrid = new Block;
       Block *executeDirectHybrid = new Block;
       Block *executeDirectTwoState = new Block;
@@ -3818,30 +3865,55 @@ FailureOr<bool> makeNativeEvalPlan(
       resetStepFourStateTracking();
       Value directPending = LLVM::AddressOfOp::create(
           builder, location, pointer, promotionPendingMaskName);
+      Value pendingOwners;
+      if (canCompressSilentFall) {
+        pendingOwners =
+            maskedOwnerWords(builder, location, directPending,
+                             directPromotionMask & ~pathGuardedOwnerMask);
+      } else {
+        pendingOwners = llvmConstant(builder, location, i64, 0);
+        for (unsigned word = 0; word != directReady.size(); ++word) {
+          uint64_t mask = ownerMaskWord(directPromotionMask, word);
+          if (!mask)
+            continue;
+          Value selected =
+              arith::AndIOp::create(builder, location, directReady[word],
+                                    llvmConstant(builder, location, i64, mask));
+          Value pending = arith::AndIOp::create(
+              builder, location, selected,
+              loadOwnerWord(builder, location, directPending, word));
+          pendingOwners =
+              arith::OrIOp::create(builder, location, pendingOwners, pending);
+        }
+      }
       Value directOwnersPromoted = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq,
-          maskedOwnerWords(builder, location, directPending,
-                           directPromotionMask & ~pathGuardedOwnerMask),
+          builder, location, arith::CmpIPredicate::eq, pendingOwners,
           llvmConstant(builder, location, i64, 0));
       cf::CondBranchOp::create(builder, location, directOwnersPromoted,
                                executeDirectTwoState, ValueRange{},
                                executeDirectHybrid, ValueRange{});
-      auto clearDirectOwner = [&](unsigned recordIndex) {
-        // Preserve coordinator fixpoint semantics between owners.  A
-        // preceding owner may republish an earlier clock owner; clearing
-        // the whole initial mask after the sequence would erase that
-        // required retrigger.  Clear only the owner just executed, exactly
-        // where the bitset coordinator would consume it.
-        APInt consumed = directOwnerConsumedMask(recordIndex);
-        for (const NativeEvalClockKernel &kernel : clockKernels) {
-          Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    kernel.ingressName);
-          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true,
-                          {}, &readyLayout);
-        }
+      auto selectDirectOwner = [&](unsigned recordIndex) -> Block * {
+        if (canCompressSilentFall)
+          return nullptr;
+        unsigned bit = mergedFragments[recordIndex].bit;
+        Value selected = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne,
+            arith::AndIOp::create(builder, location, directReady[bit / 64],
+                                  llvmConstant(builder, location, i64,
+                                               uint64_t{1} << (bit % 64))),
+            llvmConstant(builder, location, i64, 0));
+        Block *executeOwner = new Block;
+        Block *nextOwner = new Block;
+        run.getBody().push_back(executeOwner);
+        run.getBody().push_back(nextOwner);
+        cf::CondBranchOp::create(builder, location, selected, executeOwner,
+                                 ValueRange{}, nextOwner, ValueRange{});
+        builder.setInsertionPointToStart(executeOwner);
+        return nextOwner;
       };
       builder.setInsertionPointToStart(executeDirectTwoState);
       for (unsigned recordIndex : directOwnerRecords) {
+        Block *nextSelectedOwner = selectDirectOwner(recordIndex);
         handoffPrioritySignal();
         if (mergedTwoStateExecutors[recordIndex].empty()) {
           LLVM::StoreOp::create(
@@ -3874,6 +3946,10 @@ FailureOr<bool> makeNativeEvalPlan(
                                    ValueRange{}, afterStep, ValueRange{status});
           builder.setInsertionPointToStart(nextOwner);
         }
+        if (nextSelectedOwner) {
+          cf::BranchOp::create(builder, location, nextSelectedOwner);
+          builder.setInsertionPointToStart(nextSelectedOwner);
+        }
       }
       cf::BranchOp::create(builder, location, afterDirectSequence);
 
@@ -3883,6 +3959,7 @@ FailureOr<bool> makeNativeEvalPlan(
         // source order; restarting at the block front would put the eventual
         // branch before earlier calls and leave an invalid CFG.
         builder.setInsertionPointToEnd(hybridCursor);
+        Block *nextSelectedOwner = selectDirectOwner(recordIndex);
         handoffPrioritySignal();
         if (promotionKernelReadyNames[recordIndex].empty()) {
           LLVM::StoreOp::create(
@@ -3898,6 +3975,7 @@ FailureOr<bool> makeNativeEvalPlan(
                   ValueRange{runEntry->getArgument(1)})
                   .getResult();
           clearDirectOwner(recordIndex);
+          hybridCursor = builder.getInsertionBlock();
           if (directOwnerNeedsStatusCheck(recordIndex)) {
             Block *nextOwner = new Block;
             run.getBody().push_back(nextOwner);
@@ -3908,6 +3986,11 @@ FailureOr<bool> makeNativeEvalPlan(
                                      ValueRange{}, afterStep,
                                      ValueRange{status});
             hybridCursor = nextOwner;
+          }
+          if (nextSelectedOwner) {
+            builder.setInsertionPointToEnd(hybridCursor);
+            cf::BranchOp::create(builder, location, nextSelectedOwner);
+            hybridCursor = nextSelectedOwner;
           }
           continue;
         }
@@ -3973,12 +4056,17 @@ FailureOr<bool> makeNativeEvalPlan(
           cf::BranchOp::create(builder, location, nextOwner);
         }
         hybridCursor = nextOwner;
+        if (nextSelectedOwner) {
+          builder.setInsertionPointToEnd(hybridCursor);
+          cf::BranchOp::create(builder, location, nextSelectedOwner);
+          hybridCursor = nextSelectedOwner;
+        }
       }
       builder.setInsertionPointToEnd(hybridCursor);
       cf::BranchOp::create(builder, location, afterDirectSequence);
       builder.setInsertionPointToStart(afterDirectSequence);
     }
-    if (!canCompressSilentFall)
+    if (!canShareDirectProof)
       for (unsigned recordIndex : directOwnerRecords) {
         handoffPrioritySignal();
         const auto &record = mergedFragments[recordIndex];
@@ -4007,11 +4095,24 @@ FailureOr<bool> makeNativeEvalPlan(
           run.getBody().push_back(executeFourState);
           run.getBody().push_back(executeTwoState);
           run.getBody().push_back(afterExecute);
-          // A promoted multi-clock closure has the same monotonic proof as
-          // the single-clock direct prefix. Bypass the per-owner scanner once
-          // that proof is latched; only transient slots consult local closure
-          // readiness.
-          cf::BranchOp::create(builder, location, selectTransientVariant);
+          // Check only this active owner's proof. Dormant clock domains may
+          // still contain X/Z without slowing down a promoted domain. Reload
+          // at each owner, rather than caching a slot-wide certificate: an
+          // earlier coincident owner can invalidate a CDC consumer through a
+          // blocking publication before that consumer executes. NBA crossings
+          // retain the common commit barrier below.
+          Value pending = maskedOwnerWords(
+              builder, location,
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        promotionPendingMaskName),
+              APInt::getOneBitSet(ownerCount, record.bit) &
+                  ~pathGuardedOwnerMask);
+          Value promoted = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, pending,
+              llvmConstant(builder, location, i64, 0));
+          cf::CondBranchOp::create(builder, location, promoted, executeTwoState,
+                                   ValueRange{}, selectTransientVariant,
+                                   ValueRange{});
           builder.setInsertionPointToStart(selectTransientVariant);
           Value kernelReady =
               LLVM::CallOp::create(
@@ -4035,6 +4136,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                    SymbolRefAttr::get(context, fourState),
                                    ValueRange{runEntry->getArgument(1)})
                   .getResult();
+          clearDirectOwner(recordIndex);
           Value fourStateOK = arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::eq, fourStateStatus,
               llvmConstant(builder, location, i32, OBELISK_RT_OK));
@@ -4049,6 +4151,7 @@ FailureOr<bool> makeNativeEvalPlan(
                   .getResult();
           twoStateStatus.getDefiningOp()->setAttr(
               "obelisk.eval.proven_two_state_call", builder.getUnitAttr());
+          clearDirectOwner(recordIndex);
           Value twoStateOK = arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::eq, twoStateStatus,
               llvmConstant(builder, location, i32, OBELISK_RT_OK));
@@ -4068,6 +4171,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                    SymbolRefAttr::get(context, fourState),
                                    ValueRange{runEntry->getArgument(1)})
                   .getResult();
+          clearDirectOwner(recordIndex);
           Value directOK = arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::eq, directStatus,
               llvmConstant(builder, location, i32, OBELISK_RT_OK));
@@ -4077,18 +4181,6 @@ FailureOr<bool> makeNativeEvalPlan(
                                    ValueRange{}, afterStep,
                                    ValueRange{directStatus});
           builder.setInsertionPointToStart(afterExecute);
-        }
-        // Match coordinator execution semantics: neither the coordinator nor
-        // an exact member already executed inside it may remain pending. An
-        // implicit combinational sensitivity cannot retrigger its currently
-        // executing logical owner, and fused bodies commonly publish one of
-        // their own roots.
-        APInt consumed = directOwnerConsumedMask(recordIndex);
-        for (const NativeEvalClockKernel &kernel : clockKernels) {
-          Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    kernel.ingressName);
-          updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true,
-                          {}, &readyLayout);
         }
         cf::BranchOp::create(builder, location, nextDirect);
         builder.setInsertionPointToStart(nextDirect);
@@ -4112,6 +4204,31 @@ FailureOr<bool> makeNativeEvalPlan(
 
     builder.setInsertionPointToStart(completeStep);
     Value completedStatus = completeStep->getArgument(0);
+    if (module->hasAttr("obelisk.eval.runtime_calendar")) {
+      // IEEE 1800-2023 4.5, 10.4.2: a mixed calendar commits generated
+      // accumulators at the shared NBA
+      // barrier. Hand off once after the whole Active batch, not per writer.
+      Value pending = llvmConstant(builder, location, i64, 0);
+      Value summary = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                nbaDirtySummaryName);
+      for (unsigned word = 0; word != (nbaRoots.size() + 4095) / 4096; ++word)
+        pending = arith::OrIOp::create(
+            builder, location, pending,
+            LLVM::LoadOp::create(builder, location, i64,
+                                 byteGEP(builder, location, summary, word * 8),
+                                 8));
+      Value needsBarrier = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, pending,
+          llvmConstant(builder, location, i64, 0));
+      Value ok = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, completedStatus,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      completedStatus = arith::SelectOp::create(
+          builder, location,
+          arith::AndIOp::create(builder, location, ok, needsBarrier),
+          llvmConstant(builder, location, i32, OBELISK_RT_AOT_CHECKPOINT),
+          completedStatus);
+    }
     Value stepOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, completedStatus,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));

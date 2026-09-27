@@ -51,8 +51,8 @@
 // NBAKNOWN: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
 // NBAKNOWN: llvm.mlir.addressof @__obelisk_state_unknown
 
-// A fixed-only design must return directly when its bitmap is empty, before
-// probing unknown state or selecting/calling an NBA barrier.
+// A fixed-only design skips the NBA barrier when its bitmap is empty, then
+// checks for dirty local route proofs at the coordinator boundary.
 // BARRIER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // BARRIER: %[[DIRTY:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
@@ -62,7 +62,8 @@
 // BARRIER-NEXT: llvm.cond_br %[[EMPTY]], ^[[DONE:bb[0-9]+]](%[[OK]] : i32), ^[[COMMIT:bb[0-9]+]]
 // BARRIER-NEXT: ^[[COMMIT]]:
 // BARRIER: ^[[DONE]](%[[STATUS:.*]]: i32):
-// BARRIER-NEXT: llvm.return %[[STATUS]] : i32
+// BARRIER-NEXT: %[[BOUNDARY:.*]] = llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS]]) : (i32) -> i32
+// BARRIER-NEXT: llvm.return %[[BOUNDARY]] : i32
 
 // With VPI a value-change callback can observe every NBA update (IEEE
 // 1800-2017 38.36.1), so the updates use the ordered queue and its count

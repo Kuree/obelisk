@@ -5,6 +5,26 @@
 
 include "mlir/Pass/PassBase.td"
 
+def ObeliskSimExtractPeriodicClocksPass
+    : Pass<"obelisk-sim-extract-periodic-clocks", "obelisk::sim::SimDesignOp"> {
+  let summary = "Extract private toggle clocks from uniform periodic processes";
+  let description = [{
+    Replaces equal positive constant delays in a singleton, nonterminating
+    process with waits on a private periodic clock. All original assignments,
+    including NBA publication and initialization, remain in the source process.
+    Runs before suspension threading and persistent compute-graph construction.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+  let options = [
+    Option<"vpi", "vpi", "std::string", "\"off\"",
+           "VPI observability mode: off, read, or full">
+  ];
+}
+
 def ObeliskSimMaterializeClockedControlPass
     : Pass<"obelisk-sim-materialize-clocked-control",
            "obelisk::sim::SimDesignOp"> {

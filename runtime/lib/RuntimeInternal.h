@@ -1287,6 +1287,8 @@ struct SignalSubscriptionDiagnostics {
   uint64_t fallbackRescans = 0;
   uint64_t aotNodeExecutions = 0;
   uint64_t evalDispatches = 0;
+  uint64_t periodicPreparations = 0;
+  uint64_t periodicClocksHighWater = 0;
   uint64_t aotActorExecutions[64] = {};
   uint64_t aotRegionPasses = 0;
   uint64_t aotFanoutEntries = 0;

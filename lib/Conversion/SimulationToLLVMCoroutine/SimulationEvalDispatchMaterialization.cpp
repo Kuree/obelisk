@@ -494,7 +494,31 @@ materializeNativeEvalDispatch(ModuleOp module,
                          destinations, destinationOperands,
                          ArrayRef<int32_t>{});
 
+  auto emitReturns = [&] {
+    builder.setInsertionPointToStart(complete);
+    LLVM::ReturnOp::create(builder, location, complete->getArgument(0));
+    builder.setInsertionPointToStart(stopped);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
+    builder.setInsertionPointToStart(failed);
+    LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
+  };
+
   builder.setInsertionPointToStart(commit);
+  if (module->hasAttr("obelisk.eval.runtime_calendar")) {
+    // IEEE 1800-2023 4.4.2.2-4.4.2.4, 4.5, 10.4.2: finish generated
+    // Active work as one batch. The shared scheduler owns
+    // this mixed NBA barrier and must first drain runtime Active observers.
+    // Its canonical commit consumes the generated scalar accumulators and
+    // publishes both runtime waiters and subsequent generated ingress.
+    LLVM::ReturnOp::create(builder, location,
+                           llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    performCommit->erase();
+    afterCommit->erase();
+    emitReturns();
+    return success();
+  }
   // NBA fanout often needs a blocking-only settle iteration. At quiescence,
   // skip the entire commit/probe path if that iteration staged no new NBA.
   // Dynamic slots do not set fixed-root dirty bits, so both representations
@@ -722,14 +746,7 @@ materializeNativeEvalDispatch(ModuleOp module,
       llvmConstant(builder, location, i64, 0));
   cf::CondBranchOp::create(builder, location, postNBAEmpty, complete,
                            ValueRange{commitStatus}, dispatch, ValueRange{});
-  builder.setInsertionPointToStart(complete);
-  LLVM::ReturnOp::create(builder, location, complete->getArgument(0));
-  builder.setInsertionPointToStart(stopped);
-  LLVM::ReturnOp::create(
-      builder, location,
-      llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
-  builder.setInsertionPointToStart(failed);
-  LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
+  emitReturns();
   return success();
 }
 

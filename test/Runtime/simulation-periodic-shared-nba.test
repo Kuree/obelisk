@@ -1,0 +1,47 @@
+// RUN: %python %S/Inputs/gen-periodic-shared-nba.py > %t.mlir
+// RUN: obelisk-opt %t.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe --execution-tier=native | FileCheck %s
+// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
+// RUN: FileCheck %s < %t.out
+// RUN: FileCheck %s --check-prefix=DIAG < %t.diag
+
+// RUN: %python %S/Inputs/gen-periodic-shared-nba.py --timed > %t.timed.mlir
+// RUN: obelisk-opt %t.timed.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.timed.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN < %t.timed.llvm.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.timed.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.timed.o
+// RUN: %llvm_dist/bin/clang++ %t.timed.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.timed.exe
+// RUN: %t.timed.exe --execution-tier=native | FileCheck %s
+// RUN: %t.timed.exe --execution-tier=bytecode | FileCheck %s
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.timed.exe > %t.timed.out 2> %t.timed.diag
+// RUN: FileCheck %s < %t.timed.out
+// RUN: FileCheck %s --check-prefix=TIMED < %t.timed.diag
+
+
+// IEEE 1800-2023 4.4.2.2-4.4.2.4, 4.5 and 10.4.2: runtime Active
+// observers see old values; every generated root commits before the later
+// timed observation. All 128 writers should stage without per-writer
+// checkpoints. The real formatting keeps the observer runtime-owned.
+// CHECK: active 0 127 1.000000
+// CHECK-NEXT: settled 1 128
+// CHECK-NEXT: active 1 128 1.000000
+// CHECK-NEXT: settled 2 129
+// CHECK-NEXT: active 2 129 1.000000
+// CHECK-NEXT: settled 3 130
+// CHECK-NEXT: active 3 130 1.000000
+// CHECK-NEXT: settled 4 131
+// PLAN: __obelisk_periodic_clock_plan_v1
+// PLAN-LABEL: llvm.func @writer0.__obelisk_eval_body_0(
+// PLAN-NOT: llvm.call @obelisk_rt_
+// PLAN: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
+// PLAN-NOT: llvm.call @obelisk_rt_
+// PLAN: llvm.return
+// DIAG: aot_nba_stages=512 aot_nba_commits=512
+// DIAG-SAME: aot_checkpoints=0
+// DIAG-SAME: eval_dispatches=4
+// TIMED: aot_nba_stages=512 aot_nba_commits=512
+// TIMED-SAME: aot_checkpoints=0
+// TIMED-SAME: periodic_preparations={{[1-9][0-9]*}}

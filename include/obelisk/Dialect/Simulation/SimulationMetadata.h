@@ -20,10 +20,13 @@ namespace obelisk::sim::metadata {
 inline constexpr uint32_t schemaVersion = 1;
 inline constexpr uint32_t maxDirectStaticStateBits = 64;
 
-/// Initial process whose same-edge waits have one explicit, storage-backed
+/// Process whose same-edge waits have one explicit, storage-backed
 /// phase dispatcher. Its entry is cold startup, not an eval activation preamble.
 inline constexpr llvm::StringLiteral clockedControl =
     "obelisk_sim.clocked_control";
+/// Uniform delay process normalized to private periodic clock activations.
+inline constexpr llvm::StringLiteral periodicControl =
+    "obelisk_sim.periodic_control";
 
 /// Transient function attribute containing ArgumentBindingAttr,
 /// LocalBindingAttr, and ConstantBindingAttr entries.

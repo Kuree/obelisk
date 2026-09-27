@@ -1951,6 +1951,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       considerDeadline(context->scheduledPassSwitchEvents.begin()->first.first);
     outControl->next_runtime_deadline = nextRuntimeDeadline;
     context->nativePeriodicRuntimeDeadline = nextRuntimeDeadline;
+    if (context->signalDiagnosticsEnabled) {
+      ++context->signalDiagnostics.periodicPreparations;
+      context->signalDiagnostics.periodicClocksHighWater = std::max<uint64_t>(
+          context->signalDiagnostics.periodicClocksHighWater, clockCount);
+    }
     if (staticEvalIsland)
       context->nativeStaticEvalIslandCertified = true;
     return OBELISK_RT_OK;
@@ -1981,7 +1986,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
           scheduled.instance->continuation != clock.continuation ||
           nextEdges[index] <= context->schedulerTime)
         return OBELISK_RT_INVALID_CONTINUATION;
-      scheduled.wakeTime = nextEdges[index];
+      if (scheduled.wakeTime != nextEdges[index]) {
+        scheduled.wakeTime = nextEdges[index];
+        // The generated loop bypasses the generic delay heap. Restore this
+        // clock alone so checkpoint arbitration can keep the actor index
+        // instead of rebuilding it for every periodic handoff.
+        indexScheduledProcessDelayUnlocked(context, scheduled);
+      }
       setNativeAOTDeadlineUnlocked(context, clock.actor_slot, nextEdges[index]);
     }
     return OBELISK_RT_OK;
@@ -2477,7 +2488,7 @@ retryNativeSchedule:;
           } while (status == OBELISK_RT_OK);
           if (status != OBELISK_RT_OK)
             goto checkpointDone;
-          if (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) {
+          if (plan->timeslot_coordinator) {
             // A checkpoint consumes only its own owner bit. Other generated
             // owners may remain ready even if this callback publishes no
             // change. Resume that closure before advancing the calendar or

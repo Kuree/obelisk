@@ -7854,6 +7854,16 @@ TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
   std::mt19937 random(0x18002023);
   for (unsigned trial = 0; trial != 100; ++trial) {
     context->schedulerDrainingReactive = trial % 2 != 0;
+    // IEEE 1800-2023 4.4.2.4, 4.4.2.8: compiler-certified static NBA
+    // batches use only NBA/Re-NBA. Compare their early barrier selection
+    // with the same exhaustive oracle, including reactive-set isolation.
+    bool certified = trial % 4 >= 2;
+    plan.flags =
+        certified ? OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL : 0;
+    auto nextRegion = [&] {
+      return regions[certified ? 1 + 2 * (random() % 2)
+                               : random() % std::size(regions)];
+    };
     std::fill(dirty.begin(), dirty.end(), 0);
     std::fill(summary.begin(), summary.end(), 0);
     context->staticNBAAccumulatorsPending = false;
@@ -7862,10 +7872,10 @@ TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
     for (uint32_t root = 0; root != rootCount; ++root) {
       roots[root].generated_accumulator = &generated[root];
       generated[root].valid = random() % 2;
-      generated[root].exec_region = regions[random() % std::size(regions)];
+      generated[root].exec_region = nextRegion();
       auto &runtime = context->staticNBAAccumulators[root];
       runtime.valid = false;
-      runtime.execRegion = regions[random() % std::size(regions)];
+      runtime.execRegion = nextRegion();
       if (trial == 0 || (root != rootCount - 1 && random() % 1024 != 0))
         continue;
       dirty[root / 64] |= uint64_t{1} << (root % 64);

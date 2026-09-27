@@ -343,6 +343,13 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   }
   designManager.addPass(createSymbolDCEPass());
 
+  if (optLevel > 0) {
+    ObeliskSimExtractPeriodicClocksPassOptions periodicOptions;
+    periodicOptions.vpi = vpiMode.str();
+    designManager.addPass(
+        createObeliskSimExtractPeriodicClocksPass(std::move(periodicOptions)));
+  }
+
   // Make continuation-frame state explicit before freezing whole-program
   // summaries. Threading can rematerialize pointer-free constants in resume
   // blocks, which is an executable CFG change and therefore must precede the

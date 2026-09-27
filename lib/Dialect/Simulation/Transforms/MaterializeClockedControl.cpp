@@ -39,7 +39,8 @@ void ObeliskSimMaterializeClockedControlPass::runOnOperation() {
 
   for (auto function : design.getBody().front().getOps<sim::SimFuncOp>()) {
     if (function.isExternal() ||
-        function.getEntryKind() != sim::EntryKind::Initial ||
+        (function.getEntryKind() != sim::EntryKind::Initial &&
+         !function->hasAttr(sim::metadata::periodicControl)) ||
         function->hasAttr(sim::metadata::clockedControl))
       continue;
     auto found = spawns.find(function.getSymNameAttr());

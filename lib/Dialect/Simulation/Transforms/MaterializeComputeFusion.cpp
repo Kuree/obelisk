@@ -274,8 +274,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
       return success();
   }
   Block &sourceEntry = function.getBody().front();
-  bool clockedControl =
-      eventDrivenInitial && function->hasAttr(sim::metadata::clockedControl);
+  bool clockedControl = function->hasAttr(sim::metadata::clockedControl);
   SmallVector<Block *> preambleBlocks;
   llvm::SmallPtrSet<Block *, 8> preambleSeen;
   Block *preamble = &sourceEntry;

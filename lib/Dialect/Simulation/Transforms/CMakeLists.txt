@@ -5,6 +5,7 @@ add_mlir_dialect_library(ObeliskSimulationTransforms
   DevirtualizeClassCalls.cpp
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
+  ExtractPeriodicClocks.cpp
   FuseComputeFragments.cpp
   Inline.cpp
   MaterializeClockedControl.cpp

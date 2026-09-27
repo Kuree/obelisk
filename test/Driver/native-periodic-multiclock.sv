@@ -94,6 +94,8 @@ endmodule
 // DIAG: obelisk-signal-diagnostics
 // DIAG-SAME: aot_node_executions={{[1-9][0-9]*}}
 // DIAG-SAME: aot_fallbacks=0
+// DIAG-SAME: periodic_preparations={{[1-9][0-9]*}}
+// DIAG-SAME: periodic_clocks_high_water=3
 
 // Each outlined owner has an independent promotion latch.  The generated
 // scanner is a local masked-plane check and has no runtime edge.

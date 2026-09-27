@@ -7,13 +7,19 @@
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
+// RUN: sed -e 's/#4 clk/#5 clk/' -e 's/#6 clk/#5 clk/' %s > %t.periodic.sv
+// RUN: obelisk -O3 --native-scheduler=auto %t.periodic.sv -o %t.periodic
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.periodic > %t.periodic.out 2> %t.periodic.trace
+// RUN: diff -u %t.generic.out %t.periodic.out
+// RUN: FileCheck %s --check-prefix=PERIODIC < %t.periodic.trace
 
 module native_tier1_checkpoint_route_retention;
   logic clk = 0;
   integer cycles = 0;
+  // Unequal phase delays retain the clockless wrapper under normalization.
   initial forever begin
-    #5 clk <= 0;
-    #5 clk <= 1;
+    #4 clk <= 0;
+    #6 clk <= 1;
     cycles += 1;
   end
   logic [7:0] q[128];
@@ -58,6 +64,7 @@ endmodule
 // LLVM-NOT: @__obelisk_eval_route_promotion_pending_v1
 // LLVM: call i32 @obelisk_rt_v1_scheduler_run_aot_nodes
 // TRACE: eval_dispatches={{[1-9][0-9]*}}
+// PERIODIC: periodic_preparations={{[1-9][0-9]*}}
 // OUTPUT: 1 20 df df
 // OUTPUT-NEXT: 2 21 de de
 // OUTPUT-NEXT: 3 22 dd dd

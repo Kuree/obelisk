@@ -1007,9 +1007,13 @@ public:
     // accumulator, however: a coincident four-state writer may have staged X
     // first. Only the per-access root proof may omit the zero unknown-plane
     // overwrite needed to preserve last-writer semantics.
+    // IEEE 1800-2023 4.4.2.4, 4.5: a shared runtime NBA barrier must see
+    // validity, masks and region even when all payload bits are known.
     bool compactEvalMetadata =
-        inductiveTwoStateAccess ||
-        op->hasAttr(sim::metadata::evalCompactNBAMetadata);
+        !op->getParentOfType<ModuleOp>()->hasAttr(
+            "obelisk.eval.runtime_calendar") &&
+        (inductiveTwoStateAccess ||
+         op->hasAttr(sim::metadata::evalCompactNBAMetadata));
 
     sim::NBASiteAttr site = op.getSiteAttr();
     auto staticRoot =

@@ -11,13 +11,13 @@
 module checkpoint_clock_source(output logic clk = 0);
   integer cycles = 0;
   initial forever begin
-    #5 clk <= 0;
-    #5 clk <= 1;
+    #4 clk <= 0;
+    #6 clk <= 1;
     cycles += 1;
   end
 endmodule
 
-// The clock's NBA updates and side effect keep its calendar in the runtime.
+// Unequal phase delays keep this clock's calendar in the runtime.
 // The port alias publishes to both generated logic and a runtime testbench.
 // Preserve that event's runtime waiter delivery (IEEE 1800-2023 9.4.2) while
 // the independent datapath remains in the generated eval closure.

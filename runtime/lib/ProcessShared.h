@@ -148,6 +148,18 @@ inline bool schedulerRegionEligible(const obelisk_rt_context *context,
          isReactiveSchedulerRegion(region);
 }
 
+inline uint32_t nativeNBABarrierLowerBound(const obelisk_rt_context *context) {
+  // IEEE 1800-2023 4.4.2.4, 4.4.2.8: the compiler's runtime-calendar
+  // certificate stages static roots only in NBA/Re-NBA. Keep the general
+  // inventory contract for plans without that compiler proof.
+  bool certified = context->nativeSchedulePlan &&
+                   (context->nativeSchedulePlan->flags &
+                    OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL);
+  if (context->schedulerDrainingReactive)
+    return certified ? OBELISK_RT_REGION_RE_NBA : OBELISK_RT_REGION_REACTIVE;
+  return certified ? OBELISK_RT_REGION_NBA : OBELISK_RT_REGION_ACTIVE;
+}
+
 inline void setSchedulerDrainingReactive(obelisk_rt_context *context,
                                         bool draining) {
   if (context->schedulerDrainingReactive == draining)

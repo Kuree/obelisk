@@ -1,0 +1,30 @@
+// RUN: %python %S/Inputs/gen-periodic-shared-nba.py --timed --delayed > %t.mlir
+// RUN: obelisk-opt %t.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe --execution-tier=native | FileCheck %s
+// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
+// RUN: FileCheck %s < %t.out
+// RUN: FileCheck %s --check-prefix=DIAG < %t.diag
+
+// IEEE 1800-2023 4.6(b), 10.4.2 Example 6: an NBA enqueued at t=0
+// for t=15 precedes the immediate assignment executed at t=15. The old
+// delayed value (100) must not overwrite the newer captured value (2).
+// The independent 127 roots must still use generated scalar staging.
+// CHECK: active 0 127 1.000000
+// CHECK-NEXT: settled 1 128
+// CHECK-NEXT: active 1 128 1.000000
+// CHECK-NEXT: settled 2 129
+// CHECK-NEXT: active 2 129 1.000000
+// CHECK-NEXT: settled 3 130
+// CHECK-NEXT: active 3 130 1.000000
+// CHECK-NEXT: settled 4 131
+// PLAN-LABEL: llvm.func @writer1.__obelisk_eval_body_0(
+// PLAN-NOT: llvm.call @obelisk_rt_
+// PLAN: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
+// PLAN-NOT: llvm.call @obelisk_rt_
+// PLAN: llvm.return
+// DIAG: aot_nba_stages=508 aot_nba_commits=508
+// DIAG-SAME: aot_fallbacks=0

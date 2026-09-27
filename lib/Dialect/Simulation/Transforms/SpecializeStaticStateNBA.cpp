@@ -104,6 +104,24 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
       guardAllRoots = true;
   });
 
+  // IEEE 1800-2023 4.6(b), 10.4.2 (Example 6): delayed and immediate
+  // NBAs due in the same slot must retain their execution order, including
+  // assignments from different processes. Static accumulators commit before
+  // the runtime queue and have no sequence relative to an older delayed NBA.
+  // Keep every writer of such a root in the ordered runtime queue. Excluding
+  // the root here also covers bytecode's static-site specialization.
+  llvm::SmallDenseSet<uint64_t, 8> delayedNBARoots;
+  bool unknownDelayedNBARoot = false;
+  design.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    if (!enqueue.getDelay() ||
+        !isa<sim::RefType>(enqueue.getDestination().getType()))
+      return;
+    if (auto descriptor = resolveStorageRoot(enqueue.getDestination()))
+      delayedNBARoots.insert(*descriptor);
+    else
+      unknownDelayedNBARoot = true;
+  });
+
   llvm::SmallDenseSet<uint64_t, 16> stateEligible;
   DenseMap<uint64_t, unsigned> storageRootWidths;
   SmallVector<sim::SimStorageDeclOp> storages;
@@ -139,6 +157,8 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
     if (effect.getResource() != sim::ComputeResourceKind::Storage ||
         effect.getTarget() != sim::ComputeTargetKind::Descriptor ||
         effect.getDynamic() || effect.getDeferred() ||
+        unknownDelayedNBARoot ||
+        delayedNBARoots.contains(effect.getDescriptor()) ||
         !storageRootWidths.contains(effect.getDescriptor()) ||
         !commit.getFrontierSites().empty()) {
       if (missedRemarks)
