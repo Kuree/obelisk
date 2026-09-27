@@ -13,7 +13,7 @@
 // OBELISK-DAG: obelisk.sv.symbol.coverage_bin attributes {{.*}}has_number_of_bins = true{{.*}}is_array = true{{.*}}name = "fixed"
 // OBELISK-DAG: obelisk.sv.symbol.coverage_bin attributes {{.*}}has_number_of_bins = false{{.*}}is_array = true{{.*}}name = "per_value"
 // OBELISK-DAG: obelisk.sv.symbol.coverage_bin attributes {{.*}}has_number_of_bins = false{{.*}}is_array = true{{.*}}is_default = true{{.*}}name = "others"
-// SIM: obelisk_sim.covergroup.create {{.*}} payloads[{{.*}}] argument_count 0 formal_ids [] expression_ids [{{[1-9][0-9]*}}
+// SIM: simulation.covergroup.create {{.*}} payloads[{{.*}}] argument_count 0 formal_ids [] expression_ids [{{[1-9][0-9]*}}
 // SCHEMA-DAG: functional_bin id=[[FIXED:[1-9][0-9]*]] {{.*}} name=fixed
 // SCHEMA-DAG: functional_bin id=[[UNSIZED:[1-9][0-9]*]] {{.*}} name=per_value
 // SCHEMA-DAG: functional_bin id=[[DEFAULT:[1-9][0-9]*]] {{.*}} name=others {{.*}} flags=1

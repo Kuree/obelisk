@@ -18,10 +18,10 @@
 // IEEE 1800-2017 Table 19-5 permits start() and stop() on coverpoints. The
 // instance control op carries the selected template FunctionalItem ID; zero
 // remains the existing whole-covergroup selector.
-// CHECK: obelisk_sim.covergroup.stop {{.*}} item [[FIRST:-?[0-9]+]]
-// CHECK: obelisk_sim.covergroup.start {{.*}} item [[FIRST]]
-// CHECK: obelisk_sim.covergroup.stop {{.*}} item [[SECOND:-?[0-9]+]]
-// CHECK: obelisk_sim.covergroup.start {{.*}} item [[SECOND]]
+// CHECK: simulation.covergroup.stop {{.*}} item [[FIRST:-?[0-9]+]]
+// CHECK: simulation.covergroup.start {{.*}} item [[FIRST]]
+// CHECK: simulation.covergroup.stop {{.*}} item [[SECOND:-?[0-9]+]]
+// CHECK: simulation.covergroup.start {{.*}} item [[SECOND]]
 // BAD-ITEM: error: has a nonexistent or wrong-owner functional item ID
 
 //--- input.sv

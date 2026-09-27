@@ -150,42 +150,42 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The common goto form becomes a bounded aggregate token DFA. There is no
 // detached attempt actor: only a success-count loop spawns the Reactive action.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 3 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 5 : i64
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_max = 3 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 5 : i64
+// CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK: arith.addi
 // CHECK: arith.subi
 
 // Nonconsecutive repetition retains its trailing !a wait after an eligible
 // occurrence; it uses the same fixed-size aggregate token representation.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 3 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_max = 3 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK: arith.addi
 // CHECK: arith.subi
 
 // A terminal-free repetition samples only its repeated boolean and still uses
 // a count loop to preserve one cover action per successful property attempt.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-COUNT-1: simulation.assert.sampled_read
 // CHECK: arith.subi
 
 // A persistent implication antecedent keeps an aggregate DFA. Nonoverlap uses
 // counted handoffs, including continuation states for later legal endpoints.
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_antecedent_handoff_states = 4 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_antecedent
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_nonoverlapped
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_antecedent_handoff_states = 4 : i64
+// CHECK-SAME: simulation.persistent_repetition_antecedent
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_nonoverlapped
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-COUNT-2: simulation.assert.sampled_read

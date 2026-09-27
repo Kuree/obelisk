@@ -27,13 +27,13 @@ module {
   }
 }
 
-// CHECK-COUNT-1: [[ITER:%.*]] = obelisk_sim.ref.alloc {{.*}} : i32 -> !obelisk_sim.ref<i32>
-// CHECK: obelisk_sim.ref.store {{.*}} to [[ITER]] : i32, !obelisk_sim.ref<i32>
-// CHECK: obelisk_sim.observer.bind @observer_
+// CHECK-COUNT-1: [[ITER:%.*]] = simulation.ref.alloc {{.*}} : i32 -> !simulation.ref<i32>
+// CHECK: simulation.ref.store {{.*}} to [[ITER]] : i32, !simulation.ref<i32>
+// CHECK: simulation.observer.bind @observer_
 // CHECK-SAME: [[ITER]]
 // CHECK-SAME: captures 2 : <i1>
-// CHECK: obelisk_sim.func private @observer_
-// CHECK-SAME: !obelisk_sim.ref<i32>
+// CHECK: simulation.func private @observer_
+// CHECK-SAME: !simulation.ref<i32>
 // CHECK-SAME: -> i1
-// CHECK: obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<i32> -> i32
+// CHECK: simulation.ref.load {{.*}} : !simulation.ref<i32> -> i32
 // CHECK-NOT: obelisk.sv.

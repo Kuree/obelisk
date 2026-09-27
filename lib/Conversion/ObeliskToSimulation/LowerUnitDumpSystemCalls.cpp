@@ -128,7 +128,7 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     for (Operation *scope : scopes) {
-      if (!scope->hasAttr("obelisk_sim.dumpports_scope")) {
+      if (!scope->hasAttr("simulation.dumpports_scope")) {
         emitError(getSemanticLocation(scope))
             << "$dumpports selection must name a module instance";
         return failure();

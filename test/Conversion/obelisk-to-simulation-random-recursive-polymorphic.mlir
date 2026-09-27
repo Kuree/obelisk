@@ -289,26 +289,26 @@ module {
 // descendant selects the null plan without replacing either object handle.
 // Polymorphic lifecycle hooks remain in their selected whole-graph plan and
 // are guarded by the same ancestor null and rand_mode checks.
-// CHECK-DAG: obelisk_sim.func private @[[LEAF_A_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "leaf_a::pre_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[LEAF_A_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "leaf_a::post_randomize"
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK-DAG: %[[MIDDLE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s64_root_field_0]
-// CHECK-DAG: %[[DISPATCH_MIDDLE:.*]] = obelisk_sim.managed.load %[[MIDDLE_REF]]
-// CHECK-DAG: obelisk_sim.managed.is_null %[[DISPATCH_MIDDLE]]
-// CHECK-DAG: %[[LEAF_REF:.*]] = obelisk_sim.class.field_ref %[[DISPATCH_MIDDLE]][@__obelisk_class_s47_middle_field_1]
-// CHECK-DAG: %[[DISPATCH_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
-// CHECK-DAG: obelisk_sim.managed.is_null %[[DISPATCH_LEAF]]
-// CHECK-DAG: obelisk_sim.class.is_instance %[[DISPATCH_LEAF]] is @__obelisk_class_s17_leaf_a
-// CHECK-DAG: obelisk_sim.class.is_instance %[[DISPATCH_LEAF]] is @__obelisk_class_s32_leaf_b
-// CHECK-DAG: obelisk_sim.random.solve_wide
+// CHECK-DAG: simulation.func private @[[LEAF_A_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "leaf_a::pre_randomize"
+// CHECK-DAG: simulation.func private @[[LEAF_A_POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "leaf_a::post_randomize"
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK-DAG: %[[MIDDLE_REF:.*]] = simulation.class.field_ref {{.*}}[@__obelisk_class_s64_root_field_0]
+// CHECK-DAG: %[[DISPATCH_MIDDLE:.*]] = simulation.managed.load %[[MIDDLE_REF]]
+// CHECK-DAG: simulation.managed.is_null %[[DISPATCH_MIDDLE]]
+// CHECK-DAG: %[[LEAF_REF:.*]] = simulation.class.field_ref %[[DISPATCH_MIDDLE]][@__obelisk_class_s47_middle_field_1]
+// CHECK-DAG: %[[DISPATCH_LEAF:.*]] = simulation.managed.load %[[LEAF_REF]]
+// CHECK-DAG: simulation.managed.is_null %[[DISPATCH_LEAF]]
+// CHECK-DAG: simulation.class.is_instance %[[DISPATCH_LEAF]] is @__obelisk_class_s17_leaf_a
+// CHECK-DAG: simulation.class.is_instance %[[DISPATCH_LEAF]] is @__obelisk_class_s32_leaf_b
+// CHECK-DAG: simulation.random.solve_wide
 // CHECK-DAG: arith.cmpi sge, {{.*}}, {{.*}} : i32
 // CHECK-DAG: arith.cmpi sle, {{.*}}, {{.*}} : i32
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s47_middle_field_0]
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_base_field_0] {{.*}}class_handle<@__obelisk_class_s17_leaf_a>
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s17_leaf_a_field_0]
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_base_field_0] {{.*}}class_handle<@__obelisk_class_s32_leaf_b>
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s32_leaf_b_field_0]
-// CHECK-DAG: obelisk_sim.class.direct_call @[[LEAF_A_PRE]]
-// CHECK-DAG: obelisk_sim.class.direct_call @[[LEAF_A_POST]]
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[MIDDLE_REF]] :
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[LEAF_REF]] :
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s47_middle_field_0]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_base_field_0] {{.*}}class_handle<@__obelisk_class_s17_leaf_a>
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s17_leaf_a_field_0]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_base_field_0] {{.*}}class_handle<@__obelisk_class_s32_leaf_b>
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s32_leaf_b_field_0]
+// CHECK-DAG: simulation.class.direct_call @[[LEAF_A_PRE]]
+// CHECK-DAG: simulation.class.direct_call @[[LEAF_A_POST]]
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[MIDDLE_REF]] :
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[LEAF_REF]] :

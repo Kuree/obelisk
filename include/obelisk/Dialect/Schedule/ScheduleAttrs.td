@@ -21,7 +21,7 @@ def SimComputeEffectAttr : ScheduleAttr<"ComputeEffect", "effect"> {
 }
 
 // Effect arrays appear both inside compute-graph attributes and directly on
-// `obelisk_sim.func`. Constraining the element type declaratively means a
+// `simulation.func`. Constraining the element type declaratively means a
 // malformed summary is rejected by the op verifier with a real diagnostic,
 // rather than only by whichever pass happens to walk it.
 def SimComputeEffectArrayAttr

@@ -12,7 +12,7 @@ module {
         sym_name = "left_i"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "left",
           name = "left", node_id = 3 : i64, sym_name = "left_b",
-          obelisk_sim.vpi_definition_name = "cell"} {}
+          simulation.vpi_definition_name = "cell"} {}
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "right",
         is_uninstantiated = false, name = "right", node_id = 4 : i64,
@@ -21,7 +21,7 @@ module {
       // expected-error @+1 {{instances of one source definition disagree on the VPI definition name}}
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "right",
           name = "right", node_id = 5 : i64, sym_name = "right_b",
-          obelisk_sim.vpi_definition_name = "not_cell"} {}
+          simulation.vpi_definition_name = "not_cell"} {}
     }
   }
 }

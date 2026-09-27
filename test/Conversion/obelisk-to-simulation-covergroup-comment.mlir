@@ -9,9 +9,9 @@
 // Tables 19-1 and 19-3 define distinct instance and static type comments for
 // covergroups and coverpoints. All four String expressions are evaluated once
 // in the option batch and retain their typed v1 owner and scope.
-// SIM: obelisk_sim.covergroup.create
+// SIM: simulation.covergroup.create
 // SIM-SAME: payloads[{{.*}}]
-// SIM-SAME: : (!obelisk_sim.string, !obelisk_sim.string, {{.*}}, !obelisk_sim.string, !obelisk_sim.string, !obelisk_sim.string, !obelisk_sim.string) -> !obelisk_sim.covergroup_handle
+// SIM-SAME: : (!simulation.string, !simulation.string, {{.*}}, !simulation.string, !simulation.string, !simulation.string, !simulation.string) -> !simulation.covergroup_handle
 // SCHEMA: functional_type id=[[TYPE:[1-9][0-9]*]] name={{.*}} language={{2017|2023}} hierarchy=comment_plan.cg
 // SCHEMA: functional_item id=[[POINT:[1-9][0-9]*]] type=[[TYPE]] name=cp kind=1 ordinal=0 hierarchy=comment_plan.cg.cp
 // SCHEMA-DAG: functional_expression id=[[GROUP_COMMENT:[1-9][0-9]*]] owner=[[TYPE]] owner_kind=1 role=13 result_kind=6 width=0 signedness=3 owner_ordinal=14 owner_subordinal=1 phase=4 result_ordinal=0

@@ -43,114 +43,114 @@
 
 // IEEE 1800-2017/2023 19.3 block events sample synchronously at a target's
 // begin/end boundary.  They neither park a process nor honor strobe.
-// BASIC: obelisk_sim.func private @{{[^ (]*}}covergroup_block_event_sample
+// BASIC: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
 // BASIC-SAME: entry_kind = 14
-// BASIC-SAME: obelisk_sim.covergroup_block_event_sample_evaluator
-// BASIC: obelisk_sim.covergroup.sample
-// BASIC: obelisk_sim.observer.bind @{{.*}}covergroup_block_event_sample
-// BASIC: obelisk_sim.covergroup.block_event.register
+// BASIC-SAME: simulation.covergroup_block_event_sample_evaluator
+// BASIC: simulation.covergroup.sample
+// BASIC: simulation.observer.bind @{{.*}}covergroup_block_event_sample
+// BASIC: simulation.covergroup.block_event.register
 // BASIC-SAME: event_kinds = array<i32: 0, 1>
-// BASIC-NOT: obelisk_sim.covergroup.block_event.plan
+// BASIC-NOT: simulation.covergroup.block_event.plan
 // BASIC-NOT: schedule.covergroup_clocking_sampler
-// BASIC-NOT: obelisk_sim.suspend.forever
+// BASIC-NOT: simulation.suspend.forever
 
 // The target definition carries both boundaries at O0 and O3.  The runtime
 // registry decides which registered clauses consume each one.
-// TARGET-LABEL: obelisk_sim.func private @{{[^ (]+}}(
-// TARGET-SAME: obelisk_sim.hierarchical_name = "basic.target"
-// TARGET: obelisk_sim.covergroup.block_event.fire
-// TARGET-SAME: event_kind = 0 : i32
-// TARGET: obelisk_sim.ref.store
-// TARGET: obelisk_sim.covergroup.block_event.fire
-// TARGET-SAME: event_kind = 1 : i32
-// TARGET: obelisk_sim.return
+// TARGET-LABEL: simulation.func private @{{[^ (]+}}(
+// TARGET-SAME: simulation.hierarchical_name = "basic.target"
+// TARGET: simulation.covergroup.block_event.fire
+// TARGET-SAME: event_kind = #simulation.block_event_kind<begin>
+// TARGET: simulation.ref.store
+// TARGET: simulation.covergroup.block_event.fire
+// TARGET-SAME: event_kind = #simulation.block_event_kind<end>
+// TARGET: simulation.return
 
 // Both schema expressions are event-phase SamplingEvent entries.  Block is
 // flag 2 and block-end is flag 2|4.  Strobe does not alter either entry.
-// SCHEMA: functional_expression {{.*}} role=1 {{.*}} flags=2
-// SCHEMA: functional_expression {{.*}} role=1 {{.*}} flags=6
+// SCHEMA-DAG: functional_expression {{.*}} role=1 {{.*}} flags=2
+// SCHEMA-DAG: functional_expression {{.*}} role=1 {{.*}} flags=6
 
 // An embedded covergroup captures its owning object.  Registration and the
 // instrumented method carry that same receiver, and the evaluator receives it
 // as argument 2 for member-valued coverpoints.
-// CLASS: obelisk_sim.func private @{{[^ (]*}}covergroup_block_event_sample
-// CLASS-SAME: %{{[^:]+}}: !obelisk_sim.class_handle<
-// CLASS-SAME: obelisk_sim.covergroup_block_event_sample_evaluator
-// CLASS: obelisk_sim.observer.bind @{{[^ ]*}}covergroup_block_event_sample
-// CLASS-SAME: values(%{{[^,]+}}, %{{[^ ]+}} : !obelisk_sim.covergroup_handle<
-// CLASS-SAME: !obelisk_sim.class_handle<
+// CLASS: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
+// CLASS-SAME: %{{[^:]+}}: !simulation.class_handle<
+// CLASS-SAME: simulation.covergroup_block_event_sample_evaluator
+// CLASS: simulation.observer.bind @{{[^ ]*}}covergroup_block_event_sample
+// CLASS-SAME: values(%{{[^,]+}}, %{{[^ ]+}} : !simulation.covergroup_handle<
+// CLASS-SAME: !simulation.class_handle<
 // CLASS-SAME: captures 2
-// CLASS: obelisk_sim.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
-// CLASS-FIRE-COUNT-2: obelisk_sim.covergroup.block_event.fire %{{[^,]+}}, %{{[^ ]+}}
+// CLASS: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
+// CLASS-FIRE-COUNT-2: simulation.covergroup.block_event.fire %{{[^,]+}}, %{{[^ ]+}}
 
 // `disable watched` branches directly to the named block's exit.  Therefore
 // only the begin fire remains reachable in this procedure.
-// DISABLE-COUNT-1: obelisk_sim.covergroup.block_event.fire
-// DISABLE-SAME: event_kind = 0 : i32
-// DISABLE: obelisk_sim.control.disable
+// DISABLE-COUNT-1: simulation.covergroup.block_event.fire
+// DISABLE-SAME: event_kind = #simulation.block_event_kind<begin>
+// DISABLE: simulation.control.disable
 // DISABLE-NEXT: cf.br
 
 // A subroutine initializes its leading block-item declarations before its
 // first statement. The begin sample must therefore follow a declaration
 // initializer call whose side effects can be observed by the covergroup.
-// DECL-LABEL: obelisk_sim.func private @{{[^ (]+}}({{.*}}obelisk_sim.coverage_block_event_target_id
-// DECL-SAME: obelisk_sim.hierarchical_name = "declaration_case.target"
-// DECL: obelisk_sim.call
-// DECL: obelisk_sim.covergroup.block_event.fire
-// DECL-SAME: event_kind = 0 : i32
-// DECL: obelisk_sim.ref.store
-// DECL: obelisk_sim.covergroup.block_event.fire
-// DECL-SAME: event_kind = 1 : i32
+// DECL-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.coverage_block_event_target_id
+// DECL-SAME: simulation.hierarchical_name = "declaration_case.target"
+// DECL: simulation.call
+// DECL: simulation.covergroup.block_event.fire
+// DECL-SAME: event_kind = #simulation.block_event_kind<begin>
+// DECL: simulation.ref.store
+// DECL: simulation.covergroup.block_event.fire
+// DECL-SAME: event_kind = #simulation.block_event_kind<end>
 
 // Functions use the same exact boundaries, including an explicit return.
-// FUNCTION-LABEL: obelisk_sim.func private @{{[^ (]+}}({{.*}}obelisk_sim.coverage_block_event_target_id
-// FUNCTION-SAME: obelisk_sim.hierarchical_name = "function_case.target"
-// FUNCTION: obelisk_sim.covergroup.block_event.fire
-// FUNCTION-SAME: event_kind = 0 : i32
-// FUNCTION: obelisk_sim.ref.store
-// FUNCTION: obelisk_sim.covergroup.block_event.fire
-// FUNCTION-SAME: event_kind = 1 : i32
-// FUNCTION-NEXT: obelisk_sim.return
+// FUNCTION-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.coverage_block_event_target_id
+// FUNCTION-SAME: simulation.hierarchical_name = "function_case.target"
+// FUNCTION: simulation.covergroup.block_event.fire
+// FUNCTION-SAME: event_kind = #simulation.block_event_kind<begin>
+// FUNCTION: simulation.ref.store
+// FUNCTION: simulation.covergroup.block_event.fire
+// FUNCTION-SAME: event_kind = #simulation.block_event_kind<end>
+// FUNCTION-NEXT: simulation.return
 
 // Object-qualified instance methods retain one receiver per event clause.
 // Different receivers become distinct registrations while sharing the same
 // target identity and synchronous firing points.
-// QUALIFIED-COUNT-2: obelisk_sim.func private @{{[^ (]*}}covergroup_block_event_sample
-// QUALIFIED: obelisk_sim.observer.bind @{{.*}} captures 2 : <i1>
-// QUALIFIED: obelisk_sim.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
+// QUALIFIED-COUNT-2: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
+// QUALIFIED: simulation.observer.bind @{{.*}} captures 2 : <i1>
+// QUALIFIED: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
 // QUALIFIED-SAME: event_kinds = array<i32: 0>
-// QUALIFIED: obelisk_sim.observer.bind @{{.*}} captures 2 : <i1>
-// QUALIFIED: obelisk_sim.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
+// QUALIFIED: simulation.observer.bind @{{.*}} captures 2 : <i1>
+// QUALIFIED: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
 // QUALIFIED-SAME: event_kinds = array<i32: 1>
 
 // A named parallel block begins before its children spawn and ends only after
 // the requested join completes.
-// FORK: obelisk_sim.control.enter
-// FORK-NEXT: obelisk_sim.covergroup.block_event.fire
-// FORK-SAME: event_kind = 0 : i32
-// FORK: obelisk_sim.suspend.join all
-// FORK: obelisk_sim.covergroup.block_event.fire
-// FORK-SAME: event_kind = 1 : i32
-// FORK-NEXT: obelisk_sim.control.leave
+// FORK: simulation.control.enter
+// FORK-NEXT: simulation.covergroup.block_event.fire
+// FORK-SAME: event_kind = #simulation.block_event_kind<begin>
+// FORK: simulation.suspend.join all
+// FORK: simulation.covergroup.block_event.fire
+// FORK-SAME: event_kind = #simulation.block_event_kind<end>
+// FORK-NEXT: simulation.control.leave
 
 // An embedded covergroup still captures its class owner for sampling a static
 // method target, but the event registration and firing have no receiver filter.
-// STATIC: obelisk_sim.func private @{{[^ (]*}}covergroup_block_event_sample
-// STATIC-SAME: %{{[^:]+}}: !obelisk_sim.class_handle<
-// STATIC: obelisk_sim.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
+// STATIC: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
+// STATIC-SAME: %{{[^:]+}}: !simulation.class_handle<
+// STATIC: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
 // STATIC-SAME: event_kinds = array<i32: 0, 1>
-// STATIC-FIRE-COUNT-2: obelisk_sim.covergroup.block_event.fire %{{[^ ]+}} {
+// STATIC-FIRE-COUNT-2: simulation.covergroup.block_event.fire %{{[^ ]+}} {
 
 // Task output copy-out happens after the end boundary. The assignment to the
 // task-local formal is a statement; publishing its value to the caller is not.
-// TASK-OUTPUT-LABEL: obelisk_sim.func private @{{[^ (]+}}(
-// TASK-OUTPUT-SAME: obelisk_sim.hierarchical_name = "task_output_case.target"
-// TASK-OUTPUT: obelisk_sim.ref.store
-// TASK-OUTPUT: obelisk_sim.covergroup.block_event.fire
-// TASK-OUTPUT-SAME: event_kind = 1 : i32
-// TASK-OUTPUT: obelisk_sim.ref.load
-// TASK-OUTPUT: obelisk_sim.ref.store
-// TASK-OUTPUT: obelisk_sim.return
+// TASK-OUTPUT-LABEL: simulation.func private @{{[^ (]+}}(
+// TASK-OUTPUT-SAME: simulation.hierarchical_name = "task_output_case.target"
+// TASK-OUTPUT: simulation.ref.store
+// TASK-OUTPUT: simulation.covergroup.block_event.fire
+// TASK-OUTPUT-SAME: event_kind = #simulation.block_event_kind<end>
+// TASK-OUTPUT: simulation.ref.load
+// TASK-OUTPUT: simulation.ref.store
+// TASK-OUTPUT: simulation.return
 
 //--- basic.sv
 module basic;

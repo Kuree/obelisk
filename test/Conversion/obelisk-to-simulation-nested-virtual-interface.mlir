@@ -58,20 +58,20 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.scope.decl [[PARENT:[0-9]+]] parent {{[0-9]+}} hierarchy "top.parent" {{.*}} interface "@root::@top_body::@parent"
-// CHECK-DAG: obelisk_sim.scope.decl [[CHILD:[0-9]+]] parent [[PARENT]] hierarchy "top.parent.child" {{.*}} interface "@root::@top_body::@parent_body::@child"
-// CHECK-DAG: obelisk_sim.scope.decl [[OTHER:[0-9]+]] parent {{[0-9]+}} hierarchy "top.other" {{.*}} interface "@root::@top_body::@parent"
-// CHECK-DAG: obelisk_sim.scope.decl [[OTHER_CHILD:[0-9]+]] parent [[OTHER]] hierarchy "top.other.child" {{.*}} interface "@root::@top_body::@parent_body::@child"
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-DAG: simulation.scope.decl [[PARENT:[0-9]+]] parent {{[0-9]+}} hierarchy "top.parent" {{.*}} interface "@root::@top_body::@parent"
+// CHECK-DAG: simulation.scope.decl [[CHILD:[0-9]+]] parent [[PARENT]] hierarchy "top.parent.child" {{.*}} interface "@root::@top_body::@parent_body::@child"
+// CHECK-DAG: simulation.scope.decl [[OTHER:[0-9]+]] parent {{[0-9]+}} hierarchy "top.other" {{.*}} interface "@root::@top_body::@parent"
+// CHECK-DAG: simulation.scope.decl [[OTHER_CHILD:[0-9]+]] parent [[OTHER]] hierarchy "top.other.child" {{.*}} interface "@root::@top_body::@parent_body::@child"
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: [[EXPECTED:%.*]] = arith.constant [[PARENT]] : i64
-// CHECK: [[SCOPE:%.*]] = obelisk_sim.virtual_interface.scope {{%.*}} : !obelisk_sim.virtual_interface<"@root::@top_body::@parent", "">
+// CHECK: [[SCOPE:%.*]] = simulation.virtual_interface.scope {{%.*}} : !simulation.virtual_interface<"@root::@top_body::@parent", "">
 // CHECK: arith.cmpi eq, [[SCOPE]], [[EXPECTED]] : i64
-// CHECK: [[BOUND:%.*]] = obelisk_sim.virtual_interface.bind [[CHILD]] : !obelisk_sim.virtual_interface<"@root::@top_body::@parent_body::@child", "">
-// CHECK: cf.br {{.*}}([[BOUND]] : !obelisk_sim.virtual_interface<"@root::@top_body::@parent_body::@child", "">)
+// CHECK: [[BOUND:%.*]] = simulation.virtual_interface.bind [[CHILD]] : !simulation.virtual_interface<"@root::@top_body::@parent_body::@child", "">
+// CHECK: cf.br {{.*}}([[BOUND]] : !simulation.virtual_interface<"@root::@top_body::@parent_body::@child", "">)
 // CHECK: [[OTHER_EXPECTED:%.*]] = arith.constant {{.*}} [[OTHER]] : i64
 // CHECK: arith.cmpi eq, [[SCOPE]], [[OTHER_EXPECTED]] : i64
-// CHECK: [[OTHER_BOUND:%.*]] = obelisk_sim.virtual_interface.bind [[OTHER_CHILD]] : !obelisk_sim.virtual_interface<"@root::@top_body::@parent_body::@child", "">
-// CHECK: cf.br {{.*}}([[OTHER_BOUND]] : !obelisk_sim.virtual_interface<"@root::@top_body::@parent_body::@child", "">)
-// CHECK: obelisk_sim.fatal
-// CHECK: obelisk_sim.call @unit_
-// CHECK: obelisk_sim.call @unit_
+// CHECK: [[OTHER_BOUND:%.*]] = simulation.virtual_interface.bind [[OTHER_CHILD]] : !simulation.virtual_interface<"@root::@top_body::@parent_body::@child", "">
+// CHECK: cf.br {{.*}}([[OTHER_BOUND]] : !simulation.virtual_interface<"@root::@top_body::@parent_body::@child", "">)
+// CHECK: simulation.fatal
+// CHECK: simulation.call @unit_
+// CHECK: simulation.call @unit_

@@ -87,16 +87,16 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.scan_dynamic_validate {{.*}} {allowed_specifiers = 34603008 : i64
-// CHECK: obelisk_sim.string.scan_dynamic {{.*}} {allowed_specifiers = 34603008 : i64, finalize = false, raw_four_state_bytes = 16 : i64, raw_two_state_bytes = 8 : i64}
+// CHECK: simulation.scan_dynamic_validate {{.*}} {allowed_specifiers = 34603008 : i64
+// CHECK: simulation.string.scan_dynamic {{.*}} {allowed_specifiers = 34603008 : i64, finalize = false, raw_four_state_bytes = 16 : i64, raw_two_state_bytes = 8 : i64}
 // CHECK: cf.switch
 // CHECK: 9:
 // CHECK: 10:
-// CHECK-DAG: obelisk_sim.string.scan_raw
-// CHECK-DAG: obelisk_sim.string.scan_raw
-// CHECK-DAG: obelisk_sim.string.scan_raw
-// CHECK-DAG: obelisk_sim.string.scan_raw
-// CHECK-DAG: obelisk_sim.union.construct
-// CHECK-DAG: obelisk_sim.union.construct
-// CHECK-DAG: obelisk_sim.aggregate.construct
-// CHECK-DAG: obelisk_sim.aggregate.construct
+// CHECK-DAG: simulation.string.scan_raw
+// CHECK-DAG: simulation.string.scan_raw
+// CHECK-DAG: simulation.string.scan_raw
+// CHECK-DAG: simulation.string.scan_raw
+// CHECK-DAG: simulation.union.construct
+// CHECK-DAG: simulation.union.construct
+// CHECK-DAG: simulation.aggregate.construct
+// CHECK-DAG: simulation.aggregate.construct

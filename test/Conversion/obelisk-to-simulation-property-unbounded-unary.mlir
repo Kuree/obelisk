@@ -145,29 +145,29 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: function = @unit_0.$concurrent_eos_count.14.always, block = 0, region = active
 // CHECK: function = @unit_0.fork.14.0.0, block = 0, region = reactive
 // CHECK: function = @unit_2.$concurrent_eos_count.41.s_eventually, block = 0, region = active
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.14.0.0(
-// CHECK: obelisk_sim.bytes.constant "always-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.14.always(
+// CHECK-LABEL: simulation.func private @unit_0.fork.14.0.0(
+// CHECK: simulation.bytes.constant "always-pass"
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.14.always(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.ref.load
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.spawn @unit_0.fork.14.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_unary_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "always"
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 0 : i64
-// CHECK: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.14.always
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.14.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_unary_aggregate_tokens
+// CHECK-SAME: simulation.persistent_unary_kind = "always"
+// CHECK-SAME: simulation.persistent_unary_minimum = 0 : i64
+// CHECK: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.14.always
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.select
 
 // The [2:$] warm-up is one age bitset, not one process per attempt. This also
 // permits holes between starts when assertion checking is disabled.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "always"
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 2 : i64
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_unary_kind = "always"
+// CHECK-SAME: simulation.persistent_unary_minimum = 2 : i64
 // CHECK: arith.constant 2 : i64
 // CHECK: cf.br ^bb1({{.*}} : i64, i64)
 // CHECK: [[MATURE:%.*]] = arith.andi {{.*}}
@@ -178,31 +178,31 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Strong eventually succeeds every eligible attempt together on a true
 // sample and fails every still-live attempt through the final coordinator.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.41.s_eventually(
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.41.s_eventually(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK: obelisk_sim.spawn @unit_2.fork.41.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "s_eventually"
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 0 : i64
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_count.41.s_eventually
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.spawn @unit_2.fork.41.1.1
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_unary_kind = "s_eventually"
+// CHECK-SAME: simulation.persistent_unary_minimum = 0 : i64
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_count.41.s_eventually
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.select
 
 // A ranged strong eventuality adds the same age bitset; final failure counts
 // eligible attempts plus the set immature bits exactly.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.57.s_eventually(
-// CHECK: [[ELIGIBLE:%.*]] = obelisk_sim.ref.load %arg1
-// CHECK: [[IMMATURE:%.*]] = obelisk_sim.ref.load %arg2
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.57.s_eventually(
+// CHECK: [[ELIGIBLE:%.*]] = simulation.ref.load %arg1
+// CHECK: [[IMMATURE:%.*]] = simulation.ref.load %arg2
 // CHECK: cf.br [[POP_LOOP:\^bb[0-9]+]]([[IMMATURE]], [[ELIGIBLE]] : i64, i64)
 // CHECK: [[POP_LOOP]]([[BITS:%.*]]: i64, [[COUNT:%.*]]: i64)
 // CHECK: [[LESS_ONE:%.*]] = arith.subi [[BITS]],
 // CHECK: [[NEXT_BITS:%.*]] = arith.andi [[BITS]], [[LESS_ONE]] : i64
 // CHECK: [[NEXT_COUNT:%.*]] = arith.addi [[COUNT]],
 // CHECK: cf.br [[POP_LOOP]]([[NEXT_BITS]], [[NEXT_COUNT]] : i64, i64)
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "s_eventually"
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 2 : i64
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_unary_kind = "s_eventually"
+// CHECK-SAME: simulation.persistent_unary_minimum = 2 : i64
+// CHECK-COUNT-2: simulation.ref.alloc
 // CHECK: arith.constant {{.*}}2 : i64
 // CHECK: arith.cmpi ne

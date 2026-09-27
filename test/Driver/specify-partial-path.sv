@@ -58,4 +58,4 @@ module specify_partial_path;
 endmodule
 
 // CHECK: PASSED
-// SIM-COUNT-2: obelisk_sim.driver.drive_inertial_path
+// SIM-COUNT-2: simulation.driver.drive_inertial_path

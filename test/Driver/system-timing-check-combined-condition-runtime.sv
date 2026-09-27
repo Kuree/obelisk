@@ -44,7 +44,7 @@ module system_timing_check_combined_condition_runtime;
   end
 endmodule
 
-// SIM: obelisk_sim.suspend.clock_set
+// SIM: simulation.suspend.clock_set
 // SIM-SAME: conditions 2 edges [1, 1] indices [0, 1]
 // SIM-NOT: timing_check_table
 // CHECK: combined-data-disabled 0

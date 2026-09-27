@@ -7,11 +7,11 @@
 // CHECK-NEXT: vpi @full graph=true mode=full observability=externally_writable read=true write=true static-dependencies=false
 
 module {
-  obelisk_sim.design @missing {
-    obelisk_sim.scope.decl 0
+  simulation.design @missing {
+    simulation.scope.decl 0
   }
 
-  obelisk_sim.design @off attributes {
+  simulation.design @off attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1, nodes = [], edges = [],
       regions = [
@@ -21,10 +21,10 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
+    simulation.scope.decl 0
   }
 
-  obelisk_sim.design @read attributes {
+  simulation.design @read attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = read, workers = 1, nodes = [], edges = [],
       regions = [
@@ -34,10 +34,10 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
+    simulation.scope.decl 0
   }
 
-  obelisk_sim.design @full attributes {
+  simulation.design @full attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = full, workers = 1, nodes = [], edges = [],
       regions = [
@@ -47,6 +47,6 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
+    simulation.scope.decl 0
   }
 }

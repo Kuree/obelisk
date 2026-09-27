@@ -24,12 +24,12 @@
 // complete cross-target value Cartesian product at construction. Targets use
 // declared cross order, mathematical value order, and the final target varies
 // fastest. The exact tuple-major plan is transient compiler metadata.
-// PREPARE: obelisk_sim.coverage.functional.cross_with_candidate_values = [0 : i2, false, 0 : i2, true, 1 : i2, false, 1 : i2, true, -2 : i2, false, -2 : i2, true, -1 : i2, false, -1 : i2, true]
-// PREPARE-SAME: obelisk_sim.coverage.functional.cross_with_target_paths = ["cross_with.cg.x.ca", "cross_with.cg.x.cb"]
-// SIGNED: obelisk_sim.coverage.functional.cross_with_candidate_values = [-2 : i2, false, -2 : i2, true, -1 : i2, false, -1 : i2, true, 0 : i2, false, 0 : i2, true, 1 : i2, false, 1 : i2, true]
+// PREPARE: simulation.coverage.functional.cross_with_candidate_values = [0 : i2, false, 0 : i2, true, 1 : i2, false, 1 : i2, true, -2 : i2, false, -2 : i2, true, -1 : i2, false, -1 : i2, true]
+// PREPARE-SAME: simulation.coverage.functional.cross_with_target_paths = ["cross_with.cg.x.ca", "cross_with.cg.x.cb"]
+// SIGNED: simulation.coverage.functional.cross_with_candidate_values = [-2 : i2, false, -2 : i2, true, -1 : i2, false, -1 : i2, true, 0 : i2, false, 0 : i2, true, 1 : i2, false, 1 : i2, true]
 // Four-state candidates encode the exact A plane in the low half and B plane
 // in the high half, so the bounded domain includes 0, 1, X, and Z per bit.
-// FOUR-STATE: obelisk_sim.coverage.functional.cross_with_candidate_values = [0 : i4, false
+// FOUR-STATE: simulation.coverage.functional.cross_with_candidate_values = [0 : i4, false
 // FOUR-STATE-SAME: -1 : i4, true]
 
 // Omitted `matches` is Count 1, a folded positive count is retained directly,
@@ -49,12 +49,12 @@
 
 // Every predicate result and the constructor-dependent matches count travels
 // through the unchanged v1 covergroup-create expression batch.
-// SIM: obelisk_sim.covergroup.create
+// SIM: simulation.covergroup.create
 // SIM-SAME: argument_count 1
 // SIM-SAME: expression_ids [
 
 // TOO-MANY: cross selector with candidate count exceeds the v1 limit of 4096
-// NESTED-COUNT-2: obelisk_sim.coverage.functional.cross_with_candidate_values
+// NESTED-COUNT-2: simulation.coverage.functional.cross_with_candidate_values
 
 //--- input.sv
 module cross_with;

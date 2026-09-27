@@ -66,46 +66,46 @@ module attributes {
 // also receives one class-wide key and position, so every object shares its
 // cycle. All four words are committed only on the successful solve edge.
 
-// CHECK: obelisk_sim.storage.decl 0 in 0 : i32 design hierarchy "C::s" debug "s"
-// CHECK: obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<1 : 0 x i1> design hierarchy "C::cycle" debug "cycle"
-// CHECK: obelisk_sim.storage.decl 3 in 0 : i64 design hierarchy "C::s.$rand_mode" debug "__obelisk_rand_mode"
-// CHECK: obelisk_sim.storage.decl 4 in 0 : i64 design hierarchy "C::cycle.$rand_mode" debug "__obelisk_rand_mode"
-// CHECK: obelisk_sim.storage.decl 5 in 0 : i64 design hierarchy "C::cycle.$randc_key" debug "__obelisk_static_randc_key"
-// CHECK: obelisk_sim.storage.decl 6 in 0 : i64 design hierarchy "C::cycle.$randc_position" debug "__obelisk_static_randc_position"
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK-SAME: %[[S_REF:arg[0-9]+]]: !obelisk_sim.ref<i32>
-// CHECK-SAME: %[[CYCLE_REF:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x i1>>
-// CHECK-SAME: %[[OBJECT_REF:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.class_handle<@__obelisk_class_s3_C>>
-// CHECK-SAME: %[[KEY_REF:arg[0-9]+]]: !obelisk_sim.ref<i64>
-// CHECK-SAME: %[[POSITION_REF:arg[0-9]+]]: !obelisk_sim.ref<i64>
-// CHECK: %[[OBJECT:.*]] = obelisk_sim.ref.load %[[OBJECT_REF]] {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_C>
-// CHECK: %[[IS_D:.*]] = obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s24_D
+// CHECK: simulation.storage.decl 0 in 0 : i32 design hierarchy "C::s" debug "s"
+// CHECK: simulation.storage.decl 1 in 0 : !simulation.packed_array<1 : 0 x i1> design hierarchy "C::cycle" debug "cycle"
+// CHECK: simulation.storage.decl 3 in 0 : i64 design hierarchy "C::s.$rand_mode" debug "__obelisk_rand_mode"
+// CHECK: simulation.storage.decl 4 in 0 : i64 design hierarchy "C::cycle.$rand_mode" debug "__obelisk_rand_mode"
+// CHECK: simulation.storage.decl 5 in 0 : i64 design hierarchy "C::cycle.$randc_key" debug "__obelisk_static_randc_key"
+// CHECK: simulation.storage.decl 6 in 0 : i64 design hierarchy "C::cycle.$randc_position" debug "__obelisk_static_randc_position"
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK-SAME: %[[S_REF:arg[0-9]+]]: !simulation.ref<i32>
+// CHECK-SAME: %[[CYCLE_REF:arg[0-9]+]]: !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// CHECK-SAME: %[[OBJECT_REF:arg[0-9]+]]: !simulation.ref<!simulation.class_handle<@__obelisk_class_s3_C>>
+// CHECK-SAME: %[[KEY_REF:arg[0-9]+]]: !simulation.ref<i64>
+// CHECK-SAME: %[[POSITION_REF:arg[0-9]+]]: !simulation.ref<i64>
+// CHECK: %[[OBJECT:.*]] = simulation.ref.load %[[OBJECT_REF]] {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_C>
+// CHECK: %[[IS_D:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s24_D
 // CHECK: cf.cond_br %[[IS_D]]
-// CHECK: %[[DERIVED:.*]] = obelisk_sim.class.cast %[[OBJECT]] {{.*}} to !obelisk_sim.class_handle<@__obelisk_class_s24_D>
-// CHECK: %[[D_X_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_2]
-// CHECK-NOT: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_C_field_0]
-// CHECK-NOT: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_C_field_1]
-// CHECK: obelisk_sim.ref.load %[[S_REF]] : !obelisk_sim.ref<i32>
-// CHECK: obelisk_sim.ref.load %[[KEY_REF]] : !obelisk_sim.ref<i64>
-// CHECK: obelisk_sim.ref.load %[[POSITION_REF]] : !obelisk_sim.ref<i64>
-// CHECK: %[[IS_C:.*]] = obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
+// CHECK: %[[DERIVED:.*]] = simulation.class.cast %[[OBJECT]] {{.*}} to !simulation.class_handle<@__obelisk_class_s24_D>
+// CHECK: %[[D_X_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_2]
+// CHECK-NOT: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_C_field_0]
+// CHECK-NOT: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_C_field_1]
+// CHECK: simulation.ref.load %[[S_REF]] : !simulation.ref<i32>
+// CHECK: simulation.ref.load %[[KEY_REF]] : !simulation.ref<i64>
+// CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
+// CHECK: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
 // CHECK: cf.cond_br %[[IS_C]]
 // CHECK: arith.cmpi sgt, {{.*}}, {{.*}} : i32
 // CHECK: cf.cond_br %{{.*}}, ^[[D_SUCCESS:bb[0-9]+]]
 // CHECK: ^[[D_SUCCESS]]
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[S_REF]] : i32, !obelisk_sim.ref<i32>
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[CYCLE_REF]] : !obelisk_sim.packed_array<1 : 0 x i1>, !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x i1>>
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[KEY_REF]] : i64, !obelisk_sim.ref<i64>
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[POSITION_REF]] : i64, !obelisk_sim.ref<i64>
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[D_X_REF]]
-// CHECK: %[[C_X_REF:.*]] = obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_2]
-// CHECK: obelisk_sim.ref.load %[[S_REF]] : !obelisk_sim.ref<i32>
-// CHECK: obelisk_sim.ref.load %[[KEY_REF]] : !obelisk_sim.ref<i64>
-// CHECK: obelisk_sim.ref.load %[[POSITION_REF]] : !obelisk_sim.ref<i64>
+// CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[CYCLE_REF]] : !simulation.packed_array<1 : 0 x i1>, !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[KEY_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[POSITION_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_X_REF]]
+// CHECK: %[[C_X_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_2]
+// CHECK: simulation.ref.load %[[S_REF]] : !simulation.ref<i32>
+// CHECK: simulation.ref.load %[[KEY_REF]] : !simulation.ref<i64>
+// CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
 // CHECK: cf.cond_br %{{.*}}, ^[[C_SUCCESS:bb[0-9]+]]
 // CHECK: ^[[C_SUCCESS]]
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[S_REF]] : i32, !obelisk_sim.ref<i32>
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[CYCLE_REF]] : !obelisk_sim.packed_array<1 : 0 x i1>, !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x i1>>
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[KEY_REF]] : i64, !obelisk_sim.ref<i64>
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[POSITION_REF]] : i64, !obelisk_sim.ref<i64>
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[C_X_REF]]
+// CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[CYCLE_REF]] : !simulation.packed_array<1 : 0 x i1>, !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[KEY_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[POSITION_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_X_REF]]

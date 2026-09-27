@@ -287,78 +287,78 @@ module attributes {
   }
 }
 
-// IR: obelisk_sim.scope.decl 1 {{.*}} hierarchy "top" {{.*}} vpi_kind 32
-// IR: obelisk_sim.scope.decl 2 {{.*}} hierarchy "iface" {{.*}} vpi_kind 601
-// IR: obelisk_sim.scope.decl 3 {{.*}} hierarchy "prog" {{.*}} vpi_kind 602
-// IR: obelisk_sim.vpi_object.anchor @[[TOP:[^ ]+]] id [[TOP_ID:[0-9]+]] type 32
-// IR: obelisk_sim.vpi_object.anchor @[[GEN:[^ ]+]] id [[GEN_ID:[0-9]+]] type 134 {{.*}} parent @[[TOP]] {{.*}} hierarchy "top.g"
-// IR: obelisk_sim.vpi_object.anchor @[[IFACE:[^ ]+]] id [[IFACE_ID:[0-9]+]] type 601
-// IR: obelisk_sim.vpi_object.anchor @[[PROG:[^ ]+]] id [[PROG_ID:[0-9]+]] type 602
-// IR: obelisk_sim.statement.decl 1 scope 1 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 0 modes 2 to 1
-// IR: obelisk_sim.statement.decl 2 scope 1 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 1 modes 2 to 2
-// IR: obelisk_sim.statement.decl 3 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 0 modes 2 to 3
-// IR: obelisk_sim.statement.decl 4 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 1 modes 2 to 4
-// IR: obelisk_sim.statement.decl 5 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 2 modes 2 to 5
-// IR: obelisk_sim.statement.decl 6 scope 1 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 8 ordinal 0 modes 2 to 6
-// IR: obelisk_sim.statement.decl 7 scope 1 type 646
-// IR: obelisk_sim.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 646 ordinal 0 modes 2 to 7
-// IR: obelisk_sim.statement.decl 8 scope 1 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 2 modes 2 to 8
-// IR: obelisk_sim.statement.decl 9 scope 2 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 2 type 601 selector 8 ordinal 0 modes 2 to 9
-// IR: obelisk_sim.statement.decl 10 scope 3 type 8
-// IR: obelisk_sim.vpi_statement_relation.decl scope 3 type 602 selector 8 ordinal 0 modes 2 to 10
-// IR-NOT: obelisk_sim.statement.decl 11
-// IR: obelisk_sim.net.decl [[SOURCE:[0-9]+]] {{.*}} hierarchy "top.source"
-// IR: obelisk_sim.net.decl [[DIRECT_LHS:[0-9]+]] {{.*}} hierarchy "top.direct_lhs"
-// IR: obelisk_sim.net.decl [[VECTOR_LHS:[0-9]+]] {{.*}} hierarchy "top.vector_lhs"
-// IR: obelisk_sim.net.decl [[VECTOR_RHS:[0-9]+]] {{.*}} hierarchy "top.vector_rhs"
-// IR: obelisk_sim.storage.decl [[VARIABLE_LHS:[0-9]+]] {{.*}} hierarchy "top.variable_lhs"
-// IR: obelisk_sim.storage.decl [[VARIABLE_RHS:[0-9]+]] {{.*}} hierarchy "top.variable_rhs"
-// IR: obelisk_sim.net.decl [[GENERATED_A:[0-9]+]] {{.*}} hierarchy "top.g.a"
-// IR: obelisk_sim.vpi_net_identity.decl [[B_ID:[0-9]+]] backed_by [[A:[0-9]+]] in 1 {{.*}} hierarchy "top.b"
-// IR: obelisk_sim.vpi_net_identity.decl [[C_ID:[0-9]+]] backed_by [[A]] in 1 {{.*}} hierarchy "top.c"
-// IR: obelisk_sim.vpi_net_identity.decl [[D_ID:[0-9]+]] backed_by [[A]] in 1 {{.*}} hierarchy "top.d"
-// IR: obelisk_sim.vpi_net_identity.decl [[GENERATED_B_ID:[0-9]+]] backed_by [[GENERATED_A]] in 1 {{.*}} hierarchy "top.g.b"
-// IR-NOT: obelisk_sim.vpi_relation.decl <kind = net, id = [[A]] : i64> selector 126
-// IR: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[B_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[C_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[D_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[DIRECT_LHS]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 1 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[VECTOR_LHS]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 2 : i64> selector 82 handle ordinal 0 to <kind = net, id = [[VECTOR_RHS]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 3 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[A]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 3 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 4 : i64> selector 77 handle ordinal 0 to <kind = net_identity, id = [[B_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 4 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 5 : i64> selector 77 handle ordinal 0 to <kind = net_identity, id = [[C_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 5 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 6 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[GENERATED_A]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 7 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[GENERATED_A]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 7 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[GENERATED_B_ID]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 8 : i64> selector 77 handle ordinal 0 to <kind = storage, id = [[VARIABLE_LHS]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = statement, id = 8 : i64> selector 82 handle ordinal 0 to <kind = storage, id = [[VARIABLE_RHS]] : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 8 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 8 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 8 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 1 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 1 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 1 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 122 iterate ordinal 0 to <kind = statement, id = 1 : i64>
-// IR-NOT: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 8
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 2 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 122 iterate ordinal 0 to <kind = statement, id = 2 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 2 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
-// IR: obelisk_sim.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 123 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: simulation.scope.decl 1 {{.*}} hierarchy "top" {{.*}} vpi_kind 32
+// IR: simulation.scope.decl 2 {{.*}} hierarchy "iface" {{.*}} vpi_kind 601
+// IR: simulation.scope.decl 3 {{.*}} hierarchy "prog" {{.*}} vpi_kind 602
+// IR: simulation.vpi_object.anchor @[[TOP:[^ ]+]] id [[TOP_ID:[0-9]+]] type 32
+// IR: simulation.vpi_object.anchor @[[GEN:[^ ]+]] id [[GEN_ID:[0-9]+]] type 134 {{.*}} parent @[[TOP]] {{.*}} hierarchy "top.g"
+// IR: simulation.vpi_object.anchor @[[IFACE:[^ ]+]] id [[IFACE_ID:[0-9]+]] type 601
+// IR: simulation.vpi_object.anchor @[[PROG:[^ ]+]] id [[PROG_ID:[0-9]+]] type 602
+// IR: simulation.statement.decl 1 scope 1 type 8
+// IR: simulation.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 0 modes 2 to 1
+// IR: simulation.statement.decl 2 scope 1 type 8
+// IR: simulation.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 1 modes 2 to 2
+// IR: simulation.statement.decl 3 scope 1 type 646
+// IR: simulation.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 0 modes 2 to 3
+// IR: simulation.statement.decl 4 scope 1 type 646
+// IR: simulation.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 1 modes 2 to 4
+// IR: simulation.statement.decl 5 scope 1 type 646
+// IR: simulation.vpi_statement_relation.decl scope 1 type 32 selector 646 ordinal 2 modes 2 to 5
+// IR: simulation.statement.decl 6 scope 1 type 8
+// IR: simulation.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 8 ordinal 0 modes 2 to 6
+// IR: simulation.statement.decl 7 scope 1 type 646
+// IR: simulation.vpi_statement_relation.decl anchor [[GEN_ID]] type 134 selector 646 ordinal 0 modes 2 to 7
+// IR: simulation.statement.decl 8 scope 1 type 8
+// IR: simulation.vpi_statement_relation.decl scope 1 type 32 selector 8 ordinal 2 modes 2 to 8
+// IR: simulation.statement.decl 9 scope 2 type 8
+// IR: simulation.vpi_statement_relation.decl scope 2 type 601 selector 8 ordinal 0 modes 2 to 9
+// IR: simulation.statement.decl 10 scope 3 type 8
+// IR: simulation.vpi_statement_relation.decl scope 3 type 602 selector 8 ordinal 0 modes 2 to 10
+// IR-NOT: simulation.statement.decl 11
+// IR: simulation.net.decl [[SOURCE:[0-9]+]] {{.*}} hierarchy "top.source"
+// IR: simulation.net.decl [[DIRECT_LHS:[0-9]+]] {{.*}} hierarchy "top.direct_lhs"
+// IR: simulation.net.decl [[VECTOR_LHS:[0-9]+]] {{.*}} hierarchy "top.vector_lhs"
+// IR: simulation.net.decl [[VECTOR_RHS:[0-9]+]] {{.*}} hierarchy "top.vector_rhs"
+// IR: simulation.storage.decl [[VARIABLE_LHS:[0-9]+]] {{.*}} hierarchy "top.variable_lhs"
+// IR: simulation.storage.decl [[VARIABLE_RHS:[0-9]+]] {{.*}} hierarchy "top.variable_rhs"
+// IR: simulation.net.decl [[GENERATED_A:[0-9]+]] {{.*}} hierarchy "top.g.a"
+// IR: simulation.vpi_net_identity.decl [[B_ID:[0-9]+]] backed_by [[A:[0-9]+]] in 1 {{.*}} hierarchy "top.b"
+// IR: simulation.vpi_net_identity.decl [[C_ID:[0-9]+]] backed_by [[A]] in 1 {{.*}} hierarchy "top.c"
+// IR: simulation.vpi_net_identity.decl [[D_ID:[0-9]+]] backed_by [[A]] in 1 {{.*}} hierarchy "top.d"
+// IR: simulation.vpi_net_identity.decl [[GENERATED_B_ID:[0-9]+]] backed_by [[GENERATED_A]] in 1 {{.*}} hierarchy "top.g.b"
+// IR-NOT: simulation.vpi_relation.decl <kind = net, id = [[A]] : i64> selector 126
+// IR: simulation.vpi_relation.decl <kind = net_identity, id = [[B_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: simulation.vpi_relation.decl <kind = net_identity, id = [[C_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: simulation.vpi_relation.decl <kind = net_identity, id = [[D_ID]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 1 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[DIRECT_LHS]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 1 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 2 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[VECTOR_LHS]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 2 : i64> selector 82 handle ordinal 0 to <kind = net, id = [[VECTOR_RHS]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 3 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 3 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 4 : i64> selector 77 handle ordinal 0 to <kind = net_identity, id = [[B_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 4 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 5 : i64> selector 77 handle ordinal 0 to <kind = net_identity, id = [[C_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 5 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[D_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 6 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[GENERATED_A]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 7 : i64> selector 77 handle ordinal 0 to <kind = net, id = [[GENERATED_A]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 7 : i64> selector 82 handle ordinal 0 to <kind = net_identity, id = [[GENERATED_B_ID]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 8 : i64> selector 77 handle ordinal 0 to <kind = storage, id = [[VARIABLE_LHS]] : i64>
+// IR: simulation.vpi_relation.decl <kind = statement, id = 8 : i64> selector 82 handle ordinal 0 to <kind = storage, id = [[VARIABLE_RHS]] : i64>
+// IR: simulation.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: simulation.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: simulation.vpi_relation.decl <kind = storage, id = [[VARIABLE_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: simulation.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: simulation.vpi_relation.decl <kind = storage, id = [[VARIABLE_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 8 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 8 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[DIRECT_LHS]] : i64> selector 122 iterate ordinal 0 to <kind = statement, id = 1 : i64>
+// IR-NOT: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 8
+// IR: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 91 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_LHS]] : i64> selector 122 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 93 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 101 iterate ordinal 0 to <kind = statement, id = 2 : i64>
+// IR: simulation.vpi_relation.decl <kind = net, id = [[VECTOR_RHS]] : i64> selector 123 iterate ordinal 0 to <kind = statement, id = 2 : i64>
 // IR-NOT: obelisk.sv.

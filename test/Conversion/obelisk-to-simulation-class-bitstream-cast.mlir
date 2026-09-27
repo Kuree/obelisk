@@ -199,38 +199,38 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.class.field
-// CHECK-SAME: obelisk_sim.class_bitstream_member
-// CHECK-SAME: obelisk_sim.class_bitstream_visibility = 0 : i32
-// CHECK-LABEL: obelisk_sim.func private @{{.*direct}}
-// CHECK-COUNT-2: obelisk_sim.recursive.export_bitstream
+// CHECK: simulation.class.field
+// CHECK-SAME: simulation.class_bitstream_member
+// CHECK-SAME: simulation.class_bitstream_visibility = #simulation.member_visibility<public>
+// CHECK-LABEL: simulation.func private @{{.*direct}}
+// CHECK-COUNT-2: simulation.recursive.export_bitstream
 // CHECK-SAME: class_allow_hidden_root
-// CHECK-LABEL: obelisk_sim.func private @{{.*indirect}}
-// CHECK: obelisk_sim.recursive.export_bitstream
+// CHECK-LABEL: simulation.func private @{{.*indirect}}
+// CHECK: simulation.recursive.export_bitstream
 // CHECK-NOT: class_allow_hidden_root
-// CHECK-LABEL: obelisk_sim.func private @{{[^ (]+}}
-// CHECK-SAME: obelisk_sim.hierarchical_name = "top.nibbles"
-// CHECK: obelisk_sim.recursive.export_bitstream
-// CHECK-SAME: -> (!obelisk_sim.logic<8>, i1, !obelisk_sim.managed_watch)
+// CHECK-LABEL: simulation.func private @{{[^ (]+}}
+// CHECK-SAME: simulation.hierarchical_name = "top.nibbles"
+// CHECK: simulation.recursive.export_bitstream
+// CHECK-SAME: -> (!simulation.logic<8>, i1, !simulation.managed_watch)
 // CHECK: arith.constant {{.*}} 2 : i64
-// CHECK: obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>
+// CHECK: simulation.container.create
+// CHECK-SAME: -> !simulation.dynamic_array<!simulation.logic<4>>
 
 // BYTECODE: obelisk.execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
 // BYTECODE: obelisk.feature.class_bitstream
-// BYTECODE: obelisk_sim.recursive.export_bitstream
+// BYTECODE: simulation.recursive.export_bitstream
 // BYTECODE-SAME: class_site_id = 1 : i64
-// BYTECODE-SAME: obelisk_sim.class_bitstream_bytecode_function
-// BYTECODE-SAME: obelisk_sim.class_bitstream_bytecode_site
+// BYTECODE-SAME: simulation.class_bitstream_bytecode_function
+// BYTECODE-SAME: simulation.class_bitstream_bytecode_site
 
 // AUTO: obelisk.execution.class_bitstream_blob
 // AUTO-NOT: obelisk.feature.class_bitstream_bytecode
 // AUTO-NOT: obelisk.feature.container_bitstream
 // AUTO-NOT: obelisk.feature.recursive_bitstream
-// AUTO: obelisk_sim.recursive.export_bitstream
+// AUTO: simulation.recursive.export_bitstream
 // AUTO-SAME: class_site_id = 1 : i64
-// AUTO-NOT: obelisk_sim.class_bitstream_bytecode_function
-// AUTO-NOT: obelisk_sim.class_bitstream_bytecode_site
+// AUTO-NOT: simulation.class_bitstream_bytecode_function
+// AUTO-NOT: simulation.class_bitstream_bytecode_site
 
 // The native lowering must preserve the bytecode bindings already patched into
 // the class plan by the preceding encoder.  The first site is bound to bytecode

@@ -145,94 +145,94 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The zero minimum collapses to exactly one saturated pending-terminal state.
 // The weak EOS coordinator counts that state and dispatches the pass action.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.11.repetition_weak(
-// CHECK-COUNT-1: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.11.repetition_weak(
+// CHECK-COUNT-1: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_0.fork.11.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-1: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-COUNT-2: arith.select
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.0
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.11.0.0
 
 // A one-cycle prefix adds one bitset but does not add repetition DFA states.
 // Strong EOS completion counts both the pending token and prefix bitset as
 // failures; the prefix and zero-occurrence terminal are sampled separately.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.31.repetition_strong(
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.31.repetition_strong
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.31.repetition_strong(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.31.repetition_strong
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 
 // Goto minimum zero uses one nonpending and one terminal-pending saturated
 // state. Both are weak-completed at EOS. The repeated term is split into
 // true, strict-false, and X/Z classes; terminal failure gates the X/Z failure.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: %[[GOTO_NONPENDING:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[GOTO_PENDING:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_2.fork.51.0.0
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: %[[GOTO_NONPENDING:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[GOTO_PENDING:.*]] = simulation.ref.load
 // CHECK: %[[GOTO_ONE:.*]] = arith.constant {{.*}}1 : i64
 // CHECK-NEXT: %[[GOTO_ENTRY:.*]] = arith.addi %[[GOTO_PENDING]], %[[GOTO_ONE]] : i64
-// CHECK: %[[GOTO_REPEAT:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[GOTO_TRUE:.*]] = obelisk_sim.logic.is_true %[[GOTO_REPEAT]]
-// CHECK: %[[GOTO_ZERO:.*]] = obelisk_sim.logic.constant false, false
-// CHECK-NEXT: %[[GOTO_FALSE:.*]] = obelisk_sim.logic.compare case_eq %[[GOTO_REPEAT]], %[[GOTO_ZERO]]
+// CHECK: %[[GOTO_REPEAT:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[GOTO_TRUE:.*]] = simulation.logic.is_true %[[GOTO_REPEAT]]
+// CHECK: %[[GOTO_ZERO:.*]] = simulation.logic.constant false, false
+// CHECK-NEXT: %[[GOTO_FALSE:.*]] = simulation.logic.compare case_eq %[[GOTO_REPEAT]], %[[GOTO_ZERO]]
 // CHECK-NEXT: %[[GOTO_KNOWN:.*]] = arith.ori %[[GOTO_TRUE]], %[[GOTO_FALSE]]
 // CHECK: %[[GOTO_UNKNOWN:.*]] = arith.xori %[[GOTO_KNOWN]],
-// CHECK: %[[GOTO_TERMINAL:.*]] = obelisk_sim.assert.sampled_read
+// CHECK: %[[GOTO_TERMINAL:.*]] = simulation.assert.sampled_read
 // CHECK: %[[GOTO_NOT_TERMINAL:.*]] = arith.xori
 // CHECK: arith.andi %[[GOTO_NOT_TERMINAL]], %[[GOTO_UNKNOWN]]
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.1.2
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_2.fork.51.0.0
+// CHECK: simulation.spawn @unit_2.fork.51.1.2
 
 // Nonconsecutive minimum zero has one saturated eligible state. Its terminal
 // is evaluated immediately. True and strict-false repeated values retain the
 // state after terminal failure; X/Z instead dispatches assertion failure.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.71.repetition_weak(
-// CHECK-COUNT-1: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_3.fork.71.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-1: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: %[[NONCONSECUTIVE_ACTIVE:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.71.repetition_weak(
+// CHECK-COUNT-1: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_3.fork.71.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-1: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: %[[NONCONSECUTIVE_ACTIVE:.*]] = simulation.ref.load
 // CHECK: %[[NONCONSECUTIVE_ONE:.*]] = arith.constant {{.*}}1 : i64
 // CHECK-NEXT: %[[NONCONSECUTIVE_ENTRY:.*]] = arith.addi %[[NONCONSECUTIVE_ACTIVE]], %[[NONCONSECUTIVE_ONE]] : i64
-// CHECK: %[[NONCONSECUTIVE_REPEAT:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[NONCONSECUTIVE_TRUE:.*]] = obelisk_sim.logic.is_true %[[NONCONSECUTIVE_REPEAT]]
-// CHECK: %[[NONCONSECUTIVE_ZERO:.*]] = obelisk_sim.logic.constant false, false
-// CHECK-NEXT: %[[NONCONSECUTIVE_FALSE:.*]] = obelisk_sim.logic.compare case_eq %[[NONCONSECUTIVE_REPEAT]], %[[NONCONSECUTIVE_ZERO]]
+// CHECK: %[[NONCONSECUTIVE_REPEAT:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[NONCONSECUTIVE_TRUE:.*]] = simulation.logic.is_true %[[NONCONSECUTIVE_REPEAT]]
+// CHECK: %[[NONCONSECUTIVE_ZERO:.*]] = simulation.logic.constant false, false
+// CHECK-NEXT: %[[NONCONSECUTIVE_FALSE:.*]] = simulation.logic.compare case_eq %[[NONCONSECUTIVE_REPEAT]], %[[NONCONSECUTIVE_ZERO]]
 // CHECK-NEXT: %[[NONCONSECUTIVE_KNOWN:.*]] = arith.ori %[[NONCONSECUTIVE_TRUE]], %[[NONCONSECUTIVE_FALSE]]
 // CHECK: %[[NONCONSECUTIVE_UNKNOWN:.*]] = arith.xori %[[NONCONSECUTIVE_KNOWN]],
-// CHECK: %[[NONCONSECUTIVE_TERMINAL:.*]] = obelisk_sim.assert.sampled_read
+// CHECK: %[[NONCONSECUTIVE_TERMINAL:.*]] = simulation.assert.sampled_read
 // CHECK: %[[NONCONSECUTIVE_NOT_TERMINAL:.*]] = arith.xori
 // CHECK: arith.andi %[[NONCONSECUTIVE_NOT_TERMINAL]], %[[NONCONSECUTIVE_UNKNOWN]]
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_3.fork.71.0.0
-// CHECK: obelisk_sim.spawn @unit_3.fork.71.1.2
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_3.fork.71.0.0
+// CHECK: simulation.spawn @unit_3.fork.71.1.2

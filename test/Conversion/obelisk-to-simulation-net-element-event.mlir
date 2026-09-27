@@ -61,8 +61,8 @@ module attributes {
 // CHECK-SAME: low = 1, width = 1
 // CHECK-SAME: trigger = change
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[NET:[^:]*]]: !obelisk_sim.net<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-// CHECK: %[[BIT:.*]] = obelisk_sim.net.extract %[[NET]] from 1
-// CHECK-SAME: -> !obelisk_sim.net<!obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.suspend.change %[[BIT]]
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+// CHECK: %[[BIT:.*]] = simulation.net.extract %[[NET]] from 1
+// CHECK-SAME: -> !simulation.net<!simulation.logic<1>>
+// CHECK: simulation.suspend.change %[[BIT]]

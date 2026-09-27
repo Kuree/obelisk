@@ -33,7 +33,7 @@ module {
   }
 }
 
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[INTEGER:.*]] = obelisk_sim.real.to_integer %[[SOURCE]] signed = true : i32
-// CHECK: obelisk_sim.real.from_integer %[[INTEGER]] signed = true : i32 -> f64
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: %[[INTEGER:.*]] = simulation.real.to_integer %[[SOURCE]] signed = true : i32
+// CHECK: simulation.real.from_integer %[[INTEGER]] signed = true : i32 -> f64
 // CHECK-NOT: obelisk.sv.

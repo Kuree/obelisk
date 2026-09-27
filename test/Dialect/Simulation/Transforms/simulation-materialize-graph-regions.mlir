@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=16}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=10}))' | FileCheck %s --check-prefix=LIMIT
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=16}))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=10}))' | FileCheck %s --check-prefix=LIMIT
 
 module {
   // Adjacent native acyclic groups form one coarse kernel. The bytecode group
   // remains a fine-grained handoff boundary, and the following native group is
   // a separate kernel. Static commit groups can coarsen as lowering-ready
   // work. Placement balances whole kernels across worker lanes.
-  // CHECK: obelisk_sim.design @regions attributes {
+  // CHECK: simulation.design @regions attributes {
   // CHECK-SAME: compute_graph = #schedule.graph<
   // CHECK-SAME: workers = 2
   // CHECK-SAME: #schedule.group<fragments = [0], schedule = acyclic
@@ -25,7 +25,7 @@ module {
   // LIMIT: schedule.compute_kernels = [
   // LIMIT-SAME: #schedule.kernel<id = 0, region = active, schedule = acyclic, lane = 0, cost = 9, loweringReady = true, fragments = [0]>
   // LIMIT-SAME: #schedule.kernel<id = 1, region = active, schedule = acyclic, lane = 0, cost = 3, loweringReady = true, fragments = [1]>
-  obelisk_sim.design @regions attributes {
+  simulation.design @regions attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = full, workers = 2,
       nodes = [
@@ -73,6 +73,6 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
+    simulation.scope.decl 0
   }
 }

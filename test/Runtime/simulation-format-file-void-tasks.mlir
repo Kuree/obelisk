@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
@@ -21,92 +21,92 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @format_file_void_tasks {
-    obelisk_sim.scope.decl 0 hierarchy "format_file_void_tasks"
-    obelisk_sim.code_unit.decl 9970000 in 0 root_initializer
+  simulation.design @format_file_void_tasks {
+    simulation.scope.decl 0 hierarchy "format_file_void_tasks"
+    simulation.code_unit.decl 9970000 in 0 root_initializer
         hierarchy "format_file_void_tasks.root"
-    obelisk_sim.code_unit.decl 9970001 in 0 initial
+    simulation.code_unit.decl 9970001 in 0 initial
         hierarchy "format_file_void_tasks.initial"
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9970000 : i64} {
-      %process = obelisk_sim.spawn @initial(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @initial(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @initial(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @initial(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9970001 : i64} {
-      %path = obelisk_sim.bytes.constant "/dev/null"
-      %mode = obelisk_sim.bytes.constant "w"
-      %fd = obelisk_sim.file.open %ctx, %path, %mode :
-          (!obelisk_sim.context, !obelisk_sim.bytes, !obelisk_sim.bytes) -> i32
-      obelisk_sim.file.close %ctx, %fd : (!obelisk_sim.context, i32) -> ()
-      obelisk_sim.file.close %ctx, %fd : (!obelisk_sim.context, i32) -> ()
-      obelisk_sim.file.flush %ctx, %fd : (!obelisk_sim.context, i32) -> ()
+      %path = simulation.bytes.constant "/dev/null"
+      %mode = simulation.bytes.constant "w"
+      %fd = simulation.file.open %ctx, %path, %mode :
+          (!simulation.context, !simulation.bytes, !simulation.bytes) -> i32
+      simulation.file.close %ctx, %fd : (!simulation.context, i32) -> ()
+      simulation.file.close %ctx, %fd : (!simulation.context, i32) -> ()
+      simulation.file.flush %ctx, %fd : (!simulation.context, i32) -> ()
 
-      %format = obelisk_sim.bytes.constant ":%x:%0x:%s:%0s:"
-      %s0 = obelisk_sim.string.literal "\00a\00b"
-      %s1 = obelisk_sim.string.literal "\00a\00b"
-      %s2 = obelisk_sim.string.literal "\00a\00b"
-      %s3 = obelisk_sim.string.literal "\00a\00b"
-      %formatted = obelisk_sim.string.output_format %ctx(
+      %format = simulation.bytes.constant ":%x:%0x:%s:%0s:"
+      %s0 = simulation.string.literal "\00a\00b"
+      %s1 = simulation.string.literal "\00a\00b"
+      %s2 = simulation.string.literal "\00a\00b"
+      %s3 = simulation.string.literal "\00a\00b"
+      %formatted = simulation.string.output_format %ctx(
           %format, %s0, %s1, %s2, %s3)
-          radix = 10 flags = [32, 8, 8, 8, 8] :
-          !obelisk_sim.bytes, !obelisk_sim.string, !obelisk_sim.string,
-          !obelisk_sim.string, !obelisk_sim.string
-      %as_string = obelisk_sim.bytes.constant "%0s"
+          radix = <decimal> flags = [32, 8, 8, 8, 8] :
+          !simulation.bytes, !simulation.string, !simulation.string,
+          !simulation.string, !simulation.string
+      %as_string = simulation.bytes.constant "%0s"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%as_string, %formatted)
-          newline = true radix = 10 flags = [0, 8] :
-          !obelisk_sim.bytes, !obelisk_sim.string
+      simulation.display %ctx to %stdout(%as_string, %formatted)
+          newline = true radix = <decimal> flags = [0, 8] :
+          !simulation.bytes, !simulation.string
 
       // IEEE 1800-2017 21.2.1: a designated format consumes the arguments
       // named by its conversions. Remaining output-list items continue with
       // the default radix instead of being discarded.
-      %designated_format = obelisk_sim.bytes.constant "value=%0d"
+      %designated_format = simulation.bytes.constant "value=%0d"
       %twelve = arith.constant 12 : i32
       %ninety_seven = arith.constant 97 : i32
-      %designated = obelisk_sim.string.output_format %ctx(
+      %designated = simulation.string.output_format %ctx(
           %designated_format, %twelve, %ninety_seven)
-          radix = 10 flags = [32, 0, 1] :
-          !obelisk_sim.bytes, i32, i32
-      obelisk_sim.display %ctx to %stdout(%as_string, %designated)
-          newline = true radix = 10 flags = [0, 8] :
-          !obelisk_sim.bytes, !obelisk_sim.string
+          radix = <decimal> flags = [32, 0, 1] :
+          !simulation.bytes, i32, i32
+      simulation.display %ctx to %stdout(%as_string, %designated)
+          newline = true radix = <decimal> flags = [0, 8] :
+          !simulation.bytes, !simulation.string
 
       // IEEE 1800-2017 21.2.1.3: an explicit conversion width overrides the
       // minimum width installed by $timeformat.
       %units = arith.constant -9 : i32
       %digits = arith.constant 0 : i32
-      %suffix = obelisk_sim.bytes.constant "ns"
+      %suffix = simulation.bytes.constant "ns"
       %minimum_width = arith.constant 5 : i32
-      obelisk_sim.time.format %ctx, %units, %digits, %suffix, %minimum_width :
-          (!obelisk_sim.context, i32, i32, !obelisk_sim.bytes, i32) -> ()
-      %time_format = obelisk_sim.bytes.constant "%7t"
-      %time = obelisk_sim.logic.constant 0 : i64, 0 : i64 :
-          !obelisk_sim.logic<64>
-      %formatted_time = obelisk_sim.string.output_format %ctx(
-          %time_format, %time) radix = 10 flags = [32, 0]
+      simulation.time.format %ctx, %units, %digits, %suffix, %minimum_width :
+          (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
+      %time_format = simulation.bytes.constant "%7t"
+      %time = simulation.logic.constant 0 : i64, 0 : i64 :
+          !simulation.logic<64>
+      %formatted_time = simulation.string.output_format %ctx(
+          %time_format, %time) radix = <decimal> flags = [32, 0]
           {time_multiplier = 1 : i64, time_precision = -9 : i32} :
-          !obelisk_sim.bytes, !obelisk_sim.logic<64>
-      %time_width = obelisk_sim.string.length %formatted_time :
-          (!obelisk_sim.string) -> i64
-      %decimal = obelisk_sim.bytes.constant "%0d"
-      obelisk_sim.display %ctx to %stdout(%decimal, %time_width)
-          newline = true radix = 10 flags = [0, 0] :
-          !obelisk_sim.bytes, i64
+          !simulation.bytes, !simulation.logic<64>
+      %time_width = simulation.string.length %formatted_time :
+          (!simulation.string) -> i64
+      %decimal = simulation.bytes.constant "%0d"
+      simulation.display %ctx to %stdout(%decimal, %time_width)
+          newline = true radix = <decimal> flags = [0, 0] :
+          !simulation.bytes, i64
 
       %zero = arith.constant 0 : i32
-      %discarded = obelisk_sim.bytes.constant "must not be written"
-      obelisk_sim.display %ctx to %zero(%discarded)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      %passed = obelisk_sim.bytes.constant "PASSED"
-      obelisk_sim.display %ctx to %stdout(%passed)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      %discarded = simulation.bytes.constant "must not be written"
+      simulation.display %ctx to %zero(%discarded)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      %passed = simulation.bytes.constant "PASSED"
+      simulation.display %ctx to %stdout(%passed)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
   }
 }

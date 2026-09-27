@@ -185,67 +185,67 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Strong branching EOS unions the two alternative state words. The two
 // possible live ages produce two report sites, not one site per alternative.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_cancel.11(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_cancel.11(
 // Two alternative states plus one disable epoch are cleared/advanced.
-// CHECK-COUNT-3: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.11.strong(
-// CHECK-SAME: %[[EPOCH_REF:arg[0-9]+]]: !obelisk_sim.ref<i64>
+// CHECK-COUNT-3: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_report.11.strong(
+// CHECK-SAME: %[[EPOCH_REF:arg[0-9]+]]: !simulation.ref<i64>
 // CHECK-SAME: %[[EXPECTED:arg[0-9]+]]: i64
-// CHECK: %[[EPOCH:.*]] = obelisk_sim.ref.load %[[EPOCH_REF]]
+// CHECK: %[[EPOCH:.*]] = simulation.ref.load %[[EPOCH_REF]]
 // CHECK: arith.cmpi eq, %[[EPOCH]], %[[EXPECTED]]
 // CHECK: concurrent assertion failed
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
-// CHECK-COUNT-2: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.11.strong(
+// CHECK-COUNT-2: simulation.ref.load
 // CHECK: arith.ori
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_cancel.11
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.11.strong
+// CHECK-COUNT-2: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.spawn @unit_0.$concurrent_cancel.11
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.11.strong
 
 // Weak assertion EOS dispatches one vacuous pass for each live start age.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.41.weak(
-// CHECK: obelisk_sim.bytes.constant "weak-branch-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.41.weak(
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.41.weak(
+// CHECK: simulation.bytes.constant "weak-branch-pass"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.41.weak(
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.load
 // CHECK: arith.ori
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.ref.load
 // CHECK: arith.ori
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_1.$concurrent_eos_report.41.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.first_match_priority_groups = 1 : i64
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.41.weak
+// CHECK-COUNT-2: simulation.spawn @unit_1.$concurrent_eos_report.41.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.first_match_priority_groups = 1 : i64
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.41.weak
 
 // Weak cover-property completion dispatches one pass for each live start age.
 // The two alternative words are unioned first so overlapping source matches
 // still produce only one property result per attempt.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_report.71.weak(
-// CHECK: obelisk_sim.bytes.constant "cover-weak-branch-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos.71.weak(
-// CHECK-COUNT-2: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_report.71.weak(
+// CHECK: simulation.bytes.constant "cover-weak-branch-pass"
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos.71.weak(
+// CHECK-COUNT-2: simulation.ref.load
 // CHECK: arith.ori
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_2.$concurrent_eos_report.71.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos.71.weak
+// CHECK-COUNT-2: simulation.spawn @unit_2.$concurrent_eos_report.71.weak
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos.71.weak
 
 // One-cycle alternatives retain strength metadata but allocate no monitor
 // state and outline no EOS coordinator.
 // CHECK-NOT: @unit_3.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-NOT: simulation.ref.alloc
 // CHECK-NOT: $concurrent_eos

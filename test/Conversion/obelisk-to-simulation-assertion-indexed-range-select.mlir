@@ -1,16 +1,16 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/up.mlir --obelisk-sim-prepare -o %t.up.prepared
-// RUN: obelisk-opt %t.up.prepared --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %t.up.prepared --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 // RUN: obelisk-opt %t/down.mlir --obelisk-sim-prepare -o %t.down.prepared
-// RUN: obelisk-opt %t.down.prepared --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %t.down.prepared --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 // Both indexed-up and indexed-down assertion slices sample the whole base
 // and index before extracting a value, never a dynamically addressed reference.
 
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: %[[DATA:.*]] = obelisk_sim.assert.sampled_read {{.*}} : {{.*}} -> !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
-// CHECK-NOT: obelisk_sim.ref.dyn_extract
-// CHECK: obelisk_sim.packed.flatten %[[DATA]]
-// CHECK: obelisk_sim.logic.dyn_extract
+// CHECK: simulation.assert.sampled_read
+// CHECK: %[[DATA:.*]] = simulation.assert.sampled_read {{.*}} : {{.*}} -> !simulation.packed_array<7 : 0 x !simulation.logic<1>>
+// CHECK-NOT: simulation.ref.dyn_extract
+// CHECK: simulation.packed.flatten %[[DATA]]
+// CHECK: simulation.logic.dyn_extract
 
 //--- up.mlir
 !logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>

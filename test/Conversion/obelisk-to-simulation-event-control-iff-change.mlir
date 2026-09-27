@@ -45,5 +45,5 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.suspend.edge_iff change %{{.*}} iff %{{.*}} to
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.suspend.edge_iff change %{{.*}} iff %{{.*}} to

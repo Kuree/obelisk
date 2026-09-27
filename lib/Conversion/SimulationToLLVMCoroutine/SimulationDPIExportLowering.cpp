@@ -113,15 +113,15 @@ struct ExportSpec {
 
 FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
   auto identifier =
-      operation->getAttrOfType<StringAttr>("obelisk_sim.dpi_c_identifier");
+      operation->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
   auto exportID =
-      operation->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_export_id");
+      operation->getAttrOfType<IntegerAttr>("simulation.dpi_export_id");
   auto signature =
-      operation->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+      operation->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
   auto inputs =
-      operation->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
+      operation->getAttrOfType<IntegerAttr>("simulation.dpi_logical_inputs");
   auto aggregateLayouts =
-      operation->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_aggregate_layouts");
+      operation->getAttrOfType<ArrayAttr>("simulation.dpi_aggregate_layouts");
   if (!identifier || !exportID || !signature || !inputs ||
       exportID.getValue().getActiveBits() > 32 ||
       inputs.getValue().getActiveBits() > 32 ||
@@ -169,7 +169,7 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
                     aggregateLayouts,
                     std::move(abi),
                     std::move(elidedInputs),
-                    operation->hasAttr("obelisk_sim.dpi_task")};
+                    operation->hasAttr("simulation.dpi_task")};
 }
 
 Value descriptorField(OpBuilder &builder, Location location, Value base,
@@ -1561,12 +1561,12 @@ LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
 } // namespace
 
 LogicalResult materializeDPIExportWrappers(ModuleOp module) {
-  if (!module->hasAttr("obelisk_sim.has_dpi_exports"))
+  if (!module->hasAttr("simulation.has_dpi_exports"))
     return success();
   SmallVector<sim::SimFuncOp> bridges;
   llvm::StringMap<LLVM::LLVMFuncOp> functions;
   module.walk([&](sim::SimFuncOp function) {
-    if (function->hasAttr("obelisk_sim.dpi_export_bridge"))
+    if (function->hasAttr("simulation.dpi_export_bridge"))
       bridges.push_back(function);
   });
   module.walk([&](LLVM::LLVMFuncOp function) {
@@ -1647,7 +1647,7 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
 }
 
 LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
-  if (!module->hasAttr("obelisk_sim.has_dpi_exports"))
+  if (!module->hasAttr("simulation.has_dpi_exports"))
     return success();
   SmallVector<LLVM::LLVMFuncOp> thunks;
   SmallVector<LLVM::LLVMFuncOp> bodies;

@@ -261,16 +261,16 @@ module {
 
 
 
-// CHECK: obelisk_sim.class.decl @[[CLASS:[A-Za-z0-9_.$]+]] id 1
-// CHECK-SAME: obelisk_sim.constraint_mode_field = @[[MODE:[A-Za-z0-9_.$]+]]
+// CHECK: simulation.class.decl @[[CLASS:[A-Za-z0-9_.$]+]] id 1
+// CHECK-SAME: simulation.constraint_mode_field = @[[MODE:[A-Za-z0-9_.$]+]]
 
 // The constructor takes `this` as its formal, and the unqualified block name
 // resolves against it.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-SAME: %[[THIS:[a-z0-9]+]]: !obelisk_sim.class_handle<@[[CLASS]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::new"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-SAME: %[[THIS:[a-z0-9]+]]: !simulation.class_handle<@[[CLASS]]>
+// CHECK-SAME: simulation.hierarchical_name = "C::new"
 // CHECK: %[[BIT:.*]] = arith.constant 2 : i64
-// CHECK: %[[REF:.*]] = obelisk_sim.class.field_ref %[[THIS]][@[[MODE]]]
-// CHECK: %[[OLD:.*]] = obelisk_sim.managed.load %[[REF]]
+// CHECK: %[[REF:.*]] = simulation.class.field_ref %[[THIS]][@[[MODE]]]
+// CHECK: %[[OLD:.*]] = simulation.managed.load %[[REF]]
 // CHECK: %[[NEW:.*]] = arith.ori %[[OLD]], %[[BIT]] : i64
-// CHECK: obelisk_sim.managed.store %[[NEW]] to %[[REF]]
+// CHECK: simulation.managed.store %[[NEW]] to %[[REF]]

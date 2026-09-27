@@ -41,10 +41,10 @@ module {
 // initial stimulus. IEEE 1800-2017 9.2.2.2 and 9.2.2.3 defer the automatic
 // time-zero activations of always_comb and always_latch until after initial and
 // always procedures have started.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: obelisk_sim.spawn @unit_0
-// CHECK-NEXT: obelisk_sim.spawn @unit_3
-// CHECK-NEXT: obelisk_sim.spawn @unit_1
-// CHECK-NEXT: obelisk_sim.spawn @unit_2
-// CHECK-NEXT: obelisk_sim.return
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: simulation.spawn @unit_0
+// CHECK-NEXT: simulation.spawn @unit_3
+// CHECK-NEXT: simulation.spawn @unit_1
+// CHECK-NEXT: simulation.spawn @unit_2
+// CHECK-NEXT: simulation.return
 // CHECK-NOT: obelisk.sv.

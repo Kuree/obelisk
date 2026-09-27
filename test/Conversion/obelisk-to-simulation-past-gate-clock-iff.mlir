@@ -115,41 +115,41 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The gate-only and iff-only assertions share the four-argument sampler. Its
 // qualification controls suspension and the accepted sample updates history
 // unconditionally. Both assertions read the same history identity.
-// CHECK-COUNT-2: obelisk_sim.code_unit.decl {{[0-9]+}} in 0 always hierarchy {{.*}} debug "alternate-clock sampler"
+// CHECK-COUNT-2: simulation.code_unit.decl {{[0-9]+}} in 0 always hierarchy {{.*}} debug "alternate-clock sampler"
 // CHECK-NOT: debug "alternate-clock sampler"
-// CHECK: obelisk_sim.spawn @[[COMBINED:unit_2[.][$]clocked_sample[.][0-9]+]]({{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}})
-// CHECK: obelisk_sim.spawn @[[SHARED:unit_0[.][$]clocked_sample[.][0-9]+]]({{.*}}, {{.*}}, {{.*}}, {{.*}})
-// CHECK-NOT: obelisk_sim.spawn @{{.*}}[.][$]clocked_sample
-// CHECK: obelisk_sim.func private @[[SHARED]](
-// CHECK-SAME: %arg0: !obelisk_sim.context
-// CHECK-SAME: %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %arg2: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %arg3: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.suspend.edge_iff posedge %arg2 iff %arg3
+// CHECK: simulation.spawn @[[COMBINED:unit_2[.][$]clocked_sample[.][0-9]+]]({{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}})
+// CHECK: simulation.spawn @[[SHARED:unit_0[.][$]clocked_sample[.][0-9]+]]({{.*}}, {{.*}}, {{.*}}, {{.*}})
+// CHECK-NOT: simulation.spawn @{{.*}}[.][$]clocked_sample
+// CHECK: simulation.func private @[[SHARED]](
+// CHECK-SAME: %arg0: !simulation.context
+// CHECK-SAME: %arg1: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %arg2: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %arg3: !simulation.ref<!simulation.logic<1>>
+// CHECK: simulation.suspend.edge_iff posedge %arg2 iff %arg3
 // CHECK-SAME: resume_region = 16 : i32
-// CHECK: %[[SHARED_SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg1
+// CHECK: %[[SHARED_SOURCE:.*]] = simulation.assert.sampled_read %arg0 from %arg1
 // CHECK-NEXT: %[[TRUE:.*]] = arith.constant {{.*}}true
-// CHECK-NEXT: obelisk_sim.assert.clocked_sample_update %arg0 from %[[SHARED_SOURCE]] gate %[[TRUE]] id [[SHARED_ID:[0-9]+]] depth 2
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.assert.clocked_sample_read {{.*}} id [[SHARED_ID]] depth 2 age 1
-// CHECK: obelisk_sim.assert.clocked_sample_read {{.*}} id [[SHARED_ID]] depth 2 age 1
-// CHECK-NOT: obelisk_sim.assert.clocked_sample_read
+// CHECK-NEXT: simulation.assert.clocked_sample_update %arg0 from %[[SHARED_SOURCE]] gate %[[TRUE]] id [[SHARED_ID:[0-9]+]] depth 2
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.assert.clocked_sample_read {{.*}} id [[SHARED_ID]] depth 2 age 1
+// CHECK: simulation.assert.clocked_sample_read {{.*}} id [[SHARED_ID]] depth 2 age 1
+// CHECK-NOT: simulation.assert.clocked_sample_read
 
 // The simultaneous form captures source, clock, iff, and gate separately.
 // Only the iff controls suspension; the gate is sampled from the same
 // Preponed snapshot and reaches the update as an independent i1.
-// CHECK: obelisk_sim.func private @[[COMBINED]](
-// CHECK-SAME: %arg0: !obelisk_sim.context
-// CHECK-SAME: %arg1: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %arg2: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %arg3: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %arg4: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.suspend.edge_iff posedge %arg2 iff %arg3
+// CHECK: simulation.func private @[[COMBINED]](
+// CHECK-SAME: %arg0: !simulation.context
+// CHECK-SAME: %arg1: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %arg2: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %arg3: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %arg4: !simulation.ref<!simulation.logic<1>>
+// CHECK: simulation.suspend.edge_iff posedge %arg2 iff %arg3
 // CHECK-SAME: resume_region = 16 : i32
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg1
-// CHECK-NEXT: %[[GATE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg4
-// CHECK-NEXT: %[[GATE_TRUTH:.*]] = obelisk_sim.logic.is_true %[[GATE]]
-// CHECK-NEXT: obelisk_sim.assert.clocked_sample_update %arg0 from %[[SOURCE]] gate %[[GATE_TRUTH]] id [[COMBINED_ID:[0-9]+]] depth 2
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.assert.clocked_sample_read {{.*}} id [[COMBINED_ID]] depth 2 age 1
-// CHECK-NOT: obelisk_sim.assert.clocked_sample_read
+// CHECK: %[[SOURCE:.*]] = simulation.assert.sampled_read %arg0 from %arg1
+// CHECK-NEXT: %[[GATE:.*]] = simulation.assert.sampled_read %arg0 from %arg4
+// CHECK-NEXT: %[[GATE_TRUTH:.*]] = simulation.logic.is_true %[[GATE]]
+// CHECK-NEXT: simulation.assert.clocked_sample_update %arg0 from %[[SOURCE]] gate %[[GATE_TRUTH]] id [[COMBINED_ID:[0-9]+]] depth 2
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.assert.clocked_sample_read {{.*}} id [[COMBINED_ID]] depth 2 age 1
+// CHECK-NOT: simulation.assert.clocked_sample_read

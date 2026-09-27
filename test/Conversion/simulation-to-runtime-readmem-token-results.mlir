@@ -5,13 +5,13 @@
 // three results to pin that one-to-N result mapping.
 
 module {
-  func.func @readmem_token_results(%ctx: !obelisk_sim.context, %fd_bits: i32)
-      -> (!obelisk_sim.logic<24>, i32, i64)
-      attributes {obelisk_sim.hierarchical_name = "top.readmem_token_results"} {
+  func.func @readmem_token_results(%ctx: !simulation.context, %fd_bits: i32)
+      -> (!simulation.logic<24>, i32, i64)
+      attributes {simulation.hierarchical_name = "top.readmem_token_results"} {
     %data, %kind, %address =
-        obelisk_sim.file.readmem_token %ctx, %fd_bits {radix = 2 : i32} :
-        (!obelisk_sim.context, i32) -> (!obelisk_sim.logic<24>, i32, i64)
-    return %data, %kind, %address : !obelisk_sim.logic<24>, i32, i64
+        simulation.file.readmem_token %ctx, %fd_bits {radix = #simulation.radix<binary>} :
+        (!simulation.context, i32) -> (!simulation.logic<24>, i32, i64)
+    return %data, %kind, %address : !simulation.logic<24>, i32, i64
   }
 }
 

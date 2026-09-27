@@ -5,14 +5,14 @@
 // CFG therefore branches on one random bit at the first solve layer and draws
 // a second random bit only down the two-row child. The all-enabled path commits
 // the selected row directly; masked modes retain the runtime fallback.
-// SOLVE-BEFORE-LABEL: obelisk_sim.func private @unit_1
+// SOLVE-BEFORE-LABEL: simulation.func private @unit_1
 // A compile-time solve table is valid only when every property and constraint
 // block is enabled. Any partial rand_mode or constraint_mode mask branches to
 // the residual ordered solver.
-// SOLVE-BEFORE: %[[PROPERTY_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}__obelisk_rand_mode
-// SOLVE-BEFORE: %[[CONSTRAINT_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}__obelisk_constraint_mode
-// SOLVE-BEFORE: %[[PROPERTY_MODES:.*]] = obelisk_sim.managed.load %[[PROPERTY_MODE_REF]]
-// SOLVE-BEFORE: %[[CONSTRAINT_MODES:.*]] = obelisk_sim.managed.load %[[CONSTRAINT_MODE_REF]]
+// SOLVE-BEFORE: %[[PROPERTY_MODE_REF:.*]] = simulation.class.field_ref {{.*}}__obelisk_rand_mode
+// SOLVE-BEFORE: %[[CONSTRAINT_MODE_REF:.*]] = simulation.class.field_ref {{.*}}__obelisk_constraint_mode
+// SOLVE-BEFORE: %[[PROPERTY_MODES:.*]] = simulation.managed.load %[[PROPERTY_MODE_REF]]
+// SOLVE-BEFORE: %[[CONSTRAINT_MODES:.*]] = simulation.managed.load %[[CONSTRAINT_MODE_REF]]
 // SOLVE-BEFORE: %[[RELEVANT_PROPERTY_MODES:.*]] = arith.andi %[[PROPERTY_MODES]], {{.*}} : i64
 // SOLVE-BEFORE: %[[ALL_PROPERTIES_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_PROPERTY_MODES]], {{.*}} : i64
 // SOLVE-BEFORE: %[[RELEVANT_CONSTRAINT_MODES:.*]] = arith.andi %[[CONSTRAINT_MODES]], {{.*}} : i64
@@ -28,7 +28,7 @@
 // SOLVE-BEFORE: %[[SECOND_INDEX:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // SOLVE-BEFORE: %[[SECOND_ZERO:.*]] = arith.cmpi eq, %[[SECOND_INDEX]], {{.*}} : i64
 // SOLVE-BEFORE: cf.cond_br %[[SECOND_ZERO]]
-// SOLVE-BEFORE: obelisk_sim.random.solve
+// SOLVE-BEFORE: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 300 : i64, sym_name = "sb0.top"} {

@@ -110,7 +110,7 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-COUNT-4: obelisk_sim.ref.subelement %arg1
-// CHECK: %[[SLICE:.*]] = obelisk_sim.aggregate.construct
-// CHECK: obelisk_sim.ref.store %[[SLICE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-COUNT-4: simulation.ref.subelement %arg1
+// CHECK: %[[SLICE:.*]] = simulation.aggregate.construct
+// CHECK: simulation.ref.store %[[SLICE]]

@@ -33,25 +33,25 @@
 // group is sampled. The typed helper evaluates each retained schema expression
 // once and sends the values in FunctionalExpression result-ordinal order;
 // bin matching and exclusion precedence belong to the runtime plan.
-// SIM: obelisk_sim.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] schema {{[1-9][0-9]*}}
-// SIM: %[[ENABLED:.*]] = obelisk_sim.covergroup.sample_enabled
+// SIM: simulation.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] schema {{[1-9][0-9]*}}
+// SIM: %[[ENABLED:.*]] = simulation.covergroup.sample_enabled
 // SIM-NEXT: cf.cond_br %[[ENABLED]], ^[[GROUP:.*]], ^{{.*}}
 // SIM: ^[[GROUP]]:
-// SIM: %[[SAMPLED:.*]] = obelisk_sim.ref.load
-// SIM-NEXT: %[[PACKED:.*]] = obelisk_sim.packed.flatten %[[SAMPLED]]
-// SIM-NEXT: %[[POINT:.*]] = obelisk_sim.ref.load
-// SIM-NEXT: %[[POINT_I1:.*]] = obelisk_sim.logic.is_true %[[POINT]]
-// SIM-NEXT: %[[ORDINARY:.*]] = obelisk_sim.ref.load
-// SIM-NEXT: %[[ORDINARY_I1:.*]] = obelisk_sim.logic.is_true %[[ORDINARY]]
-// SIM-NEXT: %[[IGNORE:.*]] = obelisk_sim.ref.load
-// SIM-NEXT: %[[IGNORE_I1:.*]] = obelisk_sim.logic.is_true %[[IGNORE]]
-// SIM-NEXT: %[[ILLEGAL:.*]] = obelisk_sim.ref.load
-// SIM-NEXT: %[[ILLEGAL_I1:.*]] = obelisk_sim.logic.is_true %[[ILLEGAL]]
-// SIM-NEXT: %[[DEFAULT:.*]] = obelisk_sim.ref.load
-// SIM-NEXT: %[[DEFAULT_I1:.*]] = obelisk_sim.logic.is_true %[[DEFAULT]]
-// SIM-NEXT: obelisk_sim.covergroup.sample {{.*}} values[%[[PACKED]], %[[POINT_I1]], %[[ORDINARY_I1]], %[[IGNORE_I1]], %[[ILLEGAL_I1]], %[[DEFAULT_I1]]] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
-// SIM-NOT: obelisk_sim.logic.compare
-// SIM-NOT: obelisk_sim.error
+// SIM: %[[SAMPLED:.*]] = simulation.ref.load
+// SIM-NEXT: %[[PACKED:.*]] = simulation.packed.flatten %[[SAMPLED]]
+// SIM-NEXT: %[[POINT:.*]] = simulation.ref.load
+// SIM-NEXT: %[[POINT_I1:.*]] = simulation.logic.is_true %[[POINT]]
+// SIM-NEXT: %[[ORDINARY:.*]] = simulation.ref.load
+// SIM-NEXT: %[[ORDINARY_I1:.*]] = simulation.logic.is_true %[[ORDINARY]]
+// SIM-NEXT: %[[IGNORE:.*]] = simulation.ref.load
+// SIM-NEXT: %[[IGNORE_I1:.*]] = simulation.logic.is_true %[[IGNORE]]
+// SIM-NEXT: %[[ILLEGAL:.*]] = simulation.ref.load
+// SIM-NEXT: %[[ILLEGAL_I1:.*]] = simulation.logic.is_true %[[ILLEGAL]]
+// SIM-NEXT: %[[DEFAULT:.*]] = simulation.ref.load
+// SIM-NEXT: %[[DEFAULT_I1:.*]] = simulation.logic.is_true %[[DEFAULT]]
+// SIM-NEXT: simulation.covergroup.sample {{.*}} values[%[[PACKED]], %[[POINT_I1]], %[[ORDINARY_I1]], %[[IGNORE_I1]], %[[ILLEGAL_I1]], %[[DEFAULT_I1]]] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
+// SIM-NOT: simulation.logic.compare
+// SIM-NOT: simulation.error
 // Every bin role has one typed plan. Ordinary, ignore, and illegal value bins
 // retain deferred constructor value atoms; a default bin has no value set but
 // keeps its sample-phase iff identity.

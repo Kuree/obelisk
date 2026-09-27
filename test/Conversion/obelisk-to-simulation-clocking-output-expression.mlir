@@ -39,14 +39,14 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.22.1
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[GROUP:[0-9]+]] : i64
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.22.2
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[GROUP]] : i64
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-COUNT-2: obelisk_sim.ref.subelement
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.22.1
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.22.2
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.22.1
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.nba.enqueue {{.*}} {clocking_output = [[GROUP:[0-9]+]] : i64
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.22.2
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.nba.enqueue {{.*}} {clocking_output = [[GROUP]] : i64
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-COUNT-2: simulation.ref.subelement
+// CHECK: simulation.spawn @unit_0.$clocking_output.22.1
+// CHECK: simulation.spawn @unit_0.$clocking_output.22.2
 // CHECK-NOT: obelisk.sv.

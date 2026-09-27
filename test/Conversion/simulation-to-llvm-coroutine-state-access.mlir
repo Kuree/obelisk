@@ -4,33 +4,33 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @state_access {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "state_access.access"
+  simulation.design @state_access {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "state_access.access"
 
-    obelisk_sim.func @access(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %ref: !obelisk_sim.ref<!obelisk_sim.logic<8>>
-            {obelisk_sim.capture_kind = 1 : i32},
-        %net: !obelisk_sim.net<!obelisk_sim.logic<8>>
-            {obelisk_sim.capture_kind = 1 : i32},
-        %value: !obelisk_sim.logic<8>
-            {obelisk_sim.capture_kind = 2 : i32})
-        -> !obelisk_sim.logic<8>
+    simulation.func @access(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %ref: !simulation.ref<!simulation.logic<8>>
+            {simulation.capture_kind = 1 : i32},
+        %net: !simulation.net<!simulation.logic<8>>
+            {simulation.capture_kind = 1 : i32},
+        %value: !simulation.logic<8>
+            {simulation.capture_kind = 2 : i32})
+        -> !simulation.logic<8>
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %loaded = obelisk_sim.ref.load %ref :
-          !obelisk_sim.ref<!obelisk_sim.logic<8>> ->
-          !obelisk_sim.logic<8>
-      obelisk_sim.ref.store %value to %ref :
-          !obelisk_sim.logic<8>,
-          !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      obelisk_sim.ref.store %value to %ref {obelisk_sim.continuous_store} :
-          !obelisk_sim.logic<8>,
-          !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      %net_value = obelisk_sim.net.read %net :
-          !obelisk_sim.net<!obelisk_sim.logic<8>> ->
-          !obelisk_sim.logic<8>
-      obelisk_sim.return %loaded : !obelisk_sim.logic<8>
+      %loaded = simulation.ref.load %ref :
+          !simulation.ref<!simulation.logic<8>> ->
+          !simulation.logic<8>
+      simulation.ref.store %value to %ref :
+          !simulation.logic<8>,
+          !simulation.ref<!simulation.logic<8>>
+      simulation.ref.store %value to %ref {simulation.continuous_store} :
+          !simulation.logic<8>,
+          !simulation.ref<!simulation.logic<8>>
+      %net_value = simulation.net.read %net :
+          !simulation.net<!simulation.logic<8>> ->
+          !simulation.logic<8>
+      simulation.return %loaded : !simulation.logic<8>
     }
   }
 }
@@ -65,5 +65,5 @@ module attributes {
 // CHECK: llvm.select
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
-// CHECK-NOT: obelisk_sim.ref.
-// CHECK-NOT: obelisk_sim.net.read
+// CHECK-NOT: simulation.ref.
+// CHECK-NOT: simulation.net.read

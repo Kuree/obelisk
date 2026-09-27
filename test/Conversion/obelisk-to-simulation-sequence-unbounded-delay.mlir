@@ -174,45 +174,45 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The ordinary assert sequence is weak at finite end of simulation. Its
 // warm-up queue is counted by a compact bits &= bits - 1 loop and eligible
 // tokens by an integer load; this uses the same SSA in native and bytecode.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.16.delay_weak(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.16.delay_weak(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.ref.load
 // CHECK: arith.subi
 // CHECK: arith.andi
 // CHECK: arith.addi
-// CHECK: obelisk_sim.spawn @unit_0.fork.16.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_delay_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_delay_prefix_horizon = 2 : i64
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.16.delay_weak
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.16.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_delay_aggregate_tokens
+// CHECK-SAME: simulation.persistent_delay_minimum = 2 : i64
+// CHECK-SAME: simulation.persistent_delay_prefix_horizon = 2 : i64
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.16.delay_weak
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.shli
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.select
 // CHECK: arith.subi
 
 // Explicit strong qualification fails every still-pending token at EOS.
 // M=0 needs no warm-up queue, so the coordinator captures one count.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.40.delay_strong(
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.40.delay_strong(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK-COUNT-1: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_1.fork.40.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 0 : i64
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.40.delay_strong
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-COUNT-1: simulation.ref.load
+// CHECK: simulation.spawn @unit_1.fork.40.1.1
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_delay_minimum = 0 : i64
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.40.delay_strong
+// CHECK-COUNT-2: simulation.assert.sampled_read
 
 // Cover sequence keeps eligible tokens after a match so every later true
 // terminal preserves the LRM's per-endpoint match multiplicity. It has no EOS
 // coordinator because an incomplete sequence is not a cover hit.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_delay_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_delay_all_matches
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 1 : i64
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_delay_aggregate_tokens
+// CHECK-SAME: simulation.persistent_delay_all_matches
+// CHECK-SAME: simulation.persistent_delay_minimum = 1 : i64
 // CHECK-NOT: concurrent_eos_count
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK: arith.select
 // CHECK: arith.subi

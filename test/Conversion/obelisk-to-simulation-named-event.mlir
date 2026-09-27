@@ -121,16 +121,16 @@ module {
 
 // A design-lifetime event is a direct scheduler object shared by every
 // process capture; it is not represented as packed mutable storage.
-// CHECK: %[[EVENT:.*]] = obelisk_sim.context.event %{{.*}}[0] : !obelisk_sim.event
-// CHECK: obelisk_sim.spawn {{.*}}%[[EVENT]]
-// CHECK: obelisk_sim.spawn {{.*}}%[[EVENT]]
-// CHECK: obelisk_sim.event.equal
-// CHECK: obelisk_sim.event.equal
-// CHECK: obelisk_sim.suspend.event %{{.*}} to
-// CHECK: obelisk_sim.event.triggered %{{.*}}
-// CHECK: obelisk_sim.suspend.event %{{.*}} to
-// CHECK: obelisk_sim.event.triggered %{{.*}}
-// CHECK: obelisk_sim.event.triggered %{{.*}}
-// CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
-// CHECK: obelisk_sim.event.trigger %{{.*}} after %{{.*}} nonblocking = true
+// CHECK: %[[EVENT:.*]] = simulation.context.event %{{.*}}[0] : !simulation.event
+// CHECK: simulation.spawn {{.*}}%[[EVENT]]
+// CHECK: simulation.spawn {{.*}}%[[EVENT]]
+// CHECK: simulation.event.equal
+// CHECK: simulation.event.equal
+// CHECK: simulation.suspend.event %{{.*}} to
+// CHECK: simulation.event.triggered %{{.*}}
+// CHECK: simulation.suspend.event %{{.*}} to
+// CHECK: simulation.event.triggered %{{.*}}
+// CHECK: simulation.event.triggered %{{.*}}
+// CHECK: simulation.event.trigger %{{.*}} nonblocking = false
+// CHECK: simulation.event.trigger %{{.*}} after %{{.*}} nonblocking = true
 // CHECK-NOT: obelisk.sv.

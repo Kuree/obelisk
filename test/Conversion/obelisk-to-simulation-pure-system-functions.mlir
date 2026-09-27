@@ -148,17 +148,17 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK-LABEL: simulation.func private @unit_1(
 // CHECK: %[[BITS:.*]] = arith.constant 32 : i32
-// CHECK-NEXT: obelisk_sim.ref.store %[[BITS]]
-// CHECK: %[[CLOG2:.*]] = obelisk_sim.logic.clog2
-// CHECK-NEXT: obelisk_sim.ref.store %[[CLOG2]]
-// CHECK: obelisk_sim.logic.count_bits {{.*}} matching {{.*}}, {{.*}}, {{.*}}, {{.*}}
+// CHECK-NEXT: simulation.ref.store %[[BITS]]
+// CHECK: %[[CLOG2:.*]] = simulation.logic.clog2
+// CHECK-NEXT: simulation.ref.store %[[CLOG2]]
+// CHECK: simulation.logic.count_bits {{.*}} matching {{.*}}, {{.*}}, {{.*}}, {{.*}}
 // CHECK: %[[ONEHOT:.*]] = arith.cmpi eq
 // CHECK: %[[ONEHOT0:.*]] = arith.cmpi ule
 // CHECK: %[[ISUNKNOWN:.*]] = arith.cmpi ne
-// CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: obelisk_sim.ref.store %[[VALUE]]
-// CHECK-NOT: obelisk_sim.call
+// CHECK: %[[VALUE:.*]] = simulation.ref.load
+// CHECK-NEXT: simulation.ref.store %[[VALUE]]
+// CHECK-NOT: simulation.call
 // CHECK-NOT: obelisk.sv.
-// COUNT-COUNT-5: obelisk_sim.logic.count_bits
+// COUNT-COUNT-5: simulation.logic.count_bits

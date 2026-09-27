@@ -5,11 +5,11 @@
 // exact all-enabled plan therefore remains executable even though the 21-bit
 // aggregate is too large for exhaustive residual traversal; dynamic mode paths
 // still retain the runtime fallback.
-// SOLVE-BEFORE-WIDE-LABEL: obelisk_sim.func private @unit_1
-// SOLVE-BEFORE-WIDE: obelisk_sim.random.solve
+// SOLVE-BEFORE-WIDE-LABEL: simulation.func private @unit_1
+// SOLVE-BEFORE-WIDE: simulation.random.solve
 // SOLVE-BEFORE-WIDE: arith.trunci {{.*}} : i64 to i10
 // SOLVE-BEFORE-WIDE: arith.trunci {{.*}} : i64 to i11
-// SOLVE-BEFORE-WIDE: obelisk_sim.managed.store
+// SOLVE-BEFORE-WIDE: simulation.managed.store
 // SOLVE-BEFORE-WIDE-FALLBACK: error: solve before residual fallback requires exhaustive traversal of at most 2^20 semantic assignments
 
 module {

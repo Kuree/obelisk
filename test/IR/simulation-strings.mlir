@@ -1,53 +1,53 @@
 // RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
 
 module {
-  func.func @strings(%input: !obelisk_sim.string, %bits: i24,
+  func.func @strings(%input: !simulation.string, %bits: i24,
                      %index: i64, %character: i8) -> i32 {
-    %literal = obelisk_sim.string.literal "ab\00c"
-    %converted = obelisk_sim.string.from_packed %bits :
-      (i24) -> !obelisk_sim.string
-    %packed = obelisk_sim.string.to_packed %literal :
-      (!obelisk_sim.string) -> i40
-    %joined = obelisk_sim.string.concat %literal, %input, %converted :
-      (!obelisk_sim.string, !obelisk_sim.string, !obelisk_sim.string) ->
-      !obelisk_sim.string
+    %literal = simulation.string.literal "ab\00c"
+    %converted = simulation.string.from_packed %bits :
+      (i24) -> !simulation.string
+    %packed = simulation.string.to_packed %literal :
+      (!simulation.string) -> i40
+    %joined = simulation.string.concat %literal, %input, %converted :
+      (!simulation.string, !simulation.string, !simulation.string) ->
+      !simulation.string
     %count = arith.constant 3 : i64
-    %repeated = obelisk_sim.string.repeat %joined, %count :
-      (!obelisk_sim.string, i64) -> !obelisk_sim.string
-    %length = obelisk_sim.string.length %repeated :
-      (!obelisk_sim.string) -> i64
-    %byte = obelisk_sim.string.getc %repeated, %index :
-      (!obelisk_sim.string, i64) -> i8
-    %updated = obelisk_sim.string.putc %repeated, %index, %character :
-      (!obelisk_sim.string, i64, i8) -> !obelisk_sim.string
-    %substring = obelisk_sim.string.substr %updated, %index, %length :
-      (!obelisk_sim.string, i64, i64) -> !obelisk_sim.string
-    %comparison = obelisk_sim.string.compare %substring, %input
+    %repeated = simulation.string.repeat %joined, %count :
+      (!simulation.string, i64) -> !simulation.string
+    %length = simulation.string.length %repeated :
+      (!simulation.string) -> i64
+    %byte = simulation.string.getc %repeated, %index :
+      (!simulation.string, i64) -> i8
+    %updated = simulation.string.putc %repeated, %index, %character :
+      (!simulation.string, i64, i8) -> !simulation.string
+    %substring = simulation.string.substr %updated, %index, %length :
+      (!simulation.string, i64, i64) -> !simulation.string
+    %comparison = simulation.string.compare %substring, %input
       case_insensitive = true
-    %lower = obelisk_sim.string.case_convert %substring to_upper = false
-    %parsed = obelisk_sim.string.parse_integer %input radix = 16
-    %real = "obelisk_sim.string.parse_real"(%input) :
-      (!obelisk_sim.string) -> f64
-    %formatted = obelisk_sim.string.format_integer %length
-      radix = 10 signed = false
-    %formatted_real = "obelisk_sim.string.format_real"(%real) :
-      (f64) -> !obelisk_sim.string
+    %lower = simulation.string.case_convert %substring to_upper = false
+    %parsed = simulation.string.parse_integer %input radix = <hex>
+    %real = "simulation.string.parse_real"(%input) :
+      (!simulation.string) -> f64
+    %formatted = simulation.string.format_integer %length
+      radix = <decimal> signed = false
+    %formatted_real = "simulation.string.format_real"(%real) :
+      (f64) -> !simulation.string
     return %comparison : i32
   }
 }
 
-// CHECK: %[[LITERAL:.*]] = obelisk_sim.string.literal "ab\00c"
-// CHECK: obelisk_sim.string.from_packed
-// CHECK: obelisk_sim.string.to_packed
-// CHECK: obelisk_sim.string.concat
-// CHECK: obelisk_sim.string.repeat
-// CHECK: obelisk_sim.string.length
-// CHECK: obelisk_sim.string.getc
-// CHECK: obelisk_sim.string.putc
-// CHECK: obelisk_sim.string.substr
-// CHECK: obelisk_sim.string.compare
-// CHECK: obelisk_sim.string.case_convert
-// CHECK: obelisk_sim.string.parse_integer
-// CHECK: obelisk_sim.string.parse_real
-// CHECK: obelisk_sim.string.format_integer
-// CHECK: obelisk_sim.string.format_real
+// CHECK: %[[LITERAL:.*]] = simulation.string.literal "ab\00c"
+// CHECK: simulation.string.from_packed
+// CHECK: simulation.string.to_packed
+// CHECK: simulation.string.concat
+// CHECK: simulation.string.repeat
+// CHECK: simulation.string.length
+// CHECK: simulation.string.getc
+// CHECK: simulation.string.putc
+// CHECK: simulation.string.substr
+// CHECK: simulation.string.compare
+// CHECK: simulation.string.case_convert
+// CHECK: simulation.string.parse_integer
+// CHECK: simulation.string.parse_real
+// CHECK: simulation.string.format_integer
+// CHECK: simulation.string.format_real

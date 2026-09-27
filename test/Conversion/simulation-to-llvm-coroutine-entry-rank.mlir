@@ -36,7 +36,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 2 : i32
 } {
-  obelisk_sim.design @schedule attributes {
+  simulation.design @schedule attributes {
     compute_graph = #schedule.graph<version = 1, vpi = off, workers = 1,
       nodes = [
         #schedule.fragment<id = 0, function = @root, block = 0,
@@ -57,37 +57,37 @@ module attributes {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "a_initial"
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "z_always"
-    obelisk_sim.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "a_initial"
+    simulation.code_unit.decl 3 in 0 always hierarchy "z_always"
+    simulation.scope.decl 0
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %always = obelisk_sim.spawn @z_always(%ctx, %value) :
-          !obelisk_sim.context, !obelisk_sim.logic<8> -> !obelisk_sim.process
-      %initial = obelisk_sim.spawn @a_initial(%ctx, %value) :
-          !obelisk_sim.context, !obelisk_sim.logic<8> -> !obelisk_sim.process
-      obelisk_sim.return
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      %always = simulation.spawn @z_always(%ctx, %value) :
+          !simulation.context, !simulation.logic<8> -> !simulation.process
+      %initial = simulation.spawn @a_initial(%ctx, %value) :
+          !simulation.context, !simulation.logic<8> -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @a_initial(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %capture: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @a_initial(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %capture: !simulation.logic<8> {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @z_always(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %capture: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @z_always(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %capture: !simulation.logic<8> {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

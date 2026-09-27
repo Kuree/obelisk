@@ -1,17 +1,17 @@
-// RUN: not obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
+// RUN: not obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
 
 // Legal recursive grammars need dynamically nested production activations.
 // Until those frames are outlined, diagnose the exact boundary instead of
 // imposing an arbitrary recursion cutoff.
 
 module {
-  obelisk_sim.design @recursive {
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "test.recursive"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @test(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @recursive {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "test.recursive"
+    simulation.scope.decl 0
+    simulation.func @test(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32,
-                    obelisk_sim.bindings = []} {
+                    simulation.bindings = []} {
       obelisk.sv.statement.rand_sequence attributes {
           first_production = @p, node_id = 1 : i64,
           production_count = 1 : i64} {
@@ -30,7 +30,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -42,13 +42,13 @@ module {
 // IEEE 1800-2017 18.17.5 requires two or more production items in a rand join.
 
 module {
-  obelisk_sim.design @rand_join {
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "test.rand_join"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @test(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @rand_join {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "test.rand_join"
+    simulation.scope.decl 0
+    simulation.func @test(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32,
-                    obelisk_sim.bindings = []} {
+                    simulation.bindings = []} {
       obelisk.sv.statement.rand_sequence attributes {
           first_production = @p, node_id = 1 : i64,
           production_count = 1 : i64} {
@@ -64,7 +64,7 @@ module {
             semantic_type = !obelisk.void} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -79,13 +79,13 @@ module {
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
 module {
-  obelisk_sim.design @production_values {
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "test.values"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @test(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @production_values {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "test.values"
+    simulation.scope.decl 0
+    simulation.func @test(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32,
-                    obelisk_sim.bindings = []} {
+                    simulation.bindings = []} {
       obelisk.sv.statement.rand_sequence attributes {
           first_production = @p, node_id = 1 : i64,
           production_count = 1 : i64} {
@@ -100,7 +100,7 @@ module {
             semantic_type = !int} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

@@ -5,9 +5,9 @@
 // initialized automatic event copies its initializer's handle. The alias must
 // therefore trigger the source, without allocating a second event.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.event.create
-// CHECK-NEXT: obelisk_sim.event.trigger %[[SOURCE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[SOURCE:.*]] = simulation.event.create
+// CHECK-NEXT: simulation.event.trigger %[[SOURCE]]
 // CHECK-NOT: obelisk.sv.
 
 module {

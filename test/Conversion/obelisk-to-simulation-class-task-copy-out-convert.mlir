@@ -69,9 +69,9 @@ module {
 
 // The call passes a reference of the formal's own type, and the value it
 // leaves there is truncated into the actual on the continuation.
-// CHECK: %[[FORMAL:.*]] = obelisk_sim.ref.alloc %{{.*}} : i32 -> !obelisk_sim.ref<i32>
-// CHECK: obelisk_sim.task.call {{.*}}%[[FORMAL]]
-// CHECK: ^bb{{[0-9]+}}(%[[COPY:.*]]: !obelisk_sim.ref<i32>):
-// CHECK: %[[OUT:.*]] = obelisk_sim.ref.load %[[COPY]] : !obelisk_sim.ref<i32> -> i32
+// CHECK: %[[FORMAL:.*]] = simulation.ref.alloc %{{.*}} : i32 -> !simulation.ref<i32>
+// CHECK: simulation.task.call {{.*}}%[[FORMAL]]
+// CHECK: ^bb{{[0-9]+}}(%[[COPY:.*]]: !simulation.ref<i32>):
+// CHECK: %[[OUT:.*]] = simulation.ref.load %[[COPY]] : !simulation.ref<i32> -> i32
 // CHECK: %[[TRUNC:.*]] = arith.trunci %[[OUT]] : i32 to i8
-// CHECK: obelisk_sim.ref.store %[[TRUNC]] to %{{.*}} : i8, !obelisk_sim.ref<i8>
+// CHECK: simulation.ref.store %[[TRUNC]] to %{{.*}} : i8, !simulation.ref<i8>

@@ -1512,7 +1512,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
       isa<sim::ManagedWatchType>(stableDependencies.front().getType()) ||
       !isAddressableExpression(children[0]) ||
       !storageDecidesTruth(children[0])) {
-    if (!children[0]->hasAttr("obelisk_sim.observer")) {
+    if (!children[0]->hasAttr("simulation.observer")) {
       unsupported(op) << " (computed wait condition requires an observer)";
       return failure();
     }

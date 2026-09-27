@@ -29,7 +29,7 @@ module concurrent_sva_expanded_invocation_negative;
 `endif
 endmodule
 
-// LOCAL: obelisk_sim.func private @{{.*}} attributes {{.*}}home_region = 8 : i32
-// LOCAL: obelisk_sim.suspend.edge posedge
+// LOCAL: simulation.func private @{{.*}} attributes {{.*}}home_region = 8 : i32
+// LOCAL: simulation.suspend.edge posedge
 // LOCAL-NOT: obelisk.sv.
 // RECURSIVE: error: nested SVA implication/followed-by is not executable yet

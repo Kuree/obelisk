@@ -46,7 +46,7 @@ struct NetDominance {
   NetBit bit;
 };
 
-/// Immutable topology derived only from `obelisk_sim.net.connect.decl`.
+/// Immutable topology derived only from `simulation.net.connect.decl`.
 /// Keeping this separate from SimulationAnalysis lets concurrent IPO retain
 /// its existing cache and invalidation contract.
 class NetConnectivityAnalysis {

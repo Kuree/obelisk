@@ -61,13 +61,13 @@ module {
 
 // CHECK-DAG: %[[FIVE:.*]] = arith.constant 5 : i32
 // CHECK-DAG: %[[EIGHT:.*]] = arith.constant 8 : i32
-// CHECK: %[[DYNAMIC:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.dynamic_array<i5>
-// CHECK: %[[DYNAMIC_SIZE:.*]] = obelisk_sim.container.size %[[DYNAMIC]]
+// CHECK: %[[DYNAMIC:.*]] = simulation.ref.load {{.*}} -> !simulation.dynamic_array<i5>
+// CHECK: %[[DYNAMIC_SIZE:.*]] = simulation.container.size %[[DYNAMIC]]
 // CHECK: %[[DYNAMIC_SIZE32:.*]] = arith.trunci %[[DYNAMIC_SIZE]] : i64 to i32
 // CHECK: arith.muli %[[DYNAMIC_SIZE32]], %[[FIVE]] : i32
-// CHECK: %[[QUEUE:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.queue<i8, 0>
-// CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size %[[QUEUE]]
+// CHECK: %[[QUEUE:.*]] = simulation.ref.load {{.*}} -> !simulation.queue<i8, 0>
+// CHECK: %[[QUEUE_SIZE:.*]] = simulation.container.size %[[QUEUE]]
 // CHECK: arith.muli {{.*}}, %[[EIGHT]] : i32
-// CHECK: %[[STRING:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.string
-// CHECK: %[[STRING_SIZE:.*]] = obelisk_sim.string.length %[[STRING]]
+// CHECK: %[[STRING:.*]] = simulation.ref.load {{.*}} -> !simulation.string
+// CHECK: %[[STRING_SIZE:.*]] = simulation.string.length %[[STRING]]
 // CHECK: arith.muli {{.*}}, %[[EIGHT]] : i32

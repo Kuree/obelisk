@@ -33,7 +33,7 @@ module {
 
 // String parameter constant_value carries decoded bytes, without source-level
 // quote delimiters.
-// CHECK: %[[KEY:.*]] = obelisk_sim.string.literal "the_key"
-// CHECK-NOT: obelisk_sim.string.literal "\22the_key\22"
-// CHECK: obelisk_sim.ref.store %[[KEY]]
+// CHECK: %[[KEY:.*]] = simulation.string.literal "the_key"
+// CHECK-NOT: simulation.string.literal "\22the_key\22"
+// CHECK: simulation.ref.store %[[KEY]]
 // CHECK-NOT: obelisk.sv.

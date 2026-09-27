@@ -3,15 +3,15 @@
 // The first component has 31 solutions and exceeds the table cap. Planning
 // continues to the later independent three-solution component, materializes
 // that table, and retains checker/runtime solving for the oversized component.
-// COMPONENT-PARTIAL-LABEL: obelisk_sim.func private @unit_1
+// COMPONENT-PARTIAL-LABEL: simulation.func private @unit_1
 // COMPONENT-PARTIAL: arith.ori {{.*}}, %{{c2_i64.*}} : i64
-// COMPONENT-PARTIAL: obelisk_sim.managed.store
+// COMPONENT-PARTIAL: simulation.managed.store
 // COMPONENT-PARTIAL: arith.select {{.*}}, %{{c31_i64.*}}, %{{c0_i64.*}} : i64
 // COMPONENT-PARTIAL: arith.select {{.*}}, %{{c96_i64.*}}, %{{c0_i64.*}} : i64
 // COMPONENT-PARTIAL: arith.cmpi ult
 // COMPONENT-PARTIAL-COUNT-2: arith.select
 // COMPONENT-PARTIAL-COUNT-2: arith.cmpi ne
-// COMPONENT-PARTIAL: obelisk_sim.random.solve {{.*}} mutable
+// COMPONENT-PARTIAL: simulation.random.solve {{.*}} mutable
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

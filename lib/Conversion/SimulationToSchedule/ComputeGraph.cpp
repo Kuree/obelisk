@@ -1,6 +1,6 @@
 //===- ComputeGraph.cpp - Derive the late simulation schedule ------------===//
 //
-// The executable obelisk_sim CFG remains the source of truth. This analysis
+// The executable simulation CFG remains the source of truth. This analysis
 // derives deterministic compiler metadata from it: precise descriptor-range
 // summaries, fixed static sites, fragment ABI records, and an event-region
 // graph with SCC convergence groups. It never mutates the design.

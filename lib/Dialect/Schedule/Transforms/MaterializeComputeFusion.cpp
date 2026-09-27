@@ -2445,7 +2445,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     for (DictionaryAttr &attrs :
          MutableArrayRef(helperArgumentAttrs).drop_front())
       attrs = helperBuilder.getDictionaryAttr(helperBuilder.getNamedAttr(
-          "obelisk_sim.capture_kind",
+          "simulation.capture_kind",
           helperBuilder.getI32IntegerAttr(
               static_cast<int32_t>(sim::CaptureKind::Formal))));
     SmallVector<NamedAttribute> helperAttributes{helperBuilder.getNamedAttr(

@@ -183,16 +183,16 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
           builder, location,
           (Twine(severity) + ": " + name + ": " + detail).str());
       sim::SimDisplayOp::create(builder, location, context, standardError,
-                                ValueRange{item}, true, 10,
+                                ValueRange{item}, true, sim::Radix::Decimal,
                                 builder.getDenseI32ArrayAttr({0}), lexicalScope,
                                 StringAttr{}, timeMultiplier, IntegerAttr{});
     };
     auto emitWord = [&](Value descriptor, Value word) {
       sim::SimDisplayOp::create(
           builder, location, context, descriptor, ValueRange{word}, true,
-          name == "$writememb" ? 2 : 16, ArrayRef<int32_t>{0}, lexicalScope,
-          op.getSystemLibraryCellAttr(), timeMultiplier,
-          designTimePrecisionExponent());
+          static_cast<sim::Radix>(name == "$writememb" ? 2 : 16),
+          ArrayRef<int32_t>{0}, lexicalScope, op.getSystemLibraryCellAttr(),
+          timeMultiplier, designTimePrecisionExponent());
     };
 
     FailureOr<Value> memory = lowerExpression(actual, static_cast<bool>(array));
@@ -351,10 +351,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       Value addressFormat =
           sim::SimBytesConstantOp::create(builder, location, "@%h");
       sim::SimDisplayOp::create(builder, location, context, descriptor,
-                                ValueRange{addressFormat, *keyScalar}, true, 16,
-                                ArrayRef<int32_t>{0, 0}, lexicalScope,
-                                op.getSystemLibraryCellAttr(), timeMultiplier,
-                                designTimePrecisionExponent());
+                                ValueRange{addressFormat, *keyScalar}, true,
+                                sim::Radix::Hex, ArrayRef<int32_t>{0, 0},
+                                lexicalScope, op.getSystemLibraryCellAttr(),
+                                timeMultiplier, designTimePrecisionExponent());
       emitWord(descriptor, *scalar);
       cf::BranchOp::create(builder, location, step, ValueRange{key});
 
@@ -876,7 +876,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       StringAttr scope =
           function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
       sim::SimDisplayOp::create(builder, location, context, standardError,
-                                ValueRange{item}, true, 10,
+                                ValueRange{item}, true, sim::Radix::Decimal,
                                 builder.getDenseI32ArrayAttr({0}), scope,
                                 StringAttr{}, timeMultiplier, IntegerAttr{});
     };
@@ -968,7 +968,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
         builder, location,
         TypeRange{sim::LogicType::get(function.getContext(), *elementWidth),
                   i32, i64},
-        context, descriptor, name == "$readmemb" ? 2 : 16);
+        context, descriptor,
+        static_cast<sim::Radix>(name == "$readmemb" ? 2 : 16));
     Value eofKind = constant(i32, OBELISK_RT_READMEM_EOF);
     Value isEof = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, token.getKind(), eofKind);

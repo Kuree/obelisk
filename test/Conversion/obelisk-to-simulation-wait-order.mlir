@@ -31,9 +31,9 @@ module {
 // IEEE 1800-2017 15.5.4: the event inventory is one scheduler wait. The
 // resumed result selects the action block, and omission of an else statement
 // makes only the failure edge record a run-time error.
-// CHECK: obelisk_sim.suspend.event_order %{{.*}}, %{{.*}} events 2 to
-// CHECK: %[[FAILED:.*]] = obelisk_sim.wait_order.failed
+// CHECK: simulation.suspend.event_order %{{.*}}, %{{.*}} events 2 to
+// CHECK: %[[FAILED:.*]] = simulation.wait_order.failed
 // CHECK: cf.cond_br %[[FAILED]], ^[[FAIL:bb[0-9]+]], ^[[DONE:bb[0-9]+]]
 // CHECK: ^[[FAIL]]:
-// CHECK: obelisk_sim.error
+// CHECK: simulation.error
 // CHECK: cf.br ^[[DONE]]

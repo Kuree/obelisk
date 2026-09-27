@@ -104,19 +104,19 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Antecedent false selects the fail callback; it is not an implication-style
 // vacuous pass. When true, the overlapped consequent is sampled immediately.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK: [[A:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[AT:%.*]] = obelisk_sim.logic.is_true [[A]]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK: [[A:%.*]] = simulation.assert.sampled_read
+// CHECK: [[AT:%.*]] = simulation.logic.is_true [[A]]
 // CHECK: [[NA:%.*]] = arith.xori [[AT]]
 // CHECK: cf.cond_br [[NA]], ^[[AFAIL:bb[0-9]+]],
 // CHECK: ^[[AFAIL]]:
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.1.1
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.11.1.1
+// CHECK: simulation.assert.sampled_read
 
 // Nonoverlapped followed-by retains a one-cycle state bit before evaluating b.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.followed_by_monitor
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.followed_by_monitor
 // CHECK: arith.constant 1 : i64
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.assert.sampled_read

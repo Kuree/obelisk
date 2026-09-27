@@ -56,10 +56,10 @@ module attributes {
 
 // IEEE 1800-2017 10.5 and 18.12: static initialization precedes every
 // process, so std::randomize must fall back to the initialization stream.
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 function hierarchy "top.result.$static_initializer"
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: obelisk_sim.call
-// CHECK: obelisk_sim.spawn
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.random.state
-// CHECK: obelisk_sim.random.set_state
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in 1 function hierarchy "top.result.$static_initializer"
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: simulation.call
+// CHECK: simulation.spawn
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.random.state
+// CHECK: simulation.random.set_state

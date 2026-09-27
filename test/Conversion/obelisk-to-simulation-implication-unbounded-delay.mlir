@@ -204,56 +204,56 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Overlapped implication injects a token on the antecedent clock. A false
 // antecedent dispatches its vacuous pass only after older successful tokens.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.16.delay_weak(
-// CHECK-COUNT-2: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.16.delay_weak(
+// CHECK-COUNT-2: simulation.ref.load
 // CHECK: arith.andi
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_delay_implication
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 2 : i64
-// CHECK-NOT: obelisk_sim.persistent_delay_nonoverlapped
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_delay_implication
+// CHECK-SAME: simulation.persistent_delay_minimum = 2 : i64
+// CHECK-NOT: simulation.persistent_delay_nonoverlapped
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.shli
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_0.fork.16.0.0
+// CHECK: simulation.assert.sampled_read
+// CHECK-COUNT-2: simulation.spawn @unit_0.fork.16.0.0
 
 // Nonoverlapped followed-by holds the current antecedent result in one extra
 // bit. A false antecedent is a failure rather than an implication-vacuous
 // pass. The EOS coordinator counts eligible, warm-up, and delayed-activation
 // state, so a last-slot trigger is not lost.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.41.delay_weak(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.persistent_delay_implication
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_delay_nonoverlapped
-// CHECK-COUNT-3: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.41.delay_weak(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.persistent_delay_implication
+// CHECK-SAME: simulation.persistent_delay_minimum = 1 : i64
+// CHECK-SAME: simulation.persistent_delay_nonoverlapped
+// CHECK-COUNT-3: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
 // CHECK: arith.shli
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 
 // Cover followed-by has no failed-antecedent hit and no weak EOS coordinator.
 // M=0 allows the terminal on the same clock as an overlapped antecedent match.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.persistent_delay_implication
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 0 : i64
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.persistent_delay_implication
+// CHECK-SAME: simulation.persistent_delay_minimum = 0 : i64
 // CHECK-NOT: concurrent_eos_count
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK: arith.select
-// CHECK: obelisk_sim.spawn @unit_2.fork.66.0.0
+// CHECK: simulation.spawn @unit_2.fork.66.0.0
 
 // Cover implication has one callback for a prior terminal match and one for
 // the current false-antecedent vacuous success. Keeping the two static sites
 // guards both aggregate-result and vacuous scheduling without per-attempt
 // runtime threads.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.fork.81.0.0(
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_delay_implication
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 2 : i64
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_3.fork.81.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork
+// CHECK-LABEL: simulation.func private @unit_3.fork.81.0.0(
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_delay_implication
+// CHECK-SAME: simulation.persistent_delay_minimum = 2 : i64
+// CHECK-COUNT-2: simulation.spawn @unit_3.fork.81.0.0
+// CHECK-NOT: simulation.spawn @unit_3.fork

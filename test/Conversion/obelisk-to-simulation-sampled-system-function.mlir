@@ -27,6 +27,6 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[SAMPLED:.+]] = obelisk_sim.assert.sampled_read %arg0 from %arg1 : (!obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> !obelisk_sim.logic<1>
-// CHECK: obelisk_sim.logic.is_true %[[SAMPLED]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[SAMPLED:.+]] = simulation.assert.sampled_read %arg0 from %arg1 : (!simulation.context, !simulation.ref<!simulation.logic<1>>) -> !simulation.logic<1>
+// CHECK: simulation.logic.is_true %[[SAMPLED]]

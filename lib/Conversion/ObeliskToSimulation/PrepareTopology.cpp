@@ -1188,7 +1188,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
 
     bool top = false;
     if (BoolAttr frozen =
-            source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_top")) {
+            source->getAttrOfType<BoolAttr>("simulation.vpi_top")) {
       top = frozen.getValue();
     } else if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source)) {
       Operation *instance = body->getParentOp();
@@ -1199,9 +1199,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             source))
       top = true;
     BoolAttr cell =
-        source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_cell_instance");
+        source->getAttrOfType<BoolAttr>("simulation.vpi_cell_instance");
     BoolAttr automatic =
-        source->getAttrOfType<BoolAttr>("obelisk_sim.vpi_automatic");
+        source->getAttrOfType<BoolAttr>("simulation.vpi_automatic");
     bool isAutomatic = automatic && automatic.getValue();
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
       isAutomatic = subroutine.getDefaultLifetime() ==
@@ -1216,7 +1216,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
     }
     StringAttr definitionName =
-        source->getAttrOfType<StringAttr>("obelisk_sim.vpi_definition_name");
+        source->getAttrOfType<StringAttr>("simulation.vpi_definition_name");
     if (!definitionName)
       if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source))
         if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(
@@ -1489,7 +1489,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (sim::VPIPropertySetAttr properties =
             identityProperties(source, sourceKind))
       anchor->setAttr("vpi_properties", properties);
-    source->setAttr("obelisk_sim.vpi_anchor", anchorSymbols.lookup(source));
+    source->setAttr("simulation.vpi_anchor", anchorSymbols.lookup(source));
   }
 
   // IO declarations are source-definition members, not the per-instance
@@ -2830,7 +2830,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
           body && body->hasAttr("virtual_interface_identity") &&
           !isCompileTimeOnlyInstanceMember(body))
-        declaration->setAttr("obelisk_sim.virtual_interface_member", debug);
+        declaration->setAttr("simulation.virtual_interface_member", debug);
       return;
     }
 
@@ -3001,20 +3001,20 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       anchor->setAttr("vpi_properties", netProperties(net));
     }
     if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
-        net->hasAttr("obelisk_sim.inferred_user_net")) {
-      declaration->setAttr("obelisk_sim.user_defined_net",
+        net->hasAttr("simulation.inferred_user_net")) {
+      declaration->setAttr("simulation.user_defined_net",
                            builder.getUnitAttr());
       if (auto path = net.getResolutionFunctionPath())
-        declaration->setAttr("obelisk_sim.resolution_function_path",
+        declaration->setAttr("simulation.resolution_function_path",
                              builder.getStringAttr(*path));
       if (auto symbol = net.getResolutionFunctionSymbol())
-        declaration->setAttr("obelisk_sim.resolution_function_symbol", *symbol);
+        declaration->setAttr("simulation.resolution_function_symbol", *symbol);
     }
     if (auto body =
             dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
         body && body->hasAttr("virtual_interface_identity") &&
         !isCompileTimeOnlyInstanceMember(body))
-      declaration->setAttr("obelisk_sim.virtual_interface_member", debug);
+      declaration->setAttr("simulation.virtual_interface_member", debug);
   };
 
   // Materialize canonical objects first so alias resolution is independent of

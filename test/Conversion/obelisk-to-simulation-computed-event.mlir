@@ -41,9 +41,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.observer.bind
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 0 edges [1] indices [-1]
-// CHECK: obelisk_sim.func private @observer_
-// CHECK: obelisk_sim.logic.binary and
+// CHECK: simulation.func private @observer_
+// CHECK: simulation.logic.binary and
 // CHECK-NOT: obelisk.sv.

@@ -104,36 +104,36 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_cancel.
-// CHECK-SAME: %arg9: !obelisk_sim.ref<i64>
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_cancel.
+// CHECK-SAME: %arg9: !simulation.ref<i64>
 // CHECK-SAME: ) attributes
 // CHECK-SAME: schedule.concurrent_cancel
-// CHECK-COUNT-5: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.load %arg9
-// CHECK: obelisk_sim.ref.store {{.*}} to %arg9
-// CHECK-NOT: obelisk_sim.ref.store
+// CHECK-COUNT-5: simulation.ref.store
+// CHECK: simulation.ref.load %arg9
+// CHECK: simulation.ref.store {{.*}} to %arg9
+// CHECK-NOT: simulation.ref.store
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch.
-// CHECK-SAME: %arg6: !obelisk_sim.ref<i64>
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_branch.
+// CHECK-SAME: %arg6: !simulation.ref<i64>
 // CHECK-SAME: ) attributes
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
-// CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_branch_report.
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}simulation.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}simulation.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-NOT: simulation.spawn @unit_0.$concurrent_eos_branch_report.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "strong"
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs = 4 : i64
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-COUNT-6: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_cancel.
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_branch.
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK-COUNT-5: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.branching_antecedent_universal_failure
-// CHECK: obelisk_sim.branching_antecedent_universal_success
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "strong"
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 3 : i64
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_pairs = 4 : i64
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-COUNT-6: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_cancel.
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_branch.
+// CHECK: simulation.suspend.edge posedge
+// CHECK-COUNT-5: simulation.ref.store
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK: simulation.branching_antecedent_universal_failure
+// CHECK: simulation.branching_antecedent_universal_success

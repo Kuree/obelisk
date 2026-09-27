@@ -764,7 +764,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
   StringRef path = op.getReferencedPath();
   Value initial = localDefaults.lookup(path);
   bool aggregateMemberInitializers =
-      op->hasAttr("obelisk_sim.aggregate_member_initializers");
+      op->hasAttr("simulation.aggregate_member_initializers");
   auto initializeAggregateMembers = [&](Value destination) -> LogicalResult {
     auto referenceType = dyn_cast<sim::RefType>(destination.getType());
     if (!referenceType) {
@@ -775,7 +775,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
     Type aggregateType = referenceType.getElementType();
     for (Operation *child : children) {
       auto ordinalAttr = child->getAttrOfType<IntegerAttr>(
-          "obelisk_sim.initialize_subelement");
+          "simulation.initialize_subelement");
       if (!ordinalAttr) {
         emitError(getSemanticLocation(child))
             << "aggregate member initializer has no field ordinal";
@@ -858,7 +858,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
     return success();
   if (!initial) {
     auto siteIDAttr =
-        op->getAttrOfType<IntegerAttr>("obelisk_sim.static_site_id");
+        op->getAttrOfType<IntegerAttr>("simulation.static_site_id");
     if (!siteIDAttr || !siteIDAttr.getValue().isStrictlyPositive()) {
       emitError(location)
           << "static declaration has no prepared initialization site ID";
@@ -986,9 +986,9 @@ UnitLowering::outlineForkBranch(
       metadata = captureMetadata(builder, sim::CaptureKind::Formal);
     if (!isStaticallyAllocatedOverrideTarget(capture)) {
       SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
-      if (!metadata.contains("obelisk_sim.automatic_reference_capture"))
+      if (!metadata.contains("simulation.automatic_reference_capture"))
         entries.push_back(builder.getNamedAttr(
-            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+            "simulation.automatic_reference_capture", builder.getUnitAttr()));
       metadata = builder.getDictionaryAttr(entries);
     }
     argumentAttrs.push_back(metadata);
@@ -1048,7 +1048,7 @@ UnitLowering::outlineForkBranch(
     } else if (auto named =
                    dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
       path = named.getReferencedPath();
-      branchUsesThis |= named->hasAttr("obelisk_sim.class_field");
+      branchUsesThis |= named->hasAttr("simulation.class_field");
     } else if (auto hierarchical =
                    dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
@@ -1071,9 +1071,9 @@ UnitLowering::outlineForkBranch(
               findSemanticCovergroup(construct))
         collectCoveragePaths(covergroup);
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
-        call && call->hasAttr("obelisk_sim.class_instance")) {
+        call && call->hasAttr("simulation.class_instance")) {
       auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
-      bool superCall = call->hasAttr("obelisk_sim.class_super");
+      bool superCall = call->hasAttr("simulation.class_super");
       branchUsesThis |=
           superCall || (formals && getChildren(call).size() == formals.size());
     }
@@ -1172,7 +1172,7 @@ UnitLowering::outlineForkBranch(
                            Twine(forkNode) + "." + Twine(branchIndex))
                               .str();
   auto codeUnitIDAttr =
-      branch->getAttrOfType<IntegerAttr>("obelisk_sim.fork_code_unit_id");
+      branch->getAttrOfType<IntegerAttr>("simulation.fork_code_unit_id");
   if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive())
     return emitError(location) << "fork branch has no prepared code-unit ID",
            failure();
@@ -1233,12 +1233,12 @@ UnitLowering::outlineForkBranch(
   // resolver.  Make that context visible before lowering the cloned branch;
   // the caller cannot attach the marker after outlineForkBranch returns
   // because nested lowering is completed inside this routine.
-  if (branch->hasAttr("obelisk_sim.global_future_resolver"))
-    outlined->setAttr("obelisk_sim.global_future_resolver",
+  if (branch->hasAttr("simulation.global_future_resolver"))
+    outlined->setAttr("simulation.global_future_resolver",
                       outlineBuilder.getUnitAttr());
-  if (branch->hasAttr("obelisk_sim.procedural_assertion_attempt") &&
-      !branch->hasAttr("obelisk_sim.default_assertion_failure"))
-    outlined->setAttr("obelisk_sim.procedural_assertion_attempt",
+  if (branch->hasAttr("simulation.procedural_assertion_attempt") &&
+      !branch->hasAttr("simulation.default_assertion_failure"))
+    outlined->setAttr("simulation.procedural_assertion_attempt",
                       outlineBuilder.getUnitAttr());
 
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
@@ -1293,15 +1293,15 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                           "." + Twine(ordinal))
                              .str();
 
-  Attribute previousForkID = call->getAttr("obelisk_sim.fork_code_unit_id");
+  Attribute previousForkID = call->getAttr("simulation.fork_code_unit_id");
   Attribute previousMonitorCallback =
-      call->getAttr("obelisk_sim.monitor_callback");
+      call->getAttr("simulation.monitor_callback");
   StringAttr previousName = call.getCalleeNameAttr();
-  call->setAttr("obelisk_sim.fork_code_unit_id",
+  call->setAttr("simulation.fork_code_unit_id",
                 builder.getI64IntegerAttr(stableCodeUnitID(identity)));
   call->setAttr("callee_name", builder.getStringAttr(immediateName));
   if (persistent)
-    call->setAttr("obelisk_sim.monitor_callback", builder.getUnitAttr());
+    call->setAttr("simulation.monitor_callback", builder.getUnitAttr());
   SmallVector<MonitorObservation> observations;
   bool observationComplete = false;
   FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
@@ -1311,13 +1311,13 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                         persistent ? &observationComplete : nullptr);
   call->setAttr("callee_name", previousName);
   if (previousMonitorCallback)
-    call->setAttr("obelisk_sim.monitor_callback", previousMonitorCallback);
+    call->setAttr("simulation.monitor_callback", previousMonitorCallback);
   else
-    call->removeAttr("obelisk_sim.monitor_callback");
+    call->removeAttr("simulation.monitor_callback");
   if (previousForkID)
-    call->setAttr("obelisk_sim.fork_code_unit_id", previousForkID);
+    call->setAttr("simulation.fork_code_unit_id", previousForkID);
   else
-    call->removeAttr("obelisk_sim.fork_code_unit_id");
+    call->removeAttr("simulation.fork_code_unit_id");
   if (failed(outlined))
     return failure();
 
@@ -1330,7 +1330,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                                               sim::ExecutionDomain::Design));
   if (!persistent)
     return outlined;
-  callback->setAttr("obelisk_sim.persistent_monitor", builder.getUnitAttr());
+  callback->setAttr("simulation.persistent_monitor", builder.getUnitAttr());
 
   Block &entry = callback.getBody().front();
   Block *loop = entry.splitBlock(entry.begin());
@@ -1478,9 +1478,9 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
   std::string identity =
       (function.getSymName() + ".$pla." + Twine(node) + "." + Twine(ordinal))
           .str();
-  Attribute previousForkID = call->getAttr("obelisk_sim.fork_code_unit_id");
+  Attribute previousForkID = call->getAttr("simulation.fork_code_unit_id");
   StringAttr previousName = call.getCalleeNameAttr();
-  call->setAttr("obelisk_sim.fork_code_unit_id",
+  call->setAttr("simulation.fork_code_unit_id",
                 builder.getI64IntegerAttr(stableCodeUnitID(identity)));
   call->setAttr("callee_name", builder.getStringAttr(synchronousName));
   FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
@@ -1488,9 +1488,9 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
                         /*captureReferences=*/true);
   call->setAttr("callee_name", previousName);
   if (previousForkID)
-    call->setAttr("obelisk_sim.fork_code_unit_id", previousForkID);
+    call->setAttr("simulation.fork_code_unit_id", previousForkID);
   else
-    call->removeAttr("obelisk_sim.fork_code_unit_id");
+    call->removeAttr("simulation.fork_code_unit_id");
   if (failed(outlined))
     return failure();
 
@@ -1692,19 +1692,19 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
       contents.size() == 1 &&
       isa<semantic::SVImmediateAssertionStatementOp>(contents.front())) {
     auto targetID =
-        op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+        op->getAttrOfType<IntegerAttr>("simulation.control_target_id");
     if (!targetID || !targetID.getValue().isStrictlyPositive())
       return emitError(getSemanticLocation(op))
                  << "labeled assertion has no prepared control ID",
              failure();
-    contents.front()->setAttr("obelisk_sim.assertion_control_target_id",
+    contents.front()->setAttr("simulation.assertion_control_target_id",
                               targetID);
     return lowerContents();
   }
 
   Location location = getSemanticLocation(op);
   auto targetIDAttr =
-      op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+      op->getAttrOfType<IntegerAttr>("simulation.control_target_id");
   if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
     emitError(location) << "named block has no prepared control ID";
     return failure();
@@ -1726,7 +1726,7 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   Value activation = sim::SimControlEnterOp::create(
       builder, location, builder.getI64IntegerAttr(targetID));
   Block *exit = addBlock();
-  bool resumable = op->hasAttr("obelisk_sim.resumable_control_target") &&
+  bool resumable = op->hasAttr("simulation.resumable_control_target") &&
                    function.getEntryKind() != sim::EntryKind::Function &&
                    function.getEntryKind() != sim::EntryKind::Observer;
   if (resumable) {
@@ -1761,7 +1761,7 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
     return failure();
   }
   auto targetIDAttr =
-      op->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+      op->getAttrOfType<IntegerAttr>("simulation.control_target_id");
   if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
     emitError(location) << "disable has no prepared control ID";
     return failure();

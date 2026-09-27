@@ -430,7 +430,7 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
           parsed = sim::SimStringParseLogicOp::create(
               builder, location,
               sim::LogicType::get(function.getContext(), *packedWidth), field,
-              radix);
+              static_cast<sim::Radix>(radix));
           numeric = true;
         }
         FailureOr<Value> converted =
@@ -882,7 +882,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
         }
         parsed = sim::SimStringParseLogicOp::create(
             builder, location,
-            sim::LogicType::get(function.getContext(), *width), field, radix);
+            sim::LogicType::get(function.getContext(), *width), field,
+            static_cast<sim::Radix>(radix));
       }
       FailureOr<Value> value =
           parsed.getType() == destination->type

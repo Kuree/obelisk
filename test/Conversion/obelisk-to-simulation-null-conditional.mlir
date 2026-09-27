@@ -42,6 +42,6 @@ module {
   }
 }
 
-// CHECK: %[[NULL:.*]] = obelisk_sim.class.null : !obelisk_sim.class_handle<@[[CLASS:__obelisk_class_[^>]+]]>
-// CHECK: obelisk_sim.ref.store %[[NULL]] to %{{.*}} : !obelisk_sim.class_handle<@[[CLASS]]>
+// CHECK: %[[NULL:.*]] = simulation.class.null : !simulation.class_handle<@[[CLASS:__obelisk_class_[^>]+]]>
+// CHECK: simulation.ref.store %[[NULL]] to %{{.*}} : !simulation.class_handle<@[[CLASS]]>
 // CHECK-NOT: obelisk.sv.

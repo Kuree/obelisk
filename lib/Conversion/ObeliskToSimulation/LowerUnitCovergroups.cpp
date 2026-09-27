@@ -977,7 +977,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
             descriptor->valueSize, descriptor->alignment, descriptor->bitWidth,
             builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
             builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-            OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+            sim::ContainerKind::DynamicArray, 0);
         sim::SimContainerImportFixedOp::create(builder,
                                                getSemanticLocation(expression),
                                                temporary, value, *elementSpan);
@@ -1197,10 +1197,10 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
         if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
                 sim::DriverType>(value.getType()) &&
             !isStaticallyAllocatedOverrideTarget(value) &&
-            !attrs.contains("obelisk_sim.automatic_reference_capture")) {
+            !attrs.contains("simulation.automatic_reference_capture")) {
           SmallVector<NamedAttribute> entries(attrs.begin(), attrs.end());
           entries.push_back(
-              builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+              builder.getNamedAttr("simulation.automatic_reference_capture",
                                    builder.getUnitAttr()));
           attrs = builder.getDictionaryAttr(entries);
         }
@@ -1403,10 +1403,10 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
           if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
                   sim::DriverType>(value.getType()) &&
               !isStaticallyAllocatedOverrideTarget(value) &&
-              !attrs.contains("obelisk_sim.automatic_reference_capture")) {
+              !attrs.contains("simulation.automatic_reference_capture")) {
             SmallVector<NamedAttribute> entries(attrs.begin(), attrs.end());
             entries.push_back(
-                builder.getNamedAttr("obelisk_sim.automatic_reference_capture",
+                builder.getNamedAttr("simulation.automatic_reference_capture",
                                      builder.getUnitAttr()));
             attrs = builder.getDictionaryAttr(entries);
           }
@@ -1436,7 +1436,7 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
     for (Operation *control : controls) {
       SmallVector<Operation *> expressions = getChildren(control);
       for (Operation *expression : expressions)
-        if (auto evaluator = expression->getAttr("obelisk_sim.observer"))
+        if (auto evaluator = expression->getAttr("simulation.observer"))
           eventObservers.push_back(evaluator);
     }
     break;
@@ -1596,7 +1596,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
       return failure();
     }
     for (DictionaryAttr attrs : ArrayRef(argumentAttrs).drop_front(2))
-      if (attrs.contains("obelisk_sim.automatic_reference_capture")) {
+      if (attrs.contains("simulation.automatic_reference_capture")) {
         plan.emitError(
             "clocking-event covergroup sample captures automatic state; "
             "this exact event-instant slice requires static captures");
@@ -1634,7 +1634,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
             outlineBuilder.getI64IntegerAttr(evaluatorCodeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
         outlineBuilder.getNamedAttr(
-            "obelisk_sim.covergroup_event_sample_evaluator",
+            "simulation.covergroup_event_sample_evaluator",
             outlineBuilder.getUnitAttr()),
         outlineBuilder.getNamedAttr(
             sim::metadata::hierarchicalName,
@@ -1654,7 +1654,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
           outlineBuilder.getI32IntegerAttr(2 + classOwnerCapture)));
     if (strobe)
       evaluatorAttributes.push_back(outlineBuilder.getNamedAttr(
-          "obelisk_sim.covergroup_strobe_sample_evaluator",
+          "simulation.covergroup_strobe_sample_evaluator",
           outlineBuilder.getUnitAttr()));
     for (StringRef name : {StringRef("home_region"), StringRef("domain")})
       if (Attribute attribute = parent->getAttr(name))
@@ -1877,7 +1877,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
         outlineBuilder.getNamedAttr(
-            "obelisk_sim.covergroup_block_event_sample_evaluator",
+            "simulation.covergroup_block_event_sample_evaluator",
             outlineBuilder.getUnitAttr()),
         outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
                                     outlineBuilder.getStringAttr(hierarchy)),
@@ -2309,7 +2309,7 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
         !isa<sim::LogicType>(type) && !type.isF64()) {
       expression->emitError(
           "functional sample expression must lower to a signless integer, "
-          "!obelisk_sim.logic, or f64 value");
+          "!simulation.logic, or f64 value");
       return failure();
     }
 
@@ -2469,7 +2469,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
               dyn_cast<semantic::SVMemberAccessExpressionOp>(receiver)) {
         SmallVector<Operation *> memberChildren = getChildren(member);
         auto field =
-            member->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field");
+            member->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field");
         FailureOr<Type> handleType = getNormalizedSemanticType(member);
         FailureOr<Value> owner = memberChildren.size() == 1
                                      ? lowerExpression(memberChildren.front())
@@ -2486,7 +2486,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
         }
         Type storageType = *handleType;
         if (auto storage = member->getAttrOfType<TypeAttr>(
-                "obelisk_sim.covergroup_field_storage_type"))
+                "simulation.covergroup_field_storage_type"))
           storageType = storage.getValue();
         Type referenceType = sim::ManagedRefType::get(
             function.getContext(), storageType, ownerType.getClassName());
@@ -2501,7 +2501,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
         handle = *converted;
         classOwner = *owner;
       } else if (isa<semantic::SVNamedValueExpressionOp>(receiver) &&
-                 receiver->hasAttr("obelisk_sim.class_field") && thisObject) {
+                 receiver->hasAttr("simulation.class_field") && thisObject) {
         FailureOr<Value> lowered = lowerExpression(receiver);
         if (failed(lowered))
           return failure();

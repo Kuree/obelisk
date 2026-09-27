@@ -1,17 +1,17 @@
 // RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
 
 module {
-  obelisk_sim.design @net_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {
+  simulation.design @net_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 1, 2, 3>
     }
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design {
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design
+    simulation.net.decl 2 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 7, 11, 13>
     }
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
-    obelisk_sim.net.connect.decl 1 in 0 1[0] to 2[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.connect.decl 1 in 0 1[0] to 2[0] width 1 reversed = false rhs_dominates = true
   }
 }
 

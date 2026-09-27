@@ -78,13 +78,13 @@ module {
 }
 
 // Two timestamp/valid pairs are carried as ordinary SSA continuation state.
-// CHECK: obelisk_sim.func private
-// CHECK-SAME: obelisk_sim.timing_check_coordinator
+// CHECK: simulation.func private
+// CHECK-SAME: simulation.timing_check_coordinator
 // CHECK: cf.br ^{{.*}}({{.*}} : i64, i1, i64, i1)
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: conditions 2 edges [1, 1] indices [0, 1]
 // CHECK-SAME: slot_final
-// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK: simulation.assert.clock_occurrence.consume
 // CHECK-COUNT-2: arith.cmpi ult
 // CHECK: arith.ori
 // CHECK-NOT: timing_check_table

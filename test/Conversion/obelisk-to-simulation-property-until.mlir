@@ -129,45 +129,45 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // Weak until vacuously completes every still-live attempt at EOS.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.11.until_weak(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.11.until_weak(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_until_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "until"
-// CHECK-SAME: obelisk_sim.persistent_until_monitor
-// CHECK-SAME: obelisk_sim.sva_transition_normal_form = "canonical-minimal"
+// CHECK: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_until_aggregate_tokens
+// CHECK-SAME: simulation.persistent_until_kind = "until"
+// CHECK-SAME: simulation.persistent_until_monitor
+// CHECK-SAME: simulation.sva_transition_normal_form = "canonical-minimal"
 // One shared aggregate counter is captured by the EOS coordinator and carried
 // across suspension; no per-attempt process or bitset is allocated.
-// CHECK: [[LIVE_REF:%.*]] = obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.11.until_weak
-// CHECK: cf.br ^[[WAIT:bb[0-9]+]]([[LIVE_REF]] : !obelisk_sim.ref<i64>)
-// CHECK: ^[[WAIT]]({{%.*}}: !obelisk_sim.ref<i64>):
-// CHECK: obelisk_sim.suspend.edge {{.*}} to ^[[SAMPLE:bb[0-9]+]]({{%.*}} : !obelisk_sim.ref<i64>)
-// CHECK: ^[[SAMPLE]]([[LIVE_REF_ARG:%.*]]: !obelisk_sim.ref<i64>):
-// CHECK: [[A:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[B:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[LIVE:%.*]] = obelisk_sim.ref.load [[LIVE_REF_ARG]]
+// CHECK: [[LIVE_REF:%.*]] = simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.11.until_weak
+// CHECK: cf.br ^[[WAIT:bb[0-9]+]]([[LIVE_REF]] : !simulation.ref<i64>)
+// CHECK: ^[[WAIT]]({{%.*}}: !simulation.ref<i64>):
+// CHECK: simulation.suspend.edge {{.*}} to ^[[SAMPLE:bb[0-9]+]]({{%.*}} : !simulation.ref<i64>)
+// CHECK: ^[[SAMPLE]]([[LIVE_REF_ARG:%.*]]: !simulation.ref<i64>):
+// CHECK: [[A:%.*]] = simulation.assert.sampled_read
+// CHECK: [[B:%.*]] = simulation.assert.sampled_read
+// CHECK: [[LIVE:%.*]] = simulation.ref.load [[LIVE_REF_ARG]]
 // CHECK: [[ATTEMPTS:%.*]] = arith.addi [[LIVE]],
 // CHECK: [[NEXT:%.*]] = arith.select {{%.*}}, [[ATTEMPTS]], {{%.*}} : i64
-// CHECK: obelisk_sim.ref.store [[NEXT]] to [[LIVE_REF_ARG]]
+// CHECK: simulation.ref.store [[NEXT]] to [[LIVE_REF_ARG]]
 // CHECK: arith.subi
-// CHECK: cf.cond_br {{%.*}}, {{.*}}, ^[[WAIT]]([[LIVE_REF_ARG]] : !obelisk_sim.ref<i64>)
+// CHECK: cf.cond_br {{%.*}}, {{.*}}, ^[[WAIT]]([[LIVE_REF_ARG]] : !simulation.ref<i64>)
 // CHECK: arith.subi
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.31.until_strong(
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.31.until_strong(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
-// CHECK-SAME: obelisk_sim.persistent_until_strong
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_until_kind = "s_until"
+// CHECK-SAME: simulation.persistent_until_strong
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_until_inclusive
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "until_with"
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_until_inclusive
+// CHECK-SAME: simulation.persistent_until_kind = "until_with"
 
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.51.until_strong(
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.51.until_strong(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_until_inclusive
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until_with"
-// CHECK-SAME: obelisk_sim.persistent_until_strong
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_until_inclusive
+// CHECK-SAME: simulation.persistent_until_kind = "s_until_with"
+// CHECK-SAME: simulation.persistent_until_strong

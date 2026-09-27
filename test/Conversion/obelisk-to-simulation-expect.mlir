@@ -49,27 +49,27 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // A one-shot Observed monitor reports through a private result/event pair.
 // The blocked procedural caller resumes in Reactive before dispatching its
 // pass/fail action and then continues normally.
-// CHECK: obelisk_sim.func private @[[MONITOR:[^(]+]](
+// CHECK: simulation.func private @[[MONITOR:[^(]+]](
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: %[[SUCCESS:.*]] = arith.constant {{.*}}true
-// CHECK: obelisk_sim.ref.store %[[SUCCESS]]
-// CHECK: obelisk_sim.event.trigger
+// CHECK: simulation.ref.store %[[SUCCESS]]
+// CHECK: simulation.event.trigger
 // CHECK: %[[FAILURE:.*]] = arith.constant {{.*}}false
-// CHECK: obelisk_sim.ref.store %[[FAILURE]]
-// CHECK: obelisk_sim.event.trigger
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.ref.store %[[FAILURE]]
+// CHECK: simulation.event.trigger
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: %[[DONE:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.spawn @[[MONITOR]]
-// CHECK: obelisk_sim.suspend.event %[[DONE]]
+// CHECK: %[[DONE:.*]] = simulation.event.create
+// CHECK: simulation.spawn @[[MONITOR]]
+// CHECK: simulation.suspend.event %[[DONE]]
 // CHECK-SAME: resume_region = 10 : i32
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.ref.load
 // CHECK: cf.cond_br
 // CHECK: expect failed.

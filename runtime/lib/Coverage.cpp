@@ -7752,7 +7752,7 @@ uint64_t readPlaneLimb(const void *plane, uint64_t size, uint32_t ordinal) {
 bool functionalBooleanTrue(const obelisk_rt_functional_value_v1 &value) {
   uint64_t unknown = readPlaneLimb(value.unknown, value.value_size, 0);
   uint64_t encoded = readPlaneLimb(value.value, value.value_size, 0);
-  // !obelisk_sim.logic transports (aval ^ bval, bval).  IEEE boolean
+  // !simulation.logic transports (aval ^ bval, bval).  IEEE boolean
   // conversion accepts only a known one; X and Z are not true.
   uint64_t aval = value.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
                       ? encoded ^ unknown

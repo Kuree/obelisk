@@ -38,17 +38,17 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>> design hierarchy "top.q" debug "clocking output"
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.12
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.nba.enqueue {{.*}} to {{.*}} : (!obelisk_sim.packed_array<2 : 1 x !obelisk_sim.logic<1>>, !obelisk_sim.driver<!obelisk_sim.packed_array<2 : 1 x !obelisk_sim.logic<1>>>) -> ()
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.21
-// CHECK: obelisk_sim.nba.enqueue {{.*}} to {{.*}} : (!obelisk_sim.logic<1>, !obelisk_sim.driver<!obelisk_sim.logic<1>>) -> ()
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[SELECTED:.*]] = obelisk_sim.driver.extract %[[DRIVER:arg[0-9]+]] from 1
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.12
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.packed_array<3 : 0 x !simulation.logic<1>> design hierarchy "top.q" debug "clocking output"
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.12
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.nba.enqueue {{.*}} to {{.*}} : (!simulation.packed_array<2 : 1 x !simulation.logic<1>>, !simulation.driver<!simulation.packed_array<2 : 1 x !simulation.logic<1>>>) -> ()
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.21
+// CHECK: simulation.nba.enqueue {{.*}} to {{.*}} : (!simulation.logic<1>, !simulation.driver<!simulation.logic<1>>) -> ()
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[SELECTED:.*]] = simulation.driver.extract %[[DRIVER:arg[0-9]+]] from 1
+// CHECK: simulation.spawn @unit_0.$clocking_output.12
 // CHECK-SAME: %[[SELECTED]]
-// CHECK: %[[DYNAMIC:.*]] = obelisk_sim.driver.array_element %[[DRIVER]]
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.21
+// CHECK: %[[DYNAMIC:.*]] = simulation.driver.array_element %[[DRIVER]]
+// CHECK: simulation.spawn @unit_0.$clocking_output.21
 // CHECK-SAME: %[[DYNAMIC]]
 // CHECK-NOT: obelisk.sv.

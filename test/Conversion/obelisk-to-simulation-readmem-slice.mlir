@@ -47,12 +47,12 @@ module {
   }
 }
 
-// CHECK-DAG: %[[SLICE0:.*]] = obelisk_sim.ref.subelement
-// CHECK-DAG: %[[SLICE1:.*]] = obelisk_sim.ref.subelement
-// CHECK-DAG: %[[SLICE2:.*]] = obelisk_sim.ref.subelement
-// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_sim.file.readmem_token
+// CHECK-DAG: %[[SLICE0:.*]] = simulation.ref.subelement
+// CHECK-DAG: %[[SLICE1:.*]] = simulation.ref.subelement
+// CHECK-DAG: %[[SLICE2:.*]] = simulation.ref.subelement
+// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = simulation.file.readmem_token
 // CHECK: arith.cmpi eq,
 // CHECK: %[[SELECT1:.*]] = arith.select {{.*}}, %[[SLICE1]], %[[SLICE0]]
 // CHECK: %[[SELECT2:.*]] = arith.select {{.*}}, %[[SLICE2]], %[[SELECT1]]
-// CHECK: %[[INNER:.*]] = obelisk_sim.ref.array_element %[[SELECT2]]
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[INNER]]
+// CHECK: %[[INNER:.*]] = simulation.ref.array_element %[[SELECT2]]
+// CHECK: simulation.ref.store {{.*}} to %[[INNER]]

@@ -65,11 +65,11 @@ module {
 // CHECK-SAME: timing_check_kind = 12 : i32
 // CHECK: arith.constant -3000 : i64
 // CHECK: arith.constant 2000 : i64
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: edges [1, 0, 2]
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK-SAME: slot_final
-// CHECK: %[[MASK:.+]] = obelisk_sim.assert.clock_occurrence.consume
-// CHECK: obelisk_sim.assert.nochange.update {{.*}}, %[[MASK]] offsets(%{{.+}}, %{{.+}})
-// CHECK: obelisk_sim.assert.nochange.update {{.*}}, %{{.+}} offsets(%{{.+}}, %{{.+}})
+// CHECK: %[[MASK:.+]] = simulation.assert.clock_occurrence.consume
+// CHECK: simulation.assert.nochange.update {{.*}}, %[[MASK]] offsets(%{{.+}}, %{{.+}})
+// CHECK: simulation.assert.nochange.update {{.*}}, %{{.+}} offsets(%{{.+}}, %{{.+}})
 // CHECK-NOT: timing_check_table

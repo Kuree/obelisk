@@ -178,71 +178,71 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // An empty-only |=> antecedent is one guaranteed match whose consequent starts
 // on this clock. The repeated operand a is never sampled; b alone selects one
 // pass or fail action, and no handoff/final state exists.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.empty_antecedent_nonoverlap
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: %[[EMPTY_IMP_SAMPLE:.*]] = obelisk_sim.assert.sampled_read {{%.*}} from %arg3
-// CHECK-NEXT: %[[EMPTY_IMP_TRUE:.*]] = obelisk_sim.logic.is_true %[[EMPTY_IMP_SAMPLE]]
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_0.fork.14.1.1
-// CHECK: obelisk_sim.spawn @unit_0.fork.14.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.empty_antecedent_nonoverlap
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.suspend.edge posedge
+// CHECK: %[[EMPTY_IMP_SAMPLE:.*]] = simulation.assert.sampled_read {{%.*}} from %arg3
+// CHECK-NEXT: %[[EMPTY_IMP_TRUE:.*]] = simulation.logic.is_true %[[EMPTY_IMP_SAMPLE]]
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.14.1.1
+// CHECK: simulation.spawn @unit_0.fork.14.0.0
 
 // Empty #=# likewise starts the two-age b ##1 c consequent immediately. The
 // weak assert completion owns one state cell and reports each pending attempt
 // once at EOS; there is no extra nonoverlap handoff age.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.30.weak(
-// CHECK: obelisk_sim.bytes.constant "empty-follow-hit"
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.30.weak(
-// CHECK-COUNT-1: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_report.30.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.empty_antecedent_nonoverlap
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-COUNT-1: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.30.weak
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg4
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg3
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.30.weak(
+// CHECK: simulation.bytes.constant "empty-follow-hit"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.30.weak(
+// CHECK-COUNT-1: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_report.30.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.empty_antecedent_nonoverlap
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-COUNT-1: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.30.weak
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg4
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg3
+// CHECK-NOT: simulation.assert.sampled_read
 
 // For overlapped implication, the empty branch of a[*0:1] has no endpoint and
 // is discarded. The retained a endpoint evaluates c on the same clock. False
 // a selects the vacuous pass, while true a selects exactly one pass or failure.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.overlapped_empty_matches_ignored
-// CHECK-NOT: obelisk_sim.branching_antecedent_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg2
-// CHECK: obelisk_sim.spawn @unit_2.fork.46.0.0
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg3
-// CHECK: obelisk_sim.spawn @unit_2.fork.46.1.2
-// CHECK: obelisk_sim.spawn @unit_2.fork.46.0.0
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork.46
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.overlapped_empty_matches_ignored
+// CHECK-NOT: simulation.branching_antecedent_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg2
+// CHECK: simulation.spawn @unit_2.fork.46.0.0
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg3
+// CHECK: simulation.spawn @unit_2.fork.46.1.2
+// CHECK: simulation.spawn @unit_2.fork.46.0.0
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-NOT: simulation.spawn @unit_2.fork.46
 
 // The same endpoint rule applies to overlapped followed-by, but no-match a is
 // a failure and therefore cannot produce the cover hit.
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.overlapped_empty_matches_ignored
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg2
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg3
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_3.fork.59.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork.59.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.overlapped_empty_matches_ignored
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg2
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg3
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_3.fork.59.0.0
+// CHECK-NOT: simulation.spawn @unit_3.fork.59.0.0
 
 // Temporal not retains the empty-antecedent current-clock rewrite, samples b
 // only, and inverts its one result so false b produces the cover hit.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.empty_antecedent_nonoverlap
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read {{%.*}} from %arg3
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_4.fork.72.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_4.fork.72.0.0
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.empty_antecedent_nonoverlap
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read {{%.*}} from %arg3
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_4.fork.72.0.0
+// CHECK-NOT: simulation.spawn @unit_4.fork.72.0.0

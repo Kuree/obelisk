@@ -12,38 +12,38 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @virtual_interface_handles {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.first" interface "@bus"
-    obelisk_sim.scope.decl 2 parent 0 hierarchy "top.second" interface "@bus"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.exercise"
-    obelisk_sim.storage.decl 0 in 0
-      : !obelisk_sim.virtual_interface<"@bus", ""> design
+  simulation.design @virtual_interface_handles {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.scope.decl 1 parent 0 hierarchy "top.first" interface "@bus"
+    simulation.scope.decl 2 parent 0 hierarchy "top.second" interface "@bus"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.exercise"
+    simulation.storage.decl 0 in 0
+      : !simulation.virtual_interface<"@bus", ""> design
         hierarchy "top.vif"
 
-    obelisk_sim.func @exercise(
-        %ctx: !obelisk_sim.context
-          {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @exercise(
+        %ctx: !simulation.context
+          {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      %null = obelisk_sim.virtual_interface.null
-        : !obelisk_sim.virtual_interface<"@bus", "">
-      %first = obelisk_sim.virtual_interface.bind 1
-        : !obelisk_sim.virtual_interface<"@bus", "">
-      %second = obelisk_sim.virtual_interface.bind 2
-        : !obelisk_sim.virtual_interface<"@bus", "">
-      %restricted = obelisk_sim.virtual_interface.cast %first
-        : !obelisk_sim.virtual_interface<"@bus", ""> to
-          !obelisk_sim.virtual_interface<"@bus", "driver">
-      %null_equal = obelisk_sim.virtual_interface.equal %null, %null
-        : !obelisk_sim.virtual_interface<"@bus", "">,
-          !obelisk_sim.virtual_interface<"@bus", "">
-      %instance_equal = obelisk_sim.virtual_interface.equal %first, %second
-        : !obelisk_sim.virtual_interface<"@bus", "">,
-          !obelisk_sim.virtual_interface<"@bus", "">
-      %view_equal = obelisk_sim.virtual_interface.equal %restricted, %first
-        : !obelisk_sim.virtual_interface<"@bus", "driver">,
-          !obelisk_sim.virtual_interface<"@bus", "">
-      obelisk_sim.return
+      %null = simulation.virtual_interface.null
+        : !simulation.virtual_interface<"@bus", "">
+      %first = simulation.virtual_interface.bind 1
+        : !simulation.virtual_interface<"@bus", "">
+      %second = simulation.virtual_interface.bind 2
+        : !simulation.virtual_interface<"@bus", "">
+      %restricted = simulation.virtual_interface.cast %first
+        : !simulation.virtual_interface<"@bus", ""> to
+          !simulation.virtual_interface<"@bus", "driver">
+      %null_equal = simulation.virtual_interface.equal %null, %null
+        : !simulation.virtual_interface<"@bus", "">,
+          !simulation.virtual_interface<"@bus", "">
+      %instance_equal = simulation.virtual_interface.equal %first, %second
+        : !simulation.virtual_interface<"@bus", "">,
+          !simulation.virtual_interface<"@bus", "">
+      %view_equal = simulation.virtual_interface.equal %restricted, %first
+        : !simulation.virtual_interface<"@bus", "driver">,
+          !simulation.virtual_interface<"@bus", "">
+      simulation.return
     }
   }
 }
@@ -54,7 +54,7 @@ module attributes {
 // NATIVE-DAG: %[[SECOND:.*]] = llvm.mlir.constant(2 : i64)
 // NATIVE-DAG: llvm.mlir.constant(true) : i1
 // NATIVE-DAG: llvm.mlir.constant(false) : i1
-// NATIVE-NOT: obelisk_sim.virtual_interface
+// NATIVE-NOT: simulation.virtual_interface
 
 // BYTECODE-DAG: obelisk.bytecode.image = array<i8:
 // BYTECODE-DAG: obelisk.execution.state_bits = 64 : i64

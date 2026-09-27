@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 !logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
 !logic8 = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
@@ -6,41 +6,41 @@
 !bit8 = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
 
 module {
-  obelisk_sim.design @reductions {
-    obelisk_sim.code_unit.decl 9700001 in 0 always_comb
+  simulation.design @reductions {
+    simulation.code_unit.decl 9700001 in 0 always_comb
         hierarchy "top.reductions"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 :
-        !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 :
+        !simulation.packed_array<7 : 0 x !simulation.logic<1>>
         design hierarchy "top.value"
-    obelisk_sim.storage.decl 1 in 0 :
-        !obelisk_sim.packed_array<7 : 0 x i1>
+    simulation.storage.decl 1 in 0 :
+        !simulation.packed_array<7 : 0 x i1>
         design hierarchy "top.bits"
 
-    // CHECK-LABEL: obelisk_sim.func @unit
-    // CHECK: obelisk_sim.logic.reduction and
-    // CHECK: obelisk_sim.logic.reduction or
-    // CHECK: obelisk_sim.logic.reduction xor
-    // CHECK: obelisk_sim.logic.reduction nand
-    // CHECK: obelisk_sim.logic.reduction nor
-    // CHECK: obelisk_sim.logic.reduction xnor
+    // CHECK-LABEL: simulation.func @unit
+    // CHECK: simulation.logic.reduction and
+    // CHECK: simulation.logic.reduction or
+    // CHECK: simulation.logic.reduction xor
+    // CHECK: simulation.logic.reduction nand
+    // CHECK: simulation.logic.reduction nor
+    // CHECK: simulation.logic.reduction xnor
     // CHECK: arith.shrui
     // CHECK: arith.trunci
-    obelisk_sim.func @unit(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %bits: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x i1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @unit(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<!simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %bits: !simulation.ref<!simulation.packed_array<7 : 0 x i1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {
           entry_kind = 4 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.value", argument = 1,
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.value", argument = 1,
                 kind = direct, copyOut = false>,
-            #obelisk_sim.argument_binding<path = "top.bits", argument = 2,
+            #simulation.argument_binding<path = "top.bits", argument = 2,
                 kind = direct, copyOut = false>
           ],
           code_unit_id = 9700001 : i64
@@ -119,7 +119,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

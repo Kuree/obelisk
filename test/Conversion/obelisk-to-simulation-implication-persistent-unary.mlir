@@ -215,87 +215,87 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // An overlapped implication activates `always` on the antecedent clock. Its
 // false antecedent dispatches the implication pass, while a false active
 // operand dispatches the failure. The weak pending operand passes at EOS.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.
-// CHECK: obelisk_sim.spawn @unit_0.fork.{{[0-9]+}}.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_unary_implication
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "always"
-// CHECK-NOT: obelisk_sim.persistent_unary_nonoverlapped
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_0.fork.{{[0-9]+}}.0.0
-// CHECK: obelisk_sim.spawn @unit_0.fork.{{[0-9]+}}.1.1
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.
+// CHECK: simulation.spawn @unit_0.fork.{{[0-9]+}}.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_unary_implication
+// CHECK-SAME: simulation.persistent_unary_kind = "always"
+// CHECK-NOT: simulation.persistent_unary_nonoverlapped
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.{{[0-9]+}}.0.0
+// CHECK: simulation.spawn @unit_0.fork.{{[0-9]+}}.1.1
+// CHECK-NOT: simulation.assert.sampled_read
 
 // A nonoverlapped implication retains one handoff bit in addition to the
 // s_eventually eligible and two-clock warm-up state. Strong pending attempts
 // fail at EOS; a false antecedent still passes vacuously.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_1.fork.{{[0-9]+}}.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "s_eventually"
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_unary_nonoverlapped
-// CHECK-COUNT-2: obelisk_sim.ref.alloc %{{.*}} : i64 -> !obelisk_sim.ref<i64>
-// CHECK-NOT: obelisk_sim.ref.alloc %{{.*}} : i64 -> !obelisk_sim.ref<i64>
-// CHECK: [[HANDOFF:%.*]] = obelisk_sim.ref.alloc %{{.*}} {obelisk_sim.persistent_implication_handoff} : i64 -> !obelisk_sim.ref<i64>
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.{{.*}}(%{{.*}}, %{{.*}}, %{{.*}}, [[HANDOFF]])
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_1.fork.{{[0-9]+}}.0.0
-// CHECK: obelisk_sim.ref.store
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_1.fork.{{[0-9]+}}.1.1
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_unary_kind = "s_eventually"
+// CHECK-SAME: simulation.persistent_unary_minimum = 2 : i64
+// CHECK-SAME: simulation.persistent_unary_nonoverlapped
+// CHECK-COUNT-2: simulation.ref.alloc %{{.*}} : i64 -> !simulation.ref<i64>
+// CHECK-NOT: simulation.ref.alloc %{{.*}} : i64 -> !simulation.ref<i64>
+// CHECK: [[HANDOFF:%.*]] = simulation.ref.alloc %{{.*}} {simulation.persistent_implication_handoff} : i64 -> !simulation.ref<i64>
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.{{.*}}(%{{.*}}, %{{.*}}, %{{.*}}, [[HANDOFF]])
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_1.fork.{{[0-9]+}}.0.0
+// CHECK: simulation.ref.store
+// CHECK-NOT: simulation.assert.sampled_read
 
 // Followed-by differs from implication only at a false antecedent: both that
 // result and a failed active `always` attempt dispatch the failure callback.
 // Its weak pending attempt still dispatches success at EOS.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.
-// CHECK: obelisk_sim.spawn @unit_2.fork.{{[0-9]+}}.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "always"
-// CHECK-NOT: obelisk_sim.persistent_unary_nonoverlapped
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_2.fork.{{[0-9]+}}.1.1
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.
+// CHECK: simulation.spawn @unit_2.fork.{{[0-9]+}}.0.0
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.persistent_unary_kind = "always"
+// CHECK-NOT: simulation.persistent_unary_nonoverlapped
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-2: simulation.spawn @unit_2.fork.{{[0-9]+}}.1.1
+// CHECK-NOT: simulation.spawn @unit_2.fork
 
 // Temporal `not` inverts the coalesced followed-by result once. The false
 // antecedent and the strong pending EOS failure each become a cover hit.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.
-// CHECK: obelisk_sim.spawn @unit_3.fork.{{[0-9]+}}.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_unary_nonoverlapped
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_3.fork.{{[0-9]+}}.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.
+// CHECK: simulation.spawn @unit_3.fork.{{[0-9]+}}.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_unary_nonoverlapped
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_3.fork.{{[0-9]+}}.0.0
+// CHECK-NOT: simulation.spawn @unit_3.fork
 
 // Disable clears the eligible and handoff cells and advances the callback
 // epoch. Exact-symbol sharing also evaluates the repeated `a` only once in
 // the sampled clock block.
-// CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_cancel.
-// CHECK: obelisk_sim.ref.store {{.*}} to %arg4
-// CHECK: obelisk_sim.ref.store {{.*}} to %arg5
-// CHECK: [[EPOCH:%.*]] = obelisk_sim.ref.load %arg6
+// CHECK-LABEL: simulation.func private @unit_4.$concurrent_cancel.
+// CHECK: simulation.ref.store {{.*}} to %arg4
+// CHECK: simulation.ref.store {{.*}} to %arg5
+// CHECK: [[EPOCH:%.*]] = simulation.ref.load %arg6
 // CHECK: [[NEXT_EPOCH:%.*]] = arith.addi [[EPOCH]],
-// CHECK: obelisk_sim.ref.store [[NEXT_EPOCH]] to %arg6
-// CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_eos_count.
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.persistent_unary_nonoverlapped
-// CHECK: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc %{{.*}} : i64 -> !obelisk_sim.ref<i64>
-// CHECK: [[DISABLE_HANDOFF:%.*]] = obelisk_sim.ref.alloc %{{.*}} {obelisk_sim.persistent_implication_handoff}
-// CHECK: obelisk_sim.spawn @unit_4.$concurrent_cancel.{{.*}}({{.*}}[[DISABLE_HANDOFF]]
-// CHECK: obelisk_sim.spawn @unit_4.$concurrent_eos_count.{{.*}}({{.*}}[[DISABLE_HANDOFF]]
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK: simulation.ref.store [[NEXT_EPOCH]] to %arg6
+// CHECK-LABEL: simulation.func private @unit_4.$concurrent_eos_count.
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.persistent_unary_nonoverlapped
+// CHECK: simulation.ref.alloc
+// CHECK: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc %{{.*}} : i64 -> !simulation.ref<i64>
+// CHECK: [[DISABLE_HANDOFF:%.*]] = simulation.ref.alloc %{{.*}} {simulation.persistent_implication_handoff}
+// CHECK: simulation.spawn @unit_4.$concurrent_cancel.{{.*}}({{.*}}[[DISABLE_HANDOFF]]
+// CHECK: simulation.spawn @unit_4.$concurrent_eos_count.{{.*}}({{.*}}[[DISABLE_HANDOFF]]
+// CHECK-COUNT-1: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read

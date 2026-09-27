@@ -58,11 +58,11 @@ module system_timing_check_negative_runtime;
   end
 endmodule
 
-// SIM-DAG: obelisk_sim.func private @__obelisk_negative_timing_monitor_
-// SIM-DAG: obelisk_sim.suspend.change
-// SIM-DAG: obelisk_sim.spawn @__obelisk_negative_timing_monitor_{{[0-9]+}}.$commit
-// SIM-DAG: obelisk_sim.suspend.delay
-// SIM-DAG: obelisk_sim.suspend.clock_set
+// SIM-DAG: simulation.func private @__obelisk_negative_timing_monitor_
+// SIM-DAG: simulation.suspend.change
+// SIM-DAG: simulation.spawn @__obelisk_negative_timing_monitor_{{[0-9]+}}.$commit
+// SIM-DAG: simulation.suspend.delay
+// SIM-DAG: simulation.suspend.clock_set
 // SIM-NOT: timing_check_table
 // OUT: negative-open-window 010
 // OUT-NEXT: negative-periodic 6

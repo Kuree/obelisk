@@ -68,14 +68,14 @@ module {
 // string.to_packed_exact operation. Native and bytecode lowering fuse the
 // required length check with packing. The ordinary implicit conversion stays
 // on string.to_packed.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.string.to_packed_exact %[[SOURCE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: simulation.string.to_packed_exact %[[SOURCE]]
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.logic.from_bits
-// CHECK: obelisk_sim.bytes.constant "{{.*}}bit-stream cast source and destination widths differ"
-// CHECK: obelisk_sim.fatal
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK-NOT: obelisk_sim.string.length
-// CHECK: obelisk_sim.string.to_packed
-// CHECK: obelisk_sim.logic.from_bits
+// CHECK: simulation.logic.from_bits
+// CHECK: simulation.bytes.constant "{{.*}}bit-stream cast source and destination widths differ"
+// CHECK: simulation.fatal
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK-NOT: simulation.string.length
+// CHECK: simulation.string.to_packed
+// CHECK: simulation.logic.from_bits

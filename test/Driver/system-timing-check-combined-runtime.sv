@@ -117,8 +117,8 @@ endmodule
 
 // The Clause 31.3.3/.6 limit endpoint is excluded, while a simultaneous
 // cohort is included and reaches the Clause 31.6 notifier path only once.
-// SIM: obelisk_sim.suspend.clock_set
-// SIM: obelisk_sim.assert.clock_occurrence.consume
+// SIM: simulation.suspend.clock_set
+// SIM: simulation.assert.clock_occurrence.consume
 // SIM-NOT: timing_check_table
 // AOT: @__obelisk_aot_schedule_plan_v1
 // AOT: call i32 @obelisk_rt_v1_scheduler_install_aot

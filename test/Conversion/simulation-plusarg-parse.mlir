@@ -10,19 +10,19 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @plusarg_parse {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "top.parse"
-    obelisk_sim.func private @parse(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        -> (!obelisk_sim.logic<4096>, f64)
+  simulation.design @plusarg_parse {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.parse"
+    simulation.func private @parse(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        -> (!simulation.logic<4096>, f64)
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
-      %text = obelisk_sim.string.literal "1234"
-      %logic = "obelisk_sim.plusarg.parse_logic"(%text) {radix = 16 : i32} :
-          (!obelisk_sim.string) -> !obelisk_sim.logic<4096>
-      %real = "obelisk_sim.plusarg.parse_real"(%text) :
-          (!obelisk_sim.string) -> f64
-      obelisk_sim.return %logic, %real : !obelisk_sim.logic<4096>, f64
+      %text = simulation.string.literal "1234"
+      %logic = "simulation.plusarg.parse_logic"(%text) {radix = #simulation.radix<hex>} :
+          (!simulation.string) -> !simulation.logic<4096>
+      %real = "simulation.plusarg.parse_real"(%text) :
+          (!simulation.string) -> f64
+      simulation.return %logic, %real : !simulation.logic<4096>, f64
     }
   }
 }

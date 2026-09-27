@@ -29,6 +29,6 @@ module attributes {obelisk.coverage.metrics = ["functional"]} {
   }
 }
 
-// CHECK: obelisk_sim.covergroup.decl
-// CHECK: obelisk_sim.class.field
+// CHECK: simulation.covergroup.decl
+// CHECK: simulation.class.field
 // CHECK-SAME: debug_name = "cg"

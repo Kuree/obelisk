@@ -29,12 +29,12 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[CALLBACK:unit_0[.][^(]+]](
-// CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[OBSERVER:.*]] = obelisk_sim.observer.bind @observer_
-// CHECK: obelisk_sim.display
-// CHECK: obelisk_sim.suspend.observe %[[OBSERVER]], %[[VALUE]]
-// CHECK-NOT: obelisk_sim.suspend.any
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[PROCESS:.*]] = obelisk_sim.spawn @[[CALLBACK]]
-// CHECK: obelisk_sim.monitor.register %[[PROCESS]]
+// CHECK: simulation.func private @[[CALLBACK:unit_0[.][^(]+]](
+// CHECK: %[[VALUE:.*]] = simulation.ref.load
+// CHECK: %[[OBSERVER:.*]] = simulation.observer.bind @observer_
+// CHECK: simulation.display
+// CHECK: simulation.suspend.observe %[[OBSERVER]], %[[VALUE]]
+// CHECK-NOT: simulation.suspend.any
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[PROCESS:.*]] = simulation.spawn @[[CALLBACK]]
+// CHECK: simulation.monitor.register %[[PROCESS]]

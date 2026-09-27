@@ -147,25 +147,25 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Observed monitor is built. A successful branch suppresses its siblings for
 // that same assertion attempt; failure is reported only when all alternatives
 // have exhausted.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 6 : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 6 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 7 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 39 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 57 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "{{(heuristic|z3)}}"
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: simulation.branching_sequence_alternatives = 6 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 6 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 7 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 39 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 57 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "{{(heuristic|z3)}}"
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK-COUNT-4: obelisk_sim.assert.sampled_read
+// CHECK-COUNT-4: simulation.assert.sampled_read
 // CHECK: arith.select
 // CHECK: cf.cond_br
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK-LABEL: simulation.func private @unit_1(
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 54 : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: simulation.branching_sequence_alternatives = 54 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: arith.select
 // CHECK: cf.cond_br

@@ -100,8 +100,8 @@ module {
 // time-zero pass carries the value the whole way to `seen`. @unit_0 is the
 // `assign` the chain starts from and @unit_1 the initial procedure that reads
 // the end of it.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK:      obelisk_sim.spawn @unit_0
-// CHECK:      obelisk_sim.spawn @unit_3
-// CHECK:      obelisk_sim.spawn @unit_2
-// CHECK:      obelisk_sim.spawn @unit_1
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK:      simulation.spawn @unit_0
+// CHECK:      simulation.spawn @unit_3
+// CHECK:      simulation.spawn @unit_2
+// CHECK:      simulation.spawn @unit_1

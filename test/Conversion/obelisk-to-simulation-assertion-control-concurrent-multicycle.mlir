@@ -70,12 +70,12 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.
-// CHECK: obelisk_sim.ref.load {{.*}} {obelisk_sim.concurrent_attempt_action_state_load}
-// CHECK: arith.andi {{.*}} {obelisk_sim.concurrent_action_control}
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.assertion_target_id = [[ID:[0-9]+]] : i64
-// CHECK: obelisk_sim.assert.action_state {{.*}} assertion [[ID]] {obelisk_sim.concurrent_attempt_action_state}
-// CHECK: arith.select {{.*}} {obelisk_sim.concurrent_attempt_action_state_next = 0 : i64}
-// CHECK: arith.select {{.*}} {obelisk_sim.concurrent_attempt_action_state_next = 2 : i64}
-// CHECK-NOT: obelisk_sim.concurrent_attempt_action_state_next = 1 : i64
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.
+// CHECK: simulation.ref.load {{.*}} {simulation.concurrent_attempt_action_state_load}
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_control}
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.assertion_target_id = [[ID:[0-9]+]] : i64
+// CHECK: simulation.assert.action_state {{.*}} assertion [[ID]] {simulation.concurrent_attempt_action_state}
+// CHECK: arith.select {{.*}} {simulation.concurrent_attempt_action_state_next = 0 : i64}
+// CHECK: arith.select {{.*}} {simulation.concurrent_attempt_action_state_next = 2 : i64}
+// CHECK-NOT: simulation.concurrent_attempt_action_state_next = 1 : i64

@@ -26,6 +26,6 @@ module {
 
 // A clocking-input event observes changes of the sampled value; it is not a
 // writable handle to the underlying signal.
-// CHECK: obelisk_sim.assert.clocked_sample_read
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.assert.clocked_sample_read
+// CHECK: simulation.suspend.observe
 // CHECK-NOT: obelisk.sv.

@@ -31,7 +31,7 @@ module {
   }
 }
 
-// CHECK: %[[WIDE:.*]] = obelisk_sim.logic.constant 1 : i4, 0 : i4 : !obelisk_sim.logic<4>
-// CHECK: %[[ARRAY:.*]] = obelisk_sim.packed.unflatten %[[WIDE]]
-// CHECK: obelisk_sim.ref.store %[[ARRAY]]
+// CHECK: %[[WIDE:.*]] = simulation.logic.constant 1 : i4, 0 : i4 : !simulation.logic<4>
+// CHECK: %[[ARRAY:.*]] = simulation.packed.unflatten %[[WIDE]]
+// CHECK: simulation.ref.store %[[ARRAY]]
 // CHECK-NOT: obelisk.sv.

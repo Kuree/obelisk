@@ -261,42 +261,42 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.class.decl @[[BASE:[A-Za-z0-9_.$]+]] id 1
+// CHECK: simulation.class.decl @[[BASE:[A-Za-z0-9_.$]+]] id 1
 // CHECK-SAME: random_constraint_template = @[[BASE_TEMPLATE:[A-Za-z0-9_.$]+]]
-// CHECK: obelisk_sim.class.decl @[[DERIVED:[A-Za-z0-9_.$]+]] id 2 extends @[[BASE]]
+// CHECK: simulation.class.decl @[[DERIVED:[A-Za-z0-9_.$]+]] id 2 extends @[[BASE]]
 // CHECK-SAME: random_constraint_template = @[[DERIVED_TEMPLATE:[A-Za-z0-9_.$]+]]
-// CHECK: obelisk_sim.class.decl @[[FOUR_STATE:[A-Za-z0-9_.$]+]] id 3 {
+// CHECK: simulation.class.decl @[[FOUR_STATE:[A-Za-z0-9_.$]+]] id 3 {
 // CHECK-NOT: random_constraint_template
-// CHECK: obelisk_sim.class.field {{.*}} of @[[FOUR_STATE]]
-// CHECK: obelisk_sim.class.decl @[[MIXED:[A-Za-z0-9_.$]+]] id 4 {
+// CHECK: simulation.class.field {{.*}} of @[[FOUR_STATE]]
+// CHECK: simulation.class.decl @[[MIXED:[A-Za-z0-9_.$]+]] id 4 {
 // CHECK-SAME: random_constraint_template = @[[MIXED_TEMPLATE:[A-Za-z0-9_.$]+]]
-// CHECK: obelisk_sim.storage.decl [[STATIC_MODE:[0-9]+]] {{.*}} : i64 design hierarchy "B::shared.__obelisk_constraint_mode"
+// CHECK: simulation.storage.decl [[STATIC_MODE:[0-9]+]] {{.*}} : i64 design hierarchy "B::shared.__obelisk_constraint_mode"
 
-// CHECK: obelisk_sim.random.constraint_template @[[BASE_TEMPLATE]] of @[[BASE]]
-// CHECK-SAME: constraint_blocks = [#obelisk_sim.random_constraint_block_reference<kind = object_block, index = 0 : i32>, #obelisk_sim.random_constraint_block_reference<kind = storage, storage = [[STATIC_MODE]] : i64>]
-// CHECK: obelisk_sim.random.soft_constraint %{{.*}} block 0 priority 0
-// CHECK: obelisk_sim.random.soft_constraint %{{.*}} block 1 priority 1
+// CHECK: simulation.random.constraint_template @[[BASE_TEMPLATE]] of @[[BASE]]
+// CHECK-SAME: constraint_blocks = [#simulation.random_constraint_block_reference<kind = object_block, index = 0 : i32>, #simulation.random_constraint_block_reference<kind = storage, storage = [[STATIC_MODE]] : i64>]
+// CHECK: simulation.random.soft_constraint %{{.*}} block 0 priority 0
+// CHECK: simulation.random.soft_constraint %{{.*}} block 1 priority 1
 
-// CHECK: obelisk_sim.random.constraint_template @[[DERIVED_TEMPLATE]] of @[[DERIVED]]
-// CHECK-SAME: constraint_blocks = [#obelisk_sim.random_constraint_block_reference<kind = object_block, index = 0 : i32>, #obelisk_sim.random_constraint_block_reference<kind = storage, storage = [[STATIC_MODE]] : i64>, #obelisk_sim.random_constraint_block_reference<kind = object_block, index = 2 : i32>]
-// CHECK-SAME: references = [#obelisk_sim.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>, #obelisk_sim.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>]
-// CHECK: %[[BASE_X:.*]] = obelisk_sim.random.constraint_value 0 : i32
+// CHECK: simulation.random.constraint_template @[[DERIVED_TEMPLATE]] of @[[DERIVED]]
+// CHECK-SAME: constraint_blocks = [#simulation.random_constraint_block_reference<kind = object_block, index = 0 : i32>, #simulation.random_constraint_block_reference<kind = storage, storage = [[STATIC_MODE]] : i64>, #simulation.random_constraint_block_reference<kind = object_block, index = 2 : i32>]
+// CHECK-SAME: references = [#simulation.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>, #simulation.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>]
+// CHECK: %[[BASE_X:.*]] = simulation.random.constraint_value 0 : i32
 // CHECK: %[[TEN:.*]] = arith.constant 10 : i32
 // CHECK: %[[BASE_STATIC:.*]] = arith.cmpi slt, %[[BASE_X]], %[[TEN]] : i32
-// CHECK: obelisk_sim.random.soft_constraint %[[BASE_STATIC]] block 1 priority 0
-// CHECK: %[[OVERRIDE_X:.*]] = obelisk_sim.random.constraint_value 0 : i32
+// CHECK: simulation.random.soft_constraint %[[BASE_STATIC]] block 1 priority 0
+// CHECK: %[[OVERRIDE_X:.*]] = simulation.random.constraint_value 0 : i32
 // CHECK: %[[NINE:.*]] = arith.constant 9 : i32
 // CHECK: %[[DERIVED_OVERRIDE:.*]] = arith.cmpi slt, %[[OVERRIDE_X]], %[[NINE]] : i32
-// CHECK: obelisk_sim.random.soft_constraint %[[DERIVED_OVERRIDE]] block 0 priority 1
-// CHECK: %[[Y:.*]] = obelisk_sim.random.constraint_value 1 : i32
-// CHECK: %[[X:.*]] = obelisk_sim.random.constraint_value 0 : i32
+// CHECK: simulation.random.soft_constraint %[[DERIVED_OVERRIDE]] block 0 priority 1
+// CHECK: %[[Y:.*]] = simulation.random.constraint_value 1 : i32
+// CHECK: %[[X:.*]] = simulation.random.constraint_value 0 : i32
 // CHECK: %[[DERIVED_LOCAL:.*]] = arith.cmpi sgt, %[[Y]], %[[X]] : i32
-// CHECK: obelisk_sim.random.soft_constraint %[[DERIVED_LOCAL]] block 2 priority 2
-// CHECK-NOT: obelisk_sim.random.soft_constraint {{.*}} priority 3
-// CHECK: obelisk_sim.random.constraint_template @[[MIXED_TEMPLATE]] of @[[MIXED]]
-// CHECK: %[[SIGNED_BYTE:.*]] = obelisk_sim.random.constraint_value 0 : i8
+// CHECK: simulation.random.soft_constraint %[[DERIVED_LOCAL]] block 2 priority 2
+// CHECK-NOT: simulation.random.soft_constraint {{.*}} priority 3
+// CHECK: simulation.random.constraint_template @[[MIXED_TEMPLATE]] of @[[MIXED]]
+// CHECK: %[[SIGNED_BYTE:.*]] = simulation.random.constraint_value 0 : i8
 // CHECK: %[[UNSIGNED_WIDE:.*]] = arith.extui %[[SIGNED_BYTE]] : i8 to i32
-// CHECK: %[[UNSIGNED_INT:.*]] = obelisk_sim.random.constraint_value 1 : i32
+// CHECK: %[[UNSIGNED_INT:.*]] = simulation.random.constraint_value 1 : i32
 // CHECK: %[[MIXED_LESS:.*]] = arith.cmpi ult, %[[UNSIGNED_WIDE]], %[[UNSIGNED_INT]] : i32
-// CHECK: obelisk_sim.random.hard_constraint %[[MIXED_LESS]] block 0
-// CHECK: obelisk_sim.code_unit.decl
+// CHECK: simulation.random.hard_constraint %[[MIXED_LESS]] block 0
+// CHECK: simulation.code_unit.decl

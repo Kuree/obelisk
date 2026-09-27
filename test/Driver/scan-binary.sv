@@ -148,14 +148,14 @@ module scan_binary;
   end
 endmodule
 
-// SIM: obelisk_sim.string.scan_raw
+// SIM: simulation.string.scan_raw
 // SIM-SAME: four_state = false
-// SIM-SAME: !obelisk_sim.logic<69>
-// SIM: obelisk_sim.string.skip_raw
+// SIM-SAME: !simulation.logic<69>
+// SIM: simulation.string.skip_raw
 // SIM-SAME: byte_count = 12 : i64
-// SIM: obelisk_sim.file.scan_raw
+// SIM: simulation.file.scan_raw
 // SIM-SAME: four_state = false
-// SIM-SAME: !obelisk_sim.logic<69>
+// SIM-SAME: !simulation.logic<69>
 
 // CHECK: roundtrip=2:1:1:1:1:36
 // CHECK-NEXT: suppressed=1:1

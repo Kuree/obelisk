@@ -60,22 +60,22 @@ module {
 // A hard size constraint participates in the same aggregate solve. The
 // accepted size creates the replacement array before its elements are
 // randomized. The unconstrained queue retains its size and is not recreated.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[ARRAY:.*]] = obelisk_sim.managed.load {{.*}} -> !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<7 : 0 x i1>>
-// CHECK: %[[OLD_SIZE:.*]] = obelisk_sim.container.size %[[ARRAY]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[ARRAY:.*]] = simulation.managed.load {{.*}} -> !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>
+// CHECK: %[[OLD_SIZE:.*]] = simulation.container.size %[[ARRAY]]
 // CHECK: arith.cmpi sgt, {{.*}}, {{.*}} : i32
 // CHECK: arith.cmpi slt, {{.*}}, {{.*}} : i32
-// CHECK: %[[RESIZE_SOURCE:.*]] = obelisk_sim.managed.load {{.*}} -> !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<7 : 0 x i1>>
-// CHECK: %[[RESIZED:.*]] = obelisk_sim.container.create_like %[[RESIZE_SOURCE]], %[[RESIZE_SOURCE]],
-// CHECK: obelisk_sim.managed.store %[[RESIZED]]
-// CHECK: %[[NEW_ARRAY:.*]] = obelisk_sim.managed.load {{.*}} -> !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<7 : 0 x i1>>
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[NEW_ARRAY]]
+// CHECK: %[[RESIZE_SOURCE:.*]] = simulation.managed.load {{.*}} -> !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>
+// CHECK: %[[RESIZED:.*]] = simulation.container.create_like %[[RESIZE_SOURCE]], %[[RESIZE_SOURCE]],
+// CHECK: simulation.managed.store %[[RESIZED]]
+// CHECK: %[[NEW_ARRAY:.*]] = simulation.managed.load {{.*}} -> !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[NEW_ARRAY]]
 // CHECK: cf.br ^[[HEADER:bb[0-9]+]](
 // CHECK: ^[[HEADER]](%[[INDEX:.*]]: i64, %[[STATE:.*]]: i64):
 // CHECK: arith.cmpi ult, %[[INDEX]], %[[SIZE]]
-// CHECK: obelisk_sim.container.write %[[NEW_ARRAY]], %[[INDEX]],
-// CHECK: %[[QUEUE:.*]] = obelisk_sim.managed.load {{.*}} -> !obelisk_sim.queue<i32, 0>
-// CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size %[[QUEUE]]
+// CHECK: simulation.container.write %[[NEW_ARRAY]], %[[INDEX]],
+// CHECK: %[[QUEUE:.*]] = simulation.managed.load {{.*}} -> !simulation.queue<i32, 0>
+// CHECK: %[[QUEUE_SIZE:.*]] = simulation.container.size %[[QUEUE]]
 // CHECK: arith.cmpi ult, {{.*}}, %[[QUEUE_SIZE]]
-// CHECK: obelisk_sim.container.write %[[QUEUE]],
-// CHECK-NOT: obelisk_sim.container.create_like %[[QUEUE]]
+// CHECK: simulation.container.write %[[QUEUE]],
+// CHECK-NOT: simulation.container.create_like %[[QUEUE]]

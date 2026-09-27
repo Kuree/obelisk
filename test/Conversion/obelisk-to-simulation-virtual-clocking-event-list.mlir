@@ -94,30 +94,30 @@ module {
 }
 
 // Every concrete interface owns an independent event descriptor and monitor.
-// CHECK-DAG: obelisk_sim.scope.decl 2 {{.*}}hierarchy "top.b"{{.*}}obelisk_sim.virtual_interface_clock_events = [{descriptor = 0 : i64, member = "cb"}]
-// CHECK-DAG: obelisk_sim.scope.decl 3 {{.*}}hierarchy "top.other"{{.*}}obelisk_sim.virtual_interface_clock_events = [{descriptor = 1 : i64, member = "cb"}]
-// CHECK: obelisk_sim.func private @unit_0({{.*}}obelisk_sim.clocking_event_monitor_path = "top.b.cb"
-// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [1, 2] indices [0, -1]
-// CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
-// CHECK: obelisk_sim.func private @unit_1({{.*}}obelisk_sim.clocking_event_monitor_path = "top.other.cb"
-// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [1, 2] indices [0, -1]
-// CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
+// CHECK-DAG: simulation.scope.decl 2 {{.*}}hierarchy "top.b"{{.*}}simulation.virtual_interface_clock_events = [{descriptor = 0 : i64, member = "cb"}]
+// CHECK-DAG: simulation.scope.decl 3 {{.*}}hierarchy "top.other"{{.*}}simulation.virtual_interface_clock_events = [{descriptor = 1 : i64, member = "cb"}]
+// CHECK: simulation.func private @unit_0({{.*}}simulation.clocking_event_monitor_path = "top.b.cb"
+// CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [1, 2] indices [0, -1]
+// CHECK: simulation.event.trigger %{{.*}} nonblocking = false
+// CHECK: simulation.func private @unit_1({{.*}}simulation.clocking_event_monitor_path = "top.other.cb"
+// CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [1, 2] indices [0, -1]
+// CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
 // Virtual selection multiplexes the two event handles by interface scope and
 // waits for the selected occurrence in Reactive.
 // The use-site iff gets a compact primary evaluator for the selected event.
 // CHECK: observer hierarchy "unit_2.$clocking_event_primary.52"
-// CHECK: obelisk_sim.event.triggered
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-DAG: %[[EVENT1:.*]] = obelisk_sim.context.event %{{.*}}[1]
-// CHECK-DAG: %[[EVENT0:.*]] = obelisk_sim.context.event %{{.*}}[0]
-// CHECK: %[[SCOPE:.*]] = obelisk_sim.virtual_interface.scope
-// CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT0]] : !obelisk_sim.event), ^{{.*}}
-// CHECK: obelisk_sim.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
-// CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT1]] : !obelisk_sim.event), ^{{.*}}
+// CHECK: simulation.event.triggered
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-DAG: %[[EVENT1:.*]] = simulation.context.event %{{.*}}[1]
+// CHECK-DAG: %[[EVENT0:.*]] = simulation.context.event %{{.*}}[0]
+// CHECK: %[[SCOPE:.*]] = simulation.virtual_interface.scope
+// CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT0]] : !simulation.event), ^{{.*}}
+// CHECK: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
+// CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT1]] : !simulation.event), ^{{.*}}
 // The additional iff remains a separate observer over the selected virtual
 // interface and gates the published clocking event.
-// CHECK: obelisk_sim.observer.bind {{.*}}schedule.event_primary
-// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
+// CHECK: simulation.observer.bind {{.*}}schedule.event_primary
+// CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
 // CHECK-SAME: resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

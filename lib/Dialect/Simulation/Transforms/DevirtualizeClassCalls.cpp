@@ -83,9 +83,9 @@ void compactPreparedVirtualSlots(sim::SimDesignOp design) {
   }
 
   design.walk([&](semantic::SVCallExpressionOp call) {
-    auto slot = call->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
+    auto slot = call->getAttrOfType<IntegerAttr>("simulation.class_slot");
     auto reference =
-        call->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_method");
+        call->getAttrOfType<FlatSymbolRefAttr>("simulation.class_method");
     auto found = reference ? methods.find(reference.getValue()) : methods.end();
     if (!slot || found == methods.end() ||
         slot.getValue().getZExtValue() ==
@@ -95,7 +95,7 @@ void compactPreparedVirtualSlots(sim::SimDesignOp design) {
     auto root = remapped.find(findRoot(found->second.getOwner()));
     if (root != remapped.end())
       if (auto mapped = root->second.find(old); mapped != root->second.end())
-        call->setAttr("obelisk_sim.class_slot",
+        call->setAttr("simulation.class_slot",
                       builder.getI64IntegerAttr(mapped->second));
   });
 }

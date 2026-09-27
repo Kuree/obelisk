@@ -11,42 +11,42 @@
 // Four-state enum members containing x or z are legal, so membership must use
 // exact four-state equality.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-DAG: %[[COUNT:.*]] = arith.constant 3 : i32
-// CHECK-DAG: %[[BLUE_VALUE:.*]] = obelisk_sim.logic.constant -7 : i4, 0 : i4
-// CHECK-DAG: %[[X_VALUE:.*]] = obelisk_sim.logic.constant 0 : i4, -1 : i4
-// CHECK-DAG: %[[RED_VALUE:.*]] = obelisk_sim.logic.constant 1 : i4, 0 : i4
-// CHECK: %[[EMPTY_LOGIC:.*]] = obelisk_sim.string.literal ""
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK: %[[RED:.*]] = obelisk_sim.string.literal "RED"
-// CHECK: arith.select {{.*}}, %[[RED]], %[[EMPTY_LOGIC]] : !obelisk_sim.string
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK: %[[XVAL:.*]] = obelisk_sim.string.literal "XVAL"
-// CHECK: arith.select {{.*}}, %[[XVAL]], {{.*}} : !obelisk_sim.string
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK: %[[BLUE:.*]] = obelisk_sim.string.literal "BLUE"
-// CHECK: arith.select {{.*}}, %[[BLUE]], {{.*}} : !obelisk_sim.string
-// CHECK: %[[EMPTY_INT:.*]] = obelisk_sim.string.literal ""
+// CHECK-DAG: %[[BLUE_VALUE:.*]] = simulation.logic.constant -7 : i4, 0 : i4
+// CHECK-DAG: %[[X_VALUE:.*]] = simulation.logic.constant 0 : i4, -1 : i4
+// CHECK-DAG: %[[RED_VALUE:.*]] = simulation.logic.constant 1 : i4, 0 : i4
+// CHECK: %[[EMPTY_LOGIC:.*]] = simulation.string.literal ""
+// CHECK: simulation.logic.compare case_eq
+// CHECK: %[[RED:.*]] = simulation.string.literal "RED"
+// CHECK: arith.select {{.*}}, %[[RED]], %[[EMPTY_LOGIC]] : !simulation.string
+// CHECK: simulation.logic.compare case_eq
+// CHECK: %[[XVAL:.*]] = simulation.string.literal "XVAL"
+// CHECK: arith.select {{.*}}, %[[XVAL]], {{.*}} : !simulation.string
+// CHECK: simulation.logic.compare case_eq
+// CHECK: %[[BLUE:.*]] = simulation.string.literal "BLUE"
+// CHECK: arith.select {{.*}}, %[[BLUE]], {{.*}} : !simulation.string
+// CHECK: %[[EMPTY_INT:.*]] = simulation.string.literal ""
 // CHECK: arith.cmpi eq
-// CHECK: %[[START:.*]] = obelisk_sim.string.literal "START"
-// CHECK: arith.select {{.*}}, %[[START]], %[[EMPTY_INT]] : !obelisk_sim.string
+// CHECK: %[[START:.*]] = simulation.string.literal "START"
+// CHECK: arith.select {{.*}}, %[[START]], %[[EMPTY_INT]] : !simulation.string
 // CHECK: arith.cmpi eq
-// CHECK: %[[STOP:.*]] = obelisk_sim.string.literal "STOP"
-// CHECK: arith.select {{.*}}, %[[STOP]], {{.*}} : !obelisk_sim.string
-// CHECK: obelisk_sim.ref.store %[[RED_VALUE]] to {{.*}}
-// CHECK: obelisk_sim.ref.store %[[BLUE_VALUE]] to {{.*}}
+// CHECK: %[[STOP:.*]] = simulation.string.literal "STOP"
+// CHECK: arith.select {{.*}}, %[[STOP]], {{.*}} : !simulation.string
+// CHECK: simulation.ref.store %[[RED_VALUE]] to {{.*}}
+// CHECK: simulation.ref.store %[[BLUE_VALUE]] to {{.*}}
 // CHECK: arith.extui {{.*}} : i32 to i64
 // CHECK: arith.remui
 // CHECK: arith.addi
 // CHECK: arith.remui
-// CHECK: arith.select {{.*}}, {{.*}}, %[[X_VALUE]] : !obelisk_sim.logic<4>
-// CHECK: obelisk_sim.ref.store {{.*}} to {{.*}}
-// CHECK: obelisk_sim.logic.compare case_eq
+// CHECK: arith.select {{.*}}, {{.*}}, %[[X_VALUE]] : !simulation.logic<4>
+// CHECK: simulation.ref.store {{.*}} to {{.*}}
+// CHECK: simulation.logic.compare case_eq
 // CHECK: arith.addi
 // CHECK: arith.remui
-// CHECK: arith.select {{.*}}, {{.*}}, %[[X_VALUE]] : !obelisk_sim.logic<4>
-// CHECK: obelisk_sim.ref.store {{.*}} to {{.*}}
-// CHECK: obelisk_sim.ref.store %[[COUNT]] to {{.*}}
+// CHECK: arith.select {{.*}}, {{.*}}, %[[X_VALUE]] : !simulation.logic<4>
+// CHECK: simulation.ref.store {{.*}} to {{.*}}
+// CHECK: simulation.ref.store %[[COUNT]] to {{.*}}
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

@@ -21,9 +21,9 @@
 // Block events register one synchronous sample observer at construction and
 // instrument the target definition. They do not create a parked process, and
 // the single mutable v1 path has no compatibility operation.
-// BLOCK-COUNT-2: obelisk_sim.covergroup.block_event.fire
-// BLOCK-DAG: obelisk_sim.covergroup.block_event.register
-// BLOCK-DAG: obelisk_sim.covergroup_block_event_sample_evaluator
+// BLOCK-COUNT-2: simulation.covergroup.block_event.fire
+// BLOCK-DAG: simulation.covergroup.block_event.register
+// BLOCK-DAG: simulation.covergroup_block_event_sample_evaluator
 // BLOCK-NOT: schedule.covergroup_clocking_sampler
 
 // REFERENCE-PATH: clocking-event covergroup constructor ref formal

@@ -16,4 +16,4 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.logic<64> design hierarchy "top.value"
+// CHECK: simulation.storage.decl {{.*}} : !simulation.logic<64> design hierarchy "top.value"

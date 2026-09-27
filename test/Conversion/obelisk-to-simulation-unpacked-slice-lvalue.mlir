@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 !bit = !obelisk.integral<1, false, false, 0 : 0, bit>
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
@@ -8,49 +8,49 @@
 !indexed_slice = !obelisk.ranged_unpacked_array<4 : 6 x !bit>
 
 module {
-  obelisk_sim.design @slice_lvalue {
-    obelisk_sim.code_unit.decl 9300001 in 0 initial
+  simulation.design @slice_lvalue {
+    simulation.code_unit.decl 9300001 in 0 initial
         hierarchy "test.slice_lvalue.9300001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 :
-        !obelisk_sim.unpacked_array<7 : 0 x i1>
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 :
+        !simulation.unpacked_array<7 : 0 x i1>
         design hierarchy "top.destination"
-    obelisk_sim.storage.decl 1 in 0 :
-        !obelisk_sim.unpacked_array<2 : 0 x i1>
+    simulation.storage.decl 1 in 0 :
+        !simulation.unpacked_array<2 : 0 x i1>
         design hierarchy "top.replacement"
 
-    // CHECK-LABEL: obelisk_sim.func @unit
-    // CHECK-COUNT-3: obelisk_sim.ref.array_element %arg1
-    // CHECK: obelisk_sim.aggregate.extract
-    // CHECK: obelisk_sim.ref.store
-    // CHECK: obelisk_sim.aggregate.extract
-    // CHECK: obelisk_sim.ref.store
-    // CHECK: obelisk_sim.aggregate.extract
-    // CHECK: obelisk_sim.ref.store
-    // CHECK-COUNT-3: obelisk_sim.ref.array_element %arg1
-    // CHECK: obelisk_sim.aggregate.extract
-    // CHECK: obelisk_sim.ref.store
-    // CHECK: obelisk_sim.aggregate.extract
-    // CHECK: obelisk_sim.ref.store
-    // CHECK: obelisk_sim.aggregate.extract
-    // CHECK: obelisk_sim.ref.store
-    obelisk_sim.func @unit(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
+    // CHECK-LABEL: simulation.func @unit
+    // CHECK-COUNT-3: simulation.ref.array_element %arg1
+    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.store
+    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.store
+    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.store
+    // CHECK-COUNT-3: simulation.ref.array_element %arg1
+    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.store
+    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.store
+    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.store
+    simulation.func @unit(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
         %destination:
-            !obelisk_sim.ref<!obelisk_sim.unpacked_array<7 : 0 x i1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
+            !simulation.ref<!simulation.unpacked_array<7 : 0 x i1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
         %replacement:
-            !obelisk_sim.ref<!obelisk_sim.unpacked_array<2 : 0 x i1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+            !simulation.ref<!simulation.unpacked_array<2 : 0 x i1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.destination",
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.destination",
                 argument = 1, kind = direct, copyOut = false>,
-            #obelisk_sim.argument_binding<path = "top.replacement",
+            #simulation.argument_binding<path = "top.replacement",
                 argument = 2, kind = direct, copyOut = false>
           ],
           code_unit_id = 9300001 : i64
@@ -111,7 +111,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

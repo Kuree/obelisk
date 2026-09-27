@@ -264,7 +264,8 @@ public:
                                       op.getToUpper() ? 1 : 0));
     if constexpr (std::is_same_v<Op, sim::SimStringFormatIntegerOp>) {
       operands.push_back(llvmConstant(rewriter, op.getLoc(),
-                                      rewriter.getI32Type(), op.getRadix()));
+                                      rewriter.getI32Type(),
+                                      static_cast<uint32_t>(op.getRadix())));
       operands.push_back(llvmConstant(rewriter, op.getLoc(),
                                       rewriter.getI32Type(),
                                       op.getIsSigned() ? 1 : 0));
@@ -1036,7 +1037,8 @@ public:
     SmallVector<Value> operands{adaptor.getInput().front()};
     if constexpr (std::is_same_v<Op, sim::SimStringParseIntegerOp>)
       operands.push_back(llvmConstant(rewriter, op.getLoc(),
-                                      rewriter.getI32Type(), op.getRadix()));
+                                      rewriter.getI32Type(),
+                                      static_cast<uint32_t>(op.getRadix())));
     operands.push_back(output);
     Value status =
         LLVM::CallOp::create(
@@ -1088,7 +1090,7 @@ public:
             ValueRange{
                 adaptor.getInput().front(),
                 llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                             op.getRadix()),
+                             static_cast<uint32_t>(op.getRadix())),
                 llvmConstant(rewriter, op.getLoc(), i64, plane.getWidth()),
                 valueOutput,
                 llvmConstant(rewriter, op.getLoc(), i64, byteCount),
@@ -1139,7 +1141,7 @@ public:
             ValueRange{
                 adaptor.getInput().front(),
                 llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
-                             op.getRadix()),
+                             static_cast<uint32_t>(op.getRadix())),
                 llvmConstant(rewriter, op.getLoc(), i64, plane.getWidth()),
                 valueOutput,
                 llvmConstant(rewriter, op.getLoc(), i64, byteCount),

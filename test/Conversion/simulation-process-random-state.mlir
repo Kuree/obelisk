@@ -5,38 +5,38 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @process_random_state {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.parent"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "top.child"
+  simulation.design @process_random_state {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "top.parent"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "top.child"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %parent = obelisk_sim.spawn @parent(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %parent = simulation.spawn @parent(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @parent(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @parent(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      %child = obelisk_sim.spawn @child(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.suspend.await %child to ^after_child
+      %child = simulation.spawn @child(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.suspend.await %child to ^after_child
     ^after_child:
       // Process identity and its two RNG words survive FINISHED as tombstone
       // metadata, so the same typed operations remain valid after await.
-      %state, %increment = obelisk_sim.process.random_state %child
-      obelisk_sim.process.set_random_state %child, %state, %increment
-      obelisk_sim.return
+      %state, %increment = simulation.process.random_state %child
+      simulation.process.set_random_state %child, %state, %increment
+      simulation.return
     }
 
-    obelisk_sim.func @child(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @child(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

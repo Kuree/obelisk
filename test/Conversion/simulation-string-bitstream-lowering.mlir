@@ -8,18 +8,18 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @strings {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.cast"
-    obelisk_sim.func @cast(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %text: !obelisk_sim.string {obelisk_sim.capture_kind = 1 : i32})
+  simulation.design @strings {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.cast"
+    simulation.func @cast(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %text: !simulation.string {simulation.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      %exact, %matched = obelisk_sim.string.to_packed_exact %text :
-          (!obelisk_sim.string) -> (i24, i1)
-      %ordinary = obelisk_sim.string.to_packed %text :
-          (!obelisk_sim.string) -> i24
-      obelisk_sim.return
+      %exact, %matched = simulation.string.to_packed_exact %text :
+          (!simulation.string) -> (i24, i1)
+      %ordinary = simulation.string.to_packed %text :
+          (!simulation.string) -> i24
+      simulation.return
     }
   }
 }

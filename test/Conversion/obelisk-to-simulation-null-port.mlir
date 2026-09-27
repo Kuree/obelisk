@@ -8,10 +8,10 @@
 // coerced to inout. Its implicit width conversion is topology metadata: only
 // the overlapping low bits merge and unmatched bits stay undriven.
 
-// CHECK: obelisk_sim.design @design
+// CHECK: simulation.design @design
 // CHECK-SAME: edges = []
-// CHECK: obelisk_sim.net.decl
-// CHECK-COUNT-1: obelisk_sim.func @__obelisk_root
+// CHECK: simulation.net.decl
+// CHECK-COUNT-1: simulation.func @__obelisk_root
 // CHECK-NOT: obelisk.sv.
 
 module {

@@ -6,15 +6,15 @@
 // partition proves that the exact samplers are independent. The all-enabled
 // composed sampler commits directly while partial modes retain the masked
 // fallback.
-// COMPONENT-CAPTURE-LABEL: obelisk_sim.func private @unit_1
+// COMPONENT-CAPTURE-LABEL: simulation.func private @unit_1
 // COMPONENT-CAPTURE: arith.cmpi ult
 // COMPONENT-CAPTURE: cf.cond_br
 // COMPONENT-CAPTURE: cf.cond_br
 // COMPONENT-CAPTURE: arith.remui
 // COMPONENT-CAPTURE: arith.cmpi ult
-// COMPONENT-CAPTURE: obelisk_sim.random.solve {{.*}} mutable
+// COMPONENT-CAPTURE: simulation.random.solve {{.*}} mutable
 // COMPONENT-CAPTURE: arith.select
-// COMPONENT-CAPTURE: obelisk_sim.managed.store
+// COMPONENT-CAPTURE: simulation.managed.store
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

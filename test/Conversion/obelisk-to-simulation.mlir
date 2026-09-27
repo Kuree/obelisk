@@ -689,63 +689,63 @@ module {
 
 // OPTIONS: #schedule.graph<version = 1, vpi = read, workers = 2
 
-// SIM: obelisk_sim.design @design attributes {{.*}}time_precision_fs = 1000 : i64
-// SIM-DAG: obelisk_sim.scope.decl 0
-// SIM-DAG: obelisk_sim.storage.decl
-// SIM-DAG: obelisk_sim.net.decl
-// SIM-DAG: obelisk_sim.driver.decl
-// SIM-DAG: obelisk_sim.func @__obelisk_root
-// SIM-DAG: obelisk_sim.spawn
-// SIM-DAG: obelisk_sim.func private @unit_
-// SIM-DAG: obelisk_sim.call @unit_
-// SIM-DAG: obelisk_sim.ref.extract
-// SIM-DAG: obelisk_sim.logic.replicate
-// SIM-DAG: obelisk_sim.logic.compare slt
-// SIM-DAG: obelisk_sim.time.constant 5000
-// SIM-DAG: obelisk_sim.time.constant 50000
-// SIM-DAG: obelisk_sim.logic.logical and
-// SIM-DAG: obelisk_sim.logic.unary logical_not
+// SIM: simulation.design @design attributes {{.*}}time_precision_fs = 1000 : i64
+// SIM-DAG: simulation.scope.decl 0
+// SIM-DAG: simulation.storage.decl
+// SIM-DAG: simulation.net.decl
+// SIM-DAG: simulation.driver.decl
+// SIM-DAG: simulation.func @__obelisk_root
+// SIM-DAG: simulation.spawn
+// SIM-DAG: simulation.func private @unit_
+// SIM-DAG: simulation.call @unit_
+// SIM-DAG: simulation.ref.extract
+// SIM-DAG: simulation.logic.replicate
+// SIM-DAG: simulation.logic.compare slt
+// SIM-DAG: simulation.time.constant 5000
+// SIM-DAG: simulation.time.constant 50000
+// SIM-DAG: simulation.logic.logical and
+// SIM-DAG: simulation.logic.unary logical_not
 // SIM-DAG: arith.cmpi eq
-// SIM-DAG: obelisk_sim.logic.shift left
-// SIM-DAG: -> (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>) attributes {{.*}}entry_kind = 8 : i32
-// SIM-DAG: {{%.*}}:3 = obelisk_sim.call
-// SIM-DAG: obelisk_sim.ref.store {{%.*}}#1
-// SIM-DAG: obelisk_sim.ref.store {{%.*}}#2
-// SIM-DAG: obelisk_sim.ref.subelement
-// SIM-DAG: obelisk_sim.packed.flatten
+// SIM-DAG: simulation.logic.shift left
+// SIM-DAG: -> (!simulation.logic<1>, !simulation.logic<1>, !simulation.logic<1>) attributes {{.*}}entry_kind = 8 : i32
+// SIM-DAG: {{%.*}}:3 = simulation.call
+// SIM-DAG: simulation.ref.store {{%.*}}#1
+// SIM-DAG: simulation.ref.store {{%.*}}#2
+// SIM-DAG: simulation.ref.subelement
+// SIM-DAG: simulation.packed.flatten
 // SIM-DAG: cf.cond_br
-// SIM-DAG: obelisk_sim.nba.enqueue
-// SIM-DAG: obelisk_sim.suspend.change
-// SIM-DAG: obelisk_sim.suspend.edge posedge
-// SIM-DAG: obelisk_sim.suspend.any
-// SIM-DAG: obelisk_sim.suspend.delay {{.*}} to ^
+// SIM-DAG: simulation.nba.enqueue
+// SIM-DAG: simulation.suspend.change
+// SIM-DAG: simulation.suspend.edge posedge
+// SIM-DAG: simulation.suspend.any
+// SIM-DAG: simulation.suspend.delay {{.*}} to ^
 
 // FINAL-NOT: obelisk.sv.
-// FINAL-NOT: obelisk_sim.bindings
-// FINAL-NOT: obelisk_sim.delay_scale
+// FINAL-NOT: simulation.bindings
+// FINAL-NOT: simulation.delay_scale
 // FINAL-NOT: time_unit_fs
-// FINAL-NOT: obelisk_sim.ref.alloc
-// FINAL-NOT: obelisk_sim.func @unit_
+// FINAL-NOT: simulation.ref.alloc
+// FINAL-NOT: simulation.func @unit_
 
-// SCCP: obelisk_sim.func private @[[IDENTITY:unit_[0-9]+]](%arg0: !obelisk_sim.context{{.*}}) -> i1 attributes
+// SCCP: simulation.func private @[[IDENTITY:unit_[0-9]+]](%arg0: !simulation.context{{.*}}) -> i1 attributes
 // SCCP: %[[IDENTITY_RESULT:.*]] = arith.constant true
-// SCCP: obelisk_sim.return %[[IDENTITY_RESULT]] : i1
-// SCCP: obelisk_sim.func private @[[CALLER:unit_[0-9]+]]({{.*}}!obelisk_sim.ref<i1>
-// SCCP: obelisk_sim.call @[[IDENTITY]]
-// SCCP: %[[FOLDED:.*]] = arith.constant {obelisk_sim.rematerialized} true
-// SCCP: obelisk_sim.ref.store %[[FOLDED]]
+// SCCP: simulation.return %[[IDENTITY_RESULT]] : i1
+// SCCP: simulation.func private @[[CALLER:unit_[0-9]+]]({{.*}}!simulation.ref<i1>
+// SCCP: simulation.call @[[IDENTITY]]
+// SCCP: %[[FOLDED:.*]] = arith.constant {simulation.rematerialized} true
+// SCCP: simulation.ref.store %[[FOLDED]]
 
 // Input arguments are value-only. Only output and inout results are copied
 // back before the function return value is stored.
-// COPYBACK: obelisk_sim.time.constant 50000
-// COPYBACK: obelisk_sim.suspend.delay
-// COPYBACK: %[[INPUT_VALUE:.*]] = obelisk_sim.ref.load %[[INPUT_REF:.*]]
-// COPYBACK: %[[CALL:.*]]:3 = obelisk_sim.call {{.*}}%[[INPUT_VALUE]]
-// COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
-// COPYBACK: obelisk_sim.ref.store
-// COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
-// COPYBACK-NEXT: obelisk_sim.ref.store %[[CALL]]#2
-// COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
-// COPYBACK-NEXT: obelisk_sim.ref.store %[[CALL]]#0
-// COPYBACK-NOT: obelisk_sim.ref.store {{.*}} to %[[INPUT_REF]]
-// COPYBACK-NEXT: obelisk_sim.return
+// COPYBACK: simulation.time.constant 50000
+// COPYBACK: simulation.suspend.delay
+// COPYBACK: %[[INPUT_VALUE:.*]] = simulation.ref.load %[[INPUT_REF:.*]]
+// COPYBACK: %[[CALL:.*]]:3 = simulation.call {{.*}}%[[INPUT_VALUE]]
+// COPYBACK-NOT: simulation.ref.store {{.*}} to %[[INPUT_REF]]
+// COPYBACK: simulation.ref.store
+// COPYBACK-NOT: simulation.ref.store {{.*}} to %[[INPUT_REF]]
+// COPYBACK-NEXT: simulation.ref.store %[[CALL]]#2
+// COPYBACK-NOT: simulation.ref.store {{.*}} to %[[INPUT_REF]]
+// COPYBACK-NEXT: simulation.ref.store %[[CALL]]#0
+// COPYBACK-NOT: simulation.ref.store {{.*}} to %[[INPUT_REF]]
+// COPYBACK-NEXT: simulation.return

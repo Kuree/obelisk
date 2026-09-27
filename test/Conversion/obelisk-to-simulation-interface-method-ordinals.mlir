@@ -207,21 +207,21 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.class.decl @__obelisk_class_s3_I
-// CHECK: obelisk_sim.class.decl @__obelisk_class_s11_J
+// CHECK: simulation.class.decl @__obelisk_class_s3_I
+// CHECK: simulation.class.decl @__obelisk_class_s11_J
 // CHECK-SAME: implements [@__obelisk_class_s3_I]
-// CHECK: obelisk_sim.class.method @__obelisk_class_s20_Base_method_0
+// CHECK: simulation.class.method @__obelisk_class_s20_Base_method_0
 // CHECK-SAME: slot 0
 // CHECK-SAME: is_pure = true
-// CHECK: obelisk_sim.class.method @__obelisk_class_s25_Derived_method_0
+// CHECK: simulation.class.method @__obelisk_class_s25_Derived_method_0
 // CHECK-SAME: slot 0
 // CHECK-SAME: is_pure = false
-// CHECK: obelisk_sim.class.method @__obelisk_class_s3_I_method_0
+// CHECK: simulation.class.method @__obelisk_class_s3_I_method_0
 // CHECK-SAME: slot 4294967295
 // CHECK-SAME: interface_ordinal 0
-// CHECK: obelisk_sim.class.method @__obelisk_class_s3_I_method_1
+// CHECK: simulation.class.method @__obelisk_class_s3_I_method_1
 // CHECK-SAME: slot 4294967295
 // CHECK-SAME: interface_ordinal 1
-// CHECK: obelisk_sim.class.method @__obelisk_class_s11_J_method_0
+// CHECK: simulation.class.method @__obelisk_class_s11_J_method_0
 // CHECK-SAME: slot 4294967295
 // CHECK-SAME: interface_ordinal 0

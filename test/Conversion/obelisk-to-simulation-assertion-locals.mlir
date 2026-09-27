@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=NO-PARENT-AWAIT
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=NO-PARENT-AWAIT
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' -o /dev/null
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
@@ -92,7 +92,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
           // A false implication antecedent is a vacuous success. Keep this as
           // cover property so the local-flow lowering must schedule its pass
           // action without running antecedent match items.
-          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64, obelisk_sim.assertion_control_target_id = 101 : i64, obelisk_sim.assertion_controlled, obelisk_sim.assertion_kill_controlled} {
+          obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64, simulation.assertion_control_target_id = 101 : i64, simulation.assertion_controlled, simulation.assertion_kill_controlled} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 37 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 2 : i64, local_variable_has_initializer = array<i64: 1, 1>, local_variable_paths = ["t.p.x", "t.p.y"], local_variable_symbols = [@s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, @s1.$root::@s3.t::@s4.t::@s9.p::@s14.y], node_id = 38 : i64, referenced_path = "t.p", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p, semantic_type = !obelisk.property} {
                 obelisk.sv.assertion.clocking attributes {node_id = 39 : i64} {
@@ -183,120 +183,120 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The normalized types are frozen before the declaration inventory is
 // separated from its executable monitor.
 // PREPARE: local_variable_count = 2 : i64
-// PREPARE-SAME: obelisk_sim.assertion_local_types = [!obelisk_sim.logic<1>, !obelisk_sim.logic<1>]
+// PREPARE-SAME: simulation.assertion_local_types = [!simulation.logic<1>, !simulation.logic<1>]
 
 // The cover-property pass callback performs the observable action in
 // Reactive. Both a completed consequent and a false current antecedent use
 // this callback; the latter does not execute antecedent match items.
-// LOWER: obelisk_sim.func private @[[PASS_CALLBACK:unit_0\.fork\.36\.0\.0]](
-// LOWER: obelisk_sim.ref.load %arg1
-// LOWER: obelisk_sim.ref.store {{.*}} to %arg2
+// LOWER: simulation.func private @[[PASS_CALLBACK:unit_0\.fork\.36\.0\.0]](
+// LOWER: simulation.ref.load %arg1
+// LOWER: simulation.ref.store {{.*}} to %arg2
 
 // Match-call arguments are captured after each preceding local assignment.
 // The first combines its current local with sampled nonlocal b; the second
 // captures b directly. Both calls are independently guarded by the Disable
 // and Kill epochs before their observable effect, just like action reports.
-// LOWER: obelisk_sim.func private @[[MATCH_CALL_0:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1> {{.*}}, %arg2: !obelisk_sim.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !obelisk_sim.ref<i64> {{.*}}, %arg5: i64
+// LOWER: simulation.func private @[[MATCH_CALL_0:[^(]+]](%arg0: !simulation.context {{.*}}, %arg1: !simulation.logic<1> {{.*}}, %arg2: !simulation.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !simulation.ref<i64> {{.*}}, %arg5: i64
 // LOWER-SAME: domain = 0 : i32
 // LOWER-SAME: home_region = 10 : i32
-// LOWER-SAME: obelisk_sim.concurrent_match_call
 // LOWER-SAME: schedule.detached_controls
-// LOWER: %[[CALL0_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
+// LOWER-SAME: simulation.concurrent_match_call
+// LOWER: %[[CALL0_KILL:.*]] = simulation.assert.kill_epoch %arg0 assertion 101 {simulation.concurrent_match_call_kill_epoch}
 // LOWER: %[[KILL0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_KILL]], %arg5
 // LOWER: cf.cond_br %[[KILL0_CURRENT]], ^[[CHECK0_DISABLE:bb[0-9]+]], ^[[KILL0_CANCELED:bb[0-9]+]]
 // LOWER: ^[[CHECK0_DISABLE]]:
-// LOWER: %[[CALL0_DISABLE:.*]] = obelisk_sim.ref.load %arg2
+// LOWER: %[[CALL0_DISABLE:.*]] = simulation.ref.load %arg2
 // LOWER: %[[DISABLE0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_DISABLE]], %arg3
 // LOWER: cf.cond_br %[[DISABLE0_CURRENT]], ^[[CALL0_BODY:bb[0-9]+]], ^[[DISABLE0_CANCELED:bb[0-9]+]]
 // LOWER: ^[[CALL0_BODY]]:
-// LOWER-NOT: obelisk_sim.assert.sampled_read
-// LOWER: obelisk_sim.display %arg0 {{.*}}(%arg1)
+// LOWER-NOT: simulation.assert.sampled_read
+// LOWER: simulation.display %arg0 {{.*}}(%arg1)
 // LOWER: ^[[DISABLE0_CANCELED]]:
-// LOWER: obelisk_sim.return
+// LOWER: simulation.return
 // LOWER: ^[[KILL0_CANCELED]]:
-// LOWER: obelisk_sim.return
+// LOWER: simulation.return
 
-// LOWER: obelisk_sim.func private @[[MATCH_CALL_1:[^(]+]](%arg0: !obelisk_sim.context {{.*}}, %arg1: !obelisk_sim.logic<1> {{.*}}, %arg2: !obelisk_sim.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !obelisk_sim.ref<i64> {{.*}}, %arg5: i64
-// LOWER-SAME: obelisk_sim.concurrent_match_call
-// LOWER: %[[CALL1_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_match_call_kill_epoch}
+// LOWER: simulation.func private @[[MATCH_CALL_1:[^(]+]](%arg0: !simulation.context {{.*}}, %arg1: !simulation.logic<1> {{.*}}, %arg2: !simulation.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !simulation.ref<i64> {{.*}}, %arg5: i64
+// LOWER-SAME: simulation.concurrent_match_call
+// LOWER: %[[CALL1_KILL:.*]] = simulation.assert.kill_epoch %arg0 assertion 101 {simulation.concurrent_match_call_kill_epoch}
 // LOWER: %[[KILL1_CURRENT:.*]] = arith.cmpi eq, %[[CALL1_KILL]], %arg5
 // LOWER: cf.cond_br %[[KILL1_CURRENT]], ^[[CHECK1_DISABLE:bb[0-9]+]], ^{{.*}}
 // LOWER: ^[[CHECK1_DISABLE]]:
-// LOWER: %[[CALL1_DISABLE:.*]] = obelisk_sim.ref.load %arg2
+// LOWER: %[[CALL1_DISABLE:.*]] = simulation.ref.load %arg2
 // LOWER: %[[DISABLE1_CURRENT:.*]] = arith.cmpi eq, %[[CALL1_DISABLE]], %arg3
 // LOWER: cf.cond_br %[[DISABLE1_CURRENT]], ^[[CALL1_BODY:bb[0-9]+]], ^{{.*}}
 // LOWER: ^[[CALL1_BODY]]:
-// LOWER-NOT: obelisk_sim.assert.sampled_read
-// LOWER: obelisk_sim.display %arg0 {{.*}}(%arg1)
+// LOWER-NOT: simulation.assert.sampled_read
+// LOWER: simulation.display %arg0 {{.*}}(%arg1)
 
 // A detached Reactive coordinator starts the first call and waits for it to
 // finish before starting the second. The assertion monitor only spawns this
 // coordinator and therefore never blocks on match-item execution.
-// LOWER: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} debug "ordered assertion match calls"
-// LOWER-NEXT: obelisk_sim.func private @[[MATCH_CHAIN:[^(]+]](
+// LOWER: simulation.code_unit.decl {{[0-9]+}} {{.*}} debug "ordered assertion match calls"
+// LOWER-NEXT: simulation.func private @[[MATCH_CHAIN:[^(]+]](
 // LOWER-SAME: home_region = 10 : i32
-// LOWER-SAME: obelisk_sim.concurrent_match_call_chain
-// LOWER: %[[CALL0_PROCESS:.*]] = obelisk_sim.spawn @[[MATCH_CALL_0]](%arg0, %arg1, %arg2, %arg3, %arg4, %arg5)
-// LOWER-NEXT: obelisk_sim.suspend.await %[[CALL0_PROCESS]] to ^[[CALL1_START:bb[0-9]+]]
+// LOWER-SAME: simulation.concurrent_match_call_chain
+// LOWER: %[[CALL0_PROCESS:.*]] = simulation.spawn @[[MATCH_CALL_0]](%arg0, %arg1, %arg2, %arg3, %arg4, %arg5)
+// LOWER-NEXT: simulation.suspend.await %[[CALL0_PROCESS]] to ^[[CALL1_START:bb[0-9]+]]
 // LOWER-SAME: resume_region = 10 : i32
 // LOWER: ^[[CALL1_START]]:
-// LOWER-NEXT: obelisk_sim.spawn @[[MATCH_CALL_1]](%arg0, %arg6, %arg7, %arg8, %arg9, %arg10)
-// LOWER-NEXT: obelisk_sim.return
+// LOWER-NEXT: simulation.spawn @[[MATCH_CALL_1]](%arg0, %arg6, %arg7, %arg8, %arg9, %arg10)
+// LOWER-NEXT: simulation.return
 
 // Each of the two locals owns a cell at every one of the three sequence ages.
-// LOWER-LABEL: obelisk_sim.func private @unit_0(
-// LOWER: %[[INITIAL_KILL:.*]] = obelisk_sim.assert.kill_epoch %arg0 assertion 101 {obelisk_sim.concurrent_kill_epoch}
-// LOWER-NEXT: %[[KILL_EPOCH:.*]] = obelisk_sim.ref.alloc %[[INITIAL_KILL]] {obelisk_sim.concurrent_kill_epoch_storage}
-// LOWER-NEXT: %[[STATE:.*]] = obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<i64>
-// LOWER: %[[DISABLE_EPOCH:.*]] = obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<i64>
-// LOWER-COUNT-6: obelisk_sim.ref.alloc {{.*}} -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// LOWER: obelisk_sim.suspend.edge posedge
+// LOWER-LABEL: simulation.func private @unit_0(
+// LOWER: %[[INITIAL_KILL:.*]] = simulation.assert.kill_epoch %arg0 assertion 101 {simulation.concurrent_kill_epoch}
+// LOWER-NEXT: %[[KILL_EPOCH:.*]] = simulation.ref.alloc %[[INITIAL_KILL]] {simulation.concurrent_kill_epoch_storage}
+// LOWER-NEXT: %[[STATE:.*]] = simulation.ref.alloc {{.*}} -> !simulation.ref<i64>
+// LOWER: %[[DISABLE_EPOCH:.*]] = simulation.ref.alloc {{.*}} -> !simulation.ref<i64>
+// LOWER-COUNT-6: simulation.ref.alloc {{.*}} -> !simulation.ref<!simulation.logic<1>>
+// LOWER: simulation.suspend.edge posedge
 // LOWER-SAME: resume_region = 8 : i32
 
 // A true disable condition cancels the sampled attempt before predicates or
 // local initializers execute, and advances the report-cancellation epoch.
-// LOWER: %[[DISABLE:.*]] = obelisk_sim.ref.load %arg4
-// LOWER: %[[DISABLED:.*]] = obelisk_sim.logic.is_true %[[DISABLE]]
+// LOWER: %[[DISABLE:.*]] = simulation.ref.load %arg4
+// LOWER: %[[DISABLED:.*]] = simulation.logic.is_true %[[DISABLE]]
 // LOWER: cf.cond_br %[[DISABLED]], ^[[CANCEL:bb[0-9]+]], ^[[EVALUATE:bb[0-9]+]]
 // LOWER: ^[[CANCEL]]:
-// LOWER: obelisk_sim.ref.store {{.*}} to %[[STATE]]
+// LOWER: simulation.ref.store {{.*}} to %[[STATE]]
 // LOWER: arith.addi
 // LOWER: ^[[EVALUATE]]:
-// LOWER: obelisk_sim.spawn @[[PASS_CALLBACK]]
+// LOWER: simulation.spawn @[[PASS_CALLBACK]]
 
 // Off skips the complete new-attempt path—including local initialization and
 // age-zero match items—but the already-live age state above still advances.
-// LOWER: %[[ENABLED:.*]] = obelisk_sim.assert.enabled %arg0 assertion 101 {obelisk_sim.concurrent_attempt_enable}
+// LOWER: %[[ENABLED:.*]] = simulation.assert.enabled %arg0 assertion 101 {simulation.concurrent_attempt_enable}
 // LOWER-NEXT: cf.cond_br %[[ENABLED]], ^[[START:bb[0-9]+]], ^[[AFTER_START:bb[0-9]+]]({{.*}} : i64)
 // LOWER: ^[[AFTER_START]]({{.*}}: i64):
-// LOWER: obelisk_sim.ref.store
+// LOWER: simulation.ref.store
 // LOWER: ^[[START]]:
 
 // Initializers execute in declaration order. Thus y's initializer observes
 // x's sampled initializer value. The successful antecedent then applies its
 // match assignment to x, while y retains its distinct per-attempt value.
-// LOWER: %[[INIT_X:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
-// LOWER: %[[ANTECEDENT:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
-// LOWER: obelisk_sim.spawn @[[PASS_CALLBACK]]
-// LOWER: %[[MATCH_SOURCE:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
-// LOWER: %[[MATCH_X:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_SOURCE]]
-// LOWER-NOT: obelisk_sim.display
-// LOWER: %[[MATCH_B0:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg3
-// LOWER-NEXT: %[[MATCH_ARG0:.*]] = obelisk_sim.logic.binary xor %[[MATCH_X]], %[[MATCH_B0]]
-// LOWER-NEXT: %[[MATCH0_DISABLE_EPOCH:.*]] = obelisk_sim.ref.load %[[DISABLE_EPOCH]]
-// LOWER-NEXT: %[[MATCH0_KILL_EPOCH:.*]] = obelisk_sim.ref.load %[[KILL_EPOCH]]
-// LOWER-NEXT: %[[MATCH_X_2:.*]] = obelisk_sim.logic.unary logical_not %[[MATCH_X]]
-// LOWER-NEXT: %[[MATCH_B1:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg3
-// LOWER-NEXT: %[[MATCH1_DISABLE_EPOCH:.*]] = obelisk_sim.ref.load %[[DISABLE_EPOCH]]
-// LOWER-NEXT: %[[MATCH1_KILL_EPOCH:.*]] = obelisk_sim.ref.load %[[KILL_EPOCH]]
-// LOWER-NEXT: obelisk_sim.spawn @[[MATCH_CHAIN]](%arg0, %[[MATCH_ARG0]], %[[DISABLE_EPOCH]], %[[MATCH0_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH0_KILL_EPOCH]], %[[MATCH_B1]], %[[DISABLE_EPOCH]], %[[MATCH1_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH1_KILL_EPOCH]])
-// LOWER-NOT: obelisk_sim.spawn @[[PASS_CALLBACK]]
-// LOWER: obelisk_sim.ref.store %[[MATCH_X_2]] to %[[X_AGE1:.*]]
-// LOWER-NEXT: obelisk_sim.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
+// LOWER: %[[INIT_X:.*]] = simulation.assert.sampled_read %arg0 from %arg2
+// LOWER: %[[ANTECEDENT:.*]] = simulation.assert.sampled_read %arg0 from %arg2
+// LOWER: simulation.spawn @[[PASS_CALLBACK]]
+// LOWER: %[[MATCH_SOURCE:.*]] = simulation.assert.sampled_read %arg0 from %arg2
+// LOWER: %[[MATCH_X:.*]] = simulation.logic.unary logical_not %[[MATCH_SOURCE]]
+// LOWER-NOT: simulation.display
+// LOWER: %[[MATCH_B0:.*]] = simulation.assert.sampled_read %arg0 from %arg3
+// LOWER-NEXT: %[[MATCH_ARG0:.*]] = simulation.logic.binary xor %[[MATCH_X]], %[[MATCH_B0]]
+// LOWER-NEXT: %[[MATCH0_DISABLE_EPOCH:.*]] = simulation.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH0_KILL_EPOCH:.*]] = simulation.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: %[[MATCH_X_2:.*]] = simulation.logic.unary logical_not %[[MATCH_X]]
+// LOWER-NEXT: %[[MATCH_B1:.*]] = simulation.assert.sampled_read %arg0 from %arg3
+// LOWER-NEXT: %[[MATCH1_DISABLE_EPOCH:.*]] = simulation.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH1_KILL_EPOCH:.*]] = simulation.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: simulation.spawn @[[MATCH_CHAIN]](%arg0, %[[MATCH_ARG0]], %[[DISABLE_EPOCH]], %[[MATCH0_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH0_KILL_EPOCH]], %[[MATCH_B1]], %[[DISABLE_EPOCH]], %[[MATCH1_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH1_KILL_EPOCH]])
+// LOWER-NOT: simulation.spawn @[[PASS_CALLBACK]]
+// LOWER: simulation.ref.store %[[MATCH_X_2]] to %[[X_AGE1:.*]]
+// LOWER-NEXT: simulation.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
 // LOWER-NOT: obelisk.sv.
 
 // The Observed assertion monitor only starts the detached call coordinator;
 // it never waits for any attached subroutine itself.
-// NO-PARENT-AWAIT-LABEL: obelisk_sim.func private @unit_0(
-// NO-PARENT-AWAIT-NOT: obelisk_sim.suspend.await
+// NO-PARENT-AWAIT-LABEL: simulation.func private @unit_0(
+// NO-PARENT-AWAIT-NOT: simulation.suspend.await
 // NO-PARENT-AWAIT: }

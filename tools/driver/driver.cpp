@@ -1415,8 +1415,8 @@ static int executeCompilation(
 
   bool hasDPI = false;
   (*module)->walk([&](obelisk::sim::SimCodeUnitDeclOp declaration) {
-    hasDPI |= declaration->hasAttr("obelisk_sim.dpi_import") ||
-              declaration->hasAttr("obelisk_sim.dpi_export");
+    hasDPI |= declaration->hasAttr("simulation.dpi_import") ||
+              declaration->hasAttr("simulation.dpi_export");
   });
   if (native && targetName == "wasm32") {
     if (hasDPI) {

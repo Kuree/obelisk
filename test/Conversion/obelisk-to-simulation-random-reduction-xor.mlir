@@ -176,7 +176,7 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.design
+// CHECK-LABEL: simulation.design
 // The accumulator starts at the operand's low bit and folds one bit per step.
 // CHECK: %[[BIT0:.*]] = arith.cmpi ne, %{{.*}}, %{{.*}} : i64
 // CHECK: %[[BIT1:.*]] = arith.cmpi ne, %{{.*}}, %{{.*}} : i64

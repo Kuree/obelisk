@@ -184,27 +184,27 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[TRUE:.*]] = arith.constant true
 // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
-// CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<!obelisk_sim.string> -> !obelisk_sim.string
-// CHECK: %[[RO:.*]] = obelisk_sim.string.literal "RO"
-// CHECK: %[[RO_CMP:.*]] = obelisk_sim.string.compare %[[VALUE]], %[[RO]] case_insensitive = false
+// CHECK: %[[VALUE:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<!simulation.string> -> !simulation.string
+// CHECK: %[[RO:.*]] = simulation.string.literal "RO"
+// CHECK: %[[RO_CMP:.*]] = simulation.string.compare %[[VALUE]], %[[RO]] case_insensitive = false
 // CHECK: %[[RO_EQ:.*]] = arith.cmpi eq, %[[RO_CMP]], %[[ZERO]] : i32
-// CHECK: %[[RC:.*]] = obelisk_sim.string.literal "RC"
-// CHECK: %[[RC_CMP:.*]] = obelisk_sim.string.compare %[[VALUE]], %[[RC]] case_insensitive = false
+// CHECK: %[[RC:.*]] = simulation.string.literal "RC"
+// CHECK: %[[RC_CMP:.*]] = simulation.string.compare %[[VALUE]], %[[RC]] case_insensitive = false
 // CHECK: %[[RC_EQ:.*]] = arith.cmpi eq, %[[RC_CMP]], %[[ZERO]] : i32
-// CHECK: %[[A:.*]] = obelisk_sim.string.literal "A"
-// CHECK: %[[LOWER_CMP:.*]] = obelisk_sim.string.compare %[[VALUE]], %[[A]] case_insensitive = false
+// CHECK: %[[A:.*]] = simulation.string.literal "A"
+// CHECK: %[[LOWER_CMP:.*]] = simulation.string.compare %[[VALUE]], %[[A]] case_insensitive = false
 // CHECK: %[[ABOVE:.*]] = arith.cmpi sge, %[[LOWER_CMP]], %[[ZERO]] : i32
-// CHECK: %[[Z:.*]] = obelisk_sim.string.literal "Z"
-// CHECK: %[[UPPER_CMP:.*]] = obelisk_sim.string.compare %[[VALUE]], %[[Z]] case_insensitive = false
+// CHECK: %[[Z:.*]] = simulation.string.literal "Z"
+// CHECK: %[[UPPER_CMP:.*]] = simulation.string.compare %[[VALUE]], %[[Z]] case_insensitive = false
 // CHECK: %[[BELOW:.*]] = arith.cmpi sle, %[[UPPER_CMP]], %[[ZERO]] : i32
 // CHECK: arith.andi %[[ABOVE]], %[[BELOW]] : i1
-// CHECK: obelisk_sim.ref.store %{{.*}} to %{{.*}} : i1, !obelisk_sim.ref<i1>
-// CHECK: obelisk_sim.string.literal "RC"
-// CHECK: obelisk_sim.string.literal "RO"
-// CHECK: obelisk_sim.string.literal "RC"
-// CHECK-NOT: obelisk_sim.string.compare
-// CHECK: obelisk_sim.ref.store %[[TRUE]] to %{{.*}} : i1, !obelisk_sim.ref<i1>
+// CHECK: simulation.ref.store %{{.*}} to %{{.*}} : i1, !simulation.ref<i1>
+// CHECK: simulation.string.literal "RC"
+// CHECK: simulation.string.literal "RO"
+// CHECK: simulation.string.literal "RC"
+// CHECK-NOT: simulation.string.compare
+// CHECK: simulation.ref.store %[[TRUE]] to %{{.*}} : i1, !simulation.ref<i1>
 // CHECK-NOT: obelisk.sv.

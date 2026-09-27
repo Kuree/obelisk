@@ -17,11 +17,11 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.class.decl @[[BASE:[^ ]+]] id 1
-// CHECK-SAME: random_variable_references = [#obelisk_sim.random_variable_reference<target = @[[BASE_FIELD:[^>]+]]>]
-// CHECK: obelisk_sim.class.field @[[BASE_FIELD]] of @[[BASE]]
-// CHECK-SAME: obelisk_sim.random_variable_kind = 1 : i32
-// CHECK: obelisk_sim.class.decl @[[DERIVED:[^ ]+]] id 2 extends @[[BASE]]
-// CHECK-SAME: random_variable_references = [#obelisk_sim.random_variable_reference<target = @[[BASE_FIELD]]>, #obelisk_sim.random_variable_reference<target = @[[DERIVED_FIELD:[^>]+]]>]
-// CHECK: obelisk_sim.class.field @[[DERIVED_FIELD]] of @[[DERIVED]]
-// CHECK-SAME: obelisk_sim.random_variable_kind = 2 : i32
+// CHECK: simulation.class.decl @[[BASE:[^ ]+]] id 1
+// CHECK-SAME: random_variable_references = [#simulation.random_variable_reference<target = @[[BASE_FIELD:[^>]+]]>]
+// CHECK: simulation.class.field @[[BASE_FIELD]] of @[[BASE]]
+// CHECK-SAME: simulation.random_variable_kind = 1 : i32
+// CHECK: simulation.class.decl @[[DERIVED:[^ ]+]] id 2 extends @[[BASE]]
+// CHECK-SAME: random_variable_references = [#simulation.random_variable_reference<target = @[[BASE_FIELD]]>, #simulation.random_variable_reference<target = @[[DERIVED_FIELD:[^>]+]]>]
+// CHECK: simulation.class.field @[[DERIVED_FIELD]] of @[[DERIVED]]
+// CHECK-SAME: simulation.random_variable_kind = 2 : i32

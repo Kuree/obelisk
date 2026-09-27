@@ -435,8 +435,8 @@ module {
   }
 }
 
-// CHECK-COUNT-3: obelisk_sim.covergroup.decl
-// CHECK: obelisk_sim.covergroup.create
-// CHECK: obelisk_sim.covergroup.sample_enabled
-// CHECK: obelisk_sim.covergroup.sample
+// CHECK-COUNT-3: simulation.covergroup.decl
+// CHECK: simulation.covergroup.create
+// CHECK: simulation.covergroup.sample_enabled
+// CHECK: simulation.covergroup.sample
 // CHECK-NOT: obelisk.sv.

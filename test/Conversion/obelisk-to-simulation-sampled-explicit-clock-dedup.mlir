@@ -132,6 +132,6 @@ module {
   }
 }
 
-// CHECK-COUNT-1: obelisk_sim.code_unit.decl {{[0-9]+}} in 0 always hierarchy {{.*}} debug "alternate-clock sampler"
-// CHECK-COUNT-1: obelisk_sim.spawn {{.*clocked_sample.*}}
-// CHECK-COUNT-1: obelisk_sim.assert.clocked_sample_update
+// CHECK-COUNT-1: simulation.code_unit.decl {{[0-9]+}} in 0 always hierarchy {{.*}} debug "alternate-clock sampler"
+// CHECK-COUNT-1: simulation.spawn {{.*clocked_sample.*}}
+// CHECK-COUNT-1: simulation.assert.clocked_sample_update

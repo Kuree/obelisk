@@ -2710,7 +2710,7 @@ TEST(CoverageRuntimeDesignTest,
       FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
 
   // Replace the first two bins with exact X, exact Z, and wildcard 1?. The
-  // runtime !obelisk_sim.logic transport is (aval ^ bval, bval), whereas the
+  // runtime !simulation.logic transport is (aval ^ bval, bval), whereas the
   // schema stores canonical (aval, bval).
   schema.functionalBins[0].name = "exact_x";
   schema.functionalBins[0].hierarchy = "top.cg.first.exact_x";

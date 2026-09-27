@@ -88,13 +88,13 @@ module {
   }
 }
 
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.aggregate.export_bitstream %[[SOURCE]] plan
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: simulation.aggregate.export_bitstream %[[SOURCE]] plan
 // CHECK-SAME: [5407724624, 2, 65536, 65536, 4294967298, 0, 8192, 8, 8, 8,
 // CHECK-SAME: 1, 0, 8, 0, 0, 8]
-// CHECK: obelisk_sim.container.create {{.*}} -> !obelisk_sim.dynamic_array<!obelisk_sim.logic<4>>
-// CHECK-COUNT-1: obelisk_sim.logic.dyn_extract
-// CHECK: %[[PACKED:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.aggregate.import_bitstream %[[PACKED]] plan
+// CHECK: simulation.container.create {{.*}} -> !simulation.dynamic_array<!simulation.logic<4>>
+// CHECK-COUNT-1: simulation.logic.dyn_extract
+// CHECK: %[[PACKED:.*]] = simulation.ref.load
+// CHECK: simulation.aggregate.import_bitstream %[[PACKED]] plan
 // CHECK-SAME: [5407724624, 2, 65536, 65536, 4294967298, 0, 8192, 8, 8, 8,
 // CHECK-SAME: 3, 0, 8, 0, 0, 8]

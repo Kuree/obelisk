@@ -299,115 +299,115 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // `not a` reports failure exactly when sampled `a` is true.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: home_region = 8 : i32
-// CHECK: [[A0:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[A:%.*]] = obelisk_sim.logic.is_true [[A0]]
+// CHECK: [[A0:%.*]] = simulation.assert.sampled_read
+// CHECK: [[A:%.*]] = simulation.logic.is_true [[A0]]
 // CHECK: cf.cond_br [[A]],
 
 // `a iff b` expands to `(a && b) || (!a && !b)`.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK: arith.xori
 // CHECK: arith.xori
 // CHECK: arith.ori
 
 // `a implies b` expands to `!a || b`.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.xori
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.ori
 // CHECK-NOT: obelisk.sv.assertion
 
 // Z3 proves `(a && b) || (!a && b)` equivalent to `b` before monitor SSA is
 // built, removing one sampled read and the branching state entirely.
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.branching_sequence_monitor
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-COUNT-1: simulation.assert.sampled_read
+// CHECK-NOT: simulation.branching_sequence_monitor
 
 // A non-equivalent else branch keeps both guarded alternatives.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 
 // A missing else is a vacuous success when the condition is false. The cover
 // pass action executes for either success, while the alternative remains
 // marked separately for future vacuity counters.
-// CHECK: obelisk_sim.func private @[[IF_PASS:unit_5\.fork\.55\.0\.0]](
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 1 : i64
-// CHECK: [[B_BITS:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[B_TRUTH:%.*]] = obelisk_sim.logic.is_true [[B_BITS]]
-// CHECK: [[A_BITS:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[A_TRUTH:%.*]] = obelisk_sim.logic.is_true [[A_BITS]]
+// CHECK: simulation.func private @[[IF_PASS:unit_5\.fork\.55\.0\.0]](
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
+// CHECK: [[B_BITS:%.*]] = simulation.assert.sampled_read
+// CHECK: [[B_TRUTH:%.*]] = simulation.logic.is_true [[B_BITS]]
+// CHECK: [[A_BITS:%.*]] = simulation.assert.sampled_read
+// CHECK: [[A_TRUTH:%.*]] = simulation.logic.is_true [[A_BITS]]
 // CHECK: [[NONVACUOUS_SUCCESS:%.*]] = arith.andi [[B_TRUTH]], [[A_TRUTH]]
 // CHECK: [[VACUOUS_SUCCESS:%.*]] = arith.xori [[A_TRUTH]],
 // CHECK: [[ANY_SUCCESS:%.*]] = arith.ori [[NONVACUOUS_SUCCESS]], [[VACUOUS_SUCCESS]]
 // CHECK: cf.cond_br [[ANY_SUCCESS]],
-// CHECK: obelisk_sim.spawn @[[IF_PASS]]
+// CHECK: simulation.spawn @[[IF_PASS]]
 
 // Negating a case with identical matching/default bodies flips both positive
 // and negative case guards. The minimizer proves the result is just `!b`,
 // eliminating the selector and its four-state equality guard.
-// CHECK-LABEL: obelisk_sim.func private @unit_6(
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 8 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.logic.compare case_eq
+// CHECK-LABEL: simulation.func private @unit_6(
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 8 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-COUNT-1: simulation.assert.sampled_read
+// CHECK-NOT: simulation.logic.compare case_eq
 
 // Without a default, no matching label is a vacuous success. The pass action
 // executes for that path as well as for a matching label with a true body.
-// CHECK: obelisk_sim.func private @[[CASE_PASS:unit_7\.fork\.79\.0\.0]](
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_7(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 1 : i64
-// CHECK: [[CASE_BODY:%.*]] = obelisk_sim.logic.is_true
-// CHECK: [[CASE_MATCH:%.*]] = obelisk_sim.logic.compare case_eq
+// CHECK: simulation.func private @[[CASE_PASS:unit_7\.fork\.79\.0\.0]](
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_7(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
+// CHECK: [[CASE_BODY:%.*]] = simulation.logic.is_true
+// CHECK: [[CASE_MATCH:%.*]] = simulation.logic.compare case_eq
 // CHECK: [[CASE_SUCCESS:%.*]] = arith.andi [[CASE_BODY]], [[CASE_MATCH]]
 // CHECK: [[NO_LABEL:%.*]] = arith.xori [[CASE_MATCH]],
 // CHECK: [[ANY_CASE_SUCCESS:%.*]] = arith.ori [[CASE_SUCCESS]], [[NO_LABEL]]
 // CHECK: cf.cond_br [[ANY_CASE_SUCCESS]],
-// CHECK: obelisk_sim.spawn @[[CASE_PASS]]
+// CHECK: simulation.spawn @[[CASE_PASS]]
 
 // `not (a or b)` distributes into the single exact cube `!a && !b`.
-// CHECK-LABEL: obelisk_sim.func private @unit_8(
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_8(
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.xori
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.xori
 // CHECK: arith.andi
 // CHECK: arith.xori
-// CHECK-NOT: obelisk_sim.branching_sequence_monitor
+// CHECK-NOT: simulation.branching_sequence_monitor
 
 // Negating `(!a && !b) || (a && !c) || (!b && !c)` in a cover property
 // produces the consensus DNF `(a && c) || (!a && b) || (b && c)`.
 // Duplicate/contradiction cleanup cannot remove the consensus cube; Z3 proves
 // it redundant before lowering, demonstrating cover-property solver use.
-// CHECK-LABEL: obelisk_sim.func private @unit_9(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 8 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 24 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_9(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 8 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 24 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read

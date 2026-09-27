@@ -83,5 +83,5 @@ endmodule
 // The one mutable v1 schema retains the static type option.
 // SCHEMA: functional_option_plan owner={{[1-9][0-9]*}} expression={{[1-9][0-9]*}} owner_kind=1 scope=2 option=12 ordinal=12 flags=0
 
-// IR: obelisk_sim.covergroup.clock_event.register
-// IR: obelisk_sim.suspend.forever
+// IR: simulation.covergroup.clock_event.register
+// IR: simulation.suspend.forever

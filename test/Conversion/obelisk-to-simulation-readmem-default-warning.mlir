@@ -34,15 +34,15 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: ^[[LOOP:bb[0-9]+]](%{{.*}}: i64, %[[SAW_ADDRESS:.*]]: i1, %[[COUNT:.*]]: i64,
-// CHECK: obelisk_sim.file.readmem_token
+// CHECK: simulation.file.readmem_token
 // CHECK: cf.cond_br {{.*}}, ^[[COUNT_CHECK:bb[0-9]+]],
 // CHECK: ^[[COUNT_CHECK]]:
 // CHECK: %[[COUNT_MATCHES:.*]] = arith.cmpi eq, %[[COUNT]],
 // CHECK: %[[SUPPRESS:.*]] = arith.ori %[[SAW_ADDRESS]], %[[COUNT_MATCHES]]
 // CHECK: cf.cond_br %[[SUPPRESS]], ^[[EXIT:bb[0-9]+]], ^[[WARN:bb[0-9]+]]
 // CHECK: ^[[WARN]]:
-// CHECK: obelisk_sim.bytes.constant "WARNING: $readmemh: data word count does not match address range"
-// CHECK: obelisk_sim.display
+// CHECK: simulation.bytes.constant "WARNING: $readmemh: data word count does not match address range"
+// CHECK: simulation.display
 // CHECK: cf.br ^[[EXIT]]

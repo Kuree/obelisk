@@ -19,4 +19,4 @@ module {
   }
 }
 
-// CHECK: #obelisk_sim.dpi_abi<kind = open_array
+// CHECK: #simulation.dpi_abi<kind = open_array

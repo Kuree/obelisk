@@ -65,5 +65,5 @@ module specify_edge_procedural_controls;
 endmodule
 
 // CHECK: PASSED
-// SIM: obelisk_sim.time.now
-// SIM: obelisk_sim.ref.store_inertial_path
+// SIM: simulation.time.now
+// SIM: simulation.ref.store_inertial_path

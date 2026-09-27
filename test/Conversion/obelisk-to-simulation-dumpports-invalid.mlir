@@ -1,13 +1,13 @@
 // RUN: obelisk-opt %s \
-// RUN:   '--pass-pipeline=builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' \
+// RUN:   '--pass-pipeline=builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
 // RUN:   --verify-diagnostics
 
 module {
-  obelisk_sim.design @bad_dumpports_scope {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.bad"
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context
-        {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @bad_dumpports_scope {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.bad"
+    simulation.func @bad(%ctx: !simulation.context
+        {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
         obelisk.sv.expression.call attributes {
@@ -27,7 +27,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

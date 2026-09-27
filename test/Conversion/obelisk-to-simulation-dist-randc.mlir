@@ -9,33 +9,33 @@
 // RUN: not obelisk-opt %t/dist-soft.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=DIST-SOFT
 // RUN: not obelisk-opt %t/dist-solve.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=DIST-SOLVE
 
-// DIST: obelisk_sim.class.field @[[W_FIELD:[^ ]+]] {{.*}} : i32 {debug_name = "w"
-// DIST: %[[W_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[W_FIELD]]]
-// DIST: %[[W:.*]] = obelisk_sim.managed.load %[[W_REF]]
+// DIST: simulation.class.field @[[W_FIELD:[^ ]+]] {{.*}} : i32 {debug_name = "w"
+// DIST: %[[W_REF:.*]] = simulation.class.field_ref {{.*}}[@[[W_FIELD]]]
+// DIST: %[[W:.*]] = simulation.managed.load %[[W_REF]]
 // DIST: %[[W64:.*]] = arith.extsi %[[W]] : i32 to i64
 // DIST: arith.cmpi sge, %[[W64]]
 // DIST: %[[MASS:.*]] = arith.constant {{.*}} 12 : i64
 // DIST: arith.muli %[[W64]], %[[MASS]]
 // DIST: arith.divui
 // DIST: arith.constant {{.*}} 164 : i64
-// DIST: obelisk_sim.random.solve {{.*}} captures({{.*}}, %[[W64]], {{.*}})
+// DIST: simulation.random.solve {{.*}} captures({{.*}}, %[[W64]], {{.*}})
 
 // DIST-SIGNED: arith.xori {{.*}}, {{.*}} : i64
-// DIST-SIGNED: obelisk_sim.random.solve
+// DIST-SIGNED: simulation.random.solve
 
-// RANDC: obelisk_sim.class.field @[[VALUE:[^ ]+]] {{.*}}obelisk_sim.random_cycle_key_field = @[[KEY:[^, }]+]]{{.*}}obelisk_sim.random_cycle_position_field = @[[POSITION:[^, }]+]]{{.*}}obelisk_sim.random_variable_kind = 2 : i32
-// RANDC: obelisk_sim.class.field @[[KEY]] {{.*}} {debug_name = "__obelisk_randc_key"
-// RANDC: obelisk_sim.class.field @[[POSITION]] {{.*}} {debug_name = "__obelisk_randc_position"
-// RANDC: %[[KEY_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[KEY]]]
-// RANDC: %[[POSITION_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[POSITION]]]
-// RANDC: %[[KEY_VALUE:.*]] = obelisk_sim.managed.load %[[KEY_REF]]
-// RANDC: %[[POSITION_VALUE:.*]] = obelisk_sim.managed.load %[[POSITION_REF]]
+// RANDC: simulation.class.field @[[VALUE:[^ ]+]] {{.*}}simulation.random_cycle_key_field = @[[KEY:[^, }]+]]{{.*}}simulation.random_cycle_position_field = @[[POSITION:[^, }]+]]{{.*}}simulation.random_variable_kind = 2 : i32
+// RANDC: simulation.class.field @[[KEY]] {{.*}} {debug_name = "__obelisk_randc_key"
+// RANDC: simulation.class.field @[[POSITION]] {{.*}} {debug_name = "__obelisk_randc_position"
+// RANDC: %[[KEY_REF:.*]] = simulation.class.field_ref {{.*}}[@[[KEY]]]
+// RANDC: %[[POSITION_REF:.*]] = simulation.class.field_ref {{.*}}[@[[POSITION]]]
+// RANDC: %[[KEY_VALUE:.*]] = simulation.managed.load %[[KEY_REF]]
+// RANDC: %[[POSITION_VALUE:.*]] = simulation.managed.load %[[POSITION_REF]]
 // RANDC: cf.br {{.*}}%[[POSITION_VALUE]]
-// RANDC: %[[NEXT_POSITION:.*]], %[[VALUE:.*]] = obelisk_sim.random.cycle_next {{.*}} {width = 4 : i32}
-// RANDC-NOT: obelisk_sim.managed.store {{.*}} to %[[POSITION_REF]]
-// RANDC: obelisk_sim.random.solve
-// RANDC: obelisk_sim.managed.store {{.*}} to %[[KEY_REF]]
-// RANDC-NEXT: obelisk_sim.managed.store {{.*}} to %[[POSITION_REF]]
+// RANDC: %[[NEXT_POSITION:.*]], %[[VALUE:.*]] = simulation.random.cycle_next {{.*}} {width = 4 : i32}
+// RANDC-NOT: simulation.managed.store {{.*}} to %[[POSITION_REF]]
+// RANDC: simulation.random.solve
+// RANDC: simulation.managed.store {{.*}} to %[[KEY_REF]]
+// RANDC-NEXT: simulation.managed.store {{.*}} to %[[POSITION_REF]]
 
 // RANDC-NATIVE: llvm.func @obelisk_rt_v1_random_cycle_next
 // RANDC-NATIVE: %[[CYCLE_STATUS:.*]] = llvm.call @obelisk_rt_v1_random_cycle_next

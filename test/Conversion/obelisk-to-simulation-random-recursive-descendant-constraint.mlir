@@ -194,18 +194,18 @@ module {
 // its random leaf. Every rand handle edge and null ancestor gates both the
 // leaf and the descendant constraint block. Non-rand members are captured
 // from the descendant object through the same null-safe path.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s34_root_field___obelisk_rand_mode]
-// CHECK: obelisk_sim.managed.is_null
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.class.field_ref {{.*}}[@__obelisk_class_s34_root_field___obelisk_rand_mode]
+// CHECK: simulation.managed.is_null
 // CHECK: arith.cmpi ne
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s20_middle_field___obelisk_rand_mode]
+// CHECK: simulation.class.field_ref {{.*}}[@__obelisk_class_s20_middle_field___obelisk_rand_mode]
 // CHECK: arith.cmpi ne
-// CHECK: obelisk_sim.managed.is_null
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_field___obelisk_constraint_mode]
-// CHECK: obelisk_sim.managed.is_null
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_field_1]
-// CHECK: obelisk_sim.random.solve {{.*}} captures(%{{.*}})
+// CHECK: simulation.managed.is_null
+// CHECK: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_field___obelisk_constraint_mode]
+// CHECK: simulation.managed.is_null
+// CHECK: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_field_1]
+// CHECK: simulation.random.solve {{.*}} captures(%{{.*}})
 // CHECK: arith.cmpi sge, {{.*}}, %{{.*}} : i32
 // CHECK: arith.cmpi sle, {{.*}}, %{{.*}} : i32
 // CHECK: arith.cmpi sge, {{.*}}, %{{.*}} : i32
-// CHECK: obelisk_sim.managed.store
+// CHECK: simulation.managed.store

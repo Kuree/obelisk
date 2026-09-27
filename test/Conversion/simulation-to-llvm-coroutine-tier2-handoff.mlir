@@ -1,22 +1,22 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=PUBLICATION
 // RUN: sed -e 's/code_unit.decl 4 in 0 initial/code_unit.decl 4 in 0 always/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32, code_unit_id = 4/attributes {entry_kind = 3 : i32, code_unit_id = 4/' %s \
 // RUN:   | not obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=LIVE-ARG
 // RUN: sed -e 's/schedule.native.region_body,/schedule.native.region_body/' \
 // RUN:   -e '/schedule.eval.reconstructs_continuation_args/d' %s \
 // RUN:   | not obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=UNCERTIFIED-REGION
 // RUN: sed 's/{site = #schedule.continuation<id = 1>}/{schedule.procedural_event_wait, site = #schedule.continuation<id = 1>}/' %s \
 // RUN:   | obelisk-opt - -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)'
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)'
 
 // A source event control is inactive while its controlled statement runs.
 // The generated coordinator must suppress only that compact owner's self
@@ -31,7 +31,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 3 : i32
 } {
-  obelisk_sim.design @direct_scc attributes {
+  simulation.design @direct_scc attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -93,56 +93,56 @@ module attributes {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "scc.root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "scc.loop"
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "scc.clock"
-    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "scc.reset"
-    obelisk_sim.code_unit.decl 5 in 0 fork hierarchy "scc.negative_commit"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "scc.root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "scc.loop"
+    simulation.code_unit.decl 3 in 0 always hierarchy "scc.clock"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "scc.reset"
+    simulation.code_unit.decl 5 in 0 fork hierarchy "scc.negative_commit"
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %storage = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %loop = obelisk_sim.spawn @loop(%ctx, %storage) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      %clock = obelisk_sim.spawn @clock(%ctx, %storage) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
+      %storage = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
+      %loop = simulation.spawn @loop(%ctx, %storage) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>>
+          -> !simulation.process
+      %clock = simulation.spawn @clock(%ctx, %storage) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>>
+          -> !simulation.process
       %remaining = arith.constant true
-      %reset = obelisk_sim.spawn @reset(%ctx, %storage, %remaining) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>, i1
-          -> !obelisk_sim.process
-      obelisk_sim.return
+      %reset = simulation.spawn @reset(%ctx, %storage, %remaining) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>>, i1
+          -> !simulation.process
+      simulation.return
     }
 
     // The loop-carried continuation makes this a finite Tier-3 bootstrap
     // owner. It must be drained before periodic handoff, not represented by a
     // null executor in the closed Tier-1/Tier-2 coordinator.
-    obelisk_sim.func @reset(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %state: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %remaining: i1 {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @reset(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %state: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %remaining: i1 {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %state to ^done(%remaining : i1)
+      simulation.suspend.change %state to ^done(%remaining : i1)
           {site = #schedule.continuation<id = 3>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     ^done(%ignored: i1):
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @loop(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %state: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @loop(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %state: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
                     schedule.native.region_body,
                     schedule.eval.reconstructs_continuation_args
@@ -153,38 +153,38 @@ module attributes {
       // Region outlining reloads canonical instance state on each activation,
       // so this actor-side block argument must not make the generated region
       // look like a Tier-3 coroutine continuation.
-      obelisk_sim.suspend.change %state to ^resume(%keep : i1)
+      simulation.suspend.change %state to ^resume(%keep : i1)
           {site = #schedule.continuation<id = 1>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     ^resume(%ignored: i1):
-      %value = obelisk_sim.ref.load %state :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %next = obelisk_sim.logic.unary bit_not %value :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %next to %state : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %value = simulation.ref.load %state :
+          !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %next = simulation.logic.unary bit_not %value :
+          (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %next to %state : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait(%ignored : i1)
     }
 
-    obelisk_sim.func @clock(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %state: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @clock(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %state: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^toggle
           {site = #schedule.continuation<id = 2>,
            timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
-      %old = obelisk_sim.ref.load %state :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %new to %state : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %old = simulation.ref.load %state :
+          !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old :
+          (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %new to %state : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     }
 
@@ -192,25 +192,25 @@ module attributes {
     // commit writes the same direct root as @clock. Its publication is chosen
     // statically for the runtime observer; no descriptor flag or hot runtime
     // branch may distinguish it from the ordinary direct writer.
-    obelisk_sim.func private @negative_commit(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.logic<1>
-            {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func private @negative_commit(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: !simulation.logic<1>
+            {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 5 : i64,
                     domain = 0 : i32, home_region = 2 : i32, internal,
-                    obelisk_sim.negative_timing_delay_commit} {
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^publish(
-          %value : !obelisk_sim.logic<1>)
+                    simulation.negative_timing_delay_commit} {
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^publish(
+          %value : !simulation.logic<1>)
           {resume_region = 2 : i32,
            site = #schedule.continuation<id = 4>,
            timing = #schedule.timing_site<id = 0, kind = calendar>}
-    ^publish(%delayed: !obelisk_sim.logic<1>):
-      %state = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %delayed to %state : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.return
+    ^publish(%delayed: !simulation.logic<1>):
+      %state = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
+      simulation.ref.store %delayed to %state : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
+      simulation.return
     }
   }
 }

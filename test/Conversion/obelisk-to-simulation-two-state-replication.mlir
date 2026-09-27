@@ -34,9 +34,9 @@ module {
   }
 }
 
-// CHECK: %[[BIT:.*]] = obelisk_sim.ref.load
-// CHECK: %[[LOGIC:.*]] = obelisk_sim.logic.from_bits %[[BIT]]
-// CHECK: %[[REPEATED:.*]] = obelisk_sim.logic.replicate %[[LOGIC]] times 8
-// CHECK: %[[BITS:.*]] = obelisk_sim.logic.to_bits %[[REPEATED]]
-// CHECK: %[[PACKED:.*]] = obelisk_sim.packed.unflatten %[[BITS]]
-// CHECK: obelisk_sim.ref.store %[[PACKED]]
+// CHECK: %[[BIT:.*]] = simulation.ref.load
+// CHECK: %[[LOGIC:.*]] = simulation.logic.from_bits %[[BIT]]
+// CHECK: %[[REPEATED:.*]] = simulation.logic.replicate %[[LOGIC]] times 8
+// CHECK: %[[BITS:.*]] = simulation.logic.to_bits %[[REPEATED]]
+// CHECK: %[[PACKED:.*]] = simulation.packed.unflatten %[[BITS]]
+// CHECK: simulation.ref.store %[[PACKED]]

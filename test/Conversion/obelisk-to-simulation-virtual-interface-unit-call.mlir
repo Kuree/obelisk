@@ -107,9 +107,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.scope.decl [[BUS:[0-9]+]] {{.*}} hierarchy "top.bus"
-// CHECK-LABEL: obelisk_sim.func private @unit_
-// CHECK: obelisk_sim.virtual_interface.scope
+// CHECK: simulation.scope.decl [[BUS:[0-9]+]] {{.*}} hierarchy "top.bus"
+// CHECK-LABEL: simulation.func private @unit_
+// CHECK: simulation.virtual_interface.scope
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.call
+// CHECK: simulation.call
 // CHECK: virtual interface call used a null or invalid handle.

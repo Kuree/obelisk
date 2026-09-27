@@ -27,11 +27,11 @@ module {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.narrow", lifetime = 1 : i32, name = "narrow", node_id = 6 : i64, semantic_type = !obelisk.assoc<!obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, !obelisk.integral<32, true, false, 31 : 0, int>, false>, sym_name = "s6.narrow"} {
         }
         // A four-state vector key stays four-state rather than becoming i64.
-        // CHECK-DAG: assoc_array<!obelisk_sim.logic<64>, i32, false, false>
+        // CHECK-DAG: assoc_array<!simulation.logic<64>, i32, false, false>
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.four", lifetime = 1 : i32, name = "four", node_id = 7 : i64, semantic_type = !obelisk.assoc<!obelisk.ranged_packed_array<63 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, !obelisk.integral<32, true, false, 31 : 0, int>, false>, sym_name = "s7.four"} {
         }
         // A string key has no packed scalar and is left alone.
-        // CHECK-DAG: assoc_array<!obelisk_sim.string, i32, false, false>
+        // CHECK-DAG: assoc_array<!simulation.string, i32, false, false>
         obelisk.sv.symbol.variable attributes {hierarchical_name = "top.named", lifetime = 1 : i32, name = "named", node_id = 8 : i64, semantic_type = !obelisk.assoc<!obelisk.string, !obelisk.integral<32, true, false, 31 : 0, int>, false>, sym_name = "s8.named"} {
         }
         // A signed integral key keeps its signed-key marker.
@@ -43,4 +43,4 @@ module {
   }
 }
 
-// CHECK-NOT: assoc_array<!obelisk_sim.packed_array
+// CHECK-NOT: assoc_array<!simulation.packed_array

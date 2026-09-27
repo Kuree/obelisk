@@ -211,87 +211,87 @@ module {
 // success selects the outer fail action. A weak pending implication succeeds
 // at EOS, so its negation emits only the outer failure callback.
 // CHECK-NOT: @unit_0.$concurrent_eos_branch_report.20.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch_report.20.fail
-// CHECK: obelisk_sim.bytes.constant "impl-fail"
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_branch_report.20.fail
+// CHECK: simulation.bytes.constant "impl-fail"
 // CHECK-NOT: @unit_0.$concurrent_eos_branch_report.20.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch.20
-// CHECK: obelisk_sim.branching_antecedent_eos_result = "fail"
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_current_tick_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_handoff_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_nonoverlap
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.branching_antecedent_universal_failure
-// CHECK: obelisk_sim.branching_antecedent_universal_success
-// CHECK: obelisk_sim.spawn @unit_0.fork.20.0.0
-// CHECK: obelisk_sim.spawn @unit_0.fork.20.1.1
-// CHECK: obelisk_sim.spawn @unit_0.fork.20.0.0
-// CHECK: obelisk_sim.spawn @unit_0.fork.20.1.1
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.20
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_branch.20
+// CHECK: simulation.branching_antecedent_eos_result = "fail"
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
+// CHECK-SAME: simulation.mixed_empty_antecedent_current_tick_channels = 1 : i64
+// CHECK-SAME: simulation.mixed_empty_antecedent_handoff_channels = 1 : i64
+// CHECK-SAME: simulation.mixed_empty_antecedent_nonoverlap
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.branching_antecedent_universal_failure
+// CHECK: simulation.branching_antecedent_universal_success
+// CHECK: simulation.spawn @unit_0.fork.20.0.0
+// CHECK: simulation.spawn @unit_0.fork.20.1.1
+// CHECK: simulation.spawn @unit_0.fork.20.0.0
+// CHECK: simulation.spawn @unit_0.fork.20.1.1
+// CHECK-NOT: simulation.spawn @unit_0.fork.20
 
 // Followed-by retains its existential result before the one final property
 // inversion. Its weak pending handoff is an operand success and outer failure.
 // CHECK-NOT: @unit_1.$concurrent_eos_branch_report.39.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_branch_report.39.fail
-// CHECK: obelisk_sim.bytes.constant "follow-fail"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_branch_report.39.fail
+// CHECK: simulation.bytes.constant "follow-fail"
 // CHECK-NOT: @unit_1.$concurrent_eos_branch_report.39.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_branch.39
-// CHECK: obelisk_sim.branching_antecedent_eos_result = "fail"
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_nonoverlap
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.branching_antecedent_existential_success
-// CHECK: obelisk_sim.branching_antecedent_existential_failure
-// CHECK: obelisk_sim.spawn @unit_1.fork.39.0.0
-// CHECK: obelisk_sim.spawn @unit_1.fork.39.1.1
-// CHECK: obelisk_sim.spawn @unit_1.fork.39.0.0
-// CHECK: obelisk_sim.spawn @unit_1.fork.39.1.1
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.39
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_branch.39
+// CHECK: simulation.branching_antecedent_eos_result = "fail"
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.mixed_empty_antecedent_nonoverlap
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.branching_antecedent_existential_success
+// CHECK: simulation.branching_antecedent_existential_failure
+// CHECK: simulation.spawn @unit_1.fork.39.0.0
+// CHECK: simulation.spawn @unit_1.fork.39.1.1
+// CHECK: simulation.spawn @unit_1.fork.39.0.0
+// CHECK: simulation.spawn @unit_1.fork.39.1.1
+// CHECK-NOT: simulation.spawn @unit_1.fork.39
 
 // Cover-property gives the operand a strong pending completion. Negation
 // turns that failure into the one observable cover pass, including at EOS.
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.58.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch_report.58.pass
-// CHECK: obelisk_sim.bytes.constant "cover-hit"
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_branch_report.58.pass
+// CHECK: simulation.bytes.constant "cover-hit"
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.58.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch.58
-// CHECK: obelisk_sim.branching_antecedent_eos_result = "pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "strong"
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_nonoverlap
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.branching_antecedent_existential_failure
-// CHECK: obelisk_sim.spawn @unit_2.fork.58.0.0
-// CHECK: obelisk_sim.spawn @unit_2.fork.58.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork.58.0.0
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_branch.58
+// CHECK: simulation.branching_antecedent_eos_result = "pass"
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "strong"
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.mixed_empty_antecedent_nonoverlap
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.branching_antecedent_existential_failure
+// CHECK: simulation.spawn @unit_2.fork.58.0.0
+// CHECK: simulation.spawn @unit_2.fork.58.0.0
+// CHECK-NOT: simulation.spawn @unit_2.fork.58.0.0
 
 // A multi-age mixed antecedent and multi-age consequent retain every state
 // cell under disable. EOS selects only the negated weak failure action and
 // reloads the captured epoch before dispatch.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_cancel.74
-// CHECK-COUNT-4: obelisk_sim.ref.store {{.*}} : i64, !obelisk_sim.ref<i64>
-// CHECK-NOT: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_cancel.74
+// CHECK-COUNT-4: simulation.ref.store {{.*}} : i64, !simulation.ref<i64>
+// CHECK-NOT: simulation.ref.store
+// CHECK: simulation.ref.load
 // CHECK: arith.addi
-// CHECK: obelisk_sim.ref.store
-// CHECK-NOT: obelisk_sim.ref.store
+// CHECK: simulation.ref.store
+// CHECK-NOT: simulation.ref.store
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.74.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_branch_report.74.fail
-// CHECK: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_branch_report.74.fail
+// CHECK: simulation.ref.load
 // CHECK: arith.cmpi eq
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_branch.74
-// CHECK: obelisk_sim.branching_antecedent_eos_result = "fail"
-// CHECK: obelisk_sim.branching_antecedent_eos_source_age = 3 : i64
-// CHECK: obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
-// CHECK: obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 4 : i64
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_current_tick_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_handoff_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.mixed_empty_antecedent_nonoverlap
-// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_branch.74
+// CHECK: simulation.branching_antecedent_eos_result = "fail"
+// CHECK: simulation.branching_antecedent_eos_source_age = 3 : i64
+// CHECK: simulation.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: simulation.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 4 : i64
+// CHECK-SAME: simulation.mixed_empty_antecedent_current_tick_channels = 1 : i64
+// CHECK-SAME: simulation.mixed_empty_antecedent_handoff_channels = 1 : i64
+// CHECK-SAME: simulation.mixed_empty_antecedent_nonoverlap
+// CHECK-SAME: simulation.temporal_property_negation

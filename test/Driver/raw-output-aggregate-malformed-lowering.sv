@@ -19,8 +19,8 @@ module raw_output_aggregate_malformed_lowering;
   end
 endmodule
 
-// CHECK-NOT: obelisk_sim.bytes.constant "%u"
-// CHECK-NOT: obelisk_sim.bytes.constant "%z"
+// CHECK-NOT: simulation.bytes.constant "%u"
+// CHECK-NOT: simulation.bytes.constant "%z"
 // CHECK-NOT: flags = [32, 4096]
-// CHECK: obelisk_sim.string.output_format{{.*}}flags = [32, 8]
-// CHECK-COUNT-2: obelisk_sim.string.output_format{{.*}}flags = [32, 4096, 8]
+// CHECK: simulation.string.output_format{{.*}}flags = [32, 8]
+// CHECK-COUNT-2: simulation.string.output_format{{.*}}flags = [32, 4096, 8]

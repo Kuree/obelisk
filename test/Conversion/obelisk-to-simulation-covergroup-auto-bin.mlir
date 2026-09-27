@@ -22,6 +22,6 @@ module {
   }
 }
 
-// SIM: obelisk_sim.covergroup.decl
+// SIM: simulation.covergroup.decl
 // SCHEMA: functional_item id={{[1-9][0-9]*}} type={{[1-9][0-9]*}} name=cp kind=1
 // SCHEMA-NOT: functional_bin

@@ -2,27 +2,27 @@
 
 // A RAM-sized array has no managed roots. Its trace layout should depend on
 // the element type, not require visiting all four million stored words.
-!ram = !obelisk_sim.unpacked_array<0 : 4194303 x !obelisk_sim.logic<64>>
-!bytes = !obelisk_sim.packed_array<3 : 0 x i8>
-!record = !obelisk_sim.unpacked_struct<[
-  #obelisk_sim.field<name = "bytes", type = !bytes, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+!ram = !simulation.unpacked_array<0 : 4194303 x !simulation.logic<64>>
+!bytes = !simulation.packed_array<3 : 0 x i8>
+!record = !simulation.unpacked_struct<[
+  #simulation.field<name = "bytes", type = !bytes, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>
 ]>
-!overlap = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "bits", type = !obelisk_sim.logic<64>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+!overlap = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "bits", type = !simulation.logic<64>, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>
 ], isTagged = false>
 
 module {
-  obelisk_sim.design @managed_arrays {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !ram design
-    obelisk_sim.storage.decl 1 in 0 :
-        !obelisk_sim.unpacked_array<2 : 0 x !record> design
-    obelisk_sim.storage.decl 2 in 0 :
-        !obelisk_sim.unpacked_array<-1 : 1 x !overlap> design
-    obelisk_sim.storage.decl 3 in 0 :
-        !obelisk_sim.unpacked_array<7 : 7 x !obelisk_sim.string> design
+  simulation.design @managed_arrays {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !ram design
+    simulation.storage.decl 1 in 0 :
+        !simulation.unpacked_array<2 : 0 x !record> design
+    simulation.storage.decl 2 in 0 :
+        !simulation.unpacked_array<-1 : 1 x !overlap> design
+    simulation.storage.decl 3 in 0 :
+        !simulation.unpacked_array<7 : 7 x !simulation.string> design
   }
 }
 

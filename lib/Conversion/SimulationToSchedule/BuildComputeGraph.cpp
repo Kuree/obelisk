@@ -1,6 +1,6 @@
 //===- BuildComputeGraph.cpp - Attach the derived schedule ---------------===//
 //
-// The executable obelisk_sim CFG remains the source of truth. This pass runs
+// The executable simulation CFG remains the source of truth. This pass runs
 // the shared late analysis and writes its result onto the design as compiler
 // metadata: descriptor-range summaries, fixed static sites, fragment ABI
 // records, and the derived event-region graph.

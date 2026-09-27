@@ -5,16 +5,16 @@ add_public_tablegen_target(ObeliskSimulationEnumsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS SimulationAttrs.td)
 mlir_tablegen(SimulationAttrs.h.inc -gen-attrdef-decls
-              -attrdefs-dialect=obelisk_sim)
+              -attrdefs-dialect=simulation)
 mlir_tablegen(SimulationAttrs.cpp.inc -gen-attrdef-defs
-              -attrdefs-dialect=obelisk_sim)
+              -attrdefs-dialect=simulation)
 add_public_tablegen_target(ObeliskSimulationAttrsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS SimulationTypes.td)
 mlir_tablegen(SimulationTypes.h.inc -gen-typedef-decls
-              -typedefs-dialect=obelisk_sim)
+              -typedefs-dialect=simulation)
 mlir_tablegen(SimulationTypes.cpp.inc -gen-typedef-defs
-              -typedefs-dialect=obelisk_sim)
+              -typedefs-dialect=simulation)
 add_public_tablegen_target(ObeliskSimulationTypesIncGen)
 
 set(LLVM_TARGET_DEFINITIONS SimulationOps.td)
@@ -31,9 +31,9 @@ add_dependencies(ObeliskSimulationOpsIncGen ObeliskScheduleAttrsIncGen
 
 set(LLVM_TARGET_DEFINITIONS SimulationDialect.td)
 mlir_tablegen(SimulationDialect.h.inc -gen-dialect-decls
-              -dialect=obelisk_sim)
+              -dialect=simulation)
 mlir_tablegen(SimulationDialect.cpp.inc -gen-dialect-defs
-              -dialect=obelisk_sim)
+              -dialect=simulation)
 add_public_tablegen_target(ObeliskSimulationDialectIncGen)
 
 add_subdirectory(Transforms)

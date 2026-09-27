@@ -5,20 +5,20 @@
 // the complete sorted table, and generated MLIR indexes it with three random
 // bits, producing every legal assignment uniformly on the all-enabled path.
 // Partial modes retain masked checking and runtime solving.
-// TABLE-LABEL: obelisk_sim.func private @unit_1
+// TABLE-LABEL: simulation.func private @unit_1
 // TABLE: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
-// TABLE: obelisk_sim.managed.store
+// TABLE: simulation.managed.store
 // TABLE: %[[INDEX:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
 // TABLE: %[[IS_ONE:.*]] = arith.cmpi eq, %[[INDEX]], {{.*}} : i64
 // TABLE: %[[SELECT_ONE:.*]] = arith.select %[[IS_ONE]], {{.*}}, {{.*}} : i64
 // TABLE-COUNT-5: arith.select
 // TABLE: %[[ASSIGNMENT:.*]] = arith.select
-// TABLE: obelisk_sim.random.solve {{.*}} mutable
+// TABLE: simulation.random.solve {{.*}} mutable
 // TABLE: arith.trunci {{.*}} : i64 to i4
-// TABLE: obelisk_sim.managed.store
+// TABLE: simulation.managed.store
 
-// TABLE-FALLBACK-LABEL: obelisk_sim.func private @unit_1
-// TABLE-FALLBACK: obelisk_sim.random.solve
+// TABLE-FALLBACK-LABEL: simulation.func private @unit_1
+// TABLE-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

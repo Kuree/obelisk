@@ -25,7 +25,7 @@
 
 int main(int argc, char **argv) {
   // The core transforms are part of the lowering pipeline, so tests need to
-  // be able to run them directly on obelisk_sim IR.
+  // be able to run them directly on simulation IR.
   mlir::registerTransformsPasses();
   obelisk::registerObeliskConversionPasses();
   obelisk::registerRuntimeToLLVMPipeline();

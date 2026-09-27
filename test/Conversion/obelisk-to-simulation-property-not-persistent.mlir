@@ -351,127 +351,127 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Weak always is intrinsically weak. Negation makes the outer property strong:
 // live false results hit the pass action, while weak EOS successes become
 // failures once per outstanding aggregate token.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.14.always(
-// CHECK: obelisk_sim.spawn @unit_0.fork.14.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "always"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.14.always
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_0.fork.14.0.0
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.14.always(
+// CHECK: simulation.spawn @unit_0.fork.14.1.1
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.persistent_unary_kind = "always"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.14.always
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.14.0.0
 
 // Strong eventuality becomes weak. Its live successes invert to cover failures
 // and therefore dispatch nothing, while every strong EOS failure is a
 // nonvacuous outer success and creates one cover hit.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.29.s_eventually(
-// CHECK: obelisk_sim.spawn @unit_1.fork.29.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "s_eventually"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.29.s_eventually
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.29.s_eventually(
+// CHECK: simulation.spawn @unit_1.fork.29.0.0
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_unary_kind = "s_eventually"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.29.s_eventually
+// CHECK-NOT: simulation.spawn @unit_1.fork
 
 // Weak until has both live results: an operand success becomes outer failure,
 // and an operand failure becomes outer success. Its vacuous weak EOS success
 // also becomes outer failure.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.41.until_weak(
-// CHECK: obelisk_sim.spawn @unit_2.fork.41.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "until"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_count.41.until_weak
-// CHECK: obelisk_sim.spawn @unit_2.fork.41.1.1
-// CHECK: obelisk_sim.spawn @unit_2.fork.41.0.0
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.41.until_weak(
+// CHECK: simulation.spawn @unit_2.fork.41.1.1
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.persistent_until_kind = "until"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_count.41.until_weak
+// CHECK: simulation.spawn @unit_2.fork.41.1.1
+// CHECK: simulation.spawn @unit_2.fork.41.0.0
 
 // Strong until under cover proves the counted-dispatch preselection uses the
 // outer result: both live operand failures and strong EOS failures become
 // nonvacuous cover hits; operand successes remain silent.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.58.until_strong(
-// CHECK: obelisk_sim.spawn @unit_3.fork.58.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_count.58.until_strong
-// CHECK: obelisk_sim.spawn @unit_3.fork.58.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.58.until_strong(
+// CHECK: simulation.spawn @unit_3.fork.58.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_until_kind = "s_until"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_3.$concurrent_eos_count.58.until_strong
+// CHECK: simulation.spawn @unit_3.fork.58.0.0
+// CHECK-NOT: simulation.spawn @unit_3.fork
 
 // A default assert sequence is weak. The aggregate unbounded-delay state is
 // retained; terminal successes and weak EOS successes both invert to failure.
-// CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_eos_count.72.delay_weak(
-// CHECK: obelisk_sim.spawn @unit_4.fork.72.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.persistent_delay_monitor
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_4.$concurrent_eos_count.72.delay_weak
-// CHECK: obelisk_sim.spawn @unit_4.fork.72.1.1
+// CHECK-LABEL: simulation.func private @unit_4.$concurrent_eos_count.72.delay_weak(
+// CHECK: simulation.spawn @unit_4.fork.72.1.1
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.persistent_delay_monitor
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_4.$concurrent_eos_count.72.delay_weak
+// CHECK: simulation.spawn @unit_4.fork.72.1.1
 
 // A cover-property sequence is strong by default. Prefix failures and strong
 // EOS failures both invert into hits, while terminal successes are silent.
 // The deterministic two-age prefix remains compact state.
-// CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos_count.87.delay_strong(
-// CHECK: obelisk_sim.spawn @unit_5.fork.87.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_delay_prefix_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_5.$concurrent_eos_count.87.delay_strong
-// CHECK: obelisk_sim.spawn @unit_5.fork.87.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_5.fork
+// CHECK-LABEL: simulation.func private @unit_5.$concurrent_eos_count.87.delay_strong(
+// CHECK: simulation.spawn @unit_5.fork.87.0.0
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_delay_prefix_horizon = 2 : i64
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_5.$concurrent_eos_count.87.delay_strong
+// CHECK: simulation.spawn @unit_5.fork.87.0.0
+// CHECK-NOT: simulation.spawn @unit_5.fork
 
 // Persistent repetition reuses its aggregate DFA. The default weak form
 // inverts EOS to failure and swaps both live completion callbacks.
-// CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos_count.103.repetition_weak(
-// CHECK: obelisk_sim.spawn @unit_6.fork.103.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_6(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_6.$concurrent_eos_count.103.repetition_weak
-// CHECK: obelisk_sim.spawn @unit_6.fork.103.1.1
-// CHECK: obelisk_sim.spawn @unit_6.fork.103.0.0
+// CHECK-LABEL: simulation.func private @unit_6.$concurrent_eos_count.103.repetition_weak(
+// CHECK: simulation.spawn @unit_6.fork.103.1.1
+// CHECK-LABEL: simulation.func private @unit_6(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_6.$concurrent_eos_count.103.repetition_weak
+// CHECK: simulation.spawn @unit_6.fork.103.1.1
+// CHECK: simulation.spawn @unit_6.fork.103.0.0
 
 // Explicit strong qualification remains inside not. Its EOS failure becomes a
 // nonvacuous outer success, and live repetition outcomes are still swapped.
-// CHECK-LABEL: obelisk_sim.func private @unit_7.$concurrent_eos_count.117.repetition_strong(
-// CHECK: obelisk_sim.spawn @unit_7.fork.117.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_7(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_7.$concurrent_eos_count.117.repetition_strong
-// CHECK: obelisk_sim.spawn @unit_7.fork.117.1.1
-// CHECK: obelisk_sim.spawn @unit_7.fork.117.0.0
+// CHECK-LABEL: simulation.func private @unit_7.$concurrent_eos_count.117.repetition_strong(
+// CHECK: simulation.spawn @unit_7.fork.117.0.0
+// CHECK-LABEL: simulation.func private @unit_7(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_7.$concurrent_eos_count.117.repetition_strong
+// CHECK: simulation.spawn @unit_7.fork.117.1.1
+// CHECK: simulation.spawn @unit_7.fork.117.0.0
 
 // Disable clears the aggregate count and advances the epoch. The negated EOS
 // callback reloads that epoch so a stale queued success cannot execute.
-// CHECK-LABEL: obelisk_sim.func private @unit_8.$concurrent_cancel.
-// CHECK: obelisk_sim.ref.store {{.*}} to %arg4
-// CHECK: obelisk_sim.ref.load %arg5
+// CHECK-LABEL: simulation.func private @unit_8.$concurrent_cancel.
+// CHECK: simulation.ref.store {{.*}} to %arg4
+// CHECK: simulation.ref.load %arg5
 // CHECK: arith.addi
-// CHECK: obelisk_sim.ref.store {{.*}} to %arg5
-// CHECK-LABEL: obelisk_sim.func private @unit_8.$concurrent_eos_count.
-// CHECK: [[EPOCH:%.*]] = obelisk_sim.ref.load %arg2
-// CHECK: obelisk_sim.spawn @unit_8.fork.{{[0-9]+}}.0.0(%arg0, %arg2, [[EPOCH]])
-// CHECK-LABEL: obelisk_sim.func private @unit_8(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "s_eventually"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_8.$concurrent_cancel.
-// CHECK: obelisk_sim.spawn @unit_8.$concurrent_eos_count.
+// CHECK: simulation.ref.store {{.*}} to %arg5
+// CHECK-LABEL: simulation.func private @unit_8.$concurrent_eos_count.
+// CHECK: [[EPOCH:%.*]] = simulation.ref.load %arg2
+// CHECK: simulation.spawn @unit_8.fork.{{[0-9]+}}.0.0(%arg0, %arg2, [[EPOCH]])
+// CHECK-LABEL: simulation.func private @unit_8(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_unary_kind = "s_eventually"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_8.$concurrent_cancel.
+// CHECK: simulation.spawn @unit_8.$concurrent_eos_count.
 
 // An immature ranged-strong-eventuality attempt remains vacuous through not,
 // but its successful cover-property evaluation still executes the pass
@@ -479,35 +479,35 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // for future vacuity counters while one counted callback handles both. The
 // bitset representation also permits assertion-control Off gaps without
 // changing an attempt's M-clock age.
-// CHECK-LABEL: obelisk_sim.func private @unit_9.$concurrent_eos_count.
-// CHECK: [[ELIGIBLE:%.*]] = obelisk_sim.ref.load %arg1
-// CHECK: [[IMMATURE:%.*]] = obelisk_sim.ref.load %arg2
+// CHECK-LABEL: simulation.func private @unit_9.$concurrent_eos_count.
+// CHECK: [[ELIGIBLE:%.*]] = simulation.ref.load %arg1
+// CHECK: [[IMMATURE:%.*]] = simulation.ref.load %arg2
 // CHECK: cf.br [[BIT_LOOP:\^bb[0-9]+]]([[IMMATURE]], [[ELIGIBLE]] : i64, i64)
 // CHECK: [[BIT_LOOP]]([[BITS:%.*]]: i64, [[COUNT:%.*]]: i64)
 // CHECK: [[LESS_ONE:%.*]] = arith.subi [[BITS]],
 // CHECK: [[NEXT_BITS:%.*]] = arith.andi [[BITS]], [[LESS_ONE]] : i64
 // CHECK: [[NEXT_COUNT:%.*]] = arith.addi [[COUNT]],
 // CHECK: cf.br [[BIT_LOOP]]([[NEXT_BITS]], [[NEXT_COUNT]] : i64, i64)
-// CHECK: obelisk_sim.spawn @unit_9.fork.{{[0-9]+}}.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_9(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 2 : i64
-// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK: simulation.spawn @unit_9.fork.{{[0-9]+}}.0.0
+// CHECK-LABEL: simulation.func private @unit_9(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_unary_minimum = 2 : i64
+// CHECK-SAME: simulation.temporal_property_negation
 // Both classifications remain addressable for the EOS coordinator.
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_9.$concurrent_eos_count.
-// CHECK: cf.br {{.*}} : !obelisk_sim.ref<i64>, !obelisk_sim.ref<i64>
-// CHECK-NOT: obelisk_sim.spawn @unit_9.fork
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_9.$concurrent_eos_count.
+// CHECK: cf.br {{.*}} : !simulation.ref<i64>, !simulation.ref<i64>
+// CHECK-NOT: simulation.spawn @unit_9.fork
 
 // Restrict is also a non-assert/assume directive, so a bare sequence operand is
 // strong by default and the negated outer property is weak. It remains
 // simulation-silent and therefore outlines neither reports nor EOS work.
 // CHECK-NOT: @unit_10.$concurrent_eos_count
-// CHECK-LABEL: obelisk_sim.func private @unit_10(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_delay_monitor
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.spawn
+// CHECK-LABEL: simulation.func private @unit_10(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_delay_monitor
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-NOT: simulation.spawn

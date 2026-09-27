@@ -44,6 +44,6 @@ module {
 
 // Both operands then carry the same 68 unknown bits, so the case inequality is
 // false and the guarded assignment never runs.
-// CHECK: obelisk_sim.func private @unit_0
-// CHECK-NEXT: obelisk_sim.return
+// CHECK: simulation.func private @unit_0
+// CHECK-NEXT: simulation.return
 // CHECK-NOT: arith.constant 42 : i32

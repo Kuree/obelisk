@@ -12,8 +12,8 @@ module scan_dynamic_format_lowering;
   initial status = $sscanf(source, format, destination);
 endmodule
 
-// CHECK-COUNT-2: obelisk_sim.scan_dynamic_validate
-// CHECK-COUNT-2: obelisk_sim.string.scan_dynamic
-// CHECK-COUNT-2: obelisk_sim.string.parse_real
-// CHECK-COUNT-4: obelisk_sim.string.parse_logic
-// CHECK-NOT: obelisk_sim.string.scan_field
+// CHECK-COUNT-2: simulation.scan_dynamic_validate
+// CHECK-COUNT-2: simulation.string.scan_dynamic
+// CHECK-COUNT-2: simulation.string.parse_real
+// CHECK-COUNT-4: simulation.string.parse_logic
+// CHECK-NOT: simulation.string.scan_field

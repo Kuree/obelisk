@@ -49,9 +49,9 @@ const mlirProvider = mlir.providers.get(MLIR_LANGUAGE_ID);
 assert.ok(hasRule(mlirProvider, '%value.0', 'variable'));
 assert.ok(hasRule(mlirProvider, '^bb3', 'tag'));
 assert.ok(hasRule(mlirProvider, '@symbol', 'function'));
-assert.ok(hasRule(mlirProvider, '!obelisk_sim.context', 'type'));
+assert.ok(hasRule(mlirProvider, '!simulation.context', 'type'));
 assert.ok(hasRule(mlirProvider, '#schedule.graph', 'annotation'));
-assert.ok(hasRule(mlirProvider, 'obelisk_sim.return', 'keyword'));
+assert.ok(hasRule(mlirProvider, 'simulation.return', 'keyword'));
 assert.deepEqual(mlir.configurations.get(MLIR_LANGUAGE_ID).comments, { lineComment: '//' });
 
 const llvm = capture(registerLlvm);

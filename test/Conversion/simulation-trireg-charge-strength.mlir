@@ -8,30 +8,30 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @trireg_charge_strength {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "drive"
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {
+  simulation.design @trireg_charge_strength {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "drive"
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {
       charge_strength = 1 : i32,
       resolution_kind = 9 : i32
     }
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {
       charge_strength = 4 : i32,
       resolution_kind = 9 : i32
     }
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
-    obelisk_sim.driver.decl 0 in 0 drives 1 :
-        !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
-    obelisk_sim.func @drive(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+    simulation.driver.decl 0 in 0 drives 1 :
+        !simulation.logic<1> design {resolution_kind = 9 : i32}
+    simulation.func @drive(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
-      %driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %z = obelisk_sim.logic.constant true, true : !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver = %z :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<1>>
+      %z = simulation.logic.constant true, true : !simulation.logic<1>
+      simulation.driver.drive %driver = %z :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
   }
 }

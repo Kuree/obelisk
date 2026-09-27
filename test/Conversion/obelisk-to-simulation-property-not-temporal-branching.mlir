@@ -157,56 +157,56 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The weak operand becomes a strong outer property. EOS unions its two branch
 // words and reports each live start age once through the default failure path.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_cancel.11(
-// CHECK-COUNT-3: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.11.strong(
-// CHECK-SAME: !obelisk_sim.ref<i64>
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_cancel.11(
+// CHECK-COUNT-3: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_report.11.strong(
+// CHECK-SAME: !simulation.ref<i64>
 // CHECK-SAME: i64
 // CHECK: concurrent assertion failed
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.11.strong(
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.load
 // CHECK: arith.ori
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_cancel.11
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.11.strong
+// CHECK-COUNT-2: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_0.$concurrent_cancel.11
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.11.strong
 // The generated start/age failure checks all select the outer pass action;
 // the age-one check is unreachable while the longer alternative continues.
-// CHECK-COUNT-3: obelisk_sim.spawn @unit_0.fork.11.0.0
+// CHECK-COUNT-3: simulation.spawn @unit_0.fork.11.0.0
 
 // Nested first_match contributes two of three strong operand alternatives.
 // Its pending failure is inverted into one nonvacuous cover hit per live age.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.41.weak(
-// CHECK: obelisk_sim.bytes.constant "cover-not-strong-branch-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.41.weak(
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.41.weak(
+// CHECK: simulation.bytes.constant "cover-not-strong-branch-pass"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.41.weak(
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.load
 // CHECK: arith.ori
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.ref.load
 // CHECK: arith.ori
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_1.$concurrent_eos_report.41.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.first_match_priority_groups = 1 : i64
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.41.weak
+// CHECK-COUNT-2: simulation.spawn @unit_1.$concurrent_eos_report.41.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.first_match_priority_groups = 1 : i64
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.41.weak
 
 // Explicitly strong one-cycle alternatives still invert live results, while
 // allocating neither state nor a final-phase coordinator.
 // CHECK-NOT: @unit_2.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.fork.71.0.0
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.fork.71.0.0
 // CHECK-NOT: $concurrent_eos

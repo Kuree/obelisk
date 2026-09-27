@@ -4,18 +4,18 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-four-state.test.
 
-// FOUR-STATE: obelisk_sim.func private @__obelisk_fused_
-// FOUR-STATE-NOT: obelisk_sim.ref.store
-// FOUR-STATE: obelisk_sim.aggregate.extract
-// FOUR-STATE: obelisk_sim.logic.is_true
+// FOUR-STATE: simulation.func private @__obelisk_fused_
+// FOUR-STATE-NOT: simulation.ref.store
+// FOUR-STATE: simulation.aggregate.extract
+// FOUR-STATE: simulation.logic.is_true
 // FOUR-STATE: arith.select
-// FOUR-STATE: obelisk_sim.nba.enqueue
-// FOUR-STATE-NOT: obelisk_sim.ref.store
-// FOUR-STATE: obelisk_sim.aggregate.extract
-// FOUR-STATE: obelisk_sim.logic.is_true
+// FOUR-STATE: simulation.nba.enqueue
+// FOUR-STATE-NOT: simulation.ref.store
+// FOUR-STATE: simulation.aggregate.extract
+// FOUR-STATE: simulation.logic.is_true
 // FOUR-STATE: arith.select
-// FOUR-STATE: obelisk_sim.nba.enqueue
-// FOUR-STATE-NOT: obelisk_sim.ref.store
+// FOUR-STATE: simulation.nba.enqueue
+// FOUR-STATE-NOT: simulation.ref.store
 
 //--- fused-four-state.sv
 module fused_four_state;

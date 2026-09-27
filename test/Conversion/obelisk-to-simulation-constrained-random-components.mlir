@@ -5,17 +5,17 @@
 // the global table cap. Component planning emits two independent 15-entry
 // tables and two unbiased object-stream draws, then commits directly when all
 // properties are enabled.
-// COMPONENTS-LABEL: obelisk_sim.func private @unit_1
+// COMPONENTS-LABEL: simulation.func private @unit_1
 // COMPONENTS-COUNT-2: arith.cmpi ult
 // COMPONENTS-COUNT-14: arith.select
-// COMPONENTS: obelisk_sim.random.solve {{.*}} mutable
+// COMPONENTS: simulation.random.solve {{.*}} mutable
 // COMPONENTS: arith.trunci {{.*}} : i64 to i4
 // COMPONENTS: arith.trunci {{.*}} : i64 to i4
-// COMPONENTS: obelisk_sim.managed.store
-// COMPONENTS: obelisk_sim.managed.store
+// COMPONENTS: simulation.managed.store
+// COMPONENTS: simulation.managed.store
 
-// COMPONENTS-FALLBACK-LABEL: obelisk_sim.func private @unit_1
-// COMPONENTS-FALLBACK: obelisk_sim.random.solve
+// COMPONENTS-FALLBACK-LABEL: simulation.func private @unit_1
+// COMPONENTS-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

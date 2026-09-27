@@ -2888,7 +2888,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
               std::optional<uint64_t> tupleSpan =
                   sim::getProvenanceSpan(tupleType);
               if (failed(tupleDescriptor) || !tupleSpan || !*tupleSpan ||
-                  tupleDescriptor->kind != OBELISK_RT_ELEMENT_AGGREGATE ||
+                  tupleDescriptor->kind != sim::ElementKind::Aggregate ||
                   tupleDescriptor->typeID == 0 ||
                   tupleDescriptor->valueSize != (*tupleSpan + 7) / 8 ||
                   tupleDescriptor->bitWidth != tupleDescriptor->valueSize * 8) {
@@ -2900,7 +2900,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
               pending.plan.tupleElementType = tupleDescriptor->typeID;
               pending.plan.tupleProvenanceSpan = *tupleSpan;
               pending.plan.tupleFlags =
-                  (tupleDescriptor->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+                  sim::bitEnumContainsAny(tupleDescriptor->flags,
+                                          sim::ElementFlags::FourState)
                       ? coverage::CrossTupleFourState
                       : 0;
               for (auto [ordinal, target] : llvm::enumerate(pending.targets)) {

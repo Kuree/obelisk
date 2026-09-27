@@ -80,6 +80,6 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[NULL:.*]] = obelisk_sim.class.null
-// CHECK: obelisk_sim.class.id %[[NULL]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[NULL:.*]] = simulation.class.null
+// CHECK: simulation.class.id %[[NULL]]

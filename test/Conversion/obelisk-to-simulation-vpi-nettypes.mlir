@@ -11,7 +11,7 @@ module {
       name = "$root", node_id = 1 : i64, sym_name = "root"} {
     obelisk.sv.symbol.compilation_unit attributes {
         hierarchical_name = "$unit", node_id = 2 : i64,
-        obelisk_sim.vpi_definition_name = "$unit", sym_name = "unit"} {
+        simulation.vpi_definition_name = "$unit", sym_name = "unit"} {
       obelisk.sv.type.net_type attributes {data_type = !logic,
           hierarchical_name = "base_nt", is_builtin = false,
           name = "base_nt", net_kind = 14 : i32, node_id = 3 : i64,
@@ -30,10 +30,10 @@ module {
         sym_name = "top_instance"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
           name = "top", node_id = 6 : i64,
-          obelisk_sim.vpi_automatic = false,
-          obelisk_sim.vpi_cell_instance = false,
-          obelisk_sim.vpi_definition_name = "top",
-          obelisk_sim.vpi_top = true, sym_name = "top_body",
+          simulation.vpi_automatic = false,
+          simulation.vpi_cell_instance = false,
+          simulation.vpi_definition_name = "top",
+          simulation.vpi_top = true, sym_name = "top_body",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
         obelisk.sv.symbol.net attributes {hierarchical_name = "top.n",
@@ -62,11 +62,11 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.vpi_nettype.decl @[[BASE:[^ ]+]] id 0 {{.*}} hierarchy "base_nt" debug "base_nt"
-// CHECK-DAG: obelisk_sim.vpi_nettype.decl @[[ALIAS:[^ ]+]] id 1 {{.*}} hierarchy "alias_nt" debug "alias_nt" {direct_alias = @[[BASE]]
-// CHECK: obelisk_sim.net.decl 0 {{.*}} hierarchy "top.n" debug "n" {nettype = @[[ALIAS]]
-// CHECK-SAME: obelisk_sim.user_defined_net
-// CHECK-SAME: #obelisk_sim.vpi_property<selector = 22 : i32, value = 14 : i32>
-// CHECK: obelisk_sim.vpi_net_identity.decl {{[0-9]+}} backed_by 0 {{.*}} hierarchy "top.alias_n" debug "alias_n"
+// CHECK-DAG: simulation.vpi_nettype.decl @[[BASE:[^ ]+]] id 0 {{.*}} hierarchy "base_nt" debug "base_nt"
+// CHECK-DAG: simulation.vpi_nettype.decl @[[ALIAS:[^ ]+]] id 1 {{.*}} hierarchy "alias_nt" debug "alias_nt" {direct_alias = @[[BASE]]
+// CHECK: simulation.net.decl 0 {{.*}} hierarchy "top.n" debug "n" {nettype = @[[ALIAS]]
+// CHECK-SAME: simulation.user_defined_net
+// CHECK-SAME: #simulation.vpi_property<selector = 22 : i32, value = 14 : i32>
+// CHECK: simulation.vpi_net_identity.decl {{[0-9]+}} backed_by 0 {{.*}} hierarchy "top.alias_n" debug "alias_n"
 // CHECK-SAME: nettype = @[[ALIAS]]
-// CHECK-SAME: #obelisk_sim.vpi_property<selector = 22 : i32, value = 14 : i32>
+// CHECK-SAME: #simulation.vpi_property<selector = 22 : i32, value = 14 : i32>

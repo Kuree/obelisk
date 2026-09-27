@@ -19,7 +19,7 @@ module raw_output_aggregate_wide_lowering;
   end
 endmodule
 
-// CHECK: %[[RAW_FORMAT:[0-9]+]] = obelisk_sim.bytes.constant "%z%z"
-// CHECK-NOT: obelisk_sim.bytes.constant "%u"
-// CHECK: obelisk_sim.string.output_format %arg0(%[[RAW_FORMAT]], {{.*}}!obelisk_sim.logic<4097>, !obelisk_sim.logic<4>
-// CHECK: obelisk_sim.string.output_format{{.*}}flags = [32, 4096]
+// CHECK: %[[RAW_FORMAT:[0-9]+]] = simulation.bytes.constant "%z%z"
+// CHECK-NOT: simulation.bytes.constant "%u"
+// CHECK: simulation.string.output_format %arg0(%[[RAW_FORMAT]], {{.*}}!simulation.logic<4097>, !simulation.logic<4>
+// CHECK: simulation.string.output_format{{.*}}flags = [32, 4096]

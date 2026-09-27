@@ -32,13 +32,13 @@ module {
 }
 
 // IEEE 1800-2017 10.3.4: the two polarities retain independent strengths.
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: strength0 = 5 : i32
 // CHECK-SAME: strength1 = 3 : i32
 // IEEE 1800-2017 10.3.3 applies gate transition rules to a scalar continuous
 // assignment. With two values, the turn-off delay is the lesser delay (28.16).
-// CHECK: obelisk_sim.func private @unit_0
-// CHECK-SAME: obelisk_sim.propagation_delays = array<i64: 2, 5>
-// CHECK-DAG: %[[RISE:.*]] = obelisk_sim.time.constant 2
-// CHECK-DAG: %[[FALL:.*]] = obelisk_sim.time.constant 5
-// CHECK: obelisk_sim.driver.drive_inertial %{{.*}} = %{{.*}} after[%[[RISE]], %[[FALL]], %[[RISE]]] site {{[0-9]+}} : 0 vector = false
+// CHECK: simulation.func private @unit_0
+// CHECK-SAME: simulation.propagation_delays = array<i64: 2, 5>
+// CHECK-DAG: %[[RISE:.*]] = simulation.time.constant 2
+// CHECK-DAG: %[[FALL:.*]] = simulation.time.constant 5
+// CHECK: simulation.driver.drive_inertial %{{.*}} = %{{.*}} after[%[[RISE]], %[[FALL]], %[[RISE]]] site {{[0-9]+}} : 0 vector = false

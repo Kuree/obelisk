@@ -297,17 +297,17 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.stochastic_queue {{.*}} {action = 0 : i32, unit_scale = 1000 : i64}
-// CHECK: obelisk_sim.ref.store {{.*}} : !obelisk_sim.logic<32>, !obelisk_sim.ref<!obelisk_sim.logic<32>>
-// CHECK: obelisk_sim.stochastic_queue {{.*}} {action = 1 : i32, unit_scale = 1000 : i64}
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.stochastic_queue {{.*}} {action = 2 : i32, unit_scale = 1000 : i64}
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.stochastic_queue {{.*}} {action = 3 : i32, unit_scale = 1000 : i64}
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.stochastic_queue {{.*}} {action = 4 : i32, unit_scale = 1000 : i64}
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.stochastic_queue {{.*}} {action = #simulation.stochastic_queue_action<initialize>, unit_scale = 1000 : i64}
+// CHECK: simulation.ref.store {{.*}} : !simulation.logic<32>, !simulation.ref<!simulation.logic<32>>
+// CHECK: simulation.stochastic_queue {{.*}} {action = #simulation.stochastic_queue_action<add>, unit_scale = 1000 : i64}
+// CHECK: simulation.ref.store
+// CHECK: simulation.stochastic_queue {{.*}} {action = #simulation.stochastic_queue_action<remove>, unit_scale = 1000 : i64}
+// CHECK: simulation.ref.store
+// CHECK: simulation.ref.store
+// CHECK: simulation.ref.store
+// CHECK: simulation.stochastic_queue {{.*}} {action = #simulation.stochastic_queue_action<full>, unit_scale = 1000 : i64}
+// CHECK: simulation.ref.store
+// CHECK: simulation.stochastic_queue {{.*}} {action = #simulation.stochastic_queue_action<exam>, unit_scale = 1000 : i64}
+// CHECK: simulation.ref.store
+// CHECK: simulation.ref.store

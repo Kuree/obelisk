@@ -166,27 +166,27 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
-// CHECK-COUNT-2: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.suspend.clock_set
-// CHECK: obelisk_sim.assert.clock_occurrence.consume
-// CHECK: obelisk_sim.spawn @unit_0.fork.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
-// CHECK-COUNT-2: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.suspend.clock_set
-// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.multiclock_sequence_coordinator
+// CHECK-COUNT-2: simulation.virtual_interface.scope
+// CHECK: simulation.suspend.clock_set
+// CHECK: simulation.assert.clock_occurrence.consume
+// CHECK: simulation.spawn @unit_0.fork.
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.multiclock_sequence_coordinator
+// CHECK-COUNT-2: simulation.virtual_interface.scope
+// CHECK: simulation.suspend.clock_set
+// CHECK: simulation.assert.clock_occurrence.consume
 // CHECK: arith.select
-// CHECK: obelisk_sim.spawn @unit_1.fork.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-NOT: obelisk_sim.multiclock_sequence_monitor
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK-NOT: obelisk_sim.spawn
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK-COUNT-2: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.spawn @unit_1.fork.
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-NOT: simulation.multiclock_sequence_monitor
+// CHECK: simulation.virtual_interface.scope
+// CHECK: simulation.suspend.edge posedge
+// CHECK-NOT: simulation.spawn
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK: simulation.virtual_interface.scope
+// CHECK-COUNT-2: simulation.observer.bind
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
 // CHECK-NOT: obelisk.sv.

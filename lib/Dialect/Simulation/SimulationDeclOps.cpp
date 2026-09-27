@@ -144,7 +144,7 @@ static LogicalResult verifyFixedReflection(Operation *operation,
   if (Attribute attribute = operation->getAttr("vpi_properties");
       attribute && !isa<VPIPropertySetAttr>(attribute))
     return operation->emitOpError(
-        "vpi_properties must be a #obelisk_sim.vpi_properties attribute");
+        "vpi_properties must be a #simulation.vpi_properties attribute");
   if (Attribute attribute = operation->getAttr("definition_loc");
       attribute && !isa<LocationAttr>(attribute))
     return operation->emitOpError(
@@ -287,7 +287,9 @@ LogicalResult SimScopeDeclOp::verify() {
     // not the source scope category. Every keyed scope must be an interface,
     // while an authored or legacy interface scope may legitimately lack a key
     // until virtual-interface binding metadata is available.
-    if (interfaceType && StringRef(kind->apiName) != "vpiInterface")
+    if (interfaceType &&
+        kind->value !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::Interface))
       return emitOpError(
           "interface scope metadata and intrinsic VPI kind disagree");
   }
@@ -472,8 +474,11 @@ LogicalResult SimStatementDeclOp::verify() {
     return emitOpError(scopeOwned
                            ? "scope-owned statement must omit a code-unit ID"
                            : "behavioral statement requires a code-unit ID");
-  bool named = kind && (StringRef(kind->apiName) == "vpiNamedBegin" ||
-                        StringRef(kind->apiName) == "vpiNamedFork");
+  bool named =
+      kind && (kind->value == static_cast<uint32_t>(
+                                  reflection::VPIObjectKind::NamedBegin) ||
+               kind->value ==
+                   static_cast<uint32_t>(reflection::VPIObjectKind::NamedFork));
   bool requiresScope =
       named || getVpiKind() == static_cast<uint16_t>(
                                    reflection::VPIObjectKind::ForeachStmt);
@@ -1473,7 +1478,7 @@ LogicalResult SimCoveragePointHitOp::verify() {
 
 LogicalResult SimCoverageKeepaliveOp::verify() {
   if (!isa_and_nonnull<SimDesignOp>((*this)->getParentOp()))
-    return emitOpError("must be directly nested in obelisk_sim.design");
+    return emitOpError("must be directly nested in simulation.design");
   return success();
 }
 
@@ -1481,7 +1486,7 @@ LogicalResult
 SimCoverageKeepaliveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                       getFunctionAttr()))
-    return emitOpError("must reference a sibling obelisk_sim.func");
+    return emitOpError("must reference a sibling simulation.func");
   return success();
 }
 
@@ -1491,7 +1496,7 @@ static LogicalResult verifyCoverageScopeTarget(Operation *operation,
     return operation->emitOpError("coverage scope ID must be nonzero");
   auto design = operation->getParentOfType<SimDesignOp>();
   if (!design)
-    return operation->emitOpError("must be nested in an obelisk_sim.design");
+    return operation->emitOpError("must be nested in an simulation.design");
   uint64_t id = idAttr.getValue().getZExtValue();
   for (SimScopeDeclOp scope : design.getBody().front().getOps<SimScopeDeclOp>())
     if (scope.getCoverageId().value_or(0) == id)
@@ -1549,8 +1554,8 @@ LogicalResult SimCovergroupSampleOp::verify() {
         continue;
       return emitOpError()
              << "sample value " << index
-             << " must have signless integer, !obelisk_sim.logic, "
-                "!obelisk_sim.string, or f64 type, but has "
+             << " must have signless integer, !simulation.logic, "
+                "!simulation.string, or f64 type, but has "
              << type;
     }
   }
@@ -1794,12 +1799,9 @@ LogicalResult SimClassFieldDeclOp::verify() {
         "class bit-stream member marker must be a unit attribute");
   if (bitstreamMember && getIsStatic())
     return emitOpError("static properties cannot be object bit-stream members");
-  auto visibility = dyn_cast_or_null<IntegerAttr>(bitstreamVisibility);
-  if (bitstreamVisibility &&
-      (!visibility || !visibility.getType().isInteger(32) ||
-       visibility.getValue().isNegative() ||
-       visibility.getValue().getZExtValue() > 2))
-    return emitOpError("class bit-stream visibility must be an i32 "
+  auto visibility = dyn_cast_or_null<MemberVisibilityAttr>(bitstreamVisibility);
+  if (bitstreamVisibility && !visibility)
+    return emitOpError("class bit-stream visibility must be a typed "
                        "public/protected/local value");
   if (static_cast<bool>(bitstreamMember) !=
       static_cast<bool>(bitstreamVisibility))
@@ -3395,7 +3397,8 @@ LogicalResult SimDesignOp::verifyRegions() {
           return relation.emitOpError(
               "scope source VPI kind is not a scope object");
         if (source->second.getInterfaceType() &&
-            StringRef(sourceKind->apiName) != "vpiInterface")
+            sourceKind->value !=
+                static_cast<uint32_t>(reflection::VPIObjectKind::Interface))
           return relation.emitOpError(
               "interface scope metadata and source VPI kind disagree");
         if (effectiveScopeVPIKind(source->second) !=
@@ -3961,7 +3964,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       SimCodeUnitDeclOp codeUnit =
           codeUnits.lookup(backing.getId().getValue().getZExtValue());
       if (codeUnit.getInternalAttr() ||
-          codeUnit->hasAttr("obelisk_sim.dpi_import") ||
+          codeUnit->hasAttr("simulation.dpi_import") ||
           !isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
         return anchor.emitOpError(
             "backing code unit must be a VPI-visible task or function");

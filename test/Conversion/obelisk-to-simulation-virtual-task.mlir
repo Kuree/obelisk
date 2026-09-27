@@ -2,26 +2,26 @@
 
 // CHECK: #schedule.fragment<{{.*}}function = @unit_0
 // CHECK: #schedule.fragment<{{.*}}function = @unit_1
-// CHECK: obelisk_sim.func private @unit_0
-// CHECK-SAME: !obelisk_sim.ref<i32>
-// CHECK-SAME: !obelisk_sim.argument_ref<i32>
-// CHECK: obelisk_sim.argument_ref.store
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.func private @unit_1
-// CHECK-SAME: !obelisk_sim.ref<i32>
-// CHECK-SAME: !obelisk_sim.argument_ref<i32>
-// CHECK: obelisk_sim.argument_ref.store
-// CHECK: obelisk_sim.ref.store
-// CHECK-NOT: obelisk_sim.class.is_instance
-// CHECK-NOT: obelisk_sim.task.call
-// CHECK: obelisk_sim.argument_ref.from_ref
-// CHECK: obelisk_sim.class.virtual_task_call
+// CHECK: simulation.func private @unit_0
+// CHECK-SAME: !simulation.ref<i32>
+// CHECK-SAME: !simulation.argument_ref<i32>
+// CHECK: simulation.argument_ref.store
+// CHECK: simulation.ref.store
+// CHECK: simulation.func private @unit_1
+// CHECK-SAME: !simulation.ref<i32>
+// CHECK-SAME: !simulation.argument_ref<i32>
+// CHECK: simulation.argument_ref.store
+// CHECK: simulation.ref.store
+// CHECK-NOT: simulation.class.is_instance
+// CHECK-NOT: simulation.task.call
+// CHECK: simulation.argument_ref.from_ref
+// CHECK: simulation.class.virtual_task_call
 // CHECK-SAME: slot 0 signature_id
 // CHECK-SAME: arguments 4
-// CHECK-SAME: !obelisk_sim.ref<i32>
-// CHECK-SAME: !obelisk_sim.argument_ref<i32>
-// CHECK-NOT: obelisk_sim.class.is_instance
-// CHECK-NOT: obelisk_sim.task.call
+// CHECK-SAME: !simulation.ref<i32>
+// CHECK-SAME: !simulation.argument_ref<i32>
+// CHECK-NOT: simulation.class.is_instance
+// CHECK-NOT: simulation.task.call
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

@@ -7,12 +7,12 @@
 // first.
 
 module {
-  obelisk_sim.design @event_array_layout {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 :
-        !obelisk_sim.unpacked_array<0 : 1 x !obelisk_sim.event> design
-    obelisk_sim.storage.decl 1 in 0 :
-        !obelisk_sim.unpacked_array<0 : 1 x !obelisk_sim.event> design
+  simulation.design @event_array_layout {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 :
+        !simulation.unpacked_array<0 : 1 x !simulation.event> design
+    simulation.storage.decl 1 in 0 :
+        !simulation.unpacked_array<0 : 1 x !simulation.event> design
   }
 }
 

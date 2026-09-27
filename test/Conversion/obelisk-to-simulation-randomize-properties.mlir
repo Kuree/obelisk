@@ -106,45 +106,45 @@ module attributes {
 // constraint survives property-name removal and cloning into both plans. The
 // object's persistent rand_mode mask is deliberately not read.
 
-// CHECK: obelisk_sim.class.field @__obelisk_class_s3_C_field_0 {{.*}} {debug_name = "a"
-// CHECK: obelisk_sim.class.field @__obelisk_class_s3_C_field_1 {{.*}} {debug_name = "b"
-// CHECK: obelisk_sim.class.field @__obelisk_class_s3_C_field_1_randc_key
-// CHECK: obelisk_sim.class.field @__obelisk_class_s3_C_field_1_randc_position
-// CHECK: obelisk_sim.class.field @__obelisk_class_s3_C_field_4 {{.*}} {debug_name = "c"
-// CHECK: obelisk_sim.class.field @__obelisk_class_s20_D_field_0 {{.*}} {debug_name = "d"
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[OBJECT:.*]] = obelisk_sim.ref.load {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_C>
-// CHECK: %[[IS_D:.*]] = obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s20_D
+// CHECK: simulation.class.field @__obelisk_class_s3_C_field_0 {{.*}} {debug_name = "a"
+// CHECK: simulation.class.field @__obelisk_class_s3_C_field_1 {{.*}} {debug_name = "b"
+// CHECK: simulation.class.field @__obelisk_class_s3_C_field_1_randc_key
+// CHECK: simulation.class.field @__obelisk_class_s3_C_field_1_randc_position
+// CHECK: simulation.class.field @__obelisk_class_s3_C_field_4 {{.*}} {debug_name = "c"
+// CHECK: simulation.class.field @__obelisk_class_s20_D_field_0 {{.*}} {debug_name = "d"
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: %[[OBJECT:.*]] = simulation.ref.load {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_C>
+// CHECK: %[[IS_D:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s20_D
 // CHECK: cf.cond_br %[[IS_D]]
-// CHECK: %[[DERIVED:.*]] = obelisk_sim.class.cast %[[OBJECT]] {{.*}} to !obelisk_sim.class_handle<@__obelisk_class_s20_D>
-// CHECK-NEXT: %[[D_B_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1]
-// CHECK-NEXT: %[[D_KEY_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_key]
-// CHECK-NEXT: %[[D_POS_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_position]
-// CHECK-NEXT: %[[D_C_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_4]
-// CHECK: %[[IS_C:.*]] = obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
-// CHECK: %[[D_A_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_0]
-// CHECK-NEXT: obelisk_sim.managed.load %[[D_A_REF]]
-// CHECK: %[[D_STATE_REF:.*]] = obelisk_sim.class.field_ref %[[DERIVED]][@__obelisk_class_s20_D_field_0]
-// CHECK-NEXT: obelisk_sim.managed.load %[[D_STATE_REF]]
+// CHECK: %[[DERIVED:.*]] = simulation.class.cast %[[OBJECT]] {{.*}} to !simulation.class_handle<@__obelisk_class_s20_D>
+// CHECK-NEXT: %[[D_B_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1]
+// CHECK-NEXT: %[[D_KEY_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_key]
+// CHECK-NEXT: %[[D_POS_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_position]
+// CHECK-NEXT: %[[D_C_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_4]
+// CHECK: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
+// CHECK: %[[D_A_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_0]
+// CHECK-NEXT: simulation.managed.load %[[D_A_REF]]
+// CHECK: %[[D_STATE_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s20_D_field_0]
+// CHECK-NEXT: simulation.managed.load %[[D_STATE_REF]]
 // CHECK: %[[D_INLINE_LIMIT:.*]] = arith.constant {{.*}}10 : i32
 // CHECK-NEXT: {{.*}} = arith.cmpi slt, {{.*}}, %[[D_INLINE_LIMIT]] : i32
-// CHECK: obelisk_sim.managed.store {{.*}} to %[[D_B_REF]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[D_KEY_REF]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[D_POS_REF]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[D_C_REF]]
-// CHECK: %[[C_B_REF:.*]] = obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1]
-// CHECK-NEXT: %[[C_KEY_REF:.*]] = obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_key]
-// CHECK-NEXT: %[[C_POS_REF:.*]] = obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_position]
-// CHECK-NEXT: %[[C_C_REF:.*]] = obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_4]
-// CHECK: %[[C_A_REF:.*]] = obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_0]
-// CHECK-NEXT: obelisk_sim.managed.load %[[C_A_REF]]
+// CHECK: simulation.managed.store {{.*}} to %[[D_B_REF]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_KEY_REF]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_POS_REF]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_C_REF]]
+// CHECK: %[[C_B_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1]
+// CHECK-NEXT: %[[C_KEY_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_key]
+// CHECK-NEXT: %[[C_POS_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_position]
+// CHECK-NEXT: %[[C_C_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_4]
+// CHECK: %[[C_A_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_0]
+// CHECK-NEXT: simulation.managed.load %[[C_A_REF]]
 // CHECK: %[[C_INLINE_LIMIT:.*]] = arith.constant {{.*}}10 : i32
 // CHECK-NEXT: {{.*}} = arith.cmpi slt, {{.*}}, %[[C_INLINE_LIMIT]] : i32
-// CHECK: obelisk_sim.managed.store {{.*}} to %[[C_B_REF]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[C_KEY_REF]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[C_POS_REF]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[C_C_REF]]
-// CHECK-NOT: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_C_field___obelisk_rand_mode]
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[D_A_REF]]
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[D_STATE_REF]]
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[C_A_REF]]
+// CHECK: simulation.managed.store {{.*}} to %[[C_B_REF]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_KEY_REF]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_POS_REF]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_C_REF]]
+// CHECK-NOT: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_C_field___obelisk_rand_mode]
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[D_A_REF]]
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[D_STATE_REF]]
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[C_A_REF]]

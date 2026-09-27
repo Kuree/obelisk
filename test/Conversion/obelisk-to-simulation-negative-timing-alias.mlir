@@ -94,6 +94,6 @@ module attributes {
 // The zero-delay physical terminal is represented by the -1 direct-source
 // sentinel and needs no redundant storage/monitor.
 // CHECK-COUNT-1: debug "implicit negative timing-check delayed signal"
-// CHECK-COUNT-2: obelisk_sim.timing_delayed_storage_ids = array<i64: 2, -1>
-// CHECK-COUNT-1: obelisk_sim.negative_timing_delay_monitor
+// CHECK-COUNT-2: simulation.timing_delayed_storage_ids = array<i64: 2, -1>
+// CHECK-COUNT-1: simulation.negative_timing_delay_monitor
 // CHECK-NOT: timing_check_table

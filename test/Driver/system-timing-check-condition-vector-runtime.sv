@@ -66,8 +66,8 @@ module system_timing_check_condition_vector_runtime;
   end
 endmodule
 
-// SIM: obelisk_sim.ref.extract
-// SIM: obelisk_sim.suspend.clock_set
+// SIM: simulation.ref.extract
+// SIM: simulation.suspend.clock_set
 // SIM-SAME: conditions 1
 // SIM-NOT: timing_check_table
 // CHECK: condition-upper-only 0

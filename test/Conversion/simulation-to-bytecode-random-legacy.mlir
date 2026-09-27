@@ -10,17 +10,17 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @legacy_random {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "legacy_random.draw"
+  simulation.design @legacy_random {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "legacy_random.draw"
 
-    obelisk_sim.func private @draw(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32}) -> i32
+    simulation.func private @draw(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32}) -> i32
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
-      %result = obelisk_sim.random.legacy %ctx
-          : (!obelisk_sim.context) -> i32
-      obelisk_sim.return %result : i32
+      %result = simulation.random.legacy %ctx
+          : (!simulation.context) -> i32
+      simulation.return %result : i32
     }
   }
 }

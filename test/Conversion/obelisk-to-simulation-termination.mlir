@@ -107,20 +107,20 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.finish
-// CHECK-NEXT: obelisk_sim.return
-// CHECK: obelisk_sim.stop
-// CHECK-NEXT: obelisk_sim.return
-// CHECK-DAG: obelisk_sim.bytes.constant "INFO: {{.*}}: termination: simulation time %0t: {{.*}}"
-// CHECK-DAG: obelisk_sim.bytes.constant "WARNING: {{.*}}: termination: simulation time %0t: {{.*}}"
-// CHECK-DAG: obelisk_sim.bytes.constant "ERROR: {{.*}}: termination: simulation time %0t: {{.*}}"
-// CHECK: obelisk_sim.time.now
-// CHECK: obelisk_sim.error
-// CHECK-NEXT: obelisk_sim.display
-// CHECK: obelisk_sim.bytes.constant "FATAL:
-// CHECK: obelisk_sim.fatal
-// CHECK-NEXT: obelisk_sim.display
-// CHECK-NEXT: obelisk_sim.return
-// CHECK: obelisk_sim.termination.requested
+// CHECK: simulation.finish
+// CHECK-NEXT: simulation.return
+// CHECK: simulation.stop
+// CHECK-NEXT: simulation.return
+// CHECK-DAG: simulation.bytes.constant "INFO: {{.*}}: termination: simulation time %0t: {{.*}}"
+// CHECK-DAG: simulation.bytes.constant "WARNING: {{.*}}: termination: simulation time %0t: {{.*}}"
+// CHECK-DAG: simulation.bytes.constant "ERROR: {{.*}}: termination: simulation time %0t: {{.*}}"
+// CHECK: simulation.time.now
+// CHECK: simulation.error
+// CHECK-NEXT: simulation.display
+// CHECK: simulation.bytes.constant "FATAL:
+// CHECK: simulation.fatal
+// CHECK-NEXT: simulation.display
+// CHECK-NEXT: simulation.return
+// CHECK: simulation.termination.requested
 // CHECK: cf.cond_br
 // CHECK-NOT: obelisk.sv.

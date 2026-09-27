@@ -19,7 +19,7 @@ namespace obelisk::detail {
 namespace {
 
 constexpr StringLiteral continuousStoreAttrName =
-    "obelisk_sim.continuous_store";
+    "simulation.continuous_store";
 constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
     "obelisk.native.bulk_copy_source_assume_clean";
 constexpr StringLiteral guardedRefStoreAttr =

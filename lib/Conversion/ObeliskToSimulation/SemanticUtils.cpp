@@ -281,7 +281,7 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
           dyn_cast<semantic::SVUnbasedUnsizedIntegerLiteralOp>(operation))
     return literal.getConstantValue();
   if (auto constant =
-          operation->getAttrOfType<StringAttr>("obelisk_sim.constant_value"))
+          operation->getAttrOfType<StringAttr>("simulation.constant_value"))
     return constant.getValue();
   if (auto constant =
           operation->getAttrOfType<StringAttr>(staticNetConstantAttrName))
@@ -518,7 +518,7 @@ bool isStaticallyAllocatedOverrideTarget(Value value) {
           dyn_cast_or_null<sim::SimFuncOp>(argument.getOwner()->getParentOp());
       return function &&
              !function.getArgAttr(argument.getArgNumber(),
-                                  "obelisk_sim.automatic_reference_capture");
+                                  "simulation.automatic_reference_capture");
     }
     return true;
   }

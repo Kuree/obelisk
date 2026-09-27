@@ -4,7 +4,7 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-backedge.test.
 
-// BACKEDGE-IR: obelisk_sim.design
+// BACKEDGE-IR: simulation.design
 // BACKEDGE-IR: __obelisk_fused_
 
 //--- backedge.sv

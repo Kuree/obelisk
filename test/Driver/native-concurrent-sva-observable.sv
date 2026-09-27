@@ -76,7 +76,7 @@ endmodule
 
 // CHECK: ERROR: {{.*}}native-concurrent-sva-observable.sv:{{[0-9]+}}: concurrent assertion failed.
 // CHECK: assert=11 assume=11 cover=111111 vacuous=1 order=1234
-// SIM-DAG: obelisk_sim.assert.sampled_read
+// SIM-DAG: simulation.assert.sampled_read
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: home_region = 10 : i32
 // SIM-DAG: schedule.concurrent_report

@@ -144,15 +144,15 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.return %{{.*}} : !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.return %{{.*}} : !simulation.packed_array<1 : 0 x !simulation.logic<1>>
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // The zero replication's operand is still called once, and its result feeds
 // nothing.
-// CHECK: obelisk_sim.call @unit_0
-// CHECK-NOT: obelisk_sim.logic.replicate
-// CHECK-NOT: obelisk_sim.logic.concat
+// CHECK: simulation.call @unit_0
+// CHECK-NOT: simulation.logic.replicate
+// CHECK-NOT: simulation.logic.concat
 // The concatenation is the surviving operand alone.
-// CHECK: %[[A:.*]] = obelisk_sim.ref.load %arg1
-// CHECK: obelisk_sim.ref.store %[[A]] to %arg2
+// CHECK: %[[A:.*]] = simulation.ref.load %arg1
+// CHECK: simulation.ref.store %[[A]] to %arg2

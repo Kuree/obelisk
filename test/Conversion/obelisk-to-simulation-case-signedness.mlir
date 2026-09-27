@@ -45,8 +45,8 @@ module {
   }
 }
 
-// CHECK: %[[SELECTOR:.*]] = obelisk_sim.ref.load
-// CHECK: %[[FLAT:.*]] = obelisk_sim.packed.flatten %[[SELECTOR]]
-// CHECK: %[[EXTENDED:.*]] = obelisk_sim.logic.resize %[[FLAT]] signed = false : !obelisk_sim.logic<2> -> !obelisk_sim.logic<4>
-// CHECK: obelisk_sim.logic.compare case_eq %[[EXTENDED]],
+// CHECK: %[[SELECTOR:.*]] = simulation.ref.load
+// CHECK: %[[FLAT:.*]] = simulation.packed.flatten %[[SELECTOR]]
+// CHECK: %[[EXTENDED:.*]] = simulation.logic.resize %[[FLAT]] signed = false : !simulation.logic<2> -> !simulation.logic<4>
+// CHECK: simulation.logic.compare case_eq %[[EXTENDED]],
 // CHECK-NOT: obelisk.sv.

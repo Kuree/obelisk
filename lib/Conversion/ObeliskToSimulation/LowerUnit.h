@@ -1,7 +1,7 @@
 //===- LowerUnit.h - Frozen semantic unit lowering internals ----*- C++ -*-===//
 //
 // Shared implementation state for the semantic groups that lower one frozen
-// `obelisk_sim.func`. This is private to the Obelisk-to-simulation conversion.
+// `simulation.func`. This is private to the Obelisk-to-simulation conversion.
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,8 +29,8 @@ namespace obelisk::simlowering {
 
 struct ContainerElementDescriptor {
   uint64_t typeID;
-  uint32_t kind;
-  uint32_t flags;
+  sim::ElementKind kind;
+  sim::ElementFlags flags;
   uint64_t valueSize;
   uint64_t alignment;
   uint64_t bitWidth;

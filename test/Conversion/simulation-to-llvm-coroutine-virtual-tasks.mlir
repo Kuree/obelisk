@@ -4,75 +4,75 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @virtual_tasks {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.caller"
-    obelisk_sim.code_unit.decl 2 in 0 task hierarchy "Base.run"
+  simulation.design @virtual_tasks {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.caller"
+    simulation.code_unit.decl 2 in 0 task hierarchy "Base.run"
 
-    obelisk_sim.class.decl @Runner id 1 {
+    simulation.class.decl @Runner id 1 {
       is_abstract = true, is_final = false, is_interface = true
     }
-    obelisk_sim.class.decl @Base id 2 implements [@Runner] {
+    simulation.class.decl @Base id 2 implements [@Runner] {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.method @Runner_run of @Runner slot 4294967295
+    simulation.class.method @Runner_run of @Runner slot 4294967295
       signature_id 17 interface_ordinal 0 :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Runner>, f32,
-       !obelisk_sim.logic<8>, !obelisk_sim.class_handle<@Base>,
-       !obelisk_sim.ref<i32>) -> () {
+      (!simulation.context, !simulation.class_handle<@Runner>, f32,
+       !simulation.logic<8>, !simulation.class_handle<@Base>,
+       !simulation.ref<i32>) -> () {
         is_final = false, is_pure = true, is_static = false,
         is_task = true, is_virtual = true
       }
-    obelisk_sim.class.method @Base_run of @Base slot 0 signature_id 17
+    simulation.class.method @Base_run of @Base slot 0 signature_id 17
       implemented_by @base_run :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Base>, f32,
-       !obelisk_sim.logic<8>, !obelisk_sim.class_handle<@Base>,
-       !obelisk_sim.ref<i32>) -> () {
+      (!simulation.context, !simulation.class_handle<@Base>, f32,
+       !simulation.logic<8>, !simulation.class_handle<@Base>,
+       !simulation.ref<i32>) -> () {
         is_final = false, is_pure = false, is_static = false,
         is_task = true, is_virtual = true
       }
 
-    obelisk_sim.func @base_run(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %this: !obelisk_sim.class_handle<@Base>
-          {obelisk_sim.capture_kind = 1 : i32},
-        %short: f32 {obelisk_sim.capture_kind = 2 : i32},
-        %logic: !obelisk_sim.logic<8>
-          {obelisk_sim.capture_kind = 2 : i32},
-        %managed: !obelisk_sim.class_handle<@Base>
-          {obelisk_sim.capture_kind = 2 : i32},
-        %reference: !obelisk_sim.ref<i32>
-          {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @base_run(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %this: !simulation.class_handle<@Base>
+          {simulation.capture_kind = 1 : i32},
+        %short: f32 {simulation.capture_kind = 2 : i32},
+        %logic: !simulation.logic<8>
+          {simulation.capture_kind = 2 : i32},
+        %managed: !simulation.class_handle<@Base>
+          {simulation.capture_kind = 2 : i32},
+        %reference: !simulation.ref<i32>
+          {simulation.capture_kind = 2 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 12 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      %receiver = obelisk_sim.class.alloc %ctx :
-        !obelisk_sim.context -> !obelisk_sim.class_handle<@Base>
-      %interface = obelisk_sim.class.cast %receiver :
-        !obelisk_sim.class_handle<@Base> to
-        !obelisk_sim.class_handle<@Runner>
-      %managed = obelisk_sim.class.alloc %ctx :
-        !obelisk_sim.context -> !obelisk_sim.class_handle<@Base>
+      %receiver = simulation.class.alloc %ctx :
+        !simulation.context -> !simulation.class_handle<@Base>
+      %interface = simulation.class.cast %receiver :
+        !simulation.class_handle<@Base> to
+        !simulation.class_handle<@Runner>
+      %managed = simulation.class.alloc %ctx :
+        !simulation.context -> !simulation.class_handle<@Base>
       %short = arith.constant 1.25 : f32
       %bits = arith.constant 42 : i8
-      %logic = obelisk_sim.logic.from_bits %bits :
-        i8 -> !obelisk_sim.logic<8>
+      %logic = simulation.logic.from_bits %bits :
+        i8 -> !simulation.logic<8>
       %initial = arith.constant 7 : i32
-      %reference = obelisk_sim.ref.alloc %initial :
-        i32 -> !obelisk_sim.ref<i32>
-      obelisk_sim.class.virtual_task_call
+      %reference = simulation.ref.alloc %initial :
+        i32 -> !simulation.ref<i32>
+      simulation.class.virtual_task_call
         %interface[@Runner_run] slot 4294967295 signature_id 17
         (%short, %logic, %managed, %reference, %reference) arguments 4
         to ^done :
-        (!obelisk_sim.class_handle<@Runner>, f32, !obelisk_sim.logic<8>,
-         !obelisk_sim.class_handle<@Base>, !obelisk_sim.ref<i32>,
-         !obelisk_sim.ref<i32>) -> ()
-    ^done(%continued: !obelisk_sim.ref<i32>):
-      obelisk_sim.return
+        (!simulation.class_handle<@Runner>, f32, !simulation.logic<8>,
+         !simulation.class_handle<@Base>, !simulation.ref<i32>,
+         !simulation.ref<i32>) -> ()
+    ^done(%continued: !simulation.ref<i32>):
+      simulation.return
     }
   }
 }
@@ -114,4 +114,4 @@ module attributes {
 // CHECK: ^[[FAILURE]]
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_release
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.class.virtual_task_call
+// CHECK-NOT: simulation.class.virtual_task_call

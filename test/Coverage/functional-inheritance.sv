@@ -128,6 +128,6 @@ endmodule
 // REPORT: "functional":{"available":true,"covered":12,"total":17
 // REPORT: "name":"cp$inherited${{[1-9][0-9]*}}"{{.*}}"aggregating":false
 
-// IR: obelisk_sim.covergroup.decl {{.*}} base
-// IR: obelisk_sim.class.is_instance
-// IR: obelisk_sim.covergroup.cast
+// IR: simulation.covergroup.decl {{.*}} base
+// IR: simulation.class.is_instance
+// IR: simulation.covergroup.cast

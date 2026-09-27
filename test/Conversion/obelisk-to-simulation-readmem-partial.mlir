@@ -40,9 +40,9 @@ module {
   }
 }
 
-// CHECK: %[[SELECTED:.*]] = obelisk_sim.ref.subelement
-// CHECK-SAME: -> !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 4 x
-// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_sim.file.readmem_token
-// CHECK: %[[ROW:.*]] = obelisk_sim.ref.array_element %[[SELECTED]][{{.*}}]
-// CHECK: %[[COLUMN:.*]] = obelisk_sim.ref.array_element %[[ROW]][{{.*}}]
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[COLUMN]]
+// CHECK: %[[SELECTED:.*]] = simulation.ref.subelement
+// CHECK-SAME: -> !simulation.ref<!simulation.unpacked_array<0 : 4 x
+// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = simulation.file.readmem_token
+// CHECK: %[[ROW:.*]] = simulation.ref.array_element %[[SELECTED]][{{.*}}]
+// CHECK: %[[COLUMN:.*]] = simulation.ref.array_element %[[ROW]][{{.*}}]
+// CHECK: simulation.ref.store {{.*}} to %[[COLUMN]]

@@ -8,39 +8,39 @@
 // A wait captures the handle before suspension, so later cell assignment does
 // not migrate that already-suspended wait to the replacement object.
 
-// CHECK: obelisk_sim.storage.decl 0 in 1 : !obelisk_sim.event design hierarchy "event_cell.mutable"
-// CHECK: obelisk_sim.storage.decl 1 in 1 : !obelisk_sim.event design hierarchy "event_cell.alias"
-// CHECK-SAME: obelisk_sim.event_explicit_initializer
-// CHECK: obelisk_sim.storage.decl 2 in 1 : !obelisk_sim.event design hierarchy "event_cell.empty"
-// CHECK-SAME: obelisk_sim.event_explicit_initializer
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: %[[MUTABLE:.*]] = obelisk_sim.context.storage %{{.*}}[0]
-// CHECK: %[[FRESH:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.ref.store %[[FRESH]] to %[[MUTABLE]]
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.context.event %{{.*}}[0]
-// CHECK: obelisk_sim.call @unit_0(%{{.*}}, %[[SOURCE]])
-// CHECK: obelisk_sim.call @unit_1
+// CHECK: simulation.storage.decl 0 in 1 : !simulation.event design hierarchy "event_cell.mutable"
+// CHECK: simulation.storage.decl 1 in 1 : !simulation.event design hierarchy "event_cell.alias"
+// CHECK-SAME: simulation.event_explicit_initializer
+// CHECK: simulation.storage.decl 2 in 1 : !simulation.event design hierarchy "event_cell.empty"
+// CHECK-SAME: simulation.event_explicit_initializer
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: %[[MUTABLE:.*]] = simulation.context.storage %{{.*}}[0]
+// CHECK: %[[FRESH:.*]] = simulation.event.create
+// CHECK: simulation.ref.store %[[FRESH]] to %[[MUTABLE]]
+// CHECK: %[[SOURCE:.*]] = simulation.context.event %{{.*}}[0]
+// CHECK: simulation.call @unit_0(%{{.*}}, %[[SOURCE]])
+// CHECK: simulation.call @unit_1
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[ALIAS:.*]] = obelisk_sim.context.storage %{{.*}}[1]
-// CHECK: obelisk_sim.ref.store %arg1 to %[[ALIAS]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[ALIAS:.*]] = simulation.context.storage %{{.*}}[1]
+// CHECK: simulation.ref.store %arg1 to %[[ALIAS]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[NULL:.*]] = obelisk_sim.event.null
-// CHECK: %[[EMPTY:.*]] = obelisk_sim.context.storage %{{.*}}[2]
-// CHECK: obelisk_sim.ref.store %[[NULL]] to %[[EMPTY]]
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: %[[NULL:.*]] = simulation.event.null
+// CHECK: %[[EMPTY:.*]] = simulation.context.storage %{{.*}}[2]
+// CHECK: simulation.ref.store %[[NULL]] to %[[EMPTY]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2
-// CHECK: %[[WAITED:.*]] = obelisk_sim.ref.load %arg1
-// CHECK-NEXT: obelisk_sim.suspend.event %[[WAITED]]
+// CHECK-LABEL: simulation.func private @unit_2
+// CHECK: %[[WAITED:.*]] = simulation.ref.load %arg1
+// CHECK-NEXT: simulation.suspend.event %[[WAITED]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_3
-// CHECK: %[[ASSIGNNULL:.*]] = obelisk_sim.event.null
-// CHECK: obelisk_sim.ref.store %arg3 to %arg1
-// CHECK: obelisk_sim.ref.store %[[ASSIGNNULL]] to %arg2
-// CHECK: obelisk_sim.ref.store %arg3 to %arg2
-// CHECK: %[[TRIGGER:.*]] = obelisk_sim.ref.load %arg2
-// CHECK-NEXT: obelisk_sim.event.trigger %[[TRIGGER]]
+// CHECK-LABEL: simulation.func private @unit_3
+// CHECK: %[[ASSIGNNULL:.*]] = simulation.event.null
+// CHECK: simulation.ref.store %arg3 to %arg1
+// CHECK: simulation.ref.store %[[ASSIGNNULL]] to %arg2
+// CHECK: simulation.ref.store %arg3 to %arg2
+// CHECK: %[[TRIGGER:.*]] = simulation.ref.load %arg2
+// CHECK-NEXT: simulation.event.trigger %[[TRIGGER]]
 // CHECK-NOT: obelisk.sv.
 
 // NATIVE: llvm.func @obelisk_rt_v1_scheduler_event_create

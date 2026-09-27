@@ -6,13 +6,13 @@
 include "mlir/IR/DialectBase.td"
 
 def ObeliskSimulationDialect : Dialect {
-  let name = "obelisk_sim";
+  let name = "simulation";
   let cppNamespace = "::obelisk::sim";
   let dependentDialects = ["::obelisk::schedule::ScheduleDialect", "::mlir::arith::ArithDialect",
                            "::obelisk::runtime::ObeliskRuntimeDialect"];
   let summary = "Target-independent executable SystemVerilog simulation IR";
   let description = [{
-    `obelisk_sim` is the SSA and explicit-effect boundary after elaborated
+    `simulation` is the SSA and explicit-effect boundary after elaborated
     SystemVerilog semantic IR.  Hierarchy and mutable design objects are
     identified by deterministic numeric descriptors; code is isolated into
     function-like SSACFG regions whose only symbolic references are direct

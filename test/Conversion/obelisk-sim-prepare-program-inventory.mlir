@@ -3,19 +3,19 @@
 // Repeated code units share an instance classification, but different
 // instances must not share the cached answer. Frontend definition identities
 // need the name fallback when nearest-symbol lookup stops at isolated scopes.
-// CHECK: obelisk_sim.func private @unit_0
+// CHECK: simulation.func private @unit_0
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: obelisk_sim.func private @unit_1
+// CHECK: simulation.func private @unit_1
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: obelisk_sim.func private @unit_2
+// CHECK: simulation.func private @unit_2
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK: obelisk_sim.func private @unit_3
+// CHECK: simulation.func private @unit_3
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK: obelisk_sim.func private @unit_4
+// CHECK: simulation.func private @unit_4
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
 

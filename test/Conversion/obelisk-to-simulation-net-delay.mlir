@@ -32,18 +32,18 @@ module {
 
 // IEEE 1800-2017 10.3.3: a delay on an uninitialized net declaration delays
 // the resolved net update, rather than the individual continuous driver.
-// CHECK: obelisk_sim.net.decl [[NET:[0-9]+]] in {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.net.decl [[NET:[0-9]+]] in {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: propagation_delays = array<i64: 1, 1, 1>
-// CHECK: obelisk_sim.driver.decl [[DRIVER:[0-9]+]] in {{[0-9]+}} drives [[NET]]
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-SAME: obelisk_sim.delayed_net
-// CHECK: obelisk_sim.driver.drive_delayed_net
-// CHECK-NOT: obelisk_sim.driver.drive %
+// CHECK: simulation.driver.decl [[DRIVER:[0-9]+]] in {{[0-9]+}} drives [[NET]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-SAME: simulation.delayed_net
+// CHECK: simulation.driver.drive_delayed_net
+// CHECK-NOT: simulation.driver.drive %
 
 // The scheduler side effect prevents compute fusion from replacing the
 // delayed publication with an immediate drive at optimization level 3.
-// O3: obelisk_sim.net.decl
+// O3: simulation.net.decl
 // O3-SAME: propagation_delays = array<i64: 1, 1, 1>
-// O3-LABEL: obelisk_sim.func private @unit_0
-// O3: obelisk_sim.driver.drive_delayed_net
-// O3-NOT: obelisk_sim.driver.drive %
+// O3-LABEL: simulation.func private @unit_0
+// O3: simulation.driver.drive_delayed_net
+// O3-NOT: simulation.driver.drive %

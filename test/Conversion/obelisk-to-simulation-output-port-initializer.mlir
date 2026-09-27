@@ -42,13 +42,13 @@ module {
 }
 
 
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 function hierarchy "port_initializer.value.$static_initializer" debug "value"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in 1 function hierarchy "port_initializer.value.$static_initializer" debug "value"
 
 // The initializer runs as a zero-time call before the initial process spawns.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK:      obelisk_sim.call @unit_0(
-// CHECK:      obelisk_sim.spawn @unit_1(
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK:      simulation.call @unit_0(
+// CHECK:      simulation.spawn @unit_1(
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK:      %[[VALUE:.*]] = obelisk_sim.logic.constant -6 : i4, 0 : i4
-// CHECK:      obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK:      %[[VALUE:.*]] = simulation.logic.constant -6 : i4, 0 : i4
+// CHECK:      simulation.ref.store

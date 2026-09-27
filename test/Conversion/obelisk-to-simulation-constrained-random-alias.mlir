@@ -1,9 +1,9 @@
 // RUN: %if z3 %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ALIAS %}
 // RUN: %if !z3 %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ALIAS-FALLBACK %}
 
-// ALIAS-LABEL: obelisk_sim.func private @unit_1
+// ALIAS-LABEL: simulation.func private @unit_1
 // ALIAS: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
-// ALIAS: obelisk_sim.managed.store
+// ALIAS: simulation.managed.store
 // `solve y before x` makes y the canonical representative of the alias class.
 // ALIAS: %[[Y_SHIFTED:.*]] = arith.shrui %[[COUNTER:.*]], {{.*}} : i64
 // ALIAS: %[[Y:.*]] = arith.andi %[[Y_SHIFTED]], {{.*}} : i64
@@ -12,15 +12,15 @@
 // ALIAS: %[[Z:.*]] = arith.shli %[[Y]], {{.*}} : i64
 // ALIAS: %[[NO_Z:.*]] = arith.andi %[[WITH_X]], {{.*}} : i64
 // ALIAS: %[[ASSIGNMENT:.*]] = arith.ori %[[NO_Z]], %[[Z]] : i64
-// ALIAS: obelisk_sim.random.solve {{.*}} mutable
-// ALIAS: obelisk_sim.managed.store
-// ALIAS: obelisk_sim.managed.store
-// ALIAS: obelisk_sim.managed.store
+// ALIAS: simulation.random.solve {{.*}} mutable
+// ALIAS: simulation.managed.store
+// ALIAS: simulation.managed.store
+// ALIAS: simulation.managed.store
 
-// ALIAS-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// ALIAS-FALLBACK-LABEL: simulation.func private @unit_1
 // ALIAS-FALLBACK: arith.cmpi eq
 // ALIAS-FALLBACK: arith.cmpi eq
-// ALIAS-FALLBACK: obelisk_sim.random.solve
+// ALIAS-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

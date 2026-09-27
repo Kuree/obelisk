@@ -130,26 +130,26 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // nexttime starts at age one, while s_nexttime[2] starts at age two.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: arith.constant 2 : i64
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK: simulation.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1(
 // CHECK: arith.constant 4 : i64
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 
 // Both finite always variants are one deterministic conjunction across ages.
 // The predicate is sampled once per clock and shared by all active ages.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.andi
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK: simulation.assert.sampled_read
 // CHECK: arith.andi
 
 // Both finite eventually variants retain one endpoint alternative per age.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-COUNT-1: simulation.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-COUNT-1: simulation.assert.sampled_read

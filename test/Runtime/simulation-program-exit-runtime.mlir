@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
@@ -24,154 +24,154 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @program_exit_runtime {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 9940000 in 0 root_initializer
+  simulation.design @program_exit_runtime {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 9940000 in 0 root_initializer
         hierarchy "top.root"
-    obelisk_sim.code_unit.decl 9940001 in 0 initial
+    simulation.code_unit.decl 9940001 in 0 initial
         hierarchy "top.exiting.parent"
-    obelisk_sim.code_unit.decl 9940002 in 0 initial
+    simulation.code_unit.decl 9940002 in 0 initial
         hierarchy "top.exiting.sibling"
-    obelisk_sim.code_unit.decl 9940003 in 0 fork
+    simulation.code_unit.decl 9940003 in 0 fork
         hierarchy "top.exiting.descendant"
-    obelisk_sim.code_unit.decl 9940004 in 0 initial
+    simulation.code_unit.decl 9940004 in 0 initial
         hierarchy "top.survivor.root"
-    obelisk_sim.code_unit.decl 9940005 in 0 initial
+    simulation.code_unit.decl 9940005 in 0 initial
         hierarchy "top.survivor.parent"
-    obelisk_sim.code_unit.decl 9940006 in 0 fork
+    simulation.code_unit.decl 9940006 in 0 fork
         hierarchy "top.survivor.descendant"
-    obelisk_sim.code_unit.decl 9940007 in 0 initial
+    simulation.code_unit.decl 9940007 in 0 initial
         hierarchy "top.module_hold"
-    obelisk_sim.code_unit.decl 9940008 in 0 final
+    simulation.code_unit.decl 9940008 in 0 final
         hierarchy "top.final"
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9940000 : i64} {
-      %exit_parent = obelisk_sim.spawn @exit_parent(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %exit_sibling = obelisk_sim.spawn @exit_sibling(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %survivor_root = obelisk_sim.spawn @survivor_root(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %survivor_parent = obelisk_sim.spawn @survivor_parent(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %module_hold = obelisk_sim.spawn @module_hold(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %final = obelisk_sim.spawn @final_process(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %exit_parent = simulation.spawn @exit_parent(%ctx) :
+          !simulation.context -> !simulation.process
+      %exit_sibling = simulation.spawn @exit_sibling(%ctx) :
+          !simulation.context -> !simulation.process
+      %survivor_root = simulation.spawn @survivor_root(%ctx) :
+          !simulation.context -> !simulation.process
+      %survivor_parent = simulation.spawn @survivor_parent(%ctx) :
+          !simulation.context -> !simulation.process
+      %module_hold = simulation.spawn @module_hold(%ctx) :
+          !simulation.context -> !simulation.process
+      %final = simulation.spawn @final_process(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @exit_parent(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @exit_parent(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940001 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
                     schedule.program_owner_id = 1001 : i64} {
-      %descendant = obelisk_sim.spawn @exit_descendant(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %hold = obelisk_sim.time.constant 20
-      obelisk_sim.suspend.delay %hold to ^failed
+      %descendant = simulation.spawn @exit_descendant(%ctx) :
+          !simulation.context -> !simulation.process
+      %hold = simulation.time.constant 20
+      simulation.suspend.delay %hold to ^failed
     ^failed:
-      %message = obelisk_sim.bytes.constant "exit-parent-FAIL"
+      %message = simulation.bytes.constant "exit-parent-FAIL"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
 
-    obelisk_sim.func private @exit_sibling(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @exit_sibling(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940002 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
                     schedule.program_owner_id = 1001 : i64} {
-      %hold = obelisk_sim.time.constant 10
-      obelisk_sim.suspend.delay %hold to ^failed
+      %hold = simulation.time.constant 10
+      simulation.suspend.delay %hold to ^failed
     ^failed:
-      %message = obelisk_sim.bytes.constant "exit-sibling-FAIL"
+      %message = simulation.bytes.constant "exit-sibling-FAIL"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
 
-    obelisk_sim.func private @exit_descendant(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @exit_descendant(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9940003 : i64,
                     domain = 1 : i32, home_region = 10 : i32, internal,
                     schedule.detached_controls} {
-      %delay = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %delay to ^exit
+      %delay = simulation.time.constant 3
+      simulation.suspend.delay %delay to ^exit
     ^exit:
-      %message = obelisk_sim.bytes.constant "exit-descendant-3"
+      %message = simulation.bytes.constant "exit-descendant-3"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.program.exit %ctx
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.program.exit %ctx
+      simulation.return
     }
 
-    obelisk_sim.func private @survivor_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @survivor_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940004 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
                     schedule.program_owner_id = 2002 : i64} {
-      %delay = obelisk_sim.time.constant 5
-      obelisk_sim.suspend.delay %delay to ^done
+      %delay = simulation.time.constant 5
+      simulation.suspend.delay %delay to ^done
     ^done:
-      %message = obelisk_sim.bytes.constant "survivor-root-5"
+      %message = simulation.bytes.constant "survivor-root-5"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
 
-    obelisk_sim.func private @survivor_parent(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @survivor_parent(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940005 : i64,
                     domain = 1 : i32, home_region = 10 : i32,
                     schedule.program_owner_id = 2002 : i64} {
-      %descendant = obelisk_sim.spawn @survivor_descendant(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %descendant = simulation.spawn @survivor_descendant(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @survivor_descendant(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @survivor_descendant(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 13 : i32, code_unit_id = 9940006 : i64,
                     domain = 1 : i32, home_region = 10 : i32, internal,
                     schedule.detached_controls} {
-      %delay = obelisk_sim.time.constant 7
-      obelisk_sim.suspend.delay %delay to ^done
+      %delay = simulation.time.constant 7
+      simulation.suspend.delay %delay to ^done
     ^done:
-      %message = obelisk_sim.bytes.constant "survivor-descendant-7"
+      %message = simulation.bytes.constant "survivor-descendant-7"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
 
-    obelisk_sim.func private @module_hold(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @module_hold(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940007 : i64} {
-      %delay = obelisk_sim.time.constant 20
-      obelisk_sim.suspend.delay %delay to ^failed
+      %delay = simulation.time.constant 20
+      simulation.suspend.delay %delay to ^failed
     ^failed:
-      %message = obelisk_sim.bytes.constant "module-hold-FAIL"
+      %message = simulation.bytes.constant "module-hold-FAIL"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
 
-    obelisk_sim.func private @final_process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @final_process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 2 : i32, code_unit_id = 9940008 : i64} {
-      %message = obelisk_sim.bytes.constant "final-ran"
+      %message = simulation.bytes.constant "final-ran"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
   }
 }

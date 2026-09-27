@@ -14,5 +14,5 @@ endmodule
 
 // The coalesced primitive kernel must suspend on all eight selected scalar
 // references, not on either complete four-bit capture.
-// CHECK: obelisk_sim.suspend.any {{.*}} : [[SCALAR:!obelisk_sim.ref<!obelisk_sim.logic<1>>]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], i1
-// CHECK-NOT: obelisk_sim.suspend.any {{.*}}packed_array
+// CHECK: simulation.suspend.any {{.*}} : [[SCALAR:!simulation.ref<!simulation.logic<1>>]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], [[SCALAR]], i1
+// CHECK-NOT: simulation.suspend.any {{.*}}packed_array

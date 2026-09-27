@@ -93,20 +93,20 @@ module attributes {obelisk.coverage.metrics = ["functional"]} {
 }
 
 // The task's begin and end clauses share one ID.
-// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "top.work"{{.*}}obelisk_sim.control_target_id = [[CONTROL:[1-9][0-9]*]] : i64{{.*}}obelisk_sim.coverage_block_event_target_id = [[WORK:[4-9][0-9]{18}]] : i64
-// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 12{{.*}}obelisk_sim.coverage_block_event_target_id = [[WORK]] : i64
-// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 13{{.*}}obelisk_sim.coverage_block_event_target_id = [[WORK]] : i64
+// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "top.work"{{.*}}simulation.control_target_id = [[CONTROL:[1-9][0-9]*]] : i64{{.*}}simulation.coverage_block_event_target_id = [[WORK:[4-9][0-9]{18}]] : i64
+// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 12{{.*}}simulation.coverage_block_event_target_id = [[WORK]] : i64
+// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 13{{.*}}simulation.coverage_block_event_target_id = [[WORK]] : i64
 
 // A named block's semantic symbol and executable statement share one ID.
-// CHECK-DAG: obelisk.sv.statement.block attributes {{.*}}obelisk_sim.coverage_block_event_target_id = [[BLOCK:[4-9][0-9]{18}]] : i64
-// CHECK-DAG: obelisk.sv.symbol.statement_block attributes {{.*}}obelisk_sim.coverage_block_event_target_id = [[BLOCK]] : i64
-// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 14{{.*}}obelisk_sim.coverage_block_event_target_id = [[BLOCK]] : i64
+// CHECK-DAG: obelisk.sv.statement.block attributes {{.*}}simulation.coverage_block_event_target_id = [[BLOCK:[4-9][0-9]{18}]] : i64
+// CHECK-DAG: obelisk.sv.symbol.statement_block attributes {{.*}}simulation.coverage_block_event_target_id = [[BLOCK]] : i64
+// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 14{{.*}}simulation.coverage_block_event_target_id = [[BLOCK]] : i64
 
 // Functions receive their own stable target identity.
-// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "top.value"{{.*}}obelisk_sim.coverage_block_event_target_id = [[VALUE:[4-9][0-9]{18}]] : i64
-// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 15{{.*}}obelisk_sim.coverage_block_event_target_id = [[VALUE]] : i64
+// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "top.value"{{.*}}simulation.coverage_block_event_target_id = [[VALUE:[4-9][0-9]{18}]] : i64
+// CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 15{{.*}}simulation.coverage_block_event_target_id = [[VALUE]] : i64
 
 // Subroutine IDs cross the semantic/simulation boundary.  Named blocks remain
 // within their owning function and are consumed while that body is lowered.
-// CHECK-DAG: obelisk_sim.func private @{{[^ ]+}}{{.*}}obelisk_sim.control_target_id = [[CONTROL]] : i64{{.*}}obelisk_sim.coverage_block_event_target_id = [[WORK]] : i64{{.*}}obelisk_sim.hierarchical_name = "top.work"
-// CHECK-DAG: obelisk_sim.func private @{{[^ ]+}}{{.*}}obelisk_sim.coverage_block_event_target_id = [[VALUE]] : i64{{.*}}obelisk_sim.hierarchical_name = "top.value"
+// CHECK-DAG: simulation.func private @{{[^ ]+}}{{.*}}simulation.control_target_id = [[CONTROL]] : i64{{.*}}simulation.coverage_block_event_target_id = [[WORK]] : i64{{.*}}simulation.hierarchical_name = "top.work"
+// CHECK-DAG: simulation.func private @{{[^ ]+}}{{.*}}simulation.coverage_block_event_target_id = [[VALUE]] : i64{{.*}}simulation.hierarchical_name = "top.value"

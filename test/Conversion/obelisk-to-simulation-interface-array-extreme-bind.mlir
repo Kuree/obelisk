@@ -49,9 +49,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.virtual_interface.bind 2
-// CHECK: obelisk_sim.aggregate.construct
-// CHECK: obelisk_sim.virtual_interface.bind 3
-// CHECK: obelisk_sim.aggregate.construct
-// CHECK-NOT: obelisk_sim.container
+// CHECK: simulation.virtual_interface.bind 2
+// CHECK: simulation.aggregate.construct
+// CHECK: simulation.virtual_interface.bind 3
+// CHECK: simulation.aggregate.construct
+// CHECK-NOT: simulation.container
 // CHECK-NOT: obelisk.sv.

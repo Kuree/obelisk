@@ -64,7 +64,7 @@ module {
 // CHECK: cf.cond_br %[[ANY]], ^[[SELECT:[^ ,]*]], ^[[MERGE:[^ ,]*]]
 
 // CHECK: ^[[SELECT]]:
-// CHECK: %[[DRAW:.*]] = obelisk_sim.random.bounded %{{.*}}, %[[TOTAL]]
+// CHECK: %[[DRAW:.*]] = simulation.random.bounded %{{.*}}, %[[TOTAL]]
 // CHECK: %[[SELECTED:.*]] = arith.cmpi ult, %[[DRAW]], %[[BOUND0]]
 // CHECK: cf.cond_br %[[SELECTED]], ^[[ITEM0:[^ ,]*]], ^[[ITEM1:[^ ,]*]]
 

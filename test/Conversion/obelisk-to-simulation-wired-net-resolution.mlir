@@ -35,16 +35,16 @@ module attributes {
 }
 
 // IEEE 1800-2017 6.6.3: triand and trior are exact aliases of wand and wor.
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.value" {{.*}}resolution_kind = 3 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.or_value" {{.*}}resolution_kind = 4 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.triand_value" {{.*}}resolution_kind = 3 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.trior_value" {{.*}}resolution_kind = 4 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.value" {{.*}}resolution_kind = 3 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.or_value" {{.*}}resolution_kind = 4 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.triand_value" {{.*}}resolution_kind = 3 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.trior_value" {{.*}}resolution_kind = 4 : i32
 // IEEE 1800-2017 6.6.5, 6.6.6, and 28.15 define the implicit pull and supply
 // strengths carried by these net types.
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri0_value" {{.*}}resolution_kind = 5 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri1_value" {{.*}}resolution_kind = 6 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply0_value" {{.*}}resolution_kind = 7 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply1_value" {{.*}}resolution_kind = 8 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri0_value" {{.*}}resolution_kind = 5 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.tri1_value" {{.*}}resolution_kind = 6 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply0_value" {{.*}}resolution_kind = 7 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.supply1_value" {{.*}}resolution_kind = 8 : i32
 // IEEE 1800-2017 6.6.4: an unqualified trireg stores charge indefinitely
 // with the default medium charge strength.
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.trireg_value" {{.*}}resolution_kind = 9 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "unsupported_wired_resolution.trireg_value" {{.*}}resolution_kind = 9 : i32

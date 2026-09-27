@@ -60,7 +60,7 @@
 // CHECK-SAME: mode = 0 : i32
 // CHECK: obelisk_sdf.label
 // CHECK-SAME: mode = 1 : i32
-// CHECK-NOT: obelisk_sim
+// CHECK-NOT: simulation
 // CHECK-NOT: runtime
 
 // GENERIC: "obelisk_sdf.delay_file"

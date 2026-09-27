@@ -44,11 +44,11 @@ module {
   }
 }
 
-// CHECK-DAG: %[[INDEX:.*]] = obelisk_sim.ref.load
-// CHECK-DAG: %[[FLAT:.*]] = obelisk_sim.packed.flatten %[[INDEX]]
-// CHECK-DAG: %[[BITS:.*]] = obelisk_sim.logic.to_bits %[[FLAT]] : !obelisk_sim.logic<32> -> i32
-// CHECK-DAG: obelisk_sim.real.from_integer %[[BITS]] signed = false : i32 -> f32
+// CHECK-DAG: %[[INDEX:.*]] = simulation.ref.load
+// CHECK-DAG: %[[FLAT:.*]] = simulation.packed.flatten %[[INDEX]]
+// CHECK-DAG: %[[BITS:.*]] = simulation.logic.to_bits %[[FLAT]] : !simulation.logic<32> -> i32
+// CHECK-DAG: simulation.real.from_integer %[[BITS]] signed = false : i32 -> f32
 // CHECK-DAG: %[[COUNT:.*]] = arith.constant 1.040000e+01 : f64
-// CHECK-DAG: %[[ROUNDED:.*]] = obelisk_sim.real.to_integer %[[COUNT]] signed = false : i64
+// CHECK-DAG: %[[ROUNDED:.*]] = simulation.real.to_integer %[[COUNT]] signed = false : i64
 // CHECK-DAG: cf.br ^{{.*}}(%[[ROUNDED]] : i64)
 // CHECK-NOT: obelisk.sv.

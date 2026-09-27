@@ -52,11 +52,11 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 
 // 4259906 is 0x410042: the packed value keeps the zero byte.
-// CHECK: obelisk_sim.logic.constant 4259906 : i24, 0 : i24
+// CHECK: simulation.logic.constant 4259906 : i24, 0 : i24
 
 // The string variable does not.
-// CHECK: obelisk_sim.string.literal "AB"
-// CHECK-NOT: obelisk_sim.string.literal "A\00B"
+// CHECK: simulation.string.literal "AB"
+// CHECK-NOT: simulation.string.literal "A\00B"

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-plan-static-superstep))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' | FileCheck %s
 
 // A statically indexed native convergence group is a clean-superstep
 // candidate even when it contains multiple fragments. Net watches are exact
@@ -6,10 +6,10 @@
 // final proof that the complete schedule is eligible.
 
 module {
-  // CHECK: obelisk_sim.design @convergence attributes {
+  // CHECK: simulation.design @convergence attributes {
   // CHECK-SAME: schedule.static_superstep = #schedule.static_superstep<version = 1
   // CHECK-SAME: actors = [@root, @settle]
-  obelisk_sim.design @convergence attributes {
+  simulation.design @convergence attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -33,22 +33,22 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "settle"
-    obelisk_sim.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "settle"
+    simulation.scope.decl 0
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %process = obelisk_sim.spawn @settle(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @settle(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @settle(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @settle(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

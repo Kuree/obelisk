@@ -17,7 +17,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.class.decl @__obelisk_class_covergroup_owner
-// CHECK: obelisk_sim.func private @__obelisk_class_covergroup_owner_implicit_new
-// CHECK-NOT: obelisk_sim.covergroup
+// CHECK: simulation.class.decl @__obelisk_class_covergroup_owner
+// CHECK: simulation.func private @__obelisk_class_covergroup_owner_implicit_new
+// CHECK-NOT: simulation.covergroup
 // CHECK-NOT: obelisk.sv.

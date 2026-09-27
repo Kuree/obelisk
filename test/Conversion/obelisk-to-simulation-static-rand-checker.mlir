@@ -8,19 +8,19 @@
 // live static rand_mode word. It reads the current static value to check the
 // constraint but does not inspect the shared mode, draw randomness, or commit
 // any object, property, or hidden RNG state.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK-SAME: %[[STATIC:arg[0-9]+]]: !obelisk_sim.ref<i32>
-// CHECK: %[[OBJECT:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
-// CHECK: obelisk_sim.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1]
-// CHECK: %[[CURRENT_STATIC:.*]] = obelisk_sim.ref.load %[[STATIC]] : !obelisk_sim.ref<i32> -> i32
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK-SAME: %[[STATIC:arg[0-9]+]]: !simulation.ref<i32>
+// CHECK: %[[OBJECT:.*]] = simulation.ref.load
+// CHECK: simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
+// CHECK: simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1]
+// CHECK: %[[CURRENT_STATIC:.*]] = simulation.ref.load %[[STATIC]] : !simulation.ref<i32> -> i32
 // CHECK: arith.cmpi sge
-// CHECK-NOT: obelisk_sim.context.storage
-// CHECK-NOT: obelisk_sim.random.next
-// CHECK-NOT: obelisk_sim.random.solve
-// CHECK-NOT: obelisk_sim.ref.store {{.*}} to %[[STATIC]]
-// CHECK-NOT: obelisk_sim.managed.store
-// CHECK-LABEL: obelisk_sim.func private @__obelisk_class_s3_C_implicit_new
+// CHECK-NOT: simulation.context.storage
+// CHECK-NOT: simulation.random.next
+// CHECK-NOT: simulation.random.solve
+// CHECK-NOT: simulation.ref.store {{.*}} to %[[STATIC]]
+// CHECK-NOT: simulation.managed.store
+// CHECK-LABEL: simulation.func private @__obelisk_class_s3_C_implicit_new
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

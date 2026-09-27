@@ -108,32 +108,32 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // accepted abort is a vacuous successful cover-property evaluation: one pass
 // callback is conditional on the old age-1 bit and one handles the attempt
 // starting on this clock; state returns to zero.
-// CHECK: obelisk_sim.func private @[[SYNC_PASS:unit_0\.fork\.11\.0\.0]](
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.property_abort_action = "accept"
-// CHECK-SAME: obelisk_sim.synchronous_property_abort
-// CHECK: [[RESET:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[RESET_TRUE:%.*]] = obelisk_sim.logic.is_true [[RESET]]
+// CHECK: simulation.func private @[[SYNC_PASS:unit_0\.fork\.11\.0\.0]](
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.property_abort_action = "accept"
+// CHECK-SAME: simulation.synchronous_property_abort
+// CHECK: [[RESET:%.*]] = simulation.assert.sampled_read
+// CHECK: [[RESET_TRUE:%.*]] = simulation.logic.is_true [[RESET]]
 // CHECK: cf.cond_br [[RESET_TRUE]], ^[[ABORT:bb[0-9]+]]{{.*}}, ^[[EVAL:bb[0-9]+]]
 // CHECK: ^[[ABORT]]
-// CHECK: obelisk_sim.spawn @[[SYNC_PASS]]
-// CHECK: obelisk_sim.spawn @[[SYNC_PASS]]
+// CHECK: simulation.spawn @[[SYNC_PASS]]
+// CHECK: simulation.spawn @[[SYNC_PASS]]
 // CHECK: cf.br ^{{bb[0-9]+}}({{%.*}} : i64)
 // CHECK: ^[[EVAL]]
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 
 // A rejected abort follows the same priority/teardown path but schedules the
 // failure callback for both the old and current attempts.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.property_abort_action = "reject"
-// CHECK-SAME: obelisk_sim.synchronous_property_abort
-// CHECK: [[RESET1:%.*]] = obelisk_sim.assert.sampled_read
-// CHECK: [[RESET1_TRUE:%.*]] = obelisk_sim.logic.is_true [[RESET1]]
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.property_abort_action = "reject"
+// CHECK-SAME: simulation.synchronous_property_abort
+// CHECK: [[RESET1:%.*]] = simulation.assert.sampled_read
+// CHECK: [[RESET1_TRUE:%.*]] = simulation.logic.is_true [[RESET1]]
 // CHECK: cf.cond_br [[RESET1_TRUE]], ^[[ABORT1:bb[0-9]+]]{{.*}}, ^[[EVAL1:bb[0-9]+]]
 // CHECK: ^[[ABORT1]]
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.1.1
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.1.1
+// CHECK: simulation.spawn @unit_1.fork.31.1.1
+// CHECK: simulation.spawn @unit_1.fork.31.1.1
 // CHECK: ^[[EVAL1]]
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read

@@ -110,11 +110,11 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[MSG:.*]], %[[CODE:.*]] = obelisk_sim.file.error_string
-// CHECK: %[[BITS:.*]] = obelisk_sim.string.to_packed %[[MSG]] : (!obelisk_sim.string) -> i800
-// CHECK: %[[LOGIC:.*]] = obelisk_sim.logic.from_bits %[[BITS]] : i800 -> !obelisk_sim.logic<800>
-// CHECK: %[[PACKED:.*]] = obelisk_sim.packed.unflatten %[[LOGIC]]
-// CHECK: obelisk_sim.ref.store %[[PACKED]] to %arg2
-// CHECK: %[[ERRNO:.*]] = obelisk_sim.logic.from_bits %[[CODE]] : i32 -> !obelisk_sim.logic<32>
-// CHECK: obelisk_sim.ref.store %[[ERRNO]] to %arg1
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[MSG:.*]], %[[CODE:.*]] = simulation.file.error_string
+// CHECK: %[[BITS:.*]] = simulation.string.to_packed %[[MSG]] : (!simulation.string) -> i800
+// CHECK: %[[LOGIC:.*]] = simulation.logic.from_bits %[[BITS]] : i800 -> !simulation.logic<800>
+// CHECK: %[[PACKED:.*]] = simulation.packed.unflatten %[[LOGIC]]
+// CHECK: simulation.ref.store %[[PACKED]] to %arg2
+// CHECK: %[[ERRNO:.*]] = simulation.logic.from_bits %[[CODE]] : i32 -> !simulation.logic<32>
+// CHECK: simulation.ref.store %[[ERRNO]] to %arg1

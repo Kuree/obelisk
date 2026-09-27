@@ -39,4 +39,4 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.class.field_ref %{{.*}}[@__obelisk_class_s3_Cls_field_0] : !obelisk_sim.class_handle<@__obelisk_class_s3_Cls> -> !obelisk_sim.managed_ref<i1, @__obelisk_class_s3_Cls>
+// CHECK: simulation.class.field_ref %{{.*}}[@__obelisk_class_s3_Cls_field_0] : !simulation.class_handle<@__obelisk_class_s3_Cls> -> !simulation.managed_ref<i1, @__obelisk_class_s3_Cls>

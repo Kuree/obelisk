@@ -54,18 +54,18 @@ module {
 
 // A computed event expression is evaluated once by a shared monitor. All
 // consumers wait on the event descriptor published by that monitor.
-// CHECK: obelisk_sim.func private @unit_0({{.*}}obelisk_sim.clocking_event_monitor_path = "top.cb"
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 0 edges [1] indices [-1]
-// CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
+// CHECK: simulation.func private @unit_0({{.*}}simulation.clocking_event_monitor_path = "top.cb"
+// CHECK: simulation.observer.bind
+// CHECK: simulation.suspend.observe %{{.*}} conditions 0 edges [1] indices [-1]
+// CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
 // Named events with iff use the same monitor path; the event pulse is the
 // primary occurrence and the condition gates publication.
-// CHECK: obelisk_sim.func private @unit_1({{.*}}obelisk_sim.clocking_event_monitor_path = "top.cb_named"
-// CHECK: obelisk_sim.observer.bind {{.*}}schedule.event_primary
-// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
-// CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
+// CHECK: simulation.func private @unit_1({{.*}}simulation.clocking_event_monitor_path = "top.cb_named"
+// CHECK: simulation.observer.bind {{.*}}schedule.event_primary
+// CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
+// CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-COUNT-3: obelisk_sim.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-COUNT-3: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

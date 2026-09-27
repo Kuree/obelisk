@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // A static task formal has both a value argument for each invocation and a
 // descriptor-backed shared location.  After copy-in, semantic reads and writes
@@ -7,35 +7,35 @@
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
 module {
-  obelisk_sim.design @static_task_formal {
-    obelisk_sim.code_unit.decl 9400001 in 0 task
+  simulation.design @static_task_formal {
+    simulation.code_unit.decl 9400001 in 0 task
         hierarchy "top.mutate"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i32 static
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i32 static
         hierarchy "top.mutate.value"
 
-    // CHECK-LABEL: obelisk_sim.func @mutate
-    // CHECK: %[[LOCAL:.*]] = obelisk_sim.ref.alloc %arg1
-    // CHECK: %[[COPY_IN:.*]] = obelisk_sim.ref.load %[[LOCAL]]
-    // CHECK: obelisk_sim.ref.store %[[COPY_IN]] to %arg2
+    // CHECK-LABEL: simulation.func @mutate
+    // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc %arg1
+    // CHECK: %[[COPY_IN:.*]] = simulation.ref.load %[[LOCAL]]
+    // CHECK: simulation.ref.store %[[COPY_IN]] to %arg2
     // CHECK: %[[NINE:.*]] = arith.constant 9 : i32
-    // CHECK: obelisk_sim.ref.store %[[NINE]] to %arg2
-    // CHECK-NOT: obelisk_sim.ref.store %[[NINE]] to %[[LOCAL]]
-    // CHECK: obelisk_sim.return
-    obelisk_sim.func @mutate(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
+    // CHECK: simulation.ref.store %[[NINE]] to %arg2
+    // CHECK-NOT: simulation.ref.store %[[NINE]] to %[[LOCAL]]
+    // CHECK: simulation.return
+    simulation.func @mutate(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
         %input: i32
-            {obelisk_sim.capture_kind = 1 : i32},
-        %shared: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+            {simulation.capture_kind = 1 : i32},
+        %shared: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {
           entry_kind = 12 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.mutate.value",
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.mutate.value",
                 argument = 1, kind = formal_local, copyOut = false>,
-            #obelisk_sim.argument_binding<path = "top.mutate.value",
+            #simulation.argument_binding<path = "top.mutate.value",
                 argument = 2, kind = direct, copyOut = false>
           ],
           code_unit_id = 9400001 : i64
@@ -54,7 +54,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

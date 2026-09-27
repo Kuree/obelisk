@@ -239,25 +239,25 @@ module {
 // element is the source element with the leftmost declared index, not the one
 // the base names.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // `descending[4+:4]` is `descending[7:4]`, so the result runs 7, 6, 5, 4 —
 // storage ordinals 0, 1, 2, 3 of a `[7:0]` array.
-// CHECK:      obelisk_sim.ref.subelement %arg1{{\[\[}}0]]
-// CHECK:      obelisk_sim.ref.subelement %arg1{{\[\[}}1]]
-// CHECK:      obelisk_sim.ref.subelement %arg1{{\[\[}}2]]
-// CHECK:      obelisk_sim.ref.subelement %arg1{{\[\[}}3]]
-// CHECK:      %[[FALLING:.*]] = obelisk_sim.aggregate.construct
-// CHECK:      obelisk_sim.ref.store %[[FALLING]] to %arg3
+// CHECK:      simulation.ref.subelement %arg1{{\[\[}}0]]
+// CHECK:      simulation.ref.subelement %arg1{{\[\[}}1]]
+// CHECK:      simulation.ref.subelement %arg1{{\[\[}}2]]
+// CHECK:      simulation.ref.subelement %arg1{{\[\[}}3]]
+// CHECK:      %[[FALLING:.*]] = simulation.aggregate.construct
+// CHECK:      simulation.ref.store %[[FALLING]] to %arg3
 // `ascending[7-:4]` is `ascending[4:7]`, so the result runs 4, 5, 6, 7 —
 // storage ordinals 4, 5, 6, 7 of a `[0:7]` array.
-// CHECK:      obelisk_sim.ref.subelement %arg2{{\[\[}}4]]
-// CHECK:      obelisk_sim.ref.subelement %arg2{{\[\[}}5]]
-// CHECK:      obelisk_sim.ref.subelement %arg2{{\[\[}}6]]
-// CHECK:      obelisk_sim.ref.subelement %arg2{{\[\[}}7]]
-// CHECK:      %[[RISING:.*]] = obelisk_sim.aggregate.construct
-// CHECK:      obelisk_sim.ref.store %[[RISING]] to %arg4
+// CHECK:      simulation.ref.subelement %arg2{{\[\[}}4]]
+// CHECK:      simulation.ref.subelement %arg2{{\[\[}}5]]
+// CHECK:      simulation.ref.subelement %arg2{{\[\[}}6]]
+// CHECK:      simulation.ref.subelement %arg2{{\[\[}}7]]
+// CHECK:      %[[RISING:.*]] = simulation.aggregate.construct
+// CHECK:      simulation.ref.store %[[RISING]] to %arg4
 // Writing through `target[4+:4]` selects the same window, so result element 0 —
 // the value read from `patch` first — lands in `target`'s storage ordinal 0.
-// CHECK:      %[[FIRST:.*]] = obelisk_sim.ref.load
-// CHECK:      %[[SLOT:.*]] = obelisk_sim.ref.subelement %arg5{{\[\[}}0]]
-// CHECK:      obelisk_sim.ref.store %[[FIRST]] to %[[SLOT]]
+// CHECK:      %[[FIRST:.*]] = simulation.ref.load
+// CHECK:      %[[SLOT:.*]] = simulation.ref.subelement %arg5{{\[\[}}0]]
+// CHECK:      simulation.ref.store %[[FIRST]] to %[[SLOT]]

@@ -69,12 +69,12 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private
-// CHECK-SAME: !obelisk_sim.ref<!obelisk_sim.logic<4>>
-// CHECK-SAME: obelisk_sim.timing_check_coordinator
-// CHECK-COUNT-1: obelisk_sim.suspend.clock_set
+// CHECK: simulation.func private
+// CHECK-SAME: !simulation.ref<!simulation.logic<4>>
+// CHECK-SAME: simulation.timing_check_coordinator
+// CHECK-COUNT-1: simulation.suspend.clock_set
 // CHECK-SAME: conditions 1 edges [258, 3] indices [0, -1]
 // CHECK-SAME: condition_predicates = array<i32: 2>
-// CHECK-NOT: obelisk_sim.ref.extract
-// CHECK-NOT: obelisk_sim.suspend.observe
+// CHECK-NOT: simulation.ref.extract
+// CHECK-NOT: simulation.suspend.observe
 // CHECK-NOT: timing_check_table

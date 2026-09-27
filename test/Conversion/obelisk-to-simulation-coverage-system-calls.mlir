@@ -220,24 +220,24 @@ module {
 // IEEE 1800-2017 40.3.2 keeps definition-name and elaborated-instance
 // selection distinct all the way through the Simulation dialect. Dynamic
 // control, metric, and scope values are intentionally validated by the runtime.
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}
-// CHECK: obelisk_sim.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !obelisk_sim.context
-// CHECK: %[[DUT_RESET:.*]] = obelisk_sim.string.literal "DUT"
-// CHECK: obelisk_sim.coverage.control_definition {{.*}} definition %[[DUT_RESET]] : !obelisk_sim.context
-// CHECK: obelisk_sim.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !obelisk_sim.context
-// CHECK: obelisk_sim.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !obelisk_sim.context
-// CHECK: %[[DUT_START:.*]] = obelisk_sim.string.literal "DUT"
-// CHECK: obelisk_sim.coverage.control_definition {{.*}} definition %[[DUT_START]] : !obelisk_sim.context
-// CHECK: %[[DUT_MAX:.*]] = obelisk_sim.string.literal "DUT"
-// CHECK: obelisk_sim.coverage.query_definition {{.*}} definition %[[DUT_MAX]] maximum true : !obelisk_sim.context
-// CHECK: obelisk_sim.coverage.query_instance {{.*}} instance {{-?[1-9][0-9]*}} maximum false : !obelisk_sim.context
-// CHECK: %[[MERGE_NAME:.*]] = obelisk_sim.string.literal "some_name"
-// CHECK: obelisk_sim.coverage.merge %{{.*}} metric %{{.*}} name %[[MERGE_NAME]] : !obelisk_sim.context
-// CHECK: %[[SAVE_NAME:.*]] = obelisk_sim.string.literal "some_name"
-// CHECK: obelisk_sim.coverage.save %{{.*}} metric %{{.*}} name %[[SAVE_NAME]] : !obelisk_sim.context
-// CHECK: %[[DB_NAME:.*]] = obelisk_sim.string.literal "coverage.db"
-// CHECK: obelisk_sim.coverage.functional_set_db_name %{{.*}}, %[[DB_NAME]]
-// CHECK: %[[LOAD_NAME:.*]] = obelisk_sim.string.literal "coverage.db"
-// CHECK: obelisk_sim.coverage.functional_load_db %{{.*}}, %[[LOAD_NAME]]
-// CHECK: %[[GLOBAL:.*]] = obelisk_sim.coverage.functional_get %{{.*}}
-// CHECK: obelisk_sim.ref.store %[[GLOBAL]]
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}
+// CHECK: simulation.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !simulation.context
+// CHECK: %[[DUT_RESET:.*]] = simulation.string.literal "DUT"
+// CHECK: simulation.coverage.control_definition {{.*}} definition %[[DUT_RESET]] : !simulation.context
+// CHECK: simulation.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !simulation.context
+// CHECK: simulation.coverage.control_instance {{.*}} instance {{-?[1-9][0-9]*}} : !simulation.context
+// CHECK: %[[DUT_START:.*]] = simulation.string.literal "DUT"
+// CHECK: simulation.coverage.control_definition {{.*}} definition %[[DUT_START]] : !simulation.context
+// CHECK: %[[DUT_MAX:.*]] = simulation.string.literal "DUT"
+// CHECK: simulation.coverage.query_definition {{.*}} definition %[[DUT_MAX]] maximum true : !simulation.context
+// CHECK: simulation.coverage.query_instance {{.*}} instance {{-?[1-9][0-9]*}} maximum false : !simulation.context
+// CHECK: %[[MERGE_NAME:.*]] = simulation.string.literal "some_name"
+// CHECK: simulation.coverage.merge %{{.*}} metric %{{.*}} name %[[MERGE_NAME]] : !simulation.context
+// CHECK: %[[SAVE_NAME:.*]] = simulation.string.literal "some_name"
+// CHECK: simulation.coverage.save %{{.*}} metric %{{.*}} name %[[SAVE_NAME]] : !simulation.context
+// CHECK: %[[DB_NAME:.*]] = simulation.string.literal "coverage.db"
+// CHECK: simulation.coverage.functional_set_db_name %{{.*}}, %[[DB_NAME]]
+// CHECK: %[[LOAD_NAME:.*]] = simulation.string.literal "coverage.db"
+// CHECK: simulation.coverage.functional_load_db %{{.*}}, %[[LOAD_NAME]]
+// CHECK: %[[GLOBAL:.*]] = simulation.coverage.functional_get %{{.*}}
+// CHECK: simulation.ref.store %[[GLOBAL]]

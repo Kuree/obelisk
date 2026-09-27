@@ -169,7 +169,7 @@ public:
         IRMapping mapping;
         for (Operation *part : llvm::reverse(chain)) {
           Operation *clone = builder.clone(*part, mapping);
-          clone->setAttr("obelisk_sim.rematerialized", builder.getUnitAttr());
+          clone->setAttr("simulation.rematerialized", builder.getUnitAttr());
         }
         use.set(mapping.lookup(constant));
       }
@@ -188,7 +188,7 @@ public:
       return;
 
     bool timingCheckCoordinator =
-        function->hasAttr("obelisk_sim.timing_check_coordinator");
+        function->hasAttr("simulation.timing_check_coordinator");
     if (timingCheckCoordinator) {
       // IEEE 1800-2017 31.7 samples a computed condition only after its
       // controlled event matches. Keep the compiled descriptor next to the

@@ -20,7 +20,7 @@
 namespace obelisk::sim {
 
 /// Bit width of a normalized packed simulation value, which is either a
-/// signless builtin integer or an exact four-state `!obelisk_sim.logic`.
+/// signless builtin integer or an exact four-state `!simulation.logic`.
 /// Returns `std::nullopt` for every other type.
 std::optional<unsigned> getPackedWidth(::mlir::Type type);
 

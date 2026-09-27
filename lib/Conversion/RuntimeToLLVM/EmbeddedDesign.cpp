@@ -100,10 +100,10 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       directSymbols.try_emplace(name.getValue(), &operation);
   llvm::StringMap<Operation *> importCIdentifiers;
   module.walk([&](sim::SimCodeUnitDeclOp declaration) {
-    if (!declaration->hasAttr("obelisk_sim.dpi_import"))
+    if (!declaration->hasAttr("simulation.dpi_import"))
       return;
     if (auto identifier = declaration->getAttrOfType<StringAttr>(
-            "obelisk_sim.dpi_c_identifier"))
+            "simulation.dpi_c_identifier"))
       importCIdentifiers.try_emplace(identifier.getValue(), declaration);
   });
   module.walk([&](sim::SimDPICallOp call) {
@@ -111,22 +111,22 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
   });
   bool invalid = false;
   module.walk([&](sim::SimFuncOp function) {
-    if (!function->hasAttr("obelisk_sim.dpi_export_bridge"))
+    if (!function->hasAttr("simulation.dpi_export_bridge"))
       return;
     auto exportID =
-        function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_export_id");
+        function->getAttrOfType<IntegerAttr>("simulation.dpi_export_id");
     auto scopeID =
-        function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_scope_id");
+        function->getAttrOfType<IntegerAttr>("simulation.dpi_scope_id");
     auto identifier =
-        function->getAttrOfType<StringAttr>("obelisk_sim.dpi_c_identifier");
+        function->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
     auto bodySymbol = function->getAttrOfType<StringAttr>(
-        "obelisk_sim.dpi_export_body_symbol");
+        "simulation.dpi_export_body_symbol");
     auto signature =
-        function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+        function->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
     auto aggregateLayouts =
-        function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_aggregate_layouts");
+        function->getAttrOfType<ArrayAttr>("simulation.dpi_aggregate_layouts");
     auto inputs =
-        function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
+        function->getAttrOfType<IntegerAttr>("simulation.dpi_logical_inputs");
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!exportID || !scopeID || !identifier || !bodySymbol || !signature ||
         !inputs || !codeUnitID || *codeUnitID <= 0 ||
@@ -252,7 +252,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
          bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
                                 bytecodeFunction.getValue().getZExtValue()))
                           : std::nullopt,
-         function->hasAttr("obelisk_sim.dpi_task")});
+         function->hasAttr("simulation.dpi_task")});
   });
   if (invalid)
     return failure();
@@ -312,18 +312,18 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
                    builder.getStringAttr(info.symbol));
     thunk->setAttr("obelisk.dpi.export_body",
                    builder.getStringAttr(info.bodySymbol));
-    thunk->setAttr("obelisk_sim.dpi_c_identifier",
+    thunk->setAttr("simulation.dpi_c_identifier",
                    builder.getStringAttr(info.cIdentifier));
-    thunk->setAttr("obelisk_sim.dpi_export_id",
+    thunk->setAttr("simulation.dpi_export_id",
                    builder.getI32IntegerAttr(info.exportID));
-    thunk->setAttr("obelisk_sim.dpi_abi_signature", info.abi);
-    thunk->setAttr("obelisk_sim.dpi_aggregate_layouts", info.aggregateLayouts);
+    thunk->setAttr("simulation.dpi_abi_signature", info.abi);
+    thunk->setAttr("simulation.dpi_aggregate_layouts", info.aggregateLayouts);
     if (info.elidedInputs)
       thunk->setAttr(sim::metadata::dpiElidedInputs, info.elidedInputs);
-    thunk->setAttr("obelisk_sim.dpi_logical_inputs",
+    thunk->setAttr("simulation.dpi_logical_inputs",
                    builder.getI32IntegerAttr(info.inputCount));
     if (info.isTask)
-      thunk->setAttr("obelisk_sim.dpi_task", builder.getUnitAttr());
+      thunk->setAttr("simulation.dpi_task", builder.getUnitAttr());
     directSymbols.try_emplace(thunkName, thunk);
   }
   return success();
@@ -708,7 +708,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   }
 
   SmallVector<ExportInfo> exports;
-  if (module->hasAttr("obelisk_sim.has_dpi_exports") &&
+  if (module->hasAttr("simulation.has_dpi_exports") &&
       failed(collectDPIExports(module, bytecodeOnly, pointer, i32, exports)))
     return failure();
 

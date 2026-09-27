@@ -8,8 +8,8 @@
 // fails before modulo; valid ranges use unbiased dynamic sampling. The
 // all-enabled path bypasses checking, while partial modes retain a masked
 // solver path.
-// CAPTURE-DOMAIN-LABEL: obelisk_sim.func private @unit_1
-// CAPTURE-DOMAIN: obelisk_sim.ref.load
+// CAPTURE-DOMAIN-LABEL: simulation.func private @unit_1
+// CAPTURE-DOMAIN: simulation.ref.load
 // CAPTURE-DOMAIN: arith.andi {{.*}}, {{.*}} : i64
 // CAPTURE-DOMAIN: %[[CARDINALITY:.*]] = arith.addi {{.*}}, {{.*}} : i64
 // CAPTURE-DOMAIN: arith.subi %{{c16_i64.*}}, {{.*}} : i64
@@ -35,20 +35,20 @@
 // CAPTURE-DOMAIN: arith.remui {{.*}}, %[[SAFE_CARDINALITY]] : i64
 // CAPTURE-DOMAIN: cf.br
 // CAPTURE-DOMAIN: ^[[RANGE_EMPTY]]:
-// CAPTURE-DOMAIN: obelisk_sim.managed.store {{.*}} : i64
+// CAPTURE-DOMAIN: simulation.managed.store {{.*}} : i64
 // CAPTURE-DOMAIN: cf.br ^[[RANGE_DONE:bb[0-9]+]]
 // CAPTURE-DOMAIN: arith.remui {{.*}}, %[[SAFE_CARDINALITY]] : i64
 // CAPTURE-DOMAIN: arith.cmpi ult
 // CAPTURE-DOMAIN-NOT: arith.cmpi ule
-// CAPTURE-DOMAIN: obelisk_sim.random.solve {{.*}} mutable
-// CAPTURE-DOMAIN: obelisk_sim.managed.store
+// CAPTURE-DOMAIN: simulation.random.solve {{.*}} mutable
+// CAPTURE-DOMAIN: simulation.managed.store
 
-// CAPTURE-DOMAIN-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-FALLBACK-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-FALLBACK: arith.cmpi ule
 // CAPTURE-DOMAIN-FALLBACK: arith.cmpi uge
 // CAPTURE-DOMAIN-FALLBACK: arith.cmpi ugt
 // CAPTURE-DOMAIN-FALLBACK: arith.cmpi ult
-// CAPTURE-DOMAIN-FALLBACK: obelisk_sim.random.solve
+// CAPTURE-DOMAIN-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

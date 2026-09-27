@@ -82,10 +82,10 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.void_function
-// CHECK: obelisk_sim.return
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: obelisk_sim.call @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.void_function
+// CHECK: simulation.return
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK: simulation.call @unit_0(
 // CHECK-SAME: -> ()
 // CHECK-NOT: !obelisk.void

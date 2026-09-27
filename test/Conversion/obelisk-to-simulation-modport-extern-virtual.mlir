@@ -95,33 +95,33 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.storage.decl [[PBIAS:[0-9]+]] in {{[0-9]+}} : i32 design hierarchy "top.p.bias"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in [[X:[0-9]+]] function hierarchy "top.x.ping"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in [[Y:[0-9]+]] function hierarchy "top.y.ping"
-// CHECK: obelisk_sim.func private @[[P:unit_[0-9]+]]{{.*}}descriptor = [[PBIAS]]{{.*}}obelisk_sim.hierarchical_name = "top.p.ping"
-// CHECK: obelisk_sim.func private @[[Q:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "top.q.ping"
+// CHECK: simulation.storage.decl [[PBIAS:[0-9]+]] in {{[0-9]+}} : i32 design hierarchy "top.p.bias"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in [[X:[0-9]+]] function hierarchy "top.x.ping"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in [[Y:[0-9]+]] function hierarchy "top.y.ping"
+// CHECK: simulation.func private @[[P:unit_[0-9]+]]{{.*}}descriptor = [[PBIAS]]{{.*}}simulation.hierarchical_name = "top.p.ping"
+// CHECK: simulation.func private @[[Q:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "top.q.ping"
 // CHECK: %[[XCONST:.*]] = arith.constant [[X]] : i64
-// CHECK: %[[SCOPE:.*]] = obelisk_sim.virtual_interface.scope
+// CHECK: %[[SCOPE:.*]] = simulation.virtual_interface.scope
 // CHECK: arith.cmpi eq, %[[SCOPE]], %[[XCONST]]
-// CHECK: obelisk_sim.call @[[P]]
+// CHECK: simulation.call @[[P]]
 // CHECK: %[[YCONST:.*]] = arith.constant {{.*}}[[Y]] : i64
 // CHECK: arith.cmpi eq, %[[SCOPE]], %[[YCONST]]
-// CHECK: obelisk_sim.call @[[Q]]
+// CHECK: simulation.call @[[Q]]
 
 // A fork/join task still dispatches by the real interface-instance scope; the
 // selected stub then invokes its statically frozen provider aggregate.
-// FORKJOIN: obelisk_sim.func private @[[XAGG:unit_[0-9]+]]
-// FORKJOIN-SAME: obelisk_sim.hierarchical_name = "top.x.ping"
-// FORKJOIN: obelisk_sim.spawn @[[XB:[^ (]+]]
-// FORKJOIN-NEXT: obelisk_sim.suspend.join all
-// FORKJOIN: obelisk_sim.func private @[[YAGG:unit_[0-9]+]]
-// FORKJOIN-SAME: obelisk_sim.hierarchical_name = "top.y.ping"
-// FORKJOIN: obelisk_sim.spawn @[[YB:[^ (]+]]
-// FORKJOIN-NEXT: obelisk_sim.suspend.join all
-// FORKJOIN: obelisk_sim.virtual_interface.scope
-// FORKJOIN: obelisk_sim.task.call @[[XAGG]]
-// FORKJOIN: obelisk_sim.task.call @[[YAGG]]
-// FORKJOIN: obelisk_sim.func private @[[XB]]
-// FORKJOIN: obelisk_sim.task.call @{{unit_[0-9]+}}
-// FORKJOIN: obelisk_sim.func private @[[YB]]
-// FORKJOIN: obelisk_sim.task.call @{{unit_[0-9]+}}
+// FORKJOIN: simulation.func private @[[XAGG:unit_[0-9]+]]
+// FORKJOIN-SAME: simulation.hierarchical_name = "top.x.ping"
+// FORKJOIN: simulation.spawn @[[XB:[^ (]+]]
+// FORKJOIN-NEXT: simulation.suspend.join all
+// FORKJOIN: simulation.func private @[[YAGG:unit_[0-9]+]]
+// FORKJOIN-SAME: simulation.hierarchical_name = "top.y.ping"
+// FORKJOIN: simulation.spawn @[[YB:[^ (]+]]
+// FORKJOIN-NEXT: simulation.suspend.join all
+// FORKJOIN: simulation.virtual_interface.scope
+// FORKJOIN: simulation.task.call @[[XAGG]]
+// FORKJOIN: simulation.task.call @[[YAGG]]
+// FORKJOIN: simulation.func private @[[XB]]
+// FORKJOIN: simulation.task.call @{{unit_[0-9]+}}
+// FORKJOIN: simulation.func private @[[YB]]
+// FORKJOIN: simulation.task.call @{{unit_[0-9]+}}

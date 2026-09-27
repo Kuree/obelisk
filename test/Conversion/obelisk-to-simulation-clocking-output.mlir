@@ -94,71 +94,71 @@ module {
 
 // Static zero-skew clocks are registered once per event, even when several
 // outputs use the same clock.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: %[[CLK:.+]] = obelisk_sim.context.storage %arg0[0]
-// CHECK: %[[CLK2:.+]] = obelisk_sim.context.storage %arg0[4]
-// CHECK: obelisk_sim.clocking_output.track posedge %[[CLK]] width 1
-// CHECK-NEXT: obelisk_sim.clocking_output.track posedge %[[CLK2]] width 1
-// CHECK-NOT: obelisk_sim.clocking_output.track
-// CHECK: obelisk_sim.return
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: %[[CLK:.+]] = simulation.context.storage %arg0[0]
+// CHECK: %[[CLK2:.+]] = simulation.context.storage %arg0[4]
+// CHECK: simulation.clocking_output.track posedge %[[CLK]] width 1
+// CHECK-NEXT: simulation.clocking_output.track posedge %[[CLK2]] width 1
+// CHECK-NOT: simulation.clocking_output.track
+// CHECK: simulation.return
 
 // An asynchronous drive uses the current clocking time slot when available,
 // otherwise waits for the next clocking edge before scheduling NBA.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.25
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.25
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: %[[CURRENT:.+]] = obelisk_sim.clocking_output.current posedge %arg2 width 1
+// CHECK: %[[CURRENT:.+]] = simulation.clocking_output.current posedge %arg2 width 1
 // CHECK-NEXT: cf.cond_br %[[CURRENT]], ^[[DRIVE:bb[0-9]+]], ^[[WAIT:bb[0-9]+]]
 // CHECK: ^[[WAIT]]:
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.suspend.edge posedge
 // CHECK: ^[[DRIVE]]:
-// CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP:[0-9]+]] : i64
+// CHECK: simulation.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP:[0-9]+]] : i64
 
 // A same-edge drive following @(cb); ##0 remains in the current event.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.35
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.35
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-NOT: obelisk_sim.clocking_output.current
-// CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP]] : i64
+// CHECK-NOT: simulation.clocking_output.current
+// CHECK-NOT: simulation.suspend.edge
+// CHECK: simulation.nba.enqueue {{.*}} {clocking_output = [[Q_GROUP]] : i64
 
 // A distinct output edge remains a future synchronization point after @(cb).
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.41
-// CHECK: obelisk_sim.suspend.edge negedge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.41
+// CHECK: simulation.suspend.edge negedge
+// CHECK: simulation.nba.enqueue
 
 // Positive output skew is expressed as a delayed NBA in precision ticks.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.47
-// CHECK: obelisk_sim.time.constant 2{{$|[^0-9]}}
-// CHECK: obelisk_sim.nba.enqueue {{.*}} after
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.47
+// CHECK: simulation.time.constant 2{{$|[^0-9]}}
+// CHECK: simulation.nba.enqueue {{.*}} after
 
 // The current occurrence of cb does not synchronize a same-edge cb2 drive.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.55
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.55
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.nba.enqueue
 
 // An intra-assignment cycle delay runs in the drive process. It captures the
 // RHS, counts events there, and does not suspend the issuing process.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.75
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.75
 // CHECK: {{^ *}}^[[WAIT:bb[0-9]+]](%[[COUNT:[a-zA-Z0-9_]+]]: i32)
-// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[RESUME:bb[0-9]+]](%[[COUNT]] : i32)
+// CHECK: simulation.suspend.edge posedge {{.*}} to ^[[RESUME:bb[0-9]+]](%[[COUNT]] : i32)
 // CHECK: {{^ *}}^[[RESUME]](%[[RESUMED:[a-zA-Z0-9_]+]]: i32)
 // CHECK: %[[REMAINING:.*]] = arith.subi %[[RESUMED]]
 // CHECK: cf.cond_br {{.*}}, ^[[WAIT]](%[[REMAINING]] : i32), ^[[DRIVE:bb[0-9]+]]
 // CHECK: {{^ *}}^[[DRIVE]]
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK: simulation.nba.enqueue
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.25
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.spawn @unit_0.$clocking_output.25
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 10 : i32
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.35
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.41
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.47
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.55
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.75
-// CHECK-NOT: obelisk_sim.suspend
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.spawn @unit_0.$clocking_output.35
+// CHECK: simulation.spawn @unit_0.$clocking_output.41
+// CHECK: simulation.spawn @unit_0.$clocking_output.47
+// CHECK: simulation.spawn @unit_0.$clocking_output.55
+// CHECK: simulation.spawn @unit_0.$clocking_output.75
+// CHECK-NOT: simulation.suspend
+// CHECK: simulation.ref.store
 // CHECK-NOT: obelisk.sv.
 
-// INOUT: obelisk_sim.func private @unit_0.$clocking_output.25
+// INOUT: simulation.func private @unit_0.$clocking_output.25
 // INPUT-WRITE: cannot write an input clocking variable
 // ONE-STEP: #1step is not a valid clocking output skew

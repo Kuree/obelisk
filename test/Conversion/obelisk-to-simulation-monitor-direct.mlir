@@ -25,11 +25,11 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[CALLBACK:unit_0[.][^(]+]](
-// CHECK-SAME: obelisk_sim.persistent_monitor
-// CHECK: obelisk_sim.display
-// CHECK: obelisk_sim.suspend.change
-// CHECK-NOT: obelisk_sim.suspend.observe
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[PROCESS:.*]] = obelisk_sim.spawn @[[CALLBACK]]
-// CHECK: obelisk_sim.monitor.register %[[PROCESS]]
+// CHECK: simulation.func private @[[CALLBACK:unit_0[.][^(]+]](
+// CHECK-SAME: simulation.persistent_monitor
+// CHECK: simulation.display
+// CHECK: simulation.suspend.change
+// CHECK-NOT: simulation.suspend.observe
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[PROCESS:.*]] = simulation.spawn @[[CALLBACK]]
+// CHECK: simulation.monitor.register %[[PROCESS]]

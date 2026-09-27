@@ -156,72 +156,72 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Inclusive weak until retains its distinct transition equation. Negation
 // swaps both live callbacks, and its weak EOS success becomes outer failure.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.12.until_weak(
-// CHECK: obelisk_sim.spawn @unit_0.fork.12.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.persistent_until_inclusive
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "until_with"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.12.until_weak
-// CHECK: obelisk_sim.spawn @unit_0.fork.12.1.1
-// CHECK: obelisk_sim.spawn @unit_0.fork.12.0.0
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.12.until_weak(
+// CHECK: simulation.spawn @unit_0.fork.12.1.1
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.persistent_until_inclusive
+// CHECK-SAME: simulation.persistent_until_kind = "until_with"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.12.until_weak
+// CHECK: simulation.spawn @unit_0.fork.12.1.1
+// CHECK: simulation.spawn @unit_0.fork.12.0.0
 
 // Inclusive strong until under cover has strong-failure EOS and live failure
 // counts inverted into hits, while operand successes remain silent.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.29.until_strong(
-// CHECK: obelisk_sim.spawn @unit_1.fork.29.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_until_inclusive
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until_with"
-// CHECK-SAME: obelisk_sim.persistent_until_strong
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.29.until_strong
-// CHECK: obelisk_sim.spawn @unit_1.fork.29.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.29.until_strong(
+// CHECK: simulation.spawn @unit_1.fork.29.0.0
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_until_inclusive
+// CHECK-SAME: simulation.persistent_until_kind = "s_until_with"
+// CHECK-SAME: simulation.persistent_until_strong
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.29.until_strong
+// CHECK: simulation.spawn @unit_1.fork.29.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork
 
 // Goto repetition plus a terminal continuation uses four distinct aggregate
 // DFA cells. Every weak EOS completion and terminal success becomes failure
 // after negation; an X/Z gap becomes a live pass, and the EOS coordinator
 // counts all four cells.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.43.repetition_weak(
-// CHECK-COUNT-4: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_2.fork.43.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-COUNT-4: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_count.43.repetition_weak
-// CHECK: obelisk_sim.spawn @unit_2.fork.43.1.1
-// CHECK: obelisk_sim.spawn @unit_2.fork.43.0.0
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.43.repetition_weak(
+// CHECK-COUNT-4: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_2.fork.43.1.1
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-COUNT-4: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_count.43.repetition_weak
+// CHECK: simulation.spawn @unit_2.fork.43.1.1
+// CHECK: simulation.spawn @unit_2.fork.43.0.0
 
 // Nonconsecutive repetition has a different three-cell DFA. Cover's strong
 // operand failure at EOS becomes one hit per counted attempt; terminal
 // successes invert to silent failures, while an X/Z gap is an operand failure
 // and therefore produces the negated property's live pass.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.60.repetition_strong(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_3.fork.60.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK-COUNT-3: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_count.60.repetition_strong
-// CHECK: obelisk_sim.spawn @unit_3.fork.60.0.0
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.60.repetition_strong(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_3.fork.60.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK-COUNT-3: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_3.$concurrent_eos_count.60.repetition_strong
+// CHECK: simulation.spawn @unit_3.fork.60.0.0

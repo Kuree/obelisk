@@ -459,7 +459,7 @@ public:
                                                        operation.getId())};
     StringRef runtimeFunction = "obelisk_rt_v1_deferred_enqueue";
     if (auto assertionID = operation->getAttrOfType<IntegerAttr>(
-            "obelisk_sim.assertion_control_target_id")) {
+            "simulation.assertion_control_target_id")) {
       runtimeFunction = "obelisk_rt_v1_deferred_enqueue_for_assertion";
       arguments.push_back(llvmConstant(rewriter, location,
                                        rewriter.getI64Type(),
@@ -509,11 +509,12 @@ public:
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_assertion_control"),
-            ValueRange{context,
-                       llvmConstant(rewriter, location, rewriter.getI32Type(),
-                                    operation.getAction()),
-                       llvmConstant(rewriter, location, rewriter.getI64Type(),
-                                    operation.getAssertionId())})
+            ValueRange{
+                context,
+                llvmConstant(rewriter, location, rewriter.getI32Type(),
+                             static_cast<uint32_t>(operation.getAction())),
+                llvmConstant(rewriter, location, rewriter.getI64Type(),
+                             operation.getAssertionId())})
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(operation);

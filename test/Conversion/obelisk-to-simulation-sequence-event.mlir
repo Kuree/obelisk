@@ -61,20 +61,20 @@ module {
 
 // The declaration becomes one time-zero monitor in Observed. It tracks every
 // overlapping attempt and triggers a shared static endpoint event on success.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: [[ENDPOINT:%arg[0-9]+]]: !obelisk_sim.event
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: [[ENDPOINT:%arg[0-9]+]]: !simulation.event
 // CHECK-SAME: home_region = 8 : i32
 // CHECK-DAG: arith.constant 2 : i64
 // CHECK-DAG: arith.constant 4 : i64
 // CHECK-DAG: arith.constant 8 : i64
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.event.trigger [[ENDPOINT]] nonblocking = false
+// CHECK: simulation.event.trigger [[ENDPOINT]] nonblocking = false
 
 // The procedural control waits on that endpoint, independently of sequence
 // start time, and resumes in Reactive after endpoint detection in Observed.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: [[WAIT_ENDPOINT:%arg[0-9]+]]: !obelisk_sim.event
-// CHECK: obelisk_sim.suspend.event [[WAIT_ENDPOINT]]
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: [[WAIT_ENDPOINT:%arg[0-9]+]]: !simulation.event
+// CHECK: simulation.suspend.event [[WAIT_ENDPOINT]]
 // CHECK-SAME: resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

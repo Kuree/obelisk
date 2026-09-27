@@ -131,7 +131,7 @@ endmodule
 
 // The persistent child owns stable references to every automatic local it
 // rereads or writes, so the process-frame lifetime extends past the call.
-// LIFETIME-LABEL: obelisk_sim.func private @unit_0.fork
-// LIFETIME-COUNT-4: obelisk_sim.automatic_reference_capture
+// LIFETIME-LABEL: simulation.func private @unit_0.fork
+// LIFETIME-COUNT-4: simulation.automatic_reference_capture
 // LIFETIME-SAME: schedule.detached_controls
 // LIFETIME-SAME: schedule.prime_on_spawn

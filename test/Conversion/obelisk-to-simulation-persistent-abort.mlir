@@ -199,14 +199,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // warm-up bitset, clears both synchronously, then dispatches one vacuous pass
 // action per aborted attempt. The bitset popcount stays compiler-generated
 // arith/cf SSA so the same dispatcher is executable in design bytecode.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_abort_count.18.accept(
-// CHECK-SAME: obelisk_sim.concurrent_abort_counted
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_abort_count.18.accept(
+// CHECK-SAME: simulation.concurrent_abort_counted
 // CHECK: [[DELAY_ZERO:%.*]] = arith.constant 0 : i64
-// CHECK: [[COUNT:%.*]] = obelisk_sim.ref.load %arg1
+// CHECK: [[COUNT:%.*]] = simulation.ref.load %arg1
 // CHECK: [[COUNT_TOTAL:%.*]] = arith.addi %arg4, [[COUNT]] : i64
-// CHECK: obelisk_sim.ref.store [[DELAY_ZERO]] to %arg1
-// CHECK: [[BITS:%.*]] = obelisk_sim.ref.load %arg2
-// CHECK: obelisk_sim.ref.store [[DELAY_ZERO]] to %arg2
+// CHECK: simulation.ref.store [[DELAY_ZERO]] to %arg1
+// CHECK: [[BITS:%.*]] = simulation.ref.load %arg2
+// CHECK: simulation.ref.store [[DELAY_ZERO]] to %arg2
 // CHECK: cf.br [[BIT_LOOP:\^bb[0-9]+]]([[BITS]], [[COUNT_TOTAL]] : i64, i64)
 // CHECK: [[BIT_LOOP]]([[REMAIN:%.*]]: i64, [[ACCUM:%.*]]: i64):
 // CHECK: cf.cond_br {{.*}}, [[BIT_BODY:\^bb[0-9]+]], [[BIT_DONE:\^bb[0-9]+]]([[ACCUM]] : i64)
@@ -219,106 +219,106 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: cf.br [[BIT_LOOP]]([[NEXT_BITS]], [[NEXT_TOTAL]] : i64, i64)
 // CHECK: [[BIT_DONE]]([[POPCOUNT_TOTAL:%.*]]: i64):
 // CHECK: arith.cmpi ne, [[POPCOUNT_TOTAL]],
-// CHECK: obelisk_sim.spawn @unit_0.fork.18.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_abort.18(
-// CHECK-SAME: obelisk_sim.concurrent_abort_counted
+// CHECK: simulation.spawn @unit_0.fork.18.0.0
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_abort.18(
 // CHECK-SAME: schedule.concurrent_abort
 // CHECK-SAME: schedule.priority_signal_resume
-// CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
-// CHECK: obelisk_sim.suspend.observe
+// CHECK-SAME: simulation.concurrent_abort_counted
+// CHECK: simulation.observer.bind
+// CHECK-SAME: values(%arg1, %arg2 : !simulation.ref<!simulation.logic<1>>, !simulation.event) captures 1
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: schedule.concurrent_abort_level_true
 // CHECK: [[ASYNC_ZERO:%.*]] = arith.constant {{.*}} 0 : i64
-// CHECK: obelisk_sim.call @unit_0.$concurrent_abort_count.18.accept
+// CHECK: simulation.call @unit_0.$concurrent_abort_count.18.accept
 // CHECK-SAME: [[ASYNC_ZERO]])
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.asynchronous_property_abort
-// CHECK-SAME: obelisk_sim.persistent_delay_monitor
-// CHECK-SAME: obelisk_sim.property_abort_action = "accept"
-// CHECK: [[PREPONED_DELAY:%.*]] = obelisk_sim.context.event %arg0[2305843009213693952]
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_abort.18
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.asynchronous_property_abort
+// CHECK-SAME: simulation.persistent_delay_monitor
+// CHECK-SAME: simulation.property_abort_action = "accept"
+// CHECK: [[PREPONED_DELAY:%.*]] = simulation.context.event %arg0[2305843009213693952]
+// CHECK: simulation.spawn @unit_0.$concurrent_abort.18
 // CHECK-SAME: [[PREPONED_DELAY]]
-// CHECK: obelisk_sim.suspend.edge
+// CHECK: simulation.suspend.edge
 // The clocked already-true path uses the same Preponed sampled condition.
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg2
+// CHECK: simulation.assert.sampled_read %arg0 from %arg2
 // CHECK: [[CLOCK_ONE:%.*]] = arith.constant {{.*}} 1 : i64
-// CHECK: obelisk_sim.call @unit_0.$concurrent_abort_count.18.accept
+// CHECK: simulation.call @unit_0.$concurrent_abort_count.18.accept
 // CHECK-SAME: [[CLOCK_ONE]])
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 
 // sync_reject_on over s_eventually reads the abort predicate from the
 // Preponed snapshot and clears both aggregate counters before failing them.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_abort_count.38.reject(
-// CHECK-SAME: obelisk_sim.concurrent_abort_counted
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_abort_count.38.reject(
+// CHECK-SAME: simulation.concurrent_abort_counted
 // CHECK: [[UNARY_ZERO:%.*]] = arith.constant 0 : i64
-// CHECK: obelisk_sim.ref.load %arg1
-// CHECK: obelisk_sim.ref.store [[UNARY_ZERO]] to %arg1
-// CHECK: obelisk_sim.ref.load %arg2
-// CHECK: obelisk_sim.ref.store [[UNARY_ZERO]] to %arg2
-// CHECK: obelisk_sim.spawn @unit_1.fork.38.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_unary_kind = "s_eventually"
-// CHECK-SAME: obelisk_sim.property_abort_action = "reject"
-// CHECK-SAME: obelisk_sim.synchronous_property_abort
-// CHECK: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg2
-// CHECK: obelisk_sim.call @unit_1.$concurrent_abort_count.38.reject
+// CHECK: simulation.ref.load %arg1
+// CHECK: simulation.ref.store [[UNARY_ZERO]] to %arg1
+// CHECK: simulation.ref.load %arg2
+// CHECK: simulation.ref.store [[UNARY_ZERO]] to %arg2
+// CHECK: simulation.spawn @unit_1.fork.38.1.1
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_unary_kind = "s_eventually"
+// CHECK-SAME: simulation.property_abort_action = "reject"
+// CHECK-SAME: simulation.synchronous_property_abort
+// CHECK: simulation.suspend.edge
+// CHECK: simulation.assert.sampled_read %arg0 from %arg2
+// CHECK: simulation.call @unit_1.$concurrent_abort_count.38.reject
 
 // Async reject_on over strong until shares the same dispatcher between its
 // priority Reactive observer and its clocked already-true path.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_abort_count.56.reject(
-// CHECK-SAME: obelisk_sim.concurrent_abort_counted
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_abort_count.56.reject(
+// CHECK-SAME: simulation.concurrent_abort_counted
 // CHECK: [[UNTIL_ZERO:%.*]] = arith.constant 0 : i64
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store [[UNTIL_ZERO]]
-// CHECK: obelisk_sim.spawn @unit_2.fork.56.1.1
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_abort.56(
-// CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: values(%arg1, %arg2 : !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.event) captures 1
-// CHECK: obelisk_sim.call @unit_2.$concurrent_abort_count.56.reject
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.asynchronous_property_abort
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
-// CHECK: [[PREPONED_UNTIL:%.*]] = obelisk_sim.context.event %arg0[2305843009213693952]
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_abort.56
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store [[UNTIL_ZERO]]
+// CHECK: simulation.spawn @unit_2.fork.56.1.1
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_abort.56(
+// CHECK: simulation.observer.bind
+// CHECK-SAME: values(%arg1, %arg2 : !simulation.ref<!simulation.logic<1>>, !simulation.event) captures 1
+// CHECK: simulation.call @unit_2.$concurrent_abort_count.56.reject
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.asynchronous_property_abort
+// CHECK-SAME: simulation.persistent_until_kind = "s_until"
+// CHECK: [[PREPONED_UNTIL:%.*]] = simulation.context.event %arg0[2305843009213693952]
+// CHECK: simulation.spawn @unit_2.$concurrent_abort.56
 // CHECK-SAME: [[PREPONED_UNTIL]]
-// CHECK: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg2
-// CHECK: obelisk_sim.call @unit_2.$concurrent_abort_count.56.reject
+// CHECK: simulation.suspend.edge
+// CHECK: simulation.assert.sampled_read %arg0 from %arg2
+// CHECK: simulation.call @unit_2.$concurrent_abort_count.56.reject
 
 // The four-state goto DFA is aborted as four aggregate counts. An accepted
 // abort is vacuous, but every successful cover-property evaluation still
 // executes the pass action. The dispatcher adds the current attempt, clears
 // all four states, and invokes the callback once per affected attempt.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_abort_count.76.accept(
-// CHECK-SAME: obelisk_sim.concurrent_abort_counted
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_abort_count.76.accept(
+// CHECK-SAME: simulation.concurrent_abort_counted
 // CHECK: [[COVER_ZERO:%.*]] = arith.constant 0 : i64
 // CHECK: [[CURRENT:%.*]] = arith.constant 1 : i64
-// CHECK: [[COUNT0:%.*]] = obelisk_sim.ref.load %arg1
+// CHECK: [[COUNT0:%.*]] = simulation.ref.load %arg1
 // CHECK: [[WITH_CURRENT:%.*]] = arith.addi [[COUNT0]], [[CURRENT]]
-// CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg1
-// CHECK: [[COUNT1:%.*]] = obelisk_sim.ref.load %arg2
+// CHECK: simulation.ref.store [[COVER_ZERO]] to %arg1
+// CHECK: [[COUNT1:%.*]] = simulation.ref.load %arg2
 // CHECK: [[SUM1:%.*]] = arith.addi [[WITH_CURRENT]], [[COUNT1]]
-// CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg2
-// CHECK: [[COUNT2:%.*]] = obelisk_sim.ref.load %arg3
+// CHECK: simulation.ref.store [[COVER_ZERO]] to %arg2
+// CHECK: [[COUNT2:%.*]] = simulation.ref.load %arg3
 // CHECK: [[SUM2:%.*]] = arith.addi [[SUM1]], [[COUNT2]]
-// CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg3
-// CHECK: [[COUNT3:%.*]] = obelisk_sim.ref.load %arg4
+// CHECK: simulation.ref.store [[COVER_ZERO]] to %arg3
+// CHECK: [[COUNT3:%.*]] = simulation.ref.load %arg4
 // CHECK: arith.addi [[SUM2]], [[COUNT3]]
-// CHECK: obelisk_sim.ref.store [[COVER_ZERO]] to %arg4
-// CHECK: obelisk_sim.spawn @unit_3.fork.76.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-SAME: obelisk_sim.property_abort_action = "accept"
-// CHECK-SAME: obelisk_sim.synchronous_property_abort
-// CHECK: obelisk_sim.call @unit_3.$concurrent_abort_count.76.accept
+// CHECK: simulation.ref.store [[COVER_ZERO]] to %arg4
+// CHECK: simulation.spawn @unit_3.fork.76.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-SAME: simulation.property_abort_action = "accept"
+// CHECK-SAME: simulation.synchronous_property_abort
+// CHECK: simulation.call @unit_3.$concurrent_abort_count.76.accept
 
 // Only the two asynchronous forms need observer evaluators; both evaluators
 // read the Preponed snapshot.
-// CHECK-LABEL: obelisk_sim.func private @observer_
+// CHECK-LABEL: simulation.func private @observer_
 // CHECK-SAME: schedule.concurrent_abort_observer
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1
-// CHECK-LABEL: obelisk_sim.func private @observer_
+// CHECK: simulation.assert.sampled_read %arg0 from %arg1
+// CHECK-LABEL: simulation.func private @observer_
 // CHECK-SAME: schedule.concurrent_abort_observer
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg1
+// CHECK: simulation.assert.sampled_read %arg0 from %arg1

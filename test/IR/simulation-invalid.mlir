@@ -1,52 +1,52 @@
 // RUN: obelisk-opt --split-input-file --verify-diagnostics %s
 
 module {
-  obelisk_sim.design @duplicate {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
+  simulation.design @duplicate {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
     // expected-error @+1 {{duplicate storage ID 0}}
-    obelisk_sim.storage.decl 0 in 0 : i8 design
+    simulation.storage.decl 0 in 0 : i8 design
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @bad_port_ordinal {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.a"
+  simulation.design @bad_port_ordinal {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design hierarchy "top.a"
     // expected-error @+1 {{port ordinal must be an unsigned 24-bit integer}}
-    obelisk_sim.port.decl 0 in 0 source 0 net = false at 0 : i8 input ordinal 16777216 hierarchy "top.a"
+    simulation.port.decl 0 in 0 source 0 net = false at 0 : i8 input ordinal 16777216 hierarchy "top.a"
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @bad_port_range {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.a"
+  simulation.design @bad_port_range {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design hierarchy "top.a"
     // expected-error @+1 {{references an incompatible scope or source descriptor}}
-    obelisk_sim.port.decl 0 in 0 source 0 net = false at 7 : i2 input ordinal 0 hierarchy "top.a"
+    simulation.port.decl 0 in 0 source 0 net = false at 7 : i2 input ordinal 0 hierarchy "top.a"
   }
 }
 
 // -----
 
-!mixed_port_source = !obelisk_sim.packed_struct<[
-  #obelisk_sim.field<name = "bits", type = i1, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "logic", type = !obelisk_sim.logic<1>, ordinal = 1, packedOffset = 1>
+!mixed_port_source = !simulation.packed_struct<[
+  #simulation.field<name = "bits", type = i1, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "logic", type = !simulation.logic<1>, ordinal = 1, packedOffset = 1>
 ]>
 
 module {
   // A fixed two-state member view is valid even though another member makes
   // the whole canonical storage descriptor four-state.
-  obelisk_sim.design @mixed_port_representation {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !mixed_port_source design hierarchy "top.value"
-    obelisk_sim.port.decl 0 in 0 source 0 net = false at 0 : i1 input ordinal 0 hierarchy "top.bits"
+  simulation.design @mixed_port_representation {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !mixed_port_source design hierarchy "top.value"
+    simulation.port.decl 0 in 0 source 0 net = false at 0 : i1 input ordinal 0 hierarchy "top.bits"
     // expected-error @+1 {{references an incompatible scope or source descriptor}}
-    obelisk_sim.port.decl 1 in 0 source 0 net = false at 1 : i1 input ordinal 1 hierarchy "top.logic_as_bits"
+    simulation.port.decl 1 in 0 source 0 net = false at 1 : i1 input ordinal 1 hierarchy "top.logic_as_bits"
   }
 }
 
@@ -54,10 +54,10 @@ module {
 
 module {
   func.func @bad_dumpports_action(
-      %ctx: !obelisk_sim.context, %path: !obelisk_sim.string, %value: i64) {
+      %ctx: !simulation.context, %path: !simulation.string, %value: i64) {
     // expected-error @+1 {{attribute 'action' failed to satisfy constraint: EVCD session control action}}
-    obelisk_sim.dump.ports_control %ctx, %path, %value {action = 5 : i32} :
-        (!obelisk_sim.context, !obelisk_sim.string, i64) -> ()
+    simulation.dump.ports_control %ctx, %path, %value {action = 5 : i32} :
+        (!simulation.context, !simulation.string, i64) -> ()
     return
   }
 }
@@ -65,19 +65,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @empty_descriptor_binding_path {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.code_unit.decl 9100001 in 0 function hierarchy "bad"
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @empty_descriptor_binding_path {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.code_unit.decl 9100001 in 0 function hierarchy "bad"
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 8 : i32, code_unit_id = 9100001 : i64,
-          obelisk_sim.bindings = [
+          simulation.bindings = [
             // expected-error @+1 {{descriptor binding path must not be empty}}
-            #obelisk_sim.descriptor_binding<path = "", descriptor = 0, type = !obelisk_sim.ref<i8>>]
+            #simulation.descriptor_binding<path = "", descriptor = 0, type = !simulation.ref<i8>>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -85,19 +85,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @unknown_descriptor_binding {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.code_unit.decl 9100002 in 0 function hierarchy "bad"
+  simulation.design @unknown_descriptor_binding {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.code_unit.decl 9100002 in 0 function hierarchy "bad"
     // expected-error @+1 {{descriptor binding for path 'state' references an unknown or incompatible storage descriptor}}
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 8 : i32, code_unit_id = 9100002 : i64,
-          obelisk_sim.bindings = [
-            #obelisk_sim.descriptor_binding<path = "state", descriptor = 1, type = !obelisk_sim.ref<i8>>]
+          simulation.bindings = [
+            #simulation.descriptor_binding<path = "state", descriptor = 1, type = !simulation.ref<i8>>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -105,25 +105,25 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @missing_implicit_constructor {
+  simulation.design @missing_implicit_constructor {
     // expected-error @+1 {{implicit constructor references an unknown function}}
-    obelisk_sim.class.decl @C id 1 {implicit_constructor = @missing, is_abstract = false, is_final = false, is_interface = false}
+    simulation.class.decl @C id 1 {implicit_constructor = @missing, is_abstract = false, is_final = false, is_interface = false}
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @format_flag_on_integer {
-    obelisk_sim.code_unit.decl 9100003 in 0 initial hierarchy "bad"
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @format_flag_on_integer {
+    simulation.code_unit.decl 9100003 in 0 initial hierarchy "bad"
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9100003 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
       // expected-error @+1 {{packed integer items may only carry the signed flag}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [128] : i8
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [128] : i8
+      simulation.return
     }
   }
 }
@@ -132,10 +132,10 @@ module {
 
 module {
   func.func @bad_container_read(
-      %array: !obelisk_sim.dynamic_array<i32>, %index: i64) {
+      %array: !simulation.dynamic_array<i32>, %index: i64) {
     // expected-error @+1 {{result type must match the container element}}
-    %value = "obelisk_sim.container.read"(%array, %index) :
-      (!obelisk_sim.dynamic_array<i32>, i64) -> i64
+    %value = "simulation.container.read"(%array, %index) :
+      (!simulation.dynamic_array<i32>, i64) -> i64
     return
   }
 }
@@ -144,16 +144,16 @@ module {
 
 module {
   func.func @aggregate_managed_nba(
-      %value: !obelisk_sim.unpacked_struct<[
-        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>,
-      %destination: !obelisk_sim.ref<!obelisk_sim.unpacked_struct<[
-        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>>) {
+      %value: !simulation.unpacked_struct<[
+        #simulation.field<name = "text", type = !simulation.string, ordinal = 0, packedOffset = 0>]>,
+      %destination: !simulation.ref<!simulation.unpacked_struct<[
+        #simulation.field<name = "text", type = !simulation.string, ordinal = 0, packedOffset = 0>]>>) {
     // expected-error @+1 {{aggregate values containing managed handles are not yet supported}}
-    obelisk_sim.nba.enqueue %value to %destination :
-      (!obelisk_sim.unpacked_struct<[
-        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>,
-       !obelisk_sim.ref<!obelisk_sim.unpacked_struct<[
-        #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 0, packedOffset = 0>]>>) -> ()
+    simulation.nba.enqueue %value to %destination :
+      (!simulation.unpacked_struct<[
+        #simulation.field<name = "text", type = !simulation.string, ordinal = 0, packedOffset = 0>]>,
+       !simulation.ref<!simulation.unpacked_struct<[
+        #simulation.field<name = "text", type = !simulation.string, ordinal = 0, packedOffset = 0>]>>) -> ()
     return
   }
 }
@@ -163,7 +163,7 @@ module {
 module {
   func.func @bad_random_cycle(%key: i64, %position: i64) {
     // expected-error @+1 {{width must be between 1 and 32 bits}}
-    %next, %value = obelisk_sim.random.cycle_next %key, %position
+    %next, %value = simulation.random.cycle_next %key, %position
       {width = 33 : i32} : (i64, i64) -> (i64, i64)
     return
   }
@@ -173,12 +173,12 @@ module {
 
 module {
   func.func @bad_container_create(
-      %array: !obelisk_sim.dynamic_array<i32>,
-      %queue: !obelisk_sim.queue<i32, 4>, %size: i64) {
+      %array: !simulation.dynamic_array<i32>,
+      %queue: !simulation.queue<i32, 4>, %size: i64) {
     // expected-error @+1 {{source and result container types must match}}
-    %value = "obelisk_sim.container.create_like"(%array, %queue, %size) :
-      (!obelisk_sim.dynamic_array<i32>, !obelisk_sim.queue<i32, 4>, i64) ->
-      !obelisk_sim.dynamic_array<i32>
+    %value = "simulation.container.create_like"(%array, %queue, %size) :
+      (!simulation.dynamic_array<i32>, !simulation.queue<i32, 4>, i64) ->
+      !simulation.dynamic_array<i32>
     return
   }
 }
@@ -188,13 +188,13 @@ module {
 module {
   func.func @bad_assoc_create() {
     // expected-error @+1 {{element metadata does not match the associative element type}}
-    %array = "obelisk_sim.assoc.create"() {
-      type_id = 42 : i64, element_kind = 3 : i32,
-      element_flags = 0 : i32, value_size = 8 : i64,
+    %array = "simulation.assoc.create"() {
+      type_id = 42 : i64, element_kind = #simulation.element_kind<real>,
+      element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
       alignment = 1 : i64, bit_width = 64 : i64,
       trace_offsets = array<i64>, trace_kinds = array<i32>,
-      key_kind = 2 : i32, key_width = 32 : i64
-    } : () -> !obelisk_sim.assoc_array<i32, i32, true, false>
+      key_kind = #simulation.assoc_key_kind<signed>, key_width = 32 : i64
+    } : () -> !simulation.assoc_array<i32, i32, true, false>
     return
   }
 }
@@ -203,11 +203,11 @@ module {
 
 module {
   func.func @bad_assoc_key(
-      %array: !obelisk_sim.assoc_array<i32, i64, true, false>,
+      %array: !simulation.assoc_array<i32, i64, true, false>,
       %key: i64) {
     // expected-error @+1 {{key type must match the associative array key}}
-    %value = "obelisk_sim.assoc.read"(%array, %key) :
-      (!obelisk_sim.assoc_array<i32, i64, true, false>, i64) -> i64
+    %value = "simulation.assoc.read"(%array, %key) :
+      (!simulation.assoc_array<i32, i64, true, false>, i64) -> i64
     return
   }
 }
@@ -217,15 +217,15 @@ module {
 module {
   func.func @missing_assoc_aggregate_trace() {
     // expected-error @+1 {{trace inventory does not match the associative element type}}
-    %array = "obelisk_sim.assoc.create"() {
-      type_id = 47 : i64, element_kind = 7 : i32,
-      element_flags = 0 : i32, value_size = 16 : i64,
+    %array = "simulation.assoc.create"() {
+      type_id = 47 : i64, element_kind = #simulation.element_kind<aggregate>,
+      element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
       trace_offsets = array<i64>, trace_kinds = array<i32>,
-      key_kind = 2 : i32, key_width = 32 : i64
-    } : () -> !obelisk_sim.assoc_array<i32, !obelisk_sim.unpacked_struct<[
-      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
-      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+      key_kind = #simulation.assoc_key_kind<signed>, key_width = 32 : i64
+    } : () -> !simulation.assoc_array<i32, !simulation.unpacked_struct<[
+      #simulation.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>
     ]>, true, false>
     return
   }
@@ -235,12 +235,12 @@ module {
 
 module {
   func.func @bad_assoc_traversal(
-      %array: !obelisk_sim.assoc_array<i32, i64, true, false>,
+      %array: !simulation.assoc_array<i32, i64, true, false>,
       %key: i32) {
-    // expected-error @+1 {{direction must be -1 or 1}}
-    %next, %valid = "obelisk_sim.assoc.traverse"(%array, %key) {
+    // expected-error @+1 {{attribute 'direction' failed to satisfy constraint}}
+    %next, %valid = "simulation.assoc.traverse"(%array, %key) {
       direction = 0 : i32, endpoint = false
-    } : (!obelisk_sim.assoc_array<i32, i64, true, false>, i32) -> (i32, i1)
+    } : (!simulation.assoc_array<i32, i64, true, false>, i32) -> (i32, i1)
     return
   }
 }
@@ -250,13 +250,13 @@ module {
 module {
   func.func @bad_typed_container_create(%size: i64) {
     // expected-error @+1 {{element metadata does not match the result container element type}}
-    %array = "obelisk_sim.container.create"(%size) {
-      type_id = 42 : i64, element_kind = 3 : i32,
-      element_flags = 0 : i32, value_size = 8 : i64,
+    %array = "simulation.container.create"(%size) {
+      type_id = 42 : i64, element_kind = #simulation.element_kind<real>,
+      element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
       alignment = 1 : i64, bit_width = 64 : i64,
       trace_offsets = array<i64>, trace_kinds = array<i32>,
-      container_kind = 1 : i32, bound = 0 : i64
-    } : (i64) -> !obelisk_sim.dynamic_array<i32>
+      container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
+    } : (i64) -> !simulation.dynamic_array<i32>
     return
   }
 }
@@ -266,14 +266,14 @@ module {
 module {
   func.func @bad_packed_aggregate_container_create(%size: i64) {
     // expected-error @+1 {{element metadata does not match the result container element type}}
-    %array = "obelisk_sim.container.create"(%size) {
-      type_id = 43 : i64, element_kind = 7 : i32,
-      element_flags = 0 : i32, value_size = 1 : i64,
+    %array = "simulation.container.create"(%size) {
+      type_id = 43 : i64, element_kind = #simulation.element_kind<aggregate>,
+      element_flags = #simulation.element_flags<none>, value_size = 1 : i64,
       alignment = 1 : i64, bit_width = 8 : i64,
       trace_offsets = array<i64>, trace_kinds = array<i32>,
-      container_kind = 1 : i32, bound = 0 : i64
+      container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
     } : (i64) ->
-      !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<7 : 0 x i1>>
+      !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>
     return
   }
 }
@@ -283,15 +283,15 @@ module {
 module {
   func.func @missing_aggregate_trace(%size: i64) {
     // expected-error @+1 {{trace inventory does not match the result container element type}}
-    %array = "obelisk_sim.container.create"(%size) {
-      type_id = 44 : i64, element_kind = 7 : i32,
-      element_flags = 0 : i32, value_size = 16 : i64,
+    %array = "simulation.container.create"(%size) {
+      type_id = 44 : i64, element_kind = #simulation.element_kind<aggregate>,
+      element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
       trace_offsets = array<i64>, trace_kinds = array<i32>,
-      container_kind = 1 : i32, bound = 0 : i64
-    } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.unpacked_struct<[
-      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
-      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+      container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
+    } : (i64) -> !simulation.dynamic_array<!simulation.unpacked_struct<[
+      #simulation.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>
     ]>>
     return
   }
@@ -302,15 +302,15 @@ module {
 module {
   func.func @wrong_aggregate_trace_kind(%size: i64) {
     // expected-error @+1 {{trace inventory does not match the result container element type}}
-    %array = "obelisk_sim.container.create"(%size) {
-      type_id = 45 : i64, element_kind = 7 : i32,
-      element_flags = 0 : i32, value_size = 16 : i64,
+    %array = "simulation.container.create"(%size) {
+      type_id = 45 : i64, element_kind = #simulation.element_kind<aggregate>,
+      element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
       trace_offsets = array<i64: 8>, trace_kinds = array<i32: 1>,
-      container_kind = 1 : i32, bound = 0 : i64
-    } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.unpacked_struct<[
-      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
-      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+      container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
+    } : (i64) -> !simulation.dynamic_array<!simulation.unpacked_struct<[
+      #simulation.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>
     ]>>
     return
   }
@@ -321,15 +321,15 @@ module {
 module {
   func.func @wrong_aggregate_trace_offset(%size: i64) {
     // expected-error @+1 {{trace inventory does not match the result container element type}}
-    %array = "obelisk_sim.container.create"(%size) {
-      type_id = 46 : i64, element_kind = 7 : i32,
-      element_flags = 0 : i32, value_size = 16 : i64,
+    %array = "simulation.container.create"(%size) {
+      type_id = 46 : i64, element_kind = #simulation.element_kind<aggregate>,
+      element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
       trace_offsets = array<i64: 0>, trace_kinds = array<i32: 2>,
-      container_kind = 1 : i32, bound = 0 : i64
-    } : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.unpacked_struct<[
-      #obelisk_sim.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
-      #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>
+      container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
+    } : (i64) -> !simulation.dynamic_array<!simulation.unpacked_struct<[
+      #simulation.field<name = "number", type = i32, ordinal = 0, packedOffset = 0>,
+      #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>
     ]>>
     return
   }
@@ -338,36 +338,36 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @conflicting_container_descriptors {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "first"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "second"
-    obelisk_sim.func @first(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %size: i64 {obelisk_sim.capture_kind = 1 : i32})
+  simulation.design @conflicting_container_descriptors {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "first"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "second"
+    simulation.func @first(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %size: i64 {simulation.capture_kind = 1 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      %array = "obelisk_sim.container.create"(%size) {
-        type_id = 99 : i64, element_kind = 1 : i32,
-        element_flags = 0 : i32, value_size = 4 : i64,
+      %array = "simulation.container.create"(%size) {
+        type_id = 99 : i64, element_kind = #simulation.element_kind<bits>,
+        element_flags = #simulation.element_flags<none>, value_size = 4 : i64,
         alignment = 1 : i64, bit_width = 32 : i64,
         trace_offsets = array<i64>, trace_kinds = array<i32>,
-        container_kind = 1 : i32, bound = 0 : i64
-      } : (i64) -> !obelisk_sim.dynamic_array<i32>
-      obelisk_sim.return
+        container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
+      } : (i64) -> !simulation.dynamic_array<i32>
+      simulation.return
     }
-    obelisk_sim.func @second(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %size: i64 {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func @second(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %size: i64 {simulation.capture_kind = 1 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
       // expected-error @+1 {{element type ID 99 conflicts with another container descriptor}}
-      %array = "obelisk_sim.container.create"(%size) {
-        type_id = 99 : i64, element_kind = 3 : i32,
-        element_flags = 0 : i32, value_size = 8 : i64,
+      %array = "simulation.container.create"(%size) {
+        type_id = 99 : i64, element_kind = #simulation.element_kind<real>,
+        element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
         alignment = 1 : i64, bit_width = 64 : i64,
         trace_offsets = array<i64>, trace_kinds = array<i32>,
-        container_kind = 1 : i32, bound = 0 : i64
-      } : (i64) -> !obelisk_sim.dynamic_array<f64>
-      obelisk_sim.return
+        container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
+      } : (i64) -> !simulation.dynamic_array<f64>
+      simulation.return
     }
   }
 }
@@ -375,16 +375,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @dpi_missing_status {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_missing_status"
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @dpi_missing_status {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "dpi_missing_status"
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1 : i32
       // expected-error @+1 {{must return a trailing runtime status}}
-      %call = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> i32
-      obelisk_sim.return
+      %call = simulation.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !simulation.context(%value) {abi_signature = [#simulation.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #simulation.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> i32
+      simulation.return
     }
   }
 }
@@ -392,16 +392,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @dpi_bad_copyout {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_copyout"
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @dpi_bad_copyout {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_copyout"
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 0 : i32
       // expected-error @+1 {{DPI formal copy-out must match its input ABI entry}}
-      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = byte, direction = output, width = 8, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = true, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i8, !runtime.status)
-      obelisk_sim.return
+      %call:2 = simulation.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !simulation.context(%value) {abi_signature = [#simulation.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #simulation.dpi_abi<kind = byte, direction = output, width = 8, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = true, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i8, !runtime.status)
+      simulation.return
     }
   }
 }
@@ -409,16 +409,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @dpi_bad_result_order {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_result_order"
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @dpi_bad_result_order {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_result_order"
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1 : i32
       // expected-error @+1 {{a DPI function signature must place its result first}}
-      %call:3 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i32, i32, !runtime.status)
-      obelisk_sim.return
+      %call:3 = simulation.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !simulation.context(%value) {abi_signature = [#simulation.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #simulation.dpi_abi<kind = int, direction = output, width = 32, fourState = false, isSigned = true>, #simulation.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i32) -> (i32, i32, !runtime.status)
+      simulation.return
     }
   }
 }
@@ -426,16 +426,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @dpi_bad_logical_width {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_logical_width"
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @dpi_bad_logical_width {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_logical_width"
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1 : i16
       // expected-error @+1 {{logical operand or result type disagrees with its DPI ABI entry}}
-      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i16) -> (i32, !runtime.status)
-      obelisk_sim.return
+      %call:2 = simulation.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !simulation.context(%value) {abi_signature = [#simulation.dpi_abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #simulation.dpi_abi<kind = int, direction = result, width = 32, fourState = false, isSigned = true>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (i16) -> (i32, !runtime.status)
+      simulation.return
     }
   }
 }
@@ -443,16 +443,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @dpi_bad_real_kind {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_real_kind"
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @dpi_bad_real_kind {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "dpi_bad_real_kind"
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 1.000000e+00 : f64
       // expected-error @+1 {{shortreal DPI ABI entry requires an f32 value}}
-      %call:2 = obelisk_sim.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !obelisk_sim.context(%value) {abi_signature = [#obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>, #obelisk_sim.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (f64) -> (f64, !runtime.status)
-      obelisk_sim.return
+      %call:2 = simulation.dpi.call "dpi_bad" id 1 scope 0 context %ctx : !simulation.context(%value) {abi_signature = [#simulation.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>, #simulation.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>], is_context = false, is_pure = false, is_task = false, source_column = 1 : i32, source_file = "bad.sv", source_line = 1 : i32} : (f64) -> (f64, !runtime.status)
+      simulation.return
     }
   }
 }
@@ -460,184 +460,184 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @unknown_connection_endpoint {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+  simulation.design @unknown_connection_endpoint {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
     // expected-error @+1 {{references an unknown scope or net descriptor}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @out_of_range_connection {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<4> design
+  simulation.design @out_of_range_connection {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
+    simulation.net.decl 1 in 0 : !simulation.logic<4> design
     // expected-error @+1 {{contains an out-of-range bit run}}
-    obelisk_sim.net.connect.decl 0 in 0 0[3] to 1[0] width 2 reversed = false
+    simulation.net.connect.decl 0 in 0 0[3] to 1[0] width 2 reversed = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @invalid_reversed_connection {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<4> design
+  simulation.design @invalid_reversed_connection {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
+    simulation.net.decl 1 in 0 : !simulation.logic<4> design
     // expected-error @+1 {{contains an out-of-range bit run}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[1] width 3 reversed = true
+    simulation.net.connect.decl 0 in 0 0[0] to 1[1] width 3 reversed = true
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @mixed_uwire_wrong_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 2 : i32}
+  simulation.design @mixed_uwire_wrong_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 2 : i32}
     // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @mixed_wired_missing_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 3 : i32}
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 4 : i32}
+  simulation.design @mixed_wired_missing_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {resolution_kind = 3 : i32}
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 4 : i32}
     // expected-error @+1 {{must identify the dominant endpoint in mixed net topology}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @wire_wired_wrong_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 3 : i32}
+  simulation.design @wire_wired_wrong_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 3 : i32}
     // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @wire_tri0_wrong_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 5 : i32}
+  simulation.design @wire_tri0_wrong_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 5 : i32}
     // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @uwire_supply_wrong_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 2 : i32}
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 7 : i32}
+  simulation.design @uwire_supply_wrong_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {resolution_kind = 2 : i32}
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 7 : i32}
     // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @wire_trireg_wrong_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
+  simulation.design @wire_trireg_wrong_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 9 : i32}
     // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @trireg_pull_wrong_dominance {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design {resolution_kind = 5 : i32}
+  simulation.design @trireg_pull_wrong_dominance {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {resolution_kind = 9 : i32}
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design {resolution_kind = 5 : i32}
     // expected-error @+1 {{identifies the wrong dominant endpoint for these net types}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @two_state_trireg {
-    obelisk_sim.scope.decl 0
+  simulation.design @two_state_trireg {
+    simulation.scope.decl 0
     // expected-error @+1 {{trireg nets require an entirely four-state type}}
-    obelisk_sim.net.decl 0 in 0 : i1 design {resolution_kind = 9 : i32}
+    simulation.net.decl 0 in 0 : i1 design {resolution_kind = 9 : i32}
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @charge_strength_on_wire {
-    obelisk_sim.scope.decl 0
+  simulation.design @charge_strength_on_wire {
+    simulation.scope.decl 0
     // expected-error @+1 {{only trireg nets may declare charge strength}}
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {charge_strength = 2 : i32}
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {charge_strength = 2 : i32}
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @invalid_trireg_charge_strength {
-    obelisk_sim.scope.decl 0
+  simulation.design @invalid_trireg_charge_strength {
+    simulation.scope.decl 0
     // expected-error @+1 {{trireg charge strength must be small, medium, or large}}
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {charge_strength = 6 : i32, resolution_kind = 9 : i32}
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {charge_strength = 6 : i32, resolution_kind = 9 : i32}
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @mixed_state_domain_connection {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : i1 design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
+  simulation.design @mixed_state_domain_connection {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : i1 design
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design
     // expected-error @+1 {{connects incompatible two-state and four-state nets}}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @partial_driver_metadata {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+  simulation.design @partial_driver_metadata {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
     // expected-error @+1 {{driven low and width must either both be present or both be absent}}
-    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<4> design {driven_low = 1 : i64}
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<4> design {driven_low = 1 : i64}
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @program_with_active_home {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad" debug "bad"
+  simulation.design @program_with_active_home {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "bad" debug "bad"
     // expected-error @+1 {{program-domain code units must have reactive home region}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {code_unit_id = 1 : i64, domain = 1 : i32, entry_kind = 1 : i32, home_region = 2 : i32} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {code_unit_id = 1 : i64, domain = 1 : i32, entry_kind = 1 : i32, home_region = 2 : i32} {
+      simulation.return
     }
   }
 }
@@ -645,11 +645,11 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @out_of_range_driver {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
+  simulation.design @out_of_range_driver {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
     // expected-error @+1 {{driven range exceeds the driver type}}
-    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<4> design {driven_low = 3 : i64, driven_width = 2 : i64}
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<4> design {driven_low = 3 : i64, driven_width = 2 : i64}
   }
 }
 
@@ -657,17 +657,17 @@ module {
 
 module {
   // Only time-controlled statements are illegal in a SystemVerilog function.
-  obelisk_sim.design @delay_function {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.delay_function.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @delay_function {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.delay_function.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
-      %delay = obelisk_sim.time.constant 1
+      %delay = simulation.time.constant 1
       // expected-error @+1 {{is not permitted in a zero-time function entry}}
-      obelisk_sim.suspend.delay %delay to ^done
+      simulation.suspend.delay %delay to ^done
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -675,16 +675,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @wait_children_function {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.wait_children_function.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @wait_children_function {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.wait_children_function.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{is not permitted in a zero-time function entry}}
-      obelisk_sim.suspend.children to ^done
+      simulation.suspend.children to ^done
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -692,14 +692,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_summary {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_summary.process.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @bad_summary {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_summary.process.9000001"
+    simulation.scope.decl 0
     // expected-error @below {{attribute 'effect_summary' failed to satisfy constraint: compute effect array}}
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, effect_summary = [0 : i32], code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -708,20 +708,20 @@ module {
 
 module {
   // expected-error @+1 {{scope IDs must be dense from zero; missing 1}}
-  obelisk_sim.design @sparse {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.scope.decl 2 parent 0
+  simulation.design @sparse {
+    simulation.scope.decl 0
+    simulation.scope.decl 2 parent 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @cyclic_scopes {
-    obelisk_sim.scope.decl 0
+  simulation.design @cyclic_scopes {
+    simulation.scope.decl 0
     // expected-error @+1 {{parent scope ID must precede the child scope ID}}
-    obelisk_sim.scope.decl 1 parent 2
-    obelisk_sim.scope.decl 2 parent 1
+    simulation.scope.decl 1 parent 2
+    simulation.scope.decl 2 parent 1
   }
 }
 
@@ -729,20 +729,20 @@ module {
 
 module {
   // expected-error @+1 {{time precision must be a positive femtosecond value}}
-  obelisk_sim.design @bad_time_precision attributes {time_precision_fs = 0 : i64} {
-    obelisk_sim.scope.decl 0
+  simulation.design @bad_time_precision attributes {time_precision_fs = 0 : i64} {
+    simulation.scope.decl 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @bad_capture {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_capture.bad.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @bad_capture {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_capture.bad.9000001"
+    simulation.scope.decl 0
     // expected-error @+1 {{requires one argument metadata dictionary per argument}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -750,17 +750,17 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_call {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.bad_call.callee.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.bad_call.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i8 {obelisk_sim.capture_kind = 1 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return %value : i8
+  simulation.design @bad_call {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.bad_call.callee.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.bad_call.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @callee(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %value: i8 {simulation.capture_kind = 1 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return %value : i8
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{operand and result types must match callee signature}}
-      obelisk_sim.call @callee(%ctx) : (!obelisk_sim.context) -> ()
-      obelisk_sim.return
+      simulation.call @callee(%ctx) : (!simulation.context) -> ()
+      simulation.return
     }
   }
 }
@@ -768,13 +768,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{value and unknown planes must match result width}}
-      %bad = obelisk_sim.logic.constant 0 : i8, 0 : i4 : !obelisk_sim.logic<8>
-      obelisk_sim.return
+      %bad = simulation.logic.constant 0 : i8, 0 : i4 : !simulation.logic<8>
+      simulation.return
     }
   }
 }
@@ -782,15 +782,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_shift_amount {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_shift_amount.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %amount = obelisk_sim.time.constant 1
+  simulation.design @bad_shift_amount {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_shift_amount.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      %amount = simulation.time.constant 1
       // expected-error @+1 {{shift amount must be an integer or four-state logic}}
-      %shifted = obelisk_sim.logic.shift left %value by %amount : (!obelisk_sim.logic<8>, !obelisk_sim.time) -> !obelisk_sim.logic<8>
-      obelisk_sim.return
+      %shifted = simulation.logic.shift left %value by %amount : (!simulation.logic<8>, !simulation.time) -> !simulation.logic<8>
+      simulation.return
     }
   }
 }
@@ -798,15 +798,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_dynamic_index {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_index.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %index = obelisk_sim.time.constant 1
+  simulation.design @bad_dynamic_index {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_index.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      %index = simulation.time.constant 1
       // expected-error @+1 {{index must be a signless builtin integer or four-state logic}}
-      %bad = obelisk_sim.logic.dyn_extract %value from %index : (!obelisk_sim.logic<8>, !obelisk_sim.time) -> !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %bad = simulation.logic.dyn_extract %value from %index : (!simulation.logic<8>, !simulation.time) -> !simulation.logic<1>
+      simulation.return
     }
   }
 }
@@ -814,16 +814,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_signed_dynamic_index {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_signed_dynamic_index.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @bad_signed_dynamic_index {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_signed_dynamic_index.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     ^invalid(%index: si32):
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{builtin integer index must be signless}}
-      %bad = obelisk_sim.logic.dyn_extract %value from %index : (!obelisk_sim.logic<8>, si32) -> !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %bad = simulation.logic.dyn_extract %value from %index : (!simulation.logic<8>, si32) -> !simulation.logic<1>
+      simulation.return
     }
   }
 }
@@ -831,14 +831,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_conversion_domain {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_conversion_domain.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @bad_conversion_domain {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_conversion_domain.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{result must be a signless builtin integer}}
-      %bad = obelisk_sim.logic.to_bits %value : !obelisk_sim.logic<8> -> si8
-      obelisk_sim.return
+      %bad = simulation.logic.to_bits %value : !simulation.logic<8> -> si8
+      simulation.return
     }
   }
 }
@@ -846,15 +846,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_dynamic_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_dynamic_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i4
       %index = arith.constant 0 : i32
       // expected-error @+1 {{result width exceeds input width}}
-      %bad = obelisk_sim.bits.dyn_extract %value from %index : (i4, i32) -> i8
-      obelisk_sim.return
+      %bad = simulation.bits.dyn_extract %value from %index : (i4, i32) -> i8
+      simulation.return
     }
   }
 }
@@ -862,16 +862,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_dynamic_domain {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_domain.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %ref = obelisk_sim.ref.alloc %value : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
+  simulation.design @bad_dynamic_domain {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_domain.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      %ref = simulation.ref.alloc %value : !simulation.logic<8> -> !simulation.ref<!simulation.logic<8>>
       %index = arith.constant 0 : i32
       // expected-error @+1 {{input and result element types must use the same state domain}}
-      %bad = obelisk_sim.ref.dyn_extract %ref from %index : (!obelisk_sim.ref<!obelisk_sim.logic<8>>, i32) -> !obelisk_sim.ref<i4>
-      obelisk_sim.return
+      %bad = simulation.ref.dyn_extract %ref from %index : (!simulation.ref<!simulation.logic<8>>, i32) -> !simulation.ref<i4>
+      simulation.return
     }
   }
 }
@@ -879,16 +879,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_dynamic_insert_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_insert_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
-      %replacement = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @bad_dynamic_insert_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_dynamic_insert_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i4, 0 : i4 : !simulation.logic<4>
+      %replacement = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       %index = arith.constant 0 : i32
       // expected-error @+1 {{replacement width exceeds input width}}
-      %bad = obelisk_sim.logic.dyn_insert %replacement into %value at %index : (!obelisk_sim.logic<4>, !obelisk_sim.logic<8>, i32) -> !obelisk_sim.logic<4>
-      obelisk_sim.return
+      %bad = simulation.logic.dyn_insert %replacement into %value at %index : (!simulation.logic<4>, !simulation.logic<8>, i32) -> !simulation.logic<4>
+      simulation.return
     }
   }
 }
@@ -896,18 +896,18 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_bits_dynamic_insert_domain {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_bits_dynamic_insert_domain.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_bits_dynamic_insert_domain {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_bits_dynamic_insert_domain.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %raw_value = arith.constant 0 : i8
       %raw_replacement = arith.constant 0 : i4
       %value = builtin.unrealized_conversion_cast %raw_value : i8 to si8
       %replacement = builtin.unrealized_conversion_cast %raw_replacement : i4 to si4
       %index = arith.constant 0 : i32
       // expected-error @+1 {{input, replacement, and result must be signless builtin integers}}
-      %bad = obelisk_sim.bits.dyn_insert %replacement into %value at %index : (si8, si4, i32) -> si8
-      obelisk_sim.return
+      %bad = simulation.bits.dyn_insert %replacement into %value at %index : (si8, si4, i32) -> si8
+      simulation.return
     }
   }
 }
@@ -915,14 +915,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_logical_not_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_logical_not_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      // expected-error @+1 {{logical negation must produce !obelisk_sim.logic<1>}}
-      %bad = obelisk_sim.logic.unary logical_not %value : (!obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      obelisk_sim.return
+  simulation.design @bad_logical_not_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_logical_not_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      // expected-error @+1 {{logical negation must produce !simulation.logic<1>}}
+      %bad = simulation.logic.unary logical_not %value : (!simulation.logic<8>) -> !simulation.logic<8>
+      simulation.return
     }
   }
 }
@@ -930,14 +930,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_selection_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_selection_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @bad_selection_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_selection_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{constant selection is outside the input width}}
-      %part = obelisk_sim.logic.extract %value from 6 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<4>
-      obelisk_sim.return
+      %part = simulation.logic.extract %value from 6 : !simulation.logic<8> -> !simulation.logic<4>
+      simulation.return
     }
   }
 }
@@ -945,17 +945,17 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_continuation {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_continuation.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+  simulation.design @bad_continuation {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_continuation.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       %value = arith.constant 0 : i8
       // expected-error @+1 {{type mismatch for bb argument #0 of successor #0}}
-      obelisk_sim.suspend.change %ref to ^next(%value : i8) : !obelisk_sim.ref<i8>
+      simulation.suspend.change %ref to ^next(%value : i8) : !simulation.ref<i8>
     ^next(%wrong: i16):
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -964,20 +964,20 @@ module {
 
 module {
   // expected-error @+1 {{Operations with a 'SymbolTable' must have exactly one block}}
-  "obelisk_sim.design"() ({
+  "simulation.design"() ({
   }) {sym_name = "empty"} : () -> ()
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_lookup {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_lookup.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @unknown_lookup {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_lookup.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{references an unknown or incompatible storage descriptor}}
-      %ref = obelisk_sim.context.storage %ctx[7] : !obelisk_sim.ref<i8>
-      obelisk_sim.return
+      %ref = simulation.context.storage %ctx[7] : !simulation.ref<i8>
+      simulation.return
     }
   }
 }
@@ -985,13 +985,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @capture_descriptor_mismatch {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_descriptor_mismatch.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
+  simulation.design @capture_descriptor_mismatch {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_descriptor_mismatch.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
     // expected-error @+1 {{argument #1 has an incompatible capture descriptor}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %capture: !obelisk_sim.ref<i16> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %capture: !simulation.ref<i16> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -999,14 +999,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @capture_subelement_metadata_mismatch {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_subelement_metadata_mismatch.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<4>> design
+  simulation.design @capture_subelement_metadata_mismatch {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_subelement_metadata_mismatch.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.packed_array<1 : 0 x !simulation.logic<4>> design
     // Ordinal zero is the high packed element at physical offset four.
     // expected-error @+1 {{argument #1 has an incompatible capture descriptor}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %capture: !obelisk_sim.ref<!obelisk_sim.logic<4>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<4>>, obelisk_sim.descriptor_low = 0 : i64, obelisk_sim.descriptor_indices = array<i64: 0>, obelisk_sim.descriptor_aggregate_type = !obelisk_sim.logic<4>}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %capture: !simulation.ref<!simulation.logic<4>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64, simulation.descriptor_root_type = !simulation.packed_array<1 : 0 x !simulation.logic<4>>, simulation.descriptor_low = 0 : i64, simulation.descriptor_indices = array<i64: 0>, simulation.descriptor_aggregate_type = !simulation.logic<4>}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1014,13 +1014,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @capture_packed_metadata_mismatch {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_packed_metadata_mismatch.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+  simulation.design @capture_packed_metadata_mismatch {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.capture_packed_metadata_mismatch.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.logic<8> design
     // expected-error @+1 {{argument #1 has an incompatible capture descriptor}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %capture: !obelisk_sim.ref<!obelisk_sim.logic<2>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64, obelisk_sim.descriptor_root_type = !obelisk_sim.logic<8>, obelisk_sim.descriptor_low = 3 : i64, obelisk_sim.descriptor_aggregate_type = !obelisk_sim.logic<8>, obelisk_sim.descriptor_packed_low = 2 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %capture: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64, simulation.descriptor_root_type = !simulation.logic<8>, simulation.descriptor_low = 3 : i64, simulation.descriptor_aggregate_type = !simulation.logic<8>, simulation.descriptor_packed_low = 2 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1028,16 +1028,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @blocking_function {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.blocking_function.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
-      %delay = obelisk_sim.time.constant 1
+  simulation.design @blocking_function {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.blocking_function.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
+      %delay = simulation.time.constant 1
       // expected-error @+1 {{is not permitted in a zero-time function entry}}
-      obelisk_sim.suspend.delay %delay to ^next
+      simulation.suspend.delay %delay to ^next
     ^next:
       %zero = arith.constant 0 : i8
-      obelisk_sim.return %zero : i8
+      simulation.return %zero : i8
     }
   }
 }
@@ -1045,16 +1045,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_any {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_any.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+  simulation.design @bad_any {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_any.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       // expected-error @+1 {{edge inventory exceeds the operand inventory}}
-      obelisk_sim.suspend.any %ref edges [0, 1] to ^next : !obelisk_sim.ref<i8>
+      simulation.suspend.any %ref edges [0, 1] to ^next : !simulation.ref<i8>
     ^next:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1062,14 +1062,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @cross_isolation {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.cross_isolation.bad.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @cross_isolation {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.cross_isolation.bad.9000001"
+    simulation.scope.decl 0
     %outside = arith.constant 0 : i8
     // expected-note @+1 {{required by region isolation constraints}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{using value defined outside the region}}
-      obelisk_sim.return %outside : i8
+      simulation.return %outside : i8
     }
   }
 }
@@ -1077,11 +1077,11 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_driver {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : i8 design
+  simulation.design @bad_driver {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : i8 design
     // expected-error @+1 {{references an incompatible scope or net descriptor}}
-    obelisk_sim.driver.decl 0 in 0 drives 0 : i16 design
+    simulation.driver.decl 0 in 0 drives 0 : i16 design
   }
 }
 
@@ -1089,10 +1089,10 @@ module {
 
 module {
   // expected-error @+1 {{design must contain a root scope descriptor}}
-  obelisk_sim.design @no_root {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.no_root.bad.9000001"
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @no_root {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.no_root.bad.9000001"
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1100,110 +1100,110 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @two_roots {
-    obelisk_sim.scope.decl 0
+  simulation.design @two_roots {
+    simulation.scope.decl 0
     // expected-error @+1 {{design must contain exactly one root scope}}
-    obelisk_sim.scope.decl 1
+    simulation.scope.decl 1
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @self_parent {
-    obelisk_sim.scope.decl 0
+  simulation.design @self_parent {
+    simulation.scope.decl 0
     // expected-error @+1 {{scope cannot be its own parent}}
-    obelisk_sim.scope.decl 1 parent 1
+    simulation.scope.decl 1 parent 1
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @empty_scope_definition {
+  simulation.design @empty_scope_definition {
     // expected-error @+1 {{module definition name cannot be empty}}
-    obelisk_sim.scope.decl 0 source_definition ""
+    simulation.scope.decl 0 source_definition ""
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @root_scope_definition {
+  simulation.design @root_scope_definition {
     // expected-error @+1 {{root scope cannot carry a module definition name}}
-    obelisk_sim.scope.decl 0 source_definition "top"
+    simulation.scope.decl 0 source_definition "top"
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @interface_scope_definition {
-    obelisk_sim.scope.decl 0
+  simulation.design @interface_scope_definition {
+    simulation.scope.decl 0
     // expected-error @+1 {{only module scopes may carry a module definition name}}
-    obelisk_sim.scope.decl 1 parent 0 source_definition "I" vpi_kind 601
+    simulation.scope.decl 1 parent 0 source_definition "I" vpi_kind 601
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @program_scope_definition {
-    obelisk_sim.scope.decl 0
+  simulation.design @program_scope_definition {
+    simulation.scope.decl 0
     // expected-error @+1 {{only module scopes may carry a module definition name}}
-    obelisk_sim.scope.decl 1 parent 0 source_definition "P" vpi_kind 602
+    simulation.scope.decl 1 parent 0 source_definition "P" vpi_kind 602
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @zero_coverage_scope_id {
+  simulation.design @zero_coverage_scope_id {
     // expected-error @+1 {{coverage scope ID must be nonzero}}
-    obelisk_sim.scope.decl 0 coverage_id 0
+    simulation.scope.decl 0 coverage_id 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @duplicate_coverage_scope_id {
-    obelisk_sim.scope.decl 0 coverage_id 42
+  simulation.design @duplicate_coverage_scope_id {
+    simulation.scope.decl 0 coverage_id 42
     // expected-error @+1 {{duplicate coverage scope ID 42}}
-    obelisk_sim.scope.decl 1 parent 0 coverage_id 42
+    simulation.scope.decl 1 parent 0 coverage_id 42
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_storage_scope {
-    obelisk_sim.scope.decl 0
+  simulation.design @unknown_storage_scope {
+    simulation.scope.decl 0
     // expected-error @+1 {{references an unknown scope ID}}
-    obelisk_sim.storage.decl 0 in 4 : i8 design
+    simulation.storage.decl 0 in 4 : i8 design
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_net_scope {
-    obelisk_sim.scope.decl 0
+  simulation.design @unknown_net_scope {
+    simulation.scope.decl 0
     // expected-error @+1 {{references an unknown scope ID}}
-    obelisk_sim.net.decl 0 in 4 : i8 design
+    simulation.net.decl 0 in 4 : i8 design
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_callee {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_callee.caller.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @unknown_callee {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_callee.caller.9000001"
+    simulation.scope.decl 0
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{callee must name a sibling function or observer entry}}
-      obelisk_sim.call @missing(%ctx) : (!obelisk_sim.context) -> ()
-      obelisk_sim.return
+      simulation.call @missing(%ctx) : (!simulation.context) -> ()
+      simulation.return
     }
   }
 }
@@ -1211,17 +1211,17 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @call_targets_process {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.call_targets_process.process.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.call_targets_process.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @process(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @call_targets_process {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.call_targets_process.process.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.call_targets_process.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @process(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{callee must name a sibling function or observer entry}}
-      obelisk_sim.call @process(%ctx) : (!obelisk_sim.context) -> ()
-      obelisk_sim.return
+      simulation.call @process(%ctx) : (!simulation.context) -> ()
+      simulation.return
     }
   }
 }
@@ -1229,18 +1229,18 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @spawn_targets_function {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.spawn_targets_function.callee.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.spawn_targets_function.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @spawn_targets_function {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.spawn_targets_function.callee.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.spawn_targets_function.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @callee(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i8
-      obelisk_sim.return %zero : i8
+      simulation.return %zero : i8
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{callee must name a sibling process entry}}
-      %process = obelisk_sim.spawn @callee(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @callee(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
     }
   }
 }
@@ -1248,17 +1248,17 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @spawn_signature {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.spawn_signature.process.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.spawn_signature.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @process(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i8 {obelisk_sim.capture_kind = 2 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @spawn_signature {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.spawn_signature.process.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.spawn_signature.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @process(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %value: i8 {simulation.capture_kind = 2 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{operands must match the void callee signature}}
-      %process = obelisk_sim.spawn @process(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @process(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
     }
   }
 }
@@ -1266,12 +1266,12 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @missing_context {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.missing_context.bad.9000001"
-    obelisk_sim.scope.decl 0
-    // expected-error @+1 {{first argument must be !obelisk_sim.context}}
-    obelisk_sim.func @bad(%value: i8 {obelisk_sim.capture_kind = 2 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @missing_context {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.missing_context.bad.9000001"
+    simulation.scope.decl 0
+    // expected-error @+1 {{first argument must be !simulation.context}}
+    simulation.func @bad(%value: i8 {simulation.capture_kind = 2 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1279,13 +1279,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @process_returns_value {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.process_returns_value.bad.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @process_returns_value {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.process_returns_value.bad.9000001"
+    simulation.scope.decl 0
     // expected-error @+1 {{process and root entries must not return values}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i8
-      obelisk_sim.return %zero : i8
+      simulation.return %zero : i8
     }
   }
 }
@@ -1293,12 +1293,12 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @root_takes_captures {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
+  simulation.design @root_takes_captures {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
     // expected-error @+1 {{root initializer accepts only the context argument}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 0 : i32} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %ref: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 0 : i32} {
+      simulation.return
     }
   }
 }
@@ -1306,12 +1306,12 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @context_capture_metadata {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.context_capture_metadata.bad.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @context_capture_metadata {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.context_capture_metadata.bad.9000001"
+    simulation.scope.decl 0
     // expected-error @+1 {{argument #1 cannot have context capture metadata}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i8 {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %value: i8 {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1319,12 +1319,12 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @spurious_descriptor {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.spurious_descriptor.bad.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @spurious_descriptor {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.spurious_descriptor.bad.9000001"
+    simulation.scope.decl 0
     // expected-error @+1 {{argument #1 must not have descriptor metadata}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i8 {obelisk_sim.capture_kind = 2 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %value: i8 {simulation.capture_kind = 2 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1332,13 +1332,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @missing_descriptor {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.missing_descriptor.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    // expected-error @+1 {{argument #1 requires obelisk_sim.descriptor_id metadata}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 3 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @missing_descriptor {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.missing_descriptor.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    // expected-error @+1 {{argument #1 requires simulation.descriptor_id metadata}}
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %ref: !simulation.ref<i8> {simulation.capture_kind = 3 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
   }
 }
@@ -1346,13 +1346,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @return_type_mismatch {
-    obelisk_sim.code_unit.decl 9000001 in 0 function hierarchy "test.return_type_mismatch.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @return_type_mismatch {
+    simulation.code_unit.decl 9000001 in 0 function hierarchy "test.return_type_mismatch.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 9000001 : i64} {
       %zero = arith.constant 0 : i16
       // expected-error @+1 {{operand types must match the enclosing function results}}
-      obelisk_sim.return %zero : i16
+      simulation.return %zero : i16
     }
   }
 }
@@ -1360,15 +1360,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @watched_is_value {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.watched_is_value.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @watched_is_value {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.watched_is_value.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
       // expected-error @+1 {{watched value must be a ref, net, driver, or managed-watch handle}}
-      obelisk_sim.suspend.change %value to ^next : i8
+      simulation.suspend.change %value to ^next : i8
     ^next:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1376,16 +1376,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @any_needs_edges {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.any_needs_edges.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+  simulation.design @any_needs_edges {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.any_needs_edges.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       // expected-error @+1 {{requires at least one watched handle}}
-      obelisk_sim.suspend.any %ref edges [] to ^next : !obelisk_sim.ref<i8>
-    ^next(%resumed: !obelisk_sim.ref<i8>):
-      obelisk_sim.return
+      simulation.suspend.any %ref edges [] to ^next : !simulation.ref<i8>
+    ^next(%resumed: !simulation.ref<i8>):
+      simulation.return
     }
   }
 }
@@ -1393,16 +1393,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @any_bad_edge {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.any_bad_edge.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+  simulation.design @any_bad_edge {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.any_bad_edge.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       // expected-error @+1 {{contains an invalid edge kind}}
-      obelisk_sim.suspend.any %ref edges [9] to ^next : !obelisk_sim.ref<i8>
+      simulation.suspend.any %ref edges [9] to ^next : !simulation.ref<i8>
     ^next:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1410,14 +1410,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @alloc_mismatch {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.alloc_mismatch.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @alloc_mismatch {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.alloc_mismatch.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
       // expected-error @+1 {{initial value must match allocated element type}}
-      %local = obelisk_sim.ref.alloc %value : i8 -> !obelisk_sim.ref<i16>
-      obelisk_sim.return
+      %local = simulation.ref.alloc %value : i8 -> !simulation.ref<i16>
+      simulation.return
     }
   }
 }
@@ -1425,14 +1425,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @concat_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.concat_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @concat_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.concat_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{result width must equal the sum of input widths}}
-      %bad = obelisk_sim.logic.concat %value, %value : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      obelisk_sim.return
+      %bad = simulation.logic.concat %value, %value : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<8>
+      simulation.return
     }
   }
 }
@@ -1440,14 +1440,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @replicate_width {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.replicate_width.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @replicate_width {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.replicate_width.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{result width must equal input width times count}}
-      %bad = obelisk_sim.logic.replicate %value times 3 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<16>
-      obelisk_sim.return
+      %bad = simulation.logic.replicate %value times 3 : !simulation.logic<8> -> !simulation.logic<16>
+      simulation.return
     }
   }
 }
@@ -1455,14 +1455,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @replicate_width_overflow {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.replicate_width_overflow.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
+  simulation.design @replicate_width_overflow {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.replicate_width_overflow.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i4, 0 : i4 : !simulation.logic<4>
       // expected-error @+1 {{replication width overflows uint64_t}}
-      %bad = obelisk_sim.logic.replicate %value times 4611686018427387905 : !obelisk_sim.logic<4> -> !obelisk_sim.logic<4>
-      obelisk_sim.return
+      %bad = simulation.logic.replicate %value times 4611686018427387905 : !simulation.logic<4> -> !simulation.logic<4>
+      simulation.return
     }
   }
 }
@@ -1470,15 +1470,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @insert_range {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.insert_range.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %part = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
+  simulation.design @insert_range {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.insert_range.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      %part = simulation.logic.constant 0 : i4, 0 : i4 : !simulation.logic<4>
       // expected-error @+1 {{replacement is outside the input width}}
-      %bad = obelisk_sim.logic.insert %part into %value at 6 : (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
-      obelisk_sim.return
+      %bad = simulation.logic.insert %part into %value at 6 : (!simulation.logic<8>, !simulation.logic<4>) -> !simulation.logic<8>
+      simulation.return
     }
   }
 }
@@ -1486,14 +1486,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @case_compare_result {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.case_compare_result.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @case_compare_result {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.case_compare_result.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{case comparisons must produce i1}}
-      %bad = obelisk_sim.logic.compare case_eq %value, %value : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %bad = simulation.logic.compare case_eq %value, %value : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      simulation.return
     }
   }
 }
@@ -1501,14 +1501,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @wild_compare_result {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.wild_compare_result.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      // expected-error @+1 {{four-state comparisons must produce !obelisk_sim.logic<1>}}
-      %bad = obelisk_sim.logic.compare wild_eq %value, %value : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> i1
-      obelisk_sim.return
+  simulation.design @wild_compare_result {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.wild_compare_result.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      // expected-error @+1 {{four-state comparisons must produce !simulation.logic<1>}}
+      %bad = simulation.logic.compare wild_eq %value, %value : (!simulation.logic<8>, !simulation.logic<8>) -> i1
+      simulation.return
     }
   }
 }
@@ -1516,14 +1516,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @casez_compare_result {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.casez_compare_result.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %value = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
+  simulation.design @casez_compare_result {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.casez_compare_result.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
       // expected-error @+1 {{case comparisons must produce i1}}
-      %bad = obelisk_sim.logic.compare casez_eq %value, %value : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %bad = simulation.logic.compare casez_eq %value, %value : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      simulation.return
     }
   }
 }
@@ -1531,15 +1531,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @union_active_untagged {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.union_active_untagged.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @union_active_untagged {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.union_active_untagged.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
-      %union = obelisk_sim.union.construct %value as 0 : (i8) -> !obelisk_sim.unpacked_union<fields = [#obelisk_sim.field<name = "only", type = i8, ordinal = 0, packedOffset = 0>], isTagged = false>
+      %union = simulation.union.construct %value as 0 : (i8) -> !simulation.unpacked_union<fields = [#simulation.field<name = "only", type = i8, ordinal = 0, packedOffset = 0>], isTagged = false>
       // expected-error @+1 {{input union must be tagged}}
-      %bad = obelisk_sim.union.is_active %union[0] : !obelisk_sim.unpacked_union<fields = [#obelisk_sim.field<name = "only", type = i8, ordinal = 0, packedOffset = 0>], isTagged = false>
-      obelisk_sim.return
+      %bad = simulation.union.is_active %union[0] : !simulation.unpacked_union<fields = [#simulation.field<name = "only", type = i8, ordinal = 0, packedOffset = 0>], isTagged = false>
+      simulation.return
     }
   }
 }
@@ -1547,15 +1547,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @union_active_index {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.union_active_index.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @union_active_index {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.union_active_index.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
-      %union = obelisk_sim.union.construct %value as 0 : (i8) -> !obelisk_sim.packed_union<fields = [#obelisk_sim.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #obelisk_sim.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
+      %union = simulation.union.construct %value as 0 : (i8) -> !simulation.packed_union<fields = [#simulation.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
       // expected-error @+1 {{tagged union member index is out of range}}
-      %bad = obelisk_sim.union.is_active %union[2] : !obelisk_sim.packed_union<fields = [#obelisk_sim.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #obelisk_sim.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
-      obelisk_sim.return
+      %bad = simulation.union.is_active %union[2] : !simulation.packed_union<fields = [#simulation.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
+      simulation.return
     }
   }
 }
@@ -1563,13 +1563,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @negative_time {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_time.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @negative_time {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_time.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{simulation time must be nonnegative}}
-      %bad = obelisk_sim.time.constant -1
-      obelisk_sim.return
+      %bad = simulation.time.constant -1
+      simulation.return
     }
   }
 }
@@ -1577,15 +1577,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @ref_extract_range {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.ref_extract_range.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+  simulation.design @ref_extract_range {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.ref_extract_range.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       // expected-error @+1 {{constant selection is outside the input element width}}
-      %bad = obelisk_sim.ref.extract %ref from 6 : !obelisk_sim.ref<i8> -> !obelisk_sim.ref<i4>
-      obelisk_sim.return
+      %bad = simulation.ref.extract %ref from 6 : !simulation.ref<i8> -> !simulation.ref<i4>
+      simulation.return
     }
   }
 }
@@ -1593,14 +1593,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_time_scale {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_scale.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_time_scale {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_scale.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 1 : i64
       // expected-error @+1 {{tick scale must be positive}}
-      %bad = obelisk_sim.time.scale %value by 0 signed = false : i64
-      obelisk_sim.return
+      %bad = simulation.time.scale %value by 0 signed = false : i64
+      simulation.return
     }
   }
 }
@@ -1608,14 +1608,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_time_to_real_scale {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_to_real_scale.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_time_to_real_scale {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_to_real_scale.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 1 : i64
       // expected-error @+1 {{tick scale must be positive}}
-      %bad = obelisk_sim.time.to_real %value by 0
-      obelisk_sim.return
+      %bad = simulation.time.to_real %value by 0
+      simulation.return
     }
   }
 }
@@ -1623,14 +1623,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_time_from_real_quantum {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_from_real_quantum.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_time_from_real_quantum {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_time_from_real_quantum.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 1.0 : f64
       // expected-error @+1 {{tick quantum must divide the tick scale}}
-      %bad = obelisk_sim.time.from_real %value by 10 quantum 3
-      obelisk_sim.return
+      %bad = simulation.time.from_real %value by 10 quantum 3
+      simulation.return
     }
   }
 }
@@ -1638,17 +1638,17 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_edge_iff_condition {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_edge_iff_condition.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
+  simulation.design @bad_edge_iff_condition {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_edge_iff_condition.bad.9000001"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       %value = arith.constant 1 : i8
       // expected-error @+1 {{condition must be a ref or net handle}}
-      obelisk_sim.suspend.edge_iff posedge %ref iff %value to ^next : !obelisk_sim.ref<i8>, i8
+      simulation.suspend.edge_iff posedge %ref iff %value to ^next : !simulation.ref<i8>, i8
     ^next:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1656,15 +1656,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_level_handle {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_level_handle.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_level_handle {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_level_handle.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 1 : i8
       // expected-error @+1 {{watched value must be a ref or net handle}}
-      obelisk_sim.suspend.level %value to ^next : i8
+      simulation.suspend.level %value to ^next : i8
     ^next:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1672,19 +1672,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_join {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_join.child.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.bad_join.bad.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @child(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @bad_join {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_join.child.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.bad_join.bad.9000002"
+    simulation.scope.decl 0
+    simulation.func @child(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
-      %process = obelisk_sim.spawn @child(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      %process = simulation.spawn @child(%ctx) : !simulation.context -> !simulation.process
       // expected-error @+1 {{process count exceeds the operand inventory}}
-      obelisk_sim.suspend.join all %process processes 2 to ^next : !obelisk_sim.process
+      simulation.suspend.join all %process processes 2 to ^next : !simulation.process
     ^next:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1692,15 +1692,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @empty_join {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.empty_join.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @empty_join {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.empty_join.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
       // expected-error @+1 {{requires at least one child process}}
-      obelisk_sim.suspend.join all %value processes 0 to ^next : i8
+      simulation.suspend.join all %value processes 0 to ^next : i8
     ^next(%continued: i8):
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1708,13 +1708,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @task_result {
-    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.task_result.bad.9000001"
-    obelisk_sim.scope.decl 0
+  simulation.design @task_result {
+    simulation.code_unit.decl 9000001 in 0 task hierarchy "test.task_result.bad.9000001"
+    simulation.scope.decl 0
     // expected-error @+1 {{process and root entries must not return values}}
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8 attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
-      obelisk_sim.return %value : i8
+      simulation.return %value : i8
     }
   }
 }
@@ -1722,18 +1722,18 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @task_call_non_task {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.task_call_non_task.callee.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.task_call_non_task.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @task_call_non_task {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.task_call_non_task.callee.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.task_call_non_task.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @callee(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{callee must name a sibling task entry}}
-      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^done : !obelisk_sim.context
+      simulation.task.call @callee(%ctx) arguments 1 to ^done : !simulation.context
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1741,18 +1741,18 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @task_call_signature {
-    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.task_call_signature.callee.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.task_call_signature.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %value: i8 {obelisk_sim.capture_kind = 1 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @task_call_signature {
+    simulation.code_unit.decl 9000001 in 0 task hierarchy "test.task_call_signature.callee.9000001"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.task_call_signature.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @callee(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %value: i8 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{argument types must match the task signature}}
-      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^done : !obelisk_sim.context
+      simulation.task.call @callee(%ctx) arguments 1 to ^done : !simulation.context
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1760,18 +1760,18 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @task_call_function {
-    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.task_call_function.callee.9000001"
-    obelisk_sim.code_unit.decl 9000002 in 0 function hierarchy "test.task_call_function.caller.9000002"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @task_call_function {
+    simulation.code_unit.decl 9000001 in 0 task hierarchy "test.task_call_function.callee.9000001"
+    simulation.code_unit.decl 9000002 in 0 function hierarchy "test.task_call_function.caller.9000002"
+    simulation.scope.decl 0
+    simulation.func @callee(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func @caller(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{is not permitted in a zero-time function entry}}
-      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^done : !obelisk_sim.context
+      simulation.task.call @callee(%ctx) arguments 1 to ^done : !simulation.context
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -1779,14 +1779,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @negative_control_enter {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_control_enter.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @negative_control_enter {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_control_enter.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{control target ID must be positive}}
-      %control = obelisk_sim.control.enter 0
-      obelisk_sim.control.leave %control
-      obelisk_sim.return
+      %control = simulation.control.enter 0
+      simulation.control.leave %control
+      simulation.return
     }
   }
 }
@@ -1794,13 +1794,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @negative_control_disable {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_control_disable.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @negative_control_disable {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_control_disable.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{control target ID must be positive}}
-      obelisk_sim.control.disable 0
-      obelisk_sim.return
+      simulation.control.disable 0
+      simulation.return
     }
   }
 }
@@ -1808,14 +1808,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @hierarchical_activation_disable {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.hierarchical_activation_disable.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
-      %control = obelisk_sim.control.enter 1
+  simulation.design @hierarchical_activation_disable {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.hierarchical_activation_disable.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+      %control = simulation.control.enter 1
       // expected-error @+1 {{hierarchical disable must not name one activation token}}
-      obelisk_sim.control.disable 1 activation %control {hierarchical = true}
-      obelisk_sim.return
+      simulation.control.disable 1 activation %control {hierarchical = true}
+      simulation.return
     }
   }
 }
@@ -1823,13 +1823,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @negative_static_once {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_static_once.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @negative_static_once {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.negative_static_once.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{static initialization ID must be positive}}
-      %first = obelisk_sim.static.once 0
-      obelisk_sim.return
+      %first = simulation.static.once 0
+      simulation.return
     }
   }
 }
@@ -1837,15 +1837,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_display_radix {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_display_radix.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_display_radix {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_display_radix.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
-      // expected-error @+1 {{default radix must be 2, 8, 10, or 16}}
-      obelisk_sim.display %ctx to %fd(%value) newline = true radix = 3 flags = [0] : i8
-      obelisk_sim.return
+      // expected-error @+1 {{expected '<'}}
+      simulation.display %ctx to %fd(%value) newline = true radix = 3 flags = [0] : i8
+      simulation.return
     }
   }
 }
@@ -1853,15 +1853,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_display_flags {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_display_flags.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_display_flags {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_display_flags.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
       // expected-error @+1 {{requires one flag entry per display item}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [] : i8
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [] : i8
+      simulation.return
     }
   }
 }
@@ -1869,15 +1869,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @unknown_display_flag {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_display_flag.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @unknown_display_flag {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.unknown_display_flag.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
       // expected-error @+1 {{container display flags require a container operand}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [16] : i8
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [16] : i8
+      simulation.return
     }
   }
 }
@@ -1885,15 +1885,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @signed_literal_display {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.signed_literal_display.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @signed_literal_display {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.signed_literal_display.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
-      %text = obelisk_sim.bytes.constant "text"
+      %text = simulation.bytes.constant "text"
       // expected-error @+1 {{literal byte items cannot be signed}}
-      obelisk_sim.display %ctx to %fd(%text) newline = false radix = 10 flags = [1] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%text) newline = false radix = <decimal> flags = [1] : !simulation.bytes
+      simulation.return
     }
   }
 }
@@ -1901,15 +1901,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @virtual_interface_flag_on_integer {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.virtual_interface_flag_on_integer.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @virtual_interface_flag_on_integer {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.virtual_interface_flag_on_integer.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i64
       // expected-error @+1 {{virtual-interface display flags require a virtual-interface operand}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [256] : i64
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [256] : i64
+      simulation.return
     }
   }
 }
@@ -1917,16 +1917,16 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @unmarked_virtual_interface {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unmarked_virtual_interface.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.scope.decl 1 parent 0 interface "@bus"
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @unmarked_virtual_interface {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.unmarked_virtual_interface.bad.9000001"
+    simulation.scope.decl 0
+    simulation.scope.decl 1 parent 0 interface "@bus"
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
-      %value = obelisk_sim.virtual_interface.null : !obelisk_sim.virtual_interface<"@bus", "">
+      %value = simulation.virtual_interface.null : !simulation.virtual_interface<"@bus", "">
       // expected-error @+1 {{virtual-interface items require only the virtual-interface flag}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : !obelisk_sim.virtual_interface<"@bus", "">
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [0] : !simulation.virtual_interface<"@bus", "">
+      simulation.return
     }
   }
 }
@@ -1934,15 +1934,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @designated_literal_display {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.designated_literal_display.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @designated_literal_display {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.designated_literal_display.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
-      %text = obelisk_sim.bytes.constant "text"
+      %text = simulation.bytes.constant "text"
       // expected-error @+1 {{designated format must be the first string output-format item}}
-      obelisk_sim.display %ctx to %fd(%text) newline = false radix = 10 flags = [32] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%text) newline = false radix = <decimal> flags = [32] : !simulation.bytes
+      simulation.return
     }
   }
 }
@@ -1950,15 +1950,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @late_designated_string_format {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.late_designated_string_format.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @late_designated_string_format {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.late_designated_string_format.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = arith.constant 0 : i8
-      %text = obelisk_sim.bytes.constant "%d"
+      %text = simulation.bytes.constant "%d"
       // expected-error @+1 {{designated format must be the first string output-format item}}
-      %result = obelisk_sim.string.output_format %ctx(%value, %text) radix = 10 flags = [0, 32] : i8, !obelisk_sim.bytes
-      obelisk_sim.return
+      %result = simulation.string.output_format %ctx(%value, %text) radix = <decimal> flags = [0, 32] : i8, !simulation.bytes
+      simulation.return
     }
   }
 }
@@ -1966,15 +1966,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @unsupported_display_item {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unsupported_display_item.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @unsupported_display_item {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.unsupported_display_item.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0.0 : f32
       // expected-error @+1 {{items must be literal bytes, packed integers, or f64 reals}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : f32
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [0] : f32
+      simulation.return
     }
   }
 }
@@ -1982,15 +1982,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @unmarked_real_display_item {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.unmarked_real_display_item.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @unmarked_real_display_item {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.unmarked_real_display_item.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0.0 : f64
       // expected-error @+1 {{f64 display operands must be marked real}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] : f64
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [0] : f64
+      simulation.return
     }
   }
 }
@@ -1998,15 +1998,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @signed_real_display_item {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.signed_real_display_item.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @signed_real_display_item {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.signed_real_display_item.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0.0 : f64
       // expected-error @+1 {{real display items cannot be marked signed}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [5] : f64
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [5] : f64
+      simulation.return
     }
   }
 }
@@ -2014,15 +2014,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @bad_display_time_multiplier {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_display_time_multiplier.bad.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @bad_display_time_multiplier {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.bad_display_time_multiplier.bad.9000001"
+    simulation.scope.decl 0
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %fd = arith.constant 1 : i32
       %value = arith.constant 0 : i8
       // expected-error @+1 {{time multiplier must be positive}}
-      obelisk_sim.display %ctx to %fd(%value) newline = false radix = 10 flags = [0] {time_multiplier = 0 : i64} : i8
-      obelisk_sim.return
+      simulation.display %ctx to %fd(%value) newline = false radix = <decimal> flags = [0] {time_multiplier = 0 : i64} : i8
+      simulation.return
     }
   }
 }
@@ -2030,34 +2030,34 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @duplicate_code_unit {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 17 in 0 function hierarchy "top.first"
+  simulation.design @duplicate_code_unit {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 17 in 0 function hierarchy "top.first"
     // expected-error @+1 {{duplicate code-unit ID 17}}
-    obelisk_sim.code_unit.decl 17 in 0 function hierarchy "top.second"
+    simulation.code_unit.decl 17 in 0 function hierarchy "top.second"
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_code_unit_scope {
-    obelisk_sim.scope.decl 0
+  simulation.design @unknown_code_unit_scope {
+    simulation.scope.decl 0
     // expected-error @+1 {{references an unknown scope ID}}
-    obelisk_sim.code_unit.decl 17 in 1 function hierarchy "top.missing"
+    simulation.code_unit.decl 17 in 1 function hierarchy "top.missing"
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @missing_code_unit_reference {
-    obelisk_sim.scope.decl 0
+  simulation.design @missing_code_unit_reference {
+    simulation.scope.decl 0
     // expected-error @+1 {{defined non-root function requires a code-unit ID}}
-    obelisk_sim.func @missing(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @missing(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2065,29 +2065,29 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @zero_code_unit_id {
-    obelisk_sim.scope.decl 0
+  simulation.design @zero_code_unit_id {
+    simulation.scope.decl 0
     // expected-error @+1 {{code-unit ID must be nonzero}}
-    obelisk_sim.code_unit.decl 0 in 0 function hierarchy "top.zero"
+    simulation.code_unit.decl 0 in 0 function hierarchy "top.zero"
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @duplicate_executable_code_unit_reference {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 17 in 0 function hierarchy "top.shared"
-    obelisk_sim.func @first(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @duplicate_executable_code_unit_reference {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 17 in 0 function hierarchy "top.shared"
+    simulation.func @first(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 17 : i64, entry_kind = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
     // expected-error @+1 {{code-unit ID 17 is referenced by multiple executable functions}}
-    obelisk_sim.func @second(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @second(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 17 : i64, entry_kind = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
     // expected-remark @-11 {{first executable function is here}}
   }
@@ -2096,14 +2096,14 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @mismatched_code_unit_kind {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 17 in 0 initial hierarchy "top.initial"
+  simulation.design @mismatched_code_unit_kind {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 17 in 0 initial hierarchy "top.initial"
     // expected-error @+1 {{entry kind does not match its code-unit declaration}}
-    obelisk_sim.func @function(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @function(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 17 : i64, entry_kind = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2111,13 +2111,13 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observer_bad_result {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bad_result"
+  simulation.design @observer_bad_result {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bad_result"
     // expected-error @+1 {{observer entry must return one scalar result}}
-    obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> !obelisk_sim.time attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
-      %zero = obelisk_sim.time.constant 0
-      obelisk_sim.return %zero : !obelisk_sim.time
+    simulation.func private @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> !simulation.time attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+      %zero = simulation.time.constant 0
+      simulation.return %zero : !simulation.time
     }
   }
 }
@@ -2125,15 +2125,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observer_suspends {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_suspends"
-    obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @observer_suspends {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_suspends"
+    simulation.func private @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       // expected-error @+1 {{is not permitted in a zero-time observer entry}}
-      obelisk_sim.suspend.forever to ^resume
+      simulation.suspend.forever to ^resume
     ^resume:
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
   }
 }
@@ -2141,19 +2141,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observer_calls_task {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 task hierarchy "test.observer_calls_task.callee"
-    obelisk_sim.code_unit.decl 9000002 in 0 observer hierarchy "test.observer_calls_task.bad"
-    obelisk_sim.func private @callee(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
-      obelisk_sim.return
+  simulation.design @observer_calls_task {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 task hierarchy "test.observer_calls_task.callee"
+    simulation.code_unit.decl 9000002 in 0 observer hierarchy "test.observer_calls_task.bad"
+    simulation.func private @callee(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 9000001 : i64} {
+      simulation.return
     }
-    obelisk_sim.func private @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func private @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000002 : i64} {
       // expected-error @+1 {{task calls are not permitted in an observer entry}}
-      obelisk_sim.task.call @callee(%ctx) arguments 1 to ^resume : !obelisk_sim.context
+      simulation.task.call @callee(%ctx) arguments 1 to ^resume : !simulation.context
     ^resume:
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
   }
 }
@@ -2161,20 +2161,20 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observer_bind_signature {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i16 design
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_signature.evaluator"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_signature.bad"
-    obelisk_sim.func private @evaluator(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %ref: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @observer_bind_signature {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i16 design
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_signature.evaluator"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_signature.bad"
+    simulation.func private @evaluator(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %ref: !simulation.ref<i8> {simulation.capture_kind = 2 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i16>
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i16>
       // expected-error @+1 {{capture types must match evaluator arguments after context}}
-      %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i16>, !obelisk_sim.ref<i16>) captures 1 : !obelisk_sim.observer<i1>
-      obelisk_sim.return
+      %bound = simulation.observer.bind @evaluator values(%ref, %ref : !simulation.ref<i16>, !simulation.ref<i16>) captures 1 : !simulation.observer<i1>
+      simulation.return
     }
   }
 }
@@ -2182,19 +2182,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observer_bind_dependency {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_dependency.evaluator"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_dependency.bad"
-    obelisk_sim.func private @evaluator(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @observer_bind_dependency {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_dependency.evaluator"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_dependency.bad"
+    simulation.func private @evaluator(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i1 attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %value = arith.constant 0 : i8
       // expected-error @+1 {{dependencies must be storage, argument-ref, net, named-event, or managed-watch handles}}
-      %bound = obelisk_sim.observer.bind @evaluator values(%value : i8) captures 0 : !obelisk_sim.observer<i1>
-      obelisk_sim.return
+      %bound = simulation.observer.bind @evaluator values(%value : i8) captures 0 : !simulation.observer<i1>
+      simulation.return
     }
   }
 }
@@ -2202,15 +2202,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @suspend_observe_primary_type {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.suspend_observe_primary_type.bad"
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @suspend_observe_primary_type {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.suspend_observe_primary_type.bad"
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
       // expected-error @+1 {{primary operands must be observer handles}}
-      obelisk_sim.suspend.observe %false, %false conditions 0 edges [0] indices [-1] to ^resume : i1, i1
+      simulation.suspend.observe %false, %false conditions 0 edges [0] indices [-1] to ^resume : i1, i1
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2218,15 +2218,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @suspend_observe_clauses {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.suspend_observe_clauses.bad"
-    obelisk_sim.func @bad(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
+  simulation.design @suspend_observe_clauses {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.suspend_observe_clauses.bad"
+    simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
       // expected-error @+1 {{requires one initial value, edge, and condition index per primary}}
-      obelisk_sim.suspend.observe %false conditions 0 edges [0, 1] indices [-1, -1] to ^resume : i1
+      simulation.suspend.observe %false conditions 0 edges [0, 1] indices [-1, -1] to ^resume : i1
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2234,20 +2234,20 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @suspend_observe_cancel_level_true_contract {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i1 design
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_cancel_level_true_contract.evaluator"
-    obelisk_sim.code_unit.decl 9000002 in 0 fork hierarchy "test.suspend_observe_cancel_level_true_contract.bad"
-    obelisk_sim.func private @evaluator(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %ref: !obelisk_sim.ref<i1> {obelisk_sim.capture_kind = 2 : i32}) -> i1
+  simulation.design @suspend_observe_cancel_level_true_contract {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i1 design
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_cancel_level_true_contract.evaluator"
+    simulation.code_unit.decl 9000002 in 0 fork hierarchy "test.suspend_observe_cancel_level_true_contract.bad"
+    simulation.func private @evaluator(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %ref: !simulation.ref<i1> {simulation.capture_kind = 2 : i32}) -> i1
         attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 13 : i32,
           code_unit_id = 9000002 : i64,
@@ -2256,13 +2256,13 @@ module {
           schedule.concurrent_cancel,
           schedule.detached_controls
         } {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
-      %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>) captures 1 : !obelisk_sim.observer<i1>
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      %bound = simulation.observer.bind @evaluator values(%ref, %ref : !simulation.ref<i1>, !simulation.ref<i1>) captures 1 : !simulation.observer<i1>
       %false = arith.constant false
       // expected-error @+1 {{concurrent cancel level-true suspension requires an internal detached priority concurrent-cancel fork in the reactive region}}
-      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {schedule.concurrent_cancel_level_true} : !obelisk_sim.observer<i1>, i1
+      simulation.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {schedule.concurrent_cancel_level_true} : !simulation.observer<i1>, i1
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2270,20 +2270,20 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @suspend_observe_abort_level_true_contract {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i1 design
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_abort_level_true_contract.evaluator"
-    obelisk_sim.code_unit.decl 9000002 in 0 fork hierarchy "test.suspend_observe_abort_level_true_contract.bad"
-    obelisk_sim.func private @evaluator(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %ref: !obelisk_sim.ref<i1> {obelisk_sim.capture_kind = 2 : i32}) -> i1
+  simulation.design @suspend_observe_abort_level_true_contract {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i1 design
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_abort_level_true_contract.evaluator"
+    simulation.code_unit.decl 9000002 in 0 fork hierarchy "test.suspend_observe_abort_level_true_contract.bad"
+    simulation.func private @evaluator(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %ref: !simulation.ref<i1> {simulation.capture_kind = 2 : i32}) -> i1
         attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 13 : i32,
           code_unit_id = 9000002 : i64,
@@ -2292,13 +2292,13 @@ module {
           schedule.concurrent_abort,
           schedule.detached_controls
         } {
-      %ref = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
-      %bound = obelisk_sim.observer.bind @evaluator values(%ref, %ref : !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>) captures 1 : !obelisk_sim.observer<i1>
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      %bound = simulation.observer.bind @evaluator values(%ref, %ref : !simulation.ref<i1>, !simulation.ref<i1>) captures 1 : !simulation.observer<i1>
       %false = arith.constant false
       // expected-error @+1 {{concurrent abort level-true suspension requires an internal detached priority concurrent-abort fork in the reactive region}}
-      obelisk_sim.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {schedule.concurrent_abort_level_true} : !obelisk_sim.observer<i1>, i1
+      simulation.suspend.observe %bound, %false conditions 0 edges [1] indices [-1] to ^resume {schedule.concurrent_abort_level_true} : !simulation.observer<i1>, i1
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2306,11 +2306,11 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @suspend_observe_cancel_level_true_empty {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 fork hierarchy "test.suspend_observe_cancel_level_true_empty.bad"
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @suspend_observe_cancel_level_true_empty {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 fork hierarchy "test.suspend_observe_cancel_level_true_empty.bad"
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 13 : i32,
           code_unit_id = 9000001 : i64,
@@ -2321,9 +2321,9 @@ module {
           schedule.priority_signal_resume
         } {
       // expected-error @+1 {{requires at least one primary observer}}
-      "obelisk_sim.suspend.observe"()[^resume] {condition_count = 0 : i32, condition_indices = array<i32>, edges = array<i32>, schedule.concurrent_cancel_level_true} : () -> ()
+      "simulation.suspend.observe"()[^resume] {condition_count = 0 : i32, condition_indices = array<i32>, edges = array<i32>, schedule.concurrent_cancel_level_true} : () -> ()
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2331,24 +2331,24 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observer_bind_capture_abi {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_capture_abi.evaluator"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_capture_abi.bad"
-    obelisk_sim.func private @evaluator(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %scalar: i8 {obelisk_sim.capture_kind = 2 : i32}) -> i1
+  simulation.design @observer_bind_capture_abi {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.observer_bind_capture_abi.evaluator"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.observer_bind_capture_abi.bad"
+    simulation.func private @evaluator(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %scalar: i8 {simulation.capture_kind = 2 : i32}) -> i1
         attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
-    obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
       %scalar = arith.constant 0 : i8
       // expected-error @+1 {{captures must use storage, net, driver, named-event, covergroup, or managed handles}}
-      %bound = obelisk_sim.observer.bind @evaluator values(%scalar : i8) captures 1 : !obelisk_sim.observer<i1>
-      obelisk_sim.return
+      %bound = simulation.observer.bind @evaluator values(%scalar : i8) captures 1 : !simulation.observer<i1>
+      simulation.return
     }
   }
 }
@@ -2356,27 +2356,27 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @suspend_observe_truncated_condition {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_truncated_condition.primary"
-    obelisk_sim.code_unit.decl 9000002 in 0 initial hierarchy "test.suspend_observe_truncated_condition.bad"
-    obelisk_sim.func private @primary(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
+  simulation.design @suspend_observe_truncated_condition {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.code_unit.decl 9000001 in 0 observer hierarchy "test.suspend_observe_truncated_condition.primary"
+    simulation.code_unit.decl 9000002 in 0 initial hierarchy "test.suspend_observe_truncated_condition.bad"
+    simulation.func private @primary(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i1
         attributes {entry_kind = 14 : i32, code_unit_id = 9000001 : i64} {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
-    obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000002 : i64} {
-      %dependency = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %primary = obelisk_sim.observer.bind @primary values(%dependency : !obelisk_sim.ref<!obelisk_sim.logic<1>>) captures 0 : !obelisk_sim.observer<i1>
+      %dependency = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<1>>
+      %primary = simulation.observer.bind @primary values(%dependency : !simulation.ref<!simulation.logic<1>>) captures 0 : !simulation.observer<i1>
       %false = arith.constant false
       // expected-error @+1 {{condition count exceeds the operand inventory}}
-      obelisk_sim.suspend.observe %primary, %false conditions 1 edges [0] indices [0] to ^resume : !obelisk_sim.observer<i1>, i1
+      simulation.suspend.observe %primary, %false conditions 1 edges [0] indices [0] to ^resume : !simulation.observer<i1>, i1
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2384,19 +2384,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @frozen_two_state_unknown {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @frozen_two_state_unknown {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "bad"
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 8 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
+          simulation.bindings = [
             // expected-error @+2 {{two-state frozen constant must have a zero unknown plane}}
             // expected-error @+1 {{failed to parse SimConstantBindingAttr parameter 'value'}}
-            #obelisk_sim.constant_binding<path = "P", value = #obelisk_sim.frozen_constant<value = [1 : i8, 1 : i8], isSigned = false> : i8>]
+            #simulation.constant_binding<path = "P", value = #simulation.frozen_constant<value = [1 : i8, 1 : i8], isSigned = false> : i8>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2404,21 +2404,21 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @binding_copy_in_role {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "bad"
+  simulation.design @binding_copy_in_role {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 task hierarchy "bad"
     // Only a formal has a direction to take copy-in from, so declining it
     // anywhere else names a rule that has no meaning there.
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: i32 {simulation.capture_kind = 1 : i32})
         attributes {
           entry_kind = 12 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
+          simulation.bindings = [
             // expected-error @below {{skipping copy-in is valid only for a formal-local argument binding}}
-            #obelisk_sim.argument_binding<path = "value", argument = 1, kind = direct, copyOut = false, copyIn = false>]
+            #simulation.argument_binding<path = "value", argument = 1, kind = direct, copyOut = false, copyIn = false>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2426,19 +2426,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @binding_role_type {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
+  simulation.design @binding_role_type {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "bad"
     // expected-error @below {{lvalue-only binding requires a storage, net, or driver argument}}
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: i32 {simulation.capture_kind = 1 : i32})
         attributes {
           entry_kind = 8 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "value", argument = 1, kind = lvalue_only, copyOut = false>]
+          simulation.bindings = [
+            #simulation.argument_binding<path = "value", argument = 1, kind = lvalue_only, copyOut = false>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2446,18 +2446,18 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @binding_local_type {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @binding_local_type {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "bad"
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 8 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
+          simulation.bindings = [
             // expected-error @+1 {{local binding type must be a normalized simulation value}}
-            #obelisk_sim.local_binding<path = "local", type = !obelisk_sim.ref<i8>, automatic = false, patternVariable = false, isReturn = false>]
+            #simulation.local_binding<path = "local", type = !simulation.ref<i8>, automatic = false, patternVariable = false, isReturn = false>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2465,20 +2465,20 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @binding_path_collision {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad"
+  simulation.design @binding_path_collision {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "bad"
     // expected-error @below {{both provide the source value for path 'same'}}
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: i32 {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: i32 {simulation.capture_kind = 1 : i32})
         attributes {
           entry_kind = 1 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "same", argument = 1, kind = direct, copyOut = false>,
-            #obelisk_sim.local_binding<path = "same", type = i32, automatic = false, patternVariable = false, isReturn = false>]
+          simulation.bindings = [
+            #simulation.argument_binding<path = "same", argument = 1, kind = direct, copyOut = false>,
+            #simulation.local_binding<path = "same", type = i32, automatic = false, patternVariable = false, isReturn = false>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2486,19 +2486,19 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @binding_copy_out_pair {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "bad"
+  simulation.design @binding_copy_out_pair {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 task hierarchy "bad"
     // expected-error @below {{copy-out destination path 'formal' requires a copy-out formal-local binding}}
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %destination: !obelisk_sim.ref<i32> {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %destination: !simulation.ref<i32> {simulation.capture_kind = 1 : i32})
         attributes {
           entry_kind = 12 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "formal", argument = 1, kind = copy_out_destination, copyOut = false>]
+          simulation.bindings = [
+            #simulation.argument_binding<path = "formal", argument = 1, kind = copy_out_destination, copyOut = false>]
         } {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2506,21 +2506,21 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @binding_multiple_returns {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "bad"
+  simulation.design @binding_multiple_returns {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "bad"
     // expected-error @below {{multiple local bindings are marked as the function return}}
-    obelisk_sim.func private @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         -> i32
         attributes {
           entry_kind = 8 : i32, code_unit_id = 1 : i64,
-          obelisk_sim.bindings = [
-            #obelisk_sim.local_binding<path = "first", type = i32, automatic = false, patternVariable = false, isReturn = true>,
-            #obelisk_sim.local_binding<path = "second", type = i32, automatic = false, patternVariable = false, isReturn = true>]
+          simulation.bindings = [
+            #simulation.local_binding<path = "first", type = i32, automatic = false, patternVariable = false, isReturn = true>,
+            #simulation.local_binding<path = "second", type = i32, automatic = false, patternVariable = false, isReturn = true>]
         } {
       %zero = arith.constant 0 : i32
-      obelisk_sim.return %zero : i32
+      simulation.return %zero : i32
     }
   }
 }
@@ -2528,20 +2528,20 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @observed_delay {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad"
-    obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @observed_delay {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "bad"
+    simulation.func @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 1 : i32, code_unit_id = 1 : i64,
           home_region = 8 : i32
         } {
-      %zero = obelisk_sim.time.constant 0
+      %zero = simulation.time.constant 0
       // expected-error @+1 {{is not permitted in an observed-region code unit}}
-      obelisk_sim.suspend.delay %zero to ^resume
+      simulation.suspend.delay %zero to ^resume
     ^resume:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -2549,24 +2549,24 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @postponed_store {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.value"
-    obelisk_sim.code_unit.decl 1 in 0 task hierarchy "top.strobe"
-    obelisk_sim.func @strobe(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<i8>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+  simulation.design @postponed_store {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design hierarchy "top.value"
+    simulation.code_unit.decl 1 in 0 task hierarchy "top.strobe"
+    simulation.func @strobe(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<i8>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {
           entry_kind = 12 : i32, code_unit_id = 1 : i64,
           home_region = 16 : i32
         } {
       %one = arith.constant 1 : i8
       // expected-error @+1 {{is not permitted in a read-only postponed code unit}}
-      obelisk_sim.ref.store %one to %value : i8, !obelisk_sim.ref<i8>
-      obelisk_sim.return
+      simulation.ref.store %one to %value : i8, !simulation.ref<i8>
+      simulation.return
     }
   }
 }
@@ -2576,8 +2576,8 @@ module {
 module {
   func.func @string_from_real(%value: f64) {
     // expected-error @+1 {{input must be a fixed packed value}}
-    %string = obelisk_sim.string.from_packed %value :
-      (f64) -> !obelisk_sim.string
+    %string = simulation.string.from_packed %value :
+      (f64) -> !simulation.string
     return
   }
 }
@@ -2585,9 +2585,9 @@ module {
 // -----
 
 module {
-  func.func @bad_string_radix(%input: !obelisk_sim.string) {
-    // expected-error @+1 {{radix must be 2, 8, 10, or 16}}
-    %value = obelisk_sim.string.parse_integer %input radix = 3
+  func.func @bad_string_radix(%input: !simulation.string) {
+    // expected-error @+1 {{expected '<'}}
+    %value = simulation.string.parse_integer %input radix = 3
     return
   }
 }
@@ -2595,15 +2595,15 @@ module {
 // -----
 
 module {
-  obelisk_sim.design @invalid_deferred_assertion_site {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "bad"
-    obelisk_sim.func @bad(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @invalid_deferred_assertion_site {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "bad"
+    simulation.func @bad(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       // expected-error @+1 {{deferred assertion site ID must be positive}}
-      %first = obelisk_sim.assert.deferred_once 0
-      obelisk_sim.return
+      %first = simulation.assert.deferred_once 0
+      simulation.return
     }
   }
 }
@@ -2612,11 +2612,11 @@ module {
 
 module {
   func.func @managed_bits_replacement_too_wide(
-      %reference: !obelisk_sim.managed_ref<i4, @C>,
+      %reference: !simulation.managed_ref<i4, @C>,
       %replacement: i8, %low: i32) {
     // expected-error @+1 {{replacement width exceeds the packed field width}}
-    obelisk_sim.managed.bits_dyn_store %replacement into %reference at %low :
-      i8, !obelisk_sim.managed_ref<i4, @C>, i32
+    simulation.managed.bits_dyn_store %replacement into %reference at %low :
+      i8, !simulation.managed_ref<i4, @C>, i32
     return
   }
 }

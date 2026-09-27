@@ -10,30 +10,30 @@
 // rather than bypasses, the two-cycle deterministic prefix. Prefix failures
 // join the monitor's counted failure path. The observable pass action keeps
 // the prefix, warm-up, eligible, and handoff state live through finite end.
-// PREFIX-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.109.delay_weak(
-// PREFIX-COUNT-4: obelisk_sim.ref.load
-// PREFIX-LABEL: obelisk_sim.func private @unit_0(
-// PREFIX-SAME: obelisk_sim.persistent_delay_implication
-// PREFIX-SAME: obelisk_sim.persistent_delay_minimum = 1 : i64
-// PREFIX-SAME: obelisk_sim.persistent_delay_nonoverlapped
-// PREFIX-SAME: obelisk_sim.persistent_delay_prefix_horizon = 2 : i64
+// PREFIX-LABEL: simulation.func private @unit_0.$concurrent_eos_count.109.delay_weak(
+// PREFIX-COUNT-4: simulation.ref.load
+// PREFIX-LABEL: simulation.func private @unit_0(
+// PREFIX-SAME: simulation.persistent_delay_implication
+// PREFIX-SAME: simulation.persistent_delay_minimum = 1 : i64
+// PREFIX-SAME: simulation.persistent_delay_nonoverlapped
+// PREFIX-SAME: simulation.persistent_delay_prefix_horizon = 2 : i64
 // The antecedent/prefix share a, and the prefix/terminal share b. Each static
 // symbol is sampled once for the complete Observed transition.
-// PREFIX: obelisk_sim.assert.sampled_read %{{.*}} from %arg2
-// PREFIX: obelisk_sim.ref.load
+// PREFIX: simulation.assert.sampled_read %{{.*}} from %arg2
+// PREFIX: simulation.ref.load
 // PREFIX: arith.cmpi ne
-// PREFIX: obelisk_sim.ref.store
+// PREFIX: simulation.ref.store
 // PREFIX: arith.andi
 // PREFIX: arith.cmpi ne
 // PREFIX: arith.andi
 // PREFIX: arith.extui
-// PREFIX: obelisk_sim.assert.sampled_read %{{.*}} from %arg3
+// PREFIX: simulation.assert.sampled_read %{{.*}} from %arg3
 // Terminal success is dispatched before older/current prefix failures, which
 // in turn precede the current false-antecedent vacuous success.
-// PREFIX-NOT: obelisk_sim.assert.sampled_read
-// PREFIX: obelisk_sim.spawn @unit_0.fork.109.0.0
-// PREFIX: obelisk_sim.spawn @unit_0.fork.109.1.2
-// PREFIX: obelisk_sim.spawn @unit_0.fork.109.0.0
+// PREFIX-NOT: simulation.assert.sampled_read
+// PREFIX: simulation.spawn @unit_0.fork.109.0.0
+// PREFIX: simulation.spawn @unit_0.fork.109.1.2
+// PREFIX: simulation.spawn @unit_0.fork.109.0.0
 
 //--- multicycle-antecedent.mlir
 

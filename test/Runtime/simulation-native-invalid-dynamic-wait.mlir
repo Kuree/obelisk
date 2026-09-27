@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
@@ -19,79 +19,79 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @invalid_dynamic_wait {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.unpacked_array<15 : 0 x !obelisk_sim.logic<1>> design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>> design
-    obelisk_sim.code_unit.decl 9951000 in 0 root_initializer hierarchy "top.root"
-    obelisk_sim.code_unit.decl 9951001 in 0 initial hierarchy "top.waiter"
-    obelisk_sim.code_unit.decl 9951002 in 0 initial hierarchy "top.setter"
+  simulation.design @invalid_dynamic_wait {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.storage.decl 0 in 0 : !simulation.unpacked_array<15 : 0 x !simulation.logic<1>> design
+    simulation.storage.decl 1 in 0 : !simulation.packed_array<4 : 0 x !simulation.logic<1>> design
+    simulation.code_unit.decl 9951000 in 0 root_initializer hierarchy "top.root"
+    simulation.code_unit.decl 9951001 in 0 initial hierarchy "top.waiter"
+    simulation.code_unit.decl 9951002 in 0 initial hierarchy "top.setter"
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9951000 : i64} {
-      %array = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.unpacked_array<15 : 0 x !obelisk_sim.logic<1>>>
-      %selector = obelisk_sim.context.storage %ctx[1] :
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>>
-      %x = obelisk_sim.logic.constant 31 : i5, 31 : i5 : !obelisk_sim.logic<5>
-      %packed_x = obelisk_sim.packed.unflatten %x :
-          (!obelisk_sim.logic<5>) -> !obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %packed_x to %selector :
-          !obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>,
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>>
-      %waiter = obelisk_sim.spawn @waiter(%ctx, %array, %selector) :
-          !obelisk_sim.context,
-          !obelisk_sim.ref<!obelisk_sim.unpacked_array<15 : 0 x !obelisk_sim.logic<1>>>,
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>> -> !obelisk_sim.process
-      %setter = obelisk_sim.spawn @setter(%ctx, %selector) :
-          !obelisk_sim.context,
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>> ->
-          !obelisk_sim.process
-      obelisk_sim.return
+      %array = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.unpacked_array<15 : 0 x !simulation.logic<1>>>
+      %selector = simulation.context.storage %ctx[1] :
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>>
+      %x = simulation.logic.constant 31 : i5, 31 : i5 : !simulation.logic<5>
+      %packed_x = simulation.packed.unflatten %x :
+          (!simulation.logic<5>) -> !simulation.packed_array<4 : 0 x !simulation.logic<1>>
+      simulation.ref.store %packed_x to %selector :
+          !simulation.packed_array<4 : 0 x !simulation.logic<1>>,
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>>
+      %waiter = simulation.spawn @waiter(%ctx, %array, %selector) :
+          !simulation.context,
+          !simulation.ref<!simulation.unpacked_array<15 : 0 x !simulation.logic<1>>>,
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>> -> !simulation.process
+      %setter = simulation.spawn @setter(%ctx, %selector) :
+          !simulation.context,
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>> ->
+          !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @waiter(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %array: !obelisk_sim.ref<!obelisk_sim.unpacked_array<15 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64},
-        %selector: !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func private @waiter(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %array: !simulation.ref<!simulation.unpacked_array<15 : 0 x !simulation.logic<1>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
+        %selector: !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 9951001 : i64} {
-      %selected = obelisk_sim.ref.load %selector :
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>> ->
-          !obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>
-      %flat = obelisk_sim.packed.flatten %selected :
-          (!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>) ->
-          !obelisk_sim.logic<5>
-      %index = obelisk_sim.logic.resize %flat signed = false :
-          !obelisk_sim.logic<5> -> !obelisk_sim.logic<65>
-      %element = obelisk_sim.ref.array_element %array[%index] :
-          (!obelisk_sim.ref<!obelisk_sim.unpacked_array<15 : 0 x !obelisk_sim.logic<1>>>,
-           !obelisk_sim.logic<65>) -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.suspend.any %selector, %element edges [0, 0] to ^resume :
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %selected = simulation.ref.load %selector :
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>> ->
+          !simulation.packed_array<4 : 0 x !simulation.logic<1>>
+      %flat = simulation.packed.flatten %selected :
+          (!simulation.packed_array<4 : 0 x !simulation.logic<1>>) ->
+          !simulation.logic<5>
+      %index = simulation.logic.resize %flat signed = false :
+          !simulation.logic<5> -> !simulation.logic<65>
+      %element = simulation.ref.array_element %array[%index] :
+          (!simulation.ref<!simulation.unpacked_array<15 : 0 x !simulation.logic<1>>>,
+           !simulation.logic<65>) -> !simulation.ref<!simulation.logic<1>>
+      simulation.suspend.any %selector, %element edges [0, 0] to ^resume :
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>>,
+          !simulation.ref<!simulation.logic<1>>
     ^resume:
       %stdout = arith.constant 1 : i32
-      %message = obelisk_sim.bytes.constant "PASS"
-      obelisk_sim.display %ctx to %stdout(%message) newline = true radix = 10
-          flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      %message = simulation.bytes.constant "PASS"
+      simulation.display %ctx to %stdout(%message) newline = true radix = <decimal>
+          flags = [0] : !simulation.bytes
+      simulation.return
     }
 
-    obelisk_sim.func private @setter(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %selector: !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func private @setter(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %selector: !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 9951002 : i64} {
-      %tick = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %tick to ^set
+      %tick = simulation.time.constant 1
+      simulation.suspend.delay %tick to ^set
     ^set:
-      %zero = obelisk_sim.logic.constant 0 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %packed = obelisk_sim.packed.unflatten %zero :
-          (!obelisk_sim.logic<5>) -> !obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %packed to %selector :
-          !obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>,
-          !obelisk_sim.ref<!obelisk_sim.packed_array<4 : 0 x !obelisk_sim.logic<1>>>
-      obelisk_sim.return
+      %zero = simulation.logic.constant 0 : i5, 0 : i5 : !simulation.logic<5>
+      %packed = simulation.packed.unflatten %zero :
+          (!simulation.logic<5>) -> !simulation.packed_array<4 : 0 x !simulation.logic<1>>
+      simulation.ref.store %packed to %selector :
+          !simulation.packed_array<4 : 0 x !simulation.logic<1>>,
+          !simulation.ref<!simulation.packed_array<4 : 0 x !simulation.logic<1>>>
+      simulation.return
     }
   }
 }

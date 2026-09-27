@@ -237,7 +237,7 @@ public:
         continue;
       auto function = functions.lookup(name.getValue());
       auto sites = callers.find(name.getValue());
-      if (!function || function->hasAttr("obelisk_sim.dpi_export") ||
+      if (!function || function->hasAttr("simulation.dpi_export") ||
           sites == callers.end()) {
         complete = false;
         continue;

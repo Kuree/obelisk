@@ -6,5 +6,5 @@ module delayed(input wire clock, data, output logic q);
     (posedge clock => (q +: data)) = 2;
   endspecify
 endmodule
-// CHECK: obelisk_sim.time.now
-// CHECK: obelisk_sim.ref.store_inertial_path
+// CHECK: simulation.time.now
+// CHECK: simulation.ref.store_inertial_path

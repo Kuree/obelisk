@@ -39,5 +39,5 @@
 // CHECK-SAME: }
 // CHECK-NEXT: }
 
-// CHECK-NOT: obelisk_sim
+// CHECK-NOT: simulation
 // CHECK-NOT: runtime

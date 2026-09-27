@@ -629,4 +629,173 @@ def SimDumpPortsAction
   let cppNamespace = "::obelisk::sim";
 }
 
+// Closed executable classifications. Numeric values match the runtime ABI;
+// lowering converts to ABI integers only at the runtime/bytecode boundary.
+def SimElementKindBits : I32EnumAttrCase<"Bits", 1, "bits">;
+def SimElementKindLogic : I32EnumAttrCase<"Logic", 2, "logic">;
+def SimElementKindReal : I32EnumAttrCase<"Real", 3, "real">;
+def SimElementKindClassHandle
+    : I32EnumAttrCase<"ClassHandle", 4, "class_handle">;
+def SimElementKindString : I32EnumAttrCase<"String", 5, "string">;
+def SimElementKindContainerHandle
+    : I32EnumAttrCase<"ContainerHandle", 6, "container_handle">;
+def SimElementKindAggregate : I32EnumAttrCase<"Aggregate", 7, "aggregate">;
+def SimElementKindEvent : I32EnumAttrCase<"Event", 8, "event">;
+def SimElementKind : I32EnumAttr<"ElementKind", "simulation element kind", [
+  SimElementKindBits, SimElementKindLogic, SimElementKindReal,
+  SimElementKindClassHandle, SimElementKindString,
+  SimElementKindContainerHandle, SimElementKindAggregate, SimElementKindEvent
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimContainerKindDynamicArray
+    : I32EnumAttrCase<"DynamicArray", 1, "dynamic_array">;
+def SimContainerKindQueue : I32EnumAttrCase<"Queue", 2, "queue">;
+def SimContainerKind
+    : I32EnumAttr<"ContainerKind", "simulation container kind", [
+  SimContainerKindDynamicArray, SimContainerKindQueue
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimAssocKeyKindUnsigned : I32EnumAttrCase<"Unsigned", 1, "unsigned">;
+def SimAssocKeyKindSigned : I32EnumAttrCase<"Signed", 2, "signed">;
+def SimAssocKeyKindString : I32EnumAttrCase<"String", 3, "string">;
+def SimAssocKeyKindClass : I32EnumAttrCase<"Class", 4, "class">;
+def SimAssocKeyKindProcess : I32EnumAttrCase<"Process", 5, "process">;
+def SimAssocKeyKindWildcard : I32EnumAttrCase<"Wildcard", 6, "wildcard">;
+def SimAssocKeyKind : I32EnumAttr<"AssocKeyKind", "simulation assoc key kind", [
+  SimAssocKeyKindUnsigned, SimAssocKeyKindSigned, SimAssocKeyKindString,
+  SimAssocKeyKindClass, SimAssocKeyKindProcess, SimAssocKeyKindWildcard
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimRandomDistributionUniform : I32EnumAttrCase<"Uniform", 0, "uniform">;
+def SimRandomDistributionNormal : I32EnumAttrCase<"Normal", 1, "normal">;
+def SimRandomDistributionExponential
+    : I32EnumAttrCase<"Exponential", 2, "exponential">;
+def SimRandomDistributionPoisson : I32EnumAttrCase<"Poisson", 3, "poisson">;
+def SimRandomDistributionChiSquare
+    : I32EnumAttrCase<"ChiSquare", 4, "chi_square">;
+def SimRandomDistributionT : I32EnumAttrCase<"T", 5, "t">;
+def SimRandomDistributionErlang : I32EnumAttrCase<"Erlang", 6, "erlang">;
+def SimRandomDistribution
+    : I32EnumAttr<"RandomDistribution", "simulation random distribution", [
+  SimRandomDistributionUniform, SimRandomDistributionNormal,
+  SimRandomDistributionExponential, SimRandomDistributionPoisson,
+  SimRandomDistributionChiSquare, SimRandomDistributionT,
+  SimRandomDistributionErlang
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimStochasticQueueActionInitialize
+    : I32EnumAttrCase<"Initialize", 0, "initialize">;
+def SimStochasticQueueActionAdd : I32EnumAttrCase<"Add", 1, "add">;
+def SimStochasticQueueActionRemove : I32EnumAttrCase<"Remove", 2, "remove">;
+def SimStochasticQueueActionFull : I32EnumAttrCase<"Full", 3, "full">;
+def SimStochasticQueueActionExam : I32EnumAttrCase<"Exam", 4, "exam">;
+def SimStochasticQueueAction
+    : I32EnumAttr<
+        "StochasticQueueAction", "simulation stochastic queue action", [
+  SimStochasticQueueActionInitialize, SimStochasticQueueActionAdd,
+  SimStochasticQueueActionRemove, SimStochasticQueueActionFull,
+  SimStochasticQueueActionExam
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimAssertionControlActionLock : I32EnumAttrCase<"Lock", 1, "lock">;
+def SimAssertionControlActionUnlock : I32EnumAttrCase<"Unlock", 2, "unlock">;
+def SimAssertionControlActionOn : I32EnumAttrCase<"On", 3, "on">;
+def SimAssertionControlActionOff : I32EnumAttrCase<"Off", 4, "off">;
+def SimAssertionControlActionKill : I32EnumAttrCase<"Kill", 5, "kill">;
+def SimAssertionControlActionPassOn : I32EnumAttrCase<"PassOn", 6, "pass_on">;
+def SimAssertionControlActionPassOff
+    : I32EnumAttrCase<"PassOff", 7, "pass_off">;
+def SimAssertionControlActionFailOn : I32EnumAttrCase<"FailOn", 8, "fail_on">;
+def SimAssertionControlActionFailOff
+    : I32EnumAttrCase<"FailOff", 9, "fail_off">;
+def SimAssertionControlActionNonvacuousOn
+    : I32EnumAttrCase<"NonvacuousOn", 10, "nonvacuous_on">;
+def SimAssertionControlActionVacuousOff
+    : I32EnumAttrCase<"VacuousOff", 11, "vacuous_off">;
+def SimAssertionControlAction
+    : I32EnumAttr<
+        "AssertionControlAction", "simulation assertion control action", [
+  SimAssertionControlActionLock, SimAssertionControlActionUnlock,
+  SimAssertionControlActionOn, SimAssertionControlActionOff,
+  SimAssertionControlActionKill, SimAssertionControlActionPassOn,
+  SimAssertionControlActionPassOff, SimAssertionControlActionFailOn,
+  SimAssertionControlActionFailOff, SimAssertionControlActionNonvacuousOn,
+  SimAssertionControlActionVacuousOff
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimBlockEventKindBegin : I32EnumAttrCase<"Begin", 0, "begin">;
+def SimBlockEventKindEnd : I32EnumAttrCase<"End", 1, "end">;
+def SimBlockEventKind
+    : I32EnumAttr<"BlockEventKind", "simulation block event kind", [
+  SimBlockEventKindBegin, SimBlockEventKindEnd
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimRadixBinary : I32EnumAttrCase<"Binary", 2, "binary">;
+def SimRadixOctal : I32EnumAttrCase<"Octal", 8, "octal">;
+def SimRadixDecimal : I32EnumAttrCase<"Decimal", 10, "decimal">;
+def SimRadixHex : I32EnumAttrCase<"Hex", 16, "hex">;
+def SimRadix : I32EnumAttr<"Radix", "simulation radix", [
+  SimRadixBinary, SimRadixOctal, SimRadixDecimal, SimRadixHex
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimAssocTraversalDirectionForward
+    : I32EnumAttrCase<"Forward", 1, "forward">;
+def SimAssocTraversalDirectionBackward
+    : I32EnumAttrCase<"Backward", 4294967295, "backward">;
+def SimAssocTraversalDirection
+    : I32EnumAttr<
+        "AssocTraversalDirection", "simulation assoc traversal direction", [
+  SimAssocTraversalDirectionForward, SimAssocTraversalDirectionBackward
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimElementFlagsNone : I32BitEnumAttrCaseNone<"None", "none">;
+def SimElementFlagsFourState
+    : I32BitEnumAttrCaseBit<"FourState", 0, "four_state">;
+def SimElementFlagsSigned : I32BitEnumAttrCaseBit<"Signed", 1, "signed">;
+def SimElementFlags
+    : I32BitEnumAttr<"ElementFlags", "simulation element flags", [
+  SimElementFlagsNone, SimElementFlagsFourState, SimElementFlagsSigned
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimMemberVisibilityPublic : I32EnumAttrCase<"Public", 0, "public">;
+def SimMemberVisibilityProtected : I32EnumAttrCase<"Protected", 1, "protected">;
+def SimMemberVisibilityLocal : I32EnumAttrCase<"Local", 2, "local">;
+def SimMemberVisibility
+    : I32EnumAttr<"MemberVisibility", "class member visibility", [
+  SimMemberVisibilityPublic, SimMemberVisibilityProtected, SimMemberVisibilityLocal
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONENUMS_TD

@@ -1,94 +1,94 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
 
 // Ordinary settling ports are intentionally in consumer-before-producer
 // order, forcing the generic settling sort to move them. The event-handle
 // producer and consumer must remain ahead of the wait while that happens.
 module {
-  obelisk_sim.design @event_startup_order attributes {schedule.computed_event_startup} {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "wait"
-    obelisk_sim.code_unit.decl 3 in 0 port_input hierarchy "consumer" {internal}
-    obelisk_sim.code_unit.decl 4 in 0 port_input hierarchy "producer" {internal}
-    obelisk_sim.code_unit.decl 5 in 0 port_input hierarchy "selector_producer" {internal}
-    obelisk_sim.code_unit.decl 6 in 0 port_output hierarchy "ordinary_consumer" {internal}
-    obelisk_sim.code_unit.decl 7 in 0 port_output hierarchy "ordinary_producer" {internal}
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.event design hierarchy "source"
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.event design hierarchy "middle"
-    obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.event design hierarchy "sink"
-    obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.logic<1> design hierarchy "ordinary_source"
-    obelisk_sim.storage.decl 4 in 0 : !obelisk_sim.logic<1> design hierarchy "ordinary_middle"
-    obelisk_sim.storage.decl 5 in 0 : !obelisk_sim.logic<1> design hierarchy "ordinary_sink"
-    obelisk_sim.storage.decl 6 in 0 : !obelisk_sim.logic<1> design hierarchy "selector_source"
-    obelisk_sim.storage.decl 7 in 0 : !obelisk_sim.logic<1> design hierarchy "selector_sink"
+  simulation.design @event_startup_order attributes {schedule.computed_event_startup} {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "wait"
+    simulation.code_unit.decl 3 in 0 port_input hierarchy "consumer" {internal}
+    simulation.code_unit.decl 4 in 0 port_input hierarchy "producer" {internal}
+    simulation.code_unit.decl 5 in 0 port_input hierarchy "selector_producer" {internal}
+    simulation.code_unit.decl 6 in 0 port_output hierarchy "ordinary_consumer" {internal}
+    simulation.code_unit.decl 7 in 0 port_output hierarchy "ordinary_producer" {internal}
+    simulation.storage.decl 0 in 0 : !simulation.event design hierarchy "source"
+    simulation.storage.decl 1 in 0 : !simulation.event design hierarchy "middle"
+    simulation.storage.decl 2 in 0 : !simulation.event design hierarchy "sink"
+    simulation.storage.decl 3 in 0 : !simulation.logic<1> design hierarchy "ordinary_source"
+    simulation.storage.decl 4 in 0 : !simulation.logic<1> design hierarchy "ordinary_middle"
+    simulation.storage.decl 5 in 0 : !simulation.logic<1> design hierarchy "ordinary_sink"
+    simulation.storage.decl 6 in 0 : !simulation.logic<1> design hierarchy "selector_source"
+    simulation.storage.decl 7 in 0 : !simulation.logic<1> design hierarchy "selector_sink"
 
-    // CHECK-LABEL: obelisk_sim.func @root
-    // CHECK: obelisk_sim.spawn @selector_producer
-    // CHECK-NEXT: obelisk_sim.spawn @z_producer
-    // CHECK-NEXT: obelisk_sim.spawn @m_consumer
-    // CHECK-NEXT: obelisk_sim.spawn @a_wait
-    // CHECK-NEXT: obelisk_sim.spawn @ordinary_producer
-    // CHECK-NEXT: obelisk_sim.spawn @ordinary_consumer
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    // CHECK-LABEL: simulation.func @root
+    // CHECK: simulation.spawn @selector_producer
+    // CHECK-NEXT: simulation.spawn @z_producer
+    // CHECK-NEXT: simulation.spawn @m_consumer
+    // CHECK-NEXT: simulation.spawn @a_wait
+    // CHECK-NEXT: simulation.spawn @ordinary_producer
+    // CHECK-NEXT: simulation.spawn @ordinary_consumer
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %source = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.event>
-      %middle = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.event>
-      %sink = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.event>
-      %ordinary_source = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %ordinary_middle = obelisk_sim.context.storage %ctx[4] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %ordinary_sink = obelisk_sim.context.storage %ctx[5] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %selector_source = obelisk_sim.context.storage %ctx[6] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %selector_sink = obelisk_sim.context.storage %ctx[7] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %selector = obelisk_sim.spawn @selector_producer(%ctx, %selector_source, %selector_sink) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      %producer = obelisk_sim.spawn @z_producer(%ctx, %source, %middle) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.event>, !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.process
-      %consumer = obelisk_sim.spawn @m_consumer(%ctx, %middle, %sink) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.event>, !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.process
-      %wait = obelisk_sim.spawn @a_wait(%ctx, %sink) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.process
-      %ordinary_consumer = obelisk_sim.spawn @ordinary_consumer(%ctx, %ordinary_middle, %ordinary_sink) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      %ordinary_producer = obelisk_sim.spawn @ordinary_producer(%ctx, %ordinary_source, %ordinary_middle) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      obelisk_sim.return
+      %source = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.event>
+      %middle = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.event>
+      %sink = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.event>
+      %ordinary_source = simulation.context.storage %ctx[3] : !simulation.ref<!simulation.logic<1>>
+      %ordinary_middle = simulation.context.storage %ctx[4] : !simulation.ref<!simulation.logic<1>>
+      %ordinary_sink = simulation.context.storage %ctx[5] : !simulation.ref<!simulation.logic<1>>
+      %selector_source = simulation.context.storage %ctx[6] : !simulation.ref<!simulation.logic<1>>
+      %selector_sink = simulation.context.storage %ctx[7] : !simulation.ref<!simulation.logic<1>>
+      %selector = simulation.spawn @selector_producer(%ctx, %selector_source, %selector_sink) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      %producer = simulation.spawn @z_producer(%ctx, %source, %middle) : !simulation.context, !simulation.ref<!simulation.event>, !simulation.ref<!simulation.event> -> !simulation.process
+      %consumer = simulation.spawn @m_consumer(%ctx, %middle, %sink) : !simulation.context, !simulation.ref<!simulation.event>, !simulation.ref<!simulation.event> -> !simulation.process
+      %wait = simulation.spawn @a_wait(%ctx, %sink) : !simulation.context, !simulation.ref<!simulation.event> -> !simulation.process
+      %ordinary_consumer = simulation.spawn @ordinary_consumer(%ctx, %ordinary_middle, %ordinary_sink) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      %ordinary_producer = simulation.spawn @ordinary_producer(%ctx, %ordinary_source, %ordinary_middle) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @a_wait(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %sink: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
+    simulation.func @a_wait(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %sink: !simulation.ref<!simulation.event> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
-      %event = obelisk_sim.ref.load %sink : !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.event
-      obelisk_sim.suspend.event %event to ^done
+      %event = simulation.ref.load %sink : !simulation.ref<!simulation.event> -> !simulation.event
+      simulation.suspend.event %event to ^done
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @m_consumer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %middle: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %sink: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64})
+    simulation.func @m_consumer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %middle: !simulation.ref<!simulation.event> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %sink: !simulation.ref<!simulation.event> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64})
         attributes {entry_kind = 9 : i32, code_unit_id = 3 : i64, internal, schedule.computed_event_startup} {
-      %event = obelisk_sim.ref.load %middle : !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.event
-      obelisk_sim.ref.store %event to %sink : !obelisk_sim.event, !obelisk_sim.ref<!obelisk_sim.event>
-      obelisk_sim.return
+      %event = simulation.ref.load %middle : !simulation.ref<!simulation.event> -> !simulation.event
+      simulation.ref.store %event to %sink : !simulation.event, !simulation.ref<!simulation.event>
+      simulation.return
     }
 
-    obelisk_sim.func @z_producer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %source: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %middle: !obelisk_sim.ref<!obelisk_sim.event> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @z_producer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %source: !simulation.ref<!simulation.event> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %middle: !simulation.ref<!simulation.event> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 9 : i32, code_unit_id = 4 : i64, internal, schedule.computed_event_startup} {
-      %event = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.event> -> !obelisk_sim.event
-      obelisk_sim.ref.store %event to %middle : !obelisk_sim.event, !obelisk_sim.ref<!obelisk_sim.event>
-      obelisk_sim.return
+      %event = simulation.ref.load %source : !simulation.ref<!simulation.event> -> !simulation.event
+      simulation.ref.store %event to %middle : !simulation.event, !simulation.ref<!simulation.event>
+      simulation.return
     }
 
-    obelisk_sim.func @selector_producer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %source: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 6 : i64}, %sink: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 7 : i64})
+    simulation.func @selector_producer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %source: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 6 : i64}, %sink: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 7 : i64})
         attributes {entry_kind = 9 : i32, code_unit_id = 5 : i64, internal, schedule.computed_event_startup} {
-      %value = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %value to %sink : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.return
+      %value = simulation.ref.load %source : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      simulation.ref.store %value to %sink : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
+      simulation.return
     }
 
-    obelisk_sim.func @ordinary_consumer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %source: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64}, %sink: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 5 : i64})
+    simulation.func @ordinary_consumer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %source: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 4 : i64}, %sink: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 5 : i64})
         attributes {entry_kind = 10 : i32, code_unit_id = 6 : i64, internal} {
-      %value = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %value to %sink : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.return
+      %value = simulation.ref.load %source : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      simulation.ref.store %value to %sink : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
+      simulation.return
     }
 
-    obelisk_sim.func @ordinary_producer(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %source: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}, %sink: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 4 : i64})
+    simulation.func @ordinary_producer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %source: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}, %sink: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 4 : i64})
         attributes {entry_kind = 10 : i32, code_unit_id = 7 : i64, internal} {
-      %value = obelisk_sim.ref.load %source : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %value to %sink : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.return
+      %value = simulation.ref.load %source : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      simulation.ref.store %value to %sink : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
+      simulation.return
     }
   }
 }

@@ -7,11 +7,11 @@
 // process home. Their compute fragment is still planned in Postponed for
 // end-of-simulation execution.
 // CHECK: #schedule.fragment<{{.*}}function = @unit_1{{.*}}region = postponed
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: entry_kind = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32

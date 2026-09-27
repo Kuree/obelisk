@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-nba-settle-display-runtime.test.
@@ -22,121 +22,121 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 3 : i32
 } {
-  obelisk_sim.design @nba_settle {
-    obelisk_sim.scope.decl 0 hierarchy "nba_settle"
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "nba_settle.root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "nba_settle.clock"
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "nba_settle.writer"
-    obelisk_sim.code_unit.decl 4 in 0 always hierarchy "nba_settle.cascade"
-    obelisk_sim.code_unit.decl 5 in 0 initial hierarchy "nba_settle.check"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @nba_settle {
+    simulation.scope.decl 0 hierarchy "nba_settle"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "nba_settle.root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "nba_settle.clock"
+    simulation.code_unit.decl 3 in 0 always hierarchy "nba_settle.writer"
+    simulation.code_unit.decl 4 in 0 always hierarchy "nba_settle.cascade"
+    simulation.code_unit.decl 5 in 0 initial hierarchy "nba_settle.check"
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<1> design
+    simulation.storage.decl 2 in 0 : !simulation.logic<1> design
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %clk = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %a = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %b = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %zero = obelisk_sim.logic.constant false, false : !obelisk_sim.logic<1>
-      %x = obelisk_sim.logic.constant false, true : !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %zero to %clk : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %zero to %a : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %x to %b : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %p = obelisk_sim.spawn @writer(%ctx, %clk) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      %q = obelisk_sim.spawn @cascade(%ctx, %a) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      %r = obelisk_sim.spawn @check(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      %c = obelisk_sim.spawn @clock(%ctx, %clk) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      obelisk_sim.return
+      %clk = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<1>>
+      %a = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<1>>
+      %b = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.logic<1>>
+      %zero = simulation.logic.constant false, false : !simulation.logic<1>
+      %x = simulation.logic.constant false, true : !simulation.logic<1>
+      simulation.ref.store %zero to %clk : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
+      simulation.ref.store %zero to %a : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
+      simulation.ref.store %x to %b : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
+      %p = simulation.spawn @writer(%ctx, %clk) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      %q = simulation.spawn @cascade(%ctx, %a) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      %r = simulation.spawn @check(%ctx) : !simulation.context -> !simulation.process
+      %c = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      simulation.return
     }
-    obelisk_sim.func @clock(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clk: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @clock(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clk: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
       cf.br ^wait
     ^wait:
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^toggle {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
-      %old = obelisk_sim.ref.load %clk : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %new to %clk : !obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %old = simulation.ref.load %clk : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old : (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %new to %clk : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     }
-    obelisk_sim.func @writer(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clk: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @writer(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clk: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.edge posedge %clk to ^write {site = #schedule.continuation<id = 2>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      simulation.suspend.edge posedge %clk to ^write {site = #schedule.continuation<id = 2>} : !simulation.ref<!simulation.logic<1>>
     ^write:
-      %a = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %b = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %old = obelisk_sim.ref.load %a : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old : (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.nba.enqueue %new to %a : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
-      %current = obelisk_sim.ref.load %a : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %downstream = obelisk_sim.ref.load %b : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %a = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<1>>
+      %b = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.logic<1>>
+      %old = simulation.ref.load %a : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old : (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.nba.enqueue %new to %a : (!simulation.logic<1>, !simulation.ref<!simulation.logic<1>>) -> ()
+      %current = simulation.ref.load %a : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %downstream = simulation.ref.load %b : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
       %channel = arith.constant 1 : i32
-      %format = obelisk_sim.bytes.constant "active %b %b"
-      obelisk_sim.display %ctx to %channel(%format, %current, %downstream) newline = true radix = 2 flags = [0, 0, 0] {scope = "nba_settle.writer"} : !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
+      %format = simulation.bytes.constant "active %b %b"
+      simulation.display %ctx to %channel(%format, %current, %downstream) newline = true radix = <binary> flags = [0, 0, 0] {scope = "nba_settle.writer"} : !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>
       cf.br ^wait
     }
-    obelisk_sim.func @cascade(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %a: !obelisk_sim.ref<!obelisk_sim.logic<1>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @cascade(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %a: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %a to ^write {site = #schedule.continuation<id = 3>} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      simulation.suspend.change %a to ^write {site = #schedule.continuation<id = 3>} : !simulation.ref<!simulation.logic<1>>
     ^write:
-      %b = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %new = obelisk_sim.ref.load %a : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      obelisk_sim.nba.enqueue %new to %b : (!obelisk_sim.logic<1>, !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
-      %old = obelisk_sim.ref.load %b : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %b = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.logic<1>>
+      %new = simulation.ref.load %a : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      simulation.nba.enqueue %new to %b : (!simulation.logic<1>, !simulation.ref<!simulation.logic<1>>) -> ()
+      %old = simulation.ref.load %b : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
       %channel = arith.constant 1 : i32
-      %format = obelisk_sim.bytes.constant "cascade %b %b"
-      obelisk_sim.display %ctx to %channel(%format, %new, %old) newline = true radix = 2 flags = [0, 0, 0] {scope = "nba_settle.cascade"} : !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
+      %format = simulation.bytes.constant "cascade %b %b"
+      simulation.display %ctx to %channel(%format, %new, %old) newline = true radix = <binary> flags = [0, 0, 0] {scope = "nba_settle.cascade"} : !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>
       cf.br ^wait
     }
-    obelisk_sim.func @check(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @check(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
-      %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^first {site = #schedule.continuation<id = 4>, timing = #schedule.timing_site<id = 1, kind = calendar>}
+      %delay = simulation.time.constant 2
+      simulation.suspend.delay %delay to ^first {site = #schedule.continuation<id = 4>, timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^first:
-      %a0 = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %b0 = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %va0 = obelisk_sim.ref.load %a0 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %vb0 = obelisk_sim.ref.load %b0 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %a0 = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<1>>
+      %b0 = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.logic<1>>
+      %va0 = simulation.ref.load %a0 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %vb0 = simulation.ref.load %b0 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
       %ch0 = arith.constant 1 : i32
-      %now0 = obelisk_sim.time.now %ctx
-      %fmt0 = obelisk_sim.bytes.constant "settled %0d %b %b"
-      obelisk_sim.display %ctx to %ch0(%fmt0, %now0, %va0, %vb0) newline = true radix = 2 flags = [0, 0, 0, 0] : !obelisk_sim.bytes, i64, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
-      %delay0 = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay0 to ^second {site = #schedule.continuation<id = 5>, timing = #schedule.timing_site<id = 2, kind = calendar>}
+      %now0 = simulation.time.now %ctx
+      %fmt0 = simulation.bytes.constant "settled %0d %b %b"
+      simulation.display %ctx to %ch0(%fmt0, %now0, %va0, %vb0) newline = true radix = <binary> flags = [0, 0, 0, 0] : !simulation.bytes, i64, !simulation.logic<1>, !simulation.logic<1>
+      %delay0 = simulation.time.constant 2
+      simulation.suspend.delay %delay0 to ^second {site = #schedule.continuation<id = 5>, timing = #schedule.timing_site<id = 2, kind = calendar>}
     ^second:
-      %a1 = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %b1 = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %va1 = obelisk_sim.ref.load %a1 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %vb1 = obelisk_sim.ref.load %b1 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %a1 = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<1>>
+      %b1 = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.logic<1>>
+      %va1 = simulation.ref.load %a1 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %vb1 = simulation.ref.load %b1 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
       %ch1 = arith.constant 1 : i32
-      %now1 = obelisk_sim.time.now %ctx
-      %fmt1 = obelisk_sim.bytes.constant "settled %0d %b %b"
-      obelisk_sim.display %ctx to %ch1(%fmt1, %now1, %va1, %vb1) newline = true radix = 2 flags = [0, 0, 0, 0] : !obelisk_sim.bytes, i64, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
-      %delay1 = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay1 to ^third {site = #schedule.continuation<id = 6>, timing = #schedule.timing_site<id = 3, kind = calendar>}
+      %now1 = simulation.time.now %ctx
+      %fmt1 = simulation.bytes.constant "settled %0d %b %b"
+      simulation.display %ctx to %ch1(%fmt1, %now1, %va1, %vb1) newline = true radix = <binary> flags = [0, 0, 0, 0] : !simulation.bytes, i64, !simulation.logic<1>, !simulation.logic<1>
+      %delay1 = simulation.time.constant 2
+      simulation.suspend.delay %delay1 to ^third {site = #schedule.continuation<id = 6>, timing = #schedule.timing_site<id = 3, kind = calendar>}
     ^third:
-      %a2 = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %b2 = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %va2 = obelisk_sim.ref.load %a2 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %vb2 = obelisk_sim.ref.load %b2 : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
+      %a2 = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<1>>
+      %b2 = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.logic<1>>
+      %va2 = simulation.ref.load %a2 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %vb2 = simulation.ref.load %b2 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
       %ch2 = arith.constant 1 : i32
-      %now2 = obelisk_sim.time.now %ctx
-      %fmt2 = obelisk_sim.bytes.constant "settled %0d %b %b"
-      obelisk_sim.display %ctx to %ch2(%fmt2, %now2, %va2, %vb2) newline = true radix = 2 flags = [0, 0, 0, 0] : !obelisk_sim.bytes, i64, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
+      %now2 = simulation.time.now %ctx
+      %fmt2 = simulation.bytes.constant "settled %0d %b %b"
+      simulation.display %ctx to %ch2(%fmt2, %now2, %va2, %vb2) newline = true radix = <binary> flags = [0, 0, 0, 0] : !simulation.bytes, i64, !simulation.logic<1>, !simulation.logic<1>
       %status = arith.constant 1 : i32
-      obelisk_sim.finish %ctx, %status
-      obelisk_sim.return
+      simulation.finish %ctx, %status
+      simulation.return
     }
   }
 }

@@ -196,67 +196,67 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // Every queued report carries the disable epoch and suppresses a stale action.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.18.0.0(
-// CHECK-SAME: %[[EPOCH_REF:arg[0-9]+]]: !obelisk_sim.ref<i64>
+// CHECK-LABEL: simulation.func private @unit_0.fork.18.0.0(
+// CHECK-SAME: %[[EPOCH_REF:arg[0-9]+]]: !simulation.ref<i64>
 // CHECK-SAME: %[[EXPECTED:arg[0-9]+]]: i64
-// CHECK: %[[EPOCH:.*]] = obelisk_sim.ref.load %[[EPOCH_REF]]
+// CHECK: %[[EPOCH:.*]] = simulation.ref.load %[[EPOCH_REF]]
 // CHECK: %[[CURRENT:.*]] = arith.cmpi eq, %[[EPOCH]], %[[EXPECTED]]
 // CHECK: cf.cond_br %[[CURRENT]]
 
 // The final unbounded delay owns two aggregate cells. Asynchronous disable
 // clears both cells plus the epoch update, and EOS reads both plus the epoch.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_cancel.18(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_cancel.18(
 // CHECK-SAME: schedule.concurrent_cancel
 // CHECK-SAME: schedule.detached_controls
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: schedule.concurrent_cancel_level_true
-// CHECK-COUNT-3: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.18.delay_weak(
+// CHECK-COUNT-3: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.18.delay_weak(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_delay_monitor
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_cancel.18
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.18.delay_weak
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_delay_monitor
+// CHECK: simulation.spawn @unit_0.$concurrent_cancel.18
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.18.delay_weak
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 
 // s_eventually[1:$] likewise owns its eligible count and warm-up age bitset.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_cancel.38(
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_cancel.38(
 // CHECK-SAME: schedule.concurrent_cancel
-// CHECK-COUNT-3: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.38.s_eventually(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_unary_monitor
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_cancel.38
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.38.s_eventually
+// CHECK-COUNT-3: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.38.s_eventually(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_unary_monitor
+// CHECK: simulation.spawn @unit_1.$concurrent_cancel.38
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.38.s_eventually
 
 // Strong until owns one live-attempt count; it now has strong EOS failure
 // completion, and disable clears that count plus the epoch.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_cancel.56(
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_cancel.56(
 // CHECK-SAME: schedule.concurrent_cancel
-// CHECK-COUNT-2: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.56.until_strong(
+// CHECK-COUNT-2: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.56.until_strong(
 // CHECK-SAME: schedule.concurrent_eos_counted
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_until_kind = "s_until"
-// CHECK-SAME: obelisk_sim.persistent_until_strong
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_cancel.56
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_count.56.until_strong
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_until_kind = "s_until"
+// CHECK-SAME: simulation.persistent_until_strong
+// CHECK: simulation.spawn @unit_2.$concurrent_cancel.56
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_count.56.until_strong
 
 // The goto repetition DFA has four token cells. All four must be reset
 // together, not just the first cell inherited from the bounded implementation.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_cancel.76(
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_cancel.76(
 // CHECK-SAME: schedule.concurrent_cancel
-// CHECK-COUNT-5: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.76.repetition_weak(
-// CHECK-COUNT-5: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_cancel.76
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_count.76.repetition_weak
+// CHECK-COUNT-5: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.76.repetition_weak(
+// CHECK-COUNT-5: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK: simulation.spawn @unit_3.$concurrent_cancel.76
+// CHECK: simulation.spawn @unit_3.$concurrent_eos_count.76.repetition_weak
 
 // CHECK-COUNT-4: schedule.concurrent_cancel_observer

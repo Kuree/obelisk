@@ -5,9 +5,9 @@
 // call-site specialization. This single pass checks that tier-independent ABI.
 
 module {
-  func.func @shared_finish(%ctx: !obelisk_sim.context) {
+  func.func @shared_finish(%ctx: !simulation.context) {
     %verbosity = arith.constant 0 : i32
-    obelisk_sim.finish %ctx, %verbosity
+    simulation.finish %ctx, %verbosity
     return
   }
 }
@@ -15,5 +15,5 @@ module {
 // CHECK-LABEL: func.func @shared_finish
 // CHECK: %[[VERBOSITY:.*]] = arith.constant 0 : i32
 // CHECK: %[[STATUS:.*]] = runtime.finish %{{.*}}, %[[VERBOSITY]]
-// CHECK-NEXT: obelisk_sim.status.check %[[STATUS]]
+// CHECK-NEXT: simulation.status.check %[[STATUS]]
 // CHECK-NEXT: return

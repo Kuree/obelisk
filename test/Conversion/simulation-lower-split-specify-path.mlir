@@ -1,40 +1,40 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 !logic2 = !obelisk.integral<2, false, true, 1 : 0, logic>
 !logic4 = !obelisk.integral<4, false, true, 3 : 0, logic>
 
 module {
-  obelisk_sim.design @split_specify_lowering {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 9940001 in 0 continuous
+  simulation.design @split_specify_lowering {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 9940001 in 0 continuous
         hierarchy "split_specify_lowering.path"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<2> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<2> design
-    obelisk_sim.driver.decl 1 in 0 drives 1 : !obelisk_sim.logic<2> design
+    simulation.storage.decl 0 in 0 : !simulation.logic<4> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<4> design
+    simulation.net.decl 0 in 0 : !simulation.logic<2> design
+    simulation.net.decl 1 in 0 : !simulation.logic<2> design
+    simulation.net.decl 2 in 0 : !simulation.logic<4> design
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<2> design
+    simulation.driver.decl 1 in 0 drives 1 : !simulation.logic<2> design
 
-    obelisk_sim.func @path(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %low: !obelisk_sim.driver<!obelisk_sim.logic<2>>
-            {obelisk_sim.capture_kind = 5 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %high: !obelisk_sim.driver<!obelisk_sim.logic<2>>
-            {obelisk_sim.capture_kind = 5 : i32,
-             obelisk_sim.descriptor_id = 1 : i64},
-        %source: !obelisk_sim.net<!obelisk_sim.logic<4>>
-            {obelisk_sim.capture_kind = 4 : i32,
-             obelisk_sim.descriptor_id = 2 : i64},
-        %snapshot0: !obelisk_sim.ref<!obelisk_sim.logic<4>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %snapshot1: !obelisk_sim.ref<!obelisk_sim.logic<4>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @path(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %low: !simulation.driver<!simulation.logic<2>>
+            {simulation.capture_kind = 5 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %high: !simulation.driver<!simulation.logic<2>>
+            {simulation.capture_kind = 5 : i32,
+             simulation.descriptor_id = 1 : i64},
+        %source: !simulation.net<!simulation.logic<4>>
+            {simulation.capture_kind = 4 : i32,
+             simulation.descriptor_id = 2 : i64},
+        %snapshot0: !simulation.ref<!simulation.logic<4>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %snapshot1: !simulation.ref<!simulation.logic<4>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9940001 : i64,
-                    obelisk_sim.timing_path_rules = [
+                    simulation.timing_path_rules = [
                       {inputs = ["top.source"],
                        snapshots = ["top.snapshot0"],
                        input_lows = array<i64: 0>,
@@ -60,12 +60,12 @@ module {
                                                    6, 5, 4, 3, 2, 1>,
                        condition_kind = 0 : i32,
                        condition_group = 1 : i32}],
-                    obelisk_sim.bindings = [
-                      #obelisk_sim.argument_binding<path = "top.low", argument = 1, kind = lvalue_only, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.high", argument = 2, kind = lvalue_only, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.source", argument = 3, kind = direct, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.snapshot0", argument = 4, kind = direct, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.snapshot1", argument = 5, kind = direct, copyOut = false>]} {
+                    simulation.bindings = [
+                      #simulation.argument_binding<path = "top.low", argument = 1, kind = lvalue_only, copyOut = false>,
+                      #simulation.argument_binding<path = "top.high", argument = 2, kind = lvalue_only, copyOut = false>,
+                      #simulation.argument_binding<path = "top.source", argument = 3, kind = direct, copyOut = false>,
+                      #simulation.argument_binding<path = "top.snapshot0", argument = 4, kind = direct, copyOut = false>,
+                      #simulation.argument_binding<path = "top.snapshot1", argument = 5, kind = direct, copyOut = false>]} {
       obelisk.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic4} {
@@ -82,7 +82,7 @@ module {
             node_id = 4 : i64, referenced_path = "top.source",
             referenced_symbol = @source, semantic_type = !logic4} {}
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -90,12 +90,12 @@ module {
 // One actor computes both change masks before publishing either leaf. Each
 // leaf selects only its own driver-local plan. The six-value rule derives six
 // distinct static delays; the twelve-value rule retains all twelve.
-// CHECK-LABEL: obelisk_sim.func @path
-// CHECK-COUNT-2: obelisk_sim.logic.case_difference_mask
-// CHECK: obelisk_sim.driver.read
+// CHECK-LABEL: simulation.func @path
+// CHECK-COUNT-2: simulation.logic.case_difference_mask
+// CHECK: simulation.driver.read
 // CHECK: site 9940001 : {{[01]}} group 0 of 12
 // CHECK: site 9940001 : {{[01]}} group 11 of 12
-// CHECK: obelisk_sim.driver.read
+// CHECK: simulation.driver.read
 // CHECK: site 9940001 : {{[01]}} group 0 of 6
 // CHECK: site 9940001 : {{[01]}} group 5 of 6
-// CHECK: obelisk_sim.suspend.change %arg3
+// CHECK: simulation.suspend.change %arg3

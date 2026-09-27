@@ -78,12 +78,12 @@ module {
 // A dynamic object with no rand state, constraints, or lifecycle hooks adds
 // neither a variable nor a predicate nor an observable call. It shares the
 // null/default branch instead of receiving a separate frozen plan.
-// PREPARED-DAG: obelisk_sim.randomize_nested_plans = [{class = @__obelisk_class_s7_Active, field = @__obelisk_class_s22_Parent_field_1}]
-// PREPARED-DAG: obelisk_sim.randomize_nested_plans = [{class = @__obelisk_class_s10_Constrained, field = @__obelisk_class_s22_Parent_field_1}]
-// PREPARED-DAG: obelisk_sim.randomize_nested_plans = [{class = @__obelisk_class_s17_Hooked, field = @__obelisk_class_s22_Parent_field_1}]
-// PREPARED: obelisk_sim.randomize_nested_plans = [{field = @__obelisk_class_s22_Parent_field_1, null}]
+// PREPARED-DAG: simulation.randomize_nested_plans = [{class = @__obelisk_class_s7_Active, field = @__obelisk_class_s22_Parent_field_1}]
+// PREPARED-DAG: simulation.randomize_nested_plans = [{class = @__obelisk_class_s10_Constrained, field = @__obelisk_class_s22_Parent_field_1}]
+// PREPARED-DAG: simulation.randomize_nested_plans = [{class = @__obelisk_class_s17_Hooked, field = @__obelisk_class_s22_Parent_field_1}]
+// PREPARED: simulation.randomize_nested_plans = [{field = @__obelisk_class_s22_Parent_field_1, null}]
 
-// LOWERED-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// LOWERED-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s7_Active
-// LOWERED-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s10_Constrained
-// LOWERED-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s17_Hooked
+// LOWERED-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// LOWERED-DAG: simulation.class.is_instance {{.*}} is @__obelisk_class_s7_Active
+// LOWERED-DAG: simulation.class.is_instance {{.*}} is @__obelisk_class_s10_Constrained
+// LOWERED-DAG: simulation.class.is_instance {{.*}} is @__obelisk_class_s17_Hooked

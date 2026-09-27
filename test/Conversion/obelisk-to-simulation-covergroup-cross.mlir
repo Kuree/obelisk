@@ -132,12 +132,12 @@
 // AND-SELECTOR-NEXT: cross_selector_operand node=[[NESTED_ROOT]] operand=[[RIGHT_C]] ordinal=1
 // AND-SELECTOR-NEXT: cross_selector_operand node=[[EMPTY_ROOT]] operand=[[EMPTY_A_ZERO]] ordinal=0
 // AND-SELECTOR-NEXT: cross_selector_operand node=[[EMPTY_ROOT]] operand=[[EMPTY_A_ONE]] ordinal=1
-// EXPLICIT-SIM: %[[FIRST_VALUE:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<i1> -> i1
-// EXPLICIT-SIM-NEXT: %[[FIRST_SAMPLE:.*]] = obelisk_sim.logic.from_bits %[[FIRST_VALUE]]
-// EXPLICIT-SIM-NEXT: %[[SECOND_VALUE:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<i1> -> i1
-// EXPLICIT-SIM-NEXT: %[[SECOND_SAMPLE:.*]] = obelisk_sim.logic.from_bits %[[SECOND_VALUE]]
-// EXPLICIT-SIM-NEXT: %[[BIN_IFF_BOOL:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<i1> -> i1
-// EXPLICIT-SIM-NEXT: obelisk_sim.covergroup.sample {{.*}} values[%[[FIRST_SAMPLE]], %[[SECOND_SAMPLE]], %[[BIN_IFF_BOOL]]] ids [{{.*}}]
+// EXPLICIT-SIM: %[[FIRST_VALUE:.*]] = simulation.ref.load {{.*}} : !simulation.ref<i1> -> i1
+// EXPLICIT-SIM-NEXT: %[[FIRST_SAMPLE:.*]] = simulation.logic.from_bits %[[FIRST_VALUE]]
+// EXPLICIT-SIM-NEXT: %[[SECOND_VALUE:.*]] = simulation.ref.load {{.*}} : !simulation.ref<i1> -> i1
+// EXPLICIT-SIM-NEXT: %[[SECOND_SAMPLE:.*]] = simulation.logic.from_bits %[[SECOND_VALUE]]
+// EXPLICIT-SIM-NEXT: %[[BIN_IFF_BOOL:.*]] = simulation.ref.load {{.*}} : !simulation.ref<i1> -> i1
+// EXPLICIT-SIM-NEXT: simulation.covergroup.sample {{.*}} values[%[[FIRST_SAMPLE]], %[[SECOND_SAMPLE]], %[[BIN_IFF_BOOL]]] ids [{{.*}}]
 // IEEE 1800-2023 19.6.1: || forms the union of selected cross products. The
 // exact v1 plan retains both OR itself and its nesting under AND.
 // OR-SELECTOR-DAG: functional_item id=[[OA:[0-9]+]] type=[[OTYPE:[0-9]+]] name=a kind=1 ordinal=0
@@ -177,9 +177,9 @@
 // TRANSITION-SELECTOR-DAG: functional_value_set id=[[TSET]] item=[[TPOINT]] atoms=1 width=1 kind=1 flags=1 signedness=1 set_expression=0
 // TRANSITION-SELECTOR-DAG: cross_selector id=[[TSIDE_LEAF:[0-9]+]] cross=[[TCROSS]] target=[[TSIDE]] bin={{[1-9][0-9]*}} value_set=0 kind=1 ordinal=1
 // TRANSITION-SELECTOR-DAG: cross_selector id=[[TROOT]] cross=[[TCROSS]] target=0 bin=0 value_set=0 kind=3 ordinal=2
-// LOWER: obelisk_sim.covergroup.stop {{.*}} item [[CROSS_ITEM:-?[0-9]+]]
-// LOWER: obelisk_sim.covergroup.start {{.*}} item [[CROSS_ITEM]]
-// LOWER: obelisk_sim.covergroup.instance_query {{.*}} item [[CROSS_ITEM]]
+// LOWER: simulation.covergroup.stop {{.*}} item [[CROSS_ITEM:-?[0-9]+]]
+// LOWER: simulation.covergroup.start {{.*}} item [[CROSS_ITEM]]
+// LOWER: simulation.covergroup.instance_query {{.*}} item [[CROSS_ITEM]]
 
 //--- input.sv
 module cross_schema;

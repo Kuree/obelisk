@@ -9,10 +9,10 @@
 // program. Its rand `bias` read remains a pre-solve capture, while the actual
 // argument `y` remains a candidate variable. The implicit y-before-x edge sets
 // the solve-before program flag (2) without a source solve-before constraint.
-// SUCCESS-LABEL: obelisk_sim.func private @unit_1
-// SUCCESS: obelisk_sim.managed.load
+// SUCCESS-LABEL: simulation.func private @unit_1
+// SUCCESS: simulation.managed.load
 // SUCCESS: arith.addi
-// SUCCESS: obelisk_sim.random.solve
+// SUCCESS: simulation.random.solve
 // SUCCESS-SAME: captures(%{{.*}})
 // SUCCESS-SAME: "ODR1\01\00\18\00\0A\00\00\00
 // SUCCESS-SAME: \02\00\00\00

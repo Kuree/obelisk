@@ -77,12 +77,12 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[F:.*]] = arith.constant 102 : i8
 // CHECK-DAG: %[[I:.*]] = arith.constant 105 : i8
 // CHECK-DAG: %[[V:.*]] = arith.constant 118 : i8
 // CHECK-DAG: %[[E:.*]] = arith.constant 101 : i8
 // CHECK-DAG: %[[PAD:.*]] = arith.constant 0 : i8
-// CHECK: %[[ARRAY:.*]] = obelisk_sim.aggregate.construct %[[F]], %[[I]], %[[V]], %[[E]], %[[PAD]]
-// CHECK-SAME: -> !obelisk_sim.unpacked_array<0 : 4 x i8>
-// CHECK: obelisk_sim.ref.store %[[ARRAY]] to %arg1
+// CHECK: %[[ARRAY:.*]] = simulation.aggregate.construct %[[F]], %[[I]], %[[V]], %[[E]], %[[PAD]]
+// CHECK-SAME: -> !simulation.unpacked_array<0 : 4 x i8>
+// CHECK: simulation.ref.store %[[ARRAY]] to %arg1

@@ -6,72 +6,72 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @mailbox {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.mailbox"
+  simulation.design @mailbox {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.mailbox"
 
-    obelisk_sim.func @exercise(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %bound: i64 {obelisk_sim.capture_kind = 1 : i32},
-        %message: !obelisk_sim.string {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func @exercise(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %bound: i64 {simulation.capture_kind = 1 : i32},
+        %message: !simulation.string {simulation.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      // CHECK: %[[MAILBOX:.*]] = obelisk_sim.mailbox.create
-      %mailbox = "obelisk_sim.mailbox.create"(%bound) {
+      // CHECK: %[[MAILBOX:.*]] = simulation.mailbox.create
+      %mailbox = "simulation.mailbox.create"(%bound) {
         alignment = 8 : i64,
         bit_width = 0 : i64,
-        element_flags = 0 : i32,
-        element_kind = 5 : i32,
+        element_flags = #simulation.element_flags<none>,
+        element_kind = #simulation.element_kind<string>,
         trace_kinds = array<i32>,
         trace_offsets = array<i64>,
         type_id = 1 : i64,
         value_size = 8 : i64
       } :
-        (i64) -> !obelisk_sim.mailbox<!obelisk_sim.string>
-      %array = "obelisk_sim.container.create"(%bound) {
+        (i64) -> !simulation.mailbox<!simulation.string>
+      %array = "simulation.container.create"(%bound) {
         alignment = 4 : i64,
         bit_width = 32 : i64,
         bound = 0 : i64,
-        container_kind = 1 : i32,
-        element_flags = 0 : i32,
-        element_kind = 1 : i32,
+        container_kind = #simulation.container_kind<dynamic_array>,
+        element_flags = #simulation.element_flags<none>,
+        element_kind = #simulation.element_kind<bits>,
         trace_kinds = array<i32>,
         trace_offsets = array<i64>,
         type_id = 42 : i64,
         value_size = 4 : i64
-      } : (i64) -> !obelisk_sim.dynamic_array<i32>
-      // CHECK: obelisk_sim.box.pack
-      %box = obelisk_sim.box.pack %array :
-        (!obelisk_sim.dynamic_array<i32>) -> !obelisk_sim.box
-      // CHECK: obelisk_sim.box.is_type
-      %matches = obelisk_sim.box.is_type %box type_id 42 : !obelisk_sim.box
-      // CHECK: obelisk_sim.box.cast
-      %unboxed = obelisk_sim.box.cast %box :
-        (!obelisk_sim.box) -> !obelisk_sim.dynamic_array<i32>
-      // CHECK: obelisk_sim.mailbox.try_put
-      %put = "obelisk_sim.mailbox.try_put"(%mailbox, %message) :
-        (!obelisk_sim.mailbox<!obelisk_sim.string>, !obelisk_sim.string) -> i1
-      // CHECK: obelisk_sim.mailbox.try_peek
-      %peek_ok, %peek = "obelisk_sim.mailbox.try_peek"(%mailbox) :
-        (!obelisk_sim.mailbox<!obelisk_sim.string>) ->
-        (i1, !obelisk_sim.string)
-      // CHECK: obelisk_sim.mailbox.num
-      %count = "obelisk_sim.mailbox.num"(%mailbox) :
-        (!obelisk_sim.mailbox<!obelisk_sim.string>) -> i32
-      // CHECK: obelisk_sim.mailbox.try_get
-      %get_ok, %get = "obelisk_sim.mailbox.try_get"(%mailbox) :
-        (!obelisk_sim.mailbox<!obelisk_sim.string>) ->
-        (i1, !obelisk_sim.string)
-      // CHECK: obelisk_sim.suspend.mailbox %[[MAILBOX]] not_empty
-      obelisk_sim.suspend.mailbox %mailbox not_empty to ^not_full(
-        %mailbox : !obelisk_sim.mailbox<!obelisk_sim.string>) :
-        !obelisk_sim.mailbox<!obelisk_sim.string>
-    ^not_full(%live: !obelisk_sim.mailbox<!obelisk_sim.string>):
-      // CHECK: obelisk_sim.suspend.mailbox %{{.*}} not_full
-      obelisk_sim.suspend.mailbox %live not_full to ^done(
-        %live : !obelisk_sim.mailbox<!obelisk_sim.string>) :
-        !obelisk_sim.mailbox<!obelisk_sim.string>
-    ^done(%still_live: !obelisk_sim.mailbox<!obelisk_sim.string>):
-      obelisk_sim.return
+      } : (i64) -> !simulation.dynamic_array<i32>
+      // CHECK: simulation.box.pack
+      %box = simulation.box.pack %array :
+        (!simulation.dynamic_array<i32>) -> !simulation.box
+      // CHECK: simulation.box.is_type
+      %matches = simulation.box.is_type %box type_id 42 : !simulation.box
+      // CHECK: simulation.box.cast
+      %unboxed = simulation.box.cast %box :
+        (!simulation.box) -> !simulation.dynamic_array<i32>
+      // CHECK: simulation.mailbox.try_put
+      %put = "simulation.mailbox.try_put"(%mailbox, %message) :
+        (!simulation.mailbox<!simulation.string>, !simulation.string) -> i1
+      // CHECK: simulation.mailbox.try_peek
+      %peek_ok, %peek = "simulation.mailbox.try_peek"(%mailbox) :
+        (!simulation.mailbox<!simulation.string>) ->
+        (i1, !simulation.string)
+      // CHECK: simulation.mailbox.num
+      %count = "simulation.mailbox.num"(%mailbox) :
+        (!simulation.mailbox<!simulation.string>) -> i32
+      // CHECK: simulation.mailbox.try_get
+      %get_ok, %get = "simulation.mailbox.try_get"(%mailbox) :
+        (!simulation.mailbox<!simulation.string>) ->
+        (i1, !simulation.string)
+      // CHECK: simulation.suspend.mailbox %[[MAILBOX]] not_empty
+      simulation.suspend.mailbox %mailbox not_empty to ^not_full(
+        %mailbox : !simulation.mailbox<!simulation.string>) :
+        !simulation.mailbox<!simulation.string>
+    ^not_full(%live: !simulation.mailbox<!simulation.string>):
+      // CHECK: simulation.suspend.mailbox %{{.*}} not_full
+      simulation.suspend.mailbox %live not_full to ^done(
+        %live : !simulation.mailbox<!simulation.string>) :
+        !simulation.mailbox<!simulation.string>
+    ^done(%still_live: !simulation.mailbox<!simulation.string>):
+      simulation.return
     }
   }
 }

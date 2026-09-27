@@ -39,9 +39,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.random.constraint_template
-// CHECK: %[[VALUE:.*]] = obelisk_sim.random.constraint_value 0 : i32
-// CHECK-NEXT: %[[TYP:.*]] = obelisk_sim.random.constraint_value 1 : i32
-// CHECK-NOT: obelisk_sim.random.constraint_value 2
+// CHECK: simulation.random.constraint_template
+// CHECK: %[[VALUE:.*]] = simulation.random.constraint_value 0 : i32
+// CHECK-NEXT: %[[TYP:.*]] = simulation.random.constraint_value 1 : i32
+// CHECK-NOT: simulation.random.constraint_value 2
 // CHECK: %[[EQUAL:.*]] = arith.cmpi eq, %[[VALUE]], %[[TYP]] : i32
-// CHECK: obelisk_sim.random.hard_constraint %[[EQUAL]]
+// CHECK: simulation.random.hard_constraint %[[EQUAL]]

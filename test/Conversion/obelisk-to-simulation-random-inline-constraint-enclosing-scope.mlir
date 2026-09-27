@@ -85,10 +85,10 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // The randomize receiver is loaded out of the enclosing object, and the
 // constraint reads A's `j` off it while B's `i` still comes off `this`.
-// CHECK: obelisk_sim.class.field_ref %arg1[@__obelisk_class_s17_B_field_0] : !obelisk_sim.class_handle<@__obelisk_class_s17_B> -> !obelisk_sim.managed_ref<!obelisk_sim.class_handle<@__obelisk_class_s3_A>, @__obelisk_class_s17_B>
-// CHECK: %[[RECEIVER:.*]] = obelisk_sim.managed.load
-// CHECK: obelisk_sim.class.field_ref %[[RECEIVER]][@__obelisk_class_s3_A_field_0] : !obelisk_sim.class_handle<@__obelisk_class_s3_A> -> !obelisk_sim.managed_ref<i32, @__obelisk_class_s3_A>
-// CHECK: obelisk_sim.class.field_ref %arg1[@__obelisk_class_s17_B_field_1] : !obelisk_sim.class_handle<@__obelisk_class_s17_B> -> !obelisk_sim.managed_ref<i32, @__obelisk_class_s17_B>
+// CHECK: simulation.class.field_ref %arg1[@__obelisk_class_s17_B_field_0] : !simulation.class_handle<@__obelisk_class_s17_B> -> !simulation.managed_ref<!simulation.class_handle<@__obelisk_class_s3_A>, @__obelisk_class_s17_B>
+// CHECK: %[[RECEIVER:.*]] = simulation.managed.load
+// CHECK: simulation.class.field_ref %[[RECEIVER]][@__obelisk_class_s3_A_field_0] : !simulation.class_handle<@__obelisk_class_s3_A> -> !simulation.managed_ref<i32, @__obelisk_class_s3_A>
+// CHECK: simulation.class.field_ref %arg1[@__obelisk_class_s17_B_field_1] : !simulation.class_handle<@__obelisk_class_s17_B> -> !simulation.managed_ref<i32, @__obelisk_class_s17_B>

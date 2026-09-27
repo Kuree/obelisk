@@ -41,10 +41,10 @@ module {
 
 // IEEE 1800-2017 35.5.5 and Annex H.8 map real results and formals to the
 // scalar DPI-C double ABI. The result is returned before any formal copy-outs.
-// CHECK: obelisk_sim.code_unit.decl {{.*}} hierarchy "unsupported_real_dpi.pass_real"
-// CHECK-SAME: #obelisk_sim.dpi_abi<kind = real, direction = input, width = 64, fourState = false, isSigned = false>
-// CHECK-SAME: #obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>
-// CHECK-SAME: #obelisk_sim.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>
-// CHECK: obelisk_sim.dpi.call "pass_real"
+// CHECK: simulation.code_unit.decl {{.*}} hierarchy "unsupported_real_dpi.pass_real"
+// CHECK-SAME: #simulation.dpi_abi<kind = real, direction = input, width = 64, fourState = false, isSigned = false>
+// CHECK-SAME: #simulation.dpi_abi<kind = shortreal, direction = input, width = 32, fourState = false, isSigned = false>
+// CHECK-SAME: #simulation.dpi_abi<kind = real, direction = result, width = 64, fourState = false, isSigned = false>
+// CHECK: simulation.dpi.call "pass_real"
 // CHECK-SAME: ({{.*}}, {{.*}}) -> (f64, !runtime.status)
 // CHECK-NOT: obelisk.sv.

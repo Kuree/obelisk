@@ -484,44 +484,44 @@ module {
 }
 
 // CHECK: dynamic = true
-// CHECK: !obelisk_sim.packed_struct<[
-// CHECK: !obelisk_sim.unpacked_struct<[
-// CHECK: !obelisk_sim.unpacked_array<3 : 1 x !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-// CHECK: !obelisk_sim.unpacked_array<-1 : 1 x !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-// CHECK: !obelisk_sim.packed_union<fields = [
-// CHECK: !obelisk_sim.unpacked_union<fields = [
-// CHECK: !obelisk_sim.packed_union<fields = {{.*}}isTagged = true, tagBits = 2>
+// CHECK: !simulation.packed_struct<[
+// CHECK: !simulation.unpacked_struct<[
+// CHECK: !simulation.unpacked_array<3 : 1 x !simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+// CHECK: !simulation.unpacked_array<-1 : 1 x !simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+// CHECK: !simulation.packed_union<fields = [
+// CHECK: !simulation.unpacked_union<fields = [
+// CHECK: !simulation.packed_union<fields = {{.*}}isTagged = true, tagBits = 2>
 // Named setters were written valid-first, but aggregate construction follows
 // declaration order: payload, then valid.
-// CHECK: %[[NAMED_PAYLOAD:.*]] = obelisk_sim.logic.constant 6 : i4, 0 : i4
+// CHECK: %[[NAMED_PAYLOAD:.*]] = simulation.logic.constant 6 : i4, 0 : i4
 // CHECK: %[[NAMED_VALID:.*]] = arith.constant true
-// CHECK: %[[NAMED_PAYLOAD_ARRAY:.*]] = obelisk_sim.packed.unflatten %[[NAMED_PAYLOAD]]
-// CHECK: obelisk_sim.aggregate.construct %[[NAMED_PAYLOAD_ARRAY]], %[[NAMED_VALID]]
-// CHECK: obelisk_sim.aggregate.construct
+// CHECK: %[[NAMED_PAYLOAD_ARRAY:.*]] = simulation.packed.unflatten %[[NAMED_PAYLOAD]]
+// CHECK: simulation.aggregate.construct %[[NAMED_PAYLOAD_ARRAY]], %[[NAMED_VALID]]
+// CHECK: simulation.aggregate.construct
 // Descending range [3:1] maps source indices 3 and 2 to ordinals 0 and 1.
-// CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<3 : 1
-// CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[1\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<3 : 1
-// CHECK: %[[DYNAMIC_WRITE:.*]] = obelisk_sim.ref.array_element
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[DYNAMIC_WRITE]]
+// CHECK: simulation.ref.subelement {{.*}}{{\[\[0\]\]}} : !simulation.ref<!simulation.unpacked_array<3 : 1
+// CHECK: simulation.ref.subelement {{.*}}{{\[\[1\]\]}} : !simulation.ref<!simulation.unpacked_array<3 : 1
+// CHECK: %[[DYNAMIC_WRITE:.*]] = simulation.ref.array_element
+// CHECK: simulation.ref.store {{.*}} to %[[DYNAMIC_WRITE]]
 // A dynamic element read addresses the element instead of loading the whole
 // array and selecting out of the loaded value.
-// CHECK: %[[DYNAMIC_READ:.*]] = obelisk_sim.ref.array_element
-// CHECK: obelisk_sim.ref.load %[[DYNAMIC_READ]]
+// CHECK: %[[DYNAMIC_READ:.*]] = simulation.ref.array_element
+// CHECK: simulation.ref.load %[[DYNAMIC_READ]]
 // Ascending range [-1:1] maps source indices -1 and 1 to ordinals 0 and 2.
-// CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1
-// CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[2\]\]}} : !obelisk_sim.ref<!obelisk_sim.unpacked_array<-1 : 1
+// CHECK: simulation.ref.subelement {{.*}}{{\[\[0\]\]}} : !simulation.ref<!simulation.unpacked_array<-1 : 1
+// CHECK: simulation.ref.subelement {{.*}}{{\[\[2\]\]}} : !simulation.ref<!simulation.unpacked_array<-1 : 1
 // An unpacked union member write preserves every overlapping byte through a
 // whole-value read/modify/write instead of manufacturing a subreference.
-// CHECK: %[[UNTAGGED_OLD:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.unpacked_union<{{.*}}isTagged = false>
-// CHECK: %[[UNTAGGED_UPDATED:.*]] = obelisk_sim.aggregate.insert {{.*}} into %[[UNTAGGED_OLD]][1] :
-// CHECK: obelisk_sim.ref.store %[[UNTAGGED_UPDATED]] to {{.*}} : !obelisk_sim.unpacked_union<{{.*}}isTagged = false>
-// CHECK: obelisk_sim.union.construct {{.*}} as 1 : {{.*}}isTagged = true, tagBits = 2>
-// CHECK: obelisk_sim.union.construct {{.*}} as 1 : {{.*}}isTagged = true>
+// CHECK: %[[UNTAGGED_OLD:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.unpacked_union<{{.*}}isTagged = false>
+// CHECK: %[[UNTAGGED_UPDATED:.*]] = simulation.aggregate.insert {{.*}} into %[[UNTAGGED_OLD]][1] :
+// CHECK: simulation.ref.store %[[UNTAGGED_UPDATED]] to {{.*}} : !simulation.unpacked_union<{{.*}}isTagged = false>
+// CHECK: simulation.union.construct {{.*}} as 1 : {{.*}}isTagged = true, tagBits = 2>
+// CHECK: simulation.union.construct {{.*}} as 1 : {{.*}}isTagged = true>
 // Ambiguous fixed-array merging compares tagged-union activity before values.
-// CHECK: obelisk_sim.union.is_active
-// CHECK: obelisk_sim.logic.compare eq
+// CHECK: simulation.union.is_active
+// CHECK: simulation.logic.compare eq
 // Aggregate output and inout values are explicit copy-out results.
-// CHECK: %[[COPY_CALL:[0-9]+]]:3 = obelisk_sim.call
-// CHECK: obelisk_sim.ref.store %[[COPY_CALL]]#1
-// CHECK: obelisk_sim.ref.store %[[COPY_CALL]]#2
+// CHECK: %[[COPY_CALL:[0-9]+]]:3 = simulation.call
+// CHECK: simulation.ref.store %[[COPY_CALL]]#1
+// CHECK: simulation.ref.store %[[COPY_CALL]]#2
 // CHECK-NOT: obelisk.sv.

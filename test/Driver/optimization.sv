@@ -30,19 +30,19 @@ module optimization_levels;
   end
 endmodule
 
-// O0: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 function hierarchy "optimization_levels.add_one" debug "add_one"
-// O0: obelisk_sim.func private @unit_0
-// O0: obelisk_sim.func private @unit_1(%arg0: !obelisk_sim.context
-// O0-SAME: %arg1: !obelisk_sim.ref<!obelisk_sim.packed_array
-// O0-SAME: obelisk_sim.descriptor_id = 0 : i64}) attributes
-// O0: obelisk_sim.call @unit_0
+// O0: simulation.code_unit.decl {{[0-9]+}} in 1 function hierarchy "optimization_levels.add_one" debug "add_one"
+// O0: simulation.func private @unit_0
+// O0: simulation.func private @unit_1(%arg0: !simulation.context
+// O0-SAME: %arg1: !simulation.ref<!simulation.packed_array
+// O0-SAME: simulation.descriptor_id = 0 : i64}) attributes
+// O0: simulation.call @unit_0
 
-// INLINE: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 function hierarchy "optimization_levels.add_one" debug "add_one"
-// INLINE-NOT: obelisk_sim.func private @unit_0
-// INLINE-NOT: obelisk_sim.call @unit_0
-// INLINE: obelisk_sim.func private @unit_1(%arg0: !obelisk_sim.context
-// INLINE-SAME: %arg1: !obelisk_sim.ref<!obelisk_sim.packed_array
-// INLINE-SAME: obelisk_sim.descriptor_id = 0 : i64}) attributes
+// INLINE: simulation.code_unit.decl {{[0-9]+}} in 1 function hierarchy "optimization_levels.add_one" debug "add_one"
+// INLINE-NOT: simulation.func private @unit_0
+// INLINE-NOT: simulation.call @unit_0
+// INLINE: simulation.func private @unit_1(%arg0: !simulation.context
+// INLINE-SAME: %arg1: !simulation.ref<!simulation.packed_array
+// INLINE-SAME: simulation.descriptor_id = 0 : i64}) attributes
 
 // The selected level also reaches LLVM's optimization pipeline.
 // LLVM-O0: define i32 @__obelisk_root(ptr

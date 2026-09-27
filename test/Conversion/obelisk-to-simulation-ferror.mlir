@@ -3,11 +3,11 @@
 // $ferror yields the descriptor's pending error code and stores the host
 // message into the string destination.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[FD:.*]] = obelisk_sim.file.open
-// CHECK: %[[MESSAGE:.*]], %[[CODE:.*]] = obelisk_sim.file.error_string
-// CHECK: obelisk_sim.ref.store %[[MESSAGE]]
-// CHECK: obelisk_sim.logic.from_bits %[[CODE]]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[FD:.*]] = simulation.file.open
+// CHECK: %[[MESSAGE:.*]], %[[CODE:.*]] = simulation.file.error_string
+// CHECK: simulation.ref.store %[[MESSAGE]]
+// CHECK: simulation.logic.from_bits %[[CODE]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

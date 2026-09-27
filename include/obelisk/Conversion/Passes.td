@@ -153,10 +153,10 @@ def ConvertObeliskSimValuesToStandardPass
     : Pass<"convert-obelisk-sim-values-to-standard", "mlir::ModuleOp"> {
   let summary = "Lower pure four-state packed values to standard integer IR";
   let description = [{
-    Converts each !obelisk_sim.logic<W> value to an iW value plane and an iW
+    Converts each !simulation.logic<W> value to an iW value plane and an iW
     unknown plane, lowers the complete pure packed-value operation family, and
     converts standard function and control-flow boundaries. Runtime resources,
-    scheduling, time, and obelisk_sim code-unit structure are left untouched.
+    scheduling, time, and simulation code-unit structure are left untouched.
   }];
   let dependentDialects = [
     "mlir::arith::ArithDialect",
@@ -205,11 +205,11 @@ def EncodeObeliskSimToBytecodePass
   let summary = "Strictly encode the normalized executable simulation boundary";
   let description = [{
     Builds one deterministic, pointer-free design bytecode image while leaving
-    source obelisk_sim.func operations intact for native lowering. Every
+    source simulation.func operations intact for native lowering. Every
     defined function must use the encoder's closed normalized legality set:
     integer arith constants, arithmetic, bitwise, shifts, comparisons, select,
     extensions/truncation/index casts; cf branches and switches; and the
-    explicitly implemented obelisk_sim value, aggregate, reference, state,
+    explicitly implemented simulation value, aggregate, reference, state,
     scheduling, suspension, call, formatting, and file operations. Any other
     executable operation is rejected at that operation instead of being
     silently omitted. Optional VPI reflection is emitted as a separate

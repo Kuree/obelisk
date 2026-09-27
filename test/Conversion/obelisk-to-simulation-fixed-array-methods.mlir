@@ -311,22 +311,22 @@ module {
 
 // Runtime max is unrolled through fixed aggregate positions and compares signed
 // int elements.  No container-size loop is needed for the fixed extent.
-// CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}}
-// CHECK: obelisk_sim.ref.subelement {{.*}}{{\[\[4\]\]}}
+// CHECK: simulation.ref.subelement {{.*}}{{\[\[0\]\]}}
+// CHECK: simulation.ref.subelement {{.*}}{{\[\[4\]\]}}
 // CHECK-COUNT-4: arith.cmpi sgt
 
 // find_index keeps a loop, dynamically extracts by the declared [4:0] index,
 // and writes that source index to the result queue.
 // CHECK: %[[LEFT:.*]] = arith.constant {{.*}}4 : i64
 // CHECK: %[[SOURCE_INDEX:.*]] = arith.subi %[[LEFT]], %{{.*}} : i64
-// CHECK: obelisk_sim.array.extract_dynamic {{.*}}[%[[SOURCE_INDEX]]]
+// CHECK: simulation.array.extract_dynamic {{.*}}[%[[SOURCE_INDEX]]]
 // CHECK: %[[INDEX_I32:.*]] = arith.trunci %[[SOURCE_INDEX]] : i64 to i32
-// CHECK: obelisk_sim.container.write {{.*}}, {{.*}}, %[[INDEX_I32]]
+// CHECK: simulation.container.write {{.*}}, {{.*}}, %[[INDEX_I32]]
 
 // The lowering emits aggregate.extract + arith SSA for fixed constants.  The
 // dialect canonicalizer and arith folders, not array-method lowering, reduce
 // max and sum to their values.
 // CHECK: %[[NINE:.*]] = arith.constant {{.*}}9 : i32
-// CHECK: obelisk_sim.container.write {{.*}}, {{.*}}, %[[NINE]]
+// CHECK: simulation.container.write {{.*}}, {{.*}}, %[[NINE]]
 // CHECK: %[[TWENTY_TWO:.*]] = arith.constant {{.*}}22 : i32
-// CHECK: obelisk_sim.ref.store %[[TWENTY_TWO]]
+// CHECK: simulation.ref.store %[[TWENTY_TWO]]

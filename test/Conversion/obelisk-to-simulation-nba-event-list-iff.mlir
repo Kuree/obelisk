@@ -48,16 +48,16 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
+// CHECK-LABEL: simulation.func private @{{.*nba_event.*}}(
 // CHECK-SAME: schedule.detached_controls
 // CHECK-SAME: schedule.prime_on_spawn
-// CHECK: %[[CLK:.*]] = obelisk_sim.observer.bind
-// CHECK: %[[ENABLE:.*]] = obelisk_sim.observer.bind
-// CHECK: %[[RESET:.*]] = obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe %[[CLK]], %[[RESET]]
+// CHECK: %[[CLK:.*]] = simulation.observer.bind
+// CHECK: %[[ENABLE:.*]] = simulation.observer.bind
+// CHECK: %[[RESET:.*]] = simulation.observer.bind
+// CHECK: simulation.suspend.observe %[[CLK]], %[[RESET]]
 // CHECK-SAME: conditions 1 edges [1, 2] indices [0, -1]
-// CHECK: obelisk_sim.nba.enqueue
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[RHS:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @{{.*nba_event.*}}(%{{.*}}, %{{.*}}, %[[RHS]]
+// CHECK: simulation.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[RHS:.*]] = simulation.ref.load
+// CHECK: simulation.spawn @{{.*nba_event.*}}(%{{.*}}, %{{.*}}, %[[RHS]]
 // CHECK-NOT: obelisk.sv.

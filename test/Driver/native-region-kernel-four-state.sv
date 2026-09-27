@@ -51,7 +51,7 @@ module native_region_kernel_four_state;
   end
 endmodule
 
-// KERNEL: obelisk_sim.func private @__obelisk_region_kernel_
+// KERNEL: simulation.func private @__obelisk_region_kernel_
 
 // CHECK: source=0 first=1 second=2
 // CHECK: source=3 first=4 second=5

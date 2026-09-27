@@ -128,5 +128,5 @@ endmodule
 // CHECK-DAG: final-pass-preserved
 // CHECK-NOT: BAD-
 
-// IR: obelisk_sim.assert.control
-// IR: obelisk_sim.assert.action_state
+// IR: simulation.assert.control
+// IR: simulation.assert.action_state

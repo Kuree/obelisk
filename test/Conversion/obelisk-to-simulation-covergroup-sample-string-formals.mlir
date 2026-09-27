@@ -10,12 +10,12 @@
 // integral values. String input and ref formals are transient call values:
 // their derived coverpoint and iff results enter the sample batch, while the
 // managed strings themselves do not become long-lived runtime coverage state.
-// SIM: obelisk_sim.covergroup.create
-// SIM: obelisk_sim.string.literal "abc"
-// SIM: obelisk_sim.argument_ref.from_ref
-// SIM: obelisk_sim.argument_ref.load
-// SIM: obelisk_sim.string.compare
-// SIM: obelisk_sim.covergroup.sample {{.*}} values[{{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
+// SIM: simulation.covergroup.create
+// SIM: simulation.string.literal "abc"
+// SIM: simulation.argument_ref.from_ref
+// SIM: simulation.argument_ref.load
+// SIM: simulation.string.compare
+// SIM: simulation.covergroup.sample {{.*}} values[{{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
 // SCHEMA-DAG: functional_formal id={{[1-9][0-9]*}} {{.*}} name=tag kind=2 direction=1 result_kind=6 {{.*}} ordinal=0
 // SCHEMA-DAG: functional_formal id={{[1-9][0-9]*}} {{.*}} name=alias_arg kind=2 direction=2 result_kind=6 {{.*}} ordinal=1
 // SCHEMA-DAG: functional_formal id={{[1-9][0-9]*}} {{.*}} name=fallback kind=2 direction=1 result_kind=6 flags=1 {{.*}} ordinal=2 default_expression=[[DEFAULT:[1-9][0-9]*]]

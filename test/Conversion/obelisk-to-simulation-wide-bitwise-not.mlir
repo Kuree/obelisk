@@ -28,5 +28,5 @@ module {
 }
 
 // CHECK: %[[ONES:.*]] = arith.constant -1 : i90
-// CHECK: obelisk_sim.ref.store %[[ONES]] to
+// CHECK: simulation.ref.store %[[ONES]] to
 // CHECK-NOT: obelisk.sv.

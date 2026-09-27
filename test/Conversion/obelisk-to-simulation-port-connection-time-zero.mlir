@@ -50,14 +50,14 @@ module {
 }
 
 
-// CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in 2 initial hierarchy "port_time_zero_top.reader.$code_unit_13"
-// CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 port_initialize hierarchy "port_time_zero_top.reader.$port_connection_0"
+// CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} in 2 initial hierarchy "port_time_zero_top.reader.$code_unit_13"
+// CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} in 1 port_initialize hierarchy "port_time_zero_top.reader.$port_connection_0"
 
 // The port-connection initializer drives, so it takes the driver capture; the
 // initial process only reads the net.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK:      obelisk_sim.spawn @unit_1(
-// CHECK-SAME:   !obelisk_sim.driver<
-// CHECK-NEXT: obelisk_sim.spawn @unit_0(
-// CHECK-SAME:   !obelisk_sim.net<
-// CHECK-NEXT: obelisk_sim.return
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK:      simulation.spawn @unit_1(
+// CHECK-SAME:   !simulation.driver<
+// CHECK-NEXT: simulation.spawn @unit_0(
+// CHECK-SAME:   !simulation.net<
+// CHECK-NEXT: simulation.return

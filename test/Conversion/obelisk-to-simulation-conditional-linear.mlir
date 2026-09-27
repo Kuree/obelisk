@@ -51,6 +51,6 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-COUNT-1: arith.constant 4.000000e+00 : f64
 // CHECK-NOT: obelisk.sv.

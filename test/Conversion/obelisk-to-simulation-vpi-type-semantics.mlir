@@ -98,13 +98,13 @@ module {
 
 // The executable types are normalized, while the immutable declaration
 // inventory retains the exact source semantic needed by VPI.
-// CHECK-DAG: hierarchy "top.bit_value" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [0, 0], children = [], childNames = []>
-// CHECK-DAG: hierarchy "top.logic_up" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [-2, 5], children = [], childNames = []>
-// CHECK-DAG: hierarchy "top.int_value" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
-// CHECK-DAG: hierarchy "top.integer_value" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = integer, isSigned = true, isFourState = true, range = [31, 0], children = [], childNames = []>
-// CHECK-DAG: hierarchy "top.state" {{.*}}obelisk_sim.vpi_source_type_identity = 7 : i64{{.*}}vpi_type = #obelisk_sim.vpi_type<kind = enum, isSigned = false, isFourState = true, name = "state_t"{{.*}}kind = logic{{.*}}range = [1, 0]
-// CHECK-DAG: hierarchy "top.packed" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = packed_array{{.*}}range = [0, 3]{{.*}}kind = bit
-// CHECK-DAG: hierarchy "top.record" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = unpacked_struct{{.*}}name = "record_t"{{.*}}childNames = ["count", "flags"], isTagged = false, isSoft = false, bitWidth = 0 : i64, selectableWidth = 40 : i64, bitstreamWidth = 40 : i64, tagBits = 0 : i64, childOrdinals = [0, 1], childPackedOffsets = [0, 0], childRandTypes = [1, 1]>
+// CHECK-DAG: hierarchy "top.bit_value" {{.*}}vpi_type = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [0, 0], children = [], childNames = []>
+// CHECK-DAG: hierarchy "top.logic_up" {{.*}}vpi_type = #simulation.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [-2, 5], children = [], childNames = []>
+// CHECK-DAG: hierarchy "top.int_value" {{.*}}vpi_type = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
+// CHECK-DAG: hierarchy "top.integer_value" {{.*}}vpi_type = #simulation.vpi_type<kind = integer, isSigned = true, isFourState = true, range = [31, 0], children = [], childNames = []>
+// CHECK-DAG: hierarchy "top.state" {{.*}}simulation.vpi_source_type_identity = 7 : i64{{.*}}vpi_type = #simulation.vpi_type<kind = enum, isSigned = false, isFourState = true, name = "state_t"{{.*}}kind = logic{{.*}}range = [1, 0]
+// CHECK-DAG: hierarchy "top.packed" {{.*}}vpi_type = #simulation.vpi_type<kind = packed_array{{.*}}range = [0, 3]{{.*}}kind = bit
+// CHECK-DAG: hierarchy "top.record" {{.*}}vpi_type = #simulation.vpi_type<kind = unpacked_struct{{.*}}name = "record_t"{{.*}}childNames = ["count", "flags"], isTagged = false, isSoft = false, bitWidth = 0 : i64, selectableWidth = 40 : i64, bitstreamWidth = 40 : i64, tagBits = 0 : i64, childOrdinals = [0, 1], childPackedOffsets = [0, 0], childRandTypes = [1, 1]>
 // CHECK-DAG: hierarchy "top.time_value" {{.*}}kind = time{{.*}}isFourState = true{{.*}}range = [63, 0]
 // CHECK-DAG: hierarchy "top.shortreal_value" {{.*}}kind = shortreal
 // CHECK-DAG: hierarchy "top.real_value" {{.*}}kind = real
@@ -117,19 +117,19 @@ module {
 // CHECK-DAG: hierarchy "top.process_value" {{.*}}kind = process
 // CHECK-DAG: hierarchy "top.tagged" {{.*}}kind = unpacked_union{{.*}}name = "choice_t"{{.*}}kind = void{{.*}}childNames = ["none", "value"], isTagged = true, isSoft = false, bitWidth = 0 : i64, selectableWidth = 4 : i64, bitstreamWidth = 4 : i64, tagBits = 0 : i64{{.*}}childOrdinals = [0, 1], childPackedOffsets = [0, 0], childRandTypes = [1, 1]
 // CHECK-DAG: hierarchy "top.wild" {{.*}}kind = assoc_array{{.*}}kind = untyped{{.*}}kind = string{{.*}}wildcardIndex = true
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[CU_ANCHOR:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 {{.*}}hierarchy "$unit" debug ""
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP_ANCHOR:__obelisk_vpi_anchor_1]] id 1 type 32 in 1 {{.*}}hierarchy "top" debug "top"
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_0 id 0 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.flags_t" debug "flags_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_1 id 1 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.record_t" debug "record_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_1]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_2 id 2 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.outer_t" debug "outer_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_2, @__obelisk_vpi_typespec_1]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_3 id 3 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.unused_t" debug "unused_t" {{.*}}kind = bit{{.*}}typedefAliases = [@__obelisk_vpi_typespec_3]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_4 id 4 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.sequence_t" debug "sequence_t" {{.*}}kind = sequence{{.*}}typedefAliases = [@__obelisk_vpi_typespec_4]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_5 id 5 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.property_t" debug "property_t" {{.*}}kind = property{{.*}}typedefAliases = [@__obelisk_vpi_typespec_5]
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[CU_TS:__obelisk_vpi_enum_typespec_6]] id 6 in 0 owner @[[CU_ANCHOR]] hierarchy "$unit" debug "cu_state_t" {{.*}}origin = 2 : i32{{.*}}kind = enum
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[STATE_TS:__obelisk_vpi_enum_typespec_7]] id 7 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.state_t" debug "state_t" {{.*}}origin = 2 : i32{{.*}}kind = enum
-// CHECK-DAG: obelisk_sim.vpi_enum_const.decl 0 enum @[[CU_TS]] ordinal 0 name "CU_IDLE" value "1'b0"
-// CHECK-DAG: obelisk_sim.vpi_enum_const.decl 1 enum @[[STATE_TS]] ordinal 0 name "IDLE" value "2'b00"
-// CHECK-DAG: obelisk_sim.vpi_enum_const.decl 2 enum @[[STATE_TS]] ordinal 1 name "ACTIVE" value "2'b1x"
+// CHECK-DAG: simulation.vpi_object.anchor @[[CU_ANCHOR:__obelisk_vpi_anchor_0]] id 0 type 600 in 0 {{.*}}hierarchy "$unit" debug ""
+// CHECK-DAG: simulation.vpi_object.anchor @[[TOP_ANCHOR:__obelisk_vpi_anchor_1]] id 1 type 32 in 1 {{.*}}hierarchy "top" debug "top"
+// CHECK-DAG: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_0 id 0 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.flags_t" debug "flags_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]
+// CHECK-DAG: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_1 id 1 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.record_t" debug "record_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_1]
+// CHECK-DAG: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_2 id 2 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.outer_t" debug "outer_t" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_2, @__obelisk_vpi_typespec_1]
+// CHECK-DAG: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_3 id 3 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.unused_t" debug "unused_t" {{.*}}kind = bit{{.*}}typedefAliases = [@__obelisk_vpi_typespec_3]
+// CHECK-DAG: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_4 id 4 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.sequence_t" debug "sequence_t" {{.*}}kind = sequence{{.*}}typedefAliases = [@__obelisk_vpi_typespec_4]
+// CHECK-DAG: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_5 id 5 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.property_t" debug "property_t" {{.*}}kind = property{{.*}}typedefAliases = [@__obelisk_vpi_typespec_5]
+// CHECK-DAG: simulation.vpi_typespec.decl @[[CU_TS:__obelisk_vpi_enum_typespec_6]] id 6 in 0 owner @[[CU_ANCHOR]] hierarchy "$unit" debug "cu_state_t" {{.*}}origin = 2 : i32{{.*}}kind = enum
+// CHECK-DAG: simulation.vpi_typespec.decl @[[STATE_TS:__obelisk_vpi_enum_typespec_7]] id 7 in 1 owner @[[TOP_ANCHOR]] hierarchy "top.state_t" debug "state_t" {{.*}}origin = 2 : i32{{.*}}kind = enum
+// CHECK-DAG: simulation.vpi_enum_const.decl 0 enum @[[CU_TS]] ordinal 0 name "CU_IDLE" value "1'b0"
+// CHECK-DAG: simulation.vpi_enum_const.decl 1 enum @[[STATE_TS]] ordinal 0 name "IDLE" value "2'b00"
+// CHECK-DAG: simulation.vpi_enum_const.decl 2 enum @[[STATE_TS]] ordinal 1 name "ACTIVE" value "2'b1x"
 // CHECK-DAG: hierarchy "top.aliased_record" {{.*}}typedefAliases = [@__obelisk_vpi_typespec_0]{{.*}}typedefAliases = [@__obelisk_vpi_typespec_2, @__obelisk_vpi_typespec_1]
-// CHECK-DAG: obelisk_sim.net.decl {{.*}}hierarchy "top.net_value" {{.*}}kind = logic{{.*}}range = [-2, 5]
+// CHECK-DAG: simulation.net.decl {{.*}}hierarchy "top.net_value" {{.*}}kind = logic{{.*}}range = [-2, 5]
 // CHECK-NOT: obelisk.sv.

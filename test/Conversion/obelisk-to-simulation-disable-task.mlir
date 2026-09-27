@@ -117,15 +117,15 @@ module {
 // A task is itself a dynamically activated control target. Its target ID must
 // match an independently lowered hierarchical disable, survive suspension,
 // and be released on normal return.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.control_target_id = [[TASK_ID:[0-9]+]] : i64
-// CHECK-SAME: obelisk_sim.hierarchical_name = "worker"
-// CHECK: %[[ACTIVATION:.*]] = obelisk_sim.control.enter [[TASK_ID]]
-// CHECK: obelisk_sim.suspend.delay {{.*}}(%[[ACTIVATION]] : !obelisk_sim.control)
-// CHECK: ^{{.*}}(%[[RESUMED:.*]]: !obelisk_sim.control):
-// CHECK: obelisk_sim.control.leave %[[RESUMED]]
-// CHECK: obelisk_sim.return
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.control_target_id = [[TASK_ID:[0-9]+]] : i64
+// CHECK-SAME: simulation.hierarchical_name = "worker"
+// CHECK: %[[ACTIVATION:.*]] = simulation.control.enter [[TASK_ID]]
+// CHECK: simulation.suspend.delay {{.*}}(%[[ACTIVATION]] : !simulation.control)
+// CHECK: ^{{.*}}(%[[RESUMED:.*]]: !simulation.control):
+// CHECK: simulation.control.leave %[[RESUMED]]
+// CHECK: simulation.return
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: obelisk_sim.control.disable [[TASK_ID]] {hierarchical = true}
-// CHECK: obelisk_sim.return
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK: simulation.control.disable [[TASK_ID]] {hierarchical = true}
+// CHECK: simulation.return

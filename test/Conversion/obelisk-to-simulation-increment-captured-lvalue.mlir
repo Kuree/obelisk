@@ -42,9 +42,9 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK:      %[[ELEMENT:.*]] = obelisk_sim.container.read
-// CHECK:      %[[OLD:.*]] = obelisk_sim.aggregate.extract %[[ELEMENT]][0]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK:      %[[ELEMENT:.*]] = simulation.container.read
+// CHECK:      %[[OLD:.*]] = simulation.aggregate.extract %[[ELEMENT]][0]
 // CHECK:      %[[NEW:.*]] = arith.addi %[[OLD]]
-// CHECK:      %[[UPDATED:.*]] = obelisk_sim.aggregate.insert %[[NEW]] into %[[ELEMENT]][0]
-// CHECK:      obelisk_sim.container.write {{.*}}, %[[UPDATED]]
+// CHECK:      %[[UPDATED:.*]] = simulation.aggregate.insert %[[NEW]] into %[[ELEMENT]][0]
+// CHECK:      simulation.container.write {{.*}}, %[[UPDATED]]

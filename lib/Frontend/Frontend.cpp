@@ -3260,14 +3260,14 @@ private:
                       node, *node.parentInstance));
       if (node.parentInstance) {
         const slang::ast::DefinitionSymbol &definition = node.getDefinition();
-        attrs.set("obelisk_sim.vpi_definition_name",
+        attrs.set("simulation.vpi_definition_name",
                   builder.getStringAttr(definition.name));
-        attrs.set("obelisk_sim.vpi_top",
+        attrs.set("simulation.vpi_top",
                   builder.getBoolAttr(node.parentInstance->isTopLevel()));
-        attrs.set("obelisk_sim.vpi_automatic",
+        attrs.set("simulation.vpi_automatic",
                   builder.getBoolAttr(definition.defaultLifetime ==
                                       slang::ast::VariableLifetime::Automatic));
-        attrs.set("obelisk_sim.vpi_cell_instance",
+        attrs.set("simulation.vpi_cell_instance",
                   builder.getBoolAttr(definition.cellDefine));
         using VPIKind = reflection::VPIObjectKind;
         VPIKind scopeKind = VPIKind::Module;
@@ -3296,15 +3296,15 @@ private:
     }
 
     if constexpr (std::same_as<T, slang::ast::PackageSymbol>) {
-      attrs.set("obelisk_sim.vpi_definition_name",
+      attrs.set("simulation.vpi_definition_name",
                 builder.getStringAttr(node.name));
-      attrs.set("obelisk_sim.vpi_automatic",
+      attrs.set("simulation.vpi_automatic",
                 builder.getBoolAttr(node.defaultLifetime ==
                                     slang::ast::VariableLifetime::Automatic));
     }
 
     if constexpr (std::same_as<T, slang::ast::CompilationUnitSymbol>)
-      attrs.set("obelisk_sim.vpi_definition_name",
+      attrs.set("simulation.vpi_definition_name",
                 builder.getStringAttr("$unit"));
 
     if constexpr (std::same_as<T, slang::ast::InstanceArraySymbol>) {

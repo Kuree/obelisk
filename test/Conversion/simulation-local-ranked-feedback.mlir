@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.group.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-local-ranked-feedback.test.
@@ -6,89 +6,89 @@
 // A static sensitivity SCC is not a reason to exclude all of its actors.
 // Forward segments remain native groups and the shared loop handles their
 // backward publication. The OR gate breaks the value-level loop at runtime.
-// GROUP: obelisk_sim.spawn @__obelisk_region_kernel_
-// GROUP: obelisk_sim.func private @__obelisk_region_kernel_
+// GROUP: simulation.spawn @__obelisk_region_kernel_
+// GROUP: simulation.func private @__obelisk_region_kernel_
 // GROUP-SAME: schedule.native.region_body
 
-!bit = !obelisk_sim.logic<1>
-!ref = !obelisk_sim.ref<!bit>
+!bit = !simulation.logic<1>
+!ref = !simulation.ref<!bit>
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 1 : i32
 } {
-  obelisk_sim.design @feedback {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !bit design
-    obelisk_sim.storage.decl 1 in 0 : !bit design
-    obelisk_sim.storage.decl 2 in 0 : !bit design
-    obelisk_sim.storage.decl 3 in 0 : !bit design
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always_comb hierarchy "a"
-    obelisk_sim.code_unit.decl 3 in 0 always_comb hierarchy "b"
-    obelisk_sim.code_unit.decl 4 in 0 always_comb hierarchy "c"
-    obelisk_sim.code_unit.decl 5 in 0 always_comb hierarchy "d"
-    obelisk_sim.code_unit.decl 6 in 0 initial hierarchy "report"
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %a = obelisk_sim.context.storage %ctx[0] : !ref
-      %b = obelisk_sim.context.storage %ctx[1] : !ref
-      %c = obelisk_sim.context.storage %ctx[2] : !ref
-      %d = obelisk_sim.context.storage %ctx[3] : !ref
-      %pa = obelisk_sim.spawn @a(%ctx, %d, %a) : !obelisk_sim.context, !ref, !ref -> !obelisk_sim.process
-      %pb = obelisk_sim.spawn @b(%ctx, %a, %b) : !obelisk_sim.context, !ref, !ref -> !obelisk_sim.process
-      %pc = obelisk_sim.spawn @c(%ctx, %b, %c) : !obelisk_sim.context, !ref, !ref -> !obelisk_sim.process
-      %pd = obelisk_sim.spawn @d(%ctx, %c, %d) : !obelisk_sim.context, !ref, !ref -> !obelisk_sim.process
-      %pr = obelisk_sim.spawn @report(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+  simulation.design @feedback {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !bit design
+    simulation.storage.decl 2 in 0 : !bit design
+    simulation.storage.decl 3 in 0 : !bit design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always_comb hierarchy "a"
+    simulation.code_unit.decl 3 in 0 always_comb hierarchy "b"
+    simulation.code_unit.decl 4 in 0 always_comb hierarchy "c"
+    simulation.code_unit.decl 5 in 0 always_comb hierarchy "d"
+    simulation.code_unit.decl 6 in 0 initial hierarchy "report"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %a = simulation.context.storage %ctx[0] : !ref
+      %b = simulation.context.storage %ctx[1] : !ref
+      %c = simulation.context.storage %ctx[2] : !ref
+      %d = simulation.context.storage %ctx[3] : !ref
+      %pa = simulation.spawn @a(%ctx, %d, %a) : !simulation.context, !ref, !ref -> !simulation.process
+      %pb = simulation.spawn @b(%ctx, %a, %b) : !simulation.context, !ref, !ref -> !simulation.process
+      %pc = simulation.spawn @c(%ctx, %b, %c) : !simulation.context, !ref, !ref -> !simulation.process
+      %pd = simulation.spawn @d(%ctx, %c, %d) : !simulation.context, !ref, !ref -> !simulation.process
+      %pr = simulation.spawn @report(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
     }
-    obelisk_sim.func @a(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}, %output: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 2 : i64} {
+    simulation.func @a(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %input: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}, %output: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 2 : i64} {
       cf.br ^body
     ^body:
-      %old = obelisk_sim.ref.load %input : !ref -> !bit
-      %one = obelisk_sim.logic.constant true, false : !bit
-      %next = obelisk_sim.logic.binary or %old, %one : !bit
-      obelisk_sim.ref.store %next to %output : !bit, !ref
-      obelisk_sim.suspend.change %input to ^body : !ref
+      %old = simulation.ref.load %input : !ref -> !bit
+      %one = simulation.logic.constant true, false : !bit
+      %next = simulation.logic.binary or %old, %one : !bit
+      simulation.ref.store %next to %output : !bit, !ref
+      simulation.suspend.change %input to ^body : !ref
     }
-    obelisk_sim.func @b(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64}, %output: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 3 : i64} {
+    simulation.func @b(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %input: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %output: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 3 : i64} {
       cf.br ^body
     ^body:
-      %next = obelisk_sim.ref.load %input : !ref -> !bit
-      obelisk_sim.ref.store %next to %output : !bit, !ref
-      obelisk_sim.suspend.change %input to ^body : !ref
+      %next = simulation.ref.load %input : !ref -> !bit
+      simulation.ref.store %next to %output : !bit, !ref
+      simulation.suspend.change %input to ^body : !ref
     }
-    obelisk_sim.func @c(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 1 : i64}, %output: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 4 : i64} {
+    simulation.func @c(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %input: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %output: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 4 : i64} {
       cf.br ^body
     ^body:
-      %next = obelisk_sim.ref.load %input : !ref -> !bit
-      obelisk_sim.ref.store %next to %output : !bit, !ref
-      obelisk_sim.suspend.change %input to ^body : !ref
+      %next = simulation.ref.load %input : !ref -> !bit
+      simulation.ref.store %next to %output : !bit, !ref
+      simulation.suspend.change %input to ^body : !ref
     }
-    obelisk_sim.func @d(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}, %input: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 2 : i64}, %output: !ref {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 3 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 5 : i64} {
+    simulation.func @d(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %input: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %output: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 4 : i32, code_unit_id = 5 : i64} {
       cf.br ^body
     ^body:
-      %next = obelisk_sim.ref.load %input : !ref -> !bit
-      obelisk_sim.ref.store %next to %output : !bit, !ref
-      obelisk_sim.suspend.change %input to ^body : !ref
+      %next = simulation.ref.load %input : !ref -> !bit
+      simulation.ref.store %next to %output : !bit, !ref
+      simulation.suspend.change %input to ^body : !ref
     }
-    obelisk_sim.func @report(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^done
+    simulation.func @report(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^done
     ^done:
-      %a = obelisk_sim.context.storage %ctx[0] : !ref
-      %b = obelisk_sim.context.storage %ctx[1] : !ref
-      %c = obelisk_sim.context.storage %ctx[2] : !ref
-      %d = obelisk_sim.context.storage %ctx[3] : !ref
-      %av = obelisk_sim.ref.load %a : !ref -> !bit
-      %bv = obelisk_sim.ref.load %b : !ref -> !bit
-      %cv = obelisk_sim.ref.load %c : !ref -> !bit
-      %dv = obelisk_sim.ref.load %d : !ref -> !bit
+      %a = simulation.context.storage %ctx[0] : !ref
+      %b = simulation.context.storage %ctx[1] : !ref
+      %c = simulation.context.storage %ctx[2] : !ref
+      %d = simulation.context.storage %ctx[3] : !ref
+      %av = simulation.ref.load %a : !ref -> !bit
+      %bv = simulation.ref.load %b : !ref -> !bit
+      %cv = simulation.ref.load %c : !ref -> !bit
+      %dv = simulation.ref.load %d : !ref -> !bit
       %stdout = arith.constant -2147483647 : i32
-      %format = obelisk_sim.bytes.constant "settled %b %b %b %b"
-      obelisk_sim.display %ctx to %stdout(%format, %av, %bv, %cv, %dv) newline = true radix = 2 flags = [0, 0, 0, 0, 0] : !obelisk_sim.bytes, !bit, !bit, !bit, !bit
+      %format = simulation.bytes.constant "settled %b %b %b %b"
+      simulation.display %ctx to %stdout(%format, %av, %bv, %cv, %dv) newline = true radix = <binary> flags = [0, 0, 0, 0, 0] : !simulation.bytes, !bit, !bit, !bit, !bit
       %zero = arith.constant 0 : i32
-      obelisk_sim.finish %ctx, %zero
-      obelisk_sim.return
+      simulation.finish %ctx, %zero
+      simulation.return
     }
   }
 }

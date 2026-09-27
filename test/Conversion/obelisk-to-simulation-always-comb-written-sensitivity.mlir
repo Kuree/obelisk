@@ -44,13 +44,13 @@ module {
 // IEEE 1800-2017 9.2.2.2.1 excludes expressions written within an
 // always_comb from its inferred sensitivity.  Scratch is still loaded and
 // therefore remains a read effect, but only source may arm the process.
-// CHECK-LABEL: obelisk_sim.func private
+// CHECK-LABEL: simulation.func private
 // CHECK-SAME: entry_kind = 4 : i32
-// CHECK-SAME: obelisk_sim.hierarchical_name = "always_comb_written_sensitivity"
-// CHECK: %[[VALUE:[0-9]+]] = obelisk_sim.ref.load %[[SOURCE:[a-zA-Z0-9_]+]]
-// CHECK: obelisk_sim.ref.store %[[VALUE]] to %[[SCRATCH:[a-zA-Z0-9_]+]]
-// CHECK: %[[FORWARD:[0-9]+]] = obelisk_sim.ref.load %[[SCRATCH]]
-// CHECK: obelisk_sim.ref.store %[[FORWARD]] to %{{.*}}
-// CHECK: obelisk_sim.suspend.change %[[SOURCE]]
-// CHECK-NOT: obelisk_sim.suspend.change %[[SCRATCH]]
+// CHECK-SAME: simulation.hierarchical_name = "always_comb_written_sensitivity"
+// CHECK: %[[VALUE:[0-9]+]] = simulation.ref.load %[[SOURCE:[a-zA-Z0-9_]+]]
+// CHECK: simulation.ref.store %[[VALUE]] to %[[SCRATCH:[a-zA-Z0-9_]+]]
+// CHECK: %[[FORWARD:[0-9]+]] = simulation.ref.load %[[SCRATCH]]
+// CHECK: simulation.ref.store %[[FORWARD]] to %{{.*}}
+// CHECK: simulation.suspend.change %[[SOURCE]]
+// CHECK-NOT: simulation.suspend.change %[[SCRATCH]]
 // CHECK-NOT: obelisk.sv.

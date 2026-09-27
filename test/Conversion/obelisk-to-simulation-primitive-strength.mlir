@@ -78,37 +78,37 @@ module {
 // IEEE 1800-2017 28.12.2 requires an uncertain conditional-gate output to
 // retain L/H ranges. The low and high polarity banks encode those ranges with
 // asymmetric high-impedance strengths.
-// CHECK: obelisk_sim.vpi_object.anchor {{.*}} type 21 {{.*}} hierarchy "primitive_strength.multi" debug "multi" {{.*}}primitive_input_count = 1 : i64
-// CHECK: obelisk_sim.net.decl {{[0-9]+}} in {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.vpi_object.anchor {{.*}} type 21 {{.*}} hierarchy "primitive_strength.multi" debug "multi" {{.*}}primitive_input_count = 1 : i64
+// CHECK: simulation.net.decl {{[0-9]+}} in {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: resolution_kind = 2 : i32
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
-// CHECK-SAME: obelisk_sim.strength_bank = 0 : i32
-// CHECK-SAME: obelisk_sim.strength_group = [[GROUP:[0-9]+]] : i64
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
+// CHECK-SAME: simulation.strength_bank = 0 : i32
+// CHECK-SAME: simulation.strength_group = [[GROUP:[0-9]+]] : i64
 // CHECK-SAME: strength0 = 5 : i32
 // CHECK-SAME: strength1 = 0 : i32
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
-// CHECK-SAME: obelisk_sim.strength_bank = 1 : i32
-// CHECK-SAME: obelisk_sim.strength_group = [[GROUP]] : i64
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
+// CHECK-SAME: simulation.strength_bank = 1 : i32
+// CHECK-SAME: simulation.strength_group = [[GROUP]] : i64
 // CHECK-SAME: strength0 = 0 : i32
 // CHECK-SAME: strength1 = 3 : i32
 // IEEE 1800-2017 28.3.2 and 28.10: an unspecified pull source uses pull
 // strength for both declaration polarities; only the driven polarity matters,
 // and an explicit pulldown strength0 replaces that polarity.
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: strength0 = 5 : i32
 // CHECK-SAME: strength1 = 5 : i32
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: strength0 = 5 : i32
 // CHECK-SAME: strength1 = 7 : i32
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: strength0 = 3 : i32
 // CHECK-SAME: strength1 = 5 : i32
-// CHECK: obelisk_sim.driver.drive
+// CHECK: simulation.driver.drive
 // CHECK-SAME: schedule.defer_net_resolution
-// CHECK: obelisk_sim.driver.drive
-// CHECK: obelisk_sim.logic.constant true, false
-// CHECK: obelisk_sim.driver.drive
-// CHECK: obelisk_sim.logic.constant true, false
-// CHECK: obelisk_sim.driver.drive
-// CHECK: obelisk_sim.logic.constant false, false
-// CHECK: obelisk_sim.driver.drive
+// CHECK: simulation.driver.drive
+// CHECK: simulation.logic.constant true, false
+// CHECK: simulation.driver.drive
+// CHECK: simulation.logic.constant true, false
+// CHECK: simulation.driver.drive
+// CHECK: simulation.logic.constant false, false
+// CHECK: simulation.driver.drive

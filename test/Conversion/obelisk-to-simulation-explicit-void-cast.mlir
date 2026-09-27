@@ -4,9 +4,9 @@
 // function result. The child still has to be evaluated; declaration inventory
 // must not mistake the void target for a class bit-stream conversion.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.random.next
-// CHECK-NOT: obelisk_sim.class_bitstream_source_feature
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.random.next
+// CHECK-NOT: simulation.class_bitstream_source_feature
 
 module {
   obelisk.sv.symbol.root attributes {

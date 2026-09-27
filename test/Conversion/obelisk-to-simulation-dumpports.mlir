@@ -263,32 +263,32 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[DEFAULT0:.*]] = obelisk_sim.string.literal "dumpports.vcd"
-// CHECK: %[[TOP0:.*]] = obelisk_sim.string.literal "top"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[DEFAULT0]], %[[TOP0]],
-// CHECK: %[[DEFAULT1:.*]] = obelisk_sim.string.literal "dumpports.vcd"
-// CHECK: %[[TOP1:.*]] = obelisk_sim.string.literal "top"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[DEFAULT1]], %[[TOP1]],
-// CHECK: %[[NAMED0:.*]] = obelisk_sim.string.literal "default.evcd"
-// CHECK: %[[TOP2:.*]] = obelisk_sim.string.literal "top"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[NAMED0]], %[[TOP2]],
-// CHECK: %[[NAMED1:.*]] = obelisk_sim.string.literal "omitted.evcd"
-// CHECK: %[[TOP3:.*]] = obelisk_sim.string.literal "top"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[NAMED1]], %[[TOP3]],
-// CHECK: %[[DEFAULT2:.*]] = obelisk_sim.string.literal "dumpports.vcd"
-// CHECK: %[[A0:.*]] = obelisk_sim.string.literal "top.a"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[DEFAULT2]], %[[A0]],
-// CHECK: %[[B0:.*]] = obelisk_sim.string.literal "top.b"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[DEFAULT2]], %[[B0]],
-// CHECK: %[[NAMED2:.*]] = obelisk_sim.string.literal "multi.evcd"
-// CHECK: %[[A1:.*]] = obelisk_sim.string.literal "top.a"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[NAMED2]], %[[A1]],
-// CHECK: %[[B1:.*]] = obelisk_sim.string.literal "top.b"
-// CHECK: obelisk_sim.dump.ports {{.*}}, %[[NAMED2]], %[[B1]],
-// CHECK: %[[ALL:.*]] = obelisk_sim.string.literal ""
-// CHECK: obelisk_sim.dump.ports_control {{.*}}, %[[ALL]], {{.*}} {action = 0 : i32}
-// CHECK: %[[CONTROL:.*]] = obelisk_sim.string.literal "named.evcd"
-// CHECK: obelisk_sim.dump.ports_control {{.*}}, %[[CONTROL]], {{.*}} {action = 1 : i32}
-// CHECK: %[[LIMIT_PATH:.*]] = obelisk_sim.string.literal "named.evcd"
-// CHECK: obelisk_sim.dump.ports_control {{.*}}, %[[LIMIT_PATH]], {{.*}} {action = 4 : i32}
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[DEFAULT0:.*]] = simulation.string.literal "dumpports.vcd"
+// CHECK: %[[TOP0:.*]] = simulation.string.literal "top"
+// CHECK: simulation.dump.ports {{.*}}, %[[DEFAULT0]], %[[TOP0]],
+// CHECK: %[[DEFAULT1:.*]] = simulation.string.literal "dumpports.vcd"
+// CHECK: %[[TOP1:.*]] = simulation.string.literal "top"
+// CHECK: simulation.dump.ports {{.*}}, %[[DEFAULT1]], %[[TOP1]],
+// CHECK: %[[NAMED0:.*]] = simulation.string.literal "default.evcd"
+// CHECK: %[[TOP2:.*]] = simulation.string.literal "top"
+// CHECK: simulation.dump.ports {{.*}}, %[[NAMED0]], %[[TOP2]],
+// CHECK: %[[NAMED1:.*]] = simulation.string.literal "omitted.evcd"
+// CHECK: %[[TOP3:.*]] = simulation.string.literal "top"
+// CHECK: simulation.dump.ports {{.*}}, %[[NAMED1]], %[[TOP3]],
+// CHECK: %[[DEFAULT2:.*]] = simulation.string.literal "dumpports.vcd"
+// CHECK: %[[A0:.*]] = simulation.string.literal "top.a"
+// CHECK: simulation.dump.ports {{.*}}, %[[DEFAULT2]], %[[A0]],
+// CHECK: %[[B0:.*]] = simulation.string.literal "top.b"
+// CHECK: simulation.dump.ports {{.*}}, %[[DEFAULT2]], %[[B0]],
+// CHECK: %[[NAMED2:.*]] = simulation.string.literal "multi.evcd"
+// CHECK: %[[A1:.*]] = simulation.string.literal "top.a"
+// CHECK: simulation.dump.ports {{.*}}, %[[NAMED2]], %[[A1]],
+// CHECK: %[[B1:.*]] = simulation.string.literal "top.b"
+// CHECK: simulation.dump.ports {{.*}}, %[[NAMED2]], %[[B1]],
+// CHECK: %[[ALL:.*]] = simulation.string.literal ""
+// CHECK: simulation.dump.ports_control {{.*}}, %[[ALL]], {{.*}} {action = 0 : i32}
+// CHECK: %[[CONTROL:.*]] = simulation.string.literal "named.evcd"
+// CHECK: simulation.dump.ports_control {{.*}}, %[[CONTROL]], {{.*}} {action = 1 : i32}
+// CHECK: %[[LIMIT_PATH:.*]] = simulation.string.literal "named.evcd"
+// CHECK: simulation.dump.ports_control {{.*}}, %[[LIMIT_PATH]], {{.*}} {action = 4 : i32}

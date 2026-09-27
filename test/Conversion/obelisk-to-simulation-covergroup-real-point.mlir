@@ -9,8 +9,8 @@
 // IEEE 1800-2023 adds real-valued coverpoints.  Keep samples and option
 // values typed as f64 through preparation; the v1 schema represents exact
 // values, simple ranges, and the two tolerance forms as real intervals.
-// SIM: obelisk_sim.covergroup.create {{.*}} payloads[{{.*}}] argument_count 0 formal_ids [] expression_ids [{{.*}}] : (f64
-// SIM: obelisk_sim.covergroup.sample {{.*}} values[{{.*}}] ids [{{.*}}] : (!obelisk_sim.context, !obelisk_sim.covergroup_handle<{{.*}}>, f64, !obelisk_sim.logic<1>) -> ()
+// SIM: simulation.covergroup.create {{.*}} payloads[{{.*}}] argument_count 0 formal_ids [] expression_ids [{{.*}}] : (f64
+// SIM: simulation.covergroup.sample {{.*}} values[{{.*}}] ids [{{.*}}] : (!simulation.context, !simulation.covergroup_handle<{{.*}}>, f64, !simulation.logic<1>) -> ()
 // SCHEMA-DAG: functional_expression id=[[SAMPLE:[1-9][0-9]*]] owner=[[ITEM:[1-9][0-9]*]] owner_kind=2 role=2 result_kind=3 width=0 signedness=3 {{.*}} phase=2
 // SCHEMA-DAG: functional_value_set id={{[1-9][0-9]*}} item=[[ITEM]] atoms=1 width=64 kind=2 flags=1 signedness=3
 // SCHEMA-DAG: functional_value_atom set=[[EXACT_SET:[1-9][0-9]*]] ordinal=0 kind=3 flags=3 lower_expression=[[EXACT:[1-9][0-9]*]] upper_expression=0

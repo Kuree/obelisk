@@ -38,6 +38,6 @@ module specify_transition_delays_strength;
 endmodule
 
 // CHECK: PASSED
-// SIM: obelisk_sim.driver.read
-// SIM-COUNT-6: obelisk_sim.driver.drive_inertial_path
-// SIM-NOT: obelisk_sim.driver.drive_inertial_strength_pair
+// SIM: simulation.driver.read
+// SIM-COUNT-6: simulation.driver.drive_inertial_path
+// SIM-NOT: simulation.driver.drive_inertial_strength_pair

@@ -102,19 +102,19 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i64
 // CHECK-DAG: %[[FALSE:.*]] = arith.constant false
-// CHECK: %[[SEL:.*]] = obelisk_sim.ref.load %arg2 : !obelisk_sim.ref<i32> -> i32
-// CHECK: %[[QUEUE:.*]] = obelisk_sim.ref.load %arg1
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[QUEUE]]
+// CHECK: %[[SEL:.*]] = simulation.ref.load %arg2 : !simulation.ref<i32> -> i32
+// CHECK: %[[QUEUE:.*]] = simulation.ref.load %arg1
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[QUEUE]]
 // CHECK: cf.br ^bb1(%[[ZERO]], %[[FALSE]] : i64, i1)
 // CHECK: ^bb1(%[[INDEX:.*]]: i64, %[[ACC:.*]]: i1):
 // CHECK: %[[MORE:.*]] = arith.cmpi ult, %[[INDEX]], %[[SIZE]] : i64
 // CHECK: cf.cond_br %[[MORE]], ^bb2, ^bb3(%[[ACC]] : i1)
 // CHECK: ^bb2:
-// CHECK: %[[ELEM:.*]] = obelisk_sim.container.read %[[QUEUE]], %[[INDEX]]
+// CHECK: %[[ELEM:.*]] = simulation.container.read %[[QUEUE]], %[[INDEX]]
 // CHECK: %[[EQ:.*]] = arith.cmpi eq, %[[SEL]], %[[ELEM]] : i32
 // CHECK: %[[NEXTACC:.*]] = arith.ori %[[ACC]], %[[EQ]] : i1
 // CHECK: ^bb3(%[[RESULT:.*]]: i1):
-// CHECK: obelisk_sim.ref.store %[[RESULT]] to %arg3
+// CHECK: simulation.ref.store %[[RESULT]] to %arg3

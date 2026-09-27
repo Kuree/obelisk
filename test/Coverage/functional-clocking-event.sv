@@ -105,16 +105,16 @@ endmodule
 // the automatic sampler does not introduce an alternate execution revision.
 // SCHEMA: functional_expression id={{[1-9][0-9]*}} owner={{[1-9][0-9]*}} owner_kind=1 role=1 result_kind=1 width=0 signedness=3 owner_ordinal=0 owner_subordinal=0 phase=3 result_ordinal=0
 
-// IR: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
+// IR: simulation.func private @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
 // IR-SAME: entry_kind = 14
-// IR: obelisk_sim.covergroup.sample
-// IR: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
+// IR: simulation.covergroup.sample
+// IR: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
 // IR-SAME: schedule.covergroup_clocking_sampler
 // IR-SAME: schedule.detached_controls
 // IR-SAME: schedule.prime_on_spawn
-// IR: obelisk_sim.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
-// IR: obelisk_sim.covergroup.clock_event.register
+// IR: simulation.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
+// IR: simulation.covergroup.clock_event.register
 // IR-SAME: conditions 1 edges [1] indices [0]
-// IR: obelisk_sim.suspend.forever
-// IR: obelisk_sim.covergroup.create
-// IR-NEXT: {{.*}} = obelisk_sim.spawn @{{.*}}.$covergroup_event.{{[0-9]+}}
+// IR: simulation.suspend.forever
+// IR: simulation.covergroup.create
+// IR-NEXT: {{.*}} = simulation.spawn @{{.*}}.$covergroup_event.{{[0-9]+}}

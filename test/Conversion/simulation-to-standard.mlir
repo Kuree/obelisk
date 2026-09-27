@@ -1,12 +1,12 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
-// RUN:   | FileCheck %s --implicit-check-not=!obelisk_sim.logic \
-// RUN:       --implicit-check-not=obelisk_sim. \
+// RUN:   | FileCheck %s --implicit-check-not=!simulation.logic \
+// RUN:       --implicit-check-not=simulation. \
 // RUN:       --implicit-check-not=unrealized_conversion_cast
 // RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
 // RUN:   | obelisk-opt -o /dev/null
 
-// CHECK-NOT: !obelisk_sim.logic
-// CHECK-NOT: obelisk_sim.
+// CHECK-NOT: !simulation.logic
+// CHECK-NOT: simulation.
 // CHECK-NOT: unrealized_conversion_cast
 // CHECK: func.func @identity(%[[V:.*]]: i5, %[[U:.*]]: i5) -> (i5, i5)
 // CHECK: return %[[V]], %[[U]] : i5, i5
@@ -25,79 +25,79 @@
 // CHECK: cf.cond_br
 
 module {
-  func.func @identity(%arg: !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5> {
-    return %arg : !obelisk_sim.logic<5>
+  func.func @identity(%arg: !simulation.logic<5>) -> !simulation.logic<5> {
+    return %arg : !simulation.logic<5>
   }
 
-  func.func @all_values(%a: !obelisk_sim.logic<5>,
-                        %b: !obelisk_sim.logic<5>,
-                        %wide: !obelisk_sim.logic<65>,
-                        %index: !obelisk_sim.logic<5>,
+  func.func @all_values(%a: !simulation.logic<5>,
+                        %b: !simulation.logic<5>,
+                        %wide: !simulation.logic<65>,
+                        %index: !simulation.logic<5>,
                         %bits: i37, %bit_index: i37, %condition: i1)
-      -> !obelisk_sim.logic<5> {
-    %c = obelisk_sim.logic.constant 21 : i5, 10 : i5 : !obelisk_sim.logic<5>
-    %from = obelisk_sim.logic.from_bits %bits : i37 -> !obelisk_sim.logic<37>
-    %to = obelisk_sim.logic.to_bits %a : !obelisk_sim.logic<5> -> i5
-    %truth = obelisk_sim.logic.is_true %a : !obelisk_sim.logic<5>
-    %resize_s = obelisk_sim.logic.resize %a signed = true : !obelisk_sim.logic<5> -> !obelisk_sim.logic<37>
-    %resize_u = obelisk_sim.logic.resize %wide signed = false : !obelisk_sim.logic<65> -> !obelisk_sim.logic<5>
+      -> !simulation.logic<5> {
+    %c = simulation.logic.constant 21 : i5, 10 : i5 : !simulation.logic<5>
+    %from = simulation.logic.from_bits %bits : i37 -> !simulation.logic<37>
+    %to = simulation.logic.to_bits %a : !simulation.logic<5> -> i5
+    %truth = simulation.logic.is_true %a : !simulation.logic<5>
+    %resize_s = simulation.logic.resize %a signed = true : !simulation.logic<5> -> !simulation.logic<37>
+    %resize_u = simulation.logic.resize %wide signed = false : !simulation.logic<65> -> !simulation.logic<5>
 
-    %plus = obelisk_sim.logic.unary plus %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-    %neg = obelisk_sim.logic.unary negate %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-    %not = obelisk_sim.logic.unary bit_not %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-    %logical_not = obelisk_sim.logic.unary logical_not %a : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %mux = obelisk_sim.logic.mux %logical_not ? %a : %b : (!obelisk_sim.logic<1>, !obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
+    %plus = simulation.logic.unary plus %a : (!simulation.logic<5>) -> !simulation.logic<5>
+    %neg = simulation.logic.unary negate %a : (!simulation.logic<5>) -> !simulation.logic<5>
+    %not = simulation.logic.unary bit_not %a : (!simulation.logic<5>) -> !simulation.logic<5>
+    %logical_not = simulation.logic.unary logical_not %a : (!simulation.logic<5>) -> !simulation.logic<1>
+    %mux = simulation.logic.mux %logical_not ? %a : %b : (!simulation.logic<1>, !simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<5>
 
-    %red_and = obelisk_sim.logic.reduction and %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
-    %red_or = obelisk_sim.logic.reduction or %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
-    %red_xor = obelisk_sim.logic.reduction xor %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
-    %red_nand = obelisk_sim.logic.reduction nand %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
-    %red_nor = obelisk_sim.logic.reduction nor %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
-    %red_xnor = obelisk_sim.logic.reduction xnor %a : !obelisk_sim.logic<5> -> !obelisk_sim.logic<1>
-    %count = obelisk_sim.logic.count_bits %a matching %logical_not : (!obelisk_sim.logic<5>, !obelisk_sim.logic<1>) -> i32
-    %clog2 = obelisk_sim.logic.clog2 %a : !obelisk_sim.logic<5>
+    %red_and = simulation.logic.reduction and %a : !simulation.logic<5> -> !simulation.logic<1>
+    %red_or = simulation.logic.reduction or %a : !simulation.logic<5> -> !simulation.logic<1>
+    %red_xor = simulation.logic.reduction xor %a : !simulation.logic<5> -> !simulation.logic<1>
+    %red_nand = simulation.logic.reduction nand %a : !simulation.logic<5> -> !simulation.logic<1>
+    %red_nor = simulation.logic.reduction nor %a : !simulation.logic<5> -> !simulation.logic<1>
+    %red_xnor = simulation.logic.reduction xnor %a : !simulation.logic<5> -> !simulation.logic<1>
+    %count = simulation.logic.count_bits %a matching %logical_not : (!simulation.logic<5>, !simulation.logic<1>) -> i32
+    %clog2 = simulation.logic.clog2 %a : !simulation.logic<5>
 
-    %add = obelisk_sim.logic.binary add %a, %b : !obelisk_sim.logic<5>
-    %sub = obelisk_sim.logic.binary sub %a, %b : !obelisk_sim.logic<5>
-    %mul = obelisk_sim.logic.binary mul %a, %b : !obelisk_sim.logic<5>
-    %udiv = obelisk_sim.logic.binary udiv %a, %b : !obelisk_sim.logic<5>
-    %sdiv = obelisk_sim.logic.binary sdiv %a, %b : !obelisk_sim.logic<5>
-    %umod = obelisk_sim.logic.binary umod %a, %b : !obelisk_sim.logic<5>
-    %smod = obelisk_sim.logic.binary smod %a, %b : !obelisk_sim.logic<5>
-    %and = obelisk_sim.logic.binary and %a, %b : !obelisk_sim.logic<5>
-    %or = obelisk_sim.logic.binary or %a, %b : !obelisk_sim.logic<5>
-    %xor = obelisk_sim.logic.binary xor %a, %b : !obelisk_sim.logic<5>
-    %xnor = obelisk_sim.logic.binary xnor %a, %b : !obelisk_sim.logic<5>
+    %add = simulation.logic.binary add %a, %b : !simulation.logic<5>
+    %sub = simulation.logic.binary sub %a, %b : !simulation.logic<5>
+    %mul = simulation.logic.binary mul %a, %b : !simulation.logic<5>
+    %udiv = simulation.logic.binary udiv %a, %b : !simulation.logic<5>
+    %sdiv = simulation.logic.binary sdiv %a, %b : !simulation.logic<5>
+    %umod = simulation.logic.binary umod %a, %b : !simulation.logic<5>
+    %smod = simulation.logic.binary smod %a, %b : !simulation.logic<5>
+    %and = simulation.logic.binary and %a, %b : !simulation.logic<5>
+    %or = simulation.logic.binary or %a, %b : !simulation.logic<5>
+    %xor = simulation.logic.binary xor %a, %b : !simulation.logic<5>
+    %xnor = simulation.logic.binary xnor %a, %b : !simulation.logic<5>
 
-    %land = obelisk_sim.logic.logical and %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %lor = obelisk_sim.logic.logical or %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %shl = obelisk_sim.logic.shift left %a by %index : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-    %shr = obelisk_sim.logic.shift right %a by %bit_index : (!obelisk_sim.logic<5>, i37) -> !obelisk_sim.logic<5>
-    %ashr = obelisk_sim.logic.shift right_arith %a by %index : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
+    %land = simulation.logic.logical and %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %lor = simulation.logic.logical or %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %shl = simulation.logic.shift left %a by %index : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<5>
+    %shr = simulation.logic.shift right %a by %bit_index : (!simulation.logic<5>, i37) -> !simulation.logic<5>
+    %ashr = simulation.logic.shift right_arith %a by %index : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<5>
 
-    %eq = obelisk_sim.logic.compare eq %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %ne = obelisk_sim.logic.compare ne %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %case_eq = obelisk_sim.logic.compare case_eq %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
-    %case_ne = obelisk_sim.logic.compare case_ne %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
-    %ult = obelisk_sim.logic.compare ult %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %ule = obelisk_sim.logic.compare ule %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %ugt = obelisk_sim.logic.compare ugt %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %uge = obelisk_sim.logic.compare uge %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %slt = obelisk_sim.logic.compare slt %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %sle = obelisk_sim.logic.compare sle %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %sgt = obelisk_sim.logic.compare sgt %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
-    %sge = obelisk_sim.logic.compare sge %a, %b : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<1>
+    %eq = simulation.logic.compare eq %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %ne = simulation.logic.compare ne %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %case_eq = simulation.logic.compare case_eq %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> i1
+    %case_ne = simulation.logic.compare case_ne %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> i1
+    %ult = simulation.logic.compare ult %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %ule = simulation.logic.compare ule %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %ugt = simulation.logic.compare ugt %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %uge = simulation.logic.compare uge %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %slt = simulation.logic.compare slt %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %sle = simulation.logic.compare sle %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %sgt = simulation.logic.compare sgt %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
+    %sge = simulation.logic.compare sge %a, %b : (!simulation.logic<5>, !simulation.logic<5>) -> !simulation.logic<1>
 
-    %concat = obelisk_sim.logic.concat %a, %logical_not : (!obelisk_sim.logic<5>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<6>
-    %replicate = obelisk_sim.logic.replicate %a times 3 : !obelisk_sim.logic<5> -> !obelisk_sim.logic<15>
-    %extract = obelisk_sim.logic.extract %wide from 28 : !obelisk_sim.logic<65> -> !obelisk_sim.logic<37>
-    %dyn = obelisk_sim.logic.dyn_extract %from from %index : (!obelisk_sim.logic<37>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-    %bits_dyn = obelisk_sim.bits.dyn_extract %bits from %index : (i37, !obelisk_sim.logic<5>) -> i5
-    %insert = obelisk_sim.logic.insert %logical_not into %a at 2 : (!obelisk_sim.logic<5>, !obelisk_sim.logic<1>) -> !obelisk_sim.logic<5>
-    %called = func.call @identity(%insert) : (!obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-    cf.cond_br %condition, ^bb1(%called : !obelisk_sim.logic<5>), ^bb1(%c : !obelisk_sim.logic<5>)
+    %concat = simulation.logic.concat %a, %logical_not : (!simulation.logic<5>, !simulation.logic<1>) -> !simulation.logic<6>
+    %replicate = simulation.logic.replicate %a times 3 : !simulation.logic<5> -> !simulation.logic<15>
+    %extract = simulation.logic.extract %wide from 28 : !simulation.logic<65> -> !simulation.logic<37>
+    %dyn = simulation.logic.dyn_extract %from from %index : (!simulation.logic<37>, !simulation.logic<5>) -> !simulation.logic<5>
+    %bits_dyn = simulation.bits.dyn_extract %bits from %index : (i37, !simulation.logic<5>) -> i5
+    %insert = simulation.logic.insert %logical_not into %a at 2 : (!simulation.logic<5>, !simulation.logic<1>) -> !simulation.logic<5>
+    %called = func.call @identity(%insert) : (!simulation.logic<5>) -> !simulation.logic<5>
+    cf.cond_br %condition, ^bb1(%called : !simulation.logic<5>), ^bb1(%c : !simulation.logic<5>)
 
-  ^bb1(%result: !obelisk_sim.logic<5>):
-    return %result : !obelisk_sim.logic<5>
+  ^bb1(%result: !simulation.logic<5>):
+    return %result : !simulation.logic<5>
   }
 }

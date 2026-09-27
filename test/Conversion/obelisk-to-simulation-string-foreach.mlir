@@ -99,12 +99,12 @@ module attributes {
   }
 }
 
-// CHECK: %[[TEXT:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.string> -> !obelisk_sim.string
-// CHECK: %[[LENGTH:.*]] = obelisk_sim.string.length %[[TEXT]] : (!obelisk_sim.string) -> i64
+// CHECK: %[[TEXT:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.string> -> !simulation.string
+// CHECK: %[[LENGTH:.*]] = simulation.string.length %[[TEXT]] : (!simulation.string) -> i64
 // CHECK: cf.br ^[[HEADER:bb[0-9]+]](%{{.*}} : i64)
 // CHECK: ^[[HEADER]](%[[INDEX:.*]]: i64):
 // CHECK: %[[MORE:.*]] = arith.cmpi ult, %[[INDEX]], %[[LENGTH]] : i64
 // CHECK: cf.cond_br %[[MORE]]
 // CHECK: %[[NARROW_INDEX:.*]] = arith.trunci %[[INDEX]] : i64 to i32
-// CHECK: obelisk_sim.ref.store %[[NARROW_INDEX]]
+// CHECK: simulation.ref.store %[[NARROW_INDEX]]
 // CHECK-NOT: obelisk.sv.

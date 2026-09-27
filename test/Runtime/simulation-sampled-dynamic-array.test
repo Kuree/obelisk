@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-sampled-dynamic-array.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-sampled-dynamic-array.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t.sim.mlir
+// RUN: obelisk-opt %S/../Conversion/simulation-sampled-dynamic-array.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t.sim.mlir
 // RUN: obelisk-opt %t.sim.mlir --encode-obelisk-sim-to-bytecode --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
 // RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.bytecode.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o

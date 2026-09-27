@@ -379,74 +379,74 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // A pending overlapped consequent is weak for assert-property and therefore
 // dispatches its pass action once for the one live consequent age.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.{{.*}}.weak(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.{{.*}}.weak(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.weak
-// CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.weak
+// CHECK: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_0.$concurrent_eos_report.{{.*}}.weak
+// CHECK-NOT: simulation.spawn @unit_0.$concurrent_eos_report.{{.*}}.weak
 
 // An antecedent that is still live at EOS has no match. Implication therefore
 // completes vacuously true, independently of consequent strength.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.{{.*}}.pass.antecedent_no_match(
-// CHECK-SAME: obelisk_sim.concurrent_eos_forced_completion
-// CHECK-SAME: obelisk_sim.concurrent_eos_vacuous
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.{{.*}}.pass.antecedent_no_match(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.pass.antecedent_no_match
-// CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_report.{{.*}}.pass.antecedent_no_match
+// CHECK-SAME: simulation.concurrent_eos_forced_completion
+// CHECK-SAME: simulation.concurrent_eos_vacuous
+// CHECK: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_0.$concurrent_eos_report.{{.*}}.pass.antecedent_no_match
+// CHECK-NOT: simulation.spawn @unit_0.$concurrent_eos_report.{{.*}}.pass.antecedent_no_match
 
 // The terminal antecedent match call receives the value after its preceding
 // blocking assignment and runs as a detached Reactive callback.
-// CHECK: obelisk_sim.func private @[[MATCH_CALL:unit_0\.[^(]+]](
-// CHECK-SAME: %arg1: !obelisk_sim.logic<1>
+// CHECK: simulation.func private @[[MATCH_CALL:unit_0\.[^(]+]](
+// CHECK-SAME: %arg1: !simulation.logic<1>
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-SAME: obelisk_sim.concurrent_match_call
+// CHECK-SAME: simulation.concurrent_match_call
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK: %[[STATE:.*]] = obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.{{.*}}.weak({{.*}}, %[[STATE]])
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.{{.*}}.pass.antecedent_no_match({{.*}}, %[[STATE]])
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.bounded_antecedent_horizon = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK: %[[STATE:.*]] = simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.{{.*}}.weak({{.*}}, %[[STATE]])
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.{{.*}}.pass.antecedent_no_match({{.*}}, %[[STATE]])
+// CHECK: simulation.suspend.edge posedge
 // CHECK: arith.andi {{.*}}, %c8_i64{{.*}}
 // CHECK: %[[ANTE_ACTIVE:.*]] = arith.cmpi ne
-// CHECK: %[[ANTE_VALUE:.*]] = obelisk_sim.assert.sampled_read
-// CHECK: %[[ANTE_TRUE:.*]] = obelisk_sim.logic.is_true %[[ANTE_VALUE]]
-// CHECK: arith.andi %[[ANTE_ACTIVE]], {{.*}} {obelisk_sim.implication_antecedent_failure}
-// CHECK: %[[ANTE_MATCH:.*]] = arith.andi %[[ANTE_ACTIVE]], %[[ANTE_TRUE]] {obelisk_sim.implication_antecedent}
+// CHECK: %[[ANTE_VALUE:.*]] = simulation.assert.sampled_read
+// CHECK: %[[ANTE_TRUE:.*]] = simulation.logic.is_true %[[ANTE_VALUE]]
+// CHECK: arith.andi %[[ANTE_ACTIVE]], {{.*}} {simulation.implication_antecedent_failure}
+// CHECK: %[[ANTE_MATCH:.*]] = arith.andi %[[ANTE_ACTIVE]], %[[ANTE_TRUE]] {simulation.implication_antecedent}
 // CHECK: cf.cond_br %[[ANTE_MATCH]]
-// CHECK: %[[UPDATED_LOCAL:.*]] = obelisk_sim.logic.unary logical_not
-// CHECK: obelisk_sim.spawn @[[MATCH_CALL]](%arg0, %[[UPDATED_LOCAL]])
-// CHECK: obelisk_sim.logic.compare eq {{.*}}, %[[UPDATED_LOCAL]]
+// CHECK: %[[UPDATED_LOCAL:.*]] = simulation.logic.unary logical_not
+// CHECK: simulation.spawn @[[MATCH_CALL]](%arg0, %[[UPDATED_LOCAL]])
+// CHECK: simulation.logic.compare eq {{.*}}, %[[UPDATED_LOCAL]]
 
 // The cover form shares the same three-age antecedent and explicit one-tick
 // handoff. Its action-silent false result does not require an EOS callback.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: arith.andi {{.*}} {obelisk_sim.implication_antecedent}
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.bounded_antecedent_horizon = 3 : i64
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK: simulation.suspend.edge posedge
+// CHECK: arith.andi {{.*}} {simulation.implication_antecedent}
 // CHECK: arith.ori {{.*}}, %c1_i64
 
 // For assert followed-by, both still-live antecedent ages fail vacuously at
 // EOS, while a terminal live match starts the nonoverlapped bit-zero handoff.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos.{{.*}}.fail.antecedent_no_match(
-// CHECK-SAME: obelisk_sim.concurrent_eos_forced_completion
-// CHECK-SAME: obelisk_sim.concurrent_eos_vacuous
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos.{{.*}}.fail.antecedent_no_match(
+// CHECK-SAME: simulation.concurrent_eos_forced_completion
+// CHECK-SAME: simulation.concurrent_eos_vacuous
 // CHECK: arith.andi {{.*}}, %c16_i64
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_report.{{.*}}.fail.antecedent_no_match
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_report.{{.*}}.fail.antecedent_no_match
 // CHECK: arith.andi {{.*}}, %c8_i64
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_report.{{.*}}.fail.antecedent_no_match
-// CHECK-NOT: obelisk_sim.spawn @unit_2.$concurrent_eos_report.{{.*}}.fail.antecedent_no_match
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_report.{{.*}}.fail.antecedent_no_match
+// CHECK-NOT: simulation.spawn @unit_2.$concurrent_eos_report.{{.*}}.fail.antecedent_no_match
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK: %[[FOLLOW_STATE:.*]] = obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos.{{.*}}.fail.antecedent_no_match({{.*}}, %[[FOLLOW_STATE]]
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: arith.andi {{.*}} {obelisk_sim.implication_antecedent_failure}
-// CHECK: arith.andi {{.*}} {obelisk_sim.implication_antecedent}
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.bounded_antecedent_horizon = 3 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK: %[[FOLLOW_STATE:.*]] = simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos.{{.*}}.fail.antecedent_no_match({{.*}}, %[[FOLLOW_STATE]]
+// CHECK: simulation.suspend.edge posedge
+// CHECK: arith.andi {{.*}} {simulation.implication_antecedent_failure}
+// CHECK: arith.andi {{.*}} {simulation.implication_antecedent}
 // CHECK: arith.ori {{.*}}, %c1_i64

@@ -49,7 +49,7 @@ struct ComputeGraphResult {
   ::llvm::MapVector<::mlir::Operation *, schedule::EventSiteAttr> eventSites;
 };
 
-/// Derive the whole late schedule from executable `obelisk_sim` SSA. This is a
+/// Derive the whole late schedule from executable `simulation` SSA. This is a
 /// pure function of the design and the options: two runs over equal IR produce
 /// equal results, which is what lets the verifier compare rather than trust.
 /// Diagnostics are emitted on failure.

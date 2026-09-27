@@ -109,73 +109,73 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Goto [->0:2] owns exactly five cells. Weak EOS counts every survivor and
 // dispatches the pass action once per token.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.11.repetition_weak(
-// CHECK-COUNT-5: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 5 : i64
-// CHECK-NOT: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-5: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_count.11.repetition_weak
-// CHECK: %[[GOTO_NONPENDING_0:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[GOTO_NONPENDING_1:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[GOTO_PENDING_0:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[GOTO_PENDING_1:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[GOTO_PENDING_2:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.11.repetition_weak(
+// CHECK-COUNT-5: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_0.fork.11.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_max = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 5 : i64
+// CHECK-NOT: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-5: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_count.11.repetition_weak
+// CHECK: %[[GOTO_NONPENDING_0:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[GOTO_NONPENDING_1:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[GOTO_PENDING_0:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[GOTO_PENDING_1:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[GOTO_PENDING_2:.*]] = simulation.ref.load
 // CHECK: %[[GOTO_ONE:.*]] = arith.constant {{.*}}1 : i64
 // CHECK-NEXT: %[[GOTO_ENTRY:.*]] = arith.addi %[[GOTO_PENDING_0]], %[[GOTO_ONE]] : i64
-// CHECK: %[[GOTO_REPEAT:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[GOTO_TRUE:.*]] = obelisk_sim.logic.is_true %[[GOTO_REPEAT]]
-// CHECK: %[[GOTO_ZERO:.*]] = obelisk_sim.logic.constant false, false
-// CHECK-NEXT: %[[GOTO_FALSE:.*]] = obelisk_sim.logic.compare case_eq %[[GOTO_REPEAT]], %[[GOTO_ZERO]]
+// CHECK: %[[GOTO_REPEAT:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[GOTO_TRUE:.*]] = simulation.logic.is_true %[[GOTO_REPEAT]]
+// CHECK: %[[GOTO_ZERO:.*]] = simulation.logic.constant false, false
+// CHECK-NEXT: %[[GOTO_FALSE:.*]] = simulation.logic.compare case_eq %[[GOTO_REPEAT]], %[[GOTO_ZERO]]
 // CHECK-NEXT: %[[GOTO_KNOWN:.*]] = arith.ori %[[GOTO_TRUE]], %[[GOTO_FALSE]]
 // CHECK: %[[GOTO_UNKNOWN:.*]] = arith.xori %[[GOTO_KNOWN]],
-// CHECK: %[[GOTO_TERMINAL_SAMPLE:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[GOTO_TERMINAL:.*]] = obelisk_sim.logic.is_true %[[GOTO_TERMINAL_SAMPLE]]
+// CHECK: %[[GOTO_TERMINAL_SAMPLE:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[GOTO_TERMINAL:.*]] = simulation.logic.is_true %[[GOTO_TERMINAL_SAMPLE]]
 // CHECK: %[[GOTO_NOT_TERMINAL:.*]] = arith.xori %[[GOTO_TERMINAL]],
 // CHECK: arith.select %[[GOTO_TERMINAL]], %[[GOTO_ENTRY]],
 // CHECK: arith.andi %[[GOTO_NOT_TERMINAL]], %[[GOTO_UNKNOWN]]
 // CHECK: arith.select %[[GOTO_TERMINAL]], %[[GOTO_PENDING_2]],
 // CHECK: arith.select %[[GOTO_TERMINAL]], {{%.*}}, %[[GOTO_PENDING_2]]
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.0
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.1.2
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.11.0.0
+// CHECK: simulation.spawn @unit_0.fork.11.1.2
 
 // Nonconsecutive [=0:2] owns count-0/1/2 cells. Strong EOS counts all three
 // as failures. Count zero is immediately eligible, while the maximum state
 // retains strict-false gaps and rejects true or unknown values.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.31.repetition_strong(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.0.2
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-NOT: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-3: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.31.repetition_strong
-// CHECK: %[[NONCONSECUTIVE_0:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[NONCONSECUTIVE_1:.*]] = obelisk_sim.ref.load
-// CHECK-NEXT: %[[NONCONSECUTIVE_2:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.31.repetition_strong(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_1.fork.31.0.2
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_max = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-NOT: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-3: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.31.repetition_strong
+// CHECK: %[[NONCONSECUTIVE_0:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[NONCONSECUTIVE_1:.*]] = simulation.ref.load
+// CHECK-NEXT: %[[NONCONSECUTIVE_2:.*]] = simulation.ref.load
 // CHECK: %[[NONCONSECUTIVE_ONE:.*]] = arith.constant {{.*}}1 : i64
 // CHECK-NEXT: %[[NONCONSECUTIVE_ENTRY:.*]] = arith.addi %[[NONCONSECUTIVE_0]], %[[NONCONSECUTIVE_ONE]] : i64
-// CHECK: %[[NONCONSECUTIVE_REPEAT:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[NONCONSECUTIVE_TRUE:.*]] = obelisk_sim.logic.is_true %[[NONCONSECUTIVE_REPEAT]]
-// CHECK: %[[NONCONSECUTIVE_ZERO:.*]] = obelisk_sim.logic.constant false, false
-// CHECK-NEXT: %[[NONCONSECUTIVE_FALSE:.*]] = obelisk_sim.logic.compare case_eq %[[NONCONSECUTIVE_REPEAT]], %[[NONCONSECUTIVE_ZERO]]
+// CHECK: %[[NONCONSECUTIVE_REPEAT:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[NONCONSECUTIVE_TRUE:.*]] = simulation.logic.is_true %[[NONCONSECUTIVE_REPEAT]]
+// CHECK: %[[NONCONSECUTIVE_ZERO:.*]] = simulation.logic.constant false, false
+// CHECK-NEXT: %[[NONCONSECUTIVE_FALSE:.*]] = simulation.logic.compare case_eq %[[NONCONSECUTIVE_REPEAT]], %[[NONCONSECUTIVE_ZERO]]
 // CHECK-NEXT: %[[NONCONSECUTIVE_KNOWN:.*]] = arith.ori %[[NONCONSECUTIVE_TRUE]], %[[NONCONSECUTIVE_FALSE]]
 // CHECK: %[[NONCONSECUTIVE_UNKNOWN:.*]] = arith.xori %[[NONCONSECUTIVE_KNOWN]],
-// CHECK: %[[NONCONSECUTIVE_TERMINAL_SAMPLE:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[NONCONSECUTIVE_TERMINAL:.*]] = obelisk_sim.logic.is_true %[[NONCONSECUTIVE_TERMINAL_SAMPLE]]
+// CHECK: %[[NONCONSECUTIVE_TERMINAL_SAMPLE:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[NONCONSECUTIVE_TERMINAL:.*]] = simulation.logic.is_true %[[NONCONSECUTIVE_TERMINAL_SAMPLE]]
 // CHECK: %[[NONCONSECUTIVE_NOT_TERMINAL:.*]] = arith.xori %[[NONCONSECUTIVE_TERMINAL]],
 // CHECK: %[[NONCONSECUTIVE_CONSUMES:.*]] = arith.andi %[[NONCONSECUTIVE_NOT_TERMINAL]], %[[NONCONSECUTIVE_TRUE]]
 // CHECK-NEXT: %[[NONCONSECUTIVE_WAITS:.*]] = arith.andi %[[NONCONSECUTIVE_NOT_TERMINAL]], %[[NONCONSECUTIVE_FALSE]]
@@ -183,31 +183,31 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: arith.select %[[NONCONSECUTIVE_CONSUMES]], %[[NONCONSECUTIVE_2]],
 // CHECK: arith.select %[[NONCONSECUTIVE_WAITS]], %[[NONCONSECUTIVE_2]],
 // CHECK: arith.select %[[NONCONSECUTIVE_UNKNOWN_ACTIVE]], %[[NONCONSECUTIVE_2]],
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.0.2
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_1.fork.31.0.2
 
 // Exact [->0:0] constructs only pending count zero. Its entry count feeds that
 // cell, the shared symbol is sampled once, and weak EOS completes survivors.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
-// CHECK-COUNT-1: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 0 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 1 : i64
-// CHECK-NOT: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-1: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_count.51.repetition_weak
-// CHECK: %[[ZERO_RANGE_PENDING:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
+// CHECK-COUNT-1: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_2.fork.51.0.0
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_max = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 0 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 1 : i64
+// CHECK-NOT: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-1: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_count.51.repetition_weak
+// CHECK: %[[ZERO_RANGE_PENDING:.*]] = simulation.ref.load
 // CHECK: %[[ZERO_RANGE_ONE:.*]] = arith.constant {{.*}}1 : i64
 // CHECK-NEXT: %[[ZERO_RANGE_ENTRY:.*]] = arith.addi %[[ZERO_RANGE_PENDING]], %[[ZERO_RANGE_ONE]] : i64
-// CHECK: %[[ZERO_RANGE_SAMPLE:.*]] = obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[ZERO_RANGE_TRUE:.*]] = obelisk_sim.logic.is_true %[[ZERO_RANGE_SAMPLE]]
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK: %[[ZERO_RANGE_SAMPLE:.*]] = simulation.assert.sampled_read
+// CHECK-NEXT: %[[ZERO_RANGE_TRUE:.*]] = simulation.logic.is_true %[[ZERO_RANGE_SAMPLE]]
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK: arith.select %[[ZERO_RANGE_TRUE]], %[[ZERO_RANGE_ENTRY]],
 // CHECK: arith.select %[[ZERO_RANGE_TRUE]], {{%.*}}, %[[ZERO_RANGE_ENTRY]]
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.1.2
+// CHECK: simulation.spawn @unit_2.fork.51.0.0
+// CHECK: simulation.spawn @unit_2.fork.51.1.2

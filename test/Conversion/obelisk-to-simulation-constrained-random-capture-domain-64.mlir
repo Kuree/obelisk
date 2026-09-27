@@ -4,7 +4,7 @@
 // A zero i64 cardinality denotes all 2^64 values. Generated MLIR substitutes
 // one only as the modulo divisor and selects the unmodified draw as the full-
 // domain index. Fresh retries repeat the same sentinel-safe sampling.
-// CAPTURE-DOMAIN-64-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-64-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-64: %[[RANGE_VALID:.*]] = arith.cmpi ule
 // CAPTURE-DOMAIN-64: %[[CARDINALITY:.*]] = arith.addi
 // CAPTURE-DOMAIN-64: cf.cond_br %[[RANGE_VALID]], ^[[SAMPLE:bb[0-9]+]], ^[[EMPTY:bb[0-9]+]]
@@ -14,18 +14,18 @@
 // CAPTURE-DOMAIN-64: arith.remui {{.*}}, %[[SAFE]] : i64
 // CAPTURE-DOMAIN-64: cf.br
 // CAPTURE-DOMAIN-64: ^[[EMPTY]]:
-// CAPTURE-DOMAIN-64: obelisk_sim.managed.store {{.*}} : i64
+// CAPTURE-DOMAIN-64: simulation.managed.store {{.*}} : i64
 // CAPTURE-DOMAIN-64: %[[REDUCED:.*]] = arith.remui {{.*}}, %[[SAFE]] : i64
 // CAPTURE-DOMAIN-64: arith.select %[[FULL]], {{.*}}, %[[REDUCED]] : i64
-// CAPTURE-DOMAIN-64: obelisk_sim.managed.store
-// CAPTURE-DOMAIN-64: obelisk_sim.random.solve {{.*}} mutable
+// CAPTURE-DOMAIN-64: simulation.managed.store
+// CAPTURE-DOMAIN-64: simulation.random.solve {{.*}} mutable
 // CAPTURE-DOMAIN-64: arith.remui {{.*}}, %[[SAFE]] : i64
 // CAPTURE-DOMAIN-64: arith.select %[[FULL]]
 
-// CAPTURE-DOMAIN-64-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-64-FALLBACK-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-64-FALLBACK: arith.cmpi uge
 // CAPTURE-DOMAIN-64-FALLBACK: arith.cmpi ule
-// CAPTURE-DOMAIN-64-FALLBACK: obelisk_sim.random.solve
+// CAPTURE-DOMAIN-64-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

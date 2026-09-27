@@ -160,21 +160,21 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[ELEMENT_SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[ELEMENT_SIZE:.*]] = obelisk_sim.container.size %[[ELEMENT_SOURCE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[ELEMENT_SOURCE:.*]] = simulation.ref.load
+// CHECK: %[[ELEMENT_SIZE:.*]] = simulation.container.size %[[ELEMENT_SOURCE]]
 // CHECK: %[[ELEMENT_LAST:.*]] = arith.subi %[[ELEMENT_SIZE]],
-// CHECK: obelisk_sim.container.read %[[ELEMENT_SOURCE]], %[[ELEMENT_LAST]]
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[SOURCE]]
+// CHECK: simulation.container.read %[[ELEMENT_SOURCE]], %[[ELEMENT_LAST]]
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[SOURCE]]
 // CHECK: %[[LAST:.*]] = arith.subi %[[SIZE]],
 // CHECK: %[[NARROW_LAST:.*]] = arith.trunci %[[LAST]]
 // CHECK: %[[BOUND32:.*]] = arith.subi %[[NARROW_LAST]],
 // CHECK: %[[BOUND:.*]] = arith.extsi %[[BOUND32]]
-// CHECK: %[[RESULT:.*]] = obelisk_sim.container.create
+// CHECK: %[[RESULT:.*]] = simulation.container.create
 // CHECK: cf.cond_br
-// CHECK: %[[VALUE:.*]] = obelisk_sim.container.read %[[SOURCE]]
-// CHECK: obelisk_sim.container.write %[[RESULT]]
+// CHECK: %[[VALUE:.*]] = simulation.container.read %[[SOURCE]]
+// CHECK: simulation.container.write %[[RESULT]]
 // CHECK: cf.br
-// CHECK: %[[CLONE:.*]] = obelisk_sim.container.clone %[[RESULT]]
-// CHECK: obelisk_sim.ref.store %[[CLONE]]
+// CHECK: %[[CLONE:.*]] = simulation.container.clone %[[RESULT]]
+// CHECK: simulation.ref.store %[[CLONE]]

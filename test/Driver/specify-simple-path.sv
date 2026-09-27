@@ -80,4 +80,4 @@ module specify_simple_path;
 endmodule
 
 // CHECK: PASSED
-// SIM-COUNT-2: obelisk_sim.driver.drive_inertial
+// SIM-COUNT-2: simulation.driver.drive_inertial

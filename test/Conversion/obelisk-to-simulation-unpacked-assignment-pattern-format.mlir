@@ -32,5 +32,5 @@ module {
   }
 }
 
-// CHECK: %[[FORMAT:.*]] = obelisk_sim.bytes.constant "'{'{label:\22%p\22, code:%p}, '{label:\22%p\22, code:%p}}"
-// CHECK: obelisk_sim.string.output_format %{{.*}}(%[[FORMAT]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}})
+// CHECK: %[[FORMAT:.*]] = simulation.bytes.constant "'{'{label:\22%p\22, code:%p}, '{label:\22%p\22, code:%p}}"
+// CHECK: simulation.string.output_format %{{.*}}(%[[FORMAT]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}})

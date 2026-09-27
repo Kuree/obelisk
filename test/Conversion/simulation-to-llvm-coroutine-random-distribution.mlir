@@ -22,30 +22,30 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @distribution {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "distribution.draw"
-    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "distribution.legacy"
+  simulation.design @distribution {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "distribution.draw"
+    simulation.code_unit.decl 2 in 0 function hierarchy "distribution.legacy"
 
-    obelisk_sim.func private @draw(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %seed: i32 {obelisk_sim.capture_kind = 2 : i32}) -> (i32, i32)
+    simulation.func private @draw(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %seed: i32 {simulation.capture_kind = 2 : i32}) -> (i32, i32)
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %low = arith.constant 5 : i32
       %high = arith.constant 10 : i32
-      %result, %next_seed = obelisk_sim.random.distribution
-          %ctx, %seed, %low, %high {distribution = 0 : i32} :
-          (!obelisk_sim.context, i32, i32, i32) -> (i32, i32)
-      obelisk_sim.return %result, %next_seed : i32, i32
+      %result, %next_seed = simulation.random.distribution
+          %ctx, %seed, %low, %high {distribution = #simulation.random_distribution<uniform>} :
+          (!simulation.context, i32, i32, i32) -> (i32, i32)
+      simulation.return %result, %next_seed : i32, i32
     }
 
-    obelisk_sim.func private @legacy(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32}) -> i32
+    simulation.func private @legacy(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32}) -> i32
         attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
-      %result = obelisk_sim.random.legacy %ctx : (!obelisk_sim.context) -> i32
-      obelisk_sim.return %result : i32
+      %result = simulation.random.legacy %ctx : (!simulation.context) -> i32
+      simulation.return %result : i32
     }
   }
 }

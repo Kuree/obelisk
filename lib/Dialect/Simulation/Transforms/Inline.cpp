@@ -344,7 +344,7 @@ void ObeliskSimInlinePass::runOnOperation() {
     // remains unknown to optional inlining so existing optimization choices
     // stay stable, but it must not block the mandatory nonlocal-exit closure.
     if (controlFunctions.contains(function))
-      function->removeAttr("obelisk_sim.void_function");
+      function->removeAttr("simulation.void_function");
     sim::InlineLegality legality = sim::getInlineCalleeLegality(
         function, recursiveFunctions.contains(function), designHasLateMetadata);
     calleeLegalities[function] = legality;

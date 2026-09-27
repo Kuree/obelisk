@@ -6,17 +6,17 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-ssa.test.
 
-// FUSED-SSA: obelisk_sim.func private @__obelisk_fused_
-// FUSED-SSA-NOT: obelisk_sim.termination.requested
-// FUSED-SSA-NOT: obelisk_sim.ref.store
+// FUSED-SSA: simulation.func private @__obelisk_fused_
+// FUSED-SSA-NOT: simulation.termination.requested
+// FUSED-SSA-NOT: simulation.ref.store
 // FUSED-SSA: arith.select
-// FUSED-SSA-NOT: obelisk_sim.termination.requested
-// FUSED-SSA-NOT: obelisk_sim.ref.store
+// FUSED-SSA-NOT: simulation.termination.requested
+// FUSED-SSA-NOT: simulation.ref.store
 // FUSED-SSA: arith.select
-// FUSED-SSA-NOT: obelisk_sim.termination.requested
-// FUSED-SSA-NOT: obelisk_sim.ref.store
-// READ-FUSED-SSA: obelisk_sim.func private @__obelisk_fused_
-// READ-FUSED-SSA-COUNT-2: obelisk_sim.ref.store
+// FUSED-SSA-NOT: simulation.termination.requested
+// FUSED-SSA-NOT: simulation.ref.store
+// READ-FUSED-SSA: simulation.func private @__obelisk_fused_
+// READ-FUSED-SSA-COUNT-2: simulation.ref.store
 // READ-FUSED-SSA-NOT: schedule.eval.discardable_store
 
 //--- fused-ssa.sv

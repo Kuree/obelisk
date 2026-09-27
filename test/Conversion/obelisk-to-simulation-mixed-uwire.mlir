@@ -50,7 +50,7 @@ module attributes {
 
 // IEEE 1800-2017 23.3.3.7/Table 23-1: the internal uwire dominates the
 // external wire regardless of canonical endpoint ordering.
-// CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "mixed_uwire.value"
-// CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "mixed_uwire.child.value" {{.*}}resolution_kind = 2 : i32
-// CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = true
-// NOWARN: obelisk_sim.net.connect.decl 0
+// CHECK-DAG: simulation.net.decl 0 {{.*}} hierarchy "mixed_uwire.value"
+// CHECK-DAG: simulation.net.decl 1 {{.*}} hierarchy "mixed_uwire.child.value" {{.*}}resolution_kind = 2 : i32
+// CHECK: simulation.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = true
+// NOWARN: simulation.net.connect.decl 0

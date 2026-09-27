@@ -113,8 +113,8 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK:      %[[FIELD:.*]] = obelisk_sim.class.field_ref {{.*}}@{{.*}}arr
-// CHECK:      %[[ARRAY:.*]] = obelisk_sim.managed.load %[[FIELD]]
-// CHECK:      %[[UPDATED:.*]] = obelisk_sim.array.insert_dynamic {{.*}} into %[[ARRAY]]{{\[}}%{{.*}}]
-// CHECK:      obelisk_sim.managed.store %[[UPDATED]] to %[[FIELD]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK:      %[[FIELD:.*]] = simulation.class.field_ref {{.*}}@{{.*}}arr
+// CHECK:      %[[ARRAY:.*]] = simulation.managed.load %[[FIELD]]
+// CHECK:      %[[UPDATED:.*]] = simulation.array.insert_dynamic {{.*}} into %[[ARRAY]]{{\[}}%{{.*}}]
+// CHECK:      simulation.managed.store %[[UPDATED]] to %[[FIELD]]

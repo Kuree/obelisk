@@ -61,21 +61,21 @@ module {
 }
 
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[X:[^:]*]]: !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-// CHECK-SAME: %[[R:[^:]*]]: !obelisk_sim.ref<!obelisk_sim.packed_array<5 : 0 x !obelisk_sim.logic<1>>>
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[X:[^:]*]]: !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+// CHECK-SAME: %[[R:[^:]*]]: !simulation.ref<!simulation.packed_array<5 : 0 x !simulation.logic<1>>>
 
 // Six bits of padding on either side of the four-bit value, all unknown.
-// CHECK: %[[PAD:.*]] = obelisk_sim.logic.constant 0 : i16, -1 : i16 : !obelisk_sim.logic<16>
+// CHECK: %[[PAD:.*]] = simulation.logic.constant 0 : i16, -1 : i16 : !simulation.logic<16>
 
 // The read window starts one bit below the value, so it takes an x from each
 // end of the padding.
-// CHECK: %[[READ_BASE:.*]] = obelisk_sim.logic.insert %{{.*}} into %[[PAD]] at 6
-// CHECK: obelisk_sim.logic.extract %[[READ_BASE]] from 5 : !obelisk_sim.logic<16> -> !obelisk_sim.logic<6>
+// CHECK: %[[READ_BASE:.*]] = simulation.logic.insert %{{.*}} into %[[PAD]] at 6
+// CHECK: simulation.logic.extract %[[READ_BASE]] from 5 : !simulation.logic<16> -> !simulation.logic<6>
 
 // The write puts all six bits into the same padded window and then keeps only
 // the four that were in range, dropping the rest with the padding.
-// CHECK: %[[WRITE_BASE:.*]] = obelisk_sim.logic.insert %{{.*}} into %[[PAD]] at 6
-// CHECK: %[[UPDATED:.*]] = obelisk_sim.logic.insert %{{.*}} into %[[WRITE_BASE]] at 8
-// CHECK: obelisk_sim.logic.extract %[[UPDATED]] from 6 : !obelisk_sim.logic<16> -> !obelisk_sim.logic<4>
-// CHECK: obelisk_sim.ref.store %{{.*}} to %[[X]]
+// CHECK: %[[WRITE_BASE:.*]] = simulation.logic.insert %{{.*}} into %[[PAD]] at 6
+// CHECK: %[[UPDATED:.*]] = simulation.logic.insert %{{.*}} into %[[WRITE_BASE]] at 8
+// CHECK: simulation.logic.extract %[[UPDATED]] from 6 : !simulation.logic<16> -> !simulation.logic<4>
+// CHECK: simulation.ref.store %{{.*}} to %[[X]]

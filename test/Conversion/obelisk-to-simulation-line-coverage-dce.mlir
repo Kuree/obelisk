@@ -1,16 +1,16 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,obelisk_sim.design(symbol-dce))' \
+// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,simulation.design(symbol-dce))' \
 // RUN:   | FileCheck %s
 
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
 module attributes {obelisk.coverage.metrics = ["line"]} {
-  obelisk_sim.design @coverage {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "top.f"
-    obelisk_sim.func private @covered(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @coverage {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 7 in 0 function hierarchy "top.f"
+    simulation.func private @covered(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 7 : i64, entry_kind = 8 : i32} {
       obelisk.sv.statement.expression_statement attributes {
           node_id = 10 : i64,
@@ -21,14 +21,14 @@ module attributes {obelisk.coverage.metrics = ["line"]} {
             semantic_type = !int} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
 
 // The explicit SymbolUser edge keeps an included post-inventory obligation
 // executable through every later SymbolDCE pass without changing visibility.
-// CHECK: obelisk_sim.design @coverage
-// CHECK: obelisk_sim.coverage.keepalive @covered
-// CHECK: obelisk_sim.func private @covered
+// CHECK: simulation.design @coverage
+// CHECK: simulation.coverage.keepalive @covered
+// CHECK: simulation.func private @covered
 // CHECK: obelisk.coverage.line_point_index

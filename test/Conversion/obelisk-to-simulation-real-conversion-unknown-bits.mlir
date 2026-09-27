@@ -50,12 +50,12 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK:      %[[BITS:.*]] = obelisk_sim.logic.to_bits %{{.*}} : !obelisk_sim.logic<8> -> i8
-// CHECK-NEXT: obelisk_sim.real.from_integer %[[BITS]] signed = false : i8 -> f64
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK:      %[[BITS:.*]] = simulation.logic.to_bits %{{.*}} : !simulation.logic<8> -> i8
+// CHECK-NEXT: simulation.real.from_integer %[[BITS]] signed = false : i8 -> f64
 
 // No all-or-nothing unknown guard: the round trip through logic.from_bits, the
 // case-equality test against it, and the zero select are what dropped the
 // known bits.
-// CHECK-NOT: obelisk_sim.logic.from_bits
+// CHECK-NOT: simulation.logic.from_bits
 // CHECK-NOT: arith.select

@@ -112,15 +112,15 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[CALLBACK:unit_0[.][^(]+]](
-// CHECK: obelisk_sim.display
-// CHECK-SAME: radix = 10
-// CHECK: obelisk_sim.return
-// CHECK: obelisk_sim.func private @[[STROBE:unit_0[.][^(]+]](
-// CHECK: obelisk_sim.display
-// CHECK-SAME: radix = 10
-// CHECK: obelisk_sim.return
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.spawn @[[CALLBACK]]
-// CHECK: obelisk_sim.spawn @[[STROBE]]
-// CHECK-NOT: obelisk_sim.monitor.register
+// CHECK: simulation.func private @[[CALLBACK:unit_0[.][^(]+]](
+// CHECK: simulation.display
+// CHECK-SAME: radix = <decimal>
+// CHECK: simulation.return
+// CHECK: simulation.func private @[[STROBE:unit_0[.][^(]+]](
+// CHECK: simulation.display
+// CHECK-SAME: radix = <decimal>
+// CHECK: simulation.return
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.spawn @[[CALLBACK]]
+// CHECK: simulation.spawn @[[STROBE]]
+// CHECK-NOT: simulation.monitor.register

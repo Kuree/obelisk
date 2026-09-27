@@ -4,16 +4,16 @@
 // generated proposal. Z3 also proves that the proposal implies the hard
 // formula, so the all-enabled path commits directly. A cold masked fallback is
 // retained for property-specific rand_mode changes made at runtime.
-// DOMAIN-LABEL: obelisk_sim.func private @unit_1
+// DOMAIN-LABEL: simulation.func private @unit_1
 // DOMAIN: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
-// DOMAIN: obelisk_sim.managed.store
+// DOMAIN: simulation.managed.store
 // DOMAIN: %[[LOW:.*]] = arith.andi %[[COUNTER:.*]], {{.*}} : i64
 // DOMAIN: %[[VALUE:.*]] = arith.addi %[[LOW]], {{.*}} : i64
 // DOMAIN: %[[REST:.*]] = arith.andi %[[COUNTER]], {{.*}} : i64
 // DOMAIN: %[[ASSIGNMENT:.*]] = arith.ori %[[REST]], %[[VALUE]] : i64
-// DOMAIN: obelisk_sim.random.solve {{.*}} mutable
+// DOMAIN: simulation.random.solve {{.*}} mutable
 // DOMAIN: arith.trunci {{.*}} : i64 to i4
-// DOMAIN: obelisk_sim.managed.store
+// DOMAIN: simulation.managed.store
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

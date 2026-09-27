@@ -1,6 +1,6 @@
 // RUN: %python %S/../Conversion/Inputs/gen-sparse-ready-cohort.py > %t.mlir
 // RUN: obelisk-opt %t.mlir \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o

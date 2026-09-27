@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' > %t.off
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' > %t.off
 // RUN: FileCheck %s --check-prefix=CHECK < %t.off
 // RUN: FileCheck %s --check-prefix=OFF < %t.off
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=READ
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=READ
 
 // Generated eval bodies retain a stable continuation in the normalized
 // internal continuation namespace. Source diagnostic id 42 is intentionally
@@ -9,66 +9,66 @@
 // that identity from an operation pointer after fusion or CFG cleanup, and
 // eligibility must not depend on a unit_N symbol spelling.
 module attributes {schedule.native_scheduler = 3 : i32} {
-  obelisk_sim.design @eval_continuation {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 continuous hierarchy "test.project_clock"
-    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "test.forward_static"
-    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "test.forward_coverage"
-    obelisk_sim.storage.decl 0 in 0 : i1 design
-    obelisk_sim.storage.decl 1 in 0 : i1 design
-    obelisk_sim.storage.decl 2 in 0 : i1 static
-    obelisk_sim.storage.decl 3 in 0 : i1 static {obelisk.coverage.toggle_observable}
+  simulation.design @eval_continuation {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 continuous hierarchy "test.project_clock"
+    simulation.code_unit.decl 2 in 0 function hierarchy "test.forward_static"
+    simulation.code_unit.decl 3 in 0 function hierarchy "test.forward_coverage"
+    simulation.storage.decl 0 in 0 : i1 design
+    simulation.storage.decl 1 in 0 : i1 design
+    simulation.storage.decl 2 in 0 : i1 static
+    simulation.storage.decl 3 in 0 : i1 static {obelisk.coverage.toggle_observable}
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
-      %input = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
-      %output = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<i1>
-      %process = obelisk_sim.spawn @project_clock(%ctx, %input, %output) :
-          !obelisk_sim.context, !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>
-          -> !obelisk_sim.process
-      obelisk_sim.return
+      %input = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      %output = simulation.context.storage %ctx[1] : !simulation.ref<i1>
+      %process = simulation.spawn @project_clock(%ctx, %input, %output) :
+          !simulation.context, !simulation.ref<i1>, !simulation.ref<i1>
+          -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @project_clock(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %input: !obelisk_sim.ref<i1>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %output: !obelisk_sim.ref<i1>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func private @project_clock(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %input: !simulation.ref<i1>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %output: !simulation.ref<i1>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64} {
       cf.br ^body
     ^body:
-      %value = obelisk_sim.ref.load %input : !obelisk_sim.ref<i1> -> i1
-      %forwarded = obelisk_sim.call @forward_static(%ctx, %value) :
-          (!obelisk_sim.context, i1) -> i1
-      %covered = obelisk_sim.call @forward_coverage(%ctx, %forwarded) :
-          (!obelisk_sim.context, i1) -> i1
-      obelisk_sim.ref.store %covered to %output : i1, !obelisk_sim.ref<i1>
-      obelisk_sim.suspend.change %input to ^body
-          {site = #schedule.continuation<id = 42>} : !obelisk_sim.ref<i1>
+      %value = simulation.ref.load %input : !simulation.ref<i1> -> i1
+      %forwarded = simulation.call @forward_static(%ctx, %value) :
+          (!simulation.context, i1) -> i1
+      %covered = simulation.call @forward_coverage(%ctx, %forwarded) :
+          (!simulation.context, i1) -> i1
+      simulation.ref.store %covered to %output : i1, !simulation.ref<i1>
+      simulation.suspend.change %input to ^body
+          {site = #schedule.continuation<id = 42>} : !simulation.ref<i1>
     }
 
-    obelisk_sim.func private @forward_static(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: i1 {obelisk_sim.capture_kind = 1 : i32}) -> i1
+    simulation.func private @forward_static(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: i1 {simulation.capture_kind = 1 : i32}) -> i1
         attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
-      %temporary = obelisk_sim.context.storage %ctx[2] : !obelisk_sim.ref<i1>
-      obelisk_sim.ref.store %value to %temporary : i1, !obelisk_sim.ref<i1>
-      %forwarded = obelisk_sim.ref.load %temporary : !obelisk_sim.ref<i1> -> i1
-      obelisk_sim.return %forwarded : i1
+      %temporary = simulation.context.storage %ctx[2] : !simulation.ref<i1>
+      simulation.ref.store %value to %temporary : i1, !simulation.ref<i1>
+      %forwarded = simulation.ref.load %temporary : !simulation.ref<i1> -> i1
+      simulation.return %forwarded : i1
     }
 
-    obelisk_sim.func private @forward_coverage(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: i1 {obelisk_sim.capture_kind = 1 : i32}) -> i1
+    simulation.func private @forward_coverage(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: i1 {simulation.capture_kind = 1 : i32}) -> i1
         attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
-      %temporary = obelisk_sim.context.storage %ctx[3] : !obelisk_sim.ref<i1>
-      obelisk_sim.ref.store %value to %temporary : i1, !obelisk_sim.ref<i1>
-      %forwarded = obelisk_sim.ref.load %temporary : !obelisk_sim.ref<i1> -> i1
-      obelisk_sim.return %forwarded : i1
+      %temporary = simulation.context.storage %ctx[3] : !simulation.ref<i1>
+      simulation.ref.store %value to %temporary : i1, !simulation.ref<i1>
+      %forwarded = simulation.ref.load %temporary : !simulation.ref<i1> -> i1
+      simulation.return %forwarded : i1
     }
   }
 
@@ -76,91 +76,91 @@ module attributes {schedule.native_scheduler = 3 : i32} {
   // actor's captured storage reference.  Keep this direct-context form as a
   // regression for comparing the spawn's FlatSymbolRef callee with the
   // function's symbol name while proving the temporary private.
-  obelisk_sim.design @spawn_context_promotion {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "test.context_actor"
-    obelisk_sim.storage.decl 0 in 0 : i1 design
-    obelisk_sim.storage.decl 1 in 0 : i1 static
+  simulation.design @spawn_context_promotion {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 3 in 0 always hierarchy "test.context_actor"
+    simulation.storage.decl 0 in 0 : i1 design
+    simulation.storage.decl 1 in 0 : i1 static
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
-      %clock = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i1>
-      %temporary = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<i1>
-      %process = obelisk_sim.spawn @context_actor(%ctx, %clock, %temporary) :
-          !obelisk_sim.context, !obelisk_sim.ref<i1>, !obelisk_sim.ref<i1>
-          -> !obelisk_sim.process
-      obelisk_sim.return
+      %clock = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      %temporary = simulation.context.storage %ctx[1] : !simulation.ref<i1>
+      %process = simulation.spawn @context_actor(%ctx, %clock, %temporary) :
+          !simulation.context, !simulation.ref<i1>, !simulation.ref<i1>
+          -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @context_actor(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<i1>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %temporary: !obelisk_sim.ref<i1>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func private @context_actor(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<i1>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %temporary: !simulation.ref<i1>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^body
     ^body:
       %value = arith.constant true
-      obelisk_sim.ref.store %value to %temporary : i1, !obelisk_sim.ref<i1>
-      %forwarded = obelisk_sim.ref.load %temporary :
-          !obelisk_sim.ref<i1> -> i1
+      simulation.ref.store %value to %temporary : i1, !simulation.ref<i1>
+      %forwarded = simulation.ref.load %temporary :
+          !simulation.ref<i1> -> i1
       %used = arith.xori %forwarded, %value : i1
-      obelisk_sim.suspend.edge posedge %clock to ^body :
-          !obelisk_sim.ref<i1>
+      simulation.suspend.edge posedge %clock to ^body :
+          !simulation.ref<i1>
     }
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @project_clock.__obelisk_eval_body_0
+// CHECK-LABEL: simulation.func private @project_clock.__obelisk_eval_body_0
 // CHECK-SAME: schedule.eval.borrowed_captures
 // CHECK-SAME: schedule.eval.continuation = 1 : i32
 // CHECK-SAME: schedule.eval.raw_captures
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.return
-// OFF-LABEL: obelisk_sim.func private @forward_static(
-// OFF-NOT: obelisk_sim.ref.store
-// OFF-NOT: obelisk_sim.ref.load
-// OFF: obelisk_sim.return
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK: simulation.return
+// OFF-LABEL: simulation.func private @forward_static(
+// OFF-NOT: simulation.ref.store
+// OFF-NOT: simulation.ref.load
+// OFF: simulation.return
 // OFF-NOT: schedule.eval.discardable_store
-// OFF-LABEL: obelisk_sim.func private @forward_coverage(
-// OFF: obelisk_sim.ref.store
-// OFF: obelisk_sim.ref.load
-// OFF: obelisk_sim.return
+// OFF-LABEL: simulation.func private @forward_coverage(
+// OFF: simulation.ref.store
+// OFF: simulation.ref.load
+// OFF: simulation.return
 // OFF-NOT: schedule.eval.discardable_store
 
-// READ-LABEL: obelisk_sim.func private @project_clock(
+// READ-LABEL: simulation.func private @project_clock(
 // READ-SAME: schedule.eval.body = @[[READ_BODY:[^, }]+]]
-// READ-COUNT-1: obelisk_sim.ref.store
+// READ-COUNT-1: simulation.ref.store
 // READ-NOT: schedule.eval.discardable_store
-// READ-LABEL: obelisk_sim.func private @forward_static(
-// READ-COUNT-1: obelisk_sim.ref.store
+// READ-LABEL: simulation.func private @forward_static(
+// READ-COUNT-1: simulation.ref.store
 // READ-SAME: schedule.eval.discardable_store
-// READ-NOT: obelisk_sim.ref.load
-// READ: obelisk_sim.return
-// READ-LABEL: obelisk_sim.func private @forward_coverage(
-// READ: obelisk_sim.ref.store
-// READ: obelisk_sim.ref.load
-// READ: obelisk_sim.return
+// READ-NOT: simulation.ref.load
+// READ: simulation.return
+// READ-LABEL: simulation.func private @forward_coverage(
+// READ: simulation.ref.store
+// READ: simulation.ref.load
+// READ: simulation.return
 // READ-NOT: schedule.eval.discardable_store
-// READ-LABEL: obelisk_sim.func private @project_clock.__obelisk_eval_body_{{[0-9]+}}(
-// READ-NOT: obelisk_sim.context.storage %{{.*}}[2]
-// READ-COUNT-1: obelisk_sim.ref.store
-// READ-NOT: obelisk_sim.ref.subelement
+// READ-LABEL: simulation.func private @project_clock.__obelisk_eval_body_{{[0-9]+}}(
+// READ-NOT: simulation.context.storage %{{.*}}[2]
+// READ-COUNT-1: simulation.ref.store
+// READ-NOT: simulation.ref.subelement
 // READ-NOT: schedule.eval.discardable_store
 
-// OFF-LABEL: obelisk_sim.design @spawn_context_promotion
-// OFF-LABEL: obelisk_sim.func private @context_actor(
-// OFF-NOT: obelisk_sim.ref.store
-// OFF-NOT: obelisk_sim.ref.load
+// OFF-LABEL: simulation.design @spawn_context_promotion
+// OFF-LABEL: simulation.func private @context_actor(
+// OFF-NOT: simulation.ref.store
+// OFF-NOT: simulation.ref.load
 // OFF: arith.xori
 
-// READ-LABEL: obelisk_sim.design @spawn_context_promotion
-// READ-LABEL: obelisk_sim.func private @context_actor(
-// READ-COUNT-1: obelisk_sim.ref.store
-// READ-NOT: obelisk_sim.ref.load
+// READ-LABEL: simulation.design @spawn_context_promotion
+// READ-LABEL: simulation.func private @context_actor(
+// READ-COUNT-1: simulation.ref.store
+// READ-NOT: simulation.ref.load
 // READ-NOT: schedule.eval.discardable_store

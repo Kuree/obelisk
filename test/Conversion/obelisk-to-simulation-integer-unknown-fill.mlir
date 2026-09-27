@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 5.7.1: a decimal based literal may contain one X, Z,
 // or ? digit, which sets every bit. For every nondecimal base, an X/Z
@@ -11,25 +11,25 @@
 !signed_logic16 = !obelisk.integral<16, true, true, 15 : 0, logic>
 
 module {
-  obelisk_sim.design @integer_unknown_fill {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.process"
+  simulation.design @integer_unknown_fill {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.process"
 
-    // CHECK-LABEL: obelisk_sim.func @process
-    // CHECK: obelisk_sim.logic.constant 0 : i8, -1 : i8
-    // CHECK: obelisk_sim.logic.constant -1 : i12, -1 : i12
-    // CHECK: obelisk_sim.logic.constant -1 : i5, -1 : i5
-    // CHECK: obelisk_sim.logic.constant 5 : i12, -16 : i12
-    // CHECK: obelisk_sim.logic.constant -11 : i12, -16 : i12
-    // CHECK: obelisk_sim.logic.constant -5 : i10, -8 : i10
-    // CHECK: obelisk_sim.logic.constant 0 : i8, -1 : i8
-    // CHECK: obelisk_sim.logic.constant -1 : i8, -1 : i8
-    // CHECK: obelisk_sim.logic.constant 15 : i5, -1 : i5
-    // CHECK: obelisk_sim.logic.constant 80 : i12, 15 : i12
-    // CHECK: obelisk_sim.logic.constant -1 : i16, -1 : i16
-    // CHECK: obelisk_sim.return
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    // CHECK-LABEL: simulation.func @process
+    // CHECK: simulation.logic.constant 0 : i8, -1 : i8
+    // CHECK: simulation.logic.constant -1 : i12, -1 : i12
+    // CHECK: simulation.logic.constant -1 : i5, -1 : i5
+    // CHECK: simulation.logic.constant 5 : i12, -16 : i12
+    // CHECK: simulation.logic.constant -11 : i12, -16 : i12
+    // CHECK: simulation.logic.constant -5 : i10, -8 : i10
+    // CHECK: simulation.logic.constant 0 : i8, -1 : i8
+    // CHECK: simulation.logic.constant -1 : i8, -1 : i8
+    // CHECK: simulation.logic.constant 15 : i5, -1 : i5
+    // CHECK: simulation.logic.constant 80 : i12, 15 : i12
+    // CHECK: simulation.logic.constant -1 : i16, -1 : i16
+    // CHECK: simulation.return
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
         obelisk.sv.expression.integer_literal attributes {
@@ -97,7 +97,7 @@ module {
             semantic_type = !signed_logic16} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

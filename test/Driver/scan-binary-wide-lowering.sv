@@ -11,7 +11,7 @@ module scan_binary_wide_lowering;
   initial status = $sscanf(source, "%z", destination);
 endmodule
 
-// CHECK-COUNT-1: obelisk_sim.string.scan_raw
+// CHECK-COUNT-1: simulation.string.scan_raw
 // CHECK-SAME: four_state = true
-// CHECK-SAME: (!obelisk_sim.string, i32) -> (!obelisk_sim.logic<4097>, i32, i32)
-// CHECK-NOT: obelisk_sim.string.scan_raw
+// CHECK-SAME: (!simulation.string, i32) -> (!simulation.logic<4097>, i32, i32)
+// CHECK-NOT: simulation.string.scan_raw

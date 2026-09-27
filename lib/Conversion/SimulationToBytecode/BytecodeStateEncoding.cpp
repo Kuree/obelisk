@@ -9,7 +9,7 @@ using namespace mlir;
 namespace obelisk::bytecode {
 
 static constexpr StringLiteral continuousStoreAttrName =
-    "obelisk_sim.continuous_store";
+    "simulation.continuous_store";
 
 std::optional<LogicalResult>
 Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {

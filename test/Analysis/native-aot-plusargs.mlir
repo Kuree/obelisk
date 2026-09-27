@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/transient.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
-// RUN: obelisk-opt %t/persistent.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
-// RUN: obelisk-opt %t/suspended.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
-// RUN: obelisk-opt %t/unrelated.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
+// RUN: obelisk-opt %t/transient.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
+// RUN: obelisk-opt %t/persistent.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
+// RUN: obelisk-opt %t/suspended.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
+// RUN: obelisk-opt %t/unrelated.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
 
 // Only block-local query strings are exempt from managed-state rejection.
 // Stored strings, suspension-live strings, and unrelated managed operations
@@ -14,62 +14,62 @@
 
 //--- transient.mlir
 module {
-  obelisk_sim.design @plusargs {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @plusargs {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %prefix = obelisk_sim.string.literal "n="
-      %test = "obelisk_sim.plusarg.test"(%ctx, %prefix) : (!obelisk_sim.context, !obelisk_sim.string) -> i32
-      %tail, %found = "obelisk_sim.plusarg.value"(%ctx, %prefix) : (!obelisk_sim.context, !obelisk_sim.string) -> (!obelisk_sim.string, i32)
-      %parsed = obelisk_sim.plusarg.parse_logic %tail {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>
-      obelisk_sim.return
+      %prefix = simulation.string.literal "n="
+      %test = "simulation.plusarg.test"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> i32
+      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %parsed = simulation.plusarg.parse_logic %tail {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
+      simulation.return
     }
   }
 }
 
 //--- persistent.mlir
 module {
-  obelisk_sim.design @plusargs {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @plusargs {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %prefix = obelisk_sim.string.literal "n="
-      %tail, %found = "obelisk_sim.plusarg.value"(%ctx, %prefix) : (!obelisk_sim.context, !obelisk_sim.string) -> (!obelisk_sim.string, i32)
-      %saved = obelisk_sim.ref.alloc %tail : !obelisk_sim.string -> !obelisk_sim.ref<!obelisk_sim.string>
-      obelisk_sim.return
+      %prefix = simulation.string.literal "n="
+      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %saved = simulation.ref.alloc %tail : !simulation.string -> !simulation.ref<!simulation.string>
+      simulation.return
     }
   }
 }
 
 //--- suspended.mlir
 module {
-  obelisk_sim.design @plusargs {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @plusargs {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %prefix = obelisk_sim.string.literal "n="
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^resume(%prefix : !obelisk_sim.string)
+      %prefix = simulation.string.literal "n="
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^resume(%prefix : !simulation.string)
           {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
-    ^resume(%text: !obelisk_sim.string):
-      %found = "obelisk_sim.plusarg.test"(%ctx, %text) : (!obelisk_sim.context, !obelisk_sim.string) -> i32
-      obelisk_sim.return
+    ^resume(%text: !simulation.string):
+      %found = "simulation.plusarg.test"(%ctx, %text) : (!simulation.context, !simulation.string) -> i32
+      simulation.return
     }
   }
 }
 
 //--- unrelated.mlir
 module {
-  obelisk_sim.design @plusargs {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @plusargs {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %text = obelisk_sim.string.literal "not a query"
-      obelisk_sim.return
+      %text = simulation.string.literal "not a query"
+      simulation.return
     }
   }
 }

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 !byte = !obelisk.integral<8, true, false, 7 : 0, byte>
@@ -9,41 +9,41 @@
       {name = "octet", ordinal = 1 : i32, packed_offset = 0 : i64,
        type = !byte}
     ]>
-!sim_leaf = !obelisk_sim.unpacked_struct<[
-    #obelisk_sim.field<name = "number", type = i32, ordinal = 0,
+!sim_leaf = !simulation.unpacked_struct<[
+    #simulation.field<name = "number", type = i32, ordinal = 0,
         packedOffset = 0>,
-    #obelisk_sim.field<name = "octet", type = i8, ordinal = 1,
+    #simulation.field<name = "octet", type = i8, ordinal = 1,
         packedOffset = 0>
   ]>
 
 module {
-  obelisk_sim.design @assignment_pattern_type_setters {
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !sim_leaf design
+  simulation.design @assignment_pattern_type_setters {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !sim_leaf design
         hierarchy "top.value"
 
     // IEEE 1800-2017 10.9.1 and 10.9.2: the last matching type setter
     // supplies each uncovered element. This is a handwritten semantic-IR
     // test, so it also verifies that type-key metadata survives independently
     // of the source frontend.
-    // CHECK-LABEL: obelisk_sim.func @unit
+    // CHECK-LABEL: simulation.func @unit
     // CHECK: %[[TWO:.*]] = arith.constant 2 : i32
     // CHECK: %[[THREE:.*]] = arith.constant 3 : i8
-    // CHECK: %[[LEAF:.*]] = obelisk_sim.aggregate.construct %[[TWO]], %[[THREE]]
-    // CHECK: obelisk_sim.ref.store %[[LEAF]] to %arg1
-    obelisk_sim.func @unit(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<!sim_leaf>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    // CHECK: %[[LEAF:.*]] = simulation.aggregate.construct %[[TWO]], %[[THREE]]
+    // CHECK: simulation.ref.store %[[LEAF]] to %arg1
+    simulation.func @unit(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<!sim_leaf>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.delay_scale = 1 : i64,
-          obelisk_sim.hierarchical_name = "top",
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.value", argument = 1,
+          simulation.delay_scale = 1 : i64,
+          simulation.hierarchical_name = "top",
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.value", argument = 1,
                 kind = direct, copyOut = false>
           ],
           code_unit_id = 1 : i64
@@ -79,7 +79,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

@@ -32,5 +32,5 @@ endmodule
 // BAD-THREADS: error: --threads must be greater than zero
 // BAD-COMPILE-THREADS: error: --compile-threads must be greater than zero
 // BAD-VPI: error: unsupported VPI mode 'write'; expected off, read, or full
-// FULL-VPI: obelisk_sim.storage.decl
+// FULL-VPI: simulation.storage.decl
 // FULL-VPI-SAME: observability = 2 : i32

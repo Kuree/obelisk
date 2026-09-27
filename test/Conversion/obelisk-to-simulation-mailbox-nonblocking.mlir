@@ -1,22 +1,22 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 //
-// CHECK: !obelisk_sim.mailbox<!obelisk_sim.string>
-// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.semaphore
-// CHECK: obelisk_sim.mailbox.create
-// CHECK: obelisk_sim.mailbox.try_put
-// CHECK: obelisk_sim.suspend.mailbox {{.*}} not_full
-// CHECK: obelisk_sim.mailbox.try_peek
-// CHECK: obelisk_sim.suspend.mailbox {{.*}} not_empty
-// CHECK: obelisk_sim.mailbox.try_get
-// CHECK: obelisk_sim.suspend.mailbox {{.*}} not_empty
-// CHECK: obelisk_sim.mailbox.try_put
-// CHECK: obelisk_sim.mailbox.try_peek
-// CHECK: obelisk_sim.mailbox.try_get
-// CHECK: obelisk_sim.mailbox.num
-// CHECK: obelisk_sim.semaphore.create
-// CHECK: obelisk_sim.semaphore.put
-// CHECK: obelisk_sim.semaphore.try_get
-// CHECK: obelisk_sim.suspend.semaphore
+// CHECK: !simulation.mailbox<!simulation.string>
+// CHECK: simulation.storage.decl {{.*}} : !simulation.semaphore
+// CHECK: simulation.mailbox.create
+// CHECK: simulation.mailbox.try_put
+// CHECK: simulation.suspend.mailbox {{.*}} not_full
+// CHECK: simulation.mailbox.try_peek
+// CHECK: simulation.suspend.mailbox {{.*}} not_empty
+// CHECK: simulation.mailbox.try_get
+// CHECK: simulation.suspend.mailbox {{.*}} not_empty
+// CHECK: simulation.mailbox.try_put
+// CHECK: simulation.mailbox.try_peek
+// CHECK: simulation.mailbox.try_get
+// CHECK: simulation.mailbox.num
+// CHECK: simulation.semaphore.create
+// CHECK: simulation.semaphore.put
+// CHECK: simulation.semaphore.try_get
+// CHECK: simulation.suspend.semaphore
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

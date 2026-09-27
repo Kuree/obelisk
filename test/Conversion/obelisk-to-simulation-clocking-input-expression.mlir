@@ -39,36 +39,36 @@ module {
 }
 
 // #1step evaluates every source operand from its Preponed snapshot.
-// STEP-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// STEP: obelisk_sim.suspend.edge posedge
-// STEP: obelisk_sim.call @observer_{{[^(]+}}
-// STEP: obelisk_sim.assert.clocked_sample_update
-// STEP: obelisk_sim.assert.clocked_sample_read
-// STEP-LABEL: obelisk_sim.func private @observer_{{[^(]+}}
-// STEP-COUNT-2: obelisk_sim.assert.sampled_read
-// STEP: obelisk_sim.logic.concat
+// STEP-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// STEP: simulation.suspend.edge posedge
+// STEP: simulation.call @observer_{{[^(]+}}
+// STEP: simulation.assert.clocked_sample_update
+// STEP: simulation.assert.clocked_sample_read
+// STEP-LABEL: simulation.func private @observer_{{[^(]+}}
+// STEP-COUNT-2: simulation.assert.sampled_read
+// STEP: simulation.logic.concat
 
 // #0 evaluates the composite expression in Observed after the clock edge.
-// ZERO-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// ZERO: obelisk_sim.suspend.edge posedge
-// ZERO: obelisk_sim.call @observer_{{[^(]+}}
-// ZERO: obelisk_sim.assert.clocked_sample_update
-// ZERO-LABEL: obelisk_sim.func private @observer_{{[^(]+}}
-// ZERO-COUNT-2: obelisk_sim.ref.load
-// ZERO: obelisk_sim.logic.concat
+// ZERO-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// ZERO: simulation.suspend.edge posedge
+// ZERO: simulation.call @observer_{{[^(]+}}
+// ZERO: simulation.assert.clocked_sample_update
+// ZERO-LABEL: simulation.func private @observer_{{[^(]+}}
+// ZERO-COUNT-2: simulation.ref.load
+// ZERO: simulation.logic.concat
 
 // A positive skew transport-delays changes to the complete expression value.
-// DELAY-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}
-// DELAY: obelisk_sim.observer.bind
-// DELAY: obelisk_sim.call @observer_{{[^(]+}}
-// DELAY: obelisk_sim.suspend.observe
-// DELAY: obelisk_sim.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// DELAY-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// DELAY: obelisk_sim.assert.clocked_sample_read
-// DELAY: obelisk_sim.assert.clocked_sample_update
+// DELAY-LABEL: simulation.func private @unit_0.$clocking_input_delay.{{[0-9]+}}
+// DELAY: simulation.observer.bind
+// DELAY: simulation.call @observer_{{[^(]+}}
+// DELAY: simulation.suspend.observe
+// DELAY: simulation.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// DELAY-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// DELAY: simulation.assert.clocked_sample_read
+// DELAY: simulation.assert.clocked_sample_update
 
 // A distinct edge skew evaluates and retains the expression at that edge.
-// EDGE-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// EDGE: obelisk_sim.suspend.edge negedge
-// EDGE: obelisk_sim.call @observer_{{[^(]+}}
-// EDGE: obelisk_sim.assert.clocked_sample_update
+// EDGE-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// EDGE: simulation.suspend.edge negedge
+// EDGE: simulation.call @observer_{{[^(]+}}
+// EDGE: simulation.assert.clocked_sample_update

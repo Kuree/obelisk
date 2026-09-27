@@ -3,43 +3,43 @@
 // RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
 // RUN: FileCheck %s < %t.dump
 
-!packed_one = !obelisk_sim.packed_array<0 : 0 x i1>
-!unpacked_scalar = !obelisk_sim.unpacked_array<1 : 0 x i1>
-!unpacked_vector = !obelisk_sim.unpacked_array<1 : 0 x i8>
-!packed_record = !obelisk_sim.packed_struct<[
-  #obelisk_sim.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
+!packed_one = !simulation.packed_array<0 : 0 x i1>
+!unpacked_scalar = !simulation.unpacked_array<1 : 0 x i1>
+!unpacked_vector = !simulation.unpacked_array<1 : 0 x i8>
+!packed_record = !simulation.packed_struct<[
+  #simulation.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
 ]>
-!unpacked_record = !obelisk_sim.unpacked_struct<[
-  #obelisk_sim.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
+!unpacked_record = !simulation.unpacked_struct<[
+  #simulation.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
 ]>
-!packed_choice = !obelisk_sim.packed_union<fields = [
-  #obelisk_sim.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
+!packed_choice = !simulation.packed_union<fields = [
+  #simulation.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
 ], isTagged = false>
-!unpacked_choice = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
+!unpacked_choice = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "bit", type = i1, ordinal = 0, packedOffset = 0>
 ], isTagged = false>
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @vpi_shape_properties {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.storage.decl 0 in 0 : i1 design hierarchy "top.basic_scalar"
-    obelisk_sim.storage.decl 1 in 0 : i8 design hierarchy "top.basic_vector"
-    obelisk_sim.storage.decl 2 in 0 : !packed_one design hierarchy "top.packed_array"
-    obelisk_sim.storage.decl 3 in 0 : !packed_record design hierarchy "top.packed_struct"
-    obelisk_sim.storage.decl 4 in 0 : !packed_choice design hierarchy "top.packed_union"
-    obelisk_sim.storage.decl 5 in 0 : f64 design hierarchy "top.real"
-    obelisk_sim.storage.decl 6 in 0 : !unpacked_scalar design hierarchy "top.unpacked_scalar"
-    obelisk_sim.storage.decl 7 in 0 : !unpacked_record design hierarchy "top.unpacked_struct"
-    obelisk_sim.storage.decl 8 in 0 : !unpacked_choice design hierarchy "top.unpacked_union"
-    obelisk_sim.storage.decl 9 in 0 : !unpacked_vector design hierarchy "top.unpacked_vector"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    obelisk_sim.func @initial(%ctx: !obelisk_sim.context
-        {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @vpi_shape_properties {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.storage.decl 0 in 0 : i1 design hierarchy "top.basic_scalar"
+    simulation.storage.decl 1 in 0 : i8 design hierarchy "top.basic_vector"
+    simulation.storage.decl 2 in 0 : !packed_one design hierarchy "top.packed_array"
+    simulation.storage.decl 3 in 0 : !packed_record design hierarchy "top.packed_struct"
+    simulation.storage.decl 4 in 0 : !packed_choice design hierarchy "top.packed_union"
+    simulation.storage.decl 5 in 0 : f64 design hierarchy "top.real"
+    simulation.storage.decl 6 in 0 : !unpacked_scalar design hierarchy "top.unpacked_scalar"
+    simulation.storage.decl 7 in 0 : !unpacked_record design hierarchy "top.unpacked_struct"
+    simulation.storage.decl 8 in 0 : !unpacked_choice design hierarchy "top.unpacked_union"
+    simulation.storage.decl 9 in 0 : !unpacked_vector design hierarchy "top.unpacked_vector"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    simulation.func @initial(%ctx: !simulation.context
+        {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

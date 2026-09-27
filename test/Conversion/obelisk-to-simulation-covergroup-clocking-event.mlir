@@ -34,22 +34,22 @@
 // The detached owner is primed synchronously with new(), registers a compiled
 // sample evaluator, and then parks forever. The evaluator runs at each atomic
 // publication instead of observing live values from a later scheduler drain.
-// SIM: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
+// SIM: simulation.func private @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
 // SIM-SAME: entry_kind = 14
-// SIM: obelisk_sim.covergroup.sample
-// SIM: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
+// SIM: simulation.covergroup.sample
+// SIM: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
 // SIM-SAME: schedule.covergroup_clocking_sampler
 // SIM-SAME: schedule.prime_on_spawn
-// SIM: obelisk_sim.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
-// SIM: obelisk_sim.covergroup.clock_event.register
+// SIM: simulation.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
+// SIM: simulation.covergroup.clock_event.register
 // SIM-SAME: conditions 1 edges [1, 2] indices [0, -1]
-// SIM: obelisk_sim.suspend.forever
-// SIM: obelisk_sim.covergroup.create
-// SIM-NEXT: {{.*}} = obelisk_sim.spawn @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
+// SIM: simulation.suspend.forever
+// SIM: simulation.covergroup.create
+// SIM-NEXT: {{.*}} = simulation.spawn @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
 
-// NOLEGACY: obelisk_sim.design
-// NOLEGACY-NOT: obelisk_sim.suspend.clock_set
-// NOLEGACY-NOT: obelisk_sim.assert.clock_occurrence.consume
+// NOLEGACY: simulation.design
+// NOLEGACY-NOT: simulation.suspend.clock_set
+// NOLEGACY-NOT: simulation.assert.clock_occurrence.consume
 
 // Both event primaries are v1 SamplingEvent expressions. Their physical result
 // ordinals are local table details and never define merge identity.
@@ -57,79 +57,79 @@
 
 // The parent fork needs its 37-bit automatic local, but the detached coverage
 // sampler does not. Do not extend that unrelated reference's lifetime.
-// CAPTURE-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
-// CAPTURE-NOT: !obelisk_sim.logic<37>
+// CAPTURE-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}
+// CAPTURE-NOT: !simulation.logic<37>
 // CAPTURE-SAME: attributes
 
 // IEEE 1800-2017/2023 9.4.2 detects an explicit edge on the expression's LSB,
 // but change events compare the complete packed result. Preserve the full
 // two-state/four-state value in the initial plane and observer result.
-// VECTOR-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
-// VECTOR: obelisk_sim.ref.load {{%.*}} : !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x i1>> -> !obelisk_sim.packed_array<3 : 0 x i1>
-// VECTOR: obelisk_sim.packed.flatten {{%.*}} : (!obelisk_sim.packed_array<3 : 0 x i1>) -> i4
-// VECTOR: obelisk_sim.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <i4>
-// VECTOR: obelisk_sim.covergroup.clock_event.register
+// VECTOR-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
+// VECTOR: simulation.ref.load {{%.*}} : !simulation.ref<!simulation.packed_array<3 : 0 x i1>> -> !simulation.packed_array<3 : 0 x i1>
+// VECTOR: simulation.packed.flatten {{%.*}} : (!simulation.packed_array<3 : 0 x i1>) -> i4
+// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <i4>
+// VECTOR: simulation.covergroup.clock_event.register
 // VECTOR-SAME: edges [1]
-// VECTOR-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
-// VECTOR: obelisk_sim.ref.load {{%.*}} : !obelisk_sim.ref<!obelisk_sim.packed_array<0 : 3 x !obelisk_sim.logic<1>>> -> !obelisk_sim.packed_array<0 : 3 x !obelisk_sim.logic<1>>
-// VECTOR: obelisk_sim.packed.flatten {{%.*}} : (!obelisk_sim.packed_array<0 : 3 x !obelisk_sim.logic<1>>) -> !obelisk_sim.logic<4>
-// VECTOR: obelisk_sim.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <!obelisk_sim.logic<4>>
-// VECTOR: obelisk_sim.covergroup.clock_event.register
+// VECTOR-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
+// VECTOR: simulation.ref.load {{%.*}} : !simulation.ref<!simulation.packed_array<0 : 3 x !simulation.logic<1>>> -> !simulation.packed_array<0 : 3 x !simulation.logic<1>>
+// VECTOR: simulation.packed.flatten {{%.*}} : (!simulation.packed_array<0 : 3 x !simulation.logic<1>>) -> !simulation.logic<4>
+// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <!simulation.logic<4>>
+// VECTOR: simulation.covergroup.clock_event.register
 // VECTOR-SAME: edges [2]
-// VECTOR-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
-// VECTOR: obelisk_sim.net.read {{%.*}} : !obelisk_sim.net<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>> -> !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
-// VECTOR: obelisk_sim.packed.flatten {{%.*}} : (!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>) -> !obelisk_sim.logic<8>
-// VECTOR: obelisk_sim.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <!obelisk_sim.logic<8>>
-// VECTOR: obelisk_sim.covergroup.clock_event.register
+// VECTOR-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
+// VECTOR: simulation.net.read {{%.*}} : !simulation.net<!simulation.packed_array<7 : 0 x !simulation.logic<1>>> -> !simulation.packed_array<7 : 0 x !simulation.logic<1>>
+// VECTOR: simulation.packed.flatten {{%.*}} : (!simulation.packed_array<7 : 0 x !simulation.logic<1>>) -> !simulation.logic<8>
+// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <!simulation.logic<8>>
+// VECTOR: simulation.covergroup.clock_event.register
 // VECTOR-SAME: edges [3]
 
 // A computed primary and its iff are independent compiled observers. The
 // construction-time value initializes the same full-width v1 event plan.
-// COMPUTED-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
-// COMPUTED: [[A:%.*]] = obelisk_sim.ref.load
-// COMPUTED: [[B:%.*]] = obelisk_sim.ref.load
+// COMPUTED-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
+// COMPUTED: [[A:%.*]] = simulation.ref.load
+// COMPUTED: [[B:%.*]] = simulation.ref.load
 // COMPUTED: [[INITIAL:%.*]] = arith.xori [[A]], [[B]] : i1
-// COMPUTED: [[PRIMARY:%.*]] = obelisk_sim.observer.bind @[[PRIMARY_FN:[^ ]+]] values({{.*}}) captures 2 : <i1>
-// COMPUTED: [[IFF:%.*]] = obelisk_sim.observer.bind @[[IFF_FN:[^ ]+]] values({{.*}}) captures 1 : <i1>
-// COMPUTED: [[SAMPLER:%.*]] = obelisk_sim.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
-// COMPUTED: obelisk_sim.covergroup.clock_event.register {{.*}} events{{\[}}[[PRIMARY]], [[INITIAL]], [[IFF]], [[SAMPLER]]] conditions 1 edges [1] indices [0]
-// COMPUTED: obelisk_sim.func private @[[PRIMARY_FN]](
+// COMPUTED: [[PRIMARY:%.*]] = simulation.observer.bind @[[PRIMARY_FN:[^ ]+]] values({{.*}}) captures 2 : <i1>
+// COMPUTED: [[IFF:%.*]] = simulation.observer.bind @[[IFF_FN:[^ ]+]] values({{.*}}) captures 1 : <i1>
+// COMPUTED: [[SAMPLER:%.*]] = simulation.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
+// COMPUTED: simulation.covergroup.clock_event.register {{.*}} events{{\[}}[[PRIMARY]], [[INITIAL]], [[IFF]], [[SAMPLER]]] conditions 1 edges [1] indices [0]
+// COMPUTED: simulation.func private @[[PRIMARY_FN]](
 // COMPUTED: arith.xori
-// COMPUTED: obelisk_sim.func private @[[IFF_FN]](
+// COMPUTED: simulation.func private @[[IFF_FN]](
 
 // A constructor ref formal is retained as one first-class ArgumentRef in the
 // event evaluator and sampler. Each new() captures its actual alias, including
 // a managed class field, instead of freezing the construction-time value.
-// REF-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
-// REF-SAME: %[[EVENT_REF:[^:]+]]: !obelisk_sim.argument_ref<i1>
-// REF: obelisk_sim.argument_ref.load %[[EVENT_REF]]
-// REF: obelisk_sim.observer.bind @[[REF_EVALUATOR:[^ ]+]] values(%[[EVENT_REF]], %[[EVENT_REF]] : !obelisk_sim.argument_ref<i1>, !obelisk_sim.argument_ref<i1>) captures 1 : <i1>
-// REF: obelisk_sim.covergroup.clock_event.register
-// REF: obelisk_sim.argument_ref.from_ref
-// REF: obelisk_sim.argument_ref.from_managed
-// REF: obelisk_sim.func private @[[REF_EVALUATOR]](
-// REF-SAME: !obelisk_sim.argument_ref<i1>
-// REF: obelisk_sim.argument_ref.load
+// REF-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
+// REF-SAME: %[[EVENT_REF:[^:]+]]: !simulation.argument_ref<i1>
+// REF: simulation.argument_ref.load %[[EVENT_REF]]
+// REF: simulation.observer.bind @[[REF_EVALUATOR:[^ ]+]] values(%[[EVENT_REF]], %[[EVENT_REF]] : !simulation.argument_ref<i1>, !simulation.argument_ref<i1>) captures 1 : <i1>
+// REF: simulation.covergroup.clock_event.register
+// REF: simulation.argument_ref.from_ref
+// REF: simulation.argument_ref.from_managed
+// REF: simulation.func private @[[REF_EVALUATOR]](
+// REF-SAME: !simulation.argument_ref<i1>
+// REF: simulation.argument_ref.load
 
 // A dynamic reference path used by the sample expression or iff remains a
 // value capture. It is not a primary dependency and therefore does not need a
 // dynamic scheduler watch.
-// DYNAMIC-REF: obelisk_sim.observer.bind
-// DYNAMIC-REF: obelisk_sim.covergroup.clock_event.register
-// DYNAMIC-REF: obelisk_sim.argument_ref.from_path
+// DYNAMIC-REF: simulation.observer.bind
+// DYNAMIC-REF: simulation.covergroup.clock_event.register
+// DYNAMIC-REF: simulation.argument_ref.from_path
 
 // IEEE 1800-2023 19.4 permits an embedded class covergroup to use properties
 // of its containing object in both the sampling event and coverpoints. Retain
 // that object in the detached sampler, and attach the field watch to the
 // primary observer so each instance observes only its own clock.
-// EMBEDDED-LABEL: obelisk_sim.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
-// EMBEDDED-SAME: %[[THIS:[^:]+]]: !obelisk_sim.class_handle<@[[CLASS:[^>]+]]>
-// EMBEDDED: %[[CLOCK_REF:.*]] = obelisk_sim.class.field_ref %[[THIS]][@{{[^ ]+}}] : !obelisk_sim.class_handle<@[[CLASS]]> -> !obelisk_sim.managed_ref<i1, @[[CLASS]]>
-// EMBEDDED: %[[WATCH:.*]] = obelisk_sim.managed.watch field %[[CLOCK_REF]]
-// EMBEDDED: %[[PRIMARY:.*]] = obelisk_sim.observer.bind @{{[^ ]+}} values(%[[THIS]], %[[WATCH]] : !obelisk_sim.class_handle<@[[CLASS]]>, !obelisk_sim.managed_watch) captures 1 : <i1>
-// EMBEDDED: %[[SAMPLE:.*]] = obelisk_sim.observer.bind @{{[^ ]+}} values(%{{[^,]+}}, %[[THIS]] : !obelisk_sim.covergroup_handle<{{[^>]+}}>, !obelisk_sim.class_handle<@[[CLASS]]>) captures 2 : <i1>
-// EMBEDDED: obelisk_sim.covergroup.clock_event.register {{.*}} events{{\[}}%[[PRIMARY]], {{%[^,]+}}, %[[SAMPLE]]]
-// EMBEDDED: obelisk_sim.spawn @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}({{[^,]+}}, {{[^,]+}}, %{{[^)]+}})
+// EMBEDDED-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
+// EMBEDDED-SAME: %[[THIS:[^:]+]]: !simulation.class_handle<@[[CLASS:[^>]+]]>
+// EMBEDDED: %[[CLOCK_REF:.*]] = simulation.class.field_ref %[[THIS]][@{{[^ ]+}}] : !simulation.class_handle<@[[CLASS]]> -> !simulation.managed_ref<i1, @[[CLASS]]>
+// EMBEDDED: %[[WATCH:.*]] = simulation.managed.watch field %[[CLOCK_REF]]
+// EMBEDDED: %[[PRIMARY:.*]] = simulation.observer.bind @{{[^ ]+}} values(%[[THIS]], %[[WATCH]] : !simulation.class_handle<@[[CLASS]]>, !simulation.managed_watch) captures 1 : <i1>
+// EMBEDDED: %[[SAMPLE:.*]] = simulation.observer.bind @{{[^ ]+}} values(%{{[^,]+}}, %[[THIS]] : !simulation.covergroup_handle<{{[^>]+}}>, !simulation.class_handle<@[[CLASS]]>) captures 2 : <i1>
+// EMBEDDED: simulation.covergroup.clock_event.register {{.*}} events{{\[}}%[[PRIMARY]], {{%[^,]+}}, %[[SAMPLE]]]
+// EMBEDDED: simulation.spawn @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}({{[^,]+}}, {{[^,]+}}, %{{[^)]+}})
 
 //--- event-list.sv
 module top;

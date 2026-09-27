@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // Direct coverage for ordinary case item grouping and casex comparison kind.
 
@@ -8,42 +8,42 @@
 !bit8 = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
 
 module {
-  obelisk_sim.design @casex {
-    obelisk_sim.code_unit.decl 9800001 in 0 always_comb hierarchy "top.casex"
-    obelisk_sim.code_unit.decl 9800002 in 0 always_comb
+  simulation.design @casex {
+    simulation.code_unit.decl 9800001 in 0 always_comb hierarchy "top.casex"
+    simulation.code_unit.decl 9800002 in 0 always_comb
         hierarchy "top.case_shapes"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 :
-        !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 :
+        !simulation.packed_array<1 : 0 x !simulation.logic<1>>
         design hierarchy "top.selector"
-    obelisk_sim.storage.decl 1 in 0 :
-        !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+    simulation.storage.decl 1 in 0 :
+        !simulation.packed_array<7 : 0 x !simulation.logic<1>>
         design hierarchy "top.value"
-    obelisk_sim.storage.decl 2 in 0 :
-        !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>
+    simulation.storage.decl 2 in 0 :
+        !simulation.packed_array<1 : 0 x !simulation.logic<1>>
         design hierarchy "top.case_selector"
-    obelisk_sim.storage.decl 3 in 0 :
-        !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+    simulation.storage.decl 3 in 0 :
+        !simulation.packed_array<7 : 0 x !simulation.logic<1>>
         design hierarchy "top.case_result"
 
-    // CHECK-LABEL: obelisk_sim.func @unit
-    // CHECK: obelisk_sim.logic.compare casexz_eq
+    // CHECK-LABEL: simulation.func @unit
+    // CHECK: simulation.logic.compare casexz_eq
     // CHECK-NOT: obelisk.sv.
-    obelisk_sim.func @unit(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %selector: !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %value: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @unit(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %selector: !simulation.ref<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %value: !simulation.ref<!simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {
           entry_kind = 4 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.selector", argument = 1,
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.selector", argument = 1,
                 kind = direct, copyOut = false>,
-            #obelisk_sim.argument_binding<path = "top.value", argument = 2,
+            #simulation.argument_binding<path = "top.value", argument = 2,
                 kind = direct, copyOut = false>
           ],
           code_unit_id = 9800001 : i64
@@ -97,44 +97,44 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
 
     // Labels are grouped by item even though all labels precede all bodies in
     // the semantic operation. The default body is the final child.
-    // CHECK-LABEL: obelisk_sim.func @case_shapes
-    // CHECK: %[[SEL_AGG:.*]] = obelisk_sim.ref.load %arg1
-    // CHECK: %[[SEL:.*]] = obelisk_sim.packed.flatten %[[SEL_AGG]]
-    // CHECK: %[[EQ0:.*]] = obelisk_sim.logic.compare case_eq %[[SEL]]
+    // CHECK-LABEL: simulation.func @case_shapes
+    // CHECK: %[[SEL_AGG:.*]] = simulation.ref.load %arg1
+    // CHECK: %[[SEL:.*]] = simulation.packed.flatten %[[SEL_AGG]]
+    // CHECK: %[[EQ0:.*]] = simulation.logic.compare case_eq %[[SEL]]
     // CHECK: cf.cond_br %[[EQ0]], ^[[ITEM0:.*]], ^[[NEXT0:.*]]
     // CHECK: ^[[ITEM0]]:
-    // CHECK: obelisk_sim.ref.store
+    // CHECK: simulation.ref.store
     // CHECK: ^[[NEXT0]]:
-    // CHECK: %[[EQ1:.*]] = obelisk_sim.logic.compare case_eq
+    // CHECK: %[[EQ1:.*]] = simulation.logic.compare case_eq
     // CHECK: cf.cond_br %[[EQ1]], ^[[ITEM1:.*]], ^[[LABEL1:.*]]
     // CHECK: ^[[ITEM1]]:
-    // CHECK: obelisk_sim.ref.store
+    // CHECK: simulation.ref.store
     // CHECK: ^[[DEFAULT:bb[0-9]+]]:
-    // CHECK-NOT: obelisk_sim.logic.compare
-    // CHECK: obelisk_sim.ref.store
+    // CHECK-NOT: simulation.logic.compare
+    // CHECK: simulation.ref.store
     // CHECK: ^[[LABEL1]]:
-    // CHECK: %[[EQ2:.*]] = obelisk_sim.logic.compare case_eq
+    // CHECK: %[[EQ2:.*]] = simulation.logic.compare case_eq
     // CHECK: cf.cond_br %[[EQ2]], ^[[ITEM1]], ^[[DEFAULT]]
-    obelisk_sim.func @case_shapes(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %selector: !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 2 : i64},
-        %result: !obelisk_sim.ref<!obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 3 : i64})
+    simulation.func @case_shapes(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %selector: !simulation.ref<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 2 : i64},
+        %result: !simulation.ref<!simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 3 : i64})
         attributes {
           entry_kind = 4 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.case_selector",
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.case_selector",
                 argument = 1, kind = direct, copyOut = false>,
-            #obelisk_sim.argument_binding<path = "top.case_result",
+            #simulation.argument_binding<path = "top.case_result",
                 argument = 2, kind = direct, copyOut = false>
           ],
           code_unit_id = 9800002 : i64
@@ -205,7 +205,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

@@ -84,16 +84,16 @@ module attributes {
   }
 }
 
-// CHECK-DAG: obelisk_sim.vpi_definition_member.decl @[[REF_A:[^ ]+]] {{.*}} name "a" direction ref
-// CHECK-DAG: obelisk_sim.vpi_definition_member.decl @[[REF_B:[^ ]+]] {{.*}} name "b" direction ref
-// CHECK-DAG: obelisk_sim.vpi_definition_member.decl @[[REF_X:[^ ]+]] {{.*}} name "x" direction ref
-// CHECK-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[REF_A]] expr <kind = storage, id = 0 : i64>
-// CHECK-DAG: obelisk_sim.vpi_definition_member.bind scope {{[0-9]+}} member @[[REF_B]] expr <kind = storage, id = 0 : i64>
-// CHECK-DAG: obelisk_sim.storage.decl 0 {{.*}} hierarchy "top.x"
-// CHECK-DAG: obelisk_sim.port.decl 0 {{.*}} source 0 net = false
-// CHECK-DAG: obelisk_sim.port.decl 1 {{.*}} source 0 net = false
-// CHECK-DAG: obelisk_sim.port.decl 2 {{.*}} source 0 net = false
-// CHECK-DAG: obelisk_sim.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_A]] selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
-// CHECK-DAG: obelisk_sim.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_B]] selector 44 iterate ordinal 0 to <kind = port, id = 1 : i64>
-// CHECK-DAG: obelisk_sim.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_A]] selector 98 iterate ordinal 0 to <kind = port, id = 2 : i64>
-// CHECK-DAG: obelisk_sim.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_X]] selector 44 iterate ordinal 0 to <kind = port, id = 2 : i64>
+// CHECK-DAG: simulation.vpi_definition_member.decl @[[REF_A:[^ ]+]] {{.*}} name "a" direction ref
+// CHECK-DAG: simulation.vpi_definition_member.decl @[[REF_B:[^ ]+]] {{.*}} name "b" direction ref
+// CHECK-DAG: simulation.vpi_definition_member.decl @[[REF_X:[^ ]+]] {{.*}} name "x" direction ref
+// CHECK-DAG: simulation.vpi_definition_member.bind scope {{[0-9]+}} member @[[REF_A]] expr <kind = storage, id = 0 : i64>
+// CHECK-DAG: simulation.vpi_definition_member.bind scope {{[0-9]+}} member @[[REF_B]] expr <kind = storage, id = 0 : i64>
+// CHECK-DAG: simulation.storage.decl 0 {{.*}} hierarchy "top.x"
+// CHECK-DAG: simulation.port.decl 0 {{.*}} source 0 net = false
+// CHECK-DAG: simulation.port.decl 1 {{.*}} source 0 net = false
+// CHECK-DAG: simulation.port.decl 2 {{.*}} source 0 net = false
+// CHECK-DAG: simulation.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_A]] selector 44 iterate ordinal 0 to <kind = port, id = 0 : i64>
+// CHECK-DAG: simulation.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_B]] selector 44 iterate ordinal 0 to <kind = port, id = 1 : i64>
+// CHECK-DAG: simulation.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_A]] selector 98 iterate ordinal 0 to <kind = port, id = 2 : i64>
+// CHECK-DAG: simulation.vpi_definition_member.relation scope {{[0-9]+}} member @[[REF_X]] selector 44 iterate ordinal 0 to <kind = port, id = 2 : i64>

@@ -4,15 +4,15 @@
 // instruction must never be handed a divisor that traps on it: dividing by
 // zero yields zero (IEEE 1800-2017 11.4.4) rather than raising SIGFPE.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-DAG: %[[ONE:.*]] = arith.constant 1 : i32
 // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
-// CHECK: %[[LHS:.*]] = obelisk_sim.ref.load
+// CHECK: %[[LHS:.*]] = simulation.ref.load
 // CHECK: %[[BAD:.*]] = arith.cmpi eq, %[[LHS]], %[[ZERO]]
 // CHECK: %[[SAFE:.*]] = arith.select %[[BAD]], %[[ONE]], %[[LHS]]
 // CHECK: %[[QUOTIENT:.*]] = arith.divui %[[LHS]], %[[SAFE]]
 // CHECK: arith.select %[[BAD]], %[[ZERO]], %[[QUOTIENT]]
-// CHECK: %[[LHS2:.*]] = obelisk_sim.ref.load
+// CHECK: %[[LHS2:.*]] = simulation.ref.load
 // CHECK: %[[BAD2:.*]] = arith.cmpi eq, %[[LHS2]], %[[ZERO]]
 // CHECK: %[[SAFE2:.*]] = arith.select %[[BAD2]], %[[ONE]], %[[LHS2]]
 // CHECK: %[[REMAINDER:.*]] = arith.remui %[[LHS2]], %[[SAFE2]]

@@ -112,18 +112,18 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // Each timer-capable check receives exactly one private helper inventory.
-// CHECK-COUNT-1: obelisk_sim.storage.decl 4
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-COUNT-1: simulation.storage.decl 4
+// CHECK-LABEL: simulation.func private @unit_0(
 // The two flag handles are loaded and converted before the first suspension,
 // exactly once each.  No mode-dependent re-evaluation enters the wait loop.
-// CHECK: %[[EVENT_LOGIC:.*]] = obelisk_sim.ref.load
-// CHECK: %[[EVENT_MODE:.*]] = obelisk_sim.logic.is_true %[[EVENT_LOGIC]]
-// CHECK: %[[REMAIN_LOGIC:.*]] = obelisk_sim.ref.load
-// CHECK: %[[REMAIN:.*]] = obelisk_sim.logic.is_true %[[REMAIN_LOGIC]]
-// CHECK-NOT: obelisk_sim.logic.is_true
-// CHECK: obelisk_sim.event.create
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.$timing_timer
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: %[[EVENT_LOGIC:.*]] = simulation.ref.load
+// CHECK: %[[EVENT_MODE:.*]] = simulation.logic.is_true %[[EVENT_LOGIC]]
+// CHECK: %[[REMAIN_LOGIC:.*]] = simulation.ref.load
+// CHECK: %[[REMAIN:.*]] = simulation.logic.is_true %[[REMAIN_LOGIC]]
+// CHECK-NOT: simulation.logic.is_true
+// CHECK: simulation.event.create
+// CHECK-COUNT-1: simulation.spawn @unit_0.$timing_timer
+// CHECK: simulation.suspend.clock_set
 // Both established cohort state machines exist only for the unknown mode and
 // are selected by the invariant entry value at process and slot finalization.
 // CHECK: cf.cond_br %[[EVENT_MODE]], ^[[EVENT_PROCESS:bb[0-9]+]], ^[[TIMER_PROCESS:bb[0-9]+]]
@@ -144,22 +144,22 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: ^[[EVENT_FINAL]]:
 // CHECK: cf.br ^[[MODE_JOIN:bb[0-9]+]](
 // CHECK: ^[[TIMER_FINAL]]:
-// CHECK: obelisk_sim.event.trigger
+// CHECK: simulation.event.trigger
 // CHECK: cf.br ^[[MODE_JOIN]](
 // Fullskew shares the bounded selector contract while retaining its existing
 // directional state machines and a distinct serial timer helper.
-// CHECK-COUNT-1: obelisk_sim.storage.decl 5
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-COUNT-2: obelisk_sim.logic.is_true
-// CHECK-COUNT-1: obelisk_sim.event.create
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.$timing_timer
+// CHECK-COUNT-1: simulation.storage.decl 5
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-COUNT-2: simulation.logic.is_true
+// CHECK-COUNT-1: simulation.event.create
+// CHECK-COUNT-1: simulation.spawn @unit_1.$timing_timer
 // CHECK: cf.cond_br
 // CHECK: arith.cmpi ugt
 // CHECK: arith.cmpi ule
 // CHECK: cf.cond_br
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$timing_timer
-// CHECK: obelisk_sim.suspend.event
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$timing_timer
-// CHECK: obelisk_sim.suspend.event
+// CHECK-LABEL: simulation.func private @unit_0.$timing_timer
+// CHECK: simulation.suspend.event
+// CHECK-LABEL: simulation.func private @unit_1.$timing_timer
+// CHECK: simulation.suspend.event
 // CHECK-NOT: timing_check_table
 // CHECK-NOT: timing_check_timer

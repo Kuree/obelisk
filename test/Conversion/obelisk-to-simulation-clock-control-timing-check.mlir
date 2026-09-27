@@ -117,7 +117,7 @@ module {
 
 // CHECK: home_region = 8 : i32
 // CHECK-SAME: timing_check_kind = 7 : i32
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: edges [1, 1]
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK-SAME: slot_final
@@ -125,12 +125,12 @@ module {
 // CHECK: arith.cmpi ugt
 // CHECK: timing_check_kind = 10 : i32
 // CHECK-NOT: slot_final
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: edges [1]
 // CHECK: arith.cmpi ult
 // CHECK: timing_check_kind = 11 : i32
 // CHECK-NOT: slot_final
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: edges [1, 2]
 // CHECK: arith.cmpi ugt
 // CHECK: arith.cmpi ult

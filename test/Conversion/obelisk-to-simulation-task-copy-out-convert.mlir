@@ -77,15 +77,15 @@ module attributes {
 }
 
 
-// CHECK: obelisk_sim.func private @unit_1(
-// CHECK-SAME: %[[FLAG:[^:]*]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK: %[[IN:.*]] = obelisk_sim.logic.resize
-// CHECK-SAME: !obelisk_sim.logic<1> -> !obelisk_sim.logic<32>
-// CHECK: %[[FORMAL:.*]] = obelisk_sim.ref.alloc %[[IN]]
-// CHECK-SAME: -> !obelisk_sim.ref<!obelisk_sim.logic<32>>
-// CHECK: obelisk_sim.task.call @unit_0(%{{.*}}, %[[IN]], %[[FORMAL]]
-// CHECK: ^bb1(%[[RETURNED:.*]]: !obelisk_sim.ref<!obelisk_sim.logic<32>>):
-// CHECK: %[[OUT:.*]] = obelisk_sim.ref.load %[[RETURNED]]
-// CHECK: %[[NARROWED:.*]] = obelisk_sim.logic.resize %[[OUT]]
-// CHECK-SAME: !obelisk_sim.logic<32> -> !obelisk_sim.logic<1>
-// CHECK: obelisk_sim.ref.store %[[NARROWED]] to %[[FLAG]]
+// CHECK: simulation.func private @unit_1(
+// CHECK-SAME: %[[FLAG:[^:]*]]: !simulation.ref<!simulation.logic<1>>
+// CHECK: %[[IN:.*]] = simulation.logic.resize
+// CHECK-SAME: !simulation.logic<1> -> !simulation.logic<32>
+// CHECK: %[[FORMAL:.*]] = simulation.ref.alloc %[[IN]]
+// CHECK-SAME: -> !simulation.ref<!simulation.logic<32>>
+// CHECK: simulation.task.call @unit_0(%{{.*}}, %[[IN]], %[[FORMAL]]
+// CHECK: ^bb1(%[[RETURNED:.*]]: !simulation.ref<!simulation.logic<32>>):
+// CHECK: %[[OUT:.*]] = simulation.ref.load %[[RETURNED]]
+// CHECK: %[[NARROWED:.*]] = simulation.logic.resize %[[OUT]]
+// CHECK-SAME: !simulation.logic<32> -> !simulation.logic<1>
+// CHECK: simulation.ref.store %[[NARROWED]] to %[[FLAG]]

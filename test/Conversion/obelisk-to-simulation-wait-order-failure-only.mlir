@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s \
-// RUN:   --implicit-check-not=obelisk_sim.error \
+// RUN:   --implicit-check-not=simulation.error \
 // RUN:   --implicit-check-not=obelisk.sv.statement.wait_order
 
 module {
@@ -33,6 +33,6 @@ module {
 // success action is a no-op and the explicit failure action suppresses the
 // default run-time error. With an empty failure statement, both outcome edges
 // are no-ops and simplify to one continuation.
-// CHECK: obelisk_sim.suspend.event_order %{{.*}}, %{{.*}} events 2 to ^[[DONE:bb[0-9]+]]
+// CHECK: simulation.suspend.event_order %{{.*}}, %{{.*}} events 2 to ^[[DONE:bb[0-9]+]]
 // CHECK: ^[[DONE]]:
-// CHECK: obelisk_sim.return
+// CHECK: simulation.return

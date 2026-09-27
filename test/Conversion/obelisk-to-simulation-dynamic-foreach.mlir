@@ -55,14 +55,14 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.container.size
+// CHECK: simulation.container.size
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.container.write
+// CHECK: simulation.container.write
 // An associative foreach carries its current key to the traversal step when
 // continue bypasses the rest of the loop body.
-// CHECK: obelisk_sim.assoc.traverse
+// CHECK: simulation.assoc.traverse
 // CHECK: ^[[ASSOC_HEADER:bb[0-9]+]](%[[KEY:.*]]: i32, %[[VALID:.*]]: i1):
 // CHECK: cf.cond_br %[[VALID]], ^[[ASSOC_STEP:bb[0-9]+]](%[[KEY]] : i32),
 // CHECK: ^[[ASSOC_STEP]](%[[STEP_KEY:.*]]: i32):
-// CHECK: obelisk_sim.assoc.traverse {{.*}}, %[[STEP_KEY]]
+// CHECK: simulation.assoc.traverse {{.*}}, %[[STEP_KEY]]
 // CHECK-NOT: obelisk.sv.

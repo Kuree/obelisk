@@ -762,19 +762,19 @@ module attributes {
 // and the child module's scope independently of its backing descriptor.
 // The formal source kind wins over the backing storage kind when both share
 // the same executable representation.
-// LOWER-DAG: obelisk_sim.port.decl 0 in 9 source 6 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = reg, isSigned = false, isFourState = true, range = [0, 0], children = [], childNames = []>
-// LOWER-DAG: obelisk_sim.port.decl 1 in 9 source 7 net = false at 0 : !obelisk_sim.logic<1> input ordinal 1 hierarchy "port_connections_inventory.ordered.input_value" debug "input_value"
-// LOWER-DAG: obelisk_sim.port.decl 2 in 9 source 8 net = false at 0 : !obelisk_sim.logic<1> output ordinal 2 hierarchy "port_connections_inventory.ordered.output_value" debug "output_value"
-// LOWER-DAG: obelisk_sim.port.decl 3 in 9 source 1 net = true at 0 : !obelisk_sim.logic<1> inout ordinal 3 hierarchy "port_connections_inventory.ordered.net_value" debug "net_value"
-// LOWER-DAG: obelisk_sim.port.decl 4 in 10 source 9 net = false at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.named.defaulted" debug "defaulted"
+// LOWER-DAG: simulation.port.decl 0 in 9 source 6 net = false at 0 : !simulation.logic<1> input ordinal 0 hierarchy "port_connections_inventory.ordered.defaulted" debug "defaulted" {{.*}}vpi_type = #simulation.vpi_type<kind = reg, isSigned = false, isFourState = true, range = [0, 0], children = [], childNames = []>
+// LOWER-DAG: simulation.port.decl 1 in 9 source 7 net = false at 0 : !simulation.logic<1> input ordinal 1 hierarchy "port_connections_inventory.ordered.input_value" debug "input_value"
+// LOWER-DAG: simulation.port.decl 2 in 9 source 8 net = false at 0 : !simulation.logic<1> output ordinal 2 hierarchy "port_connections_inventory.ordered.output_value" debug "output_value"
+// LOWER-DAG: simulation.port.decl 3 in 9 source 1 net = true at 0 : !simulation.logic<1> inout ordinal 3 hierarchy "port_connections_inventory.ordered.net_value" debug "net_value"
+// LOWER-DAG: simulation.port.decl 4 in 10 source 9 net = false at 0 : !simulation.logic<1> input ordinal 0 hierarchy "port_connections_inventory.named.defaulted" debug "defaulted"
 // Two non-ANSI formal names may intentionally alias one internal net. Both
 // remain distinct declaration-ordered ports in the child instance scope.
-// LOWER-DAG: obelisk_sim.port.decl 28 in 16 source 9 net = true at 0 : !obelisk_sim.logic<1> input ordinal 0 hierarchy "port_connections_inventory.nonansi.a" debug "a"
-// LOWER-DAG: obelisk_sim.port.decl 29 in 16 source 9 net = true at 0 : !obelisk_sim.logic<1> input ordinal 1 hierarchy "port_connections_inventory.nonansi.b" debug "b"
-// LOWER-DAG: obelisk_sim.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
-// LOWER-DAG: obelisk_sim.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 2[0] width 1 reversed = false provenance "named"
-// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "port_connections_inventory.uses_default.$port_connection_0"{{.*}}{internal}
-// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "port_connections_inventory.arrayed[0].$port_connection_2"{{.*}}{internal}
-// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "port_connections_inventory.arrayed[1].$port_connection_2"{{.*}}{internal}
-// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_input hierarchy "port_connections_inventory.generated[0].element.$port_connection_0"{{.*}}{internal}
-// LOWER-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_input hierarchy "port_connections_inventory.generated[1].element.$port_connection_0"{{.*}}{internal}
+// LOWER-DAG: simulation.port.decl 28 in 16 source 9 net = true at 0 : !simulation.logic<1> input ordinal 0 hierarchy "port_connections_inventory.nonansi.a" debug "a"
+// LOWER-DAG: simulation.port.decl 29 in 16 source 9 net = true at 0 : !simulation.logic<1> input ordinal 1 hierarchy "port_connections_inventory.nonansi.b" debug "b"
+// LOWER-DAG: simulation.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
+// LOWER-DAG: simulation.net.connect.decl {{[0-9]+}} in {{[0-9]+}} 0[0] to 2[0] width 1 reversed = false provenance "named"
+// LOWER-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "port_connections_inventory.uses_default.$port_connection_0"{{.*}}{internal}
+// LOWER-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "port_connections_inventory.arrayed[0].$port_connection_2"{{.*}}{internal}
+// LOWER-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output hierarchy "port_connections_inventory.arrayed[1].$port_connection_2"{{.*}}{internal}
+// LOWER-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_input hierarchy "port_connections_inventory.generated[0].element.$port_connection_0"{{.*}}{internal}
+// LOWER-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_input hierarchy "port_connections_inventory.generated[1].element.$port_connection_0"{{.*}}{internal}

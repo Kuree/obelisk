@@ -4,42 +4,42 @@
 // IEEE 1800-2017 18.6.2 and 18.11.1 require randomize(null) to invoke
 // pre_randomize(), check the current values, and invoke post_randomize() only
 // when that check succeeds. It remains a checker: no RNG or property stores.
-// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s3_Base_field_0 {{.*}}obelisk_sim.random_mode_index = 0 : i64
-// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s11_Derived_field_0 {{.*}}obelisk_sim.random_mode_index = 1 : i64
-// CHECK-DAG: obelisk_sim.func private @[[BASE_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::pre_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[BASE_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Base::post_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[DERIVED_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Derived::pre_randomize"
+// CHECK-DAG: simulation.class.field @__obelisk_class_s3_Base_field_0 {{.*}}simulation.random_mode_index = 0 : i64
+// CHECK-DAG: simulation.class.field @__obelisk_class_s11_Derived_field_0 {{.*}}simulation.random_mode_index = 1 : i64
+// CHECK-DAG: simulation.func private @[[BASE_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::pre_randomize"
+// CHECK-DAG: simulation.func private @[[BASE_POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::post_randomize"
+// CHECK-DAG: simulation.func private @[[DERIVED_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Derived::pre_randomize"
 // Repeated ordinary calls share their class plans. The checker calls remain
 // inline in the caller and therefore contain lifecycle and field operations
 // but no solver or persistent object mutation.
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s11_Derived
-// CHECK-DAG: obelisk_sim.class.is_instance {{.*}} is @__obelisk_class_s3_Base
-// CHECK-DAG: obelisk_sim.class.direct_call @[[DERIVED_PLAN:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
-// CHECK-DAG: obelisk_sim.class.direct_call @[[BASE_PLAN:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
-// CHECK-DAG: obelisk_sim.class.direct_call @[[DERIVED_PRE]]
-// CHECK-DAG: obelisk_sim.class.direct_call @[[BASE_PRE]]
-// CHECK-DAG: obelisk_sim.class.direct_call @[[BASE_POST]]
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Base_field_0]
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s11_Derived_field_0]
-// CHECK-DAG: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
-// CHECK-NOT: obelisk_sim.random.solve
-// CHECK-NOT: obelisk_sim.managed.store
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-DAG: simulation.class.is_instance {{.*}} is @__obelisk_class_s11_Derived
+// CHECK-DAG: simulation.class.is_instance {{.*}} is @__obelisk_class_s3_Base
+// CHECK-DAG: simulation.class.direct_call @[[DERIVED_PLAN:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
+// CHECK-DAG: simulation.class.direct_call @[[BASE_PLAN:__obelisk_randomize_plan_[A-Za-z0-9_.$]+]]
+// CHECK-DAG: simulation.class.direct_call @[[DERIVED_PRE]]
+// CHECK-DAG: simulation.class.direct_call @[[BASE_PRE]]
+// CHECK-DAG: simulation.class.direct_call @[[BASE_POST]]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_Base_field_0]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s11_Derived_field_0]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_Base_field___obelisk_constraint_mode]
+// CHECK-NOT: simulation.random.solve
+// CHECK-NOT: simulation.managed.store
 // A context-backed read performed only by Base::pre_randomize remains in the
 // always_comb sensitivity even though it is no longer an ABI capture.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: %{{arg[0-9]+}}: !obelisk_sim.context{{.*}}%[[HOOK_LIMIT:arg[0-9]+]]: !obelisk_sim.ref<i1> {{.*}}obelisk_sim.descriptor_id = 0
-// CHECK-SAME: %[[HOOK_OBJECT:arg[0-9]+]]: !obelisk_sim.ref<!obelisk_sim.class_handle<@__obelisk_class_s3_Base>>
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: %{{arg[0-9]+}}: !simulation.context{{.*}}%[[HOOK_LIMIT:arg[0-9]+]]: !simulation.ref<i1> {{.*}}simulation.descriptor_id = 0
+// CHECK-SAME: %[[HOOK_OBJECT:arg[0-9]+]]: !simulation.ref<!simulation.class_handle<@__obelisk_class_s3_Base>>
 // CHECK-SAME: entry_kind = 4 : i32
-// CHECK: obelisk_sim.suspend.any %[[HOOK_OBJECT]], %[[HOOK_LIMIT]]
-// CHECK: obelisk_sim.func private @[[DERIVED_PLAN]]
-// CHECK: obelisk_sim.class.direct_call @[[DERIVED_PRE]]
-// CHECK: obelisk_sim.random.solve
-// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]]
-// CHECK: obelisk_sim.func private @[[BASE_PLAN]]
-// CHECK: obelisk_sim.class.direct_call @[[BASE_PRE]]
-// CHECK: obelisk_sim.random.solve
-// CHECK: obelisk_sim.class.direct_call @[[BASE_POST]]
+// CHECK: simulation.suspend.any %[[HOOK_OBJECT]], %[[HOOK_LIMIT]]
+// CHECK: simulation.func private @[[DERIVED_PLAN]]
+// CHECK: simulation.class.direct_call @[[DERIVED_PRE]]
+// CHECK: simulation.random.solve
+// CHECK: simulation.class.direct_call @[[BASE_POST]]
+// CHECK: simulation.func private @[[BASE_PLAN]]
+// CHECK: simulation.class.direct_call @[[BASE_PRE]]
+// CHECK: simulation.random.solve
+// CHECK: simulation.class.direct_call @[[BASE_POST]]
 
 //--- lifecycle.mlir
 

@@ -79,7 +79,7 @@ endmodule
 // OUTPUT-COUNT-4: strict prior pass
 // OUTPUT-NOT: FAIL
 
-// IR-COUNT-2: obelisk_sim.code_unit.decl {{[0-9]+}} in 0 always hierarchy {{.*}} debug "alternate-clock sampler"
-// IR: obelisk_sim.suspend.edge posedge
+// IR-COUNT-2: simulation.code_unit.decl {{[0-9]+}} in 0 always hierarchy {{.*}} debug "alternate-clock sampler"
+// IR: simulation.suspend.edge posedge
 // IR-SAME: resume_region = 16 : i32
-// IR: obelisk_sim.assert.clocked_sample_update
+// IR: simulation.assert.clocked_sample_update

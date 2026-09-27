@@ -12,7 +12,7 @@ Slang MLIR dialect (`slang.*`, `!slang.*`)
 Obelisk MLIR dialect (`obelisk.sv.*`, `!obelisk.*`)
     │  supported simulation lowering
     ▼
-Simulation MLIR (`obelisk_sim.*`, `arith.*`, `cf.*`)
+Simulation MLIR (`simulation.*`, `arith.*`, `cf.*`)
     │  design-wide bytecode encoding or serial native lowering
     ▼
 LLVM dialect plus embedded design database
@@ -163,7 +163,7 @@ it does not claim that every construct has already been lowered to LLVM.
 > implemented and covered at its stated boundary. It does not imply that a
 > later consumer, such as native code generation, is also complete.
 
-The current compiler reaches verified `obelisk_sim` SSA plus the standard MLIR
+The current compiler reaches verified `simulation` SSA plus the standard MLIR
 `arith` and `cf` dialects for the supported simulation subset. It derives and
 prints deterministic schedule metadata, can encode the complete supported
 design into checked runtime bytecode, and can fully lower the same boundary to
@@ -173,13 +173,22 @@ runtime and the host C runtime discovered in-process through clang's driver.
 Native execution is currently serial and requires `--threads=1`; all three VPI
 capability profiles are linkable.
 
-The `obelisk_sim` dialect is the target-independent executable boundary between
+The `simulation` dialect is the target-independent executable boundary between
 semantic SystemVerilog and the runtime. A design is flattened into deterministic
 numeric descriptors for hierarchy, storage, nets, and drivers. Executable code
 is isolated into function-like SSA CFGs with explicit captures, direct calls and
 spawns, memory effects, and suspension continuations. Source hierarchy remains
 available for diagnostics and future placement hints, but it does not determine
 the unit of optimization or parallel execution.
+
+Closed executable classifications use TableGen enums and dialect attributes,
+including element kinds and flags, container and associative-key kinds, random
+distributions, queue and assertion actions, block events, radix, traversal
+direction, and class-member visibility. For example, generic IR spells a
+radix as `#simulation.radix<hex>` and an element kind as
+`#simulation.element_kind<bits>`. Lowering converts these enums to numeric
+runtime encodings at the ABI boundary. Descriptor identities, widths, counts,
+and offsets remain integer attributes.
 
 ### Current executable boundary
 
@@ -225,7 +234,7 @@ DPI types and task behaviors. Detailed boundaries live in
 ### Executable functional coverage
 
 Covergroups declared directly in modules, interfaces, or programs lower to an
-immutable `obelisk_sim.covergroup.decl` schema and context-local 64-bit
+immutable `simulation.covergroup.decl` schema and context-local 64-bit
 instance handles. Construction is zero-argument and each instance starts
 enabled. `sample(...)` binds scalar integral `with function sample` inputs,
 evaluates enclosing design-variable reads and each coverpoint expression, and
@@ -256,7 +265,7 @@ automatic end-of-run output are not part of this executable subset.
 
 ### Packed-value semantic contract
 
-Builtin integers in `obelisk_sim` are exact two-state values; `logic` values
+Builtin integers in `simulation` are exact two-state values; `logic` values
 retain separate value and unknown planes. Lowering must keep values in the
 four-state domain until SystemVerilog explicitly requires truth evaluation or a
 two-state conversion. `logic.is_true` is the control-flow boundary: it is true
@@ -284,7 +293,7 @@ control flow to the LLVM dialect, and emits LLVM IR or machine code without
 unrealized conversion casts.
 
 The optimized native backend will insert state-layout decisions before that
-terminal conversion. It will lower `obelisk_sim.func` and direct calls through
+terminal conversion. It will lower `simulation.func` and direct calls through
 the `func` dialect while retaining `arith` and `cf` for scalar computation and
 CFG control. Structured loops may temporarily use `scf` when that enables
 standard transformations, and fixed-width hot data may use `vector` before
@@ -298,7 +307,7 @@ the statically assigned persistent lane functions and their explicit epoch and
 barrier protocol.
 
 Stable storage, net, driver, event, process, and class handles remain typed
-`obelisk_sim` values until provenance, observability, escape, ownership, and
+`simulation` values until provenance, observability, escape, ownership, and
 state-layout decisions are complete. Lowering them to pointers earlier would
 discard information needed by those analyses. After layout, compiler-owned
 state accesses use the MLIR `ptr` dialect with explicit offsets, access types,
@@ -399,13 +408,13 @@ Effects from parallel host workers must be linearizable to an event ordering
 allowed by SystemVerilog, including the required ordering of NBA updates from a
 single process.
 
-`obelisk_sim.func` remains the logical code-unit container. Runtime lowering may
+`simulation.func` remains the logical code-unit container. Runtime lowering may
 outline its entry and continuation regions into fragments that receive a
 process-frame handle, captured resource handles, and live SSA values. A
 fragment completes with an action such as continue, suspend for a delay,
 suspend on an event or change, or terminate. Existing suspension successors and
 continuation operands provide the basis for this representation. A future
-same-region `obelisk_sim.yield` can make optional preemption boundaries
+same-region `simulation.yield` can make optional preemption boundaries
 explicit.
 
 Fragmentation creates scheduling flexibility but does not make two fragments
@@ -1657,7 +1666,7 @@ changing the runtime architecture.
 
 SystemVerilog class semantics remain explicit above the physical pointer layer.
 Typed class handles, allocation, field access, inheritance, casts, constructors,
-method calls, and virtual dispatch survive in `obelisk_sim`. Native lowering
+method calls, and virtual dispatch survive in `simulation`. Native lowering
 materializes target-layout descriptors and method tables; bytecode records the
 same class, field, method, and virtual-slot identities. A heap object begins
 with a class-descriptor pointer followed by its laid-out instance fields.
@@ -1876,7 +1885,7 @@ externally writable   retain a canonical owner-visible value
 ```
 
 Per-descriptor `change observed` and `forceable` states are useful future
-refinements, but they are not part of the current `obelisk_sim` observability
+refinements, but they are not part of the current `simulation` observability
 enum. The three current VPI profiles assign one level uniformly to storage and
 net descriptors; until finer analysis exists, full mode maps them to
 `externally_writable`.
@@ -2023,7 +2032,7 @@ The implementation roadmap is:
 
 - ~~Pin the LLVM/MLIR and slang toolchains and implement exhaustive Slang and
   Obelisk semantic boundaries.~~
-- ~~Lower the currently supported simulation subset to isolated `obelisk_sim`
+- ~~Lower the currently supported simulation subset to isolated `simulation`
   SSA using `arith` and `cf`.~~
 - ~~Complete RTL port connection and aggregate conversion, native and bytecode
   two-state specialization, and the first executable procedural-timing slice:
@@ -2082,7 +2091,7 @@ The implementation roadmap is:
   analysis, object SROA, load forwarding, DSE, and state-layout optimization.
 - ~~Define typed class handles, object layout, direct and polymorphic dispatch,
   explicit managed roots, and automatic-memory-management semantics in
-  `obelisk_sim`.~~
+  `simulation`.~~
 - ~~Derive descriptor provenance, interprocedural descriptor-range effects,
   VPI-profile observability annotations, and four-state knownness facts.~~
 - ~~Extract block-level static fragments, assign a uniform fragment ABI and

@@ -175,121 +175,121 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.scope.decl [[BUS:[0-9]+]] parent 1 hierarchy "top.bus" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
-// CHECK: obelisk_sim.scope.decl [[OTHER:[0-9]+]] parent 1 hierarchy "top.other" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
-// CHECK: obelisk_sim.vpi_object.anchor @[[BUS_ANCHOR:__obelisk_vpi_anchor_[0-9]+]] id {{[0-9]+}} type 601 in [[BUS]] {{.*}}hierarchy "top.bus" debug "bus_if"
-// CHECK: obelisk_sim.vpi_typespec.decl @[[VIF_TYPESPEC:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]] id {{[0-9]+}} in [[BUS]] owner @[[BUS_ANCHOR]] hierarchy "@s2.$root::@s5.top::@s9.bus_if" debug "bus_if" {{.*}}symbol = @[[VIF_TYPESPEC]], modport = ""
-// CHECK: obelisk_sim.vpi_typespec.decl @[[VIF_PHY_TYPESPEC:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_[0-9A-F]+]] id {{[0-9]+}} in [[BUS]] owner @[[BUS_ANCHOR]] hierarchy "@s2.$root::@s5.top::@s9.bus_if" debug "bus_if" {{.*}}symbol = @[[VIF_PHY_TYPESPEC]], modport = "phy"
-// CHECK-DAG: obelisk_sim.storage.decl [[SIGNAL:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.signal"
-// CHECK-DAG: obelisk_sim.net.decl [[READY:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.ready"
-// CHECK-DAG: obelisk_sim.storage.decl [[CLK:[0-9]+]] in [[BUS]] : !obelisk_sim.logic<1> design hierarchy "top.bus.clk"
-// CHECK-DAG: obelisk_sim.storage.decl [[OTHER_SIGNAL:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.signal"
-// CHECK-DAG: obelisk_sim.net.decl [[OTHER_READY:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.ready"
-// CHECK-DAG: obelisk_sim.storage.decl [[OTHER_CLK:[0-9]+]] in [[OTHER]] : !obelisk_sim.logic<1> design hierarchy "top.other.clk"
-// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", ""> design hierarchy "top.vif" {{.*}}symbol = @[[VIF_TYPESPEC]], modport = ""
-// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", "phy"> design hierarchy "top.vif_phy" {{.*}}symbol = @[[VIF_PHY_TYPESPEC]], modport = "phy"
+// CHECK: simulation.scope.decl [[BUS:[0-9]+]] parent 1 hierarchy "top.bus" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
+// CHECK: simulation.scope.decl [[OTHER:[0-9]+]] parent 1 hierarchy "top.other" debug "bus_if" interface "@s2.$root::@s5.top::@s9.bus_if"
+// CHECK: simulation.vpi_object.anchor @[[BUS_ANCHOR:__obelisk_vpi_anchor_[0-9]+]] id {{[0-9]+}} type 601 in [[BUS]] {{.*}}hierarchy "top.bus" debug "bus_if"
+// CHECK: simulation.vpi_typespec.decl @[[VIF_TYPESPEC:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]] id {{[0-9]+}} in [[BUS]] owner @[[BUS_ANCHOR]] hierarchy "@s2.$root::@s5.top::@s9.bus_if" debug "bus_if" {{.*}}symbol = @[[VIF_TYPESPEC]], modport = ""
+// CHECK: simulation.vpi_typespec.decl @[[VIF_PHY_TYPESPEC:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_[0-9A-F]+]] id {{[0-9]+}} in [[BUS]] owner @[[BUS_ANCHOR]] hierarchy "@s2.$root::@s5.top::@s9.bus_if" debug "bus_if" {{.*}}symbol = @[[VIF_PHY_TYPESPEC]], modport = "phy"
+// CHECK-DAG: simulation.storage.decl [[SIGNAL:[0-9]+]] in [[BUS]] : !simulation.logic<1> design hierarchy "top.bus.signal"
+// CHECK-DAG: simulation.net.decl [[READY:[0-9]+]] in [[BUS]] : !simulation.logic<1> design hierarchy "top.bus.ready"
+// CHECK-DAG: simulation.storage.decl [[CLK:[0-9]+]] in [[BUS]] : !simulation.logic<1> design hierarchy "top.bus.clk"
+// CHECK-DAG: simulation.storage.decl [[OTHER_SIGNAL:[0-9]+]] in [[OTHER]] : !simulation.logic<1> design hierarchy "top.other.signal"
+// CHECK-DAG: simulation.net.decl [[OTHER_READY:[0-9]+]] in [[OTHER]] : !simulation.logic<1> design hierarchy "top.other.ready"
+// CHECK-DAG: simulation.storage.decl [[OTHER_CLK:[0-9]+]] in [[OTHER]] : !simulation.logic<1> design hierarchy "top.other.clk"
+// CHECK: simulation.storage.decl {{[0-9]+}} in 1 : !simulation.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", ""> design hierarchy "top.vif" {{.*}}symbol = @[[VIF_TYPESPEC]], modport = ""
+// CHECK: simulation.storage.decl {{[0-9]+}} in 1 : !simulation.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", "phy"> design hierarchy "top.vif_phy" {{.*}}symbol = @[[VIF_PHY_TYPESPEC]], modport = "phy"
 // The value-returning observer exercises the typed fatal-path return while
 // per-pass verification is active; it is inlined into the timed process later.
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 observer hierarchy "top.$code_unit_9.$observer.91.primary"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in 1 observer hierarchy "top.$code_unit_9.$observer.91.primary"
 // Each elaborated input has an Observed-region sampler gated by the declared
 // clocking-event iff from the same selected interface instance.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: !obelisk_sim.net
-// CHECK: obelisk_sim.suspend.observe
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// CHECK: simulation.observer.bind
+// CHECK: simulation.observer.bind
+// CHECK-SAME: !simulation.net
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.assert.clocked_sample_update
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.assert.clocked_sample_update
 // A clocking output drive is outlined so evaluating the assignment does not
 // block its caller; the child waits for the selected conditioned clock event
 // and publishes NBA. The condition binds the selected instance's net handle.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.36
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: !obelisk_sim.net
-// CHECK: obelisk_sim.suspend.observe
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.36
+// CHECK: simulation.observer.bind
+// CHECK: simulation.observer.bind
+// CHECK-SAME: !simulation.net
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK: simulation.nba.enqueue
 // A drive issued after @(vif.cb) belongs to the current occurrence and does
 // not suspend for another edge.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.79
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.nba.enqueue
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-DAG: obelisk_sim.string.output_format {{.*}} flags = [32, 256] {{.*}} !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", "">
-// CHECK-DAG: obelisk_sim.virtual_interface.scope
-// CHECK-DAG: obelisk_sim.context.storage %arg0{{.*}}[[SIGNAL]]
-// CHECK-DAG: obelisk_sim.context.storage %arg0{{.*}}[[OTHER_SIGNAL]]
-// CHECK-DAG: obelisk_sim.ref.store
-// CHECK-DAG: obelisk_sim.ref.load
+// CHECK-NOT: simulation.suspend.edge
+// CHECK: simulation.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-DAG: simulation.string.output_format {{.*}} flags = [32, 256] {{.*}} !simulation.virtual_interface<"@s2.$root::@s5.top::@s9.bus_if", "">
+// CHECK-DAG: simulation.virtual_interface.scope
+// CHECK-DAG: simulation.context.storage %arg0{{.*}}[[SIGNAL]]
+// CHECK-DAG: simulation.context.storage %arg0{{.*}}[[OTHER_SIGNAL]]
+// CHECK-DAG: simulation.ref.store
+// CHECK-DAG: simulation.ref.load
 // Reads select the retained value for the handle's scope instead of
 // resampling at each use.
-// CHECK: obelisk_sim.assert.clocked_sample_read
-// CHECK: obelisk_sim.spawn @{{.*}}clocking_output
+// CHECK: simulation.assert.clocked_sample_read
+// CHECK: simulation.spawn @{{.*}}clocking_output
 // A virtual clocking-block event selects the clock and every arbitrary iff
 // capture from the same interface instance, then resumes in Reactive.
-// CHECK: obelisk_sim.virtual_interface.scope
-// CHECK-COUNT-2: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.virtual_interface.scope
+// CHECK-COUNT-2: simulation.observer.bind
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
 // CHECK-SAME: resume_region = 10 : i32
 // CHECK-DAG: virtual interface signal used a null or invalid interface handle.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK-LABEL: simulation.func private @unit_1(
 // CHECK-SAME: entry_kind = 4 : i32
-// CHECK-DAG: %[[READY_HANDLE:.*]] = obelisk_sim.context.net %arg0{{.*}}[[READY]]
-// CHECK-DAG: %[[OTHER_READY_HANDLE:.*]] = obelisk_sim.context.net %arg0{{.*}}[[OTHER_READY]]
+// CHECK-DAG: %[[READY_HANDLE:.*]] = simulation.context.net %arg0{{.*}}[[READY]]
+// CHECK-DAG: %[[OTHER_READY_HANDLE:.*]] = simulation.context.net %arg0{{.*}}[[OTHER_READY]]
 // The handle itself and both possible member nets participate in implicit
 // sensitivity; the final two operands are loop-carried rematerializations.
-// CHECK: obelisk_sim.suspend.any {{.*}} edges [0, 0, 0]
+// CHECK: simulation.suspend.any {{.*}} edges [0, 0, 0]
 // CHECK-NOT: obelisk.sv.
 // Each possible interface instance maintains its own delayed net mirror. The
 // selected instance's conditioned clock sampler reads that mirror.
 // INPUT-SKEW-COUNT-2: always hierarchy "unit_0.$clocking_input_delay.
-// INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// INPUT-SKEW: obelisk_sim.time.constant 2{{$|[^0-9]}}
-// INPUT-SKEW: obelisk_sim.suspend.delay
+// INPUT-SKEW-LABEL: simulation.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// INPUT-SKEW: simulation.time.constant 2{{$|[^0-9]}}
+// INPUT-SKEW: simulation.suspend.delay
 // INPUT-SKEW-SAME: resume_region = 16 : i32
-// INPUT-SKEW: obelisk_sim.assert.clocked_sample_update
-// INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}(
-// INPUT-SKEW: obelisk_sim.assert.sampled_read
-// INPUT-SKEW: obelisk_sim.suspend.change
-// INPUT-SKEW: obelisk_sim.net.read
-// INPUT-SKEW: obelisk_sim.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// INPUT-SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// INPUT-SKEW: obelisk_sim.suspend.observe
+// INPUT-SKEW: simulation.assert.clocked_sample_update
+// INPUT-SKEW-LABEL: simulation.func private @unit_0.$clocking_input_delay.{{[0-9]+}}(
+// INPUT-SKEW: simulation.assert.sampled_read
+// INPUT-SKEW: simulation.suspend.change
+// INPUT-SKEW: simulation.net.read
+// INPUT-SKEW: simulation.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// INPUT-SKEW-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// INPUT-SKEW: simulation.suspend.observe
 // INPUT-SKEW-SAME: conditions 1 edges [1] indices [0]
-// INPUT-SKEW: obelisk_sim.assert.clocked_sample_read
-// INPUT-SKEW: obelisk_sim.assert.clocked_sample_update
+// INPUT-SKEW: simulation.assert.clocked_sample_read
+// INPUT-SKEW: simulation.assert.clocked_sample_update
 // INPUT-SKEW-NOT: obelisk.sv.
-// INPUT-ZERO: obelisk_sim.assert.clocked_sample_update
-// INPUT-ZERO: obelisk_sim.net.read
-// INPUT-EDGE: obelisk_sim.suspend.observe
+// INPUT-ZERO: simulation.assert.clocked_sample_update
+// INPUT-ZERO: simulation.net.read
+// INPUT-EDGE: simulation.suspend.observe
 // INPUT-EDGE-SAME: conditions 1 edges [2] indices [0]
-// INPUT-EDGE: obelisk_sim.assert.clocked_sample_update
+// INPUT-EDGE: simulation.assert.clocked_sample_update
 // A drive after @(vif.cb) reuses that qualified occurrence, but a distinct
 // output edge remains a future synchronization point in Reactive.
-// OUTPUT-EDGE-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
+// OUTPUT-EDGE-LABEL: simulation.func private @unit_0.$clocking_output.79
 // OUTPUT-EDGE-SAME: home_region = 10 : i32
-// OUTPUT-EDGE: obelisk_sim.suspend.edge negedge
-// OUTPUT-EDGE: obelisk_sim.nba.enqueue
+// OUTPUT-EDGE: simulation.suspend.edge negedge
+// OUTPUT-EDGE: simulation.nba.enqueue
 // Program-domain clocking output helpers preserve Reactive/Program so their
 // NBA is committed through the Re-NBA path.
-// PROGRAM-LABEL: obelisk_sim.func private @unit_0.$clocking_output.79
+// PROGRAM-LABEL: simulation.func private @unit_0.$clocking_output.79
 // PROGRAM-SAME: domain = 1 : i32
 // PROGRAM-SAME: home_region = 10 : i32
-// PROGRAM: obelisk_sim.nba.enqueue
+// PROGRAM: simulation.nba.enqueue
 // A net output gets one persistent procedural driver per clocking output and
 // elaborated interface instance. All syntactic sites select the shared driver.
 // NET-OUTPUT-DAG: hierarchy "top.bus.ready.$clocking_output.top.bus_if.signal" debug "virtual clocking output"
 // NET-OUTPUT-DAG: hierarchy "top.other.ready.$clocking_output.top.bus_if.signal" debug "virtual clocking output"
-// NET-OUTPUT-LABEL: obelisk_sim.func private @unit_0.$clocking_output.36
-// NET-OUTPUT-SAME: %{{.*}}: !obelisk_sim.driver<!obelisk_sim.logic<1>>
-// NET-OUTPUT: obelisk_sim.nba.enqueue
-// NET-OUTPUT-SAME: !obelisk_sim.driver<!obelisk_sim.logic<1>>
-// NET-OUTPUT-LABEL: obelisk_sim.func private @unit_0(
-// NET-OUTPUT-COUNT-2: obelisk_sim.context.driver
-// NET-OUTPUT: obelisk_sim.spawn @unit_0.$clocking_output.36
-// NET-OUTPUT-SAME: !obelisk_sim.driver<!obelisk_sim.logic<1>>
+// NET-OUTPUT-LABEL: simulation.func private @unit_0.$clocking_output.36
+// NET-OUTPUT-SAME: %{{.*}}: !simulation.driver<!simulation.logic<1>>
+// NET-OUTPUT: simulation.nba.enqueue
+// NET-OUTPUT-SAME: !simulation.driver<!simulation.logic<1>>
+// NET-OUTPUT-LABEL: simulation.func private @unit_0(
+// NET-OUTPUT-COUNT-2: simulation.context.driver
+// NET-OUTPUT: simulation.spawn @unit_0.$clocking_output.36
+// NET-OUTPUT-SAME: !simulation.driver<!simulation.logic<1>>

@@ -108,5 +108,5 @@ endmodule
 // CHECK-DAG: global-reenabled
 // CHECK-NOT: BAD-
 
-// IR: obelisk_sim.assert.control
-// IR: obelisk_sim.assert.enabled
+// IR: simulation.assert.control
+// IR: simulation.assert.enabled

@@ -239,60 +239,60 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // Strong consecutive [*2:$] has two incomplete run states. A false sample
 // kills/fails a run; EOS counts both states and reports every survivor.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_count.16.repetition_strong(
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.persistent_repetition_max
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_count.16.repetition_strong(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.persistent_repetition_max
+// CHECK: simulation.assert.sampled_read
 // CHECK-COUNT-4: arith.select
-// CHECK: obelisk_sim.spawn @unit_0.fork.16.1.1
+// CHECK: simulation.spawn @unit_0.fork.16.1.1
 
 // Consecutive [*2:$] ##1 b adds one saturated pending-terminal state.
 // Bare assertion completion is weak and retains all three live counts.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.32.repetition_weak(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.32.repetition_weak(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK: arith.andi
 
 // Goto [->2:$] without a continuation needs only the two pre-minimum counts.
 // False samples retain rather than fail those states.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.50.repetition_weak(
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.50.repetition_weak(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
 
 // Goto [->2:$] ##1 b has distinct saturated eligible and pending states.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_count.66.repetition_weak(
-// CHECK-COUNT-4: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_count.66.repetition_weak(
+// CHECK-COUNT-4: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-2: simulation.assert.sampled_read
 
 // Nonconsecutive [=2:$] shares the two pre-minimum states when no terminal is
 // present, and one saturated eligible state when ##1 b follows.
-// CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_eos_count.84.repetition_weak(
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos_count.99.repetition_weak(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_4.$concurrent_eos_count.84.repetition_weak(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-LABEL: simulation.func private @unit_5.$concurrent_eos_count.99.repetition_weak(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-2: simulation.assert.sampled_read

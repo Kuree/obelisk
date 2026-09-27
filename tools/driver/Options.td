@@ -32,7 +32,7 @@ def dump_tokens : Flag<["-"], "dump-tokens">, Group<Action_Group>,
 def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
   HelpText<"Emit Obelisk dialect MLIR">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
-  HelpText<"Emit executable obelisk_sim SSA MLIR">;
+  HelpText<"Emit executable simulation SSA MLIR">;
 def schedule_format_EQ : Joined<["--"], "schedule-format=">,
   HelpText<"Schedule inspection format: mlir or json">;
 def emit_schedule : Flag<["-"], "emit-schedule">, Group<Action_Group>,

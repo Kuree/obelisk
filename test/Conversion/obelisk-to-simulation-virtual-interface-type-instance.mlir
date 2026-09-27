@@ -43,18 +43,18 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.scope.decl 0 hierarchy "\\$root "
-// CHECK: obelisk_sim.scope.decl 1 parent 0 hierarchy "top"
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP_ANCHOR:__obelisk_vpi_anchor_[0-9]+]] id {{[0-9]+}} type 32 in 1 {{.*}}hierarchy "top" debug "top"
-// CHECK: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_0 {{.*}}symbol = @[[VIF_A:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]], modport = ""
-// CHECK: obelisk_sim.vpi_typespec.decl @__obelisk_vpi_typespec_1 {{.*}}symbol = @[[VIF_A_M:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_[0-9A-F]+]], modport = "m"
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[VIF_B:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]] {{.*}}owner @[[TOP_ANCHOR]]{{.*}}origin = 1 : i32{{.*}}symbol = @[[VIF_B]], modport = ""
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[VIF_A]] {{.*}}owner @[[TOP_ANCHOR]]{{.*}}origin = 1 : i32{{.*}}symbol = @[[VIF_A]], modport = ""
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[VIF_A_M]] {{.*}}owner @[[TOP_ANCHOR]]{{.*}}origin = 1 : i32{{.*}}symbol = @[[VIF_A_M]], modport = "m"
-// CHECK: obelisk_sim.storage.decl 0 in 1 {{.*}} hierarchy "top.sentinel"
-// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", ""> {{.*}} hierarchy "top.vif_a" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s7.bus_if"{{.*}}symbol = @[[VIF_A]], modport = ""
-// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", "m"> {{.*}} hierarchy "top.vif_a_m" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s7.bus_if"{{.*}}symbol = @[[VIF_A_M]], modport = "m"
-// CHECK-DAG: obelisk_sim.storage.decl {{[0-9]+}} in 1 : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s10.bus_if", ""> {{.*}} hierarchy "top.vif_b" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s10.bus_if"{{.*}}symbol = @[[VIF_B]], modport = ""
+// CHECK: simulation.scope.decl 0 hierarchy "\\$root "
+// CHECK: simulation.scope.decl 1 parent 0 hierarchy "top"
+// CHECK-DAG: simulation.vpi_object.anchor @[[TOP_ANCHOR:__obelisk_vpi_anchor_[0-9]+]] id {{[0-9]+}} type 32 in 1 {{.*}}hierarchy "top" debug "top"
+// CHECK: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_0 {{.*}}symbol = @[[VIF_A:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]], modport = ""
+// CHECK: simulation.vpi_typespec.decl @__obelisk_vpi_typespec_1 {{.*}}symbol = @[[VIF_A_M:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_[0-9A-F]+]], modport = "m"
+// CHECK-DAG: simulation.vpi_typespec.decl @[[VIF_B:__obelisk_vpi_interface_typespec_[0-9A-F]+_modport_]] {{.*}}owner @[[TOP_ANCHOR]]{{.*}}origin = 1 : i32{{.*}}symbol = @[[VIF_B]], modport = ""
+// CHECK-DAG: simulation.vpi_typespec.decl @[[VIF_A]] {{.*}}owner @[[TOP_ANCHOR]]{{.*}}origin = 1 : i32{{.*}}symbol = @[[VIF_A]], modport = ""
+// CHECK-DAG: simulation.vpi_typespec.decl @[[VIF_A_M]] {{.*}}owner @[[TOP_ANCHOR]]{{.*}}origin = 1 : i32{{.*}}symbol = @[[VIF_A_M]], modport = "m"
+// CHECK: simulation.storage.decl 0 in 1 {{.*}} hierarchy "top.sentinel"
+// CHECK-DAG: simulation.storage.decl {{[0-9]+}} in 1 : !simulation.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", ""> {{.*}} hierarchy "top.vif_a" {{.*}}vpi_type = #simulation.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s7.bus_if"{{.*}}symbol = @[[VIF_A]], modport = ""
+// CHECK-DAG: simulation.storage.decl {{[0-9]+}} in 1 : !simulation.virtual_interface<"@s2.$root::@s5.top::@s7.bus_if", "m"> {{.*}} hierarchy "top.vif_a_m" {{.*}}vpi_type = #simulation.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s7.bus_if"{{.*}}symbol = @[[VIF_A_M]], modport = "m"
+// CHECK-DAG: simulation.storage.decl {{[0-9]+}} in 1 : !simulation.virtual_interface<"@s2.$root::@s5.top::@s10.bus_if", ""> {{.*}} hierarchy "top.vif_b" {{.*}}vpi_type = #simulation.vpi_type<kind = virtual_interface{{.*}}name = "@s2.$root::@s5.top::@s10.bus_if"{{.*}}symbol = @[[VIF_B]], modport = ""
 // CHECK-NOT: hierarchy "top.bus_if
 // CHECK-NOT: synthetic_a
 // CHECK-NOT: synthetic_b

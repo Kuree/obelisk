@@ -93,45 +93,45 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // already removes each source attempt on its first eligible terminal match,
 // so the direct first_match wrapper adds no priority state or EOS actor.
 // CHECK-NOT: @unit_0.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_delay_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_delay_prefix_horizon = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.12.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.12.0.0
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_delay_aggregate_tokens
+// CHECK-SAME: simulation.persistent_delay_minimum = 2 : i64
+// CHECK-SAME: simulation.persistent_delay_prefix_horizon = 1 : i64
+// CHECK-SAME: simulation.persistent_first_match_equivalence
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.12.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.12.0.0
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
 // The nonoverlapped implication retains one handoff, one warm-up word, and
 // one eligible count. Its default weak final result reports each pending
 // source attempt once; live terminal success, prefix failure, and false-LHS
 // vacuity remain distinct callback sites.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.25.delay_weak(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.25.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.25.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.consequent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_delay_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_delay_implication
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_delay_nonoverlapped
-// CHECK-SAME: obelisk_sim.persistent_delay_prefix_horizon = 1 : i64
-// CHECK-COUNT-3: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_count.25.delay_weak
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_1.fork.25.0.0
-// CHECK: obelisk_sim.spawn @unit_1.fork.25.1.1
-// CHECK: obelisk_sim.spawn @unit_1.fork.25.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.25
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.25.delay_weak(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.25.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.25.0.0
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.consequent_first_match_equivalence
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_delay_aggregate_tokens
+// CHECK-SAME: simulation.persistent_delay_implication
+// CHECK-SAME: simulation.persistent_delay_minimum = 1 : i64
+// CHECK-SAME: simulation.persistent_delay_nonoverlapped
+// CHECK-SAME: simulation.persistent_delay_prefix_horizon = 1 : i64
+// CHECK-COUNT-3: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_count.25.delay_weak
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_1.fork.25.0.0
+// CHECK: simulation.spawn @unit_1.fork.25.1.1
+// CHECK: simulation.spawn @unit_1.fork.25.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.25
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion

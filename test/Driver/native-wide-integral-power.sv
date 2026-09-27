@@ -62,5 +62,5 @@ module top;
   end
 endmodule
 
-// SIM-COUNT-9: obelisk_sim.logic.power
+// SIM-COUNT-9: simulation.logic.power
 // CHECK: wide integral power passed

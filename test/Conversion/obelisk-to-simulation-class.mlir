@@ -204,47 +204,47 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.class.decl {{.*}}debug_name = "stream_interface"
-// CHECK: obelisk_sim.class.decl @{{[^ ]*supported_object}} {{.*}}debug_name = "supported_object"
-// CHECK: obelisk_sim.class.field @[[BITS_FIELD:[^ ]+]] {{.*}} : !obelisk_sim.packed_array<7 : 0 x i1> {{.*}}debug_name = "bits"
-// CHECK: obelisk_sim.class.field {{.*}} : !obelisk_sim.event {{.*}}debug_name = "trigger"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
-// CHECK: obelisk_sim.storage.decl {{.*}}hierarchy "supported_object::static_field"
-// CHECK: obelisk_sim.class.alloc
-// CHECK-NEXT: {{.*}} = obelisk_sim.random.next
-// CHECK-NEXT: {{.*}} = obelisk_sim.random.next
-// CHECK: %[[BITS_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@[[BITS_FIELD]]]
-// CHECK-NEXT: %[[BITS:.*]] = obelisk_sim.managed.load %[[BITS_REF]]
-// CHECK-NEXT: %[[SELECTED:.*]] = obelisk_sim.aggregate.extract %[[BITS]][4]
-// CHECK: %[[RANGE_BASE:.*]] = obelisk_sim.managed.load %[[BITS_REF]]
-// CHECK-NEXT: %[[FLAT_BITS:.*]] = obelisk_sim.packed.flatten %[[RANGE_BASE]]
+// CHECK: simulation.class.decl {{.*}}debug_name = "stream_interface"
+// CHECK: simulation.class.decl @{{[^ ]*supported_object}} {{.*}}debug_name = "supported_object"
+// CHECK: simulation.class.field @[[BITS_FIELD:[^ ]+]] {{.*}} : !simulation.packed_array<7 : 0 x i1> {{.*}}debug_name = "bits"
+// CHECK: simulation.class.field {{.*}} : !simulation.event {{.*}}debug_name = "trigger"
+// CHECK: simulation.class.field {{.*}}debug_name = "__obelisk_rng_state"
+// CHECK: simulation.class.field {{.*}}debug_name = "__obelisk_rng_increment"
+// CHECK: simulation.storage.decl {{.*}}hierarchy "supported_object::static_field"
+// CHECK: simulation.class.alloc
+// CHECK-NEXT: {{.*}} = simulation.random.next
+// CHECK-NEXT: {{.*}} = simulation.random.next
+// CHECK: %[[BITS_REF:.*]] = simulation.class.field_ref {{.*}}[@[[BITS_FIELD]]]
+// CHECK-NEXT: %[[BITS:.*]] = simulation.managed.load %[[BITS_REF]]
+// CHECK-NEXT: %[[SELECTED:.*]] = simulation.aggregate.extract %[[BITS]][4]
+// CHECK: %[[RANGE_BASE:.*]] = simulation.managed.load %[[BITS_REF]]
+// CHECK-NEXT: %[[FLAT_BITS:.*]] = simulation.packed.flatten %[[RANGE_BASE]]
 // CHECK-NEXT: %[[SHIFTED_BITS:.*]] = arith.shrui %[[FLAT_BITS]], {{.*}}
 // CHECK-NEXT: {{.*}} = arith.trunci %[[SHIFTED_BITS]] : i8 to i4
-// CHECK: %[[WRITE_BASE:.*]] = obelisk_sim.managed.load %[[BITS_REF]]
-// CHECK-NEXT: %[[WRITE_FLAT:.*]] = obelisk_sim.packed.flatten %[[WRITE_BASE]]
-// CHECK-NEXT: %[[WRITE_UPDATED:.*]] = obelisk_sim.bits.dyn_insert {{.*}} into %[[WRITE_FLAT]] at {{.*}} : (i8, i4, i66) -> i8
-// CHECK-NEXT: %[[WRITE_REBUILT:.*]] = obelisk_sim.packed.unflatten %[[WRITE_UPDATED]]
-// CHECK-NEXT: obelisk_sim.managed.store %[[WRITE_REBUILT]] to %[[BITS_REF]]
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.call @{{unit_[0-9]+}}({{.*}}) : (!obelisk_sim.context, i32) -> ()
+// CHECK: %[[WRITE_BASE:.*]] = simulation.managed.load %[[BITS_REF]]
+// CHECK-NEXT: %[[WRITE_FLAT:.*]] = simulation.packed.flatten %[[WRITE_BASE]]
+// CHECK-NEXT: %[[WRITE_UPDATED:.*]] = simulation.bits.dyn_insert {{.*}} into %[[WRITE_FLAT]] at {{.*}} : (i8, i4, i66) -> i8
+// CHECK-NEXT: %[[WRITE_REBUILT:.*]] = simulation.packed.unflatten %[[WRITE_UPDATED]]
+// CHECK-NEXT: simulation.managed.store %[[WRITE_REBUILT]] to %[[BITS_REF]]
+// CHECK: simulation.ref.store
+// CHECK: simulation.call @{{unit_[0-9]+}}({{.*}}) : (!simulation.context, i32) -> ()
 // The common interface receiver lets canonicalization share one dominating
 // dynamic-class guard across all three stream operations.
-// CHECK: obelisk_sim.class.is_instance {{.*}} is @{{.*}}supported_object
-// CHECK: obelisk_sim.class.cast {{.*}} to !obelisk_sim.class_handle<@{{.*}}supported_object>
+// CHECK: simulation.class.is_instance {{.*}} is @{{.*}}supported_object
+// CHECK: simulation.class.cast {{.*}} to !simulation.class_handle<@{{.*}}supported_object>
 // CHECK: arith.constant {{.*}} -8545228632546703407 : i64
-// CHECK: obelisk_sim.managed.store
+// CHECK: simulation.managed.store
 // CHECK: arith.constant {{.*}} 1442695040888963407 : i64
-// CHECK: obelisk_sim.managed.store
-// CHECK: obelisk_sim.string.format_integer
-// CHECK: obelisk_sim.string.literal ":"
-// CHECK: obelisk_sim.string.concat
-// CHECK: obelisk_sim.string.format_integer
-// CHECK: obelisk_sim.string.concat
-// CHECK-COUNT-2: obelisk_sim.string.scan_field
-// CHECK-COUNT-2: obelisk_sim.string.parse_integer
-// CHECK-COUNT-2: obelisk_sim.managed.store
-// CHECK: {{.*}} = obelisk_sim.event.create
-// CHECK: obelisk_sim.class.field_ref {{.*}} : {{.*}} -> !obelisk_sim.managed_ref<!obelisk_sim.event
-// CHECK: obelisk_sim.managed.store {{.*}} : !obelisk_sim.event
+// CHECK: simulation.managed.store
+// CHECK: simulation.string.format_integer
+// CHECK: simulation.string.literal ":"
+// CHECK: simulation.string.concat
+// CHECK: simulation.string.format_integer
+// CHECK: simulation.string.concat
+// CHECK-COUNT-2: simulation.string.scan_field
+// CHECK-COUNT-2: simulation.string.parse_integer
+// CHECK-COUNT-2: simulation.managed.store
+// CHECK: {{.*}} = simulation.event.create
+// CHECK: simulation.class.field_ref {{.*}} : {{.*}} -> !simulation.managed_ref<!simulation.event
+// CHECK: simulation.managed.store {{.*}} : !simulation.event
 // CHECK-NOT: obelisk.sv.

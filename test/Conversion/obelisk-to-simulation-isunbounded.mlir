@@ -150,9 +150,9 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-DAG: %[[FALSE:.*]] = arith.constant false
 // CHECK-DAG: %[[TRUE:.*]] = arith.constant true
-// CHECK: obelisk_sim.display {{.*}}(%[[FALSE]])
-// CHECK: obelisk_sim.display {{.*}}(%[[TRUE]])
+// CHECK: simulation.display {{.*}}(%[[FALSE]])
+// CHECK: simulation.display {{.*}}(%[[TRUE]])
 // CHECK-NOT: !obelisk.unbounded

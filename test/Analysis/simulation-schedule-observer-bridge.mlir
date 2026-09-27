@@ -11,7 +11,7 @@
 // CHECK-NOT: bb1
 
 module {
-  obelisk_sim.design @observer_bridge attributes {
+  simulation.design @observer_bridge attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -34,10 +34,10 @@ module {
         #schedule.region<kind = postponed, groups = []>
       ]>
   } {
-    obelisk_sim.code_unit.decl 1 in 0 observer hierarchy "observer"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @observer(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.code_unit.decl 1 in 0 observer hierarchy "observer"
+    simulation.scope.decl 0
+    simulation.func @observer(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         -> i1
         attributes {entry_kind = 14 : i32, code_unit_id = 1 : i64} {
       cf.br ^bridge
@@ -45,7 +45,7 @@ module {
       cf.br ^body {schedule.observer_capture_bridge}
     ^body:
       %true = arith.constant true
-      obelisk_sim.return %true : i1
+      simulation.return %true : i1
     }
   }
 }

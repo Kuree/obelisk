@@ -127,7 +127,7 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[PREFIX:.*]] = obelisk_sim.string.literal "N="
-// CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = obelisk_sim.plusarg.value %{{.*}}, %[[PREFIX]]
-// CHECK: obelisk_sim.plusarg.parse_logic %[[TAIL]] {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[PREFIX:.*]] = simulation.string.literal "N="
+// CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = simulation.plusarg.value %{{.*}}, %[[PREFIX]]
+// CHECK: simulation.plusarg.parse_logic %[[TAIL]] {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>

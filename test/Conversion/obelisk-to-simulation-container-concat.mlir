@@ -134,21 +134,21 @@ module {
 
 // Scalar elements determine the dynamic-array allocation size and are written
 // in source order.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[ARRAY_SIZE:.*]] = arith.constant 4 : i64
-// CHECK: %[[ARRAY:.*]] = obelisk_sim.container.create %[[ARRAY_SIZE]]
-// CHECK-COUNT-4: obelisk_sim.container.write %[[ARRAY]]
+// CHECK: %[[ARRAY:.*]] = simulation.container.create %[[ARRAY_SIZE]]
+// CHECK-COUNT-4: simulation.container.write %[[ARRAY]]
 
 // A container operand is copied element-by-element before the following scalar
 // is appended to the new queue.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[SOURCE_SIZE:.*]] = obelisk_sim.container.size %[[SOURCE]]
-// CHECK: %[[QUEUE:.*]] = obelisk_sim.container.create
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: %[[SOURCE_SIZE:.*]] = simulation.container.size %[[SOURCE]]
+// CHECK: %[[QUEUE:.*]] = simulation.container.create
 // CHECK: cf.cond_br
-// CHECK: %[[ELEMENT:.*]] = obelisk_sim.container.read %[[SOURCE]]
-// CHECK: obelisk_sim.container.write %[[QUEUE]]
+// CHECK: %[[ELEMENT:.*]] = simulation.container.read %[[SOURCE]]
+// CHECK: simulation.container.write %[[QUEUE]]
 // CHECK: cf.br
-// CHECK: obelisk_sim.container.write %[[QUEUE]]
-// CHECK: %[[CLONE:.*]] = obelisk_sim.container.clone %[[QUEUE]]
-// CHECK: obelisk_sim.ref.store %[[CLONE]]
+// CHECK: simulation.container.write %[[QUEUE]]
+// CHECK: %[[CLONE:.*]] = simulation.container.clone %[[QUEUE]]
+// CHECK: simulation.ref.store %[[CLONE]]

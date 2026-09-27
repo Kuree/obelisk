@@ -31,9 +31,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.net.pass.decl 0
+// CHECK: simulation.net.pass.decl 0
 // CHECK-SAME: controlled = true
 // CHECK-SAME: delayed = true
 // CHECK-SAME: directed = true
-// CHECK: obelisk_sim.net.mos.drive_delayed 0 =
+// CHECK: simulation.net.mos.drive_delayed 0 =
 // CHECK-SAME: after[

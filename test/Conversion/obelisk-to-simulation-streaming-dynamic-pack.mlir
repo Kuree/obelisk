@@ -8,77 +8,77 @@
 // container, reordered in slice-sized blocks, and grouped into the smallest
 // number of destination elements. This keeps the intermediate stream's length
 // and state domain explicit in executable MLIR.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[STREAM:.*]] = obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.queue<!obelisk_sim.logic<1>, 0>
-// CHECK: obelisk_sim.bits.dyn_extract
-// CHECK: obelisk_sim.container.write %[[STREAM]],
-// CHECK: %[[DATA:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<i8>> -> !obelisk_sim.dynamic_array<i8>
-// CHECK: %[[SLICE:.*]] = obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.dynamic_array<i8>
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[DATA]]
-// CHECK: obelisk_sim.container.read %[[DATA]]
-// CHECK: obelisk_sim.container.write %[[SLICE]],
-// CHECK: obelisk_sim.container.size %[[SLICE]]
-// CHECK: obelisk_sim.container.read %[[SLICE]]
-// CHECK: %[[NESTED:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>> -> !obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>
-// CHECK: obelisk_sim.container.size %[[NESTED]]
-// CHECK: obelisk_sim.bits.dyn_extract
-// CHECK: obelisk_sim.container.write %[[STREAM]],
-// CHECK: %[[INNER:.*]] = obelisk_sim.container.read %[[NESTED]]
-// CHECK: obelisk_sim.container.size %[[INNER]]
-// CHECK: obelisk_sim.bits.dyn_extract
-// CHECK: obelisk_sim.container.write %[[STREAM]],
-// CHECK: obelisk_sim.logic.dyn_extract
-// CHECK: obelisk_sim.container.write %[[STREAM]],
-// CHECK: %[[STREAM_WIDTH:.*]] = obelisk_sim.container.size %[[STREAM]]
-// CHECK: %[[REORDERED:.*]] = obelisk_sim.container.create
-// CHECK: %[[REORDER_WIDTH:.*]] = obelisk_sim.container.size %[[STREAM]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[STREAM:.*]] = simulation.container.create
+// CHECK-SAME: -> !simulation.queue<!simulation.logic<1>, 0>
+// CHECK: simulation.bits.dyn_extract
+// CHECK: simulation.container.write %[[STREAM]],
+// CHECK: %[[DATA:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.dynamic_array<i8>> -> !simulation.dynamic_array<i8>
+// CHECK: %[[SLICE:.*]] = simulation.container.create
+// CHECK-SAME: -> !simulation.dynamic_array<i8>
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[DATA]]
+// CHECK: simulation.container.read %[[DATA]]
+// CHECK: simulation.container.write %[[SLICE]],
+// CHECK: simulation.container.size %[[SLICE]]
+// CHECK: simulation.container.read %[[SLICE]]
+// CHECK: %[[NESTED:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.dynamic_array<!simulation.dynamic_array<i8>>> -> !simulation.dynamic_array<!simulation.dynamic_array<i8>>
+// CHECK: simulation.container.size %[[NESTED]]
+// CHECK: simulation.bits.dyn_extract
+// CHECK: simulation.container.write %[[STREAM]],
+// CHECK: %[[INNER:.*]] = simulation.container.read %[[NESTED]]
+// CHECK: simulation.container.size %[[INNER]]
+// CHECK: simulation.bits.dyn_extract
+// CHECK: simulation.container.write %[[STREAM]],
+// CHECK: simulation.logic.dyn_extract
+// CHECK: simulation.container.write %[[STREAM]],
+// CHECK: %[[STREAM_WIDTH:.*]] = simulation.container.size %[[STREAM]]
+// CHECK: %[[REORDERED:.*]] = simulation.container.create
+// CHECK: %[[REORDER_WIDTH:.*]] = simulation.container.size %[[STREAM]]
 // CHECK: arith.divui %[[REORDER_WIDTH]],
-// CHECK: obelisk_sim.container.read %[[STREAM]]
-// CHECK: obelisk_sim.container.write %[[REORDERED]],
+// CHECK: simulation.container.read %[[STREAM]]
+// CHECK: simulation.container.write %[[REORDERED]],
 // CHECK: arith.divui %[[STREAM_WIDTH]],
 // CHECK: arith.remui %[[STREAM_WIDTH]],
 // CHECK: arith.cmpi ne
-// CHECK: %[[PACKET:.*]] = obelisk_sim.container.create
-// CHECK: %[[PACKET_COPY:.*]] = obelisk_sim.container.clone %[[PACKET]]
-// CHECK: obelisk_sim.ref.store %[[PACKET_COPY]]
+// CHECK: %[[PACKET:.*]] = simulation.container.create
+// CHECK: %[[PACKET_COPY:.*]] = simulation.container.clone %[[PACKET]]
+// CHECK: simulation.ref.store %[[PACKET_COPY]]
 // A fixed-width stream assigned to a queue takes the same dynamic-target path.
-// CHECK: %[[PAD_STREAM:.*]] = obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.queue<!obelisk_sim.logic<1>, 0>
-// CHECK: obelisk_sim.container.write %[[PACKET]],
-// CHECK: obelisk_sim.logic.dyn_extract
-// CHECK: obelisk_sim.container.write %[[PAD_STREAM]],
-// CHECK: %[[PAD_WIDTH:.*]] = obelisk_sim.container.size %[[PAD_STREAM]]
-// CHECK: %[[PAD_PACKET:.*]] = obelisk_sim.container.create
-// CHECK: %[[PAD_COPY:.*]] = obelisk_sim.container.clone %[[PAD_PACKET]]
-// CHECK: obelisk_sim.ref.store %[[PAD_COPY]]
-// CHECK: obelisk_sim.container.read %[[PAD_STREAM]]
-// CHECK: obelisk_sim.container.write %[[PAD_PACKET]],
+// CHECK: %[[PAD_STREAM:.*]] = simulation.container.create
+// CHECK-SAME: -> !simulation.queue<!simulation.logic<1>, 0>
+// CHECK: simulation.container.write %[[PACKET]],
+// CHECK: simulation.logic.dyn_extract
+// CHECK: simulation.container.write %[[PAD_STREAM]],
+// CHECK: %[[PAD_WIDTH:.*]] = simulation.container.size %[[PAD_STREAM]]
+// CHECK: %[[PAD_PACKET:.*]] = simulation.container.create
+// CHECK: %[[PAD_COPY:.*]] = simulation.container.clone %[[PAD_PACKET]]
+// CHECK: simulation.ref.store %[[PAD_COPY]]
+// CHECK: simulation.container.read %[[PAD_STREAM]]
+// CHECK: simulation.container.write %[[PAD_PACKET]],
 // A one-bit destination reuses the converted bit directly; an equal-width
 // arith.extui is invalid and must never be constructed.
-// CHECK: %[[BIT_PACKET:.*]] = obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.queue<i1, 0>
-// CHECK: %[[PACKED_BIT:.*]] = obelisk_sim.logic.to_bits
+// CHECK: %[[BIT_PACKET:.*]] = simulation.container.create
+// CHECK-SAME: -> !simulation.queue<i1, 0>
+// CHECK: %[[PACKED_BIT:.*]] = simulation.logic.to_bits
 // CHECK-NOT: arith.extui {{.*}} : i1 to i1
-// CHECK: obelisk_sim.container.write %[[BIT_PACKET]], {{.*}}, %[[PACKED_BIT]]
+// CHECK: simulation.container.write %[[BIT_PACKET]], {{.*}}, %[[PACKED_BIT]]
 // A runtime-sized stream may target a fixed packed value when it fits. The
 // conversion pads on the right and diagnoses an oversized stream at runtime.
-// CHECK: %[[FIXED_STREAM:.*]] = obelisk_sim.container.create
-// CHECK: %[[FIXED_WIDTH:.*]] = obelisk_sim.container.size %[[FIXED_STREAM]]
+// CHECK: %[[FIXED_STREAM:.*]] = simulation.container.create
+// CHECK: %[[FIXED_WIDTH:.*]] = simulation.container.size %[[FIXED_STREAM]]
 // CHECK: %[[FITS:.*]] = arith.cmpi ule, %[[FIXED_WIDTH]], {{.*}} : i64
 // CHECK: cf.cond_br %[[FITS]]
-// CHECK: obelisk_sim.container.read %[[FIXED_STREAM]]
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.fatal
+// CHECK: simulation.container.read %[[FIXED_STREAM]]
+// CHECK: simulation.ref.store
+// CHECK: simulation.fatal
 // Strings participate recursively as dynamic arrays of bytes. A string target
 // greedily receives the runtime stream in eight-bit elements.
-// CHECK: obelisk_sim.container.read {{.*}} : {{.*}} -> !obelisk_sim.string
-// CHECK: obelisk_sim.string.length
-// CHECK: obelisk_sim.string.getc
-// CHECK: obelisk_sim.ref.store
-// CHECK: %[[JOINED_BYTE:.*]] = obelisk_sim.string.from_packed
-// CHECK: obelisk_sim.string.concat {{.*}}%[[JOINED_BYTE]]
+// CHECK: simulation.container.read {{.*}} : {{.*}} -> !simulation.string
+// CHECK: simulation.string.length
+// CHECK: simulation.string.getc
+// CHECK: simulation.ref.store
+// CHECK: %[[JOINED_BYTE:.*]] = simulation.string.from_packed
+// CHECK: simulation.string.concat {{.*}}%[[JOINED_BYTE]]
 // CHECK-NOT: obelisk.sv.
 
 module attributes {

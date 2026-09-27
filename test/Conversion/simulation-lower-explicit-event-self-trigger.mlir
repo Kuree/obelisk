@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 9.2.2: an always procedure repeats continuously. Distinguish
 // its outer event control from nested procedural controls so an event enabled
@@ -7,35 +7,35 @@
 !logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
 
 module {
-  obelisk_sim.design @explicit_event_self_trigger {
-    obelisk_sim.code_unit.decl 9903001 in 0 always hierarchy "top.event_loop"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
+  simulation.design @explicit_event_self_trigger {
+    simulation.code_unit.decl 9903001 in 0 always hierarchy "top.event_loop"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
         hierarchy "top.a"
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<1> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<1> design
         hierarchy "top.c"
 
-    // CHECK-LABEL: obelisk_sim.func @event_loop
-    // CHECK: obelisk_sim.suspend.any
+    // CHECK-LABEL: simulation.func @event_loop
+    // CHECK: simulation.suspend.any
     // CHECK-SAME: {schedule.procedural_event_wait, schedule.repeating_always_wait}
-    obelisk_sim.func @event_loop(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %a: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %c: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @event_loop(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %a: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %c: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {
           entry_kind = 3 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.a", argument = 1,
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.a", argument = 1,
                 kind = direct, copyOut = false>,
-            #obelisk_sim.argument_binding<path = "top.c", argument = 2,
+            #simulation.argument_binding<path = "top.c", argument = 2,
                 kind = direct, copyOut = false>
           ],
-          obelisk_sim.delay_quantum = 1 : i64,
-          obelisk_sim.delay_scale = 1 : i64,
+          simulation.delay_quantum = 1 : i64,
+          simulation.delay_scale = 1 : i64,
           code_unit_id = 9903001 : i64
         } {
       obelisk.sv.statement.timed attributes {node_id = 1 : i64} {
@@ -74,7 +74,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

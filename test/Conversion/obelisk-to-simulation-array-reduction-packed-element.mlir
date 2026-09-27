@@ -94,11 +94,11 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[IDENTITY:.*]] = obelisk_sim.logic.constant 0 : i4, 0 : i4 : !obelisk_sim.logic<4>
-// CHECK: %[[E0:.*]] = obelisk_sim.packed.flatten %{{.*}} -> !obelisk_sim.logic<4>
-// CHECK: %[[ACC0:.*]] = obelisk_sim.logic.binary or %[[E0]], %[[IDENTITY]] : !obelisk_sim.logic<4>
-// CHECK: %[[E1:.*]] = obelisk_sim.packed.flatten %{{.*}} -> !obelisk_sim.logic<4>
-// CHECK: %[[ACC1:.*]] = obelisk_sim.logic.binary or %[[ACC0]], %[[E1]] : !obelisk_sim.logic<4>
-// CHECK: %[[RESULT:.*]] = obelisk_sim.packed.unflatten %[[ACC1]] : (!obelisk_sim.logic<4>) -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.ref.store %[[RESULT]] to %arg2
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[IDENTITY:.*]] = simulation.logic.constant 0 : i4, 0 : i4 : !simulation.logic<4>
+// CHECK: %[[E0:.*]] = simulation.packed.flatten %{{.*}} -> !simulation.logic<4>
+// CHECK: %[[ACC0:.*]] = simulation.logic.binary or %[[E0]], %[[IDENTITY]] : !simulation.logic<4>
+// CHECK: %[[E1:.*]] = simulation.packed.flatten %{{.*}} -> !simulation.logic<4>
+// CHECK: %[[ACC1:.*]] = simulation.logic.binary or %[[ACC0]], %[[E1]] : !simulation.logic<4>
+// CHECK: %[[RESULT:.*]] = simulation.packed.unflatten %[[ACC1]] : (!simulation.logic<4>) -> !simulation.packed_array<3 : 0 x !simulation.logic<1>>
+// CHECK: simulation.ref.store %[[RESULT]] to %arg2

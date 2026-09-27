@@ -56,16 +56,16 @@ module {
   }
 }
 
-// CHECK: %[[DYNAMIC:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<i8>>
-// CHECK: %[[DYNAMIC_COPY:.*]] = obelisk_sim.container.clone %[[DYNAMIC]]
-// CHECK: obelisk_sim.ref.store %[[DYNAMIC_COPY]]
-// CHECK: %[[DYNAMIC_SIZE:.*]] = obelisk_sim.container.size %[[DYNAMIC_COPY]]
-// CHECK: obelisk_sim.file.read_packed {{.*}} -> (i8, i32)
-// CHECK: obelisk_sim.container.write %[[DYNAMIC_COPY]],
-// CHECK: %[[QUEUE:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.queue
-// CHECK: %[[QUEUE_COPY:.*]] = obelisk_sim.container.clone %[[QUEUE]]
-// CHECK: obelisk_sim.ref.store %[[QUEUE_COPY]]
-// CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size %[[QUEUE_COPY]]
-// CHECK: obelisk_sim.file.read_packed {{.*}} -> (i12, i32)
-// CHECK: obelisk_sim.container.write %[[QUEUE_COPY]],
-// CHECK-NOT: obelisk_sim.container.create
+// CHECK: %[[DYNAMIC:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.dynamic_array<i8>>
+// CHECK: %[[DYNAMIC_COPY:.*]] = simulation.container.clone %[[DYNAMIC]]
+// CHECK: simulation.ref.store %[[DYNAMIC_COPY]]
+// CHECK: %[[DYNAMIC_SIZE:.*]] = simulation.container.size %[[DYNAMIC_COPY]]
+// CHECK: simulation.file.read_packed {{.*}} -> (i8, i32)
+// CHECK: simulation.container.write %[[DYNAMIC_COPY]],
+// CHECK: %[[QUEUE:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.queue
+// CHECK: %[[QUEUE_COPY:.*]] = simulation.container.clone %[[QUEUE]]
+// CHECK: simulation.ref.store %[[QUEUE_COPY]]
+// CHECK: %[[QUEUE_SIZE:.*]] = simulation.container.size %[[QUEUE_COPY]]
+// CHECK: simulation.file.read_packed {{.*}} -> (i12, i32)
+// CHECK: simulation.container.write %[[QUEUE_COPY]],
+// CHECK-NOT: simulation.container.create

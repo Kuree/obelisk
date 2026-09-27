@@ -196,7 +196,7 @@ static DescriptorProvenanceMap deriveDescriptorProvenanceImpl(
     // suspension registers the exact driver handles and avoids confusing a
     // raw-driver transition with publication of the resolved net value.
     if (isa<sim::DriverType>(argument.getType()) &&
-        function.getArgAttr(index, "obelisk_sim.user_net_driver")) {
+        function.getArgAttr(index, "simulation.user_net_driver")) {
       provenanceMap[argument] = {};
       continue;
     }
@@ -420,7 +420,7 @@ DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function) {
 }
 
 uint64_t getSimulationOperationCost(Operation &operation) {
-  if (operation.hasAttr("obelisk_sim.rematerialized") &&
+  if (operation.hasAttr("simulation.rematerialized") &&
       operation.hasTrait<OpTrait::ConstantLike>())
     return 0;
   if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,

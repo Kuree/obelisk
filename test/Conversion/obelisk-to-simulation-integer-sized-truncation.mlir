@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 5.7.1: when a based literal's digit value is wider than its
 // explicit size, discard high bits. Apply that declared size before a consumer
@@ -15,11 +15,11 @@
 !signed_logic8 = !obelisk.integral<8, true, true, 7 : 0, logic>
 
 module {
-  obelisk_sim.design @integer_sized_truncation {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.process"
+  simulation.design @integer_sized_truncation {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.process"
 
-    // CHECK-LABEL: obelisk_sim.func @process
+    // CHECK-LABEL: simulation.func @process
     // CHECK: arith.constant -1 : i4
     // CHECK: arith.constant -1 : i5
     // CHECK: arith.constant 3 : i3
@@ -34,19 +34,19 @@ module {
     // A wider consumer extends from the declared sign bit.
     // CHECK: arith.constant 8 : i8
     // CHECK: arith.constant -8 : i8
-    // CHECK: obelisk_sim.logic.constant 0 : i8, 15 : i8
-    // CHECK: obelisk_sim.logic.constant 0 : i8, -1 : i8
+    // CHECK: simulation.logic.constant 0 : i8, 15 : i8
+    // CHECK: simulation.logic.constant 0 : i8, -1 : i8
     // A huge declared width must not cause a proportional allocation.
     // CHECK: arith.constant 31 : i64
-    // CHECK: %[[FIFTEEN:.*]] = obelisk_sim.time.constant 15
-    // CHECK: obelisk_sim.suspend.delay %[[FIFTEEN]]
-    // CHECK: %[[ZERO:.*]] = obelisk_sim.time.constant 0
-    // CHECK: obelisk_sim.suspend.delay %[[ZERO]]
-    // CHECK: obelisk_sim.return
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    // CHECK: %[[FIFTEEN:.*]] = simulation.time.constant 15
+    // CHECK: simulation.suspend.delay %[[FIFTEEN]]
+    // CHECK: %[[ZERO:.*]] = simulation.time.constant 0
+    // CHECK: simulation.suspend.delay %[[ZERO]]
+    // CHECK: simulation.return
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64,
-                    obelisk_sim.delay_scale = 1 : i64} {
+                    simulation.delay_scale = 1 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
         obelisk.sv.expression.integer_literal attributes {
             constant_value = "4'h1f", node_id = 2 : i64,
@@ -157,7 +157,7 @@ module {
         obelisk.sv.statement.empty attributes {node_id = 22 : i64} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
 // RUN:   | FileCheck %s --check-prefix=SHIFT \
-// RUN:       --implicit-check-not=!obelisk_sim.logic \
+// RUN:       --implicit-check-not=!simulation.logic \
 // RUN:       --implicit-check-not=unrealized_conversion_cast
 // RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
 // RUN:   | FileCheck %s --check-prefix=OR
@@ -14,9 +14,9 @@
 // OR-LABEL: func.func @replicate_1024(
 // OR-COUNT-22: arith.ori
 // OR: return
-func.func @replicate_1024(%input: !obelisk_sim.logic<1>)
-    -> !obelisk_sim.logic<1024> {
-  %result = obelisk_sim.logic.replicate %input times 1024
-      : !obelisk_sim.logic<1> -> !obelisk_sim.logic<1024>
-  return %result : !obelisk_sim.logic<1024>
+func.func @replicate_1024(%input: !simulation.logic<1>)
+    -> !simulation.logic<1024> {
+  %result = simulation.logic.replicate %input times 1024
+      : !simulation.logic<1> -> !simulation.logic<1024>
+  return %result : !simulation.logic<1024>
 }

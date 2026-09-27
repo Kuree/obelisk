@@ -38,13 +38,13 @@ module {
 }
 
 // CHECK: ^{{bb[0-9]+}}(%[[TOP:.*]]: i64, {{.*}}, %[[COUNT:.*]]: i64, %[[SUBWORD:.*]]: i64, {{.*}}: i1):
-// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[FILE_ADDRESS:.*]] = obelisk_sim.file.readmem_token {{.*}} {radix = 16 : i32}
+// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[FILE_ADDRESS:.*]] = simulation.file.readmem_token {{.*}} {radix = #simulation.radix<hex>}
 // CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[FILE_ADDRESS]], {{.*}}, %[[COUNT]], {{.*}} : i64, i1, i64, i64, i1),
-// CHECK: %[[OUTER_REF:.*]] = obelisk_sim.ref.array_element {{.*}}[%[[TOP]]]
+// CHECK: %[[OUTER_REF:.*]] = simulation.ref.array_element {{.*}}[%[[TOP]]]
 // CHECK: %[[INNER_ORDINAL:.*]] = arith.remui %[[SUBWORD]],
 // CHECK: %[[INNER_INDEX:.*]] = arith.addi %[[INNER_ORDINAL]], {{.*}} : i64
-// CHECK: %[[INNER_REF:.*]] = obelisk_sim.ref.array_element %[[OUTER_REF]][%[[INNER_INDEX]]]
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[INNER_REF]]
+// CHECK: %[[INNER_REF:.*]] = simulation.ref.array_element %[[OUTER_REF]][%[[INNER_INDEX]]]
+// CHECK: simulation.ref.store {{.*}} to %[[INNER_REF]]
 // CHECK: %[[NEXT_SUBWORD:.*]] = arith.addi %[[SUBWORD]],
 // CHECK: %[[ROW_COMPLETE:.*]] = arith.cmpi eq, %[[NEXT_SUBWORD]],
 // CHECK: arith.select %[[ROW_COMPLETE]], {{.*}}, %[[TOP]] : i64

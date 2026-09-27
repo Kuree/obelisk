@@ -79,88 +79,88 @@ module {
 // IEEE 1800-2023 18.6.2 additionally invokes the enabled, non-null child's
 // lifecycle hooks. The child pre hook precedes sampling its modes and values;
 // the child post hook follows a successful commit and is absent on failure.
-// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s3_Leaf_field_0 {{.*}}obelisk_sim.random_mode_index = 0 : i64{{.*}}obelisk_sim.random_variable_kind = 1 : i32{{.*}}obelisk_sim.random_variable_signed = true
-// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s6_Parent_field_0 {{.*}}obelisk_sim.random_mode_index = 0 : i64{{.*}}obelisk_sim.random_variable_kind = 1 : i32{{.*}}obelisk_sim.random_variable_signed = true
-// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s6_Parent_field_1 {{.*}}obelisk_sim.random_mode_index = 1 : i64{{.*}}obelisk_sim.random_object_edge
-// CHECK-DAG: obelisk_sim.class.field @__obelisk_class_s6_Parent_field_2 {{.*}}obelisk_sim.random_mode_index = 2 : i64{{.*}}obelisk_sim.random_object_edge
-// CHECK-DAG: obelisk_sim.func private @[[LEAF_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::pre_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "Leaf::post_randomize"
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: %[[LEAF_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_1]
-// CHECK: %[[LEAF2_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_2]
-// CHECK: %[[HOOK_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[HOOK_NULL:.*]] = obelisk_sim.managed.is_null %[[HOOK_LEAF]]
+// CHECK-DAG: simulation.class.field @__obelisk_class_s3_Leaf_field_0 {{.*}}simulation.random_mode_index = 0 : i64{{.*}}simulation.random_variable_kind = 1 : i32{{.*}}simulation.random_variable_signed = true
+// CHECK-DAG: simulation.class.field @__obelisk_class_s6_Parent_field_0 {{.*}}simulation.random_mode_index = 0 : i64{{.*}}simulation.random_variable_kind = 1 : i32{{.*}}simulation.random_variable_signed = true
+// CHECK-DAG: simulation.class.field @__obelisk_class_s6_Parent_field_1 {{.*}}simulation.random_mode_index = 1 : i64{{.*}}simulation.random_object_edge
+// CHECK-DAG: simulation.class.field @__obelisk_class_s6_Parent_field_2 {{.*}}simulation.random_mode_index = 2 : i64{{.*}}simulation.random_object_edge
+// CHECK-DAG: simulation.func private @[[LEAF_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Leaf::pre_randomize"
+// CHECK-DAG: simulation.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Leaf::post_randomize"
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK: %[[LEAF_REF:.*]] = simulation.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_1]
+// CHECK: %[[LEAF2_REF:.*]] = simulation.class.field_ref {{.*}}[@__obelisk_class_s6_Parent_field_2]
+// CHECK: %[[HOOK_LEAF:.*]] = simulation.managed.load %[[LEAF_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[HOOK_NULL:.*]] = simulation.managed.is_null %[[HOOK_LEAF]]
 // CHECK: %[[HOOK_NONNULL:.*]] = arith.xori %[[HOOK_NULL]], {{%true[^ ]*}}
 // CHECK: %[[HOOK_ENABLED:.*]] = arith.andi {{.*}}, %[[HOOK_NONNULL]]
 // CHECK: cf.cond_br %[[HOOK_ENABLED]], ^[[PRE:bb[0-9]+]], ^[[AFTER_PRE:bb[0-9]+]]
 // CHECK: ^[[PRE]]:
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[LEAF_PRE]] %[[HOOK_LEAF]]({{.*}})
+// CHECK-NEXT: simulation.class.direct_call @[[LEAF_PRE]] %[[HOOK_LEAF]]({{.*}})
 // CHECK-NEXT: cf.br ^[[AFTER_PRE]]
 // CHECK: ^[[AFTER_PRE]]:
-// CHECK: %[[MODE_LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[MODE_NULL:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF]]
+// CHECK: %[[MODE_LEAF:.*]] = simulation.managed.load %[[LEAF_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[MODE_NULL:.*]] = simulation.managed.is_null %[[MODE_LEAF]]
 // CHECK: %[[MODE_DISABLED:.*]] = arith.cmpi ne, {{.*}}, {{.*}} : i64
 // CHECK: %[[MODE_INACTIVE:.*]] = arith.ori %[[MODE_NULL]], %[[MODE_DISABLED]] : i1
 // CHECK: cf.cond_br %[[MODE_INACTIVE]]
-// CHECK: obelisk_sim.class.field_ref %[[MODE_LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_constraint_mode]
+// CHECK: simulation.class.field_ref %[[MODE_LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_constraint_mode]
 // CHECK: ^{{bb[0-9]+}}(%{{.*}}: i64, %[[INACTIVE0:.*]]: i1):
 // CHECK: %[[NULL_BIT0:.*]] = arith.extui %[[INACTIVE0]] : i1 to i64
-// CHECK: %[[MODE_LEAF2:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[MODE_NULL2:.*]] = obelisk_sim.managed.is_null %[[MODE_LEAF2]]
+// CHECK: %[[MODE_LEAF2:.*]] = simulation.managed.load %[[LEAF2_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[MODE_NULL2:.*]] = simulation.managed.is_null %[[MODE_LEAF2]]
 // CHECK: %[[MODE_DISABLED2:.*]] = arith.cmpi ne, {{.*}}, {{.*}} : i64
 // CHECK: %[[MODE_INACTIVE2:.*]] = arith.ori %[[MODE_NULL2]], %[[MODE_DISABLED2]] : i1
 // CHECK: cf.cond_br %[[MODE_INACTIVE2]]
 // CHECK: ^{{bb[0-9]+}}(%{{.*}}: i64, %[[INACTIVE1:.*]]: i1):
 // CHECK: %[[NULL_BIT1:.*]] = arith.select %[[INACTIVE1]], {{.*}}, {{.*}} : i64
 // CHECK: %[[NULL_MASK:.*]] = arith.ori %[[NULL_BIT0]], %[[NULL_BIT1]] : i64
-// CHECK: %[[STATIC_MODE_REF:.*]] = obelisk_sim.context.storage {{.*}} : !obelisk_sim.ref<i64>
-// CHECK: %[[STATIC_MODE:.*]] = obelisk_sim.ref.load %[[STATIC_MODE_REF]]
+// CHECK: %[[STATIC_MODE_REF:.*]] = simulation.context.storage {{.*}} : !simulation.ref<i64>
+// CHECK: %[[STATIC_MODE:.*]] = simulation.ref.load %[[STATIC_MODE_REF]]
 // CHECK: %[[STATIC_DISABLED:.*]] = arith.cmpi ne, %[[STATIC_MODE]], {{.*}} : i64
 // CHECK: %[[STATIC_BIT:.*]] = arith.select %[[STATIC_DISABLED]], {{.*}}, {{.*}} : i64
 // CHECK: %[[STATIC_COMPOSED:.*]] = arith.ori {{.*}}, %[[STATIC_BIT]] : i64
 // CHECK-NEXT: %[[NULL_GATED_MODE:.*]] = arith.ori %[[STATIC_COMPOSED]], %[[NULL_MASK]] : i64
-// CHECK: %[[LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[LEAF]]
+// CHECK: %[[LEAF:.*]] = simulation.managed.load %[[LEAF_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[NULL:.*]] = simulation.managed.is_null %[[LEAF]]
 // CHECK: cf.cond_br %[[NULL]], ^[[MERGE:bb[0-9]+]]({{.*}}%false{{.*}}), ^[[OBJECT_BLOCK:bb[0-9]+]]
 // CHECK: ^[[OBJECT_BLOCK]]:
-// CHECK: %[[X_REF:.*]] = obelisk_sim.class.field_ref %[[LEAF]][@__obelisk_class_s3_Leaf_field_0]
-// CHECK: obelisk_sim.managed.load %[[X_REF]]
-// CHECK: obelisk_sim.class.field_ref %[[LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_rand_mode]
+// CHECK: %[[X_REF:.*]] = simulation.class.field_ref %[[LEAF]][@__obelisk_class_s3_Leaf_field_0]
+// CHECK: simulation.managed.load %[[X_REF]]
+// CHECK: simulation.class.field_ref %[[LEAF]][@__obelisk_class_s3_Leaf_field___obelisk_rand_mode]
 // CHECK: cf.br ^[[MERGE]]
 // CHECK: ^[[MERGE]]({{.*}}, %[[CHILD_ENABLED:.*]]: i1, {{.*}}: i64):
 // CHECK: arith.andi {{.*}}, %[[CHILD_ENABLED]] : i1
-// CHECK: %[[STATE_CHILD:.*]] = obelisk_sim.managed.load %[[LEAF_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[STATE_NULL:.*]] = obelisk_sim.managed.is_null %[[STATE_CHILD]]
+// CHECK: %[[STATE_CHILD:.*]] = simulation.managed.load %[[LEAF_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[STATE_NULL:.*]] = simulation.managed.is_null %[[STATE_CHILD]]
 // CHECK: cf.cond_br %[[STATE_NULL]], ^[[STATE_RESUME:bb[0-9]+]]({{.*}} : i32), ^[[STATE_PRESENT:bb[0-9]+]]
 // CHECK: ^[[STATE_PRESENT]]:
-// CHECK: %[[LIMIT_REF:.*]] = obelisk_sim.class.field_ref %[[STATE_CHILD]][@__obelisk_class_s3_Leaf_field_1]
-// CHECK: %[[LIMIT:.*]] = obelisk_sim.managed.load %[[LIMIT_REF]]
+// CHECK: %[[LIMIT_REF:.*]] = simulation.class.field_ref %[[STATE_CHILD]][@__obelisk_class_s3_Leaf_field_1]
+// CHECK: %[[LIMIT:.*]] = simulation.managed.load %[[LIMIT_REF]]
 // CHECK: cf.br ^[[STATE_RESUME]](%[[LIMIT]] : i32)
 // CHECK: ^[[STATE_RESUME]](%[[CAPTURE:.*]]: i32):
 // CHECK: %[[EXTENDED_CAPTURE:.*]] = arith.extui %[[CAPTURE]] : i32 to i64
-// CHECK: %[[STATE2_CHILD:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[STATE2_NULL:.*]] = obelisk_sim.managed.is_null %[[STATE2_CHILD]]
+// CHECK: %[[STATE2_CHILD:.*]] = simulation.managed.load %[[LEAF2_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[STATE2_NULL:.*]] = simulation.managed.is_null %[[STATE2_CHILD]]
 // CHECK: cf.cond_br %[[STATE2_NULL]], ^[[STATE2_RESUME:bb[0-9]+]]({{.*}} : i32), ^[[STATE2_PRESENT:bb[0-9]+]]
 // CHECK: ^[[STATE2_PRESENT]]:
-// CHECK: %[[LIMIT2_REF:.*]] = obelisk_sim.class.field_ref %[[STATE2_CHILD]][@__obelisk_class_s3_Leaf_field_1]
-// CHECK: %[[LIMIT2:.*]] = obelisk_sim.managed.load %[[LIMIT2_REF]]
+// CHECK: %[[LIMIT2_REF:.*]] = simulation.class.field_ref %[[STATE2_CHILD]][@__obelisk_class_s3_Leaf_field_1]
+// CHECK: %[[LIMIT2:.*]] = simulation.managed.load %[[LIMIT2_REF]]
 // CHECK: cf.br ^[[STATE2_RESUME]](%[[LIMIT2]] : i32)
 // CHECK: ^[[STATE2_RESUME]](%[[CAPTURE2:.*]]: i32):
 // CHECK: %[[EXTENDED_CAPTURE2:.*]] = arith.extui %[[CAPTURE2]] : i32 to i64
-// CHECK: obelisk_sim.random.solve_wide {{.*}}, %[[EXTENDED_CAPTURE]], %[[EXTENDED_CAPTURE2]], {{.*}} {program =
+// CHECK: simulation.random.solve_wide {{.*}}, %[[EXTENDED_CAPTURE]], %[[EXTENDED_CAPTURE2]], {{.*}} {program =
 // CHECK: ^[[POST_DISPATCH:bb[0-9]+]]:  // 3 preds:
 // CHECK-NEXT: cf.cond_br %[[HOOK_ENABLED]], ^[[POST:bb[0-9]+]], ^[[AFTER_POST:bb[0-9]+]]
-// CHECK: %[[COMMIT_X_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_Leaf_field_0]
-// CHECK: obelisk_sim.managed.store {{.*}} to %[[COMMIT_X_REF]]
+// CHECK: %[[COMMIT_X_REF:.*]] = simulation.class.field_ref {{.*}}[@__obelisk_class_s3_Leaf_field_0]
+// CHECK: simulation.managed.store {{.*}} to %[[COMMIT_X_REF]]
 // CHECK-NEXT: cf.br ^[[NEXT_CHILD:bb[0-9]+]]
 // CHECK: ^[[NEXT_CHILD]]:
 // CHECK: cf.cond_br {{.*}}, ^[[STORE_CHILD2:bb[0-9]+]], ^[[POST_DISPATCH]]
 // CHECK: ^[[STORE_CHILD2]]:
-// CHECK: %[[COMMIT_LEAF2:.*]] = obelisk_sim.managed.load %[[LEAF2_REF]] : {{.*}} -> !obelisk_sim.class_handle<@__obelisk_class_s3_Leaf>
-// CHECK: %[[COMMIT_X2_REF:.*]] = obelisk_sim.class.field_ref %[[COMMIT_LEAF2]][@__obelisk_class_s3_Leaf_field_0]
-// CHECK: obelisk_sim.managed.store {{.*}} to %[[COMMIT_X2_REF]]
+// CHECK: %[[COMMIT_LEAF2:.*]] = simulation.managed.load %[[LEAF2_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
+// CHECK: %[[COMMIT_X2_REF:.*]] = simulation.class.field_ref %[[COMMIT_LEAF2]][@__obelisk_class_s3_Leaf_field_0]
+// CHECK: simulation.managed.store {{.*}} to %[[COMMIT_X2_REF]]
 // CHECK-NEXT: cf.br ^[[POST_DISPATCH]]
 // CHECK: ^[[POST]]:
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[LEAF_POST]] %[[HOOK_LEAF]]()
+// CHECK-NEXT: simulation.class.direct_call @[[LEAF_POST]] %[[HOOK_LEAF]]()
 // CHECK-NEXT: cf.br ^[[AFTER_POST]]
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[LEAF_REF]]
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[LEAF_REF]]

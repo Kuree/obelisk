@@ -274,38 +274,38 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.wire" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.wand" {{.*}}selector = 22 : i32, value = 2 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.wor" {{.*}}selector = 22 : i32, value = 3 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.tri" {{.*}}selector = 22 : i32, value = 4 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.tri0" {{.*}}selector = 22 : i32, value = 5 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.tri1" {{.*}}selector = 22 : i32, value = 6 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.trireg" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 7 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 2 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.trireg_default" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 7 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 4 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.trireg_large" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 7 : i32>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 16 : i32>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.triand" {{.*}}selector = 22 : i32, value = 8 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.trior" {{.*}}selector = 22 : i32, value = 9 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.supply1" {{.*}}selector = 22 : i32, value = 10 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.supply0" {{.*}}selector = 22 : i32, value = 11 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.uwire" {{.*}}selector = 22 : i32, value = 13 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalared" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 23 : i32, value = true>, #obelisk_sim.vpi_property<selector = 25 : i32, value = true>, #obelisk_sim.vpi_property<selector = 26 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>, #obelisk_sim.vpi_property<selector = 31 : i32, value = 32 : i32>, #obelisk_sim.vpi_property<selector = 32 : i32, value = 8 : i32>, #obelisk_sim.vpi_property<selector = 43 : i32, value = true>]>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.vectored" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>, #obelisk_sim.vpi_property<selector = 24 : i32, value = true>, #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>]>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[INTERCONNECT:[^ ]+]] {{.*}} type 534 {{.*}} hierarchy "net_properties.interconnect" {{.*}}index_dimension_flags = array<i64: 0, 1>, index_ranges = array<i64: 1, 0, -1, 0>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1][-1]" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic{{.*}}range = [7, 0]
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} parent @[[INTERCONNECT]] {{.*}} hierarchy "net_properties.interconnect[1][-1]" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net{{.*}}member_indices = array<i64: 1, -1>
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[1][0]" {{.*}}selector = 22 : i32, value = 16 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0][-1]" {{.*}}selector = 22 : i32, value = 16 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.interconnect[0][0]" {{.*}}selector = 22 : i32, value = 16 : i32
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} parent @[[INTERCONNECT]] {{.*}} hierarchy "net_properties.interconnect[0][0]" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net{{.*}}member_indices = array<i64: 0, 0>
-// CHECK-DAG: obelisk_sim.vpi_nettype.decl @[[WORDNT:[^ ]+]] {{.*}} hierarchy "$unit::word_nt"
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[WORDT:[^ ]+]] {{.*}} hierarchy "$unit::word_t"
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.scalar_interconnect" {{.*}}nettype = @[[WORDNT]]{{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic{{.*}}range = [3, 0]
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.scalar_interconnect" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.alias_interconnect" {{.*}}vpi_type = #obelisk_sim.vpi_type<kind = logic{{.*}}typedefAliases = [@[[WORDT]]]
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.alias_interconnect" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net
-// CHECK-DAG: obelisk_sim.vpi_typespec.decl @[[ANON:[^ ]+]] {{.*}} hierarchy "$unit::anon_state_t" {{.*}}source_type_identity = 77 : i64
-// CHECK-DAG: obelisk_sim.net.decl {{.*}} hierarchy "net_properties.enum_interconnect" {{.*}}obelisk_sim.vpi_source_type_identity = 77 : i64{{.*}}vpi_type = #obelisk_sim.vpi_type<kind = enum{{.*}}name = "anon_state_t"
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.enum_interconnect" {{.*}}backing = #obelisk_sim.vpi_backing<kind = net
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.wire" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 22 : i32, value = 1 : i32>, #simulation.vpi_property<selector = 27 : i32, value = 0 : i32>]>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.wand" {{.*}}selector = 22 : i32, value = 2 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.wor" {{.*}}selector = 22 : i32, value = 3 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.tri" {{.*}}selector = 22 : i32, value = 4 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.tri0" {{.*}}selector = 22 : i32, value = 5 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.tri1" {{.*}}selector = 22 : i32, value = 6 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.trireg" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 22 : i32, value = 7 : i32>, #simulation.vpi_property<selector = 27 : i32, value = 2 : i32>]>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.trireg_default" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 22 : i32, value = 7 : i32>, #simulation.vpi_property<selector = 27 : i32, value = 4 : i32>]>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.trireg_large" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 22 : i32, value = 7 : i32>, #simulation.vpi_property<selector = 27 : i32, value = 16 : i32>]>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.triand" {{.*}}selector = 22 : i32, value = 8 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.trior" {{.*}}selector = 22 : i32, value = 9 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.supply1" {{.*}}selector = 22 : i32, value = 10 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.supply0" {{.*}}selector = 22 : i32, value = 11 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.uwire" {{.*}}selector = 22 : i32, value = 13 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.scalared" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 22 : i32, value = 1 : i32>, #simulation.vpi_property<selector = 23 : i32, value = true>, #simulation.vpi_property<selector = 25 : i32, value = true>, #simulation.vpi_property<selector = 26 : i32, value = true>, #simulation.vpi_property<selector = 27 : i32, value = 0 : i32>, #simulation.vpi_property<selector = 31 : i32, value = 32 : i32>, #simulation.vpi_property<selector = 32 : i32, value = 8 : i32>, #simulation.vpi_property<selector = 43 : i32, value = true>]>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.vectored" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 22 : i32, value = 1 : i32>, #simulation.vpi_property<selector = 24 : i32, value = true>, #simulation.vpi_property<selector = 27 : i32, value = 0 : i32>]>
+// CHECK-DAG: simulation.vpi_object.anchor @[[INTERCONNECT:[^ ]+]] {{.*}} type 534 {{.*}} hierarchy "net_properties.interconnect" {{.*}}index_dimension_flags = array<i64: 0, 1>, index_ranges = array<i64: 1, 0, -1, 0>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.interconnect[1][-1]" {{.*}}vpi_type = #simulation.vpi_type<kind = logic{{.*}}range = [7, 0]
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 533 {{.*}} parent @[[INTERCONNECT]] {{.*}} hierarchy "net_properties.interconnect[1][-1]" {{.*}}backing = #simulation.vpi_backing<kind = net{{.*}}member_indices = array<i64: 1, -1>
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.interconnect[1][0]" {{.*}}selector = 22 : i32, value = 16 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.interconnect[0][-1]" {{.*}}selector = 22 : i32, value = 16 : i32
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.interconnect[0][0]" {{.*}}selector = 22 : i32, value = 16 : i32
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 533 {{.*}} parent @[[INTERCONNECT]] {{.*}} hierarchy "net_properties.interconnect[0][0]" {{.*}}backing = #simulation.vpi_backing<kind = net{{.*}}member_indices = array<i64: 0, 0>
+// CHECK-DAG: simulation.vpi_nettype.decl @[[WORDNT:[^ ]+]] {{.*}} hierarchy "$unit::word_nt"
+// CHECK-DAG: simulation.vpi_typespec.decl @[[WORDT:[^ ]+]] {{.*}} hierarchy "$unit::word_t"
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.scalar_interconnect" {{.*}}nettype = @[[WORDNT]]{{.*}}vpi_type = #simulation.vpi_type<kind = logic{{.*}}range = [3, 0]
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.scalar_interconnect" {{.*}}backing = #simulation.vpi_backing<kind = net
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.alias_interconnect" {{.*}}vpi_type = #simulation.vpi_type<kind = logic{{.*}}typedefAliases = [@[[WORDT]]]
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.alias_interconnect" {{.*}}backing = #simulation.vpi_backing<kind = net
+// CHECK-DAG: simulation.vpi_typespec.decl @[[ANON:[^ ]+]] {{.*}} hierarchy "$unit::anon_state_t" {{.*}}source_type_identity = 77 : i64
+// CHECK-DAG: simulation.net.decl {{.*}} hierarchy "net_properties.enum_interconnect" {{.*}}simulation.vpi_source_type_identity = 77 : i64{{.*}}vpi_type = #simulation.vpi_type<kind = enum{{.*}}name = "anon_state_t"
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 533 {{.*}} hierarchy "net_properties.enum_interconnect" {{.*}}backing = #simulation.vpi_backing<kind = net
 
 //--- slang.mlir
 
@@ -347,7 +347,7 @@ module {
   }
 }
 
-// MISSING: obelisk_sim.vpi_object.anchor
+// MISSING: simulation.vpi_object.anchor
 // MISSING-SAME: type 32
 // MISSING-SAME: hierarchy "top"
 // MISSING-NOT: selector = 9

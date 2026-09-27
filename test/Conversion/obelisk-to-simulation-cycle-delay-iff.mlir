@@ -29,11 +29,11 @@ module {
 
 // The two observer closures are bound once. The counter loop reloads the
 // primary value and waits for two qualified posedges, resuming in Reactive.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-COUNT-2: obelisk_sim.observer.bind
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-COUNT-2: simulation.observer.bind
 // CHECK: ^[[WAIT:bb[0-9]+]]
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.ref.load
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
 // CHECK-SAME: resume_region = 10 : i32
 // CHECK: arith.subi

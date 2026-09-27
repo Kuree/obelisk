@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' -o %t
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' -o %t
 // RUN: obelisk-opt %t -o %t.roundtrip
 // RUN: diff %t %t.roundtrip
 
@@ -33,7 +33,7 @@ module {
   // CHECK-SAME: #schedule.scheduler_ingress<trigger = 0, owner = 4, readyBit = 0, fragment = 4>
   // CHECK-SAME: #schedule.scheduler_ingress<trigger = 0, owner = 5, readyBit = 0, fragment = 5>
   // CHECK-SAME: #schedule.scheduler_ingress<trigger = 0, owner = 0, readyBit = 2, fragment = 6>]
-  obelisk_sim.design @schedule attributes {
+  simulation.design @schedule attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = full, workers = 1,
       nodes = [
@@ -113,6 +113,6 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
+    simulation.scope.decl 0
   }
 }

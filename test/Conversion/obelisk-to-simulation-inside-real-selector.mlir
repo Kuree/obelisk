@@ -5,7 +5,7 @@
 // real selector therefore matches its set with floating-point comparisons --
 // both the singleton values and the endpoints of a range.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: arith.cmpf oeq, %{{.*}}, %{{.*}} : f64
 // CHECK: arith.cmpf oge, %{{.*}}, %{{.*}} : f64
 // CHECK: arith.cmpf ole, %{{.*}}, %{{.*}} : f64

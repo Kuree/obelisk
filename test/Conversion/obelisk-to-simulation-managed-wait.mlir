@@ -248,32 +248,32 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}.fork.44.0.0(
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::wait_flag.$fork.44.0"
-// CHECK: %[[PHASE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[FIELD:.*]] = obelisk_sim.class.field_ref %[[PHASE]]
-// CHECK: %[[FIELD_WATCH:.*]] = obelisk_sim.managed.watch field %[[FIELD]]
-// CHECK: obelisk_sim.observer.bind
+// CHECK-LABEL: simulation.func private @{{.*}}.fork.44.0.0(
+// CHECK-SAME: simulation.hierarchical_name = "C::wait_flag.$fork.44.0"
+// CHECK: %[[PHASE:.*]] = simulation.ref.load
+// CHECK: %[[FIELD:.*]] = simulation.class.field_ref %[[PHASE]]
+// CHECK: %[[FIELD_WATCH:.*]] = simulation.managed.watch field %[[FIELD]]
+// CHECK: simulation.observer.bind
 // CHECK-SAME: %[[FIELD_WATCH]]
-// CHECK: obelisk_sim.suspend.observe
-// CHECK: obelisk_sim.hierarchical_name = "C::wait_q"
-// CHECK: %[[QUEUE_FIELD:.*]] = obelisk_sim.class.field_ref
-// CHECK: %[[QUEUE_WATCH:.*]] = obelisk_sim.managed.watch field %[[QUEUE_FIELD]]
-// CHECK: %[[SIZE_WATCH:.*]] = obelisk_sim.managed.watch container_size
-// CHECK: obelisk_sim.observer.bind
+// CHECK: simulation.suspend.observe
+// CHECK: simulation.hierarchical_name = "C::wait_q"
+// CHECK: %[[QUEUE_FIELD:.*]] = simulation.class.field_ref
+// CHECK: %[[QUEUE_WATCH:.*]] = simulation.managed.watch field %[[QUEUE_FIELD]]
+// CHECK: %[[SIZE_WATCH:.*]] = simulation.managed.watch container_size
+// CHECK: simulation.observer.bind
 // CHECK-SAME: %[[QUEUE_WATCH]], %[[SIZE_WATCH]]
 // CHECK-SAME: captures 1 : <i1>
-// CHECK: obelisk_sim.hierarchical_name = "C::wait_both"
-// CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: !obelisk_sim.managed_watch, !obelisk_sim.managed_watch
-// CHECK: obelisk_sim.hierarchical_name = "C::wait_event"
-// CHECK: %[[EVENT_FIELD:.*]] = obelisk_sim.class.field_ref
-// CHECK: %[[EVENT_WATCH:.*]] = obelisk_sim.managed.watch field %[[EVENT_FIELD]]
-// CHECK: %[[EVENT_OBSERVER:.*]] = obelisk_sim.observer.bind
+// CHECK: simulation.hierarchical_name = "C::wait_both"
+// CHECK: simulation.observer.bind
+// CHECK-SAME: !simulation.managed_watch, !simulation.managed_watch
+// CHECK: simulation.hierarchical_name = "C::wait_event"
+// CHECK: %[[EVENT_FIELD:.*]] = simulation.class.field_ref
+// CHECK: %[[EVENT_WATCH:.*]] = simulation.managed.watch field %[[EVENT_FIELD]]
+// CHECK: %[[EVENT_OBSERVER:.*]] = simulation.observer.bind
 // CHECK-SAME: values({{.*}}, %[[EVENT_WATCH]]
-// CHECK: obelisk_sim.suspend.observe %[[EVENT_OBSERVER]],
-// CHECK-NOT: obelisk_sim.suspend.change {{.*}}!obelisk_sim.managed_ref
-// CHECK: obelisk_sim.func private @observer_
-// CHECK-SAME: %{{.*}}: !obelisk_sim.class_handle
-// CHECK: obelisk_sim.class.field_ref %{{.*}}
+// CHECK: simulation.suspend.observe %[[EVENT_OBSERVER]],
+// CHECK-NOT: simulation.suspend.change {{.*}}!simulation.managed_ref
+// CHECK: simulation.func private @observer_
+// CHECK-SAME: %{{.*}}: !simulation.class_handle
+// CHECK: simulation.class.field_ref %{{.*}}
 // CHECK-NOT: instance property reference has no this object

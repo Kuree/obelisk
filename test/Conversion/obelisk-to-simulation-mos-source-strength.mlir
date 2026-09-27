@@ -32,8 +32,8 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.net.pass.decl {{[0-9]+}} in {{[0-9]+}} {{[0-9]+}}[0] to {{[0-9]+}}[0] width 1 reversed = false
+// CHECK: simulation.net.pass.decl {{[0-9]+}} in {{[0-9]+}} {{[0-9]+}}[0] to {{[0-9]+}}[0] width 1 reversed = false
 // CHECK-SAME: controlled = true
 // CHECK-SAME: directed = true
-// CHECK: obelisk_sim.net.pass.control {{[0-9]+}} =
-// CHECK-NOT: obelisk_sim.driver.decl
+// CHECK: simulation.net.pass.control {{[0-9]+}} =
+// CHECK-NOT: simulation.driver.decl

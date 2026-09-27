@@ -11,17 +11,17 @@ blocks = int(sys.argv[1])
 out = sys.stdout.write
 
 out("module {\n")
-out("  obelisk_sim.design @deep {\n")
-out("    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy \"test.deep.chain\"\n")
-out("    obelisk_sim.scope.decl 0\n")
-out("    obelisk_sim.func @chain(\n")
-out("        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})\n")
+out("  simulation.design @deep {\n")
+out("    simulation.code_unit.decl 1 in 0 initial hierarchy \"test.deep.chain\"\n")
+out("    simulation.scope.decl 0\n")
+out("    simulation.func @chain(\n")
+out("        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})\n")
 out("        attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {\n")
 out("      cf.br ^bb1\n")
 for index in range(1, blocks):
     out("    ^bb%d:\n      cf.br ^bb%d\n" % (index, index + 1))
 if sys.argv[2:] == ["--acyclic"]:
-    out("    ^bb%d:\n      obelisk_sim.return\n" % blocks)
+    out("    ^bb%d:\n      simulation.return\n" % blocks)
 elif not sys.argv[2:]:
     # Closing the chain gives the schedule exactly one cyclic group to plan.
     out("    ^bb%d:\n      cf.br ^bb1\n" % blocks)

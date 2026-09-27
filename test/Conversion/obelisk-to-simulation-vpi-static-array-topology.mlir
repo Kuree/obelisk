@@ -38,10 +38,10 @@ module attributes {
         sym_name = "top_i"} {
       obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
           name = "top", node_id = 5 : i64, sym_name = "top_b",
-          obelisk_sim.vpi_automatic = true,
-          obelisk_sim.vpi_cell_instance = true,
-          obelisk_sim.vpi_definition_name = "top_def",
-          obelisk_sim.vpi_top = true} {
+          simulation.vpi_automatic = true,
+          simulation.vpi_cell_instance = true,
+          simulation.vpi_definition_name = "top_def",
+          simulation.vpi_top = true} {
         obelisk.sv.symbol.instance_array attributes {
             array_range = array<i64: 2, 1>, hierarchical_name = "top.cube",
             name = "cube", node_id = 6 : i64, sym_name = "cube"} {
@@ -164,29 +164,29 @@ module attributes {
   }
 }
 
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[TOP:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}} hierarchy "top" debug "top" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 7 : i32, value = true>, #obelisk_sim.vpi_property<selector = 8 : i32, value = true>, #obelisk_sim.vpi_property<selector = 9 : i32, value = "top_def">, #obelisk_sim.vpi_property<selector = 50 : i32, value = true>, #obelisk_sim.vpi_property<selector = 600 : i32, value = true>]>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[ARRAY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 112{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.cube" debug "cube" {index_ranges = array<i64: 2, 1, -1, 0, 7, 7>}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[FIRST:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[1][-1][7]"{{.*}}member_indices = array<i64: 1, -1, 7>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[SECOND:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[1][0][7]"{{.*}}member_indices = array<i64: 1, 0, 7>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[THIRD:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[2][-1][7]"{{.*}}member_indices = array<i64: 2, -1, 7>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[FOURTH:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[2][0][7]"{{.*}}member_indices = array<i64: 2, 0, 7>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[READY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 34{{.*}}parent @[[FIRST]]{{.*}}hierarchy "top.cube[1][-1][7].ready" debug "ready"{{ *$}}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[GEN_ARRAY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 133{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.g" debug "g" {sparse_indices = array<i64: -3, 5>}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[GEN_NEG3:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 134{{.*}}parent @[[GEN_ARRAY]]{{.*}}hierarchy "top.g[-3]"{{.*}}member_indices = array<i64: -3>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[GEN_5:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 134{{.*}}parent @[[GEN_ARRAY]]{{.*}}hierarchy "top.g[5]"{{.*}}member_indices = array<i64: 5>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[DONE:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 34{{.*}}parent @[[GEN_NEG3]]{{.*}}hierarchy "top.g[-3].done" debug "done"{{ *$}}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[EVENTS:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 129{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.events" debug "events" {index_ranges = array<i64: 1, 0, -1, 0>}
-// CHECK-DAG: obelisk_sim.storage.decl {{.*}} hierarchy "top.events" debug "events" {{.*}}obelisk_sim.vpi_identity_delegated = @[[EVENTS]]
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[1][-1]"{{.*}}member_indices = array<i64: 1, -1>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[1][0]"{{.*}}member_indices = array<i64: 1, 0>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[0][-1]"{{.*}}member_indices = array<i64: 0, -1>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[0][0]"{{.*}}member_indices = array<i64: 0, 0>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[INTERFACES:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 603{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.i" debug "i" {index_ranges = array<i64: 2, 2>}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}}type 601{{.*}}parent @[[INTERFACES]]{{.*}}hierarchy "top.i[2]"{{.*}}member_indices = array<i64: 2>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor @[[PROGRAMS:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 604{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.p" debug "p" {index_ranges = array<i64: -2, -2>}
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}}type 602{{.*}}parent @[[PROGRAMS]]{{.*}}hierarchy "top.p[-2]"{{.*}}member_indices = array<i64: -2>
+// CHECK-DAG: simulation.vpi_object.anchor @[[TOP:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}} hierarchy "top" debug "top" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 7 : i32, value = true>, #simulation.vpi_property<selector = 8 : i32, value = true>, #simulation.vpi_property<selector = 9 : i32, value = "top_def">, #simulation.vpi_property<selector = 50 : i32, value = true>, #simulation.vpi_property<selector = 600 : i32, value = true>]>
+// CHECK-DAG: simulation.vpi_object.anchor @[[ARRAY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 112{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.cube" debug "cube" {index_ranges = array<i64: 2, 1, -1, 0, 7, 7>}
+// CHECK-DAG: simulation.vpi_object.anchor @[[FIRST:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[1][-1][7]"{{.*}}member_indices = array<i64: 1, -1, 7>
+// CHECK-DAG: simulation.vpi_object.anchor @[[SECOND:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[1][0][7]"{{.*}}member_indices = array<i64: 1, 0, 7>
+// CHECK-DAG: simulation.vpi_object.anchor @[[THIRD:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[2][-1][7]"{{.*}}member_indices = array<i64: 2, -1, 7>
+// CHECK-DAG: simulation.vpi_object.anchor @[[FOURTH:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 32{{.*}}parent @[[ARRAY]]{{.*}}hierarchy "top.cube[2][0][7]"{{.*}}member_indices = array<i64: 2, 0, 7>
+// CHECK-DAG: simulation.vpi_object.anchor @[[READY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 34{{.*}}parent @[[FIRST]]{{.*}}hierarchy "top.cube[1][-1][7].ready" debug "ready"{{ *$}}
+// CHECK-DAG: simulation.vpi_object.anchor @[[GEN_ARRAY:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 133{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.g" debug "g" {sparse_indices = array<i64: -3, 5>}
+// CHECK-DAG: simulation.vpi_object.anchor @[[GEN_NEG3:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 134{{.*}}parent @[[GEN_ARRAY]]{{.*}}hierarchy "top.g[-3]"{{.*}}member_indices = array<i64: -3>
+// CHECK-DAG: simulation.vpi_object.anchor @[[GEN_5:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 134{{.*}}parent @[[GEN_ARRAY]]{{.*}}hierarchy "top.g[5]"{{.*}}member_indices = array<i64: 5>
+// CHECK-DAG: simulation.vpi_object.anchor @[[DONE:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 34{{.*}}parent @[[GEN_NEG3]]{{.*}}hierarchy "top.g[-3].done" debug "done"{{ *$}}
+// CHECK-DAG: simulation.vpi_object.anchor @[[EVENTS:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 129{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.events" debug "events" {index_ranges = array<i64: 1, 0, -1, 0>}
+// CHECK-DAG: simulation.storage.decl {{.*}} hierarchy "top.events" debug "events" {{.*}}simulation.vpi_identity_delegated = @[[EVENTS]]
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[1][-1]"{{.*}}member_indices = array<i64: 1, -1>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[1][0]"{{.*}}member_indices = array<i64: 1, 0>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[0][-1]"{{.*}}member_indices = array<i64: 0, -1>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 34{{.*}}parent @[[EVENTS]]{{.*}}hierarchy "top.events[0][0]"{{.*}}member_indices = array<i64: 0, 0>
+// CHECK-DAG: simulation.vpi_object.anchor @[[INTERFACES:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 603{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.i" debug "i" {index_ranges = array<i64: 2, 2>}
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 601{{.*}}parent @[[INTERFACES]]{{.*}}hierarchy "top.i[2]"{{.*}}member_indices = array<i64: 2>
+// CHECK-DAG: simulation.vpi_object.anchor @[[PROGRAMS:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 604{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.p" debug "p" {index_ranges = array<i64: -2, -2>}
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 602{{.*}}parent @[[PROGRAMS]]{{.*}}hierarchy "top.p[-2]"{{.*}}member_indices = array<i64: -2>
 // CHECK-NOT: obelisk.sv.
-// COUNT-COUNT-1: obelisk_sim.vpi_object.anchor {{.*}} type 112
+// COUNT-COUNT-1: simulation.vpi_object.anchor {{.*}} type 112
 // IMAGE-COUNT-1: object name=top.events kind=9 vpi_kind=129
 // IMAGE-COUNT-4: object name=top.events[
 // IMAGE: relation_index {{.*}} object_name=top.cube

@@ -57,14 +57,14 @@ module {
 
 // The repeated NBA has a detached child whose count is a value capture. The
 // child loops over the event, then stages the already captured RHS.
-// CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
+// CHECK-LABEL: simulation.func private @{{.*nba_event.*}}(
 // CHECK-SAME: %[[CHILD_COUNT:[a-zA-Z0-9_]+]]: i64
 // CHECK-SAME: schedule.detached_controls
 // CHECK: cf.cond_br %{{.*}}, ^[[REPEAT_HEADER:[a-zA-Z0-9_]+]](%[[CHILD_COUNT]] {{.*}}), ^[[REPEAT_COMMIT:[a-zA-Z0-9_]+]]
 // CHECK: ^[[REPEAT_COMMIT]]:
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK: simulation.nba.enqueue
 // CHECK: ^[[REPEAT_HEADER]](%[[REPEAT_COUNT:.*]]: i64):
-// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[REPEAT_STEP:[a-zA-Z0-9_]+]](%[[REPEAT_COUNT]]
+// CHECK: simulation.suspend.edge posedge {{.*}} to ^[[REPEAT_STEP:[a-zA-Z0-9_]+]](%[[REPEAT_COUNT]]
 // CHECK: ^[[REPEAT_STEP]](%[[STEP_COUNT:.*]]: i64):
 // CHECK: %[[NEXT_COUNT:.*]] = arith.subi %[[STEP_COUNT]]
 // CHECK: %[[CONTINUE:.*]] = arith.cmpi sgt, %[[NEXT_COUNT]]
@@ -72,17 +72,17 @@ module {
 // The first assignment is blocking: its caller carries the RHS through the
 // wait and stores it in the continuation. It then evaluates the repeated
 // NBA's count, RHS, and LHS before dispatching.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[EVENT_RHS:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.suspend.edge posedge {{.*}} to ^[[EVENT_COMMIT:[a-zA-Z0-9_]+]](%[[EVENT_RHS]]
-// CHECK: ^[[EVENT_COMMIT]](%[[EVENT_COMMIT_RHS:.*]]: !obelisk_sim.logic<1>):
-// CHECK: obelisk_sim.ref.store %[[EVENT_COMMIT_RHS]]
-// CHECK: %[[REPEAT_RHS:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK: %[[COUNT:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<i32>
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[EVENT_RHS:.*]] = simulation.ref.load
+// CHECK: simulation.suspend.edge posedge {{.*}} to ^[[EVENT_COMMIT:[a-zA-Z0-9_]+]](%[[EVENT_RHS]]
+// CHECK: ^[[EVENT_COMMIT]](%[[EVENT_COMMIT_RHS:.*]]: !simulation.logic<1>):
+// CHECK: simulation.ref.store %[[EVENT_COMMIT_RHS]]
+// CHECK: %[[REPEAT_RHS:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<!simulation.logic<1>>
+// CHECK: %[[COUNT:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<i32>
 // CHECK: %[[POSITIVE:.*]] = arith.cmpi sgt, %{{.*}}, %{{.*}} : i64
 // CHECK: cf.cond_br %[[POSITIVE]], ^[[SPAWN:.*]], ^[[IMMEDIATE:.*]]
 // CHECK: ^[[SPAWN]]:
-// CHECK: obelisk_sim.spawn @{{.*nba_event.*}}
+// CHECK: simulation.spawn @{{.*nba_event.*}}
 // CHECK: ^[[IMMEDIATE]]:
-// CHECK: obelisk_sim.nba.enqueue %[[REPEAT_RHS]]
+// CHECK: simulation.nba.enqueue %[[REPEAT_RHS]]
 // CHECK-NOT: obelisk.sv.

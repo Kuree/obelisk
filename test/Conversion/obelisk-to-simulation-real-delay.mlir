@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | \
-// RUN:   FileCheck %s --implicit-check-not=obelisk_sim.time.from_real
+// RUN:   FileCheck %s --implicit-check-not=simulation.time.from_real
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 0 : i64, sym_name = "s0.simulation_real_delay"} {
@@ -79,11 +79,11 @@ module {
 // design ticks: 0.14 ns -> 1 tick, 0.15 ns -> 2 ticks, 1 ns -> 10 ticks,
 // a negative delay -> 0 ticks, and a typed real parameter of 1.55 ns -> 16
 // ticks. Constant parameters stay on the same compile-time path as literals.
-// CHECK: obelisk_sim.design @design attributes {{.*}}time_precision_fs = 100000
-// CHECK-DAG: obelisk_sim.time.constant 1{{$}}
-// CHECK-DAG: obelisk_sim.time.constant 2{{$}}
-// CHECK-DAG: obelisk_sim.time.constant 10{{$}}
-// CHECK-DAG: obelisk_sim.time.constant 0{{$}}
-// CHECK-DAG: obelisk_sim.time.constant 16{{$}}
-// CHECK-COUNT-5: obelisk_sim.suspend.delay
+// CHECK: simulation.design @design attributes {{.*}}time_precision_fs = 100000
+// CHECK-DAG: simulation.time.constant 1{{$}}
+// CHECK-DAG: simulation.time.constant 2{{$}}
+// CHECK-DAG: simulation.time.constant 10{{$}}
+// CHECK-DAG: simulation.time.constant 0{{$}}
+// CHECK-DAG: simulation.time.constant 16{{$}}
+// CHECK-COUNT-5: simulation.suspend.delay
 // CHECK-NOT: obelisk.sv.

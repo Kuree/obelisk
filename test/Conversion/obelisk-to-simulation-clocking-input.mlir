@@ -44,45 +44,45 @@ module {
 }
 
 // #1step reads the source's Preponed snapshot at each clocking event.
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.assert.clocked_sample_update
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.assert.clocked_sample_update
 
 // An edge-only input skew retains the value sampled at the most recent
 // selected edge, rather than sampling again at the block's event edge.
-// CHECK: obelisk_sim.suspend.edge negedge
+// CHECK: simulation.suspend.edge negedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.assert.clocked_sample_update
+// CHECK: simulation.ref.load
+// CHECK: simulation.assert.clocked_sample_update
 
 // Both source-level reads use their retained sampled values.
-// CHECK-COUNT-2: obelisk_sim.assert.clocked_sample_read
+// CHECK-COUNT-2: simulation.assert.clocked_sample_read
 // CHECK-NOT: obelisk.sv.
 
-// ZERO: obelisk_sim.suspend.edge posedge
-// ZERO: obelisk_sim.ref.load
-// ZERO: obelisk_sim.assert.clocked_sample_update
+// ZERO: simulation.suspend.edge posedge
+// ZERO: simulation.ref.load
+// ZERO: simulation.assert.clocked_sample_update
 // A positive skew maintains a transport-delayed mirror of the source. Delayed
 // changes publish after the event's Observed sampling boundary, so an event
 // exactly at source-change-plus-skew still sees the Preponed source value.
-// SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// SKEW: obelisk_sim.time.constant 2{{$|[^0-9]}}
-// SKEW: obelisk_sim.suspend.delay
+// SKEW-LABEL: simulation.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// SKEW: simulation.time.constant 2{{$|[^0-9]}}
+// SKEW: simulation.suspend.delay
 // SKEW-SAME: resume_region = 16 : i32
-// SKEW: obelisk_sim.assert.clocked_sample_update
-// SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}(
-// SKEW: obelisk_sim.assert.sampled_read
-// SKEW: obelisk_sim.suspend.change
-// SKEW: obelisk_sim.ref.load
-// SKEW: obelisk_sim.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// SKEW-LABEL: obelisk_sim.func private @unit_0.$clocking_input.{{[0-9]+}}
-// SKEW: obelisk_sim.suspend.edge posedge
-// SKEW: obelisk_sim.assert.clocked_sample_read
-// SKEW: obelisk_sim.assert.clocked_sample_update
+// SKEW: simulation.assert.clocked_sample_update
+// SKEW-LABEL: simulation.func private @unit_0.$clocking_input_delay.{{[0-9]+}}(
+// SKEW: simulation.assert.sampled_read
+// SKEW: simulation.suspend.change
+// SKEW: simulation.ref.load
+// SKEW: simulation.spawn @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// SKEW-LABEL: simulation.func private @unit_0.$clocking_input.{{[0-9]+}}
+// SKEW: simulation.suspend.edge posedge
+// SKEW: simulation.assert.clocked_sample_read
+// SKEW: simulation.assert.clocked_sample_update
 // SKEW-NOT: obelisk.sv.
 
 // Real skews round to the clocking block's timeprecision.
-// REAL-SKEW: obelisk_sim.time.constant 2{{$|[^0-9]}}
+// REAL-SKEW: simulation.time.constant 2{{$|[^0-9]}}
 // BAD-SKEW: clocking input skew is not a known nonnegative value
 // OUTPUT-READ: cannot read an output clocking variable

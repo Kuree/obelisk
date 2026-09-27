@@ -1,33 +1,33 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.queue<i8, 0>> -> !obelisk_sim.queue<i8, 0>
-// CHECK: %[[GENERIC:.*]] = obelisk_sim.container.create
-// CHECK: obelisk_sim.container.size %[[SOURCE]]
-// CHECK: obelisk_sim.container.read %[[SOURCE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.queue<i8, 0>> -> !simulation.queue<i8, 0>
+// CHECK: %[[GENERIC:.*]] = simulation.container.create
+// CHECK: simulation.container.size %[[SOURCE]]
+// CHECK: simulation.container.read %[[SOURCE]]
 // The source has to hold every fixed target's bits before the reordering runs,
 // because that is what the reordering spans (IEEE 1800-2017 11.4.14.3).
-// CHECK: obelisk_sim.container.size %[[GENERIC]]
+// CHECK: simulation.container.size %[[GENERIC]]
 // CHECK: arith.cmpi uge
-// CHECK: obelisk_sim.bits.dyn_extract
-// CHECK: obelisk_sim.container.write %[[GENERIC]],
-// CHECK: %[[REORDERED:.*]] = obelisk_sim.container.create
+// CHECK: simulation.bits.dyn_extract
+// CHECK: simulation.container.write %[[GENERIC]],
+// CHECK: %[[REORDERED:.*]] = simulation.container.create
 // CHECK: arith.divui
 // CHECK: arith.remui
-// CHECK: obelisk_sim.container.read %[[GENERIC]]
-// CHECK: obelisk_sim.container.write %[[REORDERED]],
-// CHECK: obelisk_sim.container.read %[[REORDERED]]
+// CHECK: simulation.container.read %[[GENERIC]]
+// CHECK: simulation.container.write %[[REORDERED]],
+// CHECK: simulation.container.read %[[REORDERED]]
 // CHECK: arith.cmpi eq
-// CHECK: %[[DYNAMIC:.*]] = obelisk_sim.container.create
-// CHECK: obelisk_sim.container.write %[[DYNAMIC]],
-// CHECK: obelisk_sim.ref.store
+// CHECK: %[[DYNAMIC:.*]] = simulation.container.create
+// CHECK: simulation.container.write %[[DYNAMIC]],
+// CHECK: simulation.ref.store
 // A one-bit dynamic destination stores the converted i1 directly. Equal-width
 // extensions are invalid MLIR and must not be constructed.
-// CHECK: %[[BIT_ARRAY:.*]] = obelisk_sim.container.create {{.*}}container_kind = 1{{.*}} -> !obelisk_sim.dynamic_array<i1>
+// CHECK: %[[BIT_ARRAY:.*]] = simulation.container.create {{.*}}container_kind = #simulation.container_kind<dynamic_array>{{.*}} -> !simulation.dynamic_array<i1>
 // CHECK-NOT: arith.extui {{.*}} : i1 to i1
-// CHECK: obelisk_sim.container.write %[[BIT_ARRAY]],
-// CHECK: %[[BIT_ARRAY_COPY:.*]] = obelisk_sim.container.clone %[[BIT_ARRAY]]
-// CHECK: obelisk_sim.ref.store %[[BIT_ARRAY_COPY]]
+// CHECK: simulation.container.write %[[BIT_ARRAY]],
+// CHECK: %[[BIT_ARRAY_COPY:.*]] = simulation.container.clone %[[BIT_ARRAY]]
+// CHECK: simulation.ref.store %[[BIT_ARRAY_COPY]]
 // CHECK-NOT: obelisk.sv.
 
 module {

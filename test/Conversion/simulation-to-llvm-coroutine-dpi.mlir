@@ -8,101 +8,101 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @dpi {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "dpi.add" {
-      obelisk_sim.dpi_abi_signature = [
-        #obelisk_sim.dpi_abi<kind = int, direction = input, width = 32,
+  simulation.design @dpi {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "dpi.add" {
+      simulation.dpi_abi_signature = [
+        #simulation.dpi_abi<kind = int, direction = input, width = 32,
                               fourState = false, isSigned = true>,
-        #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32,
+        #simulation.dpi_abi<kind = int, direction = result, width = 32,
                               fourState = false, isSigned = true>
       ],
-      obelisk_sim.dpi_c_identifier = "c_add",
-      obelisk_sim.dpi_import,
-      obelisk_sim.dpi_import_id = 17 : i32,
-      obelisk_sim.dpi_logical_inputs = 1 : i32
+      simulation.dpi_c_identifier = "c_add",
+      simulation.dpi_import,
+      simulation.dpi_import_id = 17 : i32,
+      simulation.dpi_logical_inputs = 1 : i32
     }
-    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "dpi.call"
-    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "dpi.notify" {
-      obelisk_sim.dpi_abi_signature = [
-        #obelisk_sim.dpi_abi<kind = int, direction = input, width = 32,
+    simulation.code_unit.decl 2 in 0 function hierarchy "dpi.call"
+    simulation.code_unit.decl 3 in 0 function hierarchy "dpi.notify" {
+      simulation.dpi_abi_signature = [
+        #simulation.dpi_abi<kind = int, direction = input, width = 32,
                               fourState = false, isSigned = true>
       ],
-      obelisk_sim.dpi_c_identifier = "notify",
-      obelisk_sim.dpi_import,
-      obelisk_sim.dpi_import_id = 18 : i32,
-      obelisk_sim.dpi_logical_inputs = 1 : i32
+      simulation.dpi_c_identifier = "notify",
+      simulation.dpi_import,
+      simulation.dpi_import_id = 18 : i32,
+      simulation.dpi_logical_inputs = 1 : i32
     }
-    obelisk_sim.code_unit.decl 4 in 0 function hierarchy "dpi.echo" {
-      obelisk_sim.dpi_abi_signature = [
-        #obelisk_sim.dpi_abi<kind = string, direction = input, width = 64,
+    simulation.code_unit.decl 4 in 0 function hierarchy "dpi.echo" {
+      simulation.dpi_abi_signature = [
+        #simulation.dpi_abi<kind = string, direction = input, width = 64,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = string, direction = result, width = 64,
+        #simulation.dpi_abi<kind = string, direction = result, width = 64,
                               fourState = false, isSigned = false>
       ],
-      obelisk_sim.dpi_c_identifier = "echo",
-      obelisk_sim.dpi_import,
-      obelisk_sim.dpi_import_id = 19 : i32,
-      obelisk_sim.dpi_logical_inputs = 1 : i32
+      simulation.dpi_c_identifier = "echo",
+      simulation.dpi_import,
+      simulation.dpi_import_id = 19 : i32,
+      simulation.dpi_logical_inputs = 1 : i32
     }
-    obelisk_sim.code_unit.decl 5 in 0 function hierarchy "dpi.bounce_handle" {
-      obelisk_sim.dpi_abi_signature = [
-        #obelisk_sim.dpi_abi<kind = chandle, direction = input, width = 64,
+    simulation.code_unit.decl 5 in 0 function hierarchy "dpi.bounce_handle" {
+      simulation.dpi_abi_signature = [
+        #simulation.dpi_abi<kind = chandle, direction = input, width = 64,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = chandle, direction = result, width = 64,
+        #simulation.dpi_abi<kind = chandle, direction = result, width = 64,
                               fourState = false, isSigned = false>
       ],
-      obelisk_sim.dpi_c_identifier = "bounce_handle",
-      obelisk_sim.dpi_import,
-      obelisk_sim.dpi_import_id = 20 : i32,
-      obelisk_sim.dpi_logical_inputs = 1 : i32
+      simulation.dpi_c_identifier = "bounce_handle",
+      simulation.dpi_import,
+      simulation.dpi_import_id = 20 : i32,
+      simulation.dpi_logical_inputs = 1 : i32
     }
-    obelisk_sim.code_unit.decl 6 in 0 function hierarchy "dpi.mutate" {
-      obelisk_sim.dpi_abi_signature = [
-        #obelisk_sim.dpi_abi<kind = string, direction = inout, width = 64,
+    simulation.code_unit.decl 6 in 0 function hierarchy "dpi.mutate" {
+      simulation.dpi_abi_signature = [
+        #simulation.dpi_abi<kind = string, direction = inout, width = 64,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = string, direction = output, width = 64,
+        #simulation.dpi_abi<kind = string, direction = output, width = 64,
                               fourState = false, isSigned = false>
       ],
-      obelisk_sim.dpi_c_identifier = "mutate",
-      obelisk_sim.dpi_import,
-      obelisk_sim.dpi_import_id = 21 : i32,
-      obelisk_sim.dpi_logical_inputs = 1 : i32
+      simulation.dpi_c_identifier = "mutate",
+      simulation.dpi_import,
+      simulation.dpi_import_id = 21 : i32,
+      simulation.dpi_logical_inputs = 1 : i32
     }
-    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "dpi.transform" {
-      obelisk_sim.dpi_abi_signature = [
-        #obelisk_sim.dpi_abi<kind = real, direction = input, width = 64,
+    simulation.code_unit.decl 7 in 0 function hierarchy "dpi.transform" {
+      simulation.dpi_abi_signature = [
+        #simulation.dpi_abi<kind = real, direction = input, width = 64,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = shortreal, direction = input, width = 32,
+        #simulation.dpi_abi<kind = shortreal, direction = input, width = 32,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = shortreal, direction = output, width = 32,
+        #simulation.dpi_abi<kind = shortreal, direction = output, width = 32,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = real, direction = inout, width = 64,
+        #simulation.dpi_abi<kind = real, direction = inout, width = 64,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = shortreal, direction = result, width = 32,
+        #simulation.dpi_abi<kind = shortreal, direction = result, width = 32,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = shortreal, direction = output, width = 32,
+        #simulation.dpi_abi<kind = shortreal, direction = output, width = 32,
                               fourState = false, isSigned = false>,
-        #obelisk_sim.dpi_abi<kind = real, direction = output, width = 64,
+        #simulation.dpi_abi<kind = real, direction = output, width = 64,
                               fourState = false, isSigned = false>
       ],
-      obelisk_sim.dpi_c_identifier = "transform",
-      obelisk_sim.dpi_import,
-      obelisk_sim.dpi_import_id = 22 : i32,
-      obelisk_sim.dpi_logical_inputs = 4 : i32
+      simulation.dpi_c_identifier = "transform",
+      simulation.dpi_import,
+      simulation.dpi_import_id = 22 : i32,
+      simulation.dpi_logical_inputs = 4 : i32
     }
 
-    obelisk_sim.func @call(
-        %context: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @call(
+        %context: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
       %value = arith.constant 7 : i32
-      %result:2 = obelisk_sim.dpi.call "c_add" id 17 scope 0
-          context %context : !obelisk_sim.context(%value) {
+      %result:2 = simulation.dpi.call "c_add" id 17 scope 0
+          context %context : !simulation.context(%value) {
             abi_signature = [
-              #obelisk_sim.dpi_abi<kind = int, direction = input, width = 32,
+              #simulation.dpi_abi<kind = int, direction = input, width = 32,
                                     fourState = false, isSigned = true>,
-              #obelisk_sim.dpi_abi<kind = int, direction = result, width = 32,
+              #simulation.dpi_abi<kind = int, direction = result, width = 32,
                                     fourState = false, isSigned = true>
             ],
             is_context = false,
@@ -112,10 +112,10 @@ module attributes {
             source_file = "dpi.mlir",
             source_line = 12 : i32
           } : (i32) -> (i32, !runtime.status)
-      %void_status = obelisk_sim.dpi.call "notify" id 18 scope 0
-          context %context : !obelisk_sim.context(%value) {
+      %void_status = simulation.dpi.call "notify" id 18 scope 0
+          context %context : !simulation.context(%value) {
             abi_signature = [
-              #obelisk_sim.dpi_abi<kind = int, direction = input, width = 32,
+              #simulation.dpi_abi<kind = int, direction = input, width = 32,
                                     fourState = false, isSigned = true>
             ],
             is_context = false,
@@ -125,14 +125,14 @@ module attributes {
             source_file = "dpi.mlir",
             source_line = 13 : i32
           } : (i32) -> !runtime.status
-      %text = obelisk_sim.string.literal "hello"
-      %echoed:2 = obelisk_sim.dpi.call "echo" id 19 scope 0
-          context %context : !obelisk_sim.context(%text) {
+      %text = simulation.string.literal "hello"
+      %echoed:2 = simulation.dpi.call "echo" id 19 scope 0
+          context %context : !simulation.context(%text) {
             abi_signature = [
-              #obelisk_sim.dpi_abi<kind = string, direction = input,
+              #simulation.dpi_abi<kind = string, direction = input,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = string, direction = result,
+              #simulation.dpi_abi<kind = string, direction = result,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -142,15 +142,15 @@ module attributes {
             source_column = 5 : i32,
             source_file = "dpi.mlir",
             source_line = 14 : i32
-          } : (!obelisk_sim.string) -> (!obelisk_sim.string, !runtime.status)
-      %handle = obelisk_sim.chandle.null : !obelisk_sim.chandle
-      %bounced:2 = obelisk_sim.dpi.call "bounce_handle" id 20 scope 0
-          context %context : !obelisk_sim.context(%handle) {
+          } : (!simulation.string) -> (!simulation.string, !runtime.status)
+      %handle = simulation.chandle.null : !simulation.chandle
+      %bounced:2 = simulation.dpi.call "bounce_handle" id 20 scope 0
+          context %context : !simulation.context(%handle) {
             abi_signature = [
-              #obelisk_sim.dpi_abi<kind = chandle, direction = input,
+              #simulation.dpi_abi<kind = chandle, direction = input,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = chandle, direction = result,
+              #simulation.dpi_abi<kind = chandle, direction = result,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -160,14 +160,14 @@ module attributes {
             source_column = 6 : i32,
             source_file = "dpi.mlir",
             source_line = 15 : i32
-          } : (!obelisk_sim.chandle) -> (!obelisk_sim.chandle, !runtime.status)
-      %mutated:2 = obelisk_sim.dpi.call "mutate" id 21 scope 0
-          context %context : !obelisk_sim.context(%text) {
+          } : (!simulation.chandle) -> (!simulation.chandle, !runtime.status)
+      %mutated:2 = simulation.dpi.call "mutate" id 21 scope 0
+          context %context : !simulation.context(%text) {
             abi_signature = [
-              #obelisk_sim.dpi_abi<kind = string, direction = inout,
+              #simulation.dpi_abi<kind = string, direction = inout,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = string, direction = output,
+              #simulation.dpi_abi<kind = string, direction = output,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -177,34 +177,34 @@ module attributes {
             source_column = 7 : i32,
             source_file = "dpi.mlir",
             source_line = 16 : i32
-          } : (!obelisk_sim.string) -> (!obelisk_sim.string, !runtime.status)
+          } : (!simulation.string) -> (!simulation.string, !runtime.status)
       %real = arith.constant 2.500000e+00 : f64
       %short = arith.constant 1.500000e+00 : f32
       %short_zero = arith.constant 0.000000e+00 : f32
       %accumulated = arith.constant 4.000000e+00 : f64
-      %floating:4 = obelisk_sim.dpi.call "transform" id 22 scope 0
-          context %context : !obelisk_sim.context(
+      %floating:4 = simulation.dpi.call "transform" id 22 scope 0
+          context %context : !simulation.context(
             %real, %short, %short_zero, %accumulated) {
             abi_signature = [
-              #obelisk_sim.dpi_abi<kind = real, direction = input,
+              #simulation.dpi_abi<kind = real, direction = input,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = shortreal, direction = input,
+              #simulation.dpi_abi<kind = shortreal, direction = input,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = shortreal, direction = output,
+              #simulation.dpi_abi<kind = shortreal, direction = output,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = real, direction = inout,
+              #simulation.dpi_abi<kind = real, direction = inout,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = shortreal, direction = result,
+              #simulation.dpi_abi<kind = shortreal, direction = result,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = shortreal, direction = output,
+              #simulation.dpi_abi<kind = shortreal, direction = output,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #obelisk_sim.dpi_abi<kind = real, direction = output,
+              #simulation.dpi_abi<kind = real, direction = output,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -216,7 +216,7 @@ module attributes {
             source_line = 17 : i32
           } : (f64, f32, f32, f64) ->
               (f32, f32, f64, !runtime.status)
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -258,4 +258,4 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @call(
 // CHECK: llvm.call @obelisk_rt_v1_import_call
-// CHECK-NOT: obelisk_sim.dpi.call
+// CHECK-NOT: simulation.dpi.call

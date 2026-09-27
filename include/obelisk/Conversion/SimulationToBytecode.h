@@ -61,7 +61,7 @@ struct EncodedSimulationDesign {
 /// normalized operation set documented by EncodeObeliskSimToBytecodePass:
 /// integer arith (constant, basic arithmetic/bitwise/shifts, cmp/select, and
 /// integer width/index casts), cf branch/cond_br/switch, and the explicitly
-/// implemented obelisk_sim executable families. Diagnostics are emitted on the
+/// implemented simulation executable families. Diagnostics are emitted on the
 /// first operation outside that set; dialect membership alone never implies
 /// bytecode legality.
 mlir::FailureOr<EncodedSimulationDesign>

@@ -131,8 +131,8 @@ module {
   }
 }
 
-// KILL: obelisk_sim.assert.control {{.*}} action 5 assertion
-// KILL: obelisk_sim.concurrent_report_kill_epoch
-// KILL: obelisk_sim.concurrent_kill_epoch_storage
-// KILL: obelisk_sim.concurrent_kill_epoch_check
+// KILL: simulation.assert.control {{.*}} action <kill> assertion
+// KILL: simulation.concurrent_report_kill_epoch
+// KILL: simulation.concurrent_kill_epoch_storage
+// KILL: simulation.concurrent_kill_epoch_check
 // ACTION: concurrent assertion action control currently requires a fixed bounded single-clock directive without expect, abort, locals, persistent state, nonoverlapped handoff, multicycle branching, or a vacuous branching-antecedent consequent

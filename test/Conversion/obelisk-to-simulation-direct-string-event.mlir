@@ -53,6 +53,6 @@ module {
 }
 
 // CHECK-NOT: entry_kind = 7
-// CHECK-NOT: obelisk_sim.observer
-// CHECK: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.suspend.change %{{.*}} to ^{{.*}} {{.*}} : !obelisk_sim.ref<!obelisk_sim.string>
+// CHECK-NOT: simulation.observer
+// CHECK: simulation.func private @unit_0
+// CHECK: simulation.suspend.change %{{.*}} to ^{{.*}} {{.*}} : !simulation.ref<!simulation.string>

@@ -10,7 +10,7 @@
 // a compiler-only representation.
 module {
   // CHECK: failed to legalize operation 'func.func'
-  func.func @ref_boundary(%arg: !obelisk_sim.ref<!obelisk_sim.logic<8>>) {
+  func.func @ref_boundary(%arg: !simulation.ref<!simulation.logic<8>>) {
     return
   }
 }
@@ -21,10 +21,10 @@ module {
 // the same transaction.
 module {
   func.func @scheduler_boundary() {
-    // CHECK: failed to legalize operation 'obelisk_sim.ref.alloc'
-    %value = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
-    %ref = obelisk_sim.ref.alloc %value : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
-    obelisk_sim.nba.enqueue %value to %ref : (!obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
+    // CHECK: failed to legalize operation 'simulation.ref.alloc'
+    %value = simulation.logic.constant 1 : i8, 0 : i8 : !simulation.logic<8>
+    %ref = simulation.ref.alloc %value : !simulation.logic<8> -> !simulation.ref<!simulation.logic<8>>
+    simulation.nba.enqueue %value to %ref : (!simulation.logic<8>, !simulation.ref<!simulation.logic<8>>) -> ()
     return
   }
 }
@@ -34,23 +34,23 @@ module {
 // Type-bearing descriptors and their design container are not restructured by
 // the focused value pass.
 module {
-  obelisk_sim.design @descriptor_boundary {
-    obelisk_sim.scope.decl 0
-    // CHECK: failed to legalize operation 'obelisk_sim.storage.decl'
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+  simulation.design @descriptor_boundary {
+    simulation.scope.decl 0
+    // CHECK: failed to legalize operation 'simulation.storage.decl'
+    simulation.storage.decl 0 in 0 : !simulation.logic<8> design
   }
 }
 
 // -----
 
-// The focused pass never restructures obelisk_sim code units.
+// The focused pass never restructures simulation code units.
 module {
-  // CHECK: failed to legalize operation 'obelisk_sim.func'
-  obelisk_sim.func @simulation_boundary(
-      %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-      %arg: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
+  // CHECK: failed to legalize operation 'simulation.func'
+  simulation.func @simulation_boundary(
+      %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+      %arg: !simulation.logic<8> {simulation.capture_kind = 1 : i32})
       attributes {entry_kind = 8 : i32} {
-    obelisk_sim.return
+    simulation.return
   }
 }
 
@@ -62,7 +62,7 @@ module {
   func.func @attribute_boundary() -> i1 {
     // CHECK: failed to legalize operation 'arith.constant'
     %value = "arith.constant"() <{value = 0 : i1}>
-        {test.logic_type = !obelisk_sim.logic<1>} : () -> i1
+        {test.logic_type = !simulation.logic<1>} : () -> i1
     return %value : i1
   }
 }

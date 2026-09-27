@@ -7,39 +7,39 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @control {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "control.root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "control.child"
+  simulation.design @control {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "control.root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "control.child"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
-      %child = obelisk_sim.spawn @child(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %activation = obelisk_sim.control.enter 7
-      obelisk_sim.control.boundary %activation resume ^resume body ^body
+      %child = simulation.spawn @child(%ctx) :
+          !simulation.context -> !simulation.process
+      %activation = simulation.control.enter 7
+      simulation.control.boundary %activation resume ^resume body ^body
     ^body:
-      obelisk_sim.control.leave %activation
+      simulation.control.leave %activation
       cf.br ^resume
     ^resume:
-      obelisk_sim.control.disable 7 activation %activation
-      %escape = obelisk_sim.control.escape_pending
-      %static = obelisk_sim.static.once 11
-      %deferred = obelisk_sim.assert.deferred_once 13
-      obelisk_sim.monitor.register %child
-      obelisk_sim.monitor.control true
-      %current = obelisk_sim.monitor.current
-      obelisk_sim.children.disable
-      obelisk_sim.return
+      simulation.control.disable 7 activation %activation
+      %escape = simulation.control.escape_pending
+      %static = simulation.static.once 11
+      %deferred = simulation.assert.deferred_once 13
+      simulation.monitor.register %child
+      simulation.monitor.control true
+      %current = simulation.monitor.current
+      simulation.children.disable
+      simulation.return
     }
 
-    obelisk_sim.func @child(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @child(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -67,11 +67,11 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_monitor_control
 // NATIVE: llvm.call @obelisk_rt_v1_monitor_current
 // NATIVE: llvm.call @obelisk_rt_v1_scheduler_disable_children
-// NATIVE-NOT: obelisk_sim.control
-// NATIVE-NOT: obelisk_sim.static.once
-// NATIVE-NOT: obelisk_sim.assert.deferred_once
-// NATIVE-NOT: obelisk_sim.monitor
-// NATIVE-NOT: obelisk_sim.children.disable
+// NATIVE-NOT: simulation.control
+// NATIVE-NOT: simulation.static.once
+// NATIVE-NOT: simulation.assert.deferred_once
+// NATIVE-NOT: simulation.monitor
+// NATIVE-NOT: simulation.children.disable
 
 // The append-only control-boundary intrinsic stores the nonzero resume
 // continuation in flags and takes only the 64-bit dynamic activation token.

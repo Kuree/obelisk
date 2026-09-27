@@ -135,78 +135,78 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // action-silent strong EOS failure needs no coordinator, and no finite
 // first_match priority operation or state allocation survives.
 // CHECK-NOT: @unit_0.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.11.0.0
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_first_match_equivalence
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_0.fork.11.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.11.0.0
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
 // The implication retains the handoff plus its two-state consecutive DFA.
 // Both live callbacks and the weak EOS pass are still observable once each.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_count.31.repetition_weak(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.31.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.31.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.consequent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_repetition_implication
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_nonoverlapped
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-COUNT-2: obelisk_sim.ref.alloc %{{.*}} : i64 -> !obelisk_sim.ref<i64>
-// CHECK-NOT: obelisk_sim.ref.alloc %{{.*}} : i64 -> !obelisk_sim.ref<i64>
-// CHECK: obelisk_sim.ref.alloc %{{.*}} {obelisk_sim.persistent_implication_handoff}
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.0.0
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.31.0.0
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.31.1.1
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.31.1.1
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_count.31.repetition_weak(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.31.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.31.0.0
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.consequent_first_match_equivalence
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_repetition_implication
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_nonoverlapped
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-COUNT-2: simulation.ref.alloc %{{.*}} : i64 -> !simulation.ref<i64>
+// CHECK-NOT: simulation.ref.alloc %{{.*}} : i64 -> !simulation.ref<i64>
+// CHECK: simulation.ref.alloc %{{.*}} {simulation.persistent_implication_handoff}
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_1.fork.31.0.0
+// CHECK: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_1.fork.31.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.31.0.0
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.31.1.1
+// CHECK-NOT: simulation.spawn @unit_1.fork.31.1.1
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
 // The named finite-[=] followed-by case completes the recognition matrix. Its
 // three DFA cells weak-complete at EOS, and the antecedent/terminal `a` shares
 // one sampled read from the same Preponed snapshot.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.consequent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.persistent_repetition_implication
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-COUNT-3: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.1.1
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.0.0
-// CHECK: obelisk_sim.spawn @unit_2.fork.51.1.1
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_count.51.repetition_weak(
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_2.fork.51.0.0
+// CHECK-NOT: simulation.spawn @unit_2.fork.51.0.0
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.consequent_first_match_equivalence
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.persistent_repetition_implication
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_max = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-COUNT-3: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_2.fork.51.1.1
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.logic.compare case_eq
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.spawn @unit_2.fork.51.0.0
+// CHECK: simulation.spawn @unit_2.fork.51.1.1
+// CHECK-NOT: simulation.spawn @unit_2.fork
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion

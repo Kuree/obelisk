@@ -62,11 +62,11 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-DAG: %[[FALSE:.*]] = obelisk_sim.logic.constant false, false
-// CHECK-DAG: %[[TRUE:.*]] = obelisk_sim.logic.constant true, false
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-DAG: %[[FALSE:.*]] = simulation.logic.constant false, false
+// CHECK-DAG: %[[TRUE:.*]] = simulation.logic.constant true, false
 // CHECK-DAG: %[[TWENTY:.*]] = arith.constant 20 : i32
 // CHECK-DAG: %[[FORTY:.*]] = arith.constant 40 : i32
-// CHECK: obelisk_sim.aggregate.construct %[[FORTY]], %[[TWENTY]], %[[FORTY]] :
-// CHECK: obelisk_sim.aggregate.construct %[[FALSE]], %[[TRUE]], %[[FALSE]], %[[TRUE]] :
-// CHECK-SAME: -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
+// CHECK: simulation.aggregate.construct %[[FORTY]], %[[TWENTY]], %[[FORTY]] :
+// CHECK: simulation.aggregate.construct %[[FALSE]], %[[TRUE]], %[[FALSE]], %[[TRUE]] :
+// CHECK-SAME: -> !simulation.packed_array<3 : 0 x !simulation.logic<1>>

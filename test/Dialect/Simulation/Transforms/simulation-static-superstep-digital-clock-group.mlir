@@ -1,12 +1,12 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-plan-static-superstep))' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' \
 // RUN:   | FileCheck %s
 
 // Exercise only the static-superstep planner.  A conventional digital clock
 // group with one periodic clock and one clock-sensitive state update must stay
 // wholly eligible for Tier 1 and for the eventual two-state handover.
 module {
-  obelisk_sim.design @digital_clock_group attributes {
+  simulation.design @digital_clock_group attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -73,76 +73,76 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "clock"
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "update"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<32> design
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 always hierarchy "update"
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<32> design
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %clock_ref = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %state = obelisk_sim.context.storage %ctx[1] :
-          !obelisk_sim.ref<!obelisk_sim.logic<32>>
-      %clock_process = obelisk_sim.spawn @clock(%ctx, %clock_ref) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      %update_process = obelisk_sim.spawn @update(
+      %clock_ref = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
+      %state = simulation.context.storage %ctx[1] :
+          !simulation.ref<!simulation.logic<32>>
+      %clock_process = simulation.spawn @clock(%ctx, %clock_ref) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>>
+          -> !simulation.process
+      %update_process = simulation.spawn @update(
           %ctx, %clock_ref, %state) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>,
-          !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.process
-      obelisk_sim.return
+          !simulation.context, !simulation.ref<!simulation.logic<1>>,
+          !simulation.ref<!simulation.logic<32>> -> !simulation.process
+      simulation.return
     }
-    obelisk_sim.func @clock(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock_ref: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @clock(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock_ref: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
       cf.br ^wait
     ^wait:
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^toggle
           {site = #schedule.continuation<id = 1>,
            timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
-      %old = obelisk_sim.ref.load %clock_ref :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %new to %clock_ref : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %old = simulation.ref.load %clock_ref :
+          !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old :
+          (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %new to %clock_ref : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     }
-    obelisk_sim.func @update(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock_ref: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %state: !obelisk_sim.ref<!obelisk_sim.logic<32>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @update(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock_ref: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %state: !simulation.ref<!simulation.logic<32>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %clock_ref to ^resume
+      simulation.suspend.change %clock_ref to ^resume
           {site = #schedule.continuation<id = 2>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     ^resume:
-      %old = obelisk_sim.ref.load %state :
-          !obelisk_sim.ref<!obelisk_sim.logic<32>> -> !obelisk_sim.logic<32>
-      %new = obelisk_sim.logic.unary bit_not %old :
-          (!obelisk_sim.logic<32>) -> !obelisk_sim.logic<32>
-      obelisk_sim.ref.store %new to %state : !obelisk_sim.logic<32>,
-          !obelisk_sim.ref<!obelisk_sim.logic<32>>
+      %old = simulation.ref.load %state :
+          !simulation.ref<!simulation.logic<32>> -> !simulation.logic<32>
+      %new = simulation.logic.unary bit_not %old :
+          (!simulation.logic<32>) -> !simulation.logic<32>
+      simulation.ref.store %new to %state : !simulation.logic<32>,
+          !simulation.ref<!simulation.logic<32>>
       cf.br ^wait
     }
   }
 }
 
-// CHECK: obelisk_sim.design @digital_clock_group attributes {
+// CHECK: simulation.design @digital_clock_group attributes {
 // CHECK-SAME: schedule.static_superstep = #schedule.static_superstep<version = 1
 // CHECK-SAME: actors = [@root, @clock, @update]

@@ -179,115 +179,115 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Weak qualification and deterministic first_match are recorded on the
 // monitor. Its started/pending EOS path stores success before waking the same
 // procedural expect caller.
-// CHECK: obelisk_sim.func private @unit_0.fork.11.0.16(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-COUNT-3: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.func private @unit_0.fork.11.0.16.$expect_eos.11(
-// CHECK-SAME: obelisk_sim.expect_eos_coordinator
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "weak"
-// CHECK: %[[WEAK_DONE:.*]] = obelisk_sim.ref.load
+// CHECK: simulation.func private @unit_0.fork.11.0.16(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-COUNT-3: simulation.suspend.edge posedge
+// CHECK: simulation.func private @unit_0.fork.11.0.16.$expect_eos.11(
+// CHECK-SAME: simulation.expect_eos_coordinator
+// CHECK-SAME: simulation.expect_operand_strength = "weak"
+// CHECK: %[[WEAK_DONE:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[WEAK_DONE]]
-// CHECK: %[[WEAK_STARTED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[WEAK_STARTED:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[WEAK_STARTED]]
 // CHECK: %[[WEAK_PASS:.*]] = arith.constant {{.*}}true
-// CHECK-NEXT: obelisk_sim.ref.store %[[WEAK_PASS]]
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[WEAK_PASS]]
+// CHECK: simulation.event.trigger
 
 // Strong qualification retains compact branching state and closes a pending
 // evaluation as failure at EOS.
-// CHECK: obelisk_sim.func private @unit_1.fork.31.0.16(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.expect_bounded_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.expect_bounded_branching
-// CHECK-SAME: obelisk_sim.expect_bounded_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.expect_bounded_state_words = 1 : i64
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK: obelisk_sim.func private @unit_1.fork.31.0.16.$expect_eos.31(
-// CHECK-SAME: obelisk_sim.expect_eos_coordinator
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "strong"
-// CHECK: %[[STRONG_DONE:.*]] = obelisk_sim.ref.load
+// CHECK: simulation.func private @unit_1.fork.31.0.16(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.expect_bounded_alternatives = 2 : i64
+// CHECK-SAME: simulation.expect_bounded_branching
+// CHECK-SAME: simulation.expect_bounded_horizon = 3 : i64
+// CHECK-SAME: simulation.expect_bounded_state_words = 1 : i64
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.func private @unit_1.fork.31.0.16.$expect_eos.31(
+// CHECK-SAME: simulation.expect_eos_coordinator
+// CHECK-SAME: simulation.expect_operand_strength = "strong"
+// CHECK: %[[STRONG_DONE:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[STRONG_DONE]]
-// CHECK: %[[STRONG_STARTED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[STRONG_STARTED:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[STRONG_STARTED]]
 // CHECK: %[[STRONG_FAIL:.*]] = arith.constant {{.*}}false
-// CHECK-NEXT: obelisk_sim.ref.store %[[STRONG_FAIL]]
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[STRONG_FAIL]]
+// CHECK: simulation.event.trigger
 
 // A strong deterministic operand becomes a weak negated expect. The live
 // success/failure stores and pending EOS result are all inverted once.
-// CHECK: obelisk_sim.func private @unit_2.fork.51.0.16(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK: simulation.func private @unit_2.fork.51.0.16(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-SAME: simulation.temporal_property_negation
 // CHECK: ^bb1(
 // CHECK: %[[NOT_STRONG_LIVE_FAIL:.*]] = arith.constant {{.*}}false
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_STRONG_LIVE_FAIL]] to %arg5
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[NOT_STRONG_LIVE_FAIL]] to %arg5
+// CHECK: simulation.event.trigger
 // CHECK: %[[NOT_STRONG_LIVE_PASS:.*]] = arith.constant {{.*}}true
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_STRONG_LIVE_PASS]] to %arg5
-// CHECK: obelisk_sim.event.trigger
-// CHECK: obelisk_sim.func private @unit_2.fork.51.0.16.$expect_eos.51(
-// CHECK-SAME: obelisk_sim.expect_eos_coordinator
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "strong"
-// CHECK: %[[NOT_STRONG_DONE:.*]] = obelisk_sim.ref.load
+// CHECK-NEXT: simulation.ref.store %[[NOT_STRONG_LIVE_PASS]] to %arg5
+// CHECK: simulation.event.trigger
+// CHECK: simulation.func private @unit_2.fork.51.0.16.$expect_eos.51(
+// CHECK-SAME: simulation.expect_eos_coordinator
+// CHECK-SAME: simulation.expect_operand_strength = "strong"
+// CHECK: %[[NOT_STRONG_DONE:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[NOT_STRONG_DONE]]
-// CHECK: %[[NOT_STRONG_STARTED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[NOT_STRONG_STARTED:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[NOT_STRONG_STARTED]]
 // CHECK: %[[NOT_STRONG_EOS_PASS:.*]] = arith.constant {{.*}}true
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_STRONG_EOS_PASS]]
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[NOT_STRONG_EOS_PASS]]
+// CHECK: simulation.event.trigger
 
 // A weak branching operand keeps its compact two-alternative state. Negation
 // makes the outer pending result strong failure.
-// CHECK: obelisk_sim.func private @unit_3.fork.71.0.16(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.expect_bounded_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.expect_bounded_branching
-// CHECK-SAME: obelisk_sim.expect_bounded_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.expect_bounded_state_words = 1 : i64
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK: simulation.func private @unit_3.fork.71.0.16(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.expect_bounded_alternatives = 2 : i64
+// CHECK-SAME: simulation.expect_bounded_branching
+// CHECK-SAME: simulation.expect_bounded_horizon = 3 : i64
+// CHECK-SAME: simulation.expect_bounded_state_words = 1 : i64
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-SAME: simulation.temporal_property_negation
 // CHECK: ^bb1(
 // CHECK: %[[NOT_WEAK_LIVE_FAIL:.*]] = arith.constant {{.*}}false
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_WEAK_LIVE_FAIL]] to %arg5
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[NOT_WEAK_LIVE_FAIL]] to %arg5
+// CHECK: simulation.event.trigger
 // CHECK: %[[NOT_WEAK_LIVE_PASS:.*]] = arith.constant {{.*}}true
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_WEAK_LIVE_PASS]] to %arg5
-// CHECK: obelisk_sim.event.trigger
-// CHECK: obelisk_sim.func private @unit_3.fork.71.0.16.$expect_eos.71(
-// CHECK-SAME: obelisk_sim.expect_eos_coordinator
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "weak"
-// CHECK: %[[NOT_WEAK_DONE:.*]] = obelisk_sim.ref.load
+// CHECK-NEXT: simulation.ref.store %[[NOT_WEAK_LIVE_PASS]] to %arg5
+// CHECK: simulation.event.trigger
+// CHECK: simulation.func private @unit_3.fork.71.0.16.$expect_eos.71(
+// CHECK-SAME: simulation.expect_eos_coordinator
+// CHECK-SAME: simulation.expect_operand_strength = "weak"
+// CHECK: %[[NOT_WEAK_DONE:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[NOT_WEAK_DONE]]
-// CHECK: %[[NOT_WEAK_STARTED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[NOT_WEAK_STARTED:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[NOT_WEAK_STARTED]]
 // CHECK: %[[NOT_WEAK_EOS_FAIL:.*]] = arith.constant {{.*}}false
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_WEAK_EOS_FAIL]]
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[NOT_WEAK_EOS_FAIL]]
+// CHECK: simulation.event.trigger
 
 // Unqualified expect uses the default strong operand route rather than the
 // explicit-strength optional. Temporal not still yields weak/true at EOS.
-// CHECK: obelisk_sim.func private @unit_4.fork.91.0.16(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.func private @unit_4.fork.91.0.16.$expect_eos.91(
-// CHECK-SAME: obelisk_sim.expect_eos_coordinator
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "strong"
-// CHECK: %[[NOT_DEFAULT_DONE:.*]] = obelisk_sim.ref.load
+// CHECK: simulation.func private @unit_4.fork.91.0.16(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.func private @unit_4.fork.91.0.16.$expect_eos.91(
+// CHECK-SAME: simulation.expect_eos_coordinator
+// CHECK-SAME: simulation.expect_operand_strength = "strong"
+// CHECK: %[[NOT_DEFAULT_DONE:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[NOT_DEFAULT_DONE]]
-// CHECK: %[[NOT_DEFAULT_STARTED:.*]] = obelisk_sim.ref.load
+// CHECK: %[[NOT_DEFAULT_STARTED:.*]] = simulation.ref.load
 // CHECK-NEXT: cf.cond_br %[[NOT_DEFAULT_STARTED]]
 // CHECK: %[[NOT_DEFAULT_EOS_PASS:.*]] = arith.constant {{.*}}true
-// CHECK-NEXT: obelisk_sim.ref.store %[[NOT_DEFAULT_EOS_PASS]]
-// CHECK: obelisk_sim.event.trigger
+// CHECK-NEXT: simulation.ref.store %[[NOT_DEFAULT_EOS_PASS]]
+// CHECK: simulation.event.trigger

@@ -6,78 +6,78 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @interface_calls {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "Base.get"
-    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "top.call"
-    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "Base.skip"
+  simulation.design @interface_calls {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 function hierarchy "Base.get"
+    simulation.code_unit.decl 2 in 0 function hierarchy "top.call"
+    simulation.code_unit.decl 3 in 0 function hierarchy "Base.skip"
 
-    obelisk_sim.class.decl @Empty id 1 {
+    simulation.class.decl @Empty id 1 {
       is_abstract = false, is_final = true, is_interface = false
     }
-    obelisk_sim.class.decl @Getter id 3 {
+    simulation.class.decl @Getter id 3 {
       is_abstract = true, is_final = false, is_interface = true
     }
-    obelisk_sim.class.decl @Base id 2 implements [@Getter] {
+    simulation.class.decl @Base id 2 implements [@Getter] {
       is_abstract = false, is_final = true, is_interface = false
     }
-    obelisk_sim.class.method @Getter_skip of @Getter slot 4294967295
+    simulation.class.method @Getter_skip of @Getter slot 4294967295
         signature_id 16 interface_ordinal 0 :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Getter>) -> i32 {
+      (!simulation.context, !simulation.class_handle<@Getter>) -> i32 {
         is_final = false, is_pure = true, is_static = false,
         is_task = false, is_virtual = true
       }
-    obelisk_sim.class.method @Getter_get of @Getter slot 4294967295
+    simulation.class.method @Getter_get of @Getter slot 4294967295
         signature_id 17 interface_ordinal 1 :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Getter>) -> i32 {
+      (!simulation.context, !simulation.class_handle<@Getter>) -> i32 {
         is_final = false, is_pure = true, is_static = false,
         is_task = false, is_virtual = true
       }
-    obelisk_sim.class.method @Base_get of @Base slot 0 signature_id 17
+    simulation.class.method @Base_get of @Base slot 0 signature_id 17
         implemented_by @base_get :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Base>) -> i32 {
+      (!simulation.context, !simulation.class_handle<@Base>) -> i32 {
         is_final = true, is_pure = false, is_static = false,
         is_task = false, is_virtual = true
       }
-    obelisk_sim.class.method @Base_skip of @Base slot 1 signature_id 16
+    simulation.class.method @Base_skip of @Base slot 1 signature_id 16
         implemented_by @base_skip :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Base>) -> i32 {
+      (!simulation.context, !simulation.class_handle<@Base>) -> i32 {
         is_final = true, is_pure = false, is_static = false,
         is_task = false, is_virtual = true
       }
 
-    obelisk_sim.func @base_get(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %this: !obelisk_sim.class_handle<@Base>
-          {obelisk_sim.capture_kind = 1 : i32}) -> i32
+    simulation.func @base_get(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %this: !simulation.class_handle<@Base>
+          {simulation.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %value = arith.constant 7 : i32
-      obelisk_sim.return %value : i32
+      simulation.return %value : i32
     }
 
-    obelisk_sim.func @base_skip(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %this: !obelisk_sim.class_handle<@Base>
-          {obelisk_sim.capture_kind = 1 : i32}) -> i32
+    simulation.func @base_skip(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %this: !simulation.class_handle<@Base>
+          {simulation.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 3 : i64, entry_kind = 8 : i32} {
       %zero = arith.constant 0 : i32
-      obelisk_sim.return %zero : i32
+      simulation.return %zero : i32
     }
 
-    obelisk_sim.func @call(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %base: !obelisk_sim.class_handle<@Base>
-          {obelisk_sim.capture_kind = 2 : i32},
-        %interface: !obelisk_sim.class_handle<@Getter>
-          {obelisk_sim.capture_kind = 2 : i32}) -> i32
+    simulation.func @call(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %base: !simulation.class_handle<@Base>
+          {simulation.capture_kind = 2 : i32},
+        %interface: !simulation.class_handle<@Getter>
+          {simulation.capture_kind = 2 : i32}) -> i32
         attributes {code_unit_id = 2 : i64, entry_kind = 8 : i32} {
-      %class = obelisk_sim.class.virtual_call
+      %class = simulation.class.virtual_call
         %base[@Base_get] slot 0 signature_id 17() :
-        (!obelisk_sim.class_handle<@Base>) -> i32
-      %result = obelisk_sim.class.virtual_call
+        (!simulation.class_handle<@Base>) -> i32
+      %result = simulation.class.virtual_call
         %interface[@Getter_get] slot 4294967295 signature_id 17() :
-        (!obelisk_sim.class_handle<@Getter>) -> i32
-      obelisk_sim.return %result : i32
+        (!simulation.class_handle<@Getter>) -> i32
+      simulation.return %result : i32
     }
   }
 }

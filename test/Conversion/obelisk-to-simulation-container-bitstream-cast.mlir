@@ -55,14 +55,14 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[THREE:.*]] = arith.constant 3 : i64
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[SOURCE]]
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[SOURCE]]
 // CHECK: %[[MATCHES:.*]] = arith.cmpi eq, %[[SIZE]], %[[THREE]] : i64
 // CHECK: cf.cond_br %[[MATCHES]], ^[[ACCEPTED:.*]], ^[[REJECTED:.*]]
 // CHECK: ^[[ACCEPTED]]:
-// CHECK: obelisk_sim.container.export_bitstream %[[SOURCE]]
-// CHECK-NOT: obelisk_sim.logic.dyn_insert
+// CHECK: simulation.container.export_bitstream %[[SOURCE]]
+// CHECK-NOT: simulation.logic.dyn_insert
 // CHECK: ^[[REJECTED]]:
 // CHECK: bit-stream cast source and destination widths differ

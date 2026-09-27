@@ -7,9 +7,9 @@
 // `disable iff (a==2) @(posedge clk) not (b ##1 c)`. The monitor takes its
 // clock from inside the disable, and the disable condition still gates it.
 
-// CHECK: obelisk_sim.func private @unit_0.$concurrent_cancel
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.func private @unit_0.$concurrent_cancel
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.suspend.edge posedge
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

@@ -2,13 +2,13 @@
 
 // IEEE 1800-2023 18.5.7.1: a foreach constraint applies its body to every
 // element. The checker carries conjunction state through a runtime queue loop.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.container.size
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.container.size
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.container.read
+// CHECK: simulation.container.read
 // CHECK: arith.cmpi ne
 // CHECK: arith.andi
-// CHECK-NOT: obelisk_sim.random.solve
+// CHECK-NOT: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

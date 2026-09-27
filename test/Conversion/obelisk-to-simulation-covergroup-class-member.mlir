@@ -330,58 +330,58 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.covergroup.decl
-// CHECK: obelisk_sim.class.decl @[[BASE:[^ ]+]] id 1
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "value"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "cg"
-// CHECK: obelisk_sim.class.decl @[[DERIVED:[^ ]+]] id 2 extends @[[BASE]]
-// CHECK: obelisk_sim.class.field {{.*}}of @[[DERIVED]]{{.*}}debug_name = "bias"
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.covergroup.create
-// CHECK: obelisk_sim.class.field_ref %arg1[{{.*}}field_1]
-// CHECK: obelisk_sim.managed.store
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[SELF_CG_REF:[0-9]+]] = obelisk_sim.class.field_ref %arg1[{{.*}}field_1]
-// CHECK: %[[SELF_VALUE_REF:[0-9]+]] = obelisk_sim.class.field_ref %arg1[{{.*}}field_0]
-// CHECK: obelisk_sim.argument_ref.from_managed %[[SELF_VALUE_REF]]
-// CHECK: obelisk_sim.covergroup.sample_enabled
-// CHECK: obelisk_sim.managed.load %[[SELF_VALUE_REF]]
-// CHECK: obelisk_sim.covergroup.sample
-// CHECK-LABEL: obelisk_sim.func private @unit_2
-// CHECK: %[[OTHER_CG_REF:[0-9]+]] = obelisk_sim.class.field_ref %arg2[{{.*}}field_1]
+// CHECK: simulation.covergroup.decl
+// CHECK: simulation.class.decl @[[BASE:[^ ]+]] id 1
+// CHECK: simulation.class.field {{.*}}debug_name = "value"
+// CHECK: simulation.class.field {{.*}}debug_name = "cg"
+// CHECK: simulation.class.decl @[[DERIVED:[^ ]+]] id 2 extends @[[BASE]]
+// CHECK: simulation.class.field {{.*}}of @[[DERIVED]]{{.*}}debug_name = "bias"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.covergroup.create
+// CHECK: simulation.class.field_ref %arg1[{{.*}}field_1]
+// CHECK: simulation.managed.store
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: %[[SELF_CG_REF:[0-9]+]] = simulation.class.field_ref %arg1[{{.*}}field_1]
+// CHECK: %[[SELF_VALUE_REF:[0-9]+]] = simulation.class.field_ref %arg1[{{.*}}field_0]
+// CHECK: simulation.argument_ref.from_managed %[[SELF_VALUE_REF]]
+// CHECK: simulation.covergroup.sample_enabled
+// CHECK: simulation.managed.load %[[SELF_VALUE_REF]]
+// CHECK: simulation.covergroup.sample
+// CHECK-LABEL: simulation.func private @unit_2
+// CHECK: %[[OTHER_CG_REF:[0-9]+]] = simulation.class.field_ref %arg2[{{.*}}field_1]
 // The omitted default in other.cg.sample() is evaluated in the declaration
 // scope using the receiver (%arg2), never the caller's current this (%arg1).
-// CHECK: %[[DEFAULT_REF:[0-9]+]] = obelisk_sim.class.field_ref %arg2[{{.*}}field_0]
-// CHECK: %[[DEFAULT_ALIAS:[0-9]+]] = obelisk_sim.argument_ref.from_managed %[[DEFAULT_REF]]
-// CHECK: %[[DEFAULT_VALUE:[0-9]+]] = obelisk_sim.argument_ref.load %[[DEFAULT_ALIAS]]
-// CHECK: obelisk_sim.covergroup.sample_enabled
-// CHECK: %[[OMITTED_RECEIVER_VALUE:[0-9]+]] = obelisk_sim.managed.load %[[DEFAULT_REF]]
-// CHECK: %[[OMITTED_RECEIVER_LOGIC:[0-9]+]] = obelisk_sim.logic.from_bits %[[OMITTED_RECEIVER_VALUE]]
-// CHECK: %[[DEFAULT_LOGIC:[0-9]+]] = obelisk_sim.logic.from_bits %[[DEFAULT_VALUE]]
-// CHECK: %[[OMITTED_EXPR:[0-9]+]] = obelisk_sim.logic.binary add %[[OMITTED_RECEIVER_LOGIC]], %[[DEFAULT_LOGIC]]
-// CHECK: obelisk_sim.covergroup.sample {{.*}}values[%[[DEFAULT_VALUE]], %[[OMITTED_EXPR]]]
+// CHECK: %[[DEFAULT_REF:[0-9]+]] = simulation.class.field_ref %arg2[{{.*}}field_0]
+// CHECK: %[[DEFAULT_ALIAS:[0-9]+]] = simulation.argument_ref.from_managed %[[DEFAULT_REF]]
+// CHECK: %[[DEFAULT_VALUE:[0-9]+]] = simulation.argument_ref.load %[[DEFAULT_ALIAS]]
+// CHECK: simulation.covergroup.sample_enabled
+// CHECK: %[[OMITTED_RECEIVER_VALUE:[0-9]+]] = simulation.managed.load %[[DEFAULT_REF]]
+// CHECK: %[[OMITTED_RECEIVER_LOGIC:[0-9]+]] = simulation.logic.from_bits %[[OMITTED_RECEIVER_VALUE]]
+// CHECK: %[[DEFAULT_LOGIC:[0-9]+]] = simulation.logic.from_bits %[[DEFAULT_VALUE]]
+// CHECK: %[[OMITTED_EXPR:[0-9]+]] = simulation.logic.binary add %[[OMITTED_RECEIVER_LOGIC]], %[[DEFAULT_LOGIC]]
+// CHECK: simulation.covergroup.sample {{.*}}values[%[[DEFAULT_VALUE]], %[[OMITTED_EXPR]]]
 // The explicit actual in other.cg.sample(bias) stays in the caller's lexical
 // context (%arg1), while the selected covergroup's declaration expression
 // continues to use the receiver object (%arg2).
-// CHECK: obelisk_sim.managed.load %[[OTHER_CG_REF]]
-// CHECK: %[[EXPLICIT_REF:[0-9]+]] = obelisk_sim.class.field_ref %arg1[{{.*}}field_0]
-// CHECK: %[[EXPLICIT_ALIAS:[0-9]+]] = obelisk_sim.argument_ref.from_managed %[[EXPLICIT_REF]]
-// CHECK: %[[EXPLICIT_VALUE:[0-9]+]] = obelisk_sim.argument_ref.load %[[EXPLICIT_ALIAS]]
-// CHECK: obelisk_sim.covergroup.sample_enabled
-// CHECK: %[[EXPLICIT_RECEIVER_VALUE:[0-9]+]] = obelisk_sim.managed.load %[[DEFAULT_REF]]
-// CHECK: %[[EXPLICIT_RECEIVER_LOGIC:[0-9]+]] = obelisk_sim.logic.from_bits %[[EXPLICIT_RECEIVER_VALUE]]
-// CHECK: %[[EXPLICIT_LOGIC:[0-9]+]] = obelisk_sim.logic.from_bits %[[EXPLICIT_VALUE]]
-// CHECK: %[[EXPLICIT_EXPR:[0-9]+]] = obelisk_sim.logic.binary add %[[EXPLICIT_RECEIVER_LOGIC]], %[[EXPLICIT_LOGIC]]
-// CHECK: obelisk_sim.covergroup.sample {{.*}}values[%[[EXPLICIT_EXPR]]]
-// CHECK-LABEL: obelisk_sim.func private @unit_3
-// CHECK: obelisk_sim.class.direct_call @unit_1
-// CHECK: %[[OWNER:[0-9]+]] = obelisk_sim.ref.load
-// CHECK: %[[OWNER_CG_REF:[0-9]+]] = obelisk_sim.class.field_ref %[[OWNER]][{{.*}}field_1] : !obelisk_sim.class_handle<@{{.*}}D>
-// CHECK: %[[OWNER_VALUE_REF:[0-9]+]] = obelisk_sim.class.field_ref %[[OWNER]][{{.*}}field_0] : !obelisk_sim.class_handle<@{{.*}}D>
-// CHECK: obelisk_sim.covergroup.sample_enabled
-// CHECK: obelisk_sim.managed.load %[[OWNER_VALUE_REF]]
-// CHECK: obelisk_sim.covergroup.sample
-// CHECK: %[[CALLER:[0-9]+]] = obelisk_sim.ref.load
-// CHECK: %[[RECEIVER:[0-9]+]] = obelisk_sim.class.cast %[[CALLER]]
-// CHECK: obelisk_sim.class.direct_call @unit_2 %[[CALLER]](%[[RECEIVER]])
+// CHECK: simulation.managed.load %[[OTHER_CG_REF]]
+// CHECK: %[[EXPLICIT_REF:[0-9]+]] = simulation.class.field_ref %arg1[{{.*}}field_0]
+// CHECK: %[[EXPLICIT_ALIAS:[0-9]+]] = simulation.argument_ref.from_managed %[[EXPLICIT_REF]]
+// CHECK: %[[EXPLICIT_VALUE:[0-9]+]] = simulation.argument_ref.load %[[EXPLICIT_ALIAS]]
+// CHECK: simulation.covergroup.sample_enabled
+// CHECK: %[[EXPLICIT_RECEIVER_VALUE:[0-9]+]] = simulation.managed.load %[[DEFAULT_REF]]
+// CHECK: %[[EXPLICIT_RECEIVER_LOGIC:[0-9]+]] = simulation.logic.from_bits %[[EXPLICIT_RECEIVER_VALUE]]
+// CHECK: %[[EXPLICIT_LOGIC:[0-9]+]] = simulation.logic.from_bits %[[EXPLICIT_VALUE]]
+// CHECK: %[[EXPLICIT_EXPR:[0-9]+]] = simulation.logic.binary add %[[EXPLICIT_RECEIVER_LOGIC]], %[[EXPLICIT_LOGIC]]
+// CHECK: simulation.covergroup.sample {{.*}}values[%[[EXPLICIT_EXPR]]]
+// CHECK-LABEL: simulation.func private @unit_3
+// CHECK: simulation.class.direct_call @unit_1
+// CHECK: %[[OWNER:[0-9]+]] = simulation.ref.load
+// CHECK: %[[OWNER_CG_REF:[0-9]+]] = simulation.class.field_ref %[[OWNER]][{{.*}}field_1] : !simulation.class_handle<@{{.*}}D>
+// CHECK: %[[OWNER_VALUE_REF:[0-9]+]] = simulation.class.field_ref %[[OWNER]][{{.*}}field_0] : !simulation.class_handle<@{{.*}}D>
+// CHECK: simulation.covergroup.sample_enabled
+// CHECK: simulation.managed.load %[[OWNER_VALUE_REF]]
+// CHECK: simulation.covergroup.sample
+// CHECK: %[[CALLER:[0-9]+]] = simulation.ref.load
+// CHECK: %[[RECEIVER:[0-9]+]] = simulation.class.cast %[[CALLER]]
+// CHECK: simulation.class.direct_call @unit_2 %[[CALLER]](%[[RECEIVER]])
 // CHECK-NOT: obelisk.sv.

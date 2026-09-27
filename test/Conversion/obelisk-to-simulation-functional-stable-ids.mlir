@@ -13,9 +13,9 @@
 // same coverpoint/bin names. Their canonical handle symbol references remain
 // distinct stable type identities; successful lowering also proves that the
 // pass's collision detector did not collapse them.
-// CHECK: obelisk_sim.covergroup.decl @{{.*}} schema [[FIRST:[1-9][0-9]*]]
-// CHECK: obelisk_sim.covergroup.decl @{{.*}} schema [[SECOND:[1-9][0-9]*]]
-// CHECK-NOT: obelisk_sim.covergroup.decl
+// CHECK: simulation.covergroup.decl @{{.*}} schema [[FIRST:[1-9][0-9]*]]
+// CHECK: simulation.covergroup.decl @{{.*}} schema [[SECOND:[1-9][0-9]*]]
+// CHECK-NOT: simulation.covergroup.decl
 // HIER-DAG: functional_type id={{[1-9][0-9]*}} name={{.*}} language={{2017|2023}} hierarchy={{.*}}Owner::first
 // HIER-DAG: functional_type id={{[1-9][0-9]*}} name={{.*}} language={{2017|2023}} hierarchy={{.*}}Owner::second
 // Each type's only sample-phase expression is its integral coverpoint result.

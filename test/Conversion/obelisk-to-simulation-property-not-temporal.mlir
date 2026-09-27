@@ -209,73 +209,73 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // `not (a ##2 b)` has a weak operand and therefore a strong outer property.
 // Its pending attempts dispatch the assertion failure callback at EOS.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.11.strong(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_report.11.strong(
 // CHECK: concurrent assertion failed
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.11.strong
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.11.strong(
+// CHECK-COUNT-2: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.11.strong
 
 // `not strong(a ##2 b)` is weak, but its EOS success is nonvacuous because
 // it is the inverse of an operand failure. Assert and cover both dispatch it.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.31.weak(
-// CHECK: obelisk_sim.bytes.constant "not-strong-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.31.weak(
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_1.$concurrent_eos_report.31.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.31.weak
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.31.weak(
+// CHECK: simulation.bytes.constant "not-strong-pass"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.31.weak(
+// CHECK-COUNT-2: simulation.spawn @unit_1.$concurrent_eos_report.31.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.31.weak
 // An operand failure at either age dispatches the explicit outer pass action;
 // an operand success dispatches the outer assertion's default failure.
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.0.0
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.1.2
-// CHECK: obelisk_sim.spawn @unit_1.fork.31.0.0
+// CHECK: simulation.spawn @unit_1.fork.31.0.0
+// CHECK: simulation.spawn @unit_1.fork.31.1.2
+// CHECK: simulation.spawn @unit_1.fork.31.0.0
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_report.51.weak(
-// CHECK: obelisk_sim.bytes.constant "cover-not-strong-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos.51.weak(
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_2.$concurrent_eos_report.51.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos.51.weak
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_2.fork.51.0.0
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_report.51.weak(
+// CHECK: simulation.bytes.constant "cover-not-strong-pass"
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos.51.weak(
+// CHECK-COUNT-2: simulation.spawn @unit_2.$concurrent_eos_report.51.weak
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_2.$concurrent_eos.51.weak
+// CHECK-COUNT-2: simulation.spawn @unit_2.fork.51.0.0
 
 // Default cover-property strength is strong before negation, so this matches
 // the explicit-strong cover behavior without a strong_weak source op.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_report.71.weak(
-// CHECK: obelisk_sim.bytes.constant "cover-not-default-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos.71.weak(
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_3.$concurrent_eos_report.71.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos.71.weak
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_report.71.weak(
+// CHECK: simulation.bytes.constant "cover-not-default-pass"
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos.71.weak(
+// CHECK-COUNT-2: simulation.spawn @unit_3.$concurrent_eos_report.71.weak
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: simulation.spawn @unit_3.$concurrent_eos.71.weak
 
 // Explicit weak pending success is inverted to a strong cover-property
 // failure. It creates no EOS cover hit, while live operand failures still do.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.temporal_property_negation
 // CHECK-NOT: $concurrent_eos
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_4.fork.91.0.0
+// CHECK-COUNT-2: simulation.spawn @unit_4.fork.91.0.0
 // CHECK-NOT: $concurrent_eos
 
 // An explicitly strong one-cycle operand takes the temporal negation route,
 // inverts the live result, and allocates no EOS coordinator.
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.negated_operand_end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.negated_operand_end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.temporal_property_negation
 // CHECK-NOT: $concurrent_eos
-// CHECK: obelisk_sim.spawn @unit_5.fork.111.0.0
+// CHECK: simulation.spawn @unit_5.fork.111.0.0
 // CHECK-NOT: $concurrent_eos

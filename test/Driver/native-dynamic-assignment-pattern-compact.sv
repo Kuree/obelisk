@@ -37,6 +37,6 @@ endmodule
 // SIM: cf.cond_br
 // One write in the replication loop, one in the default loop, and one
 // explicit keyed overwrite: none scale with the 65,536-element result size.
-// SIM-COUNT-3: obelisk_sim.container.write
-// SIM: obelisk_sim.aggregate.splat
+// SIM-COUNT-3: simulation.container.write
+// SIM: simulation.aggregate.splat
 // CHECK: compact dynamic and fixed patterns passed

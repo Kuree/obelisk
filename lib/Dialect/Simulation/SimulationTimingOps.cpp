@@ -136,11 +136,11 @@ LogicalResult SimCovergroupClockEventRegisterOp::verify() {
   if (!evaluator || evaluator.getEntryKind() != EntryKind::Observer ||
       SymbolTable::getSymbolVisibility(evaluator) !=
           SymbolTable::Visibility::Private ||
-      !evaluator->hasAttr("obelisk_sim.covergroup_event_sample_evaluator"))
+      !evaluator->hasAttr("simulation.covergroup_event_sample_evaluator"))
     return emitOpError(
         "sampler must name a private covergroup event sample evaluator");
   if (getStrobe() !=
-      evaluator->hasAttr("obelisk_sim.covergroup_strobe_sample_evaluator"))
+      evaluator->hasAttr("simulation.covergroup_strobe_sample_evaluator"))
     return emitOpError(
         "strobe policy must match the covergroup sample evaluator");
   if (getStrobe() && failed(verifyPostponedReadOnly(evaluator)))
@@ -157,8 +157,8 @@ LogicalResult SimCovergroupClockEventRegisterOp::verify() {
           function) ||
       !::obelisk::schedule::has<
           ::obelisk::schedule::Field::CovergroupClockingSampler>(function) ||
-      function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") ||
-      function->hasAttr("obelisk_sim.timing_check_coordinator"))
+      function->hasAttr("simulation.multiclock_sequence_coordinator") ||
+      function->hasAttr("simulation.timing_check_coordinator"))
     return emitOpError(
         "requires a private detached primed covergroup clocking owner");
   unsigned registrations = 0;
@@ -196,7 +196,7 @@ LogicalResult SimCovergroupBlockEventRegisterOp::verify() {
       SymbolTable::getSymbolVisibility(evaluator) !=
           SymbolTable::Visibility::Private ||
       !evaluator->hasAttr(
-          "obelisk_sim.covergroup_block_event_sample_evaluator"))
+          "simulation.covergroup_block_event_sample_evaluator"))
     return emitOpError(
         "sampler must name a private covergroup block-event sample evaluator");
   return success();
@@ -206,8 +206,6 @@ LogicalResult SimCovergroupBlockEventFireOp::verify() {
   if (getTargetIdAttr().getValue().isNegative() ||
       getTargetIdAttr().getValue().isZero())
     return emitOpError("block-event target ID must be positive");
-  if (getEventKindAttr().getValue().isNegative() || getEventKind() > 1)
-    return emitOpError("block-event kind must be begin (0) or end (1)");
   return success();
 }
 
@@ -363,7 +361,7 @@ SuccessorOperands SimProcessControlOp::getSuccessorOperands(unsigned index) {
 LogicalResult SimProcessControlOp::verify() {
   auto function = getOperation()->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (function.getEntryKind() == EntryKind::Observer)
     return emitOpError("is not permitted in an observer entry");
   return verifyContinuation(*this, getContinuationOperands(),
@@ -538,10 +536,10 @@ LogicalResult SimSuspendClockSetOp::verify() {
   auto function = (*this)->getParentOfType<SimFuncOp>();
   bool assertionCoordinator =
       function &&
-      function->hasAttr("obelisk_sim.multiclock_sequence_coordinator") &&
+      function->hasAttr("simulation.multiclock_sequence_coordinator") &&
       function.getHomeRegion() == EventRegion::Observed;
   bool timingCheckCoordinator =
-      function && function->hasAttr("obelisk_sim.timing_check_coordinator") &&
+      function && function->hasAttr("simulation.timing_check_coordinator") &&
       function.getHomeRegion() == EventRegion::Observed;
   if (getSlotFinalAttr() && !timingCheckCoordinator)
     return emitOpError("slot_final is reserved for a timing-check coordinator");
@@ -567,7 +565,7 @@ LogicalResult SimClockOccurrenceConsumeOp::verify() {
     return emitOpError("requires a positive 32-bit occurrence site");
   auto function = getOperation()->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   return success();
 }
 LogicalResult SimNoChangeUpdateOp::verify() {
@@ -575,7 +573,7 @@ LogicalResult SimNoChangeUpdateOp::verify() {
       getOccurrenceSite() > UINT32_MAX)
     return emitOpError("requires a positive 32-bit occurrence site");
   if (!getOperation()->getParentOfType<SimFuncOp>())
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   return success();
 }
 LogicalResult SimSuspendEventOp::verify() {
@@ -775,7 +773,7 @@ LogicalResult SimSuspendJoinOp::verify() {
 LogicalResult SimSuspendChildrenOp::verify() {
   auto function = getOperation()->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (function.getEntryKind() == EntryKind::Function)
     return emitOpError("is not permitted in a zero-time function entry");
   return verifyContinuation(*this, getContinuationOperands(),
@@ -805,11 +803,10 @@ MutableOperandRange SimSuspendJoinOp::getContinuationOperandsMutable() {
 }
 
 static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
-                                       ArrayRef<int32_t> itemFlags,
-                                       int64_t radix,
+                                       ArrayRef<int32_t> itemFlags, Radix radix,
                                        IntegerAttr timeMultiplier,
                                        bool allowDesignatedFormat) {
-  if (radix != 2 && radix != 8 && radix != 10 && radix != 16)
+  if (!symbolizeRadix(static_cast<uint32_t>(radix)))
     return operation->emitOpError("default radix must be 2, 8, 10, or 16");
   if (timeMultiplier && !timeMultiplier.getValue().isStrictlyPositive())
     return operation->emitOpError("time multiplier must be positive");
@@ -992,7 +989,7 @@ LogicalResult SimFileReadPackedOp::verify() {
 LogicalResult SimFileReadMemTokenOp::verify() {
   if (getData().getType().getWidth() == 0)
     return emitOpError("data must have nonzero width");
-  if (getRadix() != 2 && getRadix() != 16)
+  if (getRadix() != Radix::Binary && getRadix() != Radix::Hex)
     return emitOpError("radix must be 2 or 16");
   return success();
 }

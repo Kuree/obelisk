@@ -78,6 +78,6 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} hierarchy "top.a.consume"
-// CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} hierarchy "top.b.consume"
+// CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} {{.*}} hierarchy "top.a.consume"
+// CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} {{.*}} hierarchy "top.b.consume"
 // CHECK-NOT: virtual-interface call candidates have incompatible subroutine ABIs

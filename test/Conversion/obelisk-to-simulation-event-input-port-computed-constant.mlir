@@ -29,8 +29,8 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.code_unit.decl {{.*}} port_initialize
-// CHECK: obelisk_sim.func private @unit_0
+// CHECK: simulation.code_unit.decl {{.*}} port_initialize
+// CHECK: simulation.func private @unit_0
 // CHECK-SAME: entry_kind = 11 : i32
-// CHECK-NOT: obelisk_sim.suspend.change
+// CHECK-NOT: simulation.suspend.change
 // CHECK-NOT: obelisk.sv.

@@ -32,8 +32,8 @@ module {
 // The void-typed clocking-block surface resolves to the captured clock
 // storage, uses the edge declared by the clocking block, and resumes in the
 // clocking event's Reactive synchronization region.
-// CHECK: obelisk_sim.context.storage
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.context.storage
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.
 
@@ -41,8 +41,8 @@ module {
 // conditions use the observer path and still resume the waiter in Reactive.
 // IFF-DAG: observer hierarchy "top.$code_unit_7.$observer.13.clocking_primary"
 // IFF-DAG: observer hierarchy "top.$code_unit_7.$observer.14.clocking_iff"
-// IFF-COUNT-2: obelisk_sim.observer.bind
-// IFF: obelisk_sim.suspend.observe
+// IFF-COUNT-2: simulation.observer.bind
+// IFF: simulation.suspend.observe
 // IFF-SAME: conditions 1 edges [1] indices [0]
 // IFF-SAME: resume_region = 10 : i32
 // IFF-NOT: obelisk.sv.

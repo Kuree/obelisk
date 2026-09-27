@@ -5,73 +5,73 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @suspension_types {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 observer hierarchy "suspension_types.evaluate"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "suspension_types.process"
+  simulation.design @suspension_types {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 observer hierarchy "suspension_types.evaluate"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "suspension_types.process"
 
-    obelisk_sim.func private @evaluate(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %process_ref: !obelisk_sim.ref<!obelisk_sim.process>
-            {obelisk_sim.capture_kind = 2 : i32}) -> i1
+    simulation.func private @evaluate(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %process_ref: !simulation.ref<!simulation.process>
+            {simulation.capture_kind = 2 : i32}) -> i1
         attributes {
           code_unit_id = 1 : i64, entry_kind = 14 : i32,
           schedule.observer_four_state = false,
           schedule.observer_width = 1 : i32
         } {
       %false = arith.constant false
-      obelisk_sim.return %false : i1
+      simulation.return %false : i1
     }
 
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %ref: !obelisk_sim.ref<!obelisk_sim.logic<17>>
-            {obelisk_sim.capture_kind = 1 : i32},
-        %net: !obelisk_sim.net<i9>
-            {obelisk_sim.capture_kind = 1 : i32},
-        %driver: !obelisk_sim.driver<f64>
-            {obelisk_sim.capture_kind = 1 : i32},
-        %event: !obelisk_sim.event
-            {obelisk_sim.capture_kind = 1 : i32},
-        %child: !obelisk_sim.process
-            {obelisk_sim.capture_kind = 1 : i32},
-        %process_ref: !obelisk_sim.ref<!obelisk_sim.process>
-            {obelisk_sim.capture_kind = 1 : i32})
+    simulation.func @process(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %ref: !simulation.ref<!simulation.logic<17>>
+            {simulation.capture_kind = 1 : i32},
+        %net: !simulation.net<i9>
+            {simulation.capture_kind = 1 : i32},
+        %driver: !simulation.driver<f64>
+            {simulation.capture_kind = 1 : i32},
+        %event: !simulation.event
+            {simulation.capture_kind = 1 : i32},
+        %child: !simulation.process
+            {simulation.capture_kind = 1 : i32},
+        %process_ref: !simulation.ref<!simulation.process>
+            {simulation.capture_kind = 1 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 1 : i32} {
-      %observer = obelisk_sim.observer.bind @evaluate values(
+      %observer = simulation.observer.bind @evaluate values(
           %process_ref, %process_ref, %ref, %net, %event :
-          !obelisk_sim.ref<!obelisk_sim.process>,
-          !obelisk_sim.ref<!obelisk_sim.process>,
-          !obelisk_sim.ref<!obelisk_sim.logic<17>>,
-          !obelisk_sim.net<i9>, !obelisk_sim.event) captures 1 :
-          !obelisk_sim.observer<i1>
+          !simulation.ref<!simulation.process>,
+          !simulation.ref<!simulation.process>,
+          !simulation.ref<!simulation.logic<17>>,
+          !simulation.net<i9>, !simulation.event) captures 1 :
+          !simulation.observer<i1>
       %false = arith.constant false
-      obelisk_sim.suspend.observe %observer, %false conditions 0
+      simulation.suspend.observe %observer, %false conditions 0
           edges [0] indices [-1] to ^change :
-          !obelisk_sim.observer<i1>, i1
+          !simulation.observer<i1>, i1
     ^change:
       // IEEE 1800-2017 6.6.7: generated resolution waits observe raw driver
       // contribution changes, including atomic real-valued drivers.
-      obelisk_sim.suspend.change %driver to ^edge :
-          !obelisk_sim.driver<f64>
+      simulation.suspend.change %driver to ^edge :
+          !simulation.driver<f64>
     ^edge:
-      obelisk_sim.suspend.edge posedge %net to ^any : !obelisk_sim.net<i9>
+      simulation.suspend.edge posedge %net to ^any : !simulation.net<i9>
     ^any:
-      obelisk_sim.suspend.any %ref, %net edges [0, 1] to ^event_wait :
-          !obelisk_sim.ref<!obelisk_sim.logic<17>>, !obelisk_sim.net<i9>
+      simulation.suspend.any %ref, %net edges [0, 1] to ^event_wait :
+          !simulation.ref<!simulation.logic<17>>, !simulation.net<i9>
     ^event_wait:
-      obelisk_sim.suspend.event %event to ^await
+      simulation.suspend.event %event to ^await
     ^await:
-      obelisk_sim.suspend.await %child to ^join
+      simulation.suspend.await %child to ^join
     ^join:
-      obelisk_sim.suspend.join all %child processes 1 to ^children :
-          !obelisk_sim.process
+      simulation.suspend.join all %child processes 1 to ^children :
+          !simulation.process
     ^children:
-      obelisk_sim.suspend.children to ^done
+      simulation.suspend.children to ^done
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -92,5 +92,5 @@ module attributes {
 // CHECK: llvm.mlir.constant(2 : i32)
 // CHECK: llvm.mlir.constant(17 : i32)
 // CHECK: llvm.mlir.constant(1 : i32)
-// CHECK-NOT: obelisk_sim.observer
-// CHECK-NOT: obelisk_sim.suspend
+// CHECK-NOT: simulation.observer
+// CHECK-NOT: simulation.suspend

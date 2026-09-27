@@ -35,19 +35,19 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.logic.compare case_eq
+// CHECK: simulation.logic.compare case_eq
 // CHECK: arith.cmpi sge
 // CHECK: arith.cmpi sle
-// CHECK: obelisk_sim.ref.dyn_extract
+// CHECK: simulation.ref.dyn_extract
 
 // IEEE 1800-2017 11.5.1: only the bits in range are written. A slice hanging
 // off the low end loses the replacement's low bits, so the surviving bits come
 // from further up the replacement the further the slice hangs off.
-// CHECK: obelisk_sim.logic.extract {{%.*}} from 1 : !obelisk_sim.logic<4> -> !obelisk_sim.logic<3>
-// CHECK: obelisk_sim.ref.extract {{%.*}} from 0 : {{.*}} -> !obelisk_sim.ref<!obelisk_sim.logic<3>>
-// CHECK: obelisk_sim.ref.store {{%.*}} to {{%.*}} : !obelisk_sim.logic<3>, !obelisk_sim.ref<!obelisk_sim.logic<3>>
+// CHECK: simulation.logic.extract {{%.*}} from 1 : !simulation.logic<4> -> !simulation.logic<3>
+// CHECK: simulation.ref.extract {{%.*}} from 0 : {{.*}} -> !simulation.ref<!simulation.logic<3>>
+// CHECK: simulation.ref.store {{%.*}} to {{%.*}} : !simulation.logic<3>, !simulation.ref<!simulation.logic<3>>
 
 // A slice hanging off the high end instead keeps the replacement's low bits.
-// CHECK: obelisk_sim.logic.extract {{%.*}} from 0 : !obelisk_sim.logic<4> -> !obelisk_sim.logic<1>
-// CHECK: obelisk_sim.ref.extract {{%.*}} from 7 : {{.*}} -> !obelisk_sim.ref<!obelisk_sim.logic<1>>
+// CHECK: simulation.logic.extract {{%.*}} from 0 : !simulation.logic<4> -> !simulation.logic<1>
+// CHECK: simulation.ref.extract {{%.*}} from 7 : {{.*}} -> !simulation.ref<!simulation.logic<1>>
 // CHECK-NOT: obelisk.sv.

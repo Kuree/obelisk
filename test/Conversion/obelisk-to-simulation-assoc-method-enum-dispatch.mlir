@@ -153,10 +153,10 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.container.size
-// CHECK: obelisk_sim.assoc.exists
-// CHECK-COUNT-4: obelisk_sim.assoc.traverse
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.container.size
+// CHECK: simulation.assoc.exists
+// CHECK-COUNT-4: simulation.assoc.traverse
 // CHECK: arith.addi
-// CHECK: obelisk_sim.assoc.delete
-// CHECK: obelisk_sim.container.delete
+// CHECK: simulation.assoc.delete
+// CHECK: simulation.container.delete

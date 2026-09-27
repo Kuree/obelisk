@@ -105,41 +105,41 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: function = @unit_0.$concurrent_eos_report.11.strong, block = 0, region = reactive
 // CHECK: function = @unit_1.$concurrent_eos.31.weak, block = 0, region = active
 // CHECK: function = @unit_1.$concurrent_eos_report.31.weak, block = 0, region = reactive
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.11.strong(
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_report.11.strong(
 // CHECK-SAME: entry_kind = 13 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
-// CHECK: obelisk_sim.bytes.constant "strong-fail"
-// CHECK-NOT: obelisk_sim.bytes.constant "strong-pass"
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
+// CHECK-SAME: simulation.concurrent_eos_report
+// CHECK: simulation.bytes.constant "strong-fail"
+// CHECK-NOT: simulation.bytes.constant "strong-pass"
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.11.strong(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
 // CHECK-SAME: schedule.concurrent_eos_coordinator
 // CHECK: arith.constant 4 : i64
 // CHECK: arith.constant 2 : i64
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.11.strong
+// CHECK: simulation.ref.load
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.11.strong
 
 // Weak finalization mirrors the same two live bits but selects only the pass
 // action. IEEE 16.14.8(c) classifies weak(sequence) as nonvacuous.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.31.weak(
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.31.weak(
 // CHECK-SAME: entry_kind = 13 : i32
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: obelisk_sim.bytes.constant "weak-pass"
-// CHECK-NOT: obelisk_sim.bytes.constant "weak-fail"
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.31.weak(
+// CHECK: simulation.bytes.constant "weak-pass"
+// CHECK-NOT: simulation.bytes.constant "weak-fail"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.31.weak(
 // CHECK-SAME: entry_kind = 2 : i32
 // CHECK-SAME: home_region = 2 : i32
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_report.31.weak
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos_report.31.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.31.weak
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_report.31.weak
+// CHECK: simulation.spawn @unit_1.$concurrent_eos_report.31.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.31.weak

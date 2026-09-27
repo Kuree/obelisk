@@ -11,66 +11,66 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @statement_reflection {
-    obelisk_sim.scope.decl 0 hierarchy "top" vpi_kind 32 {
+  simulation.design @statement_reflection {
+    simulation.scope.decl 0 hierarchy "top" vpi_kind 32 {
       definition_loc = loc("definition.sv":27:4)
     } loc("use.sv":3:2)
     // An omitted intrinsic kind is derived from interface metadata.
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.bus" interface "@bus"
-    obelisk_sim.code_unit.decl 10 in 0 initial hierarchy "top.initial"
+    simulation.scope.decl 1 parent 0 hierarchy "top.bus" interface "@bus"
+    simulation.code_unit.decl 10 in 0 initial hierarchy "top.initial"
     // Exact kinds are intrinsic even when a code unit has no statement edge.
-    obelisk_sim.code_unit.decl 20 in 0 always hierarchy "top.zalways"
-    obelisk_sim.code_unit.decl 30 in 0 final hierarchy "top.zfinal"
-    obelisk_sim.code_unit.decl 40 in 0 function hierarchy "top.zfunction" {
-      vpi_properties = #obelisk_sim.vpi_properties<[
-        #obelisk_sim.vpi_property<selector = 50 : i32, value = true>
+    simulation.code_unit.decl 20 in 0 always hierarchy "top.zalways"
+    simulation.code_unit.decl 30 in 0 final hierarchy "top.zfinal"
+    simulation.code_unit.decl 40 in 0 function hierarchy "top.zfunction" {
+      vpi_properties = #simulation.vpi_properties<[
+        #simulation.vpi_property<selector = 50 : i32, value = true>
       ]>
     }
     // Infrastructure kinds are intrinsically internal; no redundant marker is
     // needed for a valid kind-zero/cap-internal compact record.
-    obelisk_sim.code_unit.decl 50 in 0 root_initializer hierarchy "top.zinternal"
-    obelisk_sim.code_unit.decl 55 in 0 continuous hierarchy "top.zinternal_continuous"
-    obelisk_sim.code_unit.decl 60 in 0 task hierarchy "top.ztask" {
-      vpi_properties = #obelisk_sim.vpi_properties<[
-        #obelisk_sim.vpi_property<selector = 50 : i32, value = false>
+    simulation.code_unit.decl 50 in 0 root_initializer hierarchy "top.zinternal"
+    simulation.code_unit.decl 55 in 0 continuous hierarchy "top.zinternal_continuous"
+    simulation.code_unit.decl 60 in 0 task hierarchy "top.ztask" {
+      vpi_properties = #simulation.vpi_properties<[
+        #simulation.vpi_property<selector = 50 : i32, value = false>
       ]>
     }
 
     // Deliberately reverse declaration and site order. The wire inventory is
     // normalized by stable ID, not by mutable MLIR block order or source loc.
-    obelisk_sim.statement.decl 200 in 10 scope 0 type 15 parent 100 loc("test.sv":9:3)
-    obelisk_sim.statement.decl 100 in 10 scope 0 type 33 name "body" {is_protected, is_scope} loc("test.sv":8:1)
+    simulation.statement.decl 200 in 10 scope 0 type 15 parent 100 loc("test.sv":9:3)
+    simulation.statement.decl 100 in 10 scope 0 type 33 name "body" {is_protected, is_scope} loc("test.sv":8:1)
     // Scope-owned continuous assignments are owned directly by the exact
     // elaborated scope and therefore omit a behavioral code-unit owner.
-    obelisk_sim.statement.decl 50 scope 0 type 8 loc("test.sv":7:1)
+    simulation.statement.decl 50 scope 0 type 8 loc("test.sv":7:1)
     // Non-cbStmt statement kinds are still traversal-visible identities and
     // correctly have no semantic callback-site record.
-    obelisk_sim.statement.decl 150 in 10 scope 0 type 38 parent 100 loc("test.sv":8:7)
-    obelisk_sim.statement.decl 250 in 10 scope 0 type 38 parent 200 loc("test.sv":9:9)
+    simulation.statement.decl 150 in 10 scope 0 type 38 parent 100 loc("test.sv":8:7)
+    simulation.statement.decl 250 in 10 scope 0 type 38 parent 200 loc("test.sv":9:9)
     // A task is itself the effective VPI scope of its top-level statements.
-    obelisk_sim.statement.decl 300 in 60 scope 0 type 38 loc("test.sv":11:3)
-    obelisk_sim.statement_site.decl 1200 on 200 phase 2
-    obelisk_sim.statement_site.decl 1000 on 100 phase 0
-    obelisk_sim.statement_site.decl 1100 on 200 phase 1
+    simulation.statement.decl 300 in 60 scope 0 type 38 loc("test.sv":11:3)
+    simulation.statement_site.decl 1200 on 200 phase 2
+    simulation.statement_site.decl 1000 on 100 phase 0
+    simulation.statement_site.decl 1100 on 200 phase 1
 
     // Deliberately reverse semantic edge order as well. The image sorts by
     // table/index/selector/ordinal for zero-copy query ranges.
-    obelisk_sim.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 1 modes 2 to 200
-    obelisk_sim.vpi_statement_relation.decl code_unit 10 type 24 selector 104 ordinal 0 modes 1 to 100
-    obelisk_sim.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 2 to 50
-    obelisk_sim.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 0 modes 2 to 150
-    obelisk_sim.vpi_statement_relation.decl statement 200 type 15 selector 75 ordinal 0 modes 3 to 250
-    obelisk_sim.vpi_statement_relation.decl code_unit 60 type 59 selector 104 ordinal 0 modes 1 to 300
+    simulation.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 1 modes 2 to 200
+    simulation.vpi_statement_relation.decl code_unit 10 type 24 selector 104 ordinal 0 modes 1 to 100
+    simulation.vpi_statement_relation.decl scope 0 type 32 selector 8 ordinal 0 modes 2 to 50
+    simulation.vpi_statement_relation.decl statement 100 type 33 selector 104 ordinal 0 modes 2 to 150
+    simulation.vpi_statement_relation.decl statement 200 type 15 selector 75 ordinal 0 modes 3 to 250
+    simulation.vpi_statement_relation.decl code_unit 60 type 59 selector 104 ordinal 0 modes 1 to 300
 
-    obelisk_sim.func @initial(%ctx: !obelisk_sim.context
-        {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @initial(%ctx: !simulation.context
+        {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 10 : i64} {
       // Force a VCD-only reflection image in the vpi=off run. Statement
       // inventory must still be absent from that image.
-      %path = obelisk_sim.bytes.constant "/dev/null"
-      obelisk_sim.dump.open %ctx, %path :
-          (!obelisk_sim.context, !obelisk_sim.bytes) -> ()
-      obelisk_sim.return
+      %path = simulation.bytes.constant "/dev/null"
+      simulation.dump.open %ctx, %path :
+          (!simulation.context, !simulation.bytes) -> ()
+      simulation.return
     }
   }
 }

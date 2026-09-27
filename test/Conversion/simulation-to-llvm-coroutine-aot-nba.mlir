@@ -1,31 +1,31 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --implicit-check-not=obelisk_sim.nba.enqueue
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --implicit-check-not=simulation.nba.enqueue
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition'
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=PERIODIC
 // RUN: sed 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' %s \
 // RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=TWO-STATE
 // RUN: sed -e 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {schedule.eval.inductive_two_state, entry_kind = 1 : i32/' %s \
 // RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=TWO-STATE-STAGE
 // RUN: sed -e 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {schedule.eval.selected_two_state, entry_kind = 1 : i32/' %s \
 // RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=SELECTED-STAGE
 // RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=PERIODIC-ANALYSIS
 
 // PERIODIC-ANALYSIS: native-aot eligible=true fully=true selected=true periodic=true
@@ -36,123 +36,123 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 2 : i32
 } {
-  obelisk_sim.design @aot_nba {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "aot_nba.root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "aot_nba.process"
-    obelisk_sim.code_unit.decl 3 in 0 always hierarchy "aot_nba.watcher"
-    obelisk_sim.code_unit.decl 4 in 0 always hierarchy "aot_nba.clock_slow"
-    obelisk_sim.code_unit.decl 5 in 0 always hierarchy "aot_nba.clock_fast"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+  simulation.design @aot_nba {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "aot_nba.root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "aot_nba.process"
+    simulation.code_unit.decl 3 in 0 always hierarchy "aot_nba.watcher"
+    simulation.code_unit.decl 4 in 0 always hierarchy "aot_nba.clock_slow"
+    simulation.code_unit.decl 5 in 0 always hierarchy "aot_nba.clock_fast"
+    simulation.storage.decl 0 in 0 : !simulation.logic<8> design
     // Keep an eight-byte addressable tail after the scalar root. Direct
     // generated commits use one unaligned 64-bit word plus an optional ninth
     // byte and leave a boundary root on the validating generic path.
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<64> design
-    obelisk_sim.storage.decl 2 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.storage.decl 3 in 0 : !obelisk_sim.logic<1> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<64> design
+    simulation.storage.decl 2 in 0 : !simulation.logic<1> design
+    simulation.storage.decl 3 in 0 : !simulation.logic<1> design
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %storage = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      %clock_slow = obelisk_sim.context.storage %ctx[2] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %clock_fast = obelisk_sim.context.storage %ctx[3] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %process = obelisk_sim.spawn @process(%ctx, %storage, %clock_slow) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      %watcher = obelisk_sim.spawn @watcher(%ctx, %storage) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<8>>
-          -> !obelisk_sim.process
-      %slow = obelisk_sim.spawn @clock_slow(%ctx, %clock_slow) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      %fast = obelisk_sim.spawn @clock_fast(%ctx, %clock_fast) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>>
-          -> !obelisk_sim.process
-      obelisk_sim.return
+      %storage = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<8>>
+      %clock_slow = simulation.context.storage %ctx[2] :
+          !simulation.ref<!simulation.logic<1>>
+      %clock_fast = simulation.context.storage %ctx[3] :
+          !simulation.ref<!simulation.logic<1>>
+      %process = simulation.spawn @process(%ctx, %storage, %clock_slow) :
+          !simulation.context, !simulation.ref<!simulation.logic<8>>,
+          !simulation.ref<!simulation.logic<1>> -> !simulation.process
+      %watcher = simulation.spawn @watcher(%ctx, %storage) :
+          !simulation.context, !simulation.ref<!simulation.logic<8>>
+          -> !simulation.process
+      %slow = simulation.spawn @clock_slow(%ctx, %clock_slow) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>>
+          -> !simulation.process
+      %fast = simulation.spawn @clock_fast(%ctx, %clock_fast) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>>
+          -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %destination: !obelisk_sim.ref<!obelisk_sim.logic<8>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %bit_destination: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 2 : i64})
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %destination: !simulation.ref<!simulation.logic<8>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %bit_destination: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 2 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      %value = obelisk_sim.logic.constant 42 : i8, 0 : i8 :
-          !obelisk_sim.logic<8>
-      obelisk_sim.nba.enqueue %value to %destination :
-          (!obelisk_sim.logic<8>,
-           !obelisk_sim.ref<!obelisk_sim.logic<8>>) -> ()
-      %bit_value = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.nba.enqueue %bit_value to %bit_destination :
-          (!obelisk_sim.logic<1>,
-           !obelisk_sim.ref<!obelisk_sim.logic<1>>) -> ()
-      obelisk_sim.return
+      %value = simulation.logic.constant 42 : i8, 0 : i8 :
+          !simulation.logic<8>
+      simulation.nba.enqueue %value to %destination :
+          (!simulation.logic<8>,
+           !simulation.ref<!simulation.logic<8>>) -> ()
+      %bit_value = simulation.logic.constant 1 : i1, 0 : i1 :
+          !simulation.logic<1>
+      simulation.nba.enqueue %bit_value to %bit_destination :
+          (!simulation.logic<1>,
+           !simulation.ref<!simulation.logic<1>>) -> ()
+      simulation.return
     }
 
-    obelisk_sim.func @watcher(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %source: !obelisk_sim.ref<!obelisk_sim.logic<8>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @watcher(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %source: !simulation.ref<!simulation.logic<8>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %source to ^resume
+      simulation.suspend.change %source to ^resume
           {site = #schedule.continuation<id = 1>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<8>>
+          !simulation.ref<!simulation.logic<8>>
     ^resume:
       cf.br ^wait
     }
 
-    obelisk_sim.func @clock_slow(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 2 : i64})
+    simulation.func @clock_slow(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 2 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
-      %delay = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %delay to ^toggle
+      %delay = simulation.time.constant 3
+      simulation.suspend.delay %delay to ^toggle
           {site = #schedule.continuation<id = 2>,
            timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
-      %old = obelisk_sim.ref.load %clock :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %new to %clock : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %old = simulation.ref.load %clock :
+          !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old :
+          (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %new to %clock : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     }
 
-    obelisk_sim.func @clock_fast(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 3 : i64})
+    simulation.func @clock_fast(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 3 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
       cf.br ^wait
     ^wait:
-      %delay = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %delay to ^toggle
+      %delay = simulation.time.constant 2
+      simulation.suspend.delay %delay to ^toggle
           {site = #schedule.continuation<id = 3>,
            timing = #schedule.timing_site<id = 1, kind = calendar>}
     ^toggle:
-      %old = obelisk_sim.ref.load %clock :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %new to %clock : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %old = simulation.ref.load %clock :
+          !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old :
+          (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %new to %clock : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     }
   }

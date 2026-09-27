@@ -1,7 +1,7 @@
 // Runtime semantics for ../Conversion/simulation-ranked-segment-external-clock.mlir.
 
 // RUN: %python %S/../Conversion/Inputs/mutate-forward-segments.py external-split %S/../Conversion/simulation-ranked-group-external-clock.mlir > %t.input.mlir
-// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang -I%S/../Conversion/../../runtime/include -I%resource_dir/include -c %S/Inputs/vpi-external-clock.c -o %t.helper.o
 // RUN: %llvm_dist/bin/clang++ %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
@@ -20,7 +20,7 @@
 // RUN: env OBELISK_TEST_TIMED_CLOCK=1 OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o0.exe > %t.o0.timed.out 2> %t.o0.timed.diag
 // RUN: FileCheck %s --check-prefix=TIMED < %t.o0.timed.out
 // RUN: FileCheck %s --check-prefix=TIERS < %t.o0.timed.diag
-// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=full require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.bytecode.mlir
+// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=full require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.bytecode.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.bytecode.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
 // RUN: %llvm_dist/bin/clang++ %t.bytecode.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.exe
 // RUN: %t.bytecode.exe | FileCheck %s

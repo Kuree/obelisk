@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=ENCODE --implicit-check-not=obelisk.design.database
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' | FileCheck %s --check-prefix=DATABASE
-// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
+// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
@@ -32,74 +32,74 @@ module attributes {
     %used = llvm.insertvalue %address, %zero[0] : !llvm.array<1 x ptr>
     llvm.return %used : !llvm.array<1 x ptr>
   }
-  obelisk_sim.design @bytecode {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add" loc("design.sv":7:3)
-    obelisk_sim.code_unit.decl 71 in 0 initial hierarchy "top.process" debug "process"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<65> design
+  simulation.design @bytecode {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add" loc("design.sv":7:3)
+    simulation.code_unit.decl 71 in 0 initial hierarchy "top.process" debug "process"
+    simulation.storage.decl 0 in 0 : !simulation.logic<65> design
         hierarchy "top.value"
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
+    simulation.net.decl 0 in 0 : !simulation.logic<2> design
         {resolution_kind = 2 : i32}
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<2> design
+    simulation.net.decl 1 in 0 : !simulation.logic<2> design
         {resolution_kind = 2 : i32}
-    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<2> design
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<2> design
         {driven_low = 0 : i64, driven_width = 1 : i64,
          strength0 = 5 : i32, strength1 = 0 : i32}
-    obelisk_sim.driver.decl 1 in 0 drives 0 : !obelisk_sim.logic<2> design
+    simulation.driver.decl 1 in 0 drives 0 : !simulation.logic<2> design
         {driven_low = 1 : i64, driven_width = 1 : i64}
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 2 reversed = false
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 2 reversed = false
 
-    obelisk_sim.func private @add(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %lhs: !obelisk_sim.logic<65> {obelisk_sim.capture_kind = 1 : i32},
-        %rhs: !obelisk_sim.logic<65> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<65> attributes {code_unit_id = 70 : i64,
+    simulation.func private @add(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %lhs: !simulation.logic<65> {simulation.capture_kind = 1 : i32},
+        %rhs: !simulation.logic<65> {simulation.capture_kind = 1 : i32})
+        -> !simulation.logic<65> attributes {code_unit_id = 70 : i64,
                                               entry_kind = 8 : i32} {
-      %sum = obelisk_sim.logic.binary add %lhs, %rhs
-          : !obelisk_sim.logic<65>
-      obelisk_sim.return %sum : !obelisk_sim.logic<65>
+      %sum = simulation.logic.binary add %lhs, %rhs
+          : !simulation.logic<65>
+      simulation.return %sum : !simulation.logic<65>
     }
 
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 71 : i64, entry_kind = 1 : i32} {
-      %two = obelisk_sim.logic.constant 2 : i65, 0 : i65 : !obelisk_sim.logic<65>
-      %three = obelisk_sim.logic.constant 3 : i65, 0 : i65 : !obelisk_sim.logic<65>
-      %narrow = obelisk_sim.logic.resize %two signed = false
-          : !obelisk_sim.logic<65> -> !obelisk_sim.logic<64>
-      %extended = obelisk_sim.logic.resize %narrow signed = true
-          : !obelisk_sim.logic<64> -> !obelisk_sim.logic<65>
-      %replacement = obelisk_sim.logic.constant 6 : i3, 0 : i3 : !obelisk_sim.logic<3>
-      %index = obelisk_sim.logic.constant -1 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %updated = obelisk_sim.logic.dyn_insert %replacement into %extended at %index
-          : (!obelisk_sim.logic<65>, !obelisk_sim.logic<3>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<65>
-      %storage = obelisk_sim.context.storage %ctx[0]
-          : !obelisk_sim.ref<!obelisk_sim.logic<65>>
-      obelisk_sim.ref.store %updated to %storage
-          {obelisk_sim.continuous_store} : !obelisk_sim.logic<65>,
-          !obelisk_sim.ref<!obelisk_sim.logic<65>>
-      obelisk_sim.override %storage = %extended assign true
-          : !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
-      obelisk_sim.release_override %storage assign true
-          : !obelisk_sim.ref<!obelisk_sim.logic<65>>
-      obelisk_sim.override %storage = %extended assign false
-          : !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
-      %owner = obelisk_sim.process.current
-      obelisk_sim.dynamic_override %storage = %extended owner %owner
+      %two = simulation.logic.constant 2 : i65, 0 : i65 : !simulation.logic<65>
+      %three = simulation.logic.constant 3 : i65, 0 : i65 : !simulation.logic<65>
+      %narrow = simulation.logic.resize %two signed = false
+          : !simulation.logic<65> -> !simulation.logic<64>
+      %extended = simulation.logic.resize %narrow signed = true
+          : !simulation.logic<64> -> !simulation.logic<65>
+      %replacement = simulation.logic.constant 6 : i3, 0 : i3 : !simulation.logic<3>
+      %index = simulation.logic.constant -1 : i8, 0 : i8 : !simulation.logic<8>
+      %updated = simulation.logic.dyn_insert %replacement into %extended at %index
+          : (!simulation.logic<65>, !simulation.logic<3>, !simulation.logic<8>) -> !simulation.logic<65>
+      %storage = simulation.context.storage %ctx[0]
+          : !simulation.ref<!simulation.logic<65>>
+      simulation.ref.store %updated to %storage
+          {simulation.continuous_store} : !simulation.logic<65>,
+          !simulation.ref<!simulation.logic<65>>
+      simulation.override %storage = %extended assign true
+          : !simulation.ref<!simulation.logic<65>>, !simulation.logic<65>
+      simulation.release_override %storage assign true
+          : !simulation.ref<!simulation.logic<65>>
+      simulation.override %storage = %extended assign false
+          : !simulation.ref<!simulation.logic<65>>, !simulation.logic<65>
+      %owner = simulation.process.current
+      simulation.dynamic_override %storage = %extended owner %owner
           assign false claim true :
-          !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
-      obelisk_sim.dynamic_override %storage = %extended owner %owner
+          !simulation.ref<!simulation.logic<65>>, !simulation.logic<65>
+      simulation.dynamic_override %storage = %extended owner %owner
           assign false claim false :
-          !obelisk_sim.ref<!obelisk_sim.logic<65>>, !obelisk_sim.logic<65>
-      obelisk_sim.release_override %storage assign false
-          : !obelisk_sim.ref<!obelisk_sim.logic<65>>
-      %sum = obelisk_sim.call @add(%ctx, %two, %three)
-          : (!obelisk_sim.context, !obelisk_sim.logic<65>, !obelisk_sim.logic<65>) -> !obelisk_sim.logic<65>
-      %first = obelisk_sim.assert.deferred_once 4294967297
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^done
+          !simulation.ref<!simulation.logic<65>>, !simulation.logic<65>
+      simulation.release_override %storage assign false
+          : !simulation.ref<!simulation.logic<65>>
+      %sum = simulation.call @add(%ctx, %two, %three)
+          : (!simulation.context, !simulation.logic<65>, !simulation.logic<65>) -> !simulation.logic<65>
+      %first = simulation.assert.deferred_once 4294967297
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^done
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -130,9 +130,9 @@ module attributes {
 // The last executable copy of @add is erased, but version-1 reflection still
 // originates from its immutable record, including parent, name, and source.
 // INLINED-DATABASE: obelisk.design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
-// INLINED-DATABASE: obelisk_sim.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add"
+// INLINED-DATABASE: simulation.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add"
 // INLINED-DATABASE-SAME: loc(#loc[[ADD:[0-9]+]])
-// INLINED-DATABASE-NOT: obelisk_sim.func private @add
+// INLINED-DATABASE-NOT: simulation.func private @add
 // INLINED-DATABASE: #loc[[ADD]] = loc("design.sv":7:3)
 
 // LOWER: llvm.mlir.global external constant @process.__obelisk_process_descriptor

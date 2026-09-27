@@ -12,23 +12,23 @@
 // are imported into the same managed representation used by dynamic arrays
 // and queues. IEEE 1800-2023 19.5.7 additionally permits real coverpoints and
 // set values; shortreal elements are promoted according to 6.12 and 6.22.3.
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.packed_array<1 : 0 x i1>>
-// LOWER: obelisk_sim.container.create {{.*}} bit_width = 2 : i64{{.*}} element_kind = 1 : i32{{.*}} : (i64) -> !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<1 : 0 x i1>>
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.unpacked_array<0 : 2 x i32>
-// LOWER: obelisk_sim.container.create {{.*}} bit_width = 32 : i64{{.*}} container_kind = 1 : i32{{.*}} element_kind = 1 : i32{{.*}} : (i64) -> !obelisk_sim.dynamic_array<i32>
-// LOWER: obelisk_sim.container.import_fixed {{.*}}element_span = 32 : i64
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.dynamic_array<i32>
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.queue<i32, 3>
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.unpacked_array<0 : 1 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-// LOWER: obelisk_sim.container.create {{.*}} bit_width = 4 : i64{{.*}} element_flags = 1 : i32{{.*}} element_kind = 2 : i32
-// LOWER: obelisk_sim.container.import_fixed {{.*}}element_span = 4 : i64
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.unpacked_array<0 : 1 x f64>
-// LOWER: obelisk_sim.container.create {{.*}} bit_width = 64 : i64{{.*}} element_kind = 3 : i32
-// LOWER: obelisk_sim.container.import_fixed {{.*}}element_span = 64 : i64
-// LOWER: obelisk_sim.call {{.*}} -> !obelisk_sim.unpacked_array<0 : 1 x f32>
-// LOWER: obelisk_sim.container.create {{.*}} bit_width = 32 : i64{{.*}} element_kind = 3 : i32
-// LOWER: obelisk_sim.container.import_fixed {{.*}}element_span = 32 : i64
-// LOWER: obelisk_sim.covergroup.create {{.*}} payloads[{{.*}}] {{.*}} : (!obelisk_sim.dynamic_array<!obelisk_sim.packed_array<1 : 0 x i1>>, !obelisk_sim.dynamic_array<i32>, !obelisk_sim.dynamic_array<i32>, !obelisk_sim.queue<i32, 3>, i32, !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>, !obelisk_sim.dynamic_array<f64>, !obelisk_sim.dynamic_array<f32>)
+// LOWER: simulation.call {{.*}} -> !simulation.packed_array<1 : 0 x !simulation.packed_array<1 : 0 x i1>>
+// LOWER: simulation.container.create {{.*}} bit_width = 2 : i64{{.*}} element_kind = #simulation.element_kind<bits>{{.*}} : (i64) -> !simulation.dynamic_array<!simulation.packed_array<1 : 0 x i1>>
+// LOWER: simulation.call {{.*}} -> !simulation.unpacked_array<0 : 2 x i32>
+// LOWER: simulation.container.create {{.*}} bit_width = 32 : i64{{.*}} container_kind = #simulation.container_kind<dynamic_array>{{.*}} element_kind = #simulation.element_kind<bits>{{.*}} : (i64) -> !simulation.dynamic_array<i32>
+// LOWER: simulation.container.import_fixed {{.*}}element_span = 32 : i64
+// LOWER: simulation.call {{.*}} -> !simulation.dynamic_array<i32>
+// LOWER: simulation.call {{.*}} -> !simulation.queue<i32, 3>
+// LOWER: simulation.call {{.*}} -> !simulation.unpacked_array<0 : 1 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+// LOWER: simulation.container.create {{.*}} bit_width = 4 : i64{{.*}} element_flags = #simulation.element_flags<four_state>{{.*}} element_kind = #simulation.element_kind<logic>
+// LOWER: simulation.container.import_fixed {{.*}}element_span = 4 : i64
+// LOWER: simulation.call {{.*}} -> !simulation.unpacked_array<0 : 1 x f64>
+// LOWER: simulation.container.create {{.*}} bit_width = 64 : i64{{.*}} element_kind = #simulation.element_kind<real>
+// LOWER: simulation.container.import_fixed {{.*}}element_span = 64 : i64
+// LOWER: simulation.call {{.*}} -> !simulation.unpacked_array<0 : 1 x f32>
+// LOWER: simulation.container.create {{.*}} bit_width = 32 : i64{{.*}} element_kind = #simulation.element_kind<real>
+// LOWER: simulation.container.import_fixed {{.*}}element_span = 32 : i64
+// LOWER: simulation.covergroup.create {{.*}} payloads[{{.*}}] {{.*}} : (!simulation.dynamic_array<!simulation.packed_array<1 : 0 x i1>>, !simulation.dynamic_array<i32>, !simulation.dynamic_array<i32>, !simulation.queue<i32, 3>, i32, !simulation.dynamic_array<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>, !simulation.dynamic_array<f64>, !simulation.dynamic_array<f32>)
 
 // SCHEMA-DAG: functional_value_set id=[[PACKED_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[PACKED_EXPR:[1-9][0-9]*]]
 // SCHEMA-DAG: functional_value_set id=[[FIXED_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[FIXED_EXPR:[1-9][0-9]*]]

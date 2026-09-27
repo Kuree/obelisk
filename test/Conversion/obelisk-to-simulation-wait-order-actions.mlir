@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s \
-// RUN:   --implicit-check-not=obelisk_sim.error \
+// RUN:   --implicit-check-not=simulation.error \
 // RUN:   --implicit-check-not=obelisk.sv.statement.wait_order
 
 module {
@@ -51,14 +51,14 @@ module {
 
 // IEEE 1800-2017 15.5.4: success executes the first action and an explicit
 // failure action executes instead of the default run-time error.
-// CHECK: obelisk_sim.suspend.event_order %{{.*}}, %{{.*}} events 2 to
-// CHECK: %[[FAILED:.*]] = obelisk_sim.wait_order.failed
+// CHECK: simulation.suspend.event_order %{{.*}}, %{{.*}} events 2 to
+// CHECK: %[[FAILED:.*]] = simulation.wait_order.failed
 // CHECK: cf.cond_br %[[FAILED]], ^[[FAIL:bb[0-9]+]], ^[[SUCCESS:bb[0-9]+]]
 // CHECK: ^[[SUCCESS]]:
-// CHECK: obelisk_sim.logic.constant true, false
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.logic.constant true, false
+// CHECK: simulation.ref.store
 // CHECK: cf.br ^[[DONE:bb[0-9]+]]
 // CHECK: ^[[FAIL]]:
-// CHECK: obelisk_sim.logic.constant false, false
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.logic.constant false, false
+// CHECK: simulation.ref.store
 // CHECK: cf.br ^[[DONE]]

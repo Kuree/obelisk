@@ -41,6 +41,6 @@ module {
   }
 }
 
-// CHECK-NOT: obelisk_sim.logic.resize {{.*}} signed = true : !obelisk_sim.logic<2> -> !obelisk_sim.logic<3>
-// CHECK: obelisk_sim.logic.resize {{.*}} signed = false : !obelisk_sim.logic<2> -> !obelisk_sim.logic<3>
+// CHECK-NOT: simulation.logic.resize {{.*}} signed = true : !simulation.logic<2> -> !simulation.logic<3>
+// CHECK: simulation.logic.resize {{.*}} signed = false : !simulation.logic<2> -> !simulation.logic<3>
 // CHECK-NOT: obelisk.sv.

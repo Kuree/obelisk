@@ -48,11 +48,11 @@
 // FunctionalExpression IDs rather than compiler-side bin ordinals. Omitted
 // constructor and sample defaults reuse their already-evaluated actual value
 // in the expression batch rather than evaluating the default a second time.
-// CHECK: %[[SOURCE_REF:.*]] = obelisk_sim.argument_ref.from_ref
-// CHECK: %[[SOURCE_VALUE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[HANDLE:.*]] = obelisk_sim.covergroup.create {{.*}} payloads[%[[SOURCE_REF]], %[[SOURCE_VALUE]], %[[SOURCE_VALUE]], {{.*}}, {{.*}}] argument_count 2 formal_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}] expression_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
-// CHECK: obelisk_sim.covergroup.formal_read {{.*}}[{{[1-9][0-9]*}}]
-// CHECK: obelisk_sim.covergroup.sample {{.*}} values[{{.*}}, {{.*}}, {{.*}}] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
+// CHECK: %[[SOURCE_REF:.*]] = simulation.argument_ref.from_ref
+// CHECK: %[[SOURCE_VALUE:.*]] = simulation.ref.load
+// CHECK: %[[HANDLE:.*]] = simulation.covergroup.create {{.*}} payloads[%[[SOURCE_REF]], %[[SOURCE_VALUE]], %[[SOURCE_VALUE]], {{.*}}, {{.*}}] argument_count 2 formal_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}] expression_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
+// CHECK: simulation.covergroup.formal_read {{.*}}[{{[1-9][0-9]*}}]
+// CHECK: simulation.covergroup.sample {{.*}} values[{{.*}}, {{.*}}, {{.*}}] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
 // SCHEMA-DAG: functional_expression id={{[1-9][0-9]*}} owner={{[1-9][0-9]*}} owner_kind=6 role=17 result_kind=2 width=32 signedness=2 owner_ordinal=0 owner_subordinal=0 phase=1 result_ordinal=0
 // SCHEMA-DAG: functional_expression id={{[1-9][0-9]*}} owner={{[1-9][0-9]*}} owner_kind=6 role=17 result_kind=2 width=32 signedness=2 owner_ordinal=0 owner_subordinal=0 phase=2 result_ordinal=0
 // FORMAL-REORDER: error: constructor FunctionalFormal batch is reordered, wrong-owner, or type-mismatched at schema ordinal 0
@@ -66,9 +66,9 @@
 
 // A defaulted ref contributes its alias to the formal payload and the single
 // value loaded through that alias to the FormalDefault expression batch.
-// DEFAULT-REF: %[[REF:.*]] = obelisk_sim.argument_ref.from_ref
-// DEFAULT-REF: %[[VALUE:.*]] = obelisk_sim.argument_ref.load %[[REF]]
-// DEFAULT-REF: obelisk_sim.covergroup.create {{.*}} payloads[%[[REF]], %[[VALUE]], {{.*}}] argument_count 1 formal_ids [{{[1-9][0-9]*}}] expression_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}] : (!obelisk_sim.argument_ref<i32>, i32, i32)
+// DEFAULT-REF: %[[REF:.*]] = simulation.argument_ref.from_ref
+// DEFAULT-REF: %[[VALUE:.*]] = simulation.argument_ref.load %[[REF]]
+// DEFAULT-REF: simulation.covergroup.create {{.*}} payloads[%[[REF]], %[[VALUE]], {{.*}}] argument_count 1 formal_ids [{{[1-9][0-9]*}}] expression_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}] : (!simulation.argument_ref<i32>, i32, i32)
 
 //--- input.sv
 module constructor_batch;

@@ -44,10 +44,10 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     if (!patternPlan)
       return op.emitOpError("container pattern has no stable layout");
     SmallVector<uint32_t, 11> inputs{
-        emitU64Constant(plan, op.getContainerKind()),
+        emitU64Constant(plan, static_cast<uint32_t>(op.getContainerKind())),
         emitU64Constant(plan, op.getTypeId()),
-        emitU64Constant(plan, op.getElementKind()),
-        emitU64Constant(plan, op.getElementFlags()),
+        emitU64Constant(plan, static_cast<uint32_t>(op.getElementKind())),
+        emitU64Constant(plan, static_cast<uint32_t>(op.getElementFlags())),
         emitU64Constant(plan, op.getValueSize()),
         emitU64Constant(plan, op.getAlignment()),
         emitU64Constant(plan, op.getBitWidth()),
@@ -226,16 +226,16 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
       append32(traceSlots, static_cast<uint32_t>(kind));
       append32(traceSlots, 0);
     }
-    return emitIntrinsicRegisters(plan, kIntrinsicMailboxCreate,
-                                  {emitU64Constant(plan, op.getTypeId()),
-                                   emitU64Constant(plan, op.getElementKind()),
-                                   emitU64Constant(plan, op.getElementFlags()),
-                                   emitU64Constant(plan, op.getValueSize()),
-                                   emitU64Constant(plan, op.getAlignment()),
-                                   emitU64Constant(plan, op.getBitWidth()),
-                                   emitBytesConstant(plan, traceSlots),
-                                   reg(plan, op.getBound())},
-                                  {reg(plan, op.getResult())});
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicMailboxCreate,
+        {emitU64Constant(plan, op.getTypeId()),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getElementKind())),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getElementFlags())),
+         emitU64Constant(plan, op.getValueSize()),
+         emitU64Constant(plan, op.getAlignment()),
+         emitU64Constant(plan, op.getBitWidth()),
+         emitBytesConstant(plan, traceSlots), reg(plan, op.getBound())},
+        {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimMailboxNumOp>(operation))
     return emitIntrinsic(plan, kIntrinsicMailboxNum, {op.getMailbox()},
@@ -297,7 +297,8 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     return emitIntrinsic(plan, kIntrinsicRandomBounded, {op.getBound()},
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimRandomDistributionOp>(operation)) {
-    uint32_t distribution = emitU64Constant(plan, op.getDistribution());
+    uint32_t distribution =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getDistribution()));
     return emitIntrinsicRegisters(
         plan, kIntrinsicRandomDistribution,
         {distribution, reg(plan, op.getSeed()), reg(plan, op.getFirst()),
@@ -305,7 +306,8 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getResult()), reg(plan, op.getNextSeed())});
   }
   if (auto op = dyn_cast<sim::SimStochasticQueueOp>(operation)) {
-    uint32_t action = emitU64Constant(plan, op.getAction());
+    uint32_t action =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getAction()));
     uint32_t unitScale = emitU64Constant(plan, op.getUnitScale());
     return emitIntrinsicRegisters(
         plan, kIntrinsicStochasticQueue,
@@ -375,17 +377,18 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
       append32(traceSlots, static_cast<uint32_t>(kind));
       append32(traceSlots, 0);
     }
-    return emitIntrinsicRegisters(plan, kIntrinsicAssocCreate,
-                                  {emitU64Constant(plan, op.getTypeId()),
-                                   emitU64Constant(plan, op.getElementKind()),
-                                   emitU64Constant(plan, op.getElementFlags()),
-                                   emitU64Constant(plan, op.getValueSize()),
-                                   emitU64Constant(plan, op.getAlignment()),
-                                   emitU64Constant(plan, op.getBitWidth()),
-                                   emitBytesConstant(plan, traceSlots),
-                                   emitU64Constant(plan, op.getKeyKind()),
-                                   emitU64Constant(plan, op.getKeyWidth())},
-                                  {reg(plan, op.getResult())});
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicAssocCreate,
+        {emitU64Constant(plan, op.getTypeId()),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getElementKind())),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getElementFlags())),
+         emitU64Constant(plan, op.getValueSize()),
+         emitU64Constant(plan, op.getAlignment()),
+         emitU64Constant(plan, op.getBitWidth()),
+         emitBytesConstant(plan, traceSlots),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getKeyKind())),
+         emitU64Constant(plan, op.getKeyWidth())},
+        {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimAssocReadOp>(operation))
     return emitIntrinsic(plan, kIntrinsicAssocRead,

@@ -115,33 +115,33 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-COUNT-2: obelisk_sim.assert.control {{.*}} action 7 assertion
-// CHECK-NOT: obelisk_sim.assert.control
+// CHECK-COUNT-2: simulation.assert.control {{.*}} action <pass_off> assertion
+// CHECK-NOT: simulation.assert.control
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.assertion_target_id = [[IMPL_ID:[0-9]+]] : i64
-// CHECK: [[IMPL_ACTION:%.*]] = obelisk_sim.assert.action_state {{.*}} assertion [[IMPL_ID]] {obelisk_sim.concurrent_attempt_action_state}
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.assertion_target_id = [[IMPL_ID:[0-9]+]] : i64
+// CHECK: [[IMPL_ACTION:%.*]] = simulation.assert.action_state {{.*}} assertion [[IMPL_ID]] {simulation.concurrent_attempt_action_state}
 // CHECK: [[VAC_MASK:%.*]] = arith.constant {{.*}} 2 : i32
 // CHECK: arith.andi [[IMPL_ACTION]], [[VAC_MASK]] : i32
-// CHECK: arith.andi {{.*}} {obelisk_sim.concurrent_action_class = "vacuous-pass", obelisk_sim.concurrent_action_control} : i1
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "vacuous-pass", simulation.concurrent_action_control} : i1
 // CHECK: [[FAIL_MASK:%.*]] = arith.constant {{.*}} 4 : i32
 // CHECK: arith.andi [[IMPL_ACTION]], [[FAIL_MASK]] : i32
-// CHECK: arith.andi {{.*}} {obelisk_sim.concurrent_action_class = "fail", obelisk_sim.concurrent_action_control} : i1
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "fail", simulation.concurrent_action_control} : i1
 // CHECK: [[PASS_MASK:%.*]] = arith.constant {{.*}} 1 : i32
 // CHECK: arith.andi [[IMPL_ACTION]], [[PASS_MASK]] : i32
-// CHECK: arith.andi {{.*}} {obelisk_sim.concurrent_action_class = "nonvacuous-pass", obelisk_sim.concurrent_action_control} : i1
-// CHECK-NOT: obelisk_sim.assert.action_state
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "nonvacuous-pass", simulation.concurrent_action_control} : i1
+// CHECK-NOT: simulation.assert.action_state
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.assertion_target_id = [[BRANCH_ID:[0-9]+]] : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK: [[BRANCH_ACTION:%.*]] = obelisk_sim.assert.action_state {{.*}} assertion [[BRANCH_ID]] {obelisk_sim.concurrent_attempt_action_state}
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.assertion_target_id = [[BRANCH_ID:[0-9]+]] : i64
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK: [[BRANCH_ACTION:%.*]] = simulation.assert.action_state {{.*}} assertion [[BRANCH_ID]] {simulation.concurrent_attempt_action_state}
 // CHECK: [[BRANCH_PASS:%.*]] = arith.constant {{.*}} 1 : i32
 // CHECK: arith.andi [[BRANCH_ACTION]], [[BRANCH_PASS]] : i32
-// CHECK: arith.andi {{.*}} {obelisk_sim.concurrent_action_class = "nonvacuous-pass", obelisk_sim.concurrent_action_control} : i1
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "nonvacuous-pass", simulation.concurrent_action_control} : i1
 // CHECK: [[BRANCH_FAIL:%.*]] = arith.constant {{.*}} 4 : i32
 // CHECK: arith.andi [[BRANCH_ACTION]], [[BRANCH_FAIL]] : i32
-// CHECK: arith.andi {{.*}} {obelisk_sim.concurrent_action_class = "fail", obelisk_sim.concurrent_action_control} : i1
-// CHECK-NOT: obelisk_sim.assert.action_state
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "fail", simulation.concurrent_action_control} : i1
+// CHECK-NOT: simulation.assert.action_state

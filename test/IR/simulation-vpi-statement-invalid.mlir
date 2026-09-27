@@ -1,235 +1,235 @@
 // RUN: obelisk-opt --split-input-file --verify-diagnostics %s
 
 module {
-  obelisk_sim.design @non_statement_kind {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @non_statement_kind {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{VPI kind is not a concrete statement object}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 39
+    simulation.statement.decl 1 in 1 scope 0 type 39
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @missing_name {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @missing_name {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{named block requires a nonempty name}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 33
+    simulation.statement.decl 1 in 1 scope 0 type 33
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @named_block_not_marked_scope {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @named_block_not_marked_scope {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{named begin/fork and foreach statements must be marked is_scope}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 33 name "body"
+    simulation.statement.decl 1 in 1 scope 0 type 33 name "body"
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @foreach_not_marked_scope {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @foreach_not_marked_scope {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{named begin/fork and foreach statements must be marked is_scope}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 675
+    simulation.statement.decl 1 in 1 scope 0 type 675
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @non_scope_marked_scope {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @non_scope_marked_scope {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{only a scope-capable statement may be marked is_scope}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 38 {is_scope}
+    simulation.statement.decl 1 in 1 scope 0 type 38 {is_scope}
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_owner {
-    obelisk_sim.scope.decl 0
+  simulation.design @unknown_owner {
+    simulation.scope.decl 0
     // expected-error @below {{references an unknown code-unit ID}}
-    obelisk_sim.statement.decl 1 in 99 scope 0 type 4
-    obelisk_sim.statement_site.decl 2 on 1 phase 0
+    simulation.statement.decl 1 in 99 scope 0 type 4
+    simulation.statement_site.decl 2 on 1 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @behavioral_statement_without_owner {
-    obelisk_sim.scope.decl 0
+  simulation.design @behavioral_statement_without_owner {
+    simulation.scope.decl 0
     // expected-error @below {{behavioral statement requires a code-unit ID}}
-    obelisk_sim.statement.decl 1 scope 0 type 38
+    simulation.statement.decl 1 scope 0 type 38
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @scope_owned_statement_with_owner {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @scope_owned_statement_with_owner {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{scope-owned statement must omit a code-unit ID}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 8
+    simulation.statement.decl 1 in 1 scope 0 type 8
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @scope_owner_mismatch {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.scope.decl 1 parent 0
-    obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.child.initial"
+  simulation.design @scope_owner_mismatch {
+    simulation.scope.decl 0
+    simulation.scope.decl 1 parent 0
+    simulation.code_unit.decl 1 in 1 initial hierarchy "top.child.initial"
     // expected-error @below {{scope ID must match the owning code unit's scope}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 4
-    obelisk_sim.statement_site.decl 2 on 1 phase 0
+    simulation.statement.decl 1 in 1 scope 0 type 4
+    simulation.statement_site.decl 2 on 1 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @illegal_for_phase {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 15
+  simulation.design @illegal_for_phase {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    simulation.statement.decl 1 in 1 scope 0 type 15
     // expected-error @below {{phase is not legal for the statement's Table 38-6 policy}}
-    obelisk_sim.statement_site.decl 2 on 1 phase 0
+    simulation.statement_site.decl 2 on 1 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @missing_for_site {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @missing_for_site {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{does not declare exactly the callback sites required by its Table 38-6 policy}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 15
-    obelisk_sim.statement_site.decl 2 on 1 phase 1
+    simulation.statement.decl 1 in 1 scope 0 type 15
+    simulation.statement_site.decl 2 on 1 phase 1
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @parent_cycle {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @parent_cycle {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{parent statements contain a cycle}}
-    obelisk_sim.statement.decl 10 in 1 scope 0 type 4 parent 20
-    obelisk_sim.statement.decl 20 in 1 scope 0 type 4 parent 10
-    obelisk_sim.statement_site.decl 11 on 10 phase 0
-    obelisk_sim.statement_site.decl 21 on 20 phase 0
+    simulation.statement.decl 10 in 1 scope 0 type 4 parent 20
+    simulation.statement.decl 20 in 1 scope 0 type 4 parent 10
+    simulation.statement_site.decl 11 on 10 phase 0
+    simulation.statement_site.decl 21 on 20 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @duplicate_statement_id {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 38
+  simulation.design @duplicate_statement_id {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    simulation.statement.decl 1 in 1 scope 0 type 38
     // expected-error @below {{duplicate statement ID 1}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 38
+    simulation.statement.decl 1 in 1 scope 0 type 38
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @duplicate_site_id {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 3
-    obelisk_sim.statement.decl 3 in 1 scope 0 type 3
-    obelisk_sim.statement_site.decl 2 on 1 phase 0
+  simulation.design @duplicate_site_id {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    simulation.statement.decl 1 in 1 scope 0 type 3
+    simulation.statement.decl 3 in 1 scope 0 type 3
+    simulation.statement_site.decl 2 on 1 phase 0
     // expected-error @below {{duplicate statement-site ID 2}}
-    obelisk_sim.statement_site.decl 2 on 3 phase 0
+    simulation.statement_site.decl 2 on 3 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @zero_statement_id {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @zero_statement_id {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{statement ID must be nonzero}}
-    obelisk_sim.statement.decl 0 in 1 scope 0 type 38
+    simulation.statement.decl 0 in 1 scope 0 type 38
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @unknown_site_target {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 38
+  simulation.design @unknown_site_target {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    simulation.statement.decl 1 in 1 scope 0 type 38
     // expected-error @below {{references an unknown statement ID}}
-    obelisk_sim.statement_site.decl 2 on 99 phase 0
+    simulation.statement_site.decl 2 on 99 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @duplicate_phase {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 3
-    obelisk_sim.statement_site.decl 2 on 1 phase 0
+  simulation.design @duplicate_phase {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    simulation.statement.decl 1 in 1 scope 0 type 3
+    simulation.statement_site.decl 2 on 1 phase 0
     // expected-error @below {{duplicates a semantic callback phase for the statement}}
-    obelisk_sim.statement_site.decl 3 on 1 phase 0
+    simulation.statement_site.decl 3 on 1 phase 0
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @cross_code_unit_parent {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.first"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.second"
-    obelisk_sim.statement.decl 10 in 1 scope 0 type 38
+  simulation.design @cross_code_unit_parent {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.first"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "top.second"
+    simulation.statement.decl 10 in 1 scope 0 type 38
     // expected-error @below {{references an unknown or cross-owner/scope parent statement}}
-    obelisk_sim.statement.decl 20 in 2 scope 0 type 38 parent 10
+    simulation.statement.decl 20 in 2 scope 0 type 38 parent 10
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @cross_scope_scope_owned_parent {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.scope.decl 1 parent 0
-    obelisk_sim.statement.decl 10 scope 0 type 8
+  simulation.design @cross_scope_scope_owned_parent {
+    simulation.scope.decl 0
+    simulation.scope.decl 1 parent 0
+    simulation.statement.decl 10 scope 0 type 8
     // expected-error @below {{references an unknown or cross-owner/scope parent statement}}
-    obelisk_sim.statement.decl 20 scope 1 type 128 parent 10
+    simulation.statement.decl 20 scope 1 type 128 parent 10
   }
 }
 
 // -----
 
 module {
-  obelisk_sim.design @name_on_ordinary_statement {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+  simulation.design @name_on_ordinary_statement {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
     // expected-error @below {{only named begin/fork may carry a name}}
-    obelisk_sim.statement.decl 1 in 1 scope 0 type 38 name "illegal"
+    simulation.statement.decl 1 in 1 scope 0 type 38 name "illegal"
   }
 }

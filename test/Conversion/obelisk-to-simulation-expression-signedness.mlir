@@ -43,6 +43,6 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.logic.shift right %
-// CHECK: obelisk_sim.logic.shift right_arith
+// CHECK: simulation.logic.shift right %
+// CHECK: simulation.logic.shift right_arith
 // CHECK-NOT: obelisk.sv.

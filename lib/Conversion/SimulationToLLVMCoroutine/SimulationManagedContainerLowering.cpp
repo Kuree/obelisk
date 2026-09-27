@@ -137,16 +137,17 @@ public:
       pattern = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
                                           patternName.getValue());
     }
-    SmallVector<Value> arguments{lane,
-                                 c32(op.getContainerKind()),
-                                 c64(op.getTypeId()),
-                                 c32(op.getElementKind()),
-                                 c32(op.getElementFlags()),
-                                 c64(op.getValueSize()),
-                                 c64(op.getAlignment()),
-                                 c64(op.getBitWidth()),
-                                 traceSlots,
-                                 c64(traceOffsets.size())};
+    SmallVector<Value> arguments{
+        lane,
+        c32(static_cast<uint32_t>(op.getContainerKind())),
+        c64(op.getTypeId()),
+        c32(static_cast<uint32_t>(op.getElementKind())),
+        c32(static_cast<uint32_t>(op.getElementFlags())),
+        c64(op.getValueSize()),
+        c64(op.getAlignment()),
+        c64(op.getBitWidth()),
+        traceSlots,
+        c64(traceOffsets.size())};
     if (patternName) {
       arguments.push_back(pattern);
       arguments.push_back(c64(patternSize.getValue().getZExtValue()));
@@ -904,11 +905,13 @@ public:
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_mailbox_create_typed"),
-            ValueRange{lane, c64(op.getTypeId()), c32(op.getElementKind()),
-                       c32(op.getElementFlags()), c64(op.getValueSize()),
-                       c64(op.getAlignment()), c64(op.getBitWidth()),
-                       traceSlots, c64(traceOffsets.size()),
-                       adaptor.getBound().front(), output})
+            ValueRange{lane, c64(op.getTypeId()),
+                       c32(static_cast<uint32_t>(op.getElementKind())),
+                       c32(static_cast<uint32_t>(op.getElementFlags())),
+                       c64(op.getValueSize()), c64(op.getAlignment()),
+                       c64(op.getBitWidth()), traceSlots,
+                       c64(traceOffsets.size()), adaptor.getBound().front(),
+                       output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value result =
@@ -1533,7 +1536,8 @@ public:
                                "obelisk_rt_v1_random_distribution"),
             ValueRange{
                 context,
-                llvmConstant(rewriter, op.getLoc(), i32, op.getDistribution()),
+                llvmConstant(rewriter, op.getLoc(), i32,
+                             static_cast<uint32_t>(op.getDistribution())),
                 adaptor.getSeed().front(), adaptor.getFirst().front(),
                 adaptor.getSecond().front(), output, nextSeed})
             .getResult();
@@ -1571,7 +1575,8 @@ public:
                                "obelisk_rt_v1_stochastic_queue"),
             ValueRange{
                 context,
-                llvmConstant(rewriter, op.getLoc(), i32, op.getAction()),
+                llvmConstant(rewriter, op.getLoc(), i32,
+                             static_cast<uint32_t>(op.getAction())),
                 adaptor.getId()[0], adaptor.getId()[1], adaptor.getFirst()[0],
                 adaptor.getFirst()[1], adaptor.getSecond()[0],
                 adaptor.getSecond()[1],

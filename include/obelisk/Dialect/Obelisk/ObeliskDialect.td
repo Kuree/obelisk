@@ -23,7 +23,7 @@ def ObeliskDialect : Dialect {
     elaborated Slang frontend. Its concrete AST operations preserve source
     identity, resolved references, declared types, and the full elaborated
     hierarchy. Executable SSA, explicit scheduler effects, and flattened
-    numeric descriptors belong to the separate `obelisk_sim` dialect.
+    numeric descriptors belong to the separate `simulation` dialect.
   }];
 
   // Enum attributes are specialized builtin IntegerAttr wrappers, so the

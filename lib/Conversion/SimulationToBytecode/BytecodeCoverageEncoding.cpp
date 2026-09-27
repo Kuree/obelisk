@@ -238,11 +238,12 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimCovergroupBlockEventFireOp>(operation)) {
     uint32_t receiver = op.getReceiver() ? reg(plan, op.getReceiver())
                                          : emitU64Constant(plan, 0);
-    return emitIntrinsicRegisters(plan, kIntrinsicCovergroupBlockEventFire,
-                                  {emitU64Constant(plan, op.getTargetId()),
-                                   emitU64Constant(plan, op.getEventKind()),
-                                   receiver},
-                                  {});
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicCovergroupBlockEventFire,
+        {emitU64Constant(plan, op.getTargetId()),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getEventKind())),
+         receiver},
+        {});
   }
   if (auto op = dyn_cast<sim::SimCovergroupFormalReadOp>(operation))
     return emitIntrinsicRegisters(

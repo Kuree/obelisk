@@ -6,24 +6,24 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   obelisk.feature.class_bitstream_source
 } {
-  obelisk_sim.design @null_class_bitstream {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.class.decl @__obelisk_class_s3_C id 1 {
+  simulation.design @null_class_bitstream {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.class.decl @__obelisk_class_s3_C id 1 {
       is_abstract = true, is_final = false, is_interface = false
     }
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.cast"
-    obelisk_sim.func @cast(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.cast"
+    simulation.func @cast(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      %null = obelisk_sim.class.null :
-          !obelisk_sim.class_handle<@__obelisk_class_s3_C>
+      %null = simulation.class.null :
+          !simulation.class_handle<@__obelisk_class_s3_C>
       %result, %matched, %watch =
-          obelisk_sim.recursive.export_bitstream %null {
+          simulation.recursive.export_bitstream %null {
             plan = array<i64: 9702691408, 1, 64, 0,
                 5, 0, 3235077357463657086, 0, 64, 0>
-          } : (!obelisk_sim.class_handle<@__obelisk_class_s3_C>) ->
-              (i8, i1, !obelisk_sim.managed_watch)
-      obelisk_sim.return
+          } : (!simulation.class_handle<@__obelisk_class_s3_C>) ->
+              (i8, i1, !simulation.managed_watch)
+      simulation.return
     }
   }
 }

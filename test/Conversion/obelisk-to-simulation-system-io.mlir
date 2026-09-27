@@ -353,54 +353,54 @@ module {
   }
 }
 
-// CHECK-DAG: %[[FORMAT:.*]] = obelisk_sim.bytes.constant "value=%0h"
+// CHECK-DAG: %[[FORMAT:.*]] = simulation.bytes.constant "value=%0h"
 // CHECK-DAG: %[[STDOUT:.*]] = arith.constant 1 : i32
-// CHECK-DAG: %[[OUT_PATH:.*]] = obelisk_sim.bytes.constant "out.log"
-// CHECK-DAG: %[[INPUT_PATH:.*]] = obelisk_sim.bytes.constant "input.bin"
-// CHECK-DAG: %[[READ_MODE:.*]] = obelisk_sim.bytes.constant "rb"
-// CHECK-DAG: obelisk_sim.bytes.constant "value="
+// CHECK-DAG: %[[OUT_PATH:.*]] = simulation.bytes.constant "out.log"
+// CHECK-DAG: %[[INPUT_PATH:.*]] = simulation.bytes.constant "input.bin"
+// CHECK-DAG: %[[READ_MODE:.*]] = simulation.bytes.constant "rb"
+// CHECK-DAG: simulation.bytes.constant "value="
 // CHECK-DAG: %[[ALL_FILES:.*]] = arith.constant 0 : i32
-// CHECK: obelisk_sim.display {{.*}} to %[[STDOUT]](%[[FORMAT]], {{.*}}) newline = true radix = 10 flags = [0, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64, time_precision = -12 : i32}
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10 flags = [0, 2, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64, time_precision = -12 : i32}
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10 flags = [0, 1] {library_cell = "work.system_io", scope = "system_io.named", time_multiplier = 1000 : i64, time_precision = -12 : i32}
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 2
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 8
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 16
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 10
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 2
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 8
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 16
-// CHECK: obelisk_sim.file.open_mcd {{.*}}, %[[OUT_PATH]]
-// CHECK: obelisk_sim.file.open {{.*}}, %[[INPUT_PATH]], %[[READ_MODE]]
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 10
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 2
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 8
-// CHECK: obelisk_sim.display {{.*}} newline = true radix = 16
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 10
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 2
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 8
-// CHECK: obelisk_sim.display {{.*}} newline = false radix = 16
-// CHECK: obelisk_sim.file.getc
-// CHECK: obelisk_sim.file.ungetc
-// CHECK: %[[LINE_DATA:.*]], %[[LINE_COUNT:.*]] = obelisk_sim.file.getline
-// CHECK: %[[LINE_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[LINE_DATA]]
-// CHECK: %[[LINE_VALUE:.*]] = obelisk_sim.packed.unflatten %[[LINE_LOGIC]]
-// CHECK: obelisk_sim.ref.store %[[LINE_VALUE]]
-// CHECK: obelisk_sim.logic.from_bits %[[LINE_COUNT]]
-// CHECK: %[[READ_DATA:.*]], %[[READ_COUNT:.*]] = obelisk_sim.file.read_packed
-// CHECK: %[[READ_OLD:.*]] = obelisk_sim.ref.load
-// CHECK: %[[READ_OLD_LOGIC:.*]] = obelisk_sim.packed.flatten %[[READ_OLD]]
-// CHECK: %[[READ_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[READ_DATA]]
-// CHECK: %[[READ_PART:.*]] = obelisk_sim.logic.dyn_extract %[[READ_LOGIC]]
-// CHECK: %[[READ_MERGED:.*]] = obelisk_sim.logic.dyn_insert %[[READ_PART]] into %[[READ_OLD_LOGIC]]
-// CHECK: %[[READ_VALUE:.*]] = obelisk_sim.packed.unflatten %[[READ_MERGED]]
-// CHECK: obelisk_sim.ref.store %[[READ_VALUE]]
-// CHECK: obelisk_sim.logic.from_bits %[[READ_COUNT]]
-// CHECK: obelisk_sim.file.eof
-// CHECK: obelisk_sim.file.seek
-// CHECK: obelisk_sim.file.tell
-// CHECK: obelisk_sim.file.rewind
-// CHECK: obelisk_sim.file.flush
-// CHECK: obelisk_sim.file.flush {{.*}}, %[[ALL_FILES]]
-// CHECK: obelisk_sim.file.close
-// CHECK: obelisk_sim.file.close
+// CHECK: simulation.display {{.*}} to %[[STDOUT]](%[[FORMAT]], {{.*}}) newline = true radix = <decimal> flags = [0, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64, time_precision = -12 : i32}
+// CHECK: simulation.display {{.*}} newline = true radix = <decimal> flags = [0, 2, 0] {library_cell = "work.system_io", scope = "system_io", time_multiplier = 1000 : i64, time_precision = -12 : i32}
+// CHECK: simulation.display {{.*}} newline = true radix = <decimal> flags = [0, 1] {library_cell = "work.system_io", scope = "system_io.named", time_multiplier = 1000 : i64, time_precision = -12 : i32}
+// CHECK: simulation.display {{.*}} newline = true radix = <binary>
+// CHECK: simulation.display {{.*}} newline = true radix = <octal>
+// CHECK: simulation.display {{.*}} newline = true radix = <hex>
+// CHECK: simulation.display {{.*}} newline = false radix = <decimal>
+// CHECK: simulation.display {{.*}} newline = false radix = <binary>
+// CHECK: simulation.display {{.*}} newline = false radix = <octal>
+// CHECK: simulation.display {{.*}} newline = false radix = <hex>
+// CHECK: simulation.file.open_mcd {{.*}}, %[[OUT_PATH]]
+// CHECK: simulation.file.open {{.*}}, %[[INPUT_PATH]], %[[READ_MODE]]
+// CHECK: simulation.display {{.*}} newline = true radix = <decimal>
+// CHECK: simulation.display {{.*}} newline = true radix = <binary>
+// CHECK: simulation.display {{.*}} newline = true radix = <octal>
+// CHECK: simulation.display {{.*}} newline = true radix = <hex>
+// CHECK: simulation.display {{.*}} newline = false radix = <decimal>
+// CHECK: simulation.display {{.*}} newline = false radix = <binary>
+// CHECK: simulation.display {{.*}} newline = false radix = <octal>
+// CHECK: simulation.display {{.*}} newline = false radix = <hex>
+// CHECK: simulation.file.getc
+// CHECK: simulation.file.ungetc
+// CHECK: %[[LINE_DATA:.*]], %[[LINE_COUNT:.*]] = simulation.file.getline
+// CHECK: %[[LINE_LOGIC:.*]] = simulation.logic.from_bits %[[LINE_DATA]]
+// CHECK: %[[LINE_VALUE:.*]] = simulation.packed.unflatten %[[LINE_LOGIC]]
+// CHECK: simulation.ref.store %[[LINE_VALUE]]
+// CHECK: simulation.logic.from_bits %[[LINE_COUNT]]
+// CHECK: %[[READ_DATA:.*]], %[[READ_COUNT:.*]] = simulation.file.read_packed
+// CHECK: %[[READ_OLD:.*]] = simulation.ref.load
+// CHECK: %[[READ_OLD_LOGIC:.*]] = simulation.packed.flatten %[[READ_OLD]]
+// CHECK: %[[READ_LOGIC:.*]] = simulation.logic.from_bits %[[READ_DATA]]
+// CHECK: %[[READ_PART:.*]] = simulation.logic.dyn_extract %[[READ_LOGIC]]
+// CHECK: %[[READ_MERGED:.*]] = simulation.logic.dyn_insert %[[READ_PART]] into %[[READ_OLD_LOGIC]]
+// CHECK: %[[READ_VALUE:.*]] = simulation.packed.unflatten %[[READ_MERGED]]
+// CHECK: simulation.ref.store %[[READ_VALUE]]
+// CHECK: simulation.logic.from_bits %[[READ_COUNT]]
+// CHECK: simulation.file.eof
+// CHECK: simulation.file.seek
+// CHECK: simulation.file.tell
+// CHECK: simulation.file.rewind
+// CHECK: simulation.file.flush
+// CHECK: simulation.file.flush {{.*}}, %[[ALL_FILES]]
+// CHECK: simulation.file.close
+// CHECK: simulation.file.close

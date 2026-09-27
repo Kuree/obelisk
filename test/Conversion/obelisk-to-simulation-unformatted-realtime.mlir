@@ -23,9 +23,9 @@ module {
   }
 }
 
-// CHECK: %[[NOW:.*]] = obelisk_sim.time.now
-// CHECK: %[[REALTIME:.*]] = obelisk_sim.time.to_real %[[NOW]]
-// CHECK: obelisk_sim.display {{.*}}(%[[REALTIME]])
+// CHECK: %[[NOW:.*]] = simulation.time.now
+// CHECK: %[[REALTIME:.*]] = simulation.time.to_real %[[NOW]]
+// CHECK: simulation.display {{.*}}(%[[REALTIME]])
 // CHECK-SAME: flags = [8196]
 // CHECK-SAME: time_multiplier = 1000 : i64
 // CHECK-SAME: time_precision = -12 : i32

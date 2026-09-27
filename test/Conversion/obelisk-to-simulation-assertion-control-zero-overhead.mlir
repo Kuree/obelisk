@@ -59,8 +59,8 @@ module {
   }
 }
 
-// CHECK-NOT: obelisk_sim.assert.enabled
-// CHECK-NOT: obelisk_sim.assert.action_state
-// CHECK: obelisk_sim.assert.deferred_enqueue
-// CHECK-NOT: obelisk_sim.assert.enabled
-// CHECK-NOT: obelisk_sim.assert.action_state
+// CHECK-NOT: simulation.assert.enabled
+// CHECK-NOT: simulation.assert.action_state
+// CHECK: simulation.assert.deferred_enqueue
+// CHECK-NOT: simulation.assert.enabled
+// CHECK-NOT: simulation.assert.action_state

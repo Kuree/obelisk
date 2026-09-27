@@ -209,7 +209,7 @@ UnitLowering::lowerPlusargSystemCall(semantic::SVCallExpressionOp op) {
           width = *packedWidth;
       parsed = sim::SimPlusargParseLogicOp::create(
           builder, location, sim::LogicType::get(function.getContext(), width),
-          tail, radix);
+          tail, static_cast<sim::Radix>(radix));
     }
     return convert(parsed, destinationType, radix != kStringRadix, location);
   };

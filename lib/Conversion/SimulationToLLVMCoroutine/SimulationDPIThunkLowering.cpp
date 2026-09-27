@@ -678,18 +678,18 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
 LogicalResult materializeDPIThunks(ModuleOp module) {
   SmallVector<sim::SimCodeUnitDeclOp> declarations;
   module.walk([&](sim::SimCodeUnitDeclOp declaration) {
-    if (declaration->hasAttr("obelisk_sim.dpi_import"))
+    if (declaration->hasAttr("simulation.dpi_import"))
       declarations.push_back(declaration);
   });
   for (sim::SimCodeUnitDeclOp declaration : declarations) {
     auto importID =
-        declaration->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_import_id");
+        declaration->getAttrOfType<IntegerAttr>("simulation.dpi_import_id");
     auto cIdentifier =
-        declaration->getAttrOfType<StringAttr>("obelisk_sim.dpi_c_identifier");
+        declaration->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
     auto signature =
-        declaration->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+        declaration->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
     auto logicalInputs = declaration->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.dpi_logical_inputs");
+        "simulation.dpi_logical_inputs");
     if (!importID || !cIdentifier || !signature || !logicalInputs)
       return declaration.emitOpError(
           "has incomplete DPI import declaration metadata");
@@ -700,7 +700,7 @@ LogicalResult materializeDPIThunks(ModuleOp module) {
         cIdentifier,
         signature,
         logicalInputs.getValue().getZExtValue(),
-        declaration->hasAttr("obelisk_sim.dpi_task"),
+        declaration->hasAttr("simulation.dpi_task"),
     };
     if (failed(materializeDPIThunk(module, spec)))
       return failure();

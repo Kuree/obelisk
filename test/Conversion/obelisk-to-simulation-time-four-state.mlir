@@ -5,10 +5,10 @@
 // uninitialized `time` variable the value zero instead of x, and would send
 // its arithmetic down the two-state path where unknown bits cannot exist.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: !obelisk_sim.ref<!obelisk_sim.logic<64>>
-// CHECK: %[[LHS:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.logic.binary add %[[LHS]], %[[LHS]] : !obelisk_sim.logic<64>
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: !simulation.ref<!simulation.logic<64>>
+// CHECK: %[[LHS:.*]] = simulation.ref.load
+// CHECK: simulation.logic.binary add %[[LHS]], %[[LHS]] : !simulation.logic<64>
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {

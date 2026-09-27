@@ -44,16 +44,16 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.bytes.constant "ERROR: $readmemb: data value is outside the enumerated type"
-// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_sim.file.readmem_token {{.*}} {radix = 2 : i32}
-// CHECK: obelisk_sim.logic.constant 0 : i3, 0 : i3
-// CHECK: obelisk_sim.logic.compare case_eq %[[DATA]],
-// CHECK: obelisk_sim.logic.constant 3 : i3, 0 : i3
-// CHECK: obelisk_sim.logic.compare case_eq %[[DATA]],
-// CHECK: obelisk_sim.logic.constant -1 : i3, 0 : i3
-// CHECK: obelisk_sim.logic.compare case_eq %[[DATA]],
+// CHECK-DAG: simulation.bytes.constant "ERROR: $readmemb: data value is outside the enumerated type"
+// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = simulation.file.readmem_token {{.*}} {radix = #simulation.radix<binary>}
+// CHECK: simulation.logic.constant 0 : i3, 0 : i3
+// CHECK: simulation.logic.compare case_eq %[[DATA]],
+// CHECK: simulation.logic.constant 3 : i3, 0 : i3
+// CHECK: simulation.logic.compare case_eq %[[DATA]],
+// CHECK: simulation.logic.constant -1 : i3, 0 : i3
+// CHECK: simulation.logic.compare case_eq %[[DATA]],
 // CHECK: cf.cond_br {{.*}}, ^[[WRITE:bb[0-9]+]], ^[[ENUM_ERROR:bb[0-9]+]]
 // CHECK: ^[[WRITE]]:
-// CHECK: obelisk_sim.ref.store %[[DATA]]
+// CHECK: simulation.ref.store %[[DATA]]
 // CHECK: ^[[ENUM_ERROR]]:
-// CHECK: obelisk_sim.display
+// CHECK: simulation.display

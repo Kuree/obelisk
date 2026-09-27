@@ -37,22 +37,22 @@ module {
 }
 
 // The nested local remains descriptor-backed storage.
-// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in 0 : i32 design hierarchy "T.value"
+// CHECK: simulation.storage.decl {{[0-9]+}} in 0 : i32 design hierarchy "T.value"
 
 // Its initializer is called by the root before simulation processes run.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: obelisk_sim.call @unit_1
-// CHECK: obelisk_sim.return
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: simulation.call @unit_1
+// CHECK: simulation.return
 
 // The task declaration is only a lexical occurrence of the static object; it
 // does not clone the initializer for evaluation on task entry.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: obelisk.sv.statement.variable_declaration
 // CHECK-NOT: obelisk.sv.expression.integer_literal
-// CHECK: obelisk_sim.return
+// CHECK: simulation.return
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK: obelisk.sv.expression.integer_literal attributes
 // CHECK-SAME: constant_value = "9"
-// CHECK-SAME: obelisk_sim.initialize_static = "T.value"
-// CHECK: obelisk_sim.return
+// CHECK-SAME: simulation.initialize_static = "T.value"
+// CHECK: simulation.return

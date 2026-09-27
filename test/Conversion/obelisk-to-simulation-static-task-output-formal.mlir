@@ -54,10 +54,10 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK:      %[[PRODUCED:.*]] = obelisk_sim.context.storage %arg0[0]
-// CHECK-NOT:  obelisk_sim.ref.store {{.*}} to %[[PRODUCED]]
-// CHECK:      %[[ADDED:.*]] = obelisk_sim.context.storage %arg0[1]
-// CHECK-NEXT: obelisk_sim.ref.store {{.*}} to %[[ADDED]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK:      %[[PRODUCED:.*]] = simulation.context.storage %arg0[0]
+// CHECK-NOT:  simulation.ref.store {{.*}} to %[[PRODUCED]]
+// CHECK:      %[[ADDED:.*]] = simulation.context.storage %arg0[1]
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[ADDED]]
 // CHECK:      %[[SUM:.*]] = arith.addi
-// CHECK:      obelisk_sim.ref.store %[[SUM]] to %[[PRODUCED]]
+// CHECK:      simulation.ref.store %[[SUM]] to %[[PRODUCED]]

@@ -14,8 +14,8 @@
 // RUN: diff -u %t.o0.native.out %t.o3.aot.out
 // RUN: FileCheck %s < %t.o0.native.out
 // RUN: obelisk --std=1800-2023 -emit-obelisk %s -o %t.obelisk.mlir
-// RUN: obelisk-opt %t.obelisk.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=obelisk_sim.control.enter --implicit-check-not=schedule.detached_controls
-// RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=FINAL --implicit-check-not=obelisk_sim.control.enter --implicit-check-not=schedule.detached_controls
+// RUN: obelisk-opt %t.obelisk.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
+// RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=FINAL --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
 
 module native_concurrent_sva;
   logic clk = 0;
@@ -72,15 +72,15 @@ module native_concurrent_sva;
 endmodule
 
 // CHECK: restrict monitors completed
-// SIM-DAG: obelisk_sim.assert.sampled_read
-// SIM-DAG: obelisk_sim.assertion_path = "native_concurrent_sva.labeled_delay"
-// SIM-DAG: obelisk_sim.assertion_target_id = {{[0-9]+}} : i64
+// SIM-DAG: simulation.assert.sampled_read
+// SIM-DAG: simulation.assertion_path = "native_concurrent_sva.labeled_delay"
+// SIM-DAG: simulation.assertion_target_id = {{[0-9]+}} : i64
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: resume_region = 8 : i32
-// SIM-DAG: obelisk_sim.ref.alloc
+// SIM-DAG: simulation.ref.alloc
 // SIM-DAG: arith.constant 2 : i64
 // SIM-DAG: arith.constant 4 : i64
-// SIM-DAG: obelisk_sim.ref.store
-// FINAL-DAG: obelisk_sim.assertion_path = "native_concurrent_sva.labeled_delay"
+// SIM-DAG: simulation.ref.store
+// FINAL-DAG: simulation.assertion_path = "native_concurrent_sva.labeled_delay"
 // FINAL-DAG: home_region = 8 : i32
 // FINAL-DAG: resume_region = 8 : i32

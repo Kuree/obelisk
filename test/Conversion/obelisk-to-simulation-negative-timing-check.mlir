@@ -11,11 +11,11 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=TRANSPORT
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | sed 's/, obelisk_sim.negative_timing_delay_commit//' \
+// RUN:   | sed 's/, simulation.negative_timing_delay_commit//' \
 // RUN:   | obelisk-opt --test-obelisk-native-aot-analysis 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CERT-MISS
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | sed 's/ {obelisk_sim.negative_timing_transport_activation}//' \
+// RUN:   | sed 's/ {simulation.negative_timing_transport_activation}//' \
 // RUN:   | obelisk-opt --test-obelisk-native-aot-analysis 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CERT-MISS
 
@@ -164,18 +164,18 @@ module attributes {
   }
 }
 
-// CHECK-DAG: obelisk_sim.negative_timing_delay_monitor
-// CHECK-DAG: obelisk_sim.negative_timing_delay_commit
-// CHECK-DAG: obelisk_sim.time.constant 1001
-// CHECK-DAG: obelisk_sim.time.constant 2002
-// CHECK-DAG: obelisk_sim.time.constant 202
-// CHECK-DAG: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 1, 999>
-// CHECK-DAG: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 999, 1>
-// CHECK-DAG: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 399, 1>
-// CHECK-DAG: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 1, 1>
-// CHECK-DAG: obelisk_sim.suspend.clock_set
+// CHECK-DAG: simulation.negative_timing_delay_monitor
+// CHECK-DAG: simulation.negative_timing_delay_commit
+// CHECK-DAG: simulation.time.constant 1001
+// CHECK-DAG: simulation.time.constant 2002
+// CHECK-DAG: simulation.time.constant 202
+// CHECK-DAG: simulation.timing_check_arg_ticks = array<i64: 0, 0, 1, 999>
+// CHECK-DAG: simulation.timing_check_arg_ticks = array<i64: 0, 0, 999, 1>
+// CHECK-DAG: simulation.timing_check_arg_ticks = array<i64: 0, 0, 399, 1>
+// CHECK-DAG: simulation.timing_check_arg_ticks = array<i64: 0, 0, 1, 1>
+// CHECK-DAG: simulation.suspend.clock_set
 // CHECK-DAG: conditions 1 edges [1, 0] indices [0, -1]
-// CHECK-NOT: obelisk_sim.suspend.observe
+// CHECK-NOT: simulation.suspend.observe
 // CHECK-NOT: timing_check_table
 
 // AOT: native-aot eligible=true fully=false
@@ -195,32 +195,32 @@ module attributes {
 // their change monitors or the timing-check coordinators can run.  The monitor
 // entry itself goes directly to its wait, so initialization is not mistaken
 // for a source occurrence.
-// ORDER-LABEL: obelisk_sim.func @__obelisk_root
-// ORDER: obelisk_sim.ref.store
-// ORDER-NEXT: obelisk_sim.spawn @__obelisk_negative_timing_monitor_
-// ORDER: obelisk_sim.ref.store
-// ORDER-NEXT: obelisk_sim.spawn @__obelisk_negative_timing_monitor_
-// ORDER: obelisk_sim.ref.store
-// ORDER-NEXT: obelisk_sim.spawn @__obelisk_negative_timing_monitor_
-// ORDER-NOT: obelisk_sim.ref.store
-// ORDER: obelisk_sim.spawn @unit_0
-// ORDER-LABEL: obelisk_sim.func private @__obelisk_negative_timing_monitor_5(
+// ORDER-LABEL: simulation.func @__obelisk_root
+// ORDER: simulation.ref.store
+// ORDER-NEXT: simulation.spawn @__obelisk_negative_timing_monitor_
+// ORDER: simulation.ref.store
+// ORDER-NEXT: simulation.spawn @__obelisk_negative_timing_monitor_
+// ORDER: simulation.ref.store
+// ORDER-NEXT: simulation.spawn @__obelisk_negative_timing_monitor_
+// ORDER-NOT: simulation.ref.store
+// ORDER: simulation.spawn @unit_0
+// ORDER-LABEL: simulation.func private @__obelisk_negative_timing_monitor_5(
 // ORDER: ^bb1:
-// ORDER-NEXT: obelisk_sim.suspend.change
+// ORDER-NEXT: simulation.suspend.change
 // ORDER: ^bb2:
-// ORDER-NEXT: %{{.*}} = obelisk_sim.ref.load
-// ORDER-NEXT: %{{.*}} = obelisk_sim.spawn @__obelisk_negative_timing_monitor_5.$commit
+// ORDER-NEXT: %{{.*}} = simulation.ref.load
+// ORDER-NEXT: %{{.*}} = simulation.spawn @__obelisk_negative_timing_monitor_5.$commit
 
 // Every source transition creates an independent one-shot delayed commit and
 // immediately returns the monitor to its wait.  There is no inertial
 // cancellation slot, so multiple outstanding (including equal-maturity)
 // transport copies remain scheduler-visible.
-// TRANSPORT-LABEL: obelisk_sim.func private @__obelisk_negative_timing_monitor_5.$commit
-// TRANSPORT: obelisk_sim.suspend.delay
-// TRANSPORT: obelisk_sim.ref.store
-// TRANSPORT-NEXT: obelisk_sim.return
-// TRANSPORT-LABEL: obelisk_sim.func private @__obelisk_negative_timing_monitor_5(
+// TRANSPORT-LABEL: simulation.func private @__obelisk_negative_timing_monitor_5.$commit
+// TRANSPORT: simulation.suspend.delay
+// TRANSPORT: simulation.ref.store
+// TRANSPORT-NEXT: simulation.return
+// TRANSPORT-LABEL: simulation.func private @__obelisk_negative_timing_monitor_5(
 // TRANSPORT: ^bb2:
-// TRANSPORT-NEXT: %{{.*}} = obelisk_sim.ref.load
-// TRANSPORT-NEXT: %{{.*}} = obelisk_sim.spawn @__obelisk_negative_timing_monitor_5.$commit
+// TRANSPORT-NEXT: %{{.*}} = simulation.ref.load
+// TRANSPORT-NEXT: %{{.*}} = simulation.spawn @__obelisk_negative_timing_monitor_5.$commit
 // TRANSPORT-NEXT: cf.br ^bb1

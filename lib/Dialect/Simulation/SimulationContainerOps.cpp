@@ -996,14 +996,14 @@ static bool isValidManagedTraceKind(int32_t signedKind) {
 }
 
 static LogicalResult verifyManagedTraceInventory(Operation *operation,
-                                                 uint32_t elementKind,
+                                                 ElementKind elementKind,
                                                  uint64_t valueSize,
                                                  ArrayRef<int64_t> traceOffsets,
                                                  ArrayRef<int32_t> traceKinds) {
   if (traceOffsets.size() != traceKinds.size())
     return operation->emitOpError(
         "trace offset and kind inventories must match");
-  if (elementKind != 7 && !traceOffsets.empty())
+  if (elementKind != ElementKind::Aggregate && !traceOffsets.empty())
     return operation->emitOpError(
         "only aggregate elements carry explicit trace slots");
   int64_t previousOffset = -1;
@@ -1135,60 +1135,55 @@ LogicalResult SimContainerCreateOp::verify() {
     return emitOpError("result must be a dynamic array or queue");
   if (getTypeId() == 0)
     return emitOpError("element type ID must be nonzero");
-  if (getElementKind() < 1 || getElementKind() > 8)
-    return emitOpError("element kind is outside the runtime ABI");
-  if ((getElementFlags() & ~3u) != 0)
-    return emitOpError("element flags contain an unknown runtime ABI bit");
   if (getValueSize() == 0 || getAlignment() == 0 ||
       !llvm::isPowerOf2_64(getAlignment()) ||
       getValueSize() % getAlignment() != 0)
     return emitOpError("element size and alignment are invalid");
-  if (getContainerKind() != 1 && getContainerKind() != 2)
-    return emitOpError("container kind is outside the runtime ABI");
   ArrayRef<int64_t> traceOffsets = getTraceOffsets();
   ArrayRef<int32_t> traceKinds = getTraceKinds();
   if (failed(verifyManagedTraceInventory(getOperation(), getElementKind(),
                                          getValueSize(), traceOffsets,
                                          traceKinds)))
     return failure();
-  if (isa<DynamicArrayType>(type) && getContainerKind() != 1)
+  if (isa<DynamicArrayType>(type) &&
+      getContainerKind() != ContainerKind::DynamicArray)
     return emitOpError("dynamic-array result requires dynamic-array metadata");
-  if (isa<QueueType>(type) && getContainerKind() != 2)
+  if (isa<QueueType>(type) && getContainerKind() != ContainerKind::Queue)
     return emitOpError("queue result requires queue metadata");
-  uint32_t expectedKind = 0;
+  std::optional<ElementKind> expectedKind;
   uint64_t expectedSize = 0;
   uint64_t expectedWidth = 0;
   bool fourState = false;
   SmallVector<int64_t, 2> expectedTraceOffsets;
   SmallVector<int32_t, 2> expectedTraceKinds;
   if (auto integer = dyn_cast<IntegerType>(element)) {
-    expectedKind = 1;
+    expectedKind = ElementKind::Bits;
     expectedSize = (integer.getWidth() + 7) / 8;
     expectedWidth = integer.getWidth();
   } else if (auto logic = dyn_cast<LogicType>(element)) {
-    expectedKind = 2;
+    expectedKind = ElementKind::Logic;
     expectedSize = (logic.getWidth() + 7) / 8;
     expectedWidth = logic.getWidth();
     fourState = true;
   } else if (auto real = dyn_cast<FloatType>(element)) {
-    expectedKind = 3;
+    expectedKind = ElementKind::Real;
     expectedSize = real.getWidth() / 8;
     expectedWidth = real.getWidth();
   } else if (isa<ClassHandleType>(element)) {
-    expectedKind = 4;
+    expectedKind = ElementKind::ClassHandle;
     expectedSize = managedHandleByteWidth;
   } else if (isa<StringType>(element)) {
-    expectedKind = 5;
+    expectedKind = ElementKind::String;
     expectedSize = managedHandleByteWidth;
   } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
                  SemaphoreType, AssocArrayType>(element)) {
-    expectedKind = 6;
+    expectedKind = ElementKind::ContainerHandle;
     expectedSize = managedHandleByteWidth;
   } else if (isa<EventType>(element)) {
-    expectedKind = 8;
+    expectedKind = ElementKind::Event;
     expectedSize = sizeof(uint64_t);
   } else if (isa<ProcessType>(element)) {
-    expectedKind = 1;
+    expectedKind = ElementKind::Bits;
     expectedSize = sizeof(uint64_t);
     expectedWidth = 64;
   } else if (Type scalar = getPackedScalarType(element)) {
@@ -1196,7 +1191,7 @@ LogicalResult SimContainerCreateOp::verify() {
     if (!width || *width == 0)
       return emitOpError("packed element has no canonical width");
     fourState = isa<LogicType>(scalar);
-    expectedKind = fourState ? 2 : 1;
+    expectedKind = fourState ? ElementKind::Logic : ElementKind::Bits;
     expectedSize = (*width + 7) / 8;
     expectedWidth = *width;
   } else if (isAggregateType(element)) {
@@ -1204,17 +1199,18 @@ LogicalResult SimContainerCreateOp::verify() {
     if (!width || *width == 0)
       return emitOpError("aggregate element has no canonical layout");
     element.walk([&](LogicType) { fourState = true; });
-    expectedKind = 7;
+    expectedKind = ElementKind::Aggregate;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
     if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
                                            expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
-  if (expectedKind != 0 &&
+  if (expectedKind.has_value() &&
       (getElementKind() != expectedKind || getValueSize() != expectedSize ||
        getBitWidth() != expectedWidth ||
-       ((getElementFlags() & 1u) != 0) != fourState))
+       bitEnumContainsAny(getElementFlags(), ElementFlags::FourState) !=
+           fourState))
     return emitOpError(
         "element metadata does not match the result container element type");
   if (traceOffsets != ArrayRef<int64_t>(expectedTraceOffsets) ||
@@ -1363,10 +1359,6 @@ LogicalResult SimMailboxCreateOp::verify() {
   Type element = getResult().getType().getElementType();
   if (getTypeId() == 0)
     return emitOpError("element type ID must be nonzero");
-  if (getElementKind() < 1 || getElementKind() > 8)
-    return emitOpError("element kind is outside the runtime ABI");
-  if ((getElementFlags() & ~3u) != 0)
-    return emitOpError("element flags contain an unknown runtime ABI bit");
   if (getValueSize() == 0 || getAlignment() == 0 ||
       !llvm::isPowerOf2_64(getAlignment()) ||
       getValueSize() % getAlignment() != 0)
@@ -1377,40 +1369,40 @@ LogicalResult SimMailboxCreateOp::verify() {
                                          getValueSize(), traceOffsets,
                                          traceKinds)))
     return failure();
-  uint32_t expectedKind = 0;
+  std::optional<ElementKind> expectedKind;
   uint64_t expectedSize = 0;
   uint64_t expectedWidth = 0;
   bool fourState = false;
   SmallVector<int64_t, 2> expectedTraceOffsets;
   SmallVector<int32_t, 2> expectedTraceKinds;
   if (auto integer = dyn_cast<IntegerType>(element)) {
-    expectedKind = 1;
+    expectedKind = ElementKind::Bits;
     expectedSize = (integer.getWidth() + 7) / 8;
     expectedWidth = integer.getWidth();
   } else if (auto logic = dyn_cast<LogicType>(element)) {
-    expectedKind = 2;
+    expectedKind = ElementKind::Logic;
     expectedSize = (logic.getWidth() + 7) / 8;
     expectedWidth = logic.getWidth();
     fourState = true;
   } else if (auto real = dyn_cast<FloatType>(element)) {
-    expectedKind = 3;
+    expectedKind = ElementKind::Real;
     expectedSize = real.getWidth() / 8;
     expectedWidth = real.getWidth();
   } else if (isa<ClassHandleType>(element)) {
-    expectedKind = 4;
+    expectedKind = ElementKind::ClassHandle;
     expectedSize = managedHandleByteWidth;
   } else if (isa<StringType>(element)) {
-    expectedKind = 5;
+    expectedKind = ElementKind::String;
     expectedSize = managedHandleByteWidth;
   } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
                  SemaphoreType, AssocArrayType>(element)) {
-    expectedKind = 6;
+    expectedKind = ElementKind::ContainerHandle;
     expectedSize = managedHandleByteWidth;
   } else if (isa<EventType>(element)) {
-    expectedKind = 8;
+    expectedKind = ElementKind::Event;
     expectedSize = sizeof(uint64_t);
   } else if (isa<ProcessType>(element)) {
-    expectedKind = 1;
+    expectedKind = ElementKind::Bits;
     expectedSize = sizeof(uint64_t);
     expectedWidth = 64;
   } else if (Type scalar = getPackedScalarType(element)) {
@@ -1418,7 +1410,7 @@ LogicalResult SimMailboxCreateOp::verify() {
     if (!width || *width == 0)
       return emitOpError("packed element has no canonical width");
     fourState = isa<LogicType>(scalar);
-    expectedKind = fourState ? 2 : 1;
+    expectedKind = fourState ? ElementKind::Logic : ElementKind::Bits;
     expectedSize = (*width + 7) / 8;
     expectedWidth = *width;
   } else if (isAggregateType(element)) {
@@ -1426,16 +1418,17 @@ LogicalResult SimMailboxCreateOp::verify() {
     if (!width || *width == 0)
       return emitOpError("aggregate element has no canonical layout");
     element.walk([&](LogicType) { fourState = true; });
-    expectedKind = 7;
+    expectedKind = ElementKind::Aggregate;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
     if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
                                            expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
-  if (expectedKind == 0 || getElementKind() != expectedKind ||
+  if (!expectedKind || getElementKind() != expectedKind ||
       getValueSize() != expectedSize || getBitWidth() != expectedWidth ||
-      ((getElementFlags() & 1u) != 0) != fourState)
+      bitEnumContainsAny(getElementFlags(), ElementFlags::FourState) !=
+          fourState)
     return emitOpError(
         "element metadata does not match the mailbox element type");
   if (traceOffsets != ArrayRef<int64_t>(expectedTraceOffsets) ||
@@ -1487,10 +1480,10 @@ LogicalResult verifyAssocKey(Operation *op, AssocArrayType array, Type key) {
 
 LogicalResult SimAssocCreateOp::verify() {
   AssocArrayType array = getResult().getType();
-  if (getTypeId() == 0 || getElementKind() < 1 || getElementKind() > 8)
+  if (getTypeId() == 0)
     return emitOpError("element descriptor is outside the runtime ABI");
-  if ((getElementFlags() & ~3u) != 0 || getValueSize() == 0 ||
-      getAlignment() == 0 || !llvm::isPowerOf2_64(getAlignment()) ||
+  if (getValueSize() == 0 || getAlignment() == 0 ||
+      !llvm::isPowerOf2_64(getAlignment()) ||
       getValueSize() % getAlignment() != 0)
     return emitOpError("element descriptor has an invalid layout");
   if (failed(verifyManagedTraceInventory(getOperation(), getElementKind(),
@@ -1498,44 +1491,44 @@ LogicalResult SimAssocCreateOp::verify() {
                                          getTraceKinds())))
     return failure();
   Type element = array.getElementType();
-  uint32_t expectedKind = 0;
+  std::optional<ElementKind> expectedKind;
   uint64_t expectedSize = 0;
   uint64_t expectedWidth = 0;
   bool fourState = false;
   SmallVector<int64_t, 2> expectedTraceOffsets;
   SmallVector<int32_t, 2> expectedTraceKinds;
   if (auto integer = dyn_cast<IntegerType>(element)) {
-    expectedKind = 1;
+    expectedKind = ElementKind::Bits;
     expectedSize = (integer.getWidth() + 7) / 8;
     expectedWidth = integer.getWidth();
   } else if (auto logic = dyn_cast<LogicType>(element)) {
-    expectedKind = 2;
+    expectedKind = ElementKind::Logic;
     expectedSize = (logic.getWidth() + 7) / 8;
     expectedWidth = logic.getWidth();
     fourState = true;
   } else if (auto real = dyn_cast<FloatType>(element)) {
-    expectedKind = 3;
+    expectedKind = ElementKind::Real;
     expectedSize = real.getWidth() / 8;
     expectedWidth = real.getWidth();
   } else if (isa<ClassHandleType>(element)) {
-    expectedKind = 4;
+    expectedKind = ElementKind::ClassHandle;
     expectedSize = managedHandleByteWidth;
   } else if (isa<StringType>(element)) {
-    expectedKind = 5;
+    expectedKind = ElementKind::String;
     expectedSize = managedHandleByteWidth;
   } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
                  SemaphoreType, AssocArrayType>(element)) {
-    expectedKind = 6;
+    expectedKind = ElementKind::ContainerHandle;
     expectedSize = managedHandleByteWidth;
   } else if (isa<EventType>(element)) {
-    expectedKind = 8;
+    expectedKind = ElementKind::Event;
     expectedSize = sizeof(uint64_t);
   } else if (Type scalar = getPackedScalarType(element)) {
     std::optional<unsigned> width = getPackedWidth(element);
     if (!width || *width == 0)
       return emitOpError("packed element has no canonical width");
     fourState = isa<LogicType>(scalar);
-    expectedKind = fourState ? 2 : 1;
+    expectedKind = fourState ? ElementKind::Logic : ElementKind::Bits;
     expectedSize = (*width + 7) / 8;
     expectedWidth = *width;
   } else if (isAggregateType(element)) {
@@ -1543,17 +1536,18 @@ LogicalResult SimAssocCreateOp::verify() {
     if (!width || *width == 0)
       return emitOpError("aggregate element has no canonical layout");
     element.walk([&](LogicType) { fourState = true; });
-    expectedKind = 7;
+    expectedKind = ElementKind::Aggregate;
     expectedSize = (*width + 7) / 8;
     expectedWidth = expectedSize * 8;
     if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
                                            expectedTraceKinds)))
       return emitOpError("aggregate element has no canonical trace layout");
   }
-  if (expectedKind != 0 &&
+  if (expectedKind.has_value() &&
       (getElementKind() != expectedKind || getValueSize() != expectedSize ||
        getBitWidth() != expectedWidth ||
-       ((getElementFlags() & 1u) != 0) != fourState))
+       bitEnumContainsAny(getElementFlags(), ElementFlags::FourState) !=
+           fourState))
     return emitOpError(
         "element metadata does not match the associative element type");
   if (getTraceOffsets() != ArrayRef<int64_t>(expectedTraceOffsets) ||
@@ -1562,20 +1556,23 @@ LogicalResult SimAssocCreateOp::verify() {
         "trace inventory does not match the associative element type");
   Type key = array.getKeyType();
   if (array.getWildcardIndex()) {
-    if (!isa<BoxType>(key) || getKeyKind() != 6 || getKeyWidth() != 0)
+    if (!isa<BoxType>(key) || getKeyKind() != AssocKeyKind::Wildcard ||
+        getKeyWidth() != 0)
       return emitOpError("wildcard key metadata is inconsistent");
   } else if (isa<StringType>(key)) {
-    if (getKeyKind() != 3 || getKeyWidth() != 0)
+    if (getKeyKind() != AssocKeyKind::String || getKeyWidth() != 0)
       return emitOpError("string key metadata is inconsistent");
   } else if (isa<ClassHandleType>(key)) {
-    if (getKeyKind() != 4 || getKeyWidth() != 0)
+    if (getKeyKind() != AssocKeyKind::Class || getKeyWidth() != 0)
       return emitOpError("class key metadata is inconsistent");
   } else if (isa<ProcessType>(key)) {
-    if (getKeyKind() != 5 || getKeyWidth() != 0)
+    if (getKeyKind() != AssocKeyKind::Process || getKeyWidth() != 0)
       return emitOpError("process key metadata is inconsistent");
   } else {
     std::optional<unsigned> width = getPackedWidth(key);
-    if (!width || *width == 0 || (getKeyKind() != 1 && getKeyKind() != 2) ||
+    if (!width || *width == 0 ||
+        (getKeyKind() != AssocKeyKind::Unsigned &&
+         getKeyKind() != AssocKeyKind::Signed) ||
         getKeyWidth() != *width)
       return emitOpError("integral key metadata is inconsistent");
   }
@@ -1622,9 +1619,6 @@ LogicalResult SimAssocTraverseOp::verify() {
     return failure();
   if (getResultKey().getType() != array.getKeyType())
     return emitOpError("result key type must match the associative key");
-  int32_t direction = static_cast<int32_t>(getDirection());
-  if (direction != -1 && direction != 1)
-    return emitOpError("direction must be -1 or 1");
   return success();
 }
 
@@ -1649,8 +1643,8 @@ LogicalResult SimStringConcatOp::verify() {
   return success();
 }
 
-static LogicalResult verifyStringRadix(Operation *operation, uint32_t radix) {
-  if (radix != 2 && radix != 8 && radix != 10 && radix != 16)
+static LogicalResult verifyStringRadix(Operation *operation, Radix radix) {
+  if (!symbolizeRadix(static_cast<uint32_t>(radix)))
     return operation->emitOpError("radix must be 2, 8, 10, or 16");
   return success();
 }

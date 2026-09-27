@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAIN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=RESUMED < %t.llvm.mlir
@@ -28,71 +28,71 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 2 : i32
 } {
-  obelisk_sim.design @plusargs {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>> design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> design
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "initial"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "resumed"
-    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "scalar"
-    obelisk_sim.func @root(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @plusargs {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.packed_array<3 : 0 x !simulation.logic<1>> design
+    simulation.storage.decl 1 in 0 : !simulation.unpacked_array<0 : 3 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>> design
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<4> design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "initial"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "resumed"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "scalar"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %a = obelisk_sim.spawn @initial(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      %b = obelisk_sim.spawn @resumed(%ctx) : !obelisk_sim.context -> !obelisk_sim.process
-      %dst = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-      %c = obelisk_sim.spawn @scalar(%ctx, %dst) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> -> !obelisk_sim.process
-      obelisk_sim.return
+      %a = simulation.spawn @initial(%ctx) : !simulation.context -> !simulation.process
+      %b = simulation.spawn @resumed(%ctx) : !simulation.context -> !simulation.process
+      %dst = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+      %c = simulation.spawn @scalar(%ctx, %dst) : !simulation.context, !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>> -> !simulation.process
+      simulation.return
     }
-    obelisk_sim.func @scalar(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %dst: !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @scalar(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %dst: !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
-      %scope = obelisk_sim.control.enter 42
-      %bits = obelisk_sim.logic.constant 5 : i4, 0 : i4 : !obelisk_sim.logic<4>
-      %value = obelisk_sim.packed.unflatten %bits : (!obelisk_sim.logic<4>) -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
-      %array = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>>
-      %element = obelisk_sim.ref.subelement %array[[2]] : !obelisk_sim.ref<!obelisk_sim.unpacked_array<0 : 3 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>> -> !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-      obelisk_sim.ref.store %value to %element : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-      %observed = obelisk_sim.ref.load %element : !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>> -> !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
-      obelisk_sim.ref.store %observed to %dst : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>, !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-      %driver = obelisk_sim.context.driver %ctx[0] : !obelisk_sim.driver<!obelisk_sim.logic<4>>
-      obelisk_sim.driver.drive %driver = %bits : !obelisk_sim.driver<!obelisk_sim.logic<4>>, !obelisk_sim.logic<4>
-      obelisk_sim.control.leave %scope
-      obelisk_sim.return
+      %scope = simulation.control.enter 42
+      %bits = simulation.logic.constant 5 : i4, 0 : i4 : !simulation.logic<4>
+      %value = simulation.packed.unflatten %bits : (!simulation.logic<4>) -> !simulation.packed_array<3 : 0 x !simulation.logic<1>>
+      %array = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.unpacked_array<0 : 3 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>>>
+      %element = simulation.ref.subelement %array[[2]] : !simulation.ref<!simulation.unpacked_array<0 : 3 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>>> -> !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+      simulation.ref.store %value to %element : !simulation.packed_array<3 : 0 x !simulation.logic<1>>, !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+      %observed = simulation.ref.load %element : !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>> -> !simulation.packed_array<3 : 0 x !simulation.logic<1>>
+      simulation.ref.store %observed to %dst : !simulation.packed_array<3 : 0 x !simulation.logic<1>>, !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+      %driver = simulation.context.driver %ctx[0] : !simulation.driver<!simulation.logic<4>>
+      simulation.driver.drive %driver = %bits : !simulation.driver<!simulation.logic<4>>, !simulation.logic<4>
+      simulation.control.leave %scope
+      simulation.return
     }
-    obelisk_sim.func @initial(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @initial(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      %prefix = obelisk_sim.string.literal "n="
-      %tail, %found = "obelisk_sim.plusarg.value"(%ctx, %prefix) : (!obelisk_sim.context, !obelisk_sim.string) -> (!obelisk_sim.string, i32)
-      %parsed = obelisk_sim.plusarg.parse_logic %tail {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>
+      %prefix = simulation.string.literal "n="
+      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %parsed = simulation.plusarg.parse_logic %tail {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
       %zero = arith.constant 0 : i32
       %matched = arith.cmpi ne, %found, %zero : i32
-      %default = obelisk_sim.logic.constant 99 : i32, 0 : i32 : !obelisk_sim.logic<32>
-      %value = arith.select %matched, %parsed, %default : !obelisk_sim.logic<32>
-      %format = obelisk_sim.bytes.constant "initial found=%0d value=%0d"
+      %default = simulation.logic.constant 99 : i32, 0 : i32 : !simulation.logic<32>
+      %value = arith.select %matched, %parsed, %default : !simulation.logic<32>
+      %format = simulation.bytes.constant "initial found=%0d value=%0d"
       %channel = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %channel(%format, %found, %value) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, i32, !obelisk_sim.logic<32>
-      obelisk_sim.return
+      simulation.display %ctx to %channel(%format, %found, %value) newline = true radix = <decimal> flags = [0, 0, 0] : !simulation.bytes, i32, !simulation.logic<32>
+      simulation.return
     }
-    obelisk_sim.func @resumed(%ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @resumed(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^resume
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^resume
     ^resume:
-      %prefix = obelisk_sim.string.literal "n="
-      %tail, %found = "obelisk_sim.plusarg.value"(%ctx, %prefix) : (!obelisk_sim.context, !obelisk_sim.string) -> (!obelisk_sim.string, i32)
-      %parsed = obelisk_sim.plusarg.parse_logic %tail {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>
+      %prefix = simulation.string.literal "n="
+      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %parsed = simulation.plusarg.parse_logic %tail {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
       %zero = arith.constant 0 : i32
       %matched = arith.cmpi ne, %found, %zero : i32
-      %default = obelisk_sim.logic.constant 99 : i32, 0 : i32 : !obelisk_sim.logic<32>
-      %value = arith.select %matched, %parsed, %default : !obelisk_sim.logic<32>
-      %format = obelisk_sim.bytes.constant "resumed found=%0d value=%0d"
+      %default = simulation.logic.constant 99 : i32, 0 : i32 : !simulation.logic<32>
+      %value = arith.select %matched, %parsed, %default : !simulation.logic<32>
+      %format = simulation.bytes.constant "resumed found=%0d value=%0d"
       %channel = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %channel(%format, %found, %value) newline = true radix = 10 flags = [0, 0, 0] : !obelisk_sim.bytes, i32, !obelisk_sim.logic<32>
-      obelisk_sim.return
+      simulation.display %ctx to %channel(%format, %found, %value) newline = true radix = <decimal> flags = [0, 0, 0] : !simulation.bytes, i32, !simulation.logic<32>
+      simulation.return
     }
   }
 }

@@ -108,8 +108,8 @@ module attributes {
   }
 }
 
-// CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load {{.*}} :
-// CHECK-SAME: -> !obelisk_sim.class_handle<@__obelisk_class_s3_C>
-// CHECK: obelisk_sim.string.output_format
+// CHECK: %[[VALUE:.*]] = simulation.ref.load {{.*}} :
+// CHECK-SAME: -> !simulation.class_handle<@__obelisk_class_s3_C>
+// CHECK: simulation.string.output_format
 // CHECK-SAME: %[[VALUE]]
 // CHECK-SAME: flags = [32, 64]

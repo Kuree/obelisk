@@ -99,15 +99,15 @@ module {
 
 // CHECK-DAG: arith.constant 1.500000e+00 : f64
 // CHECK-DAG: arith.addf
-// CHECK-DAG: obelisk_sim.storage.decl {{.*}} : f32
-// CHECK-DAG: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.unpacked_array<0 : 1 x f64>
-// CHECK-DAG: obelisk_sim.storage.decl {{.*}} : f64
+// CHECK-DAG: simulation.storage.decl {{.*}} : f32
+// CHECK-DAG: simulation.storage.decl {{.*}} : !simulation.unpacked_array<0 : 1 x f64>
+// CHECK-DAG: simulation.storage.decl {{.*}} : f64
 // A non-finite real converted to four-state integral data must become X.
-// CHECK-DAG: %[[UNKNOWN_LOGIC:.*]] = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
-// CHECK: %[[REAL_VALUE:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<f64> -> f64
-// CHECK: %[[REAL_BITS:.*]] = obelisk_sim.real.to_integer %[[REAL_VALUE]] signed = false : i8
-// CHECK: %[[KNOWN_LOGIC:.*]] = obelisk_sim.logic.from_bits %[[REAL_BITS]] : i8 -> !obelisk_sim.logic<8>
+// CHECK-DAG: %[[UNKNOWN_LOGIC:.*]] = simulation.logic.constant 0 : i8, -1 : i8 : !simulation.logic<8>
+// CHECK: %[[REAL_VALUE:.*]] = simulation.ref.load {{.*}} : !simulation.ref<f64> -> f64
+// CHECK: %[[REAL_BITS:.*]] = simulation.real.to_integer %[[REAL_VALUE]] signed = false : i8
+// CHECK: %[[KNOWN_LOGIC:.*]] = simulation.logic.from_bits %[[REAL_BITS]] : i8 -> !simulation.logic<8>
 // CHECK: %[[ENCODED:.*]] = arith.bitcast %[[REAL_VALUE]] : f64 to i64
 // CHECK: %[[FINITE:.*]] = arith.cmpi ne, {{.*}} : i64
-// CHECK: arith.select %[[FINITE]], %[[KNOWN_LOGIC]], %[[UNKNOWN_LOGIC]] : !obelisk_sim.logic<8>
+// CHECK: arith.select %[[FINITE]], %[[KNOWN_LOGIC]], %[[UNKNOWN_LOGIC]] : !simulation.logic<8>
 // CHECK-NOT: obelisk.sv.

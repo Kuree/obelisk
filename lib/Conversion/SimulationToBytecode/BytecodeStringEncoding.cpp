@@ -220,19 +220,22 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getOk()), reg(plan, op.getEof())});
   }
   if (auto op = dyn_cast<sim::SimStringParseIntegerOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    uint32_t radix =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getRadix()));
     return emitIntrinsicRegisters(plan, kIntrinsicStringParseInteger,
                                   {reg(plan, op.getInput()), radix},
                                   {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimStringParseLogicOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    uint32_t radix =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getRadix()));
     return emitIntrinsicRegisters(plan, kIntrinsicPlusargParseLogic,
                                   {reg(plan, op.getInput()), radix},
                                   {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimPlusargParseLogicOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    uint32_t radix =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getRadix()));
     return emitIntrinsicRegisters(plan, kIntrinsicPlusargParseLogic,
                                   {reg(plan, op.getInput()), radix},
                                   {reg(plan, op.getResult())});
@@ -244,7 +247,8 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
     return emitIntrinsic(plan, kIntrinsicPlusargParseReal, {op.getInput()},
                          {op.getResult()});
   if (auto op = dyn_cast<sim::SimStringFormatIntegerOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    uint32_t radix =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getRadix()));
     uint32_t signedMode = emitU64Constant(plan, op.getIsSigned() ? 1 : 0);
     return emitIntrinsicRegisters(plan, kIntrinsicStringFormatInteger,
                                   {reg(plan, op.getInput()), radix, signedMode},

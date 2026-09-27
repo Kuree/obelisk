@@ -1,4 +1,4 @@
-// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --implicit-check-not='obelisk_sim.hierarchical_name = "worker::dead"' --implicit-check-not='obelisk_sim.hierarchical_name = "worker::dead_virtual"'
+// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --implicit-check-not='simulation.hierarchical_name = "worker::dead"' --implicit-check-not='simulation.hierarchical_name = "worker::dead_virtual"'
 
 class worker;
   function int live();
@@ -29,8 +29,8 @@ module early_class_method_dce;
   end
 endmodule
 
-// CHECK: obelisk_sim.func private
-// CHECK-SAME: obelisk_sim.hierarchical_name = "worker::live"
-// CHECK: obelisk_sim.class.method
+// CHECK: simulation.func private
+// CHECK-SAME: simulation.hierarchical_name = "worker::live"
+// CHECK: simulation.class.method
 // CHECK-SAME: slot 0
 // CHECK-SAME: debug_name = "live_virtual"

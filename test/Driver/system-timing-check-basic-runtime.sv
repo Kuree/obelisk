@@ -116,8 +116,8 @@ module system_timing_check_basic_runtime;
   end
 endmodule
 
-// SIM: obelisk_sim.suspend.clock_set
-// SIM: obelisk_sim.assert.clock_occurrence.consume
+// SIM: simulation.suspend.clock_set
+// SIM: simulation.assert.clock_occurrence.consume
 // SIM-NOT: timing_check_table
 // CHECK: setup-violation 1
 // CHECK-NEXT: setup-endpoint 1

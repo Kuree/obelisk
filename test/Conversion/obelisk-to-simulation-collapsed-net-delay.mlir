@@ -47,14 +47,14 @@ module {
 
 // LRM 23.3.3.7/Table 23-1: an external uwire dominates an internal wire. Its
 // delay therefore applies to both logical declarations in the simulated net.
-// CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "collapsed_delay_top.external" {{.*}}propagation_delays = array<i64: 5, 5, 5>{{.*}}resolution_kind = 2 : i32
-// CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "collapsed_delay_top.child.formal" {{.*}}propagation_delays = array<i64: 5, 5, 5>
-// CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = false
-// CHECK: obelisk_sim.func private @unit_0
-// CHECK-SAME: obelisk_sim.delayed_net
-// CHECK: obelisk_sim.driver.drive_delayed_net
+// CHECK-DAG: simulation.net.decl 0 {{.*}} hierarchy "collapsed_delay_top.external" {{.*}}propagation_delays = array<i64: 5, 5, 5>{{.*}}resolution_kind = 2 : i32
+// CHECK-DAG: simulation.net.decl 1 {{.*}} hierarchy "collapsed_delay_top.child.formal" {{.*}}propagation_delays = array<i64: 5, 5, 5>
+// CHECK: simulation.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = false
+// CHECK: simulation.func private @unit_0
+// CHECK-SAME: simulation.delayed_net
+// CHECK: simulation.driver.drive_delayed_net
 
-// O3: obelisk_sim.net.connect.decl
+// O3: simulation.net.connect.decl
 // O3-SAME: rhs_dominates = false
-// O3-LABEL: obelisk_sim.func private @unit_0
-// O3: obelisk_sim.driver.drive_delayed_net
+// O3-LABEL: simulation.func private @unit_0
+// O3: simulation.driver.drive_delayed_net

@@ -59,12 +59,12 @@ module {
 }
 
 // CHECK: %[[FIVE:.*]] = arith.constant 5 : i64
-// CHECK: obelisk_sim.container.create %[[FIVE]]
-// CHECK-SAME: -> !obelisk_sim.dynamic_array<!obelisk_sim.packed_array<3 : 0 x i1>>
+// CHECK: simulation.container.create %[[FIVE]]
+// CHECK-SAME: -> !simulation.dynamic_array<!simulation.packed_array<3 : 0 x i1>>
 // One dynamic extraction in the counted element loop, independent of the
 // middle array's runtime size.
-// CHECK-COUNT-1: obelisk_sim.logic.dyn_extract
+// CHECK-COUNT-1: simulation.logic.dyn_extract
 // CHECK: %[[ZERO:.*]] = arith.constant {{.*}} 0 : i64
-// CHECK: obelisk_sim.container.create %[[ZERO]]
-// CHECK-SAME: -> !obelisk_sim.dynamic_array<i8>
-// CHECK: obelisk_sim.aggregate.construct
+// CHECK: simulation.container.create %[[ZERO]]
+// CHECK-SAME: -> !simulation.dynamic_array<i8>
+// CHECK: simulation.aggregate.construct

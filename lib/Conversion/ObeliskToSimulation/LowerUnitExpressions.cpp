@@ -364,10 +364,10 @@ FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
   if (sampleAssertionDefaults && !lvalue &&
-      !op->hasAttr("obelisk_sim.sample_default_current") &&
+      !op->hasAttr("simulation.sample_default_current") &&
       !getConstantSpelling(op)) {
     if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
-            "obelisk_sim.sample_default_snapshot")) {
+            "simulation.sample_default_snapshot")) {
       FailureOr<Type> type = getNormalizedSemanticType(op);
       if (failed(type))
         return failure();
@@ -379,7 +379,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                                        snapshot)
           .getResult();
     }
-    if (op->hasAttr("obelisk_sim.sample_default_dynamic"))
+    if (op->hasAttr("simulation.sample_default_dynamic"))
       return emitError(getSemanticLocation(op))
                  << "sampled history default requires preservation of a "
                     "nonconstant declaration initializer",
@@ -388,7 +388,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     if (failed(type))
       return failure();
     auto spelling =
-        op->getAttrOfType<StringAttr>("obelisk_sim.sample_default_constant");
+        op->getAttrOfType<StringAttr>("simulation.sample_default_constant");
     if (!spelling)
       return createDefaultValue(builder, getSemanticLocation(op), *type);
     Type scalarType = sim::getPackedScalarType(*type);
@@ -423,7 +423,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
         op->getAttrOfType<TypeAttr>(randomNestedStateStorageTypeAttrName);
     auto pathAttr = op->getAttrOfType<ArrayAttr>(randomNestedStatePathAttrName);
     auto childField =
-        op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field");
+        op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field");
     auto parentType = thisObject
                           ? dyn_cast<sim::ClassHandleType>(thisObject.getType())
                           : sim::ClassHandleType{};
@@ -528,7 +528,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     return resume->getArgument(0);
   }
   if (auto field =
-          op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field")) {
+          op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field")) {
     if (!thisObject) {
       emitError(getSemanticLocation(op))
           << "instance property reference has no this object";
@@ -556,7 +556,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
       return failure();
     Type storageType = *elementType;
     if (auto storage = op->getAttrOfType<TypeAttr>(
-            "obelisk_sim.covergroup_field_storage_type"))
+            "simulation.covergroup_field_storage_type"))
       storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
         function.getContext(), storageType, objectType.getClassName());
@@ -878,13 +878,13 @@ FailureOr<Value> UnitLowering::lowerConcatenation(Operation *op) {
         describeContainerElement(elementType, location);
     if (failed(descriptor))
       return failure();
-    uint32_t containerKind = isa<sim::DynamicArrayType>(*resultType)
-                                 ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                                 : OBELISK_RT_CONTAINER_QUEUE;
+    sim::ContainerKind containerKind = isa<sim::DynamicArrayType>(*resultType)
+                                           ? sim::ContainerKind::DynamicArray
+                                           : sim::ContainerKind::Queue;
     uint64_t bound = 0;
     if (auto queue = dyn_cast<sim::QueueType>(*resultType))
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
-    Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+    Value allocationSize = containerKind == sim::ContainerKind::DynamicArray
                                ? totalSize
                                : i64Constant(0);
     Value result = sim::SimContainerCreateOp::create(
@@ -1143,7 +1143,7 @@ FailureOr<Value> UnitLowering::createBitStream(bool fourState,
              descriptor->alignment, descriptor->bitWidth,
              builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
              builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-             OBELISK_RT_CONTAINER_QUEUE, UINT64_MAX)
+             sim::ContainerKind::Queue, UINT64_MAX)
       .getResult();
 }
 
@@ -1510,7 +1510,7 @@ FailureOr<Value> UnitLowering::sliceStreamingContainer(Value container,
       descriptor->alignment, descriptor->bitWidth,
       builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
       builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-      OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+      sim::ContainerKind::DynamicArray, 0);
   Value sourceSize;
   if (!fixedArray)
     sourceSize = sim::SimContainerSizeOp::create(
@@ -1679,14 +1679,14 @@ FailureOr<Value> UnitLowering::materializeDynamicBitStreamTarget(
         describeContainerElement(targetElement, location);
     if (failed(targetDescriptor))
       return failure();
-    uint32_t containerKind = isa<sim::DynamicArrayType>(targetType)
-                                 ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                                 : OBELISK_RT_CONTAINER_QUEUE;
+    sim::ContainerKind containerKind = isa<sim::DynamicArrayType>(targetType)
+                                           ? sim::ContainerKind::DynamicArray
+                                           : sim::ContainerKind::Queue;
     uint64_t bound = 0;
     if (auto queue = dyn_cast<sim::QueueType>(targetType))
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
     Value allocationSize =
-        containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ? targetSize : zero;
+        containerKind == sim::ContainerKind::DynamicArray ? targetSize : zero;
     result = sim::SimContainerCreateOp::create(
         builder, location, targetType, allocationSize, targetDescriptor->typeID,
         targetDescriptor->kind, targetDescriptor->flags,
@@ -2007,7 +2007,7 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       return failure();
     if (isa<sim::ClassHandleType>((*value).getType())) {
       auto width = child->getAttrOfType<IntegerAttr>(
-          "obelisk_sim.class_bitstream_width");
+          "simulation.class_bitstream_width");
       if (!width || width.getValue().isZero() ||
           width.getValue().isNegative() ||
           width.getValue().getActiveBits() > 32)
@@ -3539,7 +3539,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
   }
   if (auto field =
-          op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_field")) {
+          op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field")) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     FailureOr<Value> object = lowerExpression(children.front());
     auto objectType = succeeded(object)
@@ -3549,7 +3549,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
       return failure();
     Type storageType = *resultType;
     if (auto storage = op->getAttrOfType<TypeAttr>(
-            "obelisk_sim.covergroup_field_storage_type"))
+            "simulation.covergroup_field_storage_type"))
       storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
         function.getContext(), storageType, objectType.getClassName());
@@ -4043,8 +4043,9 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        dynamicArray ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                     : OBELISK_RT_CONTAINER_QUEUE,
+        static_cast<sim::ContainerKind>(dynamicArray
+                                            ? sim::ContainerKind::DynamicArray
+                                            : sim::ContainerKind::Queue),
         bound);
     if (compactDefault) {
       Type i64 = builder.getI64Type();
@@ -4467,7 +4468,7 @@ FailureOr<Value> UnitLowering::lowerNewArray(Operation *op) {
       descriptor->alignment, descriptor->bitWidth,
       builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
       builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-      OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+      sim::ContainerKind::DynamicArray, 0);
   if (children.size() == 1)
     return result;
 
@@ -5066,7 +5067,7 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, bound);
+        sim::ContainerKind::Queue, bound);
 
     Block *header = addBlock();
     header->addArgument(builder.getI64Type(), location);

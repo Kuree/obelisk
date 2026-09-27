@@ -10,29 +10,29 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @design {
-    obelisk_sim.vpi_definition.decl @cell type 32 name "cell" definition_loc loc("cell.sv":3:1)
-    obelisk_sim.vpi_definition_member.decl @cell_a of @cell type 28 ordinal 0
+  simulation.design @design {
+    simulation.vpi_definition.decl @cell type 32 name "cell" definition_loc loc("cell.sv":3:1)
+    simulation.vpi_definition_member.decl @cell_a of @cell type 28 ordinal 0
         name "a" direction input loc("cell.sv":3:13)
-    obelisk_sim.vpi_definition_member.decl @cell_z of @cell type 28 ordinal 1
+    simulation.vpi_definition_member.decl @cell_z of @cell type 28 ordinal 1
         name "z" direction output loc("cell.sv":3:32)
-    obelisk_sim.vpi_definition_specialization.decl @cell_spec of @cell
-    obelisk_sim.vpi_definition_member.specialize @cell_spec member @cell_a type
-        #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+    simulation.vpi_definition_specialization.decl @cell_spec of @cell
+    simulation.vpi_definition_member.specialize @cell_spec member @cell_a type
+        #simulation.vpi_type<kind = logic, isSigned = false,
           isFourState = true, range = [7, 0], children = [], childNames = []>
-    obelisk_sim.vpi_definition_member.specialize @cell_spec member @cell_z type
-        #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+    simulation.vpi_definition_member.specialize @cell_spec member @cell_z type
+        #simulation.vpi_type<kind = bit, isSigned = false,
           isFourState = false, range = [0, 0], children = [], childNames = []>
-    obelisk_sim.scope.decl 0 hierarchy "$root"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top.left" debug "left"
+    simulation.scope.decl 0 hierarchy "$root"
+    simulation.scope.decl 1 parent 0 hierarchy "top.left" debug "left"
         vpi_kind 32 definition @cell specialization @cell_spec
-    obelisk_sim.scope.decl 2 parent 0 hierarchy "top.right" debug "right"
+    simulation.scope.decl 2 parent 0 hierarchy "top.right" debug "right"
         vpi_kind 32 definition @cell specialization @cell_spec
-    obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.left.initial"
-    obelisk_sim.func @initial(%ctx: !obelisk_sim.context
-        {obelisk_sim.capture_kind = 0 : i32})
+    simulation.code_unit.decl 1 in 1 initial hierarchy "top.left.initial"
+    simulation.func @initial(%ctx: !simulation.context
+        {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

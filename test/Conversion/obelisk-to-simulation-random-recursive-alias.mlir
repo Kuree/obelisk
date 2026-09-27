@@ -54,23 +54,23 @@ module attributes {
 // A null recursive edge contributes no active object. If the edge is enabled
 // and nonnull, identity decides whether it closes onto the already planned
 // ancestor. Only a distinct object takes the explicit unsupported path.
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: %[[HEAD_REF:.*]] = obelisk_sim.class.field_ref %{{.*}}[@__obelisk_class_s9_root_field_0]
-// CHECK: %[[HEAD:.*]] = obelisk_sim.managed.load %[[HEAD_REF]]
-// CHECK: %[[HEAD_NULL:.*]] = obelisk_sim.managed.is_null %[[HEAD]]
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK: %[[HEAD_REF:.*]] = simulation.class.field_ref %{{.*}}[@__obelisk_class_s9_root_field_0]
+// CHECK: %[[HEAD:.*]] = simulation.managed.load %[[HEAD_REF]]
+// CHECK: %[[HEAD_NULL:.*]] = simulation.managed.is_null %[[HEAD]]
 // CHECK: cf.cond_br {{.*}}, ^[[HEAD_ACTIVE:bb[0-9]+]], ^[[CONTINUE:bb[0-9]+]]
 // CHECK: ^[[HEAD_ACTIVE]]:
-// CHECK: %[[NODE_MODE_REF:.*]] = obelisk_sim.class.field_ref %[[HEAD]][@__obelisk_class_s3_node_field___obelisk_rand_mode]
-// CHECK: %[[NEXT_REF:.*]] = obelisk_sim.class.field_ref %[[HEAD]][@__obelisk_class_s3_node_field_0]
-// CHECK: %[[NEXT:.*]] = obelisk_sim.managed.load %[[NEXT_REF]]
-// CHECK: obelisk_sim.managed.is_null %[[NEXT]]
+// CHECK: %[[NODE_MODE_REF:.*]] = simulation.class.field_ref %[[HEAD]][@__obelisk_class_s3_node_field___obelisk_rand_mode]
+// CHECK: %[[NEXT_REF:.*]] = simulation.class.field_ref %[[HEAD]][@__obelisk_class_s3_node_field_0]
+// CHECK: %[[NEXT:.*]] = simulation.managed.load %[[NEXT_REF]]
+// CHECK: simulation.managed.is_null %[[NEXT]]
 // CHECK: cf.cond_br {{.*}}, ^[[NEXT_ACTIVE:bb[0-9]+]], ^[[CONTINUE]]
 // CHECK: ^[[NEXT_ACTIVE]]:
-// CHECK: %[[NEXT_ID:.*]] = obelisk_sim.class.id %[[NEXT]]
-// CHECK: %[[HEAD_ID:.*]] = obelisk_sim.class.id %[[HEAD]]
+// CHECK: %[[NEXT_ID:.*]] = simulation.class.id %[[NEXT]]
+// CHECK: %[[HEAD_ID:.*]] = simulation.class.id %[[HEAD]]
 // CHECK: %[[ALIASED:.*]] = arith.cmpi eq, %[[NEXT_ID]], %[[HEAD_ID]] : i64
 // CHECK: cf.cond_br %[[ALIASED]], ^[[CONTINUE]], ^[[DISTINCT:bb[0-9]+]]
 // CHECK: ^[[DISTINCT]]:
-// CHECK: obelisk_sim.bytes.constant "{{.*}}distinct object beyond the static recursive graph plan"
-// CHECK: obelisk_sim.fatal
-// CHECK: obelisk_sim.random.solve
+// CHECK: simulation.bytes.constant "{{.*}}distinct object beyond the static recursive graph plan"
+// CHECK: simulation.fatal
+// CHECK: simulation.random.solve

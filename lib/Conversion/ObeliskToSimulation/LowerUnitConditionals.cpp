@@ -45,7 +45,7 @@ void UnitLowering::emitDefaultAssertionFailure(Location location,
   StringAttr scope =
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
   sim::SimDisplayOp::create(builder, location, context, descriptor,
-                            ValueRange{item}, true, 10,
+                            ValueRange{item}, true, sim::Radix::Decimal,
                             builder.getDenseI32ArrayAttr({0}), scope,
                             StringAttr{}, timeMultiplier, IntegerAttr{});
 }
@@ -53,7 +53,7 @@ void UnitLowering::emitDefaultAssertionFailure(Location location,
 LogicalResult UnitLowering::lowerImmediateAssertion(
     semantic::SVImmediateAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
-  if (op->hasAttr("obelisk_sim.default_assertion_failure")) {
+  if (op->hasAttr("simulation.default_assertion_failure")) {
     emitDefaultAssertionFailure(location);
     return success();
   }
@@ -67,16 +67,16 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
 
   Block *controlMerge = nullptr;
   Value actionState;
-  bool deferredEvaluator = op->hasAttr("obelisk_sim.deferred_evaluator");
+  bool deferredEvaluator = op->hasAttr("simulation.deferred_evaluator");
   bool attemptControlled =
-      !deferredEvaluator && op->hasAttr("obelisk_sim.assertion_controlled");
+      !deferredEvaluator && op->hasAttr("simulation.assertion_controlled");
   bool actionControlled =
       !deferredEvaluator &&
-      op->hasAttr("obelisk_sim.assertion_action_controlled");
+      op->hasAttr("simulation.assertion_action_controlled");
   IntegerAttr assertionID;
   if (attemptControlled || actionControlled) {
     assertionID = op->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.assertion_control_target_id");
+        "simulation.assertion_control_target_id");
     if (!assertionID || !assertionID.getValue().isStrictlyPositive()) {
       emitError(location) << "immediate assertion has no prepared control ID";
       return failure();
@@ -136,8 +136,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       auto enqueue = sim::SimDeferredEnqueueOp::create(
           builder, location, builder.getI64IntegerAttr(siteID));
       if (auto targetID = op->getAttrOfType<IntegerAttr>(
-              "obelisk_sim.assertion_control_target_id"))
-        enqueue->setAttr("obelisk_sim.assertion_control_target_id", targetID);
+              "simulation.assertion_control_target_id"))
+        enqueue->setAttr("simulation.assertion_control_target_id", targetID);
       Value ticket = enqueue;
 
       llvm::StringMap<Value> previousValues;
@@ -217,23 +217,23 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
 
       std::string identity =
           (Twine(siteIdentity) + (passed ? ".pass" : ".fail")).str();
-      Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
+      Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
       BoolAttr previousDeferred = op.getIsDeferredAttr();
-      op->setAttr("obelisk_sim.deferred_evaluator", builder.getUnitAttr());
-      op->setAttr("obelisk_sim.deferred_result", builder.getBoolAttr(passed));
-      op->setAttr("obelisk_sim.fork_code_unit_id",
+      op->setAttr("simulation.deferred_evaluator", builder.getUnitAttr());
+      op->setAttr("simulation.deferred_result", builder.getBoolAttr(passed));
+      op->setAttr("simulation.fork_code_unit_id",
                   builder.getI64IntegerAttr(stableCodeUnitID(identity)));
       op->setAttr("is_deferred", builder.getBoolAttr(false));
       FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
           outlineForkBranch(op, node, passed ? 0 : 1,
                             /*captureReferences=*/false);
       op->setAttr("is_deferred", previousDeferred);
-      op->removeAttr("obelisk_sim.deferred_evaluator");
-      op->removeAttr("obelisk_sim.deferred_result");
+      op->removeAttr("simulation.deferred_evaluator");
+      op->removeAttr("simulation.deferred_result");
       if (previousCodeUnit)
-        op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+        op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
       else
-        op->removeAttr("obelisk_sim.fork_code_unit_id");
+        op->removeAttr("simulation.fork_code_unit_id");
       for (const auto &entry : newlyBoundValues)
         values.erase(entry.getKey());
       for (const auto &entry : previousValues)
@@ -263,7 +263,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       while (argumentAttrs.size() < originalInputCount)
         argumentAttrs.push_back(builder.getDictionaryAttr({}));
       DictionaryAttr formal = builder.getDictionaryAttr({builder.getNamedAttr(
-          "obelisk_sim.capture_kind",
+          "simulation.capture_kind",
           sim::CaptureKindAttr::get(function.getContext(),
                                     sim::CaptureKind::Formal))});
       while (argumentAttrs.size() < inputTypes.size())
@@ -319,7 +319,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   }
 
   FailureOr<Value> condition;
-  if (auto result = op->getAttrOfType<BoolAttr>("obelisk_sim.deferred_result"))
+  if (auto result = op->getAttrOfType<BoolAttr>("simulation.deferred_result"))
     condition = arith::ConstantOp::create(
                     builder, location, builder.getBoolAttr(result.getValue()))
                     .getResult();
@@ -333,7 +333,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   }
 
   bool reactiveActions =
-      op->hasAttr("obelisk_sim.deferred_evaluator") && !op.getIsFinal();
+      op->hasAttr("simulation.deferred_evaluator") && !op.getIsFinal();
   auto lowerAction = [&](Operation *action, unsigned branch) -> LogicalResult {
     if (!reactiveActions)
       return lowerStatement(action);
@@ -344,15 +344,15 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
          "." + Twine(branch))
             .str();
     Attribute previousCodeUnit =
-        action->getAttr("obelisk_sim.fork_code_unit_id");
-    action->setAttr("obelisk_sim.fork_code_unit_id",
+        action->getAttr("simulation.fork_code_unit_id");
+    action->setAttr("simulation.fork_code_unit_id",
                     builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
         outlineForkBranch(action, node, branch, /*captureReferences=*/true);
     if (previousCodeUnit)
-      action->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+      action->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
     else
-      action->removeAttr("obelisk_sim.fork_code_unit_id");
+      action->removeAttr("simulation.fork_code_unit_id");
     if (failed(callback))
       return failure();
     callback->first->setAttr(
@@ -373,17 +373,17 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     std::string identity =
         (function.getSymName() + ".$reactive_assert_default." + Twine(node))
             .str();
-    Attribute previousCodeUnit = op->getAttr("obelisk_sim.fork_code_unit_id");
-    op->setAttr("obelisk_sim.default_assertion_failure", builder.getUnitAttr());
-    op->setAttr("obelisk_sim.fork_code_unit_id",
+    Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
+    op->setAttr("simulation.default_assertion_failure", builder.getUnitAttr());
+    op->setAttr("simulation.fork_code_unit_id",
                 builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
         outlineForkBranch(op, node, 3, /*captureReferences=*/true);
-    op->removeAttr("obelisk_sim.default_assertion_failure");
+    op->removeAttr("simulation.default_assertion_failure");
     if (previousCodeUnit)
-      op->setAttr("obelisk_sim.fork_code_unit_id", previousCodeUnit);
+      op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
     else
-      op->removeAttr("obelisk_sim.fork_code_unit_id");
+      op->removeAttr("simulation.fork_code_unit_id");
     if (failed(callback))
       return failure();
     callback->first->setAttr(
@@ -936,9 +936,9 @@ void UnitLowering::emitQualifierWarning(
     return;
   }
   Block *controlResume = nullptr;
-  if (statement->hasAttr("obelisk_sim.assertion_controlled")) {
+  if (statement->hasAttr("simulation.assertion_controlled")) {
     IntegerAttr assertionID = statement->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.assertion_control_target_id");
+        "simulation.assertion_control_target_id");
     assert(assertionID && assertionID.getValue().isStrictlyPositive() &&
            "controlled qualifier report must have a prepared identity");
     Value context = function.getBody().front().getArgument(0);
@@ -973,8 +973,8 @@ void UnitLowering::emitQualifierWarning(
       function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
   sim::SimDisplayOp::create(
       builder, location, function.getBody().front().getArgument(0), descriptor,
-      ValueRange{text}, true, 10, ArrayRef<int32_t>{0}, scope, StringAttr{},
-      multiplier, IntegerAttr{});
+      ValueRange{text}, true, sim::Radix::Decimal, ArrayRef<int32_t>{0}, scope,
+      StringAttr{}, multiplier, IntegerAttr{});
   if (controlResume) {
     emitBranch(controlResume);
     setCurrent(controlResume);

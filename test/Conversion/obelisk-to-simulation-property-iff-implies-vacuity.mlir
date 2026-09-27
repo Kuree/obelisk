@@ -280,93 +280,93 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The exact partition initially emits four successful cubes. Z3 removes one
 // redundant cube within its vacuity class without crossing classification.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 7 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 11 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 2 : i64
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.11.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.11.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 7 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 11 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 2 : i64
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.11.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.11.0.0
 
 // `iff` keeps only !a&&!c vacuous. The other four successful regions are
 // nonvacuous, including equality through two false operand evaluations.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 5 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 5 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 5 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 15 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 16 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 1 : i64
-// CHECK-COUNT-4: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.41.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.41.0.0
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 5 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 5 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 5 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 15 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 16 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
+// CHECK-COUNT-4: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.41.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.41.0.0
 
 // The case form retains one selector comparison while producing the same
 // 4->3 solver reduction and two vacuous success regions as the conditional.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 7 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 11 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 2 : i64
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_2.fork.71.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork.71.0.0
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 7 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 11 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 2 : i64
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK: simulation.logic.compare case_eq
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_2.fork.71.0.0
+// CHECK-NOT: simulation.spawn @unit_2.fork.71.0.0
 
 // Nested false-vacuous results remain distinct until the outer iff is
 // classified. The generated monitor still samples each semantic atom once and
 // dispatches one cover-property action for the single source evaluation.
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 12 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 12 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 34 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 53 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 204 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 5 : i64
-// CHECK-COUNT-6: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_3.fork.101.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork.101.0.0
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 12 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 12 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 34 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 53 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 204 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 5 : i64
+// CHECK-COUNT-6: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_3.fork.101.0.0
+// CHECK-NOT: simulation.spawn @unit_3.fork.101.0.0
 
 // Nested not/or/and lowering preserves false-vacuous results and minimizes
 // only within each successful classification before materializing the monitor.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 8 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 8 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 28 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 25 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 160 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 2 : i64
-// CHECK-COUNT-6: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_4.fork.131.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_4.fork.131.0.0
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 8 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 8 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 28 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 25 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 160 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 2 : i64
+// CHECK-COUNT-6: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_4.fork.131.0.0
+// CHECK-NOT: simulation.spawn @unit_4.fork.131.0.0
 
 // The double-negated implication is truth-equivalent to the original and its
 // false-antecedent success remains vacuous across both negations.
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 6 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = 1 : i64
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_5.fork.161.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_5.fork.161.0.0
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 6 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_5.fork.161.0.0
+// CHECK-NOT: simulation.spawn @unit_5.fork.161.0.0
 // CHECK-NOT: obelisk.sv.assertion

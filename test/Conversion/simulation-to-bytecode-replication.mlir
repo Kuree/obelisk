@@ -7,18 +7,18 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @replication {
-    obelisk_sim.code_unit.decl 9100001 in 0 function hierarchy "test.replication.9100001"
-    obelisk_sim.scope.decl 0 hierarchy "top"
+  simulation.design @replication {
+    simulation.code_unit.decl 9100001 in 0 function hierarchy "test.replication.9100001"
+    simulation.scope.decl 0 hierarchy "top"
 
-    obelisk_sim.func @replicate(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.logic<8> {obelisk_sim.capture_kind = 1 : i32})
-        -> !obelisk_sim.logic<65536>
+    simulation.func @replicate(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: !simulation.logic<8> {simulation.capture_kind = 1 : i32})
+        -> !simulation.logic<65536>
         attributes {entry_kind = 8 : i32, code_unit_id = 9100001 : i64} {
-      %result = obelisk_sim.logic.replicate %value times 8192 :
-          !obelisk_sim.logic<8> -> !obelisk_sim.logic<65536>
-      obelisk_sim.return %result : !obelisk_sim.logic<65536>
+      %result = simulation.logic.replicate %value times 8192 :
+          !simulation.logic<8> -> !simulation.logic<65536>
+      simulation.return %result : !simulation.logic<65536>
     }
   }
 }

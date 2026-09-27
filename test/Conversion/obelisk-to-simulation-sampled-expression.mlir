@@ -9,26 +9,26 @@
 // the ordinary adjacent display operand must still see the current data.
 // The dynamic selection uses the Preponed index, not its newly assigned 1.
 // This is semantic MLIR input; no SystemVerilog frontend is needed by the test.
-// PLAN: %[[DATA:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg2
-// PLAN: %[[FLAT:.*]] = obelisk_sim.packed.flatten %[[DATA]]
-// PLAN: %[[SUM:.*]] = obelisk_sim.logic.binary add %[[FLAT]], {{.*}}
-// PLAN: obelisk_sim.ref.load %arg2
-// PLAN: %[[INDEX:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg4
-// PLAN: obelisk_sim.array.extract_dynamic %[[DATA]]
-// PLAN: %[[PACKED:.*]] = obelisk_sim.packed.unflatten %[[SUM]]
-// PLAN: obelisk_sim.assert.sampled_history {{.*}} from %[[PACKED]]
-// PLAN: %[[FLAG:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg3
-// PLAN: %[[PAST:.*]] = obelisk_sim.assert.sampled_history {{.*}} from %[[FLAG]]
-// PLAN: obelisk_sim.assert.sampled_history {{.*}} from %[[PAST]]
+// PLAN: %[[DATA:.*]] = simulation.assert.sampled_read {{.*}} from %arg2
+// PLAN: %[[FLAT:.*]] = simulation.packed.flatten %[[DATA]]
+// PLAN: %[[SUM:.*]] = simulation.logic.binary add %[[FLAT]], {{.*}}
+// PLAN: simulation.ref.load %arg2
+// PLAN: %[[INDEX:.*]] = simulation.assert.sampled_read {{.*}} from %arg4
+// PLAN: simulation.array.extract_dynamic %[[DATA]]
+// PLAN: %[[PACKED:.*]] = simulation.packed.unflatten %[[SUM]]
+// PLAN: simulation.assert.sampled_history {{.*}} from %[[PACKED]]
+// PLAN: %[[FLAG:.*]] = simulation.assert.sampled_read {{.*}} from %arg3
+// PLAN: %[[PAST:.*]] = simulation.assert.sampled_history {{.*}} from %[[FLAG]]
+// PLAN: simulation.assert.sampled_history {{.*}} from %[[PAST]]
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 0 : i64, sym_name = "s0.sampled_expression"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, obelisk_sim.vpi_definition_name = "$unit", sym_name = "s2"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, simulation.vpi_definition_name = "$unit", sym_name = "s2"} {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "sampled_expression", is_uninstantiated = false, name = "sampled_expression", node_id = 3 : i64, referenced_path = "sampled_expression", referenced_symbol = @s0.sampled_expression, sym_name = "s3.sampled_expression"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 4 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "sampled_expression", obelisk_sim.vpi_top = true, sym_name = "s4.sampled_expression", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 4 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "sampled_expression", simulation.vpi_top = true, sym_name = "s4.sampled_expression", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
         obelisk.sv.symbol.variable attributes {hierarchical_name = "sampled_expression.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b0", is_implicit = true, is_signed = false, node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 15, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 16, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "0", is_implicit = true, is_signed = true, node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 15, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 16, "">} {

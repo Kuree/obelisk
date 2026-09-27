@@ -5,7 +5,7 @@
 // coordinates, so they can be intersected before sampling. Sampled values are
 // un-biased before insertion into the aggregate assignment. Strict signed
 // extrema take the same direct-failure edge as unsigned extrema.
-// CAPTURE-DOMAIN-SIGNED-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-SIGNED-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-SIGNED-COUNT-2: arith.xori {{.*}}, %{{c8_i64.*}} : i64
 // CAPTURE-DOMAIN-SIGNED: %[[INCLUSIVE_VALID:.*]] = arith.cmpi ule
 // CAPTURE-DOMAIN-SIGNED: %[[LOW_EDGE:.*]] = arith.cmpi ne, {{.*}}, %{{c15_i64.*}} : i64
@@ -18,14 +18,14 @@
 // CAPTURE-DOMAIN-SIGNED: cf.cond_br {{.*}}, ^[[SAMPLE:bb[0-9]+]], ^[[EMPTY:bb[0-9]+]]
 // CAPTURE-DOMAIN-SIGNED: ^[[SAMPLE]]:
 // CAPTURE-DOMAIN-SIGNED-COUNT-3: arith.xori {{.*}}, %{{c8_i64.*}} : i64
-// CAPTURE-DOMAIN-SIGNED: obelisk_sim.random.solve {{.*}} mutable
+// CAPTURE-DOMAIN-SIGNED: simulation.random.solve {{.*}} mutable
 
-// CAPTURE-DOMAIN-SIGNED-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-SIGNED-FALLBACK-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-SIGNED-FALLBACK: arith.cmpi sge
 // CAPTURE-DOMAIN-SIGNED-FALLBACK: arith.cmpi sle
 // CAPTURE-DOMAIN-SIGNED-FALLBACK: arith.cmpi sgt
 // CAPTURE-DOMAIN-SIGNED-FALLBACK: arith.cmpi slt
-// CAPTURE-DOMAIN-SIGNED-FALLBACK: obelisk_sim.random.solve
+// CAPTURE-DOMAIN-SIGNED-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

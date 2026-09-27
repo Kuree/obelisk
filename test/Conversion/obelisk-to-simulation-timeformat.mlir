@@ -3,16 +3,16 @@
 // Each $timeformat argument has its own default, so a call with none restores
 // the IEEE defaults rather than lowering to nothing.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-DAG: %[[SUFFIX:.*]] = obelisk_sim.bytes.constant "ns"
-// CHECK-DAG: %[[EMPTY:.*]] = obelisk_sim.bytes.constant ""
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-DAG: %[[SUFFIX:.*]] = simulation.bytes.constant "ns"
+// CHECK-DAG: %[[EMPTY:.*]] = simulation.bytes.constant ""
 // CHECK-DAG: %[[UNITS:.*]] = arith.constant -9 : i32
 // CHECK-DAG: %[[DIGITS:.*]] = arith.constant 5 : i32
 // CHECK-DAG: %[[WIDTH:.*]] = arith.constant 10 : i32
 // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
 // CHECK-DAG: %[[DEFAULT_WIDTH:.*]] = arith.constant 20 : i32
-// CHECK: obelisk_sim.time.format {{.*}}, %[[UNITS]], %[[DIGITS]], %[[SUFFIX]], %[[WIDTH]]
-// CHECK: obelisk_sim.time.format {{.*}}, %[[UNITS]], %[[ZERO]], %[[EMPTY]], %[[DEFAULT_WIDTH]]
+// CHECK: simulation.time.format {{.*}}, %[[UNITS]], %[[DIGITS]], %[[SUFFIX]], %[[WIDTH]]
+// CHECK: simulation.time.format {{.*}}, %[[UNITS]], %[[ZERO]], %[[EMPTY]], %[[DEFAULT_WIDTH]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

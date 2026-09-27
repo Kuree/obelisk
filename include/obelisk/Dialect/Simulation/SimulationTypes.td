@@ -33,7 +33,7 @@ def SimBytesType : SimType<"Bytes"> {
   let summary = "immutable literal byte sequence";
   let description = [{
     This type is intentionally limited to compiler-owned byte spans such as
-    static display formats. Dynamic SystemVerilog strings use `!obelisk_sim.string`
+    static display formats. Dynamic SystemVerilog strings use `!simulation.string`
     and the managed-word ABI instead.
   }];
 }

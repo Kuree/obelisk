@@ -76,7 +76,7 @@ struct ProcessSuspension {
 };
 
 /// Target-layout-aware, deterministic canonical frame for one suspendable
-/// obelisk_sim.func. The analysis records entry captures, continuation block
+/// simulation.func. The analysis records entry captures, continuation block
 /// arguments, and reusable wait storage; four-state values always occupy
 /// adjacent value and unknown planes.
 class SimulationProcessFrameAnalysis {

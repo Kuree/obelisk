@@ -58,13 +58,13 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private
-// CHECK-SAME: obelisk_sim.timing_check_coordinator
+// CHECK: simulation.func private
+// CHECK-SAME: simulation.timing_check_coordinator
 // CHECK: cf.br ^{{.*}}({{.*}} : i64, i1)
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: conditions 0 edges [1, 1]
 // CHECK-SAME: slot_final
-// CHECK: obelisk_sim.assert.clock_occurrence.consume
-// CHECK: obelisk_sim.time.now
+// CHECK: simulation.assert.clock_occurrence.consume
+// CHECK: simulation.time.now
 // CHECK: arith.cmpi ult
 // CHECK-NOT: timing_check_table

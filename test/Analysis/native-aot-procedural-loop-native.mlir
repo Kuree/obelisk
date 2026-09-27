@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
 // A while-loop over storage has no bounded-induction proof, so the compute
@@ -15,53 +15,53 @@
 // CHECK-NOT: reason
 
 module {
-  obelisk_sim.design @procedural_loop {
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always_comb hierarchy "shift"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.storage.decl 1 in 0 : i8 design
+  simulation.design @procedural_loop {
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always_comb hierarchy "shift"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.storage.decl 1 in 0 : i8 design
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %in = obelisk_sim.context.storage %ctx[0] : !obelisk_sim.ref<i8>
-      %work = obelisk_sim.context.storage %ctx[1] : !obelisk_sim.ref<i8>
-      %process = obelisk_sim.spawn @shift(%ctx, %in, %work) :
-          !obelisk_sim.context, !obelisk_sim.ref<i8>, !obelisk_sim.ref<i8>
-          -> !obelisk_sim.process
-      obelisk_sim.return
+      %in = simulation.context.storage %ctx[0] : !simulation.ref<i8>
+      %work = simulation.context.storage %ctx[1] : !simulation.ref<i8>
+      %process = simulation.spawn @shift(%ctx, %in, %work) :
+          !simulation.context, !simulation.ref<i8>, !simulation.ref<i8>
+          -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @shift(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %in: !obelisk_sim.ref<i8>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %work: !obelisk_sim.ref<i8>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @shift(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %in: !simulation.ref<i8>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %work: !simulation.ref<i8>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 4 : i32, code_unit_id = 2 : i64} {
       cf.br ^activation
     ^activation:
-      %seed = obelisk_sim.ref.load %in : !obelisk_sim.ref<i8> -> i8
-      obelisk_sim.ref.store %seed to %work : i8, !obelisk_sim.ref<i8>
+      %seed = simulation.ref.load %in : !simulation.ref<i8> -> i8
+      simulation.ref.store %seed to %work : i8, !simulation.ref<i8>
       cf.br ^head
     ^head:
-      %value = obelisk_sim.ref.load %work : !obelisk_sim.ref<i8> -> i8
+      %value = simulation.ref.load %work : !simulation.ref<i8> -> i8
       %zero = arith.constant 0 : i8
       %more = arith.cmpi ne, %value, %zero : i8
       cf.cond_br %more, ^body, ^wait
     ^body:
       %one = arith.constant 1 : i8
       %shifted = arith.shrui %value, %one : i8
-      obelisk_sim.ref.store %shifted to %work : i8, !obelisk_sim.ref<i8>
+      simulation.ref.store %shifted to %work : i8, !simulation.ref<i8>
       cf.br ^head
     ^wait:
-      obelisk_sim.suspend.any %in edges [0] to ^activation :
-          !obelisk_sim.ref<i8>
+      simulation.suspend.any %in edges [0] to ^activation :
+          !simulation.ref<i8>
     }
   }
 }

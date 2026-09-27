@@ -410,7 +410,7 @@ OpFoldResult SimLogicReductionOp::fold(FoldAdaptor adaptor) {
 LogicalResult SimLogicUnaryOp::verify() {
   if (getKind() == UnaryKind::LogicalNot) {
     if (getResult().getType().getWidth() != 1)
-      return emitOpError("logical negation must produce !obelisk_sim.logic<1>");
+      return emitOpError("logical negation must produce !simulation.logic<1>");
   } else if (getInput().getType() != getResult().getType()) {
     return emitOpError("width-preserving unary operations require matching "
                        "input and result types");
@@ -734,7 +734,7 @@ LogicalResult SimLogicCompareOp::verify() {
     return emitOpError("case comparisons must produce i1");
   if (!caseComparison && !isa<LogicType>(result))
     return emitOpError(
-        "four-state comparisons must produce !obelisk_sim.logic<1>");
+        "four-state comparisons must produce !simulation.logic<1>");
   if (auto logic = dyn_cast<LogicType>(result); logic && logic.getWidth() != 1)
     return emitOpError("comparison result logic width must be one");
   return success();

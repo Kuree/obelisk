@@ -60,13 +60,13 @@ module {
 }
 
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[X:[^:]*]]: !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[X:[^:]*]]: !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
 
-// CHECK: %[[LOW_VALUE:.*]] = obelisk_sim.logic.extract %{{.*}} from 1 : !obelisk_sim.logic<2> -> !obelisk_sim.logic<1>
-// CHECK: %[[LOW_BIT:.*]] = obelisk_sim.ref.extract %[[X]] from 0
-// CHECK: obelisk_sim.ref.store %[[LOW_VALUE]] to %[[LOW_BIT]]
+// CHECK: %[[LOW_VALUE:.*]] = simulation.logic.extract %{{.*}} from 1 : !simulation.logic<2> -> !simulation.logic<1>
+// CHECK: %[[LOW_BIT:.*]] = simulation.ref.extract %[[X]] from 0
+// CHECK: simulation.ref.store %[[LOW_VALUE]] to %[[LOW_BIT]]
 
-// CHECK: %[[HIGH_VALUE:.*]] = obelisk_sim.logic.extract %{{.*}} from 0 : !obelisk_sim.logic<2> -> !obelisk_sim.logic<1>
-// CHECK: %[[HIGH_BIT:.*]] = obelisk_sim.ref.extract %[[X]] from 3
-// CHECK: obelisk_sim.ref.store %[[HIGH_VALUE]] to %[[HIGH_BIT]]
+// CHECK: %[[HIGH_VALUE:.*]] = simulation.logic.extract %{{.*}} from 0 : !simulation.logic<2> -> !simulation.logic<1>
+// CHECK: %[[HIGH_BIT:.*]] = simulation.ref.extract %[[X]] from 3
+// CHECK: simulation.ref.store %[[HIGH_VALUE]] to %[[HIGH_BIT]]

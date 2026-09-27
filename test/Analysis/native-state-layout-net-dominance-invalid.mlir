@@ -4,17 +4,17 @@
 
 //--- ambiguous.mlir
 module {
-  obelisk_sim.design @ambiguous {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {
+  simulation.design @ambiguous {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 1, 1, 1>
     }
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design {
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design
+    simulation.net.decl 2 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 2, 2, 2>
     }
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
-    obelisk_sim.net.connect.decl 1 in 0 0[0] to 2[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.connect.decl 1 in 0 0[0] to 2[0] width 1 reversed = false rhs_dominates = true
   }
 }
 
@@ -22,16 +22,16 @@ module {
 
 //--- cycle.mlir
 module {
-  obelisk_sim.design @cycle {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design {
+  simulation.design @cycle {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 1, 1, 1>
     }
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
-    obelisk_sim.net.connect.decl 1 in 0 1[0] to 0[0] width 1 reversed = false rhs_dominates = true
-    obelisk_sim.net.connect.decl 2 in 0 1[0] to 2[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design
+    simulation.net.decl 2 in 0 : !simulation.logic<1> design
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.connect.decl 1 in 0 1[0] to 0[0] width 1 reversed = false rhs_dominates = true
+    simulation.net.connect.decl 2 in 0 1[0] to 2[0] width 1 reversed = false rhs_dominates = true
   }
 }
 

@@ -66,13 +66,13 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.storage.decl [[BIAS:[0-9]+]] in {{[0-9]+}} : i32 design hierarchy "top.p.bias"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} function hierarchy "top.x.foo"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} function hierarchy "top.p.foo"
-// CHECK: obelisk_sim.func private @[[IMPL:unit_[0-9]+]]
+// CHECK: simulation.storage.decl [[BIAS:[0-9]+]] in {{[0-9]+}} : i32 design hierarchy "top.p.bias"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} {{.*}} function hierarchy "top.x.foo"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} {{.*}} function hierarchy "top.p.foo"
+// CHECK: simulation.func private @[[IMPL:unit_[0-9]+]]
 // CHECK-SAME: descriptor = [[BIAS]]
-// CHECK-SAME: obelisk_sim.hierarchical_name = "top.p.foo"
-// CHECK: obelisk_sim.call @[[IMPL]](%{{.*}}) : (!obelisk_sim.context) -> i32
+// CHECK-SAME: simulation.hierarchical_name = "top.p.foo"
+// CHECK: simulation.call @[[IMPL]](%{{.*}}) : (!simulation.context) -> i32
 
 // MISSING: error: modport-exported interface extern has no implementation
 // MULTI: error: modport-exported interface extern has 2 implementations; exactly one is executable

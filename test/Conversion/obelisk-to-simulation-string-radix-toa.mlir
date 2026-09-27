@@ -63,8 +63,8 @@ module {
 }
 
 
-// CHECK: obelisk_sim.string.format_integer {{.*}} radix = 10 signed = true
-// CHECK: obelisk_sim.string.format_integer {{.*}} radix = 16 signed = true
-// CHECK: obelisk_sim.string.format_integer {{.*}} radix = 8 signed = true
-// CHECK: obelisk_sim.string.format_integer {{.*}} radix = 2 signed = true
+// CHECK: simulation.string.format_integer {{.*}} radix = <decimal> signed = true
+// CHECK: simulation.string.format_integer {{.*}} radix = <hex> signed = true
+// CHECK: simulation.string.format_integer {{.*}} radix = <octal> signed = true
+// CHECK: simulation.string.format_integer {{.*}} radix = <binary> signed = true
 // CHECK-NOT: obelisk.sv.

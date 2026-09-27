@@ -3,15 +3,15 @@
 // IEEE 1800-2017 7.10 makes `$` the current last queue index. A mutating
 // method on an element selected by `$-1` must resolve that bound before it
 // captures the selected dynamic-array lvalue.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[PARENT:.*]] = obelisk_sim.ref.load
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[PARENT]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[PARENT:.*]] = simulation.ref.load
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[PARENT]]
 // CHECK: %[[LAST:.*]] = arith.subi %[[SIZE]],
 // CHECK: %[[INDEX:.*]] = arith.subi {{.*}},
-// CHECK: %[[CHILD:.*]] = obelisk_sim.container.read %[[PARENT]], {{.*}}
-// CHECK: obelisk_sim.container.clone %[[CHILD]]
-// CHECK: obelisk_sim.container.delete %[[MUTABLE:[^ ]+]]
-// CHECK: obelisk_sim.container.write {{.*}}, {{.*}}, %[[MUTABLE]]
+// CHECK: %[[CHILD:.*]] = simulation.container.read %[[PARENT]], {{.*}}
+// CHECK: simulation.container.clone %[[CHILD]]
+// CHECK: simulation.container.delete %[[MUTABLE:[^ ]+]]
+// CHECK: simulation.container.write {{.*}}, {{.*}}, %[[MUTABLE]]
 
 module {
   obelisk.sv.symbol.definition attributes {

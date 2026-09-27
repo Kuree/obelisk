@@ -64,23 +64,23 @@ module {
 // CHECK-DAG: arith.constant -8 : i64
 // CHECK-DAG: arith.constant 2 : i64
 // CHECK-DAG: arith.constant 1 : i64
-// CHECK-DAG: obelisk_sim.bytes.constant "WARNING:{{.*}}$assertcontrol control type is outside the valid range 1 through 11; the task has no effect"
-// CHECK: %[[MASK32:.*]] = obelisk_sim.ref.load
+// CHECK-DAG: simulation.bytes.constant "WARNING:{{.*}}$assertcontrol control type is outside the valid range 1 through 11; the task has no effect"
+// CHECK: %[[MASK32:.*]] = simulation.ref.load
 // CHECK: %[[MASK:.*]] = arith.extsi %[[MASK32]] : i32 to i64
 // CHECK: %[[BAD_ASSERT:.*]] = arith.andi %[[MASK]],
 // CHECK: %[[BAD_ASSERTED:.*]] = arith.cmpi ne, %[[BAD_ASSERT]],
 // CHECK: %[[BAD_DIRECTIVE:.*]] = arith.andi %[[MASK]],
 // CHECK: %[[BAD_DIRECTED:.*]] = arith.cmpi ne, %[[BAD_DIRECTIVE]],
 // CHECK: arith.ori %[[BAD_ASSERTED]], %[[BAD_DIRECTED]] : i1
-// CHECK: obelisk_sim.fatal
+// CHECK: simulation.fatal
 // CHECK: %[[ASSERT_TYPE:.*]] = arith.andi %[[MASK]],
 // CHECK: %[[ASSERT_MATCH:.*]] = arith.cmpi ne, %[[ASSERT_TYPE]],
 // CHECK: %[[DIRECTIVE_TYPE:.*]] = arith.andi %[[MASK]],
 // CHECK: %[[DIRECTIVE_MATCH:.*]] = arith.cmpi ne, %[[DIRECTIVE_TYPE]],
 // CHECK: arith.andi %[[ASSERT_MATCH]], %[[DIRECTIVE_MATCH]] : i1
-// CHECK: obelisk_sim.assert.control {{.*}} action 4 assertion
-// CHECK: %[[ACTION32:.*]] = obelisk_sim.ref.load
+// CHECK: simulation.assert.control {{.*}} action <off> assertion
+// CHECK: %[[ACTION32:.*]] = simulation.ref.load
 // CHECK: %[[ACTION:.*]] = arith.extsi %[[ACTION32]] : i32 to i64
 // CHECK: arith.cmpi ult, %[[ACTION]],
 // CHECK: arith.cmpi ugt, %[[ACTION]],
-// CHECK: obelisk_sim.assert.control.dynamic {{.*}} action %[[ACTION32]] assertion
+// CHECK: simulation.assert.control.dynamic {{.*}} action %[[ACTION32]] assertion

@@ -524,37 +524,37 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 6 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_match_channels = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 6 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // The a&&c antecedent channel makes its consequent `a` tautologically pass.
 // With no observable pass action, canonicalization removes that dead channel's
 // sampled c read after the Z3-proven antecedent reduction.
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.10.0.2
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.10.0.2
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.10.0.2
+// CHECK-NOT: simulation.spawn @unit_0.fork.10.0.2
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_monitor
-// CHECK-NOT: obelisk_sim.branching_antecedent_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_consequent_monitor
+// CHECK-NOT: simulation.branching_antecedent_monitor
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: obelisk.sv.assertion
 
 // The raw two-alternative antecedent of unit_2 minimizes to one cube, but its
@@ -562,166 +562,166 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // the live consequent obligation fails; the no-match implication result was
 // already dispatched vacuously on its sampling clock.
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch_report.71.fail(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_branch_report.71.fail(
+// CHECK-SAME: simulation.branching_antecedent_eos_report
+// CHECK-SAME: simulation.concurrent_eos_report
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch.71(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_branch.71(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "fail", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_branch_report.71.fail{{.*}} {obelisk_sim.branching_antecedent_eos_result = "fail", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: cf.cond_br {{.*}} {simulation.branching_antecedent_eos_result = "fail", simulation.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_branch_report.71.fail{{.*}} {simulation.branching_antecedent_eos_result = "fail", simulation.branching_antecedent_eos_source_age = 1 : i64}
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 1 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "strong"
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_branch.71
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 1 : i64
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "strong"
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-SAME: simulation.branching_antecedent_match_channels = 1 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_branch.71
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.pass
 
 // Unit_3 proves the dual weak completion: the reduced one-channel monitor
 // keeps its EOS state and executes exactly the cover pass for a pending
 // nexttime obligation, without manufacturing a failure actor.
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.101.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_branch_report.101.pass(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_branch_report.101.pass(
+// CHECK-SAME: simulation.branching_antecedent_eos_report
+// CHECK-SAME: simulation.concurrent_eos_report
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.101.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$concurrent_eos_branch.101(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-LABEL: simulation.func private @unit_3.$concurrent_eos_branch.101(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_branch_report.101.pass{{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: cf.cond_br {{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK: simulation.spawn @unit_3.$concurrent_eos_branch_report.101.pass{{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.101.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 1 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_3.$concurrent_eos_branch.101
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 1 : i64
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-SAME: simulation.branching_antecedent_match_channels = 1 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_3.$concurrent_eos_branch.101
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.101.fail
 
 // Unit_4 closes the other solver-dependent hole: a post-minimized single
 // antecedent may itself remain multi-age.  EOS must turn its unfinished
 // a ##1 b attempt into one vacuous implication pass.
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.131.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_eos_branch_report.131.pass(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_4.$concurrent_eos_branch_report.131.pass(
+// CHECK-SAME: simulation.branching_antecedent_eos_report
+// CHECK-SAME: simulation.concurrent_eos_report
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.131.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_4.$concurrent_eos_branch.131(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-LABEL: simulation.func private @unit_4.$concurrent_eos_branch.131(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
-// CHECK: obelisk_sim.spawn @unit_4.$concurrent_eos_branch_report.131.pass{{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: cf.cond_br {{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK: simulation.spawn @unit_4.$concurrent_eos_branch_report.131.pass{{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.131.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.bounded_antecedent_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 1 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 1 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 6 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_4.$concurrent_eos_branch.131
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.bounded_antecedent_horizon = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 1 : i64
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-SAME: simulation.branching_antecedent_match_channels = 1 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 6 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_4.$concurrent_eos_branch.131
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.131.fail
 
 // After Z3 collapses unit_5's antecedent, the two temporal RHS traces use the
 // ordinary branching-consequent monitor.  Its final coordinator unions both
 // state words before dispatching one weak success for each relative source
 // age, oldest first.
-// CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos_report.171.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_5.$concurrent_eos_report.171.weak(
 // CHECK-SAME: schedule.concurrent_report
-// CHECK-LABEL: obelisk_sim.func private @unit_5.$concurrent_eos.171.weak(
+// CHECK-SAME: simulation.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_5.$concurrent_eos.171.weak(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_5.$concurrent_eos_report.171.weak
-// CHECK-NOT: obelisk_sim.spawn @unit_5.$concurrent_eos_report.171.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_consequent_monitor
-// CHECK-NOT: obelisk_sim.branching_antecedent_monitor
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_5.$concurrent_eos.171.weak
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-2: simulation.spawn @unit_5.$concurrent_eos_report.171.weak
+// CHECK-NOT: simulation.spawn @unit_5.$concurrent_eos_report.171.weak
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_consequent_eos_coalescer
+// CHECK-SAME: simulation.branching_consequent_monitor
+// CHECK-NOT: simulation.branching_antecedent_monitor
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_5.$concurrent_eos.171.weak
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: obelisk.sv.assertion
 
 // Unit_6 proves the symmetric post-minimization case: genuine Z3 consensus
 // removes RHS branching, but the remaining deterministic b ##1 a state still
 // owns one weak EOS completion.
-// CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos_report.211.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_6.$concurrent_eos_report.211.weak(
 // CHECK-SAME: schedule.concurrent_report
-// CHECK-LABEL: obelisk_sim.func private @unit_6.$concurrent_eos.211.weak(
+// CHECK-SAME: simulation.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_6.$concurrent_eos.211.weak(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-1: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_6.$concurrent_eos_report.211.weak
-// CHECK-NOT: obelisk_sim.spawn @unit_6.$concurrent_eos_report.211.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_6(
-// CHECK-NOT: obelisk_sim.branching_consequent_monitor
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-SAME: obelisk_sim.strong_weak_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_consequent_alternatives_after = 1 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_consequent_alternatives_before = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_consequent_literals_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_consequent_literals_before = 6 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_consequent_solver = "z3"
-// CHECK-COUNT-1: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_6.$concurrent_eos.211.weak
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-COUNT-1: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_6.$concurrent_eos_report.211.weak
+// CHECK-NOT: simulation.spawn @unit_6.$concurrent_eos_report.211.weak
+// CHECK-LABEL: simulation.func private @unit_6(
+// CHECK-NOT: simulation.branching_consequent_monitor
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-SAME: simulation.sva_boolean_consequent_alternatives_after = 1 : i64
+// CHECK-SAME: simulation.sva_boolean_consequent_alternatives_before = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_consequent_literals_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_consequent_literals_before = 6 : i64
+// CHECK-SAME: simulation.sva_boolean_consequent_solver = "z3"
+// CHECK-COUNT-1: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_6.$concurrent_eos.211.weak
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: obelisk.sv.assertion
 
 // Unit_7 erases only the direct consequent first_match boundary. The raw 3x2
@@ -730,62 +730,62 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // reports the explicit pass once per pending source age, and no runtime
 // first_match priority operation remains.
 // CHECK-NOT: @unit_7.$concurrent_eos_branch_report.251.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_7.$concurrent_eos_branch_report.251.pass(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_7.$concurrent_eos_branch_report.251.pass(
+// CHECK-SAME: simulation.branching_antecedent_eos_report
+// CHECK-SAME: simulation.concurrent_eos_report
 // CHECK-NOT: @unit_7.$concurrent_eos_branch_report.251.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_7.$concurrent_eos_branch.251(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-LABEL: simulation.func private @unit_7.$concurrent_eos_branch.251(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-5: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_7.$concurrent_eos_branch_report.251.pass
-// CHECK-NOT: obelisk_sim.spawn @unit_7.$concurrent_eos_branch_report.251.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_7(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_monitor
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs = 4 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs_before_minimization = 6 : i64
-// CHECK-SAME: obelisk_sim.consequent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_after = 2 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_alternatives_before = 3 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_after = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_literals_before = 6 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-5: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_7.$concurrent_eos_branch.251
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-COUNT-5: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-2: simulation.spawn @unit_7.$concurrent_eos_branch_report.251.pass
+// CHECK-NOT: simulation.spawn @unit_7.$concurrent_eos_branch_report.251.pass
+// CHECK-LABEL: simulation.func private @unit_7(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-SAME: simulation.branching_antecedent_match_channels = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 3 : i64
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_monitor
+// CHECK-SAME: simulation.combined_bounded_branching_pairs = 4 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_pairs_before_minimization = 6 : i64
+// CHECK-SAME: simulation.consequent_first_match_equivalence
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 2 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 3 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 6 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-5: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_7.$concurrent_eos_branch.251
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
 // Unit_8 proves that directness is determined from a named sequence's expanded
 // executable body, not the retained assertion-instance inventory. Its outer
 // first_match boundary is erased while the two source alternatives and two
 // consequent endpoints remain distinct coalescer channels.
-// CHECK-LABEL: obelisk_sim.func private @unit_8(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_match_channels = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_monitor
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs = 4 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs_before_minimization = 4 : i64
-// CHECK-SAME: obelisk_sim.consequent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_8(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_match_channels = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 3 : i64
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_monitor
+// CHECK-SAME: simulation.combined_bounded_branching_pairs = 4 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_pairs_before_minimization = 4 : i64
+// CHECK-SAME: simulation.consequent_first_match_equivalence
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
-// NO-DIRECT-FIRST-MATCH-PRIORITY-LABEL: obelisk_sim.func private @unit_7(
-// NO-DIRECT-FIRST-MATCH-PRIORITY-NOT: obelisk_sim.first_match_priority
+// NO-DIRECT-FIRST-MATCH-PRIORITY-LABEL: simulation.func private @unit_7(
+// NO-DIRECT-FIRST-MATCH-PRIORITY-NOT: simulation.first_match_priority

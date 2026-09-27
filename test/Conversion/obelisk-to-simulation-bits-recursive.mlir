@@ -95,12 +95,12 @@ module attributes {
 }
 
 // CHECK-DAG: arith.constant 32 : i32
-// CHECK: obelisk_sim.ref.subelement
-// CHECK: obelisk_sim.string.length
-// CHECK: obelisk_sim.union.is_active
-// CHECK: obelisk_sim.managed.watch container_size
-// CHECK: obelisk_sim.suspend.any
-// CHECK: obelisk_sim.union.is_active
-// CHECK: obelisk_sim.container.size
-// CHECK: obelisk_sim.container.read
+// CHECK: simulation.ref.subelement
+// CHECK: simulation.string.length
+// CHECK: simulation.union.is_active
+// CHECK: simulation.managed.watch container_size
+// CHECK: simulation.suspend.any
+// CHECK: simulation.union.is_active
+// CHECK: simulation.container.size
+// CHECK: simulation.container.read
 // CHECK: arith.muli {{.*}} : i32

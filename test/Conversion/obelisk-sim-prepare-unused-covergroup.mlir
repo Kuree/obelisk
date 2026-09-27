@@ -27,9 +27,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.class.decl
-// CHECK-NOT: obelisk_sim.covergroup.decl
+// CHECK: simulation.class.decl
+// CHECK-NOT: simulation.covergroup.decl
 // CHECK-NOT: debug_name = "cg"
-// PRESERVE: obelisk_sim.covergroup.decl
-// PRESERVE: obelisk_sim.class.field
+// PRESERVE: simulation.covergroup.decl
+// PRESERVE: simulation.class.field
 // PRESERVE-SAME: debug_name = "cg"

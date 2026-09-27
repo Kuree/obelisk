@@ -48,31 +48,31 @@ module {
 
 // The declaration publishes only clock edges accepted by its own iff.
 // CHECK-DAG: observer hierarchy "top.$code_unit_12.$observer.16.clocking_event_iff"
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.suspend.edge_iff posedge
-// CHECK: obelisk_sim.event.trigger %{{.*}} nonblocking = false
+// CHECK: simulation.func private @unit_0(
+// CHECK: simulation.suspend.edge_iff posedge
+// CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
 // The use-site iff observes the published event and applies its independent
 // condition before resuming in Reactive.
 // CHECK: observer hierarchy "unit_1.$clocking_event_primary.14"
-// CHECK: obelisk_sim.event.triggered
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: obelisk_sim.observer.bind {{.*}}schedule.event_primary
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
+// CHECK: simulation.event.triggered
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK: simulation.observer.bind {{.*}}schedule.event_primary
+// CHECK: simulation.observer.bind
+// CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
 // CHECK-SAME: resume_region = 10 : i32
 
 // An asynchronous distinct-edge output first waits for the qualified clocking
 // occurrence, then waits for the selected raw-signal edge before driving.
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$clocking_output.23
-// CHECK: obelisk_sim.suspend.event
-// CHECK: obelisk_sim.suspend.edge negedge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_2.$clocking_output.23
+// CHECK: simulation.suspend.event
+// CHECK: simulation.suspend.edge negedge
+// CHECK: simulation.nba.enqueue
 
 // A distinct input edge is sampled directly from the raw clock, independently
 // of whether the later posedge qualifies as a clocking-block occurrence.
-// CHECK-LABEL: obelisk_sim.func private @unit_3.$clocking_input.{{[0-9]+}}
-// CHECK: obelisk_sim.suspend.edge negedge
+// CHECK-LABEL: simulation.func private @unit_3.$clocking_input.{{[0-9]+}}
+// CHECK: simulation.suspend.edge negedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.clocked_sample_update
+// CHECK: simulation.assert.clocked_sample_update
 // CHECK-NOT: obelisk.sv.

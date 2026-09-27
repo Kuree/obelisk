@@ -1,7 +1,7 @@
 //===- Detail.h - Shared semantic-to-simulation lowering helpers -*- C++ -*===//
 //
 // Helpers shared by the four passes that lower elaborated `obelisk.sv`
-// semantic IR to executable `obelisk_sim` SSA. Nothing here is part of the
+// semantic IR to executable `simulation` SSA. Nothing here is part of the
 // public conversion interface.
 //
 //===----------------------------------------------------------------------===//
@@ -44,49 +44,49 @@ inline constexpr ::llvm::StringLiteral delayScaleAttrName =
     sim::metadata::delayScale;
 inline constexpr ::llvm::StringLiteral delayQuantumAttrName =
     sim::metadata::delayQuantum;
-inline constexpr ::mlir::StringLiteral calleeAttrName = "obelisk_sim.callee";
+inline constexpr ::mlir::StringLiteral calleeAttrName = "simulation.callee";
 inline constexpr ::mlir::StringLiteral calleeCapturesAttrName =
-    "obelisk_sim.callee_captures";
+    "simulation.callee_captures";
 inline constexpr ::mlir::StringLiteral calleeReadCapturesAttrName =
-    "obelisk_sim.callee_read_captures";
+    "simulation.callee_read_captures";
 inline constexpr ::mlir::StringLiteral calleeWrittenCapturesAttrName =
-    "obelisk_sim.callee_written_captures";
+    "simulation.callee_written_captures";
 inline constexpr ::mlir::StringLiteral calleeFormalsAttrName =
-    "obelisk_sim.callee_formals";
+    "simulation.callee_formals";
 inline constexpr ::mlir::StringLiteral staticClassPropertyAttrName =
-    "obelisk_sim.static_class_property";
+    "simulation.static_class_property";
 inline constexpr ::mlir::StringLiteral staticClassReceiverAttrName =
-    "obelisk_sim.static_class_receiver";
+    "simulation.static_class_receiver";
 inline constexpr ::mlir::StringLiteral dynamicCastEnumValuesAttrName =
-    "obelisk_sim.dynamic_cast_enum_values";
+    "simulation.dynamic_cast_enum_values";
 inline constexpr ::mlir::StringLiteral enumMethodValuesAttrName =
-    "obelisk_sim.enum_method_values";
+    "simulation.enum_method_values";
 inline constexpr ::mlir::StringLiteral enumMethodNamesAttrName =
-    "obelisk_sim.enum_method_names";
+    "simulation.enum_method_names";
 inline constexpr ::mlir::StringLiteral enumFormatValuesAttrName =
-    "obelisk_sim.enum_format_values";
+    "simulation.enum_format_values";
 inline constexpr ::mlir::StringLiteral enumFormatNamesAttrName =
-    "obelisk_sim.enum_format_names";
+    "simulation.enum_format_names";
 inline constexpr ::mlir::StringLiteral dynamicCastTaskAttrName =
-    "obelisk_sim.dynamic_cast_task";
+    "simulation.dynamic_cast_task";
 inline constexpr ::mlir::StringLiteral readMemEnumKeyValuesAttrName =
     "readmem_enum_key_values";
 inline constexpr ::mlir::StringLiteral readMemEnumElementValuesAttrName =
     "readmem_enum_element_values";
 inline constexpr ::mlir::StringLiteral placeholderAttrName =
-    "obelisk_sim.placeholder";
+    "simulation.placeholder";
 /// Marks a Simulation-dialect property-initializer fragment deliberately
 /// nested in semantic constructor syntax so unit lowering preserves its
 /// position immediately after an explicit super.new call.
 inline constexpr ::mlir::StringLiteral preparedInitializerAttrName =
-    "obelisk_sim.prepared_initializer";
+    "simulation.prepared_initializer";
 /// Marks an event storage cell whose declaration initializer supplies the
 /// initial handle. The root initializer must not first create an unused
 /// synchronization object for such a cell (IEEE 1800-2017 6.17).
 inline constexpr ::mlir::StringLiteral eventExplicitInitializerAttrName =
-    "obelisk_sim.event_explicit_initializer";
+    "simulation.event_explicit_initializer";
 inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
-    "obelisk_sim.static_net_constant";
+    "simulation.static_net_constant";
 /// Value elaboration folded an expression to, carried over by the frontend.
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
@@ -100,13 +100,13 @@ inline constexpr ::mlir::StringLiteral arrayQueryDimensionsAttrName =
 /// structural aggregates as independent typed descriptors and freezes the
 /// selected descriptor path directly on each semantic leaf expression.
 inline constexpr ::mlir::StringLiteral interconnectLeafPathAttrName =
-    "obelisk_sim.interconnect_leaf_path";
+    "simulation.interconnect_leaf_path";
 inline constexpr ::mlir::StringLiteral interconnectLeavesAttrName =
-    "obelisk_sim.interconnect_leaves";
+    "simulation.interconnect_leaves";
 inline constexpr ::mlir::StringLiteral interconnectVPITypeAttrName =
-    "obelisk_sim.interconnect_vpi_type";
+    "simulation.interconnect_vpi_type";
 inline constexpr ::mlir::StringLiteral interconnectNettypeAttrName =
-    "obelisk_sim.interconnect_nettype";
+    "simulation.interconnect_nettype";
 /// Identity a type reference shares with every reference to a matching type
 /// (IEEE 1800-2017 6.22.1). Written by the Slang importer, so the spelling is
 /// fixed there as well.
@@ -119,19 +119,19 @@ inline constexpr ::mlir::StringLiteral typeReferenceIdentityAttrName =
 inline constexpr ::mlir::StringLiteral udpSemanticMetadataAttrName =
     "udp_metadata";
 inline constexpr ::mlir::StringLiteral udpMetadataAttrName =
-    "obelisk_sim.udp_metadata";
+    "simulation.udp_metadata";
 inline constexpr ::llvm::StringLiteral captureKindAttrName =
     sim::metadata::captureKind;
 inline constexpr ::llvm::StringLiteral descriptorIdAttrName =
     sim::metadata::descriptorId;
 inline constexpr ::mlir::StringLiteral observerResultAttrName =
-    "obelisk_sim.observer_result";
+    "simulation.observer_result";
 /// Optional packed/real result type imposed by the context that requested an
 /// observer. Procedural continuous assignments use the target's assignment
 /// type so every reevaluation has exactly the same conversion as the initial
 /// statement execution.
 inline constexpr ::mlir::StringLiteral observerCoercedTypeAttrName =
-    "obelisk_sim.observer_coerced_type";
+    "simulation.observer_coerced_type";
 inline constexpr auto observerEventPrimaryAttrName =
     ::obelisk::schedule::Field::EventPrimary;
 /// Unit lowering is a parallel nested-function pipeline. Observer users mark
@@ -142,102 +142,102 @@ inline constexpr auto concurrentCancelObserverRequestAttrName =
 inline constexpr auto concurrentAbortObserverRequestAttrName =
     ::obelisk::schedule::Field::ConcurrentAbortObserverRequest;
 inline constexpr ::mlir::StringLiteral sequenceEndpointEventAttrName =
-    "obelisk_sim.sequence_endpoint_event";
+    "simulation.sequence_endpoint_event";
 inline constexpr ::mlir::StringLiteral sequenceEndpointDefaultClockAttrName =
-    "obelisk_sim.sequence_endpoint_default_clock";
+    "simulation.sequence_endpoint_default_clock";
 inline constexpr ::mlir::StringLiteral sequenceEndpointMonitorAttrName =
-    "obelisk_sim.sequence_endpoint_monitor";
+    "simulation.sequence_endpoint_monitor";
 inline constexpr ::mlir::StringLiteral sequenceEndpointPathAttrName =
-    "obelisk_sim.sequence_endpoint_path";
+    "simulation.sequence_endpoint_path";
 inline constexpr ::mlir::StringLiteral assertionLocalTypesAttrName =
-    "obelisk_sim.assertion_local_types";
+    "simulation.assertion_local_types";
 inline constexpr ::mlir::StringLiteral randomizeAttrName =
-    "obelisk_sim.randomize";
+    "simulation.randomize";
 inline constexpr ::mlir::StringLiteral randomizeScopeAttrName =
-    "obelisk_sim.randomize_scope";
+    "simulation.randomize_scope";
 inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
-    "obelisk_sim.randomize_dispatch";
+    "simulation.randomize_dispatch";
 inline constexpr ::mlir::StringLiteral randomizeHelperAttrName =
-    "obelisk_sim.randomize_helper";
+    "simulation.randomize_helper";
 inline constexpr ::mlir::StringLiteral randomizeHelperCapturesAttrName =
-    "obelisk_sim.randomize_helper_captures";
+    "simulation.randomize_helper_captures";
 inline constexpr ::mlir::StringLiteral randomizeHelperReadCapturesAttrName =
-    "obelisk_sim.randomize_helper_read_captures";
+    "simulation.randomize_helper_read_captures";
 inline constexpr ::mlir::StringLiteral randomizeHelperReceiverAttrName =
-    "obelisk_sim.randomize_helper_receiver";
+    "simulation.randomize_helper_receiver";
 inline constexpr ::mlir::StringLiteral randomizeNestedDispatchAttrName =
-    "obelisk_sim.randomize_nested_dispatch";
+    "simulation.randomize_nested_dispatch";
 inline constexpr ::mlir::StringLiteral randomizeNestedDispatchFieldAttrName =
-    "obelisk_sim.randomize_nested_dispatch_field";
+    "simulation.randomize_nested_dispatch_field";
 inline constexpr ::mlir::StringLiteral randomizeNestedDispatchStorageAttrName =
-    "obelisk_sim.randomize_nested_dispatch_storage_type";
+    "simulation.randomize_nested_dispatch_storage_type";
 inline constexpr ::mlir::StringLiteral randomizeNestedDispatchPathAttrName =
-    "obelisk_sim.randomize_nested_dispatch_path";
+    "simulation.randomize_nested_dispatch_path";
 inline constexpr ::mlir::StringLiteral
     randomizeNestedDispatchSelectionPathAttrName =
-        "obelisk_sim.randomize_nested_dispatch_selection_path";
+        "simulation.randomize_nested_dispatch_selection_path";
 inline constexpr ::mlir::StringLiteral randomizeNestedPlansAttrName =
-    "obelisk_sim.randomize_nested_plans";
+    "simulation.randomize_nested_plans";
 inline constexpr ::mlir::StringLiteral randomizePlanClassAttrName =
-    "obelisk_sim.randomize_plan_class";
+    "simulation.randomize_plan_class";
 inline constexpr ::mlir::StringLiteral randomizeConstraintTemplateAttrName =
-    "obelisk_sim.randomize_constraint_template";
+    "simulation.randomize_constraint_template";
 inline constexpr ::mlir::StringLiteral objectRandomDispatchClassesAttrName =
-    "obelisk_sim.object_random_dispatch_classes";
+    "simulation.object_random_dispatch_classes";
 inline constexpr ::mlir::StringLiteral randomizeCheckerOnlyAttrName =
-    "obelisk_sim.randomize_checker_only";
+    "simulation.randomize_checker_only";
 inline constexpr ::mlir::StringLiteral randomizeExplicitPropertiesAttrName =
-    "obelisk_sim.randomize_explicit_properties";
+    "simulation.randomize_explicit_properties";
 inline constexpr ::mlir::StringLiteral randomReceiverIndexAttrName =
-    "obelisk_sim.random_receiver_index";
+    "simulation.random_receiver_index";
 inline constexpr ::mlir::StringLiteral randomPreHookAttrName =
-    "obelisk_sim.random_pre_hook";
+    "simulation.random_pre_hook";
 inline constexpr ::mlir::StringLiteral randomPreHookOwnerAttrName =
-    "obelisk_sim.random_pre_hook_owner";
+    "simulation.random_pre_hook_owner";
 inline constexpr ::mlir::StringLiteral randomPreHookSourceAttrName =
-    "obelisk_sim.random_pre_hook_source";
+    "simulation.random_pre_hook_source";
 inline constexpr ::mlir::StringLiteral randomPreHookCapturesAttrName =
-    "obelisk_sim.random_pre_hook_captures";
+    "simulation.random_pre_hook_captures";
 inline constexpr ::mlir::StringLiteral randomPreHookReadCapturesAttrName =
-    "obelisk_sim.random_pre_hook_read_captures";
+    "simulation.random_pre_hook_read_captures";
 inline constexpr ::mlir::StringLiteral randomPostHookAttrName =
-    "obelisk_sim.random_post_hook";
+    "simulation.random_post_hook";
 inline constexpr ::mlir::StringLiteral randomPostHookOwnerAttrName =
-    "obelisk_sim.random_post_hook_owner";
+    "simulation.random_post_hook_owner";
 inline constexpr ::mlir::StringLiteral randomPostHookSourceAttrName =
-    "obelisk_sim.random_post_hook_source";
+    "simulation.random_post_hook_source";
 inline constexpr ::mlir::StringLiteral randomPostHookCapturesAttrName =
-    "obelisk_sim.random_post_hook_captures";
+    "simulation.random_post_hook_captures";
 inline constexpr ::mlir::StringLiteral randomPostHookReadCapturesAttrName =
-    "obelisk_sim.random_post_hook_read_captures";
+    "simulation.random_post_hook_read_captures";
 inline constexpr ::mlir::StringLiteral randomModeAttrName =
-    "obelisk_sim.rand_mode";
+    "simulation.rand_mode";
 inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
-    "obelisk_sim.rand_mode_property";
+    "simulation.rand_mode_property";
 inline constexpr ::mlir::StringLiteral randomModeStaticStorageAttrName =
-    "obelisk_sim.rand_mode_static_storage";
+    "simulation.rand_mode_static_storage";
 inline constexpr ::mlir::StringLiteral randomModeStaticDispatchAttrName =
-    "obelisk_sim.rand_mode_static_dispatch";
+    "simulation.rand_mode_static_dispatch";
 inline constexpr ::mlir::StringLiteral staticRandomModeStorageAttrName =
-    "obelisk_sim.static_random_mode_storage";
+    "simulation.static_random_mode_storage";
 inline constexpr ::mlir::StringLiteral constraintModeAttrName =
-    "obelisk_sim.constraint_mode";
+    "simulation.constraint_mode";
 inline constexpr ::mlir::StringLiteral constraintModeBlockAttrName =
-    "obelisk_sim.constraint_mode_block";
+    "simulation.constraint_mode_block";
 inline constexpr ::mlir::StringLiteral constraintModeStaticStorageAttrName =
-    "obelisk_sim.constraint_mode_static_storage";
+    "simulation.constraint_mode_static_storage";
 inline constexpr ::mlir::StringLiteral constraintModeStaticStoragesAttrName =
-    "obelisk_sim.constraint_mode_static_storages";
+    "simulation.constraint_mode_static_storages";
 inline constexpr ::mlir::StringLiteral staticConstraintStorageAttrName =
-    "obelisk_sim.static_constraint_storage";
+    "simulation.static_constraint_storage";
 inline constexpr ::mlir::StringLiteral randomConstraintBlockAttrName =
-    "obelisk_sim.random_constraint_block";
+    "simulation.random_constraint_block";
 inline constexpr ::mlir::StringLiteral randomConstraintCountAttrName =
-    "obelisk_sim.random_constraint_count";
+    "simulation.random_constraint_count";
 inline constexpr ::mlir::StringLiteral randomPropertiesAttrName =
-    "obelisk_sim.random_properties";
+    "simulation.random_properties";
 inline constexpr ::mlir::StringLiteral randomContainerPropertiesAttrName =
-    "obelisk_sim.random_container_properties";
+    "simulation.random_container_properties";
 inline constexpr ::mlir::StringLiteral randomPropertyModeIndexAttrName =
     "rand_mode_index";
 inline constexpr ::mlir::StringLiteral randomContainerSizeAttrName =
@@ -255,19 +255,19 @@ inline constexpr ::mlir::StringLiteral randomNestedModeIndexAttrName =
 inline constexpr ::mlir::StringLiteral randomNestedObjectPathAttrName =
     "nested_object_path";
 inline constexpr ::mlir::StringLiteral randomNestedConstraintModesAttrName =
-    "obelisk_sim.random_nested_constraint_modes";
+    "simulation.random_nested_constraint_modes";
 inline constexpr ::mlir::StringLiteral randomNestedHooksAttrName =
-    "obelisk_sim.random_nested_hooks";
+    "simulation.random_nested_hooks";
 inline constexpr ::mlir::StringLiteral randomRecursiveAliasGuardsAttrName =
-    "obelisk_sim.random_recursive_alias_guards";
+    "simulation.random_recursive_alias_guards";
 inline constexpr ::mlir::StringLiteral randomNestedStateFieldAttrName =
-    "obelisk_sim.random_nested_state_field";
+    "simulation.random_nested_state_field";
 inline constexpr ::mlir::StringLiteral randomNestedStateConcreteTypeAttrName =
-    "obelisk_sim.random_nested_state_concrete_type";
+    "simulation.random_nested_state_concrete_type";
 inline constexpr ::mlir::StringLiteral randomNestedStateStorageTypeAttrName =
-    "obelisk_sim.random_nested_state_storage_type";
+    "simulation.random_nested_state_storage_type";
 inline constexpr ::mlir::StringLiteral randomNestedStatePathAttrName =
-    "obelisk_sim.random_nested_state_path";
+    "simulation.random_nested_state_path";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
 inline constexpr ::mlir::StringLiteral randomPropertySymbolAttrName =
@@ -279,15 +279,15 @@ inline constexpr ::mlir::StringLiteral randomRandCKeyPathAttrName =
 inline constexpr ::mlir::StringLiteral randomRandCPositionPathAttrName =
     "randc_position_path";
 inline constexpr ::mlir::StringLiteral randomTotalWidthAttrName =
-    "obelisk_sim.random_total_width";
+    "simulation.random_total_width";
 inline constexpr ::mlir::StringLiteral randomVariableAttrName =
-    "obelisk_sim.random_variable";
+    "simulation.random_variable";
 inline constexpr ::mlir::StringLiteral randomVariableBitOffsetAttrName =
-    "obelisk_sim.random_variable_bit_offset";
+    "simulation.random_variable_bit_offset";
 inline constexpr ::mlir::StringLiteral randomFunctionStateAttrName =
-    "obelisk_sim.random_function_state";
+    "simulation.random_function_state";
 inline constexpr ::mlir::StringLiteral randomFunctionOrderAttrName =
-    "obelisk_sim.random_function_order";
+    "simulation.random_function_order";
 
 /// Result representation frozen by prepare for computed timing observers.
 /// Keep this strongly typed at both ends of the private pass boundary so a
@@ -300,15 +300,15 @@ enum class ObserverResult : uint32_t {
 };
 
 inline constexpr ::mlir::StringLiteral observerCapturesAttrName =
-    "obelisk_sim.observer_captures";
+    "simulation.observer_captures";
 inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
-    "obelisk_sim.observer_dependencies";
+    "simulation.observer_dependencies";
 /// Marks a foreach iterator that must remain addressable while an outlined
 /// observer reevaluates an expression from the loop body.
 inline constexpr ::mlir::StringLiteral foreachIteratorObserverCaptureAttrName =
-    "obelisk_sim.foreach_iterator_observer_capture";
+    "simulation.foreach_iterator_observer_capture";
 inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
-    "obelisk_sim.sampled_observer";
+    "simulation.sampled_observer";
 
 inline bool isGlobalPastSampledFunction(::llvm::StringRef name) {
   return name == "$past_gclk" || name == "$rose_gclk" || name == "$fell_gclk" ||
@@ -356,28 +356,28 @@ inline constexpr ::mlir::StringLiteral clockingEventListAttrName =
 /// target expression and to every semantic operation that defines the target;
 /// later per-unit lowering only consumes the frozen numeric identity.
 inline constexpr ::mlir::StringLiteral coverageBlockEventTargetIdAttrName =
-    "obelisk_sim.coverage_block_event_target_id";
+    "simulation.coverage_block_event_target_id";
 inline constexpr ::mlir::StringLiteral
     coverageBlockEventInstanceMethodAttrName =
-        "obelisk_sim.coverage_block_event_instance_method";
+        "simulation.coverage_block_event_instance_method";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorRequiredAttrName =
     "clocking_event_monitor";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorAttrName =
-    "obelisk_sim.clocking_event_monitor";
+    "simulation.clocking_event_monitor";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorPathAttrName =
-    "obelisk_sim.clocking_event_monitor_path";
+    "simulation.clocking_event_monitor_path";
 inline constexpr ::mlir::StringLiteral
     virtualInterfaceClockEventMembersAttrName =
-        "obelisk_sim.virtual_interface_clock_events";
+        "simulation.virtual_interface_clock_events";
 /// Names the interface member whose elaborated instance owns a child scope.
 /// This avoids recovering escaped or indexed identifiers from display paths
 /// when a virtual-interface member selects another interface instance.
 inline constexpr ::mlir::StringLiteral virtualInterfaceParentMemberAttrName =
-    "obelisk_sim.virtual_interface_parent_member";
+    "simulation.virtual_interface_parent_member";
 /// Ordered nested-interface selections omitted from a flattened semantic call
 /// receiver. Each entry records the member name and child interface identity.
 inline constexpr ::mlir::StringLiteral virtualInterfaceReceiverMembersAttrName =
-    "obelisk_sim.virtual_interface_receiver_members";
+    "simulation.virtual_interface_receiver_members";
 inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =
@@ -430,7 +430,7 @@ parseObserverResult(::mlir::IntegerAttr attribute) {
 /// True for any operation in the elaborated semantic dialect.
 bool isSemanticOp(::mlir::Operation *op);
 
-/// True for the semantic symbols that become one `obelisk_sim.func`.
+/// True for the semantic symbols that become one `simulation.func`.
 bool isCodeUnit(::mlir::Operation *op);
 
 /// True for an elaborated design member nested in Slang's synthetic instance

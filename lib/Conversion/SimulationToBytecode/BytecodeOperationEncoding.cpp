@@ -219,7 +219,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicFileReadPacked, {op.getDescriptor()},
                          {op.getData(), op.getCount()});
   if (auto op = dyn_cast<sim::SimFileReadMemTokenOp>(operation)) {
-    uint32_t radix = emitU64Constant(plan, op.getRadix());
+    uint32_t radix =
+        emitU64Constant(plan, static_cast<uint32_t>(op.getRadix()));
     return emitIntrinsicRegisters(plan, kIntrinsicFileReadMemToken,
                                   {reg(plan, op.getDescriptor()), radix},
                                   {reg(plan, op.getData()),
@@ -351,7 +352,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             (op.getDeferResolution()
                  ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                  : 0) |
-            (op->hasAttr("obelisk_sim.user_net_raw_drive")
+            (op->hasAttr("simulation.user_net_raw_drive")
                  ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
             (op.getValue().getType().isF32() ? OBELISK_RT_INERTIAL_DRIVER_REAL32
@@ -382,7 +383,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan,
         (op.getDeferResolution() ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                                  : 0) |
-            (op->hasAttr("obelisk_sim.user_net_raw_drive")
+            (op->hasAttr("simulation.user_net_raw_drive")
                  ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
             (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
@@ -981,7 +982,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     SmallVector<uint32_t> inputs{
         emitU64Constant(plan, static_cast<uint64_t>(op.getId()))};
     if (auto assertionID = op->getAttrOfType<IntegerAttr>(
-            "obelisk_sim.assertion_control_target_id"))
+            "simulation.assertion_control_target_id"))
       inputs.push_back(
           emitU64Constant(plan, assertionID.getValue().getZExtValue()));
     return emitIntrinsicRegisters(plan, kIntrinsicDeferredEnqueue, inputs,

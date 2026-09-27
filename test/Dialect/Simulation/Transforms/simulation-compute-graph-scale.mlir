@@ -5,7 +5,7 @@
 //
 // RUN: %python %S/../../../Conversion/Inputs/gen-deep-cfg.py 20000 > %t.mlir
 // RUN: obelisk-opt %t.mlir \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' \
 // RUN:   | FileCheck %s
 
 // The chain is one long acyclic run, and the loop back to the top of the body
@@ -19,7 +19,7 @@
 // Exercise the stable internal-edge index and verify full node coverage.
 // RUN: %python %S/../../../Conversion/Inputs/gen-deep-cfg.py 20000 --acyclic > %t.acyclic.mlir
 // RUN: obelisk-opt %t.acyclic.mlir \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' \
 // RUN:   | FileCheck %s --check-prefix=ACYCLIC --implicit-check-not="schedule = convergence" --implicit-check-not="schedule = control_loop"
 // ACYCLIC: #schedule.fragment<id = 20000
 // ACYCLIC-SAME: #schedule.region<kind = active

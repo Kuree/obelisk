@@ -6,15 +6,15 @@
 // whose slots would otherwise all start as the same null handle. The root
 // initializer gives each element its own object before any process starts.
 
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: %[[STORAGE:.*]] = obelisk_sim.context.storage %{{.*}}[0]
-// CHECK: %[[FIRST:.*]] = obelisk_sim.ref.subelement %[[STORAGE]]{{\[\[0\]\]}}
-// CHECK: %[[FIRSTEVENT:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.ref.store %[[FIRSTEVENT]] to %[[FIRST]]
-// CHECK: %[[SECOND:.*]] = obelisk_sim.ref.subelement %[[STORAGE]]{{\[\[1\]\]}}
-// CHECK: %[[SECONDEVENT:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.ref.store %[[SECONDEVENT]] to %[[SECOND]]
-// CHECK: obelisk_sim.spawn
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: %[[STORAGE:.*]] = simulation.context.storage %{{.*}}[0]
+// CHECK: %[[FIRST:.*]] = simulation.ref.subelement %[[STORAGE]]{{\[\[0\]\]}}
+// CHECK: %[[FIRSTEVENT:.*]] = simulation.event.create
+// CHECK: simulation.ref.store %[[FIRSTEVENT]] to %[[FIRST]]
+// CHECK: %[[SECOND:.*]] = simulation.ref.subelement %[[STORAGE]]{{\[\[1\]\]}}
+// CHECK: %[[SECONDEVENT:.*]] = simulation.event.create
+// CHECK: simulation.ref.store %[[SECONDEVENT]] to %[[SECOND]]
+// CHECK: simulation.spawn
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {

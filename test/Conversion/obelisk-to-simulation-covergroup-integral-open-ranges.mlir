@@ -12,8 +12,8 @@
 // 1800-2023). Preparation retains the open end in the v1 definition schema
 // without inventing a constructor expression. An unbounded parameter alias
 // chain is semantically identical to a direct `$` endpoint.
-// PREPARE-DAG: obelisk_sim.coverage.functional.with_candidate_values = [0 : i4, 1 : i4, 2 : i4, 3 : i4]
-// PREPARE-DAG: obelisk_sim.coverage.functional.with_candidate_values = [-8 : i4, -7 : i4, -6 : i4]
+// PREPARE-DAG: simulation.coverage.functional.with_candidate_values = [0 : i4, 1 : i4, 2 : i4, 3 : i4]
+// PREPARE-DAG: simulation.coverage.functional.with_candidate_values = [-8 : i4, -7 : i4, -6 : i4]
 // SCHEMA-DAG: functional_bin id=[[TRANSITION:[1-9][0-9]*]] {{.*}} name=crossing kind=2
 // SCHEMA-DAG: functional_bin id=[[PARAMETER:[1-9][0-9]*]] {{.*}} name=parameter_low kind=1
 // SCHEMA-DAG: transition_program bin=[[TRANSITION]]

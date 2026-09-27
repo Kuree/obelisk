@@ -69,14 +69,14 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
-// CHECK: %[[ARRAY:.*]] = obelisk_sim.container.create %[[ZERO]]
-// CHECK-SAME: container_kind = 1
-// CHECK: obelisk_sim.ref.store %[[ARRAY]]
+// CHECK: %[[ARRAY:.*]] = simulation.container.create %[[ZERO]]
+// CHECK-SAME: container_kind = #simulation.container_kind<dynamic_array>
+// CHECK: simulation.ref.store %[[ARRAY]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK: %[[QUEUE_ZERO:.*]] = arith.constant 0 : i64
-// CHECK: %[[QUEUE:.*]] = obelisk_sim.container.create %[[QUEUE_ZERO]]
-// CHECK-SAME: container_kind = 2
-// CHECK: obelisk_sim.ref.store %[[QUEUE]]
+// CHECK: %[[QUEUE:.*]] = simulation.container.create %[[QUEUE_ZERO]]
+// CHECK-SAME: container_kind = #simulation.container_kind<queue>
+// CHECK: simulation.ref.store %[[QUEUE]]

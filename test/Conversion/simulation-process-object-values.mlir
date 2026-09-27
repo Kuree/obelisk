@@ -5,48 +5,48 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @process_object_values {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.parent"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "top.child"
-    obelisk_sim.code_unit.decl 4 in 0 task hierarchy "top.callee"
+  simulation.design @process_object_values {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "top.parent"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "top.child"
+    simulation.code_unit.decl 4 in 0 task hierarchy "top.callee"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %parent = obelisk_sim.spawn @parent(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %parent = simulation.spawn @parent(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @parent(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @parent(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      %child = obelisk_sim.spawn @child(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %null = obelisk_sim.process.null
-      %current = obelisk_sim.process.current
-      %is_null = obelisk_sim.process.equal %current, %null
-      obelisk_sim.suspend.await %child to ^after_await
+      %child = simulation.spawn @child(%ctx) :
+          !simulation.context -> !simulation.process
+      %null = simulation.process.null
+      %current = simulation.process.current
+      %is_null = simulation.process.equal %current, %null
+      simulation.suspend.await %child to ^after_await
     ^after_await:
-      obelisk_sim.task.call @callee(%ctx, %current) arguments 1 to ^done :
-          !obelisk_sim.context, !obelisk_sim.process
-    ^done(%continued: !obelisk_sim.process):
-      %status = obelisk_sim.process.status %continued
-      obelisk_sim.return
+      simulation.task.call @callee(%ctx, %current) arguments 1 to ^done :
+          !simulation.context, !simulation.process
+    ^done(%continued: !simulation.process):
+      %status = simulation.process.status %continued
+      simulation.return
     }
 
-    obelisk_sim.func @child(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @child(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func private @callee(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @callee(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 12 : i32, code_unit_id = 4 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

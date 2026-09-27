@@ -104,11 +104,11 @@ module {
 
 // The one four-bit parallel path is clipped into two two-bit driver-local
 // plans. Its upper owner reads source[3:2], while its lower owner reads [1:0].
-// CHECK-COUNT-2: obelisk_sim.storage.decl
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-COUNT-2: simulation.storage.decl
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: driver_node_id = 15 : i64{{.*}}input_lows = array<i64: 0>{{.*}}output_root_width = 2 : i64{{.*}}driver_node_id = 11 : i64{{.*}}input_lows = array<i64: 2>{{.*}}output_root_width = 2 : i64
-// CHECK-COUNT-2: obelisk_sim.logic.case_difference_mask
-// CHECK: obelisk_sim.driver.read
-// CHECK-COUNT-12: obelisk_sim.driver.drive_inertial_path
-// CHECK: obelisk_sim.driver.read
-// CHECK-COUNT-12: obelisk_sim.driver.drive_inertial_path
+// CHECK-COUNT-2: simulation.logic.case_difference_mask
+// CHECK: simulation.driver.read
+// CHECK-COUNT-12: simulation.driver.drive_inertial_path
+// CHECK: simulation.driver.read
+// CHECK-COUNT-12: simulation.driver.drive_inertial_path

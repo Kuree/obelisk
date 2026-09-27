@@ -33,7 +33,7 @@ module {
   }
 }
 
-// CHECK: %{{.*}}, %{{.*}} = obelisk_sim.string.to_packed_exact %{{.*}} : (!obelisk_sim.string) -> (i32, i1)
+// CHECK: %{{.*}}, %{{.*}} = simulation.string.to_packed_exact %{{.*}} : (!simulation.string) -> (i32, i1)
 // CHECK: cf.cond_br
 // CHECK: bit-stream cast source and destination widths differ
-// CHECK-NOT: obelisk_sim.string.to_packed %
+// CHECK-NOT: simulation.string.to_packed %

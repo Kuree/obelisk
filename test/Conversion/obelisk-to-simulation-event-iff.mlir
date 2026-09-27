@@ -37,7 +37,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.suspend.edge_iff posedge
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.suspend.edge_iff posedge
+// CHECK: simulation.ref.store
 // CHECK-NOT: cf.cond_br
 // CHECK-NOT: obelisk.sv.

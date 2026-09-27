@@ -99,6 +99,6 @@ endconfig
 // REPORT-NEXT: binding top.outer_cell -> libb.leaf config=work.outer root=top liblist=[liba, libb] rule=cell@config-bindings.sv:77:3
 // REPORT-NEXT: binding top.outer_cell_liblist -> libb.pick config=work.outer root=top liblist=[libb, liba] rule=cell@config-bindings.sv:78:3
 
-// SIM: obelisk_sim.design
+// SIM: simulation.design
 
 // RUNTIME: CONFIG_BIND_PASS

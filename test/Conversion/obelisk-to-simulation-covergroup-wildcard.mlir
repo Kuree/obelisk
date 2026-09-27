@@ -13,9 +13,9 @@
 // bits, as required by IEEE 1800-2023 19.5.4.
 // OBELISK-COUNT-3: obelisk.sv.symbol.coverage_bin
 // OBELISK-SAME: is_wildcard = true
-// SIM: obelisk_sim.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] schema {{[1-9][0-9]*}}
-// SIM: obelisk_sim.covergroup.create {{.*}} from @[[DECL]]
-// SIM: obelisk_sim.covergroup.sample
+// SIM: simulation.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] schema {{[1-9][0-9]*}}
+// SIM: simulation.covergroup.create {{.*}} from @[[DECL]]
+// SIM: simulation.covergroup.sample
 // SCHEMA-DAG: functional_bin id=[[BIN:[1-9][0-9]*]] {{.*}} name=values kind=1 flags=16
 // SCHEMA-DAG: functional_value_set id=[[SET:[1-9][0-9]*]] {{.*}} atoms=1 width=5 kind=1 flags=1 signedness=2
 // SCHEMA-DAG: functional_expression id={{[1-9][0-9]*}} owner=[[SET]] owner_kind=5 role=14 result_kind=2 width=4 signedness=2

@@ -54,27 +54,27 @@ module attributes {
 
 // The parent evaluates and captures both operands, launches a detached waiter,
 // and returns without suspending. The child waits and only then stages the NBA.
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 fork hierarchy "nba_event_assignment.$code_unit_8.$nba_event.10" debug "deferred NBA event" {internal}
-// CHECK-LABEL: obelisk_sim.func private @{{.*nba_event.*}}(
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in 1 fork hierarchy "nba_event_assignment.$code_unit_8.$nba_event.10" debug "deferred NBA event" {internal}
+// CHECK-LABEL: simulation.func private @{{.*nba_event.*}}(
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
 // CHECK-SAME: schedule.detached_controls
 // CHECK-SAME: schedule.prime_on_spawn
-// CHECK: %[[PRIMARY:.*]] = obelisk_sim.observer.bind
+// CHECK: %[[PRIMARY:.*]] = simulation.observer.bind
 // CHECK-SAME: captures 2
-// CHECK: obelisk_sim.suspend.observe %[[PRIMARY]]
+// CHECK: simulation.suspend.observe %[[PRIMARY]]
 // CHECK-SAME: edges [1]
 // CHECK-SAME: ^[[COMMIT:[a-zA-Z0-9_]+]]
 // CHECK: ^[[COMMIT]](
 // CHECK: cf.br ^[[FINAL:[a-zA-Z0-9_]+]]
 // CHECK: ^[[FINAL]]:
-// CHECK: obelisk_sim.nba.enqueue %{{.*}} to %{{.*}}
-// CHECK: obelisk_sim.return
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[RHS:.*]] = obelisk_sim.ref.load
-// CHECK: %[[INDEX:.*]] = obelisk_sim.ref.load
+// CHECK: simulation.nba.enqueue %{{.*}} to %{{.*}}
+// CHECK: simulation.return
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[RHS:.*]] = simulation.ref.load
+// CHECK: %[[INDEX:.*]] = simulation.ref.load
 // CHECK: %[[WIDE_INDEX:.*]] = arith.extsi %[[INDEX]]
-// CHECK: %[[DESTINATION:.*]] = obelisk_sim.ref.array_element %{{.*}}[%[[WIDE_INDEX]]]
-// CHECK-NEXT: %{{.*}} = obelisk_sim.spawn @{{.*nba_event.*}}(%{{.*}}, %[[DESTINATION]], %[[RHS]], %{{.*}})
-// CHECK-NEXT: obelisk_sim.return
+// CHECK: %[[DESTINATION:.*]] = simulation.ref.array_element %{{.*}}[%[[WIDE_INDEX]]]
+// CHECK-NEXT: %{{.*}} = simulation.spawn @{{.*nba_event.*}}(%{{.*}}, %[[DESTINATION]], %[[RHS]], %{{.*}})
+// CHECK-NEXT: simulation.return
 // CHECK-NOT: obelisk.sv.

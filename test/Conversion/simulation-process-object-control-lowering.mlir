@@ -1,38 +1,38 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: sed 's/native_scheduler = 0/native_scheduler = 2/' %s | not obelisk-opt - --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=AOT-REJECT
+// RUN: sed 's/native_scheduler = 0/native_scheduler = 2/' %s | not obelisk-opt - --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=AOT-REJECT
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 0 : i32
 } {
-  obelisk_sim.design @process_object_control {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.control"
+  simulation.design @process_object_control {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "top.control"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %process = obelisk_sim.spawn @control(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @control(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @control(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @control(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      %current = obelisk_sim.process.current
-      obelisk_sim.process.control resume %current to
-          ^after_resume(%current : !obelisk_sim.process)
-    ^after_resume(%resumed: !obelisk_sim.process):
-      obelisk_sim.process.control suspend %resumed to
-          ^after_suspend(%resumed : !obelisk_sim.process)
-    ^after_suspend(%continued: !obelisk_sim.process):
-      obelisk_sim.process.control kill %continued to ^unreachable
+      %current = simulation.process.current
+      simulation.process.control resume %current to
+          ^after_resume(%current : !simulation.process)
+    ^after_resume(%resumed: !simulation.process):
+      simulation.process.control suspend %resumed to
+          ^after_suspend(%resumed : !simulation.process)
+    ^after_suspend(%continued: !simulation.process):
+      simulation.process.control kill %continued to ^unreachable
     ^unreachable:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

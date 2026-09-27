@@ -199,7 +199,7 @@ endmodule
 // CHECK: initial=00 cancel=00 unrelated=1 x=11 z=11 recover=11 before=00 nba=00 queued=2002 complex=0
 // SIM-DAG: schedule.concurrent_cancel
 // SIM-DAG: schedule.concurrent_cancel_observer
-// SIM-DAG: obelisk_sim.suspend.observe
+// SIM-DAG: simulation.suspend.observe
 // SIM-DAG: schedule.concurrent_report
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: home_region = 10 : i32

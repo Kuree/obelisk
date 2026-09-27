@@ -193,21 +193,21 @@ module {
 // IEEE 1800-2023 18.6.2 invokes hooks on every enabled random object.
 // Descendant hooks are guarded by every ancestor's rand_mode and null state;
 // pre hooks run before sampling and post hooks run only on the success path.
-// CHECK-DAG: obelisk_sim.func private @[[LEAF_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "leaf::pre_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "leaf::post_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[MIDDLE_PRE:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "middle::pre_randomize"
-// CHECK-DAG: obelisk_sim.func private @[[MIDDLE_POST:unit_[0-9]+]]{{.*}}obelisk_sim.hierarchical_name = "middle::post_randomize"
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: obelisk_sim.managed.is_null
+// CHECK-DAG: simulation.func private @[[LEAF_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "leaf::pre_randomize"
+// CHECK-DAG: simulation.func private @[[LEAF_POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "leaf::post_randomize"
+// CHECK-DAG: simulation.func private @[[MIDDLE_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "middle::pre_randomize"
+// CHECK-DAG: simulation.func private @[[MIDDLE_POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "middle::post_randomize"
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK: simulation.managed.is_null
 // CHECK: arith.cmpi eq
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.class.direct_call @[[MIDDLE_PRE]]
-// CHECK: obelisk_sim.managed.is_null
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s20_middle_field___obelisk_rand_mode]
+// CHECK: simulation.class.direct_call @[[MIDDLE_PRE]]
+// CHECK: simulation.managed.is_null
+// CHECK: simulation.class.field_ref {{.*}}[@__obelisk_class_s20_middle_field___obelisk_rand_mode]
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.managed.is_null
+// CHECK: simulation.managed.is_null
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.class.direct_call @[[LEAF_PRE]]
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_field_0]
-// CHECK: obelisk_sim.class.direct_call @[[MIDDLE_POST]]
-// CHECK: obelisk_sim.class.direct_call @[[LEAF_POST]]
+// CHECK: simulation.class.direct_call @[[LEAF_PRE]]
+// CHECK: simulation.class.field_ref {{.*}}[@__obelisk_class_s3_leaf_field_0]
+// CHECK: simulation.class.direct_call @[[MIDDLE_POST]]
+// CHECK: simulation.class.direct_call @[[LEAF_POST]]

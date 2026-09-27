@@ -113,19 +113,19 @@ module attributes {
 
 // REPAIR-NOT: changing smallest negative limit -5 ticks
 // REPAIR: warning: IEEE 1800-2017 31.9.1 mutually inconsistent delayed-signal constraints; changing smallest negative limit -2 ticks to 0 and recalculating
-// IR-LABEL: obelisk_sim.func private @unit_0
-// IR-SAME: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 0, 8>
-// IR-LABEL: obelisk_sim.func private @unit_1
-// IR-SAME: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 2, 1>
-// IR-DAG: obelisk_sim.timing_check_arg_ticks = array<i64: 0, 0, 1, 1>
-// IR-DAG: obelisk_sim.time.constant 3
-// IR-DAG: obelisk_sim.time.constant 6
+// IR-LABEL: simulation.func private @unit_0
+// IR-SAME: simulation.timing_check_arg_ticks = array<i64: 0, 0, 0, 8>
+// IR-LABEL: simulation.func private @unit_1
+// IR-SAME: simulation.timing_check_arg_ticks = array<i64: 0, 0, 2, 1>
+// IR-DAG: simulation.timing_check_arg_ticks = array<i64: 0, 0, 1, 1>
+// IR-DAG: simulation.time.constant 3
+// IR-DAG: simulation.time.constant 6
 // IR-NOT: timing_check_table
 
 // An adjusted-zero endpoint remains open.  A simultaneous reference/data
 // occurrence has delta zero and is explicitly excluded before notification.
-// ZERO-LABEL: obelisk_sim.func private @unit_0
-// ZERO: %[[NOW:.*]] = obelisk_sim.time.now
+// ZERO-LABEL: simulation.func private @unit_0
+// ZERO: %[[NOW:.*]] = simulation.time.now
 // ZERO: %[[DELTA:.*]] = arith.subi %[[NOW]],
 // ZERO: arith.cmpi ult, %[[DELTA]],
 // ZERO: %[[NONZERO:.*]] = arith.cmpi ne, %[[DELTA]],

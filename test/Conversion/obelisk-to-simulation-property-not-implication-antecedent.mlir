@@ -8,26 +8,26 @@
 
 // A single multi-cycle antecedent remains on the source-age coalescer so its
 // pending no-match implication success is inverted once, including at EOS.
-// MULTICYCLE-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch_report.14.fail
-// MULTICYCLE-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch.14
-// MULTICYCLE: obelisk_sim.branching_antecedent_eos_result = "fail"
-// MULTICYCLE-LABEL: obelisk_sim.func private @unit_0(
-// MULTICYCLE-SAME: obelisk_sim.bounded_antecedent_horizon = 2 : i64
-// MULTICYCLE-SAME: obelisk_sim.branching_antecedent_alternatives = 1 : i64
-// MULTICYCLE-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// MULTICYCLE-SAME: obelisk_sim.temporal_property_negation
-// MULTICYCLE: obelisk_sim.branching_antecedent_universal_success
+// MULTICYCLE-LABEL: simulation.func private @unit_0.$concurrent_eos_branch_report.14.fail
+// MULTICYCLE-LABEL: simulation.func private @unit_0.$concurrent_eos_branch.14
+// MULTICYCLE: simulation.branching_antecedent_eos_result = "fail"
+// MULTICYCLE-LABEL: simulation.func private @unit_0(
+// MULTICYCLE-SAME: simulation.bounded_antecedent_horizon = 2 : i64
+// MULTICYCLE-SAME: simulation.branching_antecedent_alternatives = 1 : i64
+// MULTICYCLE-SAME: simulation.branching_antecedent_result_coalescer
+// MULTICYCLE-SAME: simulation.temporal_property_negation
+// MULTICYCLE: simulation.branching_antecedent_universal_success
 
 // The source-age coalescer makes a branching Boolean antecedent one property
 // result before temporal negation. Its two same-clock alternatives remain
 // eligible for the optional compiler-side Boolean minimizer.
-// BRANCHING-LABEL: obelisk_sim.func private @unit_0(
-// BRANCHING-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// BRANCHING-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// BRANCHING-SAME: obelisk_sim.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
-// BRANCHING-SAME: obelisk_sim.temporal_property_negation
-// BRANCHING: obelisk_sim.branching_antecedent_universal_success
-// BRANCHING: obelisk_sim.spawn @unit_0.fork.14.0.2
+// BRANCHING-LABEL: simulation.func private @unit_0(
+// BRANCHING-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// BRANCHING-SAME: simulation.branching_antecedent_result_coalescer
+// BRANCHING-SAME: simulation.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
+// BRANCHING-SAME: simulation.temporal_property_negation
+// BRANCHING: simulation.branching_antecedent_universal_success
+// BRANCHING: simulation.spawn @unit_0.fork.14.0.2
 
 //--- multicycle-antecedent.mlir
 

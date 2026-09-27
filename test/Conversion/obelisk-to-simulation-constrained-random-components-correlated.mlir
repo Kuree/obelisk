@@ -6,13 +6,13 @@
 // `solve x before y` turns that component table into a layered branch tree;
 // all ordered properties are covered without materializing the Cartesian
 // product with z.
-// COMPONENT-CORRELATED-LABEL: obelisk_sim.func private @unit_1
+// COMPONENT-CORRELATED-LABEL: simulation.func private @unit_1
 // COMPONENT-CORRELATED-COUNT-1: arith.cmpi ult
 // COMPONENT-CORRELATED-COUNT-14: cf.cond_br
-// COMPONENT-CORRELATED: obelisk_sim.random.solve {{.*}} mutable
+// COMPONENT-CORRELATED: simulation.random.solve {{.*}} mutable
 // COMPONENT-CORRELATED-COUNT-2: arith.trunci {{.*}} : i64 to i4
 // COMPONENT-CORRELATED: arith.trunci {{.*}} : i64 to i8
-// COMPONENT-CORRELATED-COUNT-3: obelisk_sim.managed.store
+// COMPONENT-CORRELATED-COUNT-3: simulation.managed.store
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

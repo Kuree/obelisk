@@ -228,33 +228,33 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[ORIGINAL_PARENT:.*]] = obelisk_sim.ref.load %[[PARENT_REF:arg[0-9]+]]
-// CHECK: %[[ORIGINAL_QUEUE:.*]] = obelisk_sim.assoc.read %[[ORIGINAL_PARENT]],
-// CHECK: obelisk_sim.container.clone %{{.*}}
-// CHECK: ^{{bb[0-9]+}}(%[[MUTATED_QUEUE:.*]]: !obelisk_sim.queue<i32, 0>):
-// CHECK: obelisk_sim.queue.insert {{.*}} into %[[MUTATED_QUEUE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[ORIGINAL_PARENT:.*]] = simulation.ref.load %[[PARENT_REF:arg[0-9]+]]
+// CHECK: %[[ORIGINAL_QUEUE:.*]] = simulation.assoc.read %[[ORIGINAL_PARENT]],
+// CHECK: simulation.container.clone %{{.*}}
+// CHECK: ^{{bb[0-9]+}}(%[[MUTATED_QUEUE:.*]]: !simulation.queue<i32, 0>):
+// CHECK: simulation.queue.insert {{.*}} into %[[MUTATED_QUEUE]]
 // The parent is reloaded after mutation so argument/with-clause side effects
 // to sibling elements are retained by the recursive writeback.
-// CHECK: %[[FRESH_PARENT:.*]] = obelisk_sim.ref.load %[[PARENT_REF]]
+// CHECK: %[[FRESH_PARENT:.*]] = simulation.ref.load %[[PARENT_REF]]
 // Existing direct variable storage mutates in place so outstanding element
 // references retain identity. Only the null-container branch creates and
 // publishes a replacement parent.
-// CHECK: obelisk_sim.assoc.write %[[FRESH_PARENT]], {{.*}}, %[[MUTATED_QUEUE]]
+// CHECK: simulation.assoc.write %[[FRESH_PARENT]], {{.*}}, %[[MUTATED_QUEUE]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[BACK_ORIGINAL_PARENT:.*]] = obelisk_sim.ref.load %[[BACK_PARENT_REF:arg[0-9]+]]
-// CHECK: %[[BACK_ORIGINAL_QUEUE:.*]] = obelisk_sim.assoc.read %[[BACK_ORIGINAL_PARENT]],
-// CHECK: obelisk_sim.container.clone %{{.*}}
-// CHECK: ^{{bb[0-9]+}}(%[[BACK_MUTATED_QUEUE:.*]]: !obelisk_sim.queue<i32, 0>):
-// CHECK: obelisk_sim.container.write %[[BACK_MUTATED_QUEUE]],
-// CHECK: %[[BACK_FRESH_PARENT:.*]] = obelisk_sim.ref.load %[[BACK_PARENT_REF]]
-// CHECK: obelisk_sim.assoc.write %[[BACK_FRESH_PARENT]], {{.*}}, %[[BACK_MUTATED_QUEUE]]
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: %[[BACK_ORIGINAL_PARENT:.*]] = simulation.ref.load %[[BACK_PARENT_REF:arg[0-9]+]]
+// CHECK: %[[BACK_ORIGINAL_QUEUE:.*]] = simulation.assoc.read %[[BACK_ORIGINAL_PARENT]],
+// CHECK: simulation.container.clone %{{.*}}
+// CHECK: ^{{bb[0-9]+}}(%[[BACK_MUTATED_QUEUE:.*]]: !simulation.queue<i32, 0>):
+// CHECK: simulation.container.write %[[BACK_MUTATED_QUEUE]],
+// CHECK: %[[BACK_FRESH_PARENT:.*]] = simulation.ref.load %[[BACK_PARENT_REF]]
+// CHECK: simulation.assoc.write %[[BACK_FRESH_PARENT]], {{.*}}, %[[BACK_MUTATED_QUEUE]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2
-// CHECK: obelisk_sim.assoc.traverse
-// CHECK: obelisk_sim.container.size
+// CHECK-LABEL: simulation.func private @unit_2
+// CHECK: simulation.assoc.traverse
+// CHECK: simulation.container.size
 // CHECK: ^[[OUTER_STEP:bb[0-9]+]](%[[STEP_KEY:.*]]: i32):
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^[[OUTER_STEP]](%{{.*}} : i32)
-// CHECK: obelisk_sim.assoc.traverse {{.*}}, %[[STEP_KEY]]
+// CHECK: simulation.assoc.traverse {{.*}}, %[[STEP_KEY]]
 // CHECK-NOT: obelisk.sv.

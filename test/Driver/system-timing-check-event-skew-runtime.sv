@@ -206,7 +206,7 @@ endmodule
 // SIM: timing_check_event_based = true
 // SIM-SAME: timing_check_kind = 8 : i32
 // SIM-SAME: timing_check_remain_active = false
-// SIM: obelisk_sim.suspend.clock_set
+// SIM: simulation.suspend.clock_set
 // SIM-SAME: edges [1, 1, 1]
 // SIM-SAME: slot_final
 // SIM: arith.cmpi ugt

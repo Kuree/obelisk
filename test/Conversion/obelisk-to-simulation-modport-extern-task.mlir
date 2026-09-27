@@ -124,40 +124,40 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[AGG:unit_[0-9]+]]({{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}i32{{.*}}!obelisk_sim.ref<i32>{{.*}}!obelisk_sim.ref<i32>
-// CHECK-SAME: %[[PCAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>
-// CHECK-SAME: %[[QCAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>
-// CHECK-SAME: obelisk_sim.control_target_id = [[ACTRL:[0-9]+]]
-// CHECK-SAME: obelisk_sim.hierarchical_name = "top.x.work"
-// CHECK: obelisk_sim.spawn @[[B0:[^ (]+]]({{.*}}%[[PCAP]]) :
+// CHECK: simulation.func private @[[AGG:unit_[0-9]+]]({{.*}}i32{{.*}}!simulation.ref<i32>{{.*}}i32{{.*}}!simulation.ref<i32>{{.*}}!simulation.ref<i32>
+// CHECK-SAME: %[[PCAP:[^:]+]]: !simulation.net<!simulation.logic<32>>
+// CHECK-SAME: %[[QCAP:[^:]+]]: !simulation.net<!simulation.logic<32>>
+// CHECK-SAME: simulation.control_target_id = [[ACTRL:[0-9]+]]
+// CHECK-SAME: simulation.hierarchical_name = "top.x.work"
+// CHECK: simulation.spawn @[[B0:[^ (]+]]({{.*}}%[[PCAP]]) :
 // The q implementation does not read its interface net, so the branch-local
 // capture is pruned while the aggregate ABI still accepts every candidate.
-// CHECK-NEXT: obelisk_sim.spawn @[[B1:[^ (]+]](%arg0, %arg2, %arg3, %arg4) :
-// CHECK-NEXT: obelisk_sim.suspend.join all
+// CHECK-NEXT: simulation.spawn @[[B1:[^ (]+]](%arg0, %arg2, %arg3, %arg4) :
+// CHECK-NEXT: simulation.suspend.join all
 // CHECK-SAME: processes 2 to
-// CHECK: obelisk_sim.func private @[[P:unit_[0-9]+]]
-// CHECK-SAME: obelisk_sim.control_target_id = [[PCTRL:[0-9]+]]
-// CHECK-SAME: obelisk_sim.hierarchical_name = "top.p.work"
-// CHECK: obelisk_sim.func private @[[Q:unit_[0-9]+]]
-// CHECK-SAME: obelisk_sim.hierarchical_name = "top.q.work"
-// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}
-// CHECK: obelisk_sim.task.call @[[AGG]]
-// CHECK: obelisk_sim.control.disable [[PCTRL]]
-// CHECK: obelisk_sim.control.disable [[ACTRL]]
-// CHECK: obelisk_sim.func private @[[B0]]({{.*}}%[[B0CAP:[^:]+]]: !obelisk_sim.net<!obelisk_sim.logic<32>>{{[^)]*}}) attributes
-// CHECK: %[[B0CTRL:.*]] = obelisk_sim.control.enter [[ACTRL]]
-// CHECK: obelisk_sim.control.boundary %[[B0CTRL]]
-// CHECK: obelisk_sim.task.call @[[P]]({{.*}}%[[B0CAP]], %{{[^,)]+}}) arguments 7 to
-// CHECK: obelisk_sim.func private @[[B1]](%arg0: !obelisk_sim.context{{.*}}, %arg1: !obelisk_sim.ref<i32>{{.*}}, %arg2: i32{{.*}}, %arg3: !obelisk_sim.ref<i32>{{.*}}) attributes
-// CHECK: %[[B1CTRL:.*]] = obelisk_sim.control.enter [[ACTRL]]
-// CHECK: obelisk_sim.control.boundary %[[B1CTRL]]
-// CHECK: obelisk_sim.task.call @[[Q]](%arg0, %arg1, %arg2, %arg3, %[[B1CTRL]]) arguments 4 to
+// CHECK: simulation.func private @[[P:unit_[0-9]+]]
+// CHECK-SAME: simulation.control_target_id = [[PCTRL:[0-9]+]]
+// CHECK-SAME: simulation.hierarchical_name = "top.p.work"
+// CHECK: simulation.func private @[[Q:unit_[0-9]+]]
+// CHECK-SAME: simulation.hierarchical_name = "top.q.work"
+// CHECK: simulation.func private @{{unit_[0-9]+}}
+// CHECK: simulation.task.call @[[AGG]]
+// CHECK: simulation.control.disable [[PCTRL]]
+// CHECK: simulation.control.disable [[ACTRL]]
+// CHECK: simulation.func private @[[B0]]({{.*}}%[[B0CAP:[^:]+]]: !simulation.net<!simulation.logic<32>>{{[^)]*}}) attributes
+// CHECK: %[[B0CTRL:.*]] = simulation.control.enter [[ACTRL]]
+// CHECK: simulation.control.boundary %[[B0CTRL]]
+// CHECK: simulation.task.call @[[P]]({{.*}}%[[B0CAP]], %{{[^,)]+}}) arguments 7 to
+// CHECK: simulation.func private @[[B1]](%arg0: !simulation.context{{.*}}, %arg1: !simulation.ref<i32>{{.*}}, %arg2: i32{{.*}}, %arg3: !simulation.ref<i32>{{.*}}) attributes
+// CHECK: %[[B1CTRL:.*]] = simulation.control.enter [[ACTRL]]
+// CHECK: simulation.control.boundary %[[B1CTRL]]
+// CHECK: simulation.task.call @[[Q]](%arg0, %arg1, %arg2, %arg3, %[[B1CTRL]]) arguments 4 to
 
-// ZERO: obelisk_sim.func private @{{unit_[0-9]+}}
-// ZERO-SAME: obelisk_sim.hierarchical_name = "top.x.work"
-// ZERO: obelisk_sim.bytes.constant "ERROR: interface extern fork/join task has no implementation"
-// ZERO-NEXT: obelisk_sim.display
-// ZERO: obelisk_sim.error
+// ZERO: simulation.func private @{{unit_[0-9]+}}
+// ZERO-SAME: simulation.hierarchical_name = "top.x.work"
+// ZERO: simulation.bytes.constant "ERROR: interface extern fork/join task has no implementation"
+// ZERO-NEXT: simulation.display
+// ZERO: simulation.error
 // ZERO-NOT: $extern_forkjoin
 
 // METADATA: error: modport-exported interface extern fork/join task has inconsistent implementation metadata

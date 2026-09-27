@@ -56,14 +56,14 @@ module attributes {
 }
 
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[MEM:[^:]*]]: !obelisk_sim.ref<!obelisk_sim.unpacked_array<3 : 0 x !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>>
-// CHECK-SAME: %[[IDX:[^:]*]]: !obelisk_sim.ref<!obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>
-// CHECK: %[[OBSERVER:.*]] = obelisk_sim.observer.bind @observer_
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[MEM:[^:]*]]: !simulation.ref<!simulation.unpacked_array<3 : 0 x !simulation.packed_array<7 : 0 x !simulation.logic<1>>>>
+// CHECK-SAME: %[[IDX:[^:]*]]: !simulation.ref<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>
+// CHECK: %[[OBSERVER:.*]] = simulation.observer.bind @observer_
 // CHECK-SAME: values(%[[MEM]], %[[IDX]], %[[MEM]], %[[IDX]]
-// CHECK-SAME: captures 2 : <!obelisk_sim.logic<8>>
-// CHECK: obelisk_sim.suspend.observe %[[OBSERVER]],
+// CHECK-SAME: captures 2 : <!simulation.logic<8>>
+// CHECK: simulation.suspend.observe %[[OBSERVER]],
 
-// CHECK: obelisk_sim.func private @observer_
-// CHECK: %[[ELEMENT:.*]] = obelisk_sim.ref.array_element
-// CHECK: obelisk_sim.ref.load %[[ELEMENT]]
+// CHECK: simulation.func private @observer_
+// CHECK: %[[ELEMENT:.*]] = simulation.ref.array_element
+// CHECK: simulation.ref.load %[[ELEMENT]]

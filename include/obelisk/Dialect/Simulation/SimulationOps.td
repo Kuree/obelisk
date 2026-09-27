@@ -51,7 +51,7 @@ def SimDesignOp : SimOp<"design", [
   let description = [{
     Owns one flattened descriptor and code-unit inventory. When present,
     `time_precision_fs` defines the femtosecond duration of one
-    `obelisk_sim.time` tick for every nested code unit.
+    `simulation.time` tick for every nested code unit.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name,
                        OptionalAttr<I64Attr>:$time_precision_fs,
@@ -206,7 +206,7 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
   let summary = "immutable process or zero-time function inventory record";
   let description = [{
     Retains the elaborated identity and lexical hierarchy of a code unit even
-    when IPO erases its executable `obelisk_sim.func`. The ID is stable across
+    when IPO erases its executable `simulation.func`. The ID is stable across
     compilation modes and is also the runtime process handle ID. Entry kinds
     without a source-level VPI object are intrinsically internal. The optional
     `internal` marker additionally hides a normally source-visible entry kind.
@@ -781,7 +781,7 @@ def SimCovergroupClockingSpawnOp
     Transiently records the spawn of one automatic functional-coverage
     sampler. Per-function lowering may create this operation but must not
     mutate its parent design's symbol table. The subsequent design-anchored
-    materialization pass replaces it with an ordinary `obelisk_sim.spawn` and
+    materialization pass replaces it with an ordinary `simulation.spawn` and
     creates the private sampler symbol.
 
     `bindings` contains only the declaration paths referenced by the clocking
@@ -910,7 +910,7 @@ def SimCovergroupBlockEventFireOp
   let arguments = (ins SimContextType:$context,
                        Optional<SimClassHandleType>:$receiver,
                        I64Attr:$target_id,
-                       I32Attr:$event_kind);
+                       SimBlockEventKindAttr:$event_kind);
   let hasVerifier = 1;
 }
 
@@ -1533,14 +1533,14 @@ def SimContainerCreateOp : SimOp<"container.create", [
   let arguments = (ins
     I64:$size,
     I64Attr:$type_id,
-    I32Attr:$element_kind,
-    I32Attr:$element_flags,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
     I64Attr:$value_size,
     I64Attr:$alignment,
     I64Attr:$bit_width,
     DenseI64ArrayAttr:$trace_offsets,
     DenseI32ArrayAttr:$trace_kinds,
-    I32Attr:$container_kind,
+    SimContainerKindAttr:$container_kind,
     I64Attr:$bound
   );
   let results = (outs AnyType:$result);
@@ -1644,8 +1644,8 @@ def SimMailboxCreateOp : SimOp<"mailbox.create", [
   let arguments = (ins
     I64:$bound,
     I64Attr:$type_id,
-    I32Attr:$element_kind,
-    I32Attr:$element_flags,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
     I64Attr:$value_size,
     I64Attr:$alignment,
     I64Attr:$bit_width,
@@ -1775,7 +1775,7 @@ def SimRandomDistributionOp : SimOp<"random.distribution", [
     `first` and `second` carry the distribution's parameters in source order;
     distributions taking a single parameter ignore `second`.
   }];
-  let arguments = (ins SimContextType:$context, I32Attr:$distribution,
+  let arguments = (ins SimContextType:$context, SimRandomDistributionAttr:$distribution,
                        I32:$seed, I32:$first, I32:$second);
   let results = (outs I32:$result, I32:$next_seed);
 }
@@ -1794,7 +1794,7 @@ def SimStochasticQueueOp : SimOp<"stochastic_queue", [
     per calling-scope time unit and governs time-statistic rounding. `status`
     is the queue-operation status from Table 20-11, not a runtime ABI status.
   }];
-  let arguments = (ins SimContextType:$context, I32Attr:$action,
+  let arguments = (ins SimContextType:$context, SimStochasticQueueActionAttr:$action,
                        SimLogicType:$id, SimLogicType:$first,
                        SimLogicType:$second, I64Attr:$unit_scale);
   let results = (outs SimLogicType:$primary, SimLogicType:$secondary,
@@ -1891,14 +1891,14 @@ def SimAssocCreateOp : SimOp<"assoc.create", [
   let summary = "create an empty typed associative array";
   let arguments = (ins
     I64Attr:$type_id,
-    I32Attr:$element_kind,
-    I32Attr:$element_flags,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
     I64Attr:$value_size,
     I64Attr:$alignment,
     I64Attr:$bit_width,
     DenseI64ArrayAttr:$trace_offsets,
     DenseI32ArrayAttr:$trace_kinds,
-    I32Attr:$key_kind,
+    SimAssocKeyKindAttr:$key_kind,
     I64Attr:$key_width);
   let results = (outs SimAssocArrayType:$result);
   let hasVerifier = 1;
@@ -1951,7 +1951,7 @@ def SimAssocTraverseOp : SimOp<"assoc.traverse", [
   ]> {
   let summary = "perform ordered first, last, next, or previous traversal";
   let arguments = (ins SimAssocArrayType:$array, AnyType:$key,
-                       I32Attr:$direction, BoolAttr:$endpoint);
+                       SimAssocTraversalDirectionAttr:$direction, BoolAttr:$endpoint);
   let results = (outs AnyType:$result_key, I1:$success);
   let hasVerifier = 1;
 }
@@ -2128,7 +2128,7 @@ def SimStringSkipRawOp : SimOp<"string.skip_raw", [
 
 def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
   let summary = "parse a managed string using a fixed integer radix";
-  let arguments = (ins SimStringType:$input, I32Attr:$radix);
+  let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
   let results = (outs I64:$result);
   let assemblyFormat = "$input `radix` `=` $radix attr-dict";
   let hasVerifier = 1;
@@ -2141,7 +2141,7 @@ def SimStringParseLogicOp : SimOp<"string.parse_logic", [Pure]> {
     separate value and unknown planes. Power-of-two radices place digits
     directly; decimal uses bounded word-wise multiply and accumulate.
   }];
-  let arguments = (ins SimStringType:$input, I32Attr:$radix);
+  let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
   let results = (outs SimLogicType:$result);
   let assemblyFormat =
       "$input `radix` `=` $radix attr-dict `:` type($result)";
@@ -2156,7 +2156,7 @@ def SimStringParseRealOp : SimOp<"string.parse_real", [Pure]> {
 
 def SimStringFormatIntegerOp
     : SimStringAllocatingOp<"string.format_integer",
-                            (ins I64:$input, I32Attr:$radix,
+                            (ins I64:$input, SimRadixAttr:$radix,
                                  BoolAttr:$is_signed)> {
   let summary = "format an integer into a managed string";
   let assemblyFormat = [{
@@ -2183,7 +2183,7 @@ def SimStringOutputFormatOp : SimOp<"string.output_format", [
     designated format expression used by `$sformat` and `$sformatf`.
   }];
   let arguments = (ins SimContextType:$context, Variadic<AnyType>:$items,
-                       I32Attr:$default_radix,
+                       SimRadixAttr:$default_radix,
                        DenseI32ArrayAttr:$item_flags,
                        OptionalAttr<StrAttr>:$scope,
                        OptionalAttr<StrAttr>:$library_cell,
@@ -2461,8 +2461,8 @@ def SimReferencePathAggregateElementOp
     I64Attr:$right,
     I64Attr:$element_span,
     I64Attr:$type_id,
-    I32Attr:$element_kind,
-    I32Attr:$element_flags,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
     I64Attr:$value_size,
     I64Attr:$alignment,
     I64Attr:$bit_width,
@@ -2959,7 +2959,7 @@ def SimDisplayOp : SimOp<"display", [
   }];
   let arguments = (ins SimContextType:$context, I32:$descriptor,
                        Variadic<AnyType>:$items, BoolAttr:$append_newline,
-                       I32Attr:$default_radix,
+                       SimRadixAttr:$default_radix,
                        DenseI32ArrayAttr:$item_flags,
                        OptionalAttr<StrAttr>:$scope,
                        OptionalAttr<StrAttr>:$library_cell,
@@ -3224,7 +3224,7 @@ def SimPlusargScanOp : SimFileOp<"plusarg.scan",
 
 def SimPlusargParseLogicOp : SimOp<"plusarg.parse_logic", [Pure]> {
   let summary = "strictly parse one integral $value$plusargs remainder";
-  let arguments = (ins SimStringType:$input, I32Attr:$radix);
+  let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
   let results = (outs SimLogicType:$result);
   let hasVerifier = 1;
 }
@@ -3259,7 +3259,7 @@ def SimFileReadPackedOp : SimFileOp<"file.read_packed",
 }
 
 def SimFileReadMemTokenOp : SimFileOp<"file.readmem_token",
-    (ins SimContextType:$context, I32:$descriptor, I32Attr:$radix),
+    (ins SimContextType:$context, I32:$descriptor, SimRadixAttr:$radix),
     (outs SimLogicType:$data, I32:$kind, I64:$address)> {
   let summary = "read one IEEE $readmem data or address token";
   let description = [{
@@ -3329,7 +3329,7 @@ def SimProcessCurrentOp : SimOp<"process.current", [
   let description = [{
     The logical process identity is stable across task activation boundaries.
     Native and bytecode implementations may encode the handle differently,
-    but the value remains an opaque `!obelisk_sim.process` in Simulation IR.
+    but the value remains an opaque `!simulation.process` in Simulation IR.
   }];
   let results = (outs SimProcessType:$result);
   let assemblyFormat = "attr-dict";
@@ -3623,7 +3623,7 @@ def SimAssertionControlOp : SimOp<"assert.control", [
     generated concurrent monitors use that generation to invalidate live work.
     Action controls affect only attempts that start after the control operation.
   }];
-  let arguments = (ins SimContextType:$context, I32Attr:$action,
+  let arguments = (ins SimContextType:$context, SimAssertionControlActionAttr:$action,
                        I64Attr:$assertion_id);
   let assemblyFormat = "$context `action` $action `assertion` $assertion_id attr-dict";
   let hasVerifier = 1;
@@ -3924,7 +3924,7 @@ def SimRefReleaseOwnerOp : SimOp<"ref.release_owner"> {
   let summary = "end an automatic reference ownership lifetime";
   let description = [{
     Marks a control-flow point where the owner reference created by
-    `obelisk_sim.ref.alloc` is no longer live. This internal operation is
+    `simulation.ref.alloc` is no longer live. This internal operation is
     inserted by lifetime analysis and consumed by native lowering.
   }];
   let arguments =

@@ -109,73 +109,73 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The one-shot actor samples each semantic predicate once, ORs all minimized
 // cubes, and selects exactly one result store and completion trigger.
-// CHECK: obelisk_sim.func private @[[MONITOR:[^(]+]](
+// CHECK: simulation.func private @[[MONITOR:[^(]+]](
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.expect_one_cycle_alternatives = 5 : i64
-// CHECK-SAME: obelisk_sim.expect_one_cycle_branching
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_after = 5 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_alternatives_before = 10 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_after = 15 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_literals_before = 40 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_solver = "z3"
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.expect_one_cycle_alternatives = 5 : i64
+// CHECK-SAME: simulation.expect_one_cycle_branching
+// CHECK-SAME: simulation.sva_boolean_alternatives_after = 5 : i64
+// CHECK-SAME: simulation.sva_boolean_alternatives_before = 10 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_after = 15 : i64
+// CHECK-SAME: simulation.sva_boolean_literals_before = 40 : i64
+// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: %[[SUCCESS:.*]] = arith.constant {{.*}}true
-// CHECK: obelisk_sim.ref.store %[[SUCCESS]]
-// CHECK: obelisk_sim.ref.store {{.*}}true
-// CHECK-NOT: obelisk_sim.ref.store
-// CHECK: obelisk_sim.event.trigger
-// CHECK-NOT: obelisk_sim.ref.store
-// CHECK-NOT: obelisk_sim.event.trigger
+// CHECK: simulation.ref.store %[[SUCCESS]]
+// CHECK: simulation.ref.store {{.*}}true
+// CHECK-NOT: simulation.ref.store
+// CHECK: simulation.event.trigger
+// CHECK-NOT: simulation.ref.store
+// CHECK-NOT: simulation.event.trigger
 // CHECK: %[[FAILURE:.*]] = arith.constant {{.*}}false
-// CHECK: obelisk_sim.ref.store %[[FAILURE]]
-// CHECK: obelisk_sim.ref.store {{.*}}true
-// CHECK-NOT: obelisk_sim.ref.store
-// CHECK: obelisk_sim.event.trigger
-// CHECK-NOT: obelisk_sim.event.trigger
+// CHECK: simulation.ref.store %[[FAILURE]]
+// CHECK: simulation.ref.store {{.*}}true
+// CHECK-NOT: simulation.ref.store
+// CHECK: simulation.event.trigger
+// CHECK-NOT: simulation.event.trigger
 // The first sampled clock marks the evaluation started for EOS handling.
-// CHECK: obelisk_sim.ref.store {{.*}}true
-// CHECK-NOT: obelisk_sim.ref.store
-// CHECK-COUNT-4: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK: simulation.ref.store {{.*}}true
+// CHECK-NOT: simulation.ref.store
+// CHECK-COUNT-4: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK: cf.cond_br
-// CHECK-NOT: obelisk_sim.suspend.edge
+// CHECK-NOT: simulation.suspend.edge
 
-// CHECK: obelisk_sim.func private @[[MONITOR]].$expect_eos.11(
-// CHECK-SAME: obelisk_sim.expect_eos_coordinator
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "strong"
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.func private @[[MONITOR]].$expect_eos.11(
+// CHECK-SAME: simulation.expect_eos_coordinator
+// CHECK-SAME: simulation.expect_operand_strength = "strong"
+// CHECK: simulation.ref.load
 // CHECK: cf.cond_br
 // CHECK: arith.constant {{.*}}false
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.store
 // CHECK: arith.constant {{.*}}true
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.event.trigger
+// CHECK: simulation.ref.store
+// CHECK: simulation.event.trigger
 
 // The procedural caller blocks on the monitor's private event, resumes in
 // Reactive, and dispatches the selected pass/fail action exactly once.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 2 : i32
-// CHECK: %[[DONE:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.spawn @[[MONITOR]]
-// CHECK: obelisk_sim.suspend.event %[[DONE]]
+// CHECK: %[[DONE:.*]] = simulation.event.create
+// CHECK: simulation.spawn @[[MONITOR]]
+// CHECK: simulation.suspend.event %[[DONE]]
 // CHECK-SAME: resume_region = 10 : i32
-// CHECK: obelisk_sim.ref.load
+// CHECK: simulation.ref.load
 // CHECK: cf.cond_br
 // CHECK-NOT: obelisk.sv.assertion
 
 // The singleton case complement stays on the one-cycle Boolean evaluator and
 // therefore cannot lose its selector guard when branching collapses.
-// CHECK: obelisk_sim.func private @[[CASE_MONITOR:unit_1[^ (]*]](
-// CHECK-SAME: obelisk_sim.expect_monitor_actor
-// CHECK-SAME: obelisk_sim.expect_one_cycle_alternatives = 1 : i64
-// CHECK-NOT: obelisk_sim.expect_one_cycle_branching
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.func private @[[CASE_MONITOR:unit_1[^ (]*]](
+// CHECK-SAME: simulation.expect_monitor_actor
+// CHECK-SAME: simulation.expect_one_cycle_alternatives = 1 : i64
+// CHECK-NOT: simulation.expect_one_cycle_branching
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.logic.compare case_eq
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK: simulation.logic.compare case_eq
 // CHECK: cf.cond_br

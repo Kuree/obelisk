@@ -180,6 +180,6 @@ endmodule
 // CHECK: timed=7
 // CHECK-NOT: cancelled-task-returned
 
-// SIM-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} task hierarchy "native_tasks.arguments"
-// SIM-DAG: obelisk_sim.func private @{{.*}} attributes {{.*}}entry_kind = 12 : i32
-// SIM-DAG: obelisk_sim.task.call @
+// SIM-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} task hierarchy "native_tasks.arguments"
+// SIM-DAG: simulation.func private @{{.*}} attributes {{.*}}entry_kind = 12 : i32
+// SIM-DAG: simulation.task.call @

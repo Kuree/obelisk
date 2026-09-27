@@ -22,7 +22,7 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[VALUE:.*]] = obelisk_sim.logic.constant 1 : i2
-// CHECK-NOT: obelisk_sim.string.literal
-// CHECK: obelisk_sim.display {{.*}}%[[VALUE]]{{.*}}flags = [0, 0]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[VALUE:.*]] = simulation.logic.constant 1 : i2
+// CHECK-NOT: simulation.string.literal
+// CHECK: simulation.display {{.*}}%[[VALUE]]{{.*}}flags = [0, 0]

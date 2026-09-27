@@ -46,11 +46,11 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // 7.8.6: reading a key that is not there yet yields the element type's default
 // value, so the element the member is written into comes from either arm of
 // that choice.
-// CHECK:      obelisk_sim.aggregate.default
-// CHECK:      obelisk_sim.assoc.read
-// CHECK:      %[[UPDATED:.*]] = obelisk_sim.aggregate.insert {{.*}}[1]
-// CHECK:      obelisk_sim.assoc.write {{.*}}, %[[UPDATED]]
+// CHECK:      simulation.aggregate.default
+// CHECK:      simulation.assoc.read
+// CHECK:      %[[UPDATED:.*]] = simulation.aggregate.insert {{.*}}[1]
+// CHECK:      simulation.assoc.write {{.*}}, %[[UPDATED]]

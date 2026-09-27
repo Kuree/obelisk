@@ -51,8 +51,8 @@ module {
 // 1800-2017 6.5 makes the net it reads one whose "resultant value of multiple
 // drivers is determined by the resolution function of the net type", so those
 // drivers must propagate before it starts.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: obelisk_sim.spawn @unit_2
-// CHECK: obelisk_sim.spawn @unit_0
-// CHECK: obelisk_sim.spawn @unit_1
-// CHECK: obelisk_sim.return
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: simulation.spawn @unit_2
+// CHECK: simulation.spawn @unit_0
+// CHECK: simulation.spawn @unit_1
+// CHECK: simulation.return

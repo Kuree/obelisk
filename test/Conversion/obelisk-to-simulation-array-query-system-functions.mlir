@@ -163,24 +163,24 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-DAG: %[[DIMENSIONS:.*]] = arith.constant 3 : i32
 // CHECK-DAG: %[[UNPACKED:.*]] = arith.constant 1 : i32
 // CHECK-DAG: %[[LEFT:.*]] = arith.constant 7 : i32
-// CHECK: obelisk_sim.ref.store %[[DIMENSIONS]]
-// CHECK-NEXT: obelisk_sim.ref.store %[[UNPACKED]]
-// CHECK-NEXT: obelisk_sim.ref.store %[[LEFT]]
+// CHECK: simulation.ref.store %[[DIMENSIONS]]
+// CHECK-NEXT: simulation.ref.store %[[UNPACKED]]
+// CHECK-NEXT: simulation.ref.store %[[LEFT]]
 // A runtime string uses its current byte length, and an empty string naturally
 // produces the required right bound of -1.
-// CHECK: %[[STRING_LENGTH:.*]] = obelisk_sim.string.length
+// CHECK: %[[STRING_LENGTH:.*]] = simulation.string.length
 // CHECK: %[[STRING_RIGHT:.*]] = arith.subi %[[STRING_LENGTH]], {{.*}} : i64
 // CHECK: arith.trunci %[[STRING_RIGHT]] : i64 to i32
 // The omitted dimension argument queries only dimension 1; a queue of strings
 // therefore does not inspect its variable-sized element dimension.
-// CHECK: %[[QUEUE_SIZE:.*]] = obelisk_sim.container.size
+// CHECK: %[[QUEUE_SIZE:.*]] = simulation.container.size
 // CHECK: arith.subi %[[QUEUE_SIZE]], {{.*}} : i64
 // CHECK-NOT: obelisk.sv.
-// LOADS-COUNT-7: obelisk_sim.ref.load
-// COMPARES-COUNT-15: obelisk_sim.logic.compare case_eq
+// LOADS-COUNT-7: simulation.ref.load
+// COMPARES-COUNT-15: simulation.logic.compare case_eq
 // SELECTS-COUNT-15: arith.select
-// TO-BITS-COUNT-5: obelisk_sim.logic.to_bits
+// TO-BITS-COUNT-5: simulation.logic.to_bits

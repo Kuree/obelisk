@@ -56,20 +56,20 @@ static void addStatistic(Pass::Statistic *statistic, uint64_t amount = 1) {
 }
 
 static bool isDPIExportMetadata(StringRef name) {
-  return name == "obelisk_sim.dpi_export" ||
-         name == "obelisk_sim.dpi_c_identifier" ||
-         name == "obelisk_sim.dpi_scope_id" ||
-         name == "obelisk_sim.dpi_export_id" ||
-         name == "obelisk_sim.dpi_abi_signature" ||
-         name == "obelisk_sim.dpi_aggregate_layouts" ||
-         name == "obelisk_sim.dpi_logical_inputs";
+  return name == "simulation.dpi_export" ||
+         name == "simulation.dpi_c_identifier" ||
+         name == "simulation.dpi_scope_id" ||
+         name == "simulation.dpi_export_id" ||
+         name == "simulation.dpi_abi_signature" ||
+         name == "simulation.dpi_aggregate_layouts" ||
+         name == "simulation.dpi_logical_inputs";
 }
 
 static bool hasUnknownOperationMetadata(Operation *operation,
                                         bool allowDPIExport = false) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if ((name.starts_with("obelisk_sim.") || name.starts_with("schedule.")) &&
+    if ((name.starts_with("simulation.") || name.starts_with("schedule.")) &&
         !sim::metadata::isKnownOperation(name) &&
         !(allowDPIExport && isDPIExportMetadata(name)))
       return true;
@@ -82,21 +82,21 @@ static bool hasUnknownOperationMetadata(Operation *operation,
 /// destination references and every input/inout value remain ABI-pinned.
 static std::optional<llvm::BitVector>
 getDPIOutputArguments(sim::SimFuncOp function) {
-  if (!function->hasAttr("obelisk_sim.dpi_export") ||
+  if (!function->hasAttr("simulation.dpi_export") ||
       function->hasAttr(sim::metadata::dpiElidedInputs) ||
       function.getEntryKind() != sim::EntryKind::Task ||
       !function.getFunctionType().getResults().empty())
     return std::nullopt;
 
   auto identifier =
-      function->getAttrOfType<StringAttr>("obelisk_sim.dpi_c_identifier");
-  auto scope = function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_scope_id");
+      function->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
+  auto scope = function->getAttrOfType<IntegerAttr>("simulation.dpi_scope_id");
   auto exportID =
-      function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_export_id");
+      function->getAttrOfType<IntegerAttr>("simulation.dpi_export_id");
   auto logicalInputs =
-      function->getAttrOfType<IntegerAttr>("obelisk_sim.dpi_logical_inputs");
+      function->getAttrOfType<IntegerAttr>("simulation.dpi_logical_inputs");
   auto signature =
-      function->getAttrOfType<ArrayAttr>("obelisk_sim.dpi_abi_signature");
+      function->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
   if (!identifier || identifier.empty() || !scope || !exportID ||
       !logicalInputs || logicalInputs.getValue().isNegative() || !signature)
     return std::nullopt;
@@ -106,7 +106,7 @@ getDPIOutputArguments(sim::SimFuncOp function) {
       !isa<sim::ContextType>(type.getInput(0)))
     return std::nullopt;
   if (auto layouts = function->getAttrOfType<ArrayAttr>(
-          "obelisk_sim.dpi_aggregate_layouts");
+          "simulation.dpi_aggregate_layouts");
       layouts && layouts.size() != signature.size())
     return std::nullopt;
 
@@ -407,7 +407,7 @@ LogicalResult BoundaryEliminator::run() {
     bool canPruneDPIOutput = info.dpiOutputArguments.any();
 
     if (hasUnknownOperationMetadata(function, canPruneDPIOutput))
-      pin(index, "unknown obelisk_sim operation metadata");
+      pin(index, "unknown simulation operation metadata");
     else if (function->getParentOp() != design.getOperation() &&
              !canPruneDPIOutput)
       pin(index, "nested function ABI");
@@ -440,7 +440,7 @@ LogicalResult BoundaryEliminator::run() {
 
     walkFunctionBody(function, [&](Operation *operation) {
       if (hasUnknownOperationMetadata(operation))
-        pin(index, "unknown obelisk_sim operation metadata");
+        pin(index, "unknown simulation operation metadata");
 
       auto recordSite = [&](auto site) -> LogicalResult {
         if constexpr (!std::is_same_v<decltype(site), sim::SimTaskCallOp>) {
@@ -497,7 +497,7 @@ LogicalResult BoundaryEliminator::run() {
           return site.emitOpError(
               "has a malformed positional boundary for its callee");
         if (hasUnknownOperationMetadata(site))
-          pin(*calleeIndex, "unknown obelisk_sim call-site metadata");
+          pin(*calleeIndex, "unknown simulation call-site metadata");
         return success();
       };
 

@@ -38,5 +38,5 @@ module {
 // CHECK: %[[XOR:.*]] = arith.xori %{{.*}}, %{{.*}} : i4
 // CHECK: %[[ONES:.*]] = arith.constant {{.*}}-1 : i4
 // CHECK: %[[XNOR:.*]] = arith.xori %[[XOR]], %[[ONES]] : i4
-// CHECK: %[[PACKED:.*]] = obelisk_sim.packed.unflatten %[[XNOR]]
-// CHECK: obelisk_sim.ref.store %[[PACKED]]
+// CHECK: %[[PACKED:.*]] = simulation.packed.unflatten %[[XNOR]]
+// CHECK: simulation.ref.store %[[PACKED]]

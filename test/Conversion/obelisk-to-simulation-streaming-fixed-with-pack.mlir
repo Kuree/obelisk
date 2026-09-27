@@ -3,21 +3,21 @@
 // A with range over a fixed unpacked array selects by the array's declared
 // SystemVerilog indices and materializes the runtime-sized selection before
 // flattening it into the generic bit stream.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[STREAM:.*]] = obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.queue<i1, 0>
-// CHECK: %[[R0:.*]] = obelisk_sim.ref.subelement {{.*}}[0]
-// CHECK: %[[E0:.*]] = obelisk_sim.ref.load %[[R0]]
-// CHECK: %[[R5:.*]] = obelisk_sim.ref.subelement {{.*}}[5]
-// CHECK: %[[E5:.*]] = obelisk_sim.ref.load %[[R5]]
-// CHECK: %[[SELECTED:.*]] = obelisk_sim.container.create
-// CHECK-SAME: -> !obelisk_sim.dynamic_array<i8>
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[STREAM:.*]] = simulation.container.create
+// CHECK-SAME: -> !simulation.queue<i1, 0>
+// CHECK: %[[R0:.*]] = simulation.ref.subelement {{.*}}[0]
+// CHECK: %[[E0:.*]] = simulation.ref.load %[[R0]]
+// CHECK: %[[R5:.*]] = simulation.ref.subelement {{.*}}[5]
+// CHECK: %[[E5:.*]] = simulation.ref.load %[[R5]]
+// CHECK: %[[SELECTED:.*]] = simulation.container.create
+// CHECK-SAME: -> !simulation.dynamic_array<i8>
 // CHECK: arith.select {{.*}}, %[[E0]],
 // CHECK: arith.select {{.*}}, %[[E5]],
-// CHECK: obelisk_sim.container.write %[[SELECTED]],
-// CHECK: obelisk_sim.container.size %[[SELECTED]]
-// CHECK: obelisk_sim.container.read %[[SELECTED]]
-// CHECK: obelisk_sim.container.write %[[STREAM]],
+// CHECK: simulation.container.write %[[SELECTED]],
+// CHECK: simulation.container.size %[[SELECTED]]
+// CHECK: simulation.container.read %[[SELECTED]]
+// CHECK: simulation.container.write %[[STREAM]],
 // CHECK-NOT: obelisk.sv.
 
 module {

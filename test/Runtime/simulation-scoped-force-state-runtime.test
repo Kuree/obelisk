@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-scoped-force-state-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-scoped-force-state-runtime.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' -o %t.sim.mlir
+// RUN: obelisk-opt %S/../Conversion/simulation-scoped-force-state-runtime.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' -o %t.sim.mlir
 // RUN: obelisk-opt %t.sim.mlir --encode-obelisk-sim-to-bytecode --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
 // RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.bytecode.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o

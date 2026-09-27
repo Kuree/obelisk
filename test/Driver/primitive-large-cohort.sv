@@ -59,7 +59,7 @@ module primitive_large_cohort;
 endmodule
 
 // CHECK: LARGE PRIMITIVE PASS
-// KERNEL-COUNT-8: obelisk_sim.func private @__obelisk_region_kernel_
+// KERNEL-COUNT-8: simulation.func private @__obelisk_region_kernel_
 // KERNEL-NOT: schedule.primitive_name = "and"
 // The acyclic graph keeps the input ranges in Tier-1. The dynamically changed
 // lane has distinct ownership from the two unchanged ranges.

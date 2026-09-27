@@ -53,15 +53,15 @@ module {
 
 // The antecedent starts age one (mask 2), which advances to age two (mask 4).
 // Only an age-two attempt evaluates the consequent b.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: %[[AGE1_MASK:.*]] = arith.constant {{.*}} 2 : i64
 // CHECK: %[[AGE1:.*]] = arith.andi %{{.*}}, %[[AGE1_MASK]] : i64
 // CHECK: %[[AGE2_NEXT:.*]] = arith.constant {{.*}} 4 : i64
 // CHECK: %[[ADVANCED:.*]] = arith.select %{{.*}}, %[[AGE2_NEXT]], %{{.*}} : i64
 // CHECK: %[[AGE2_MASK:.*]] = arith.constant {{.*}} 4 : i64
 // CHECK: %[[AGE2:.*]] = arith.andi %{{.*}}, %[[AGE2_MASK]] : i64
-// CHECK: %[[CONSEQUENT:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg3
-// CHECK: %[[ANTECEDENT:.*]] = obelisk_sim.assert.sampled_read %arg0 from %arg2
+// CHECK: %[[CONSEQUENT:.*]] = simulation.assert.sampled_read %arg0 from %arg3
+// CHECK: %[[ANTECEDENT:.*]] = simulation.assert.sampled_read %arg0 from %arg2
 // CHECK: %[[START_MASK:.*]] = arith.constant {{.*}} 2 : i64
 // CHECK: arith.select %{{.*}}, %[[START_MASK]], %{{.*}} : i64
 // CHECK-NOT: obelisk.sv.

@@ -70,7 +70,7 @@ bool isTransientPlusargString(Value value) {
 /// ensure this is one bounded actor which either waits for its next argument
 /// change or terminates after being replaced.
 bool isPersistentMonitorActor(sim::SimFuncOp function) {
-  if (!function || !function->hasAttr("obelisk_sim.persistent_monitor") ||
+  if (!function || !function->hasAttr("simulation.persistent_monitor") ||
       !function->hasAttr("internal") ||
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
@@ -201,7 +201,7 @@ bool isCovergroupClockingSamplerActor(sim::SimFuncOp function) {
 
 bool isNegativeTimingDelayCommit(sim::SimFuncOp function) {
   if (!function ||
-      !function->hasAttr("obelisk_sim.negative_timing_delay_commit") ||
+      !function->hasAttr("simulation.negative_timing_delay_commit") ||
       !function->hasAttr("internal") ||
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
@@ -254,8 +254,8 @@ bool isNegativeTimingDelayMonitorSpawn(sim::SimSpawnOp spawn,
                                        sim::SimFuncOp target) {
   sim::SimFuncOp monitor = spawn->getParentOfType<sim::SimFuncOp>();
   if (!monitor || !target || !isNegativeTimingDelayCommit(target) ||
-      !spawn->hasAttr("obelisk_sim.negative_timing_transport_activation") ||
-      !monitor->hasAttr("obelisk_sim.negative_timing_delay_monitor") ||
+      !spawn->hasAttr("simulation.negative_timing_transport_activation") ||
+      !monitor->hasAttr("simulation.negative_timing_delay_monitor") ||
       !monitor->hasAttr("internal") ||
       SymbolTable::getSymbolVisibility(monitor) !=
           SymbolTable::Visibility::Private ||
@@ -270,7 +270,7 @@ bool isNegativeTimingDelayMonitorSpawn(sim::SimSpawnOp spawn,
   Value context = monitor.getBody().front().getArgument(0);
   Value source = monitor.getBody().front().getArgument(1);
   auto capture = monitor.getArgAttrOfType<sim::CaptureKindAttr>(
-      1, "obelisk_sim.capture_kind");
+      1, "simulation.capture_kind");
   auto descriptor =
       monitor.getArgAttrOfType<IntegerAttr>(1, sim::metadata::descriptorId);
   bool exactSource = (isa<sim::RefType>(source.getType()) && capture &&
@@ -335,8 +335,8 @@ bool isRuntimeClockCoordinator(sim::SimFuncOp function) {
       function.getEntryKind() != sim::EntryKind::Always ||
       function.getHomeRegion() != sim::EventRegion::Observed ||
       function.getDomain() != sim::ExecutionDomain::Design ||
-      (!function->hasAttr("obelisk_sim.timing_check_coordinator") &&
-       !function->hasAttr("obelisk_sim.multiclock_sequence_coordinator")))
+      (!function->hasAttr("simulation.timing_check_coordinator") &&
+       !function->hasAttr("simulation.multiclock_sequence_coordinator")))
     return false;
   unsigned clockWaits = 0;
   function.walk([&](sim::SimSuspendClockSetOp) { ++clockWaits; });
@@ -390,7 +390,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       return true;
     if (isCovergroupClockingSamplerActor(function))
       return true;
-    if (function->hasAttr("obelisk_sim.skew_deadline_helper")) {
+    if (function->hasAttr("simulation.skew_deadline_helper")) {
       unsigned eventWaits = 0;
       unsigned delayedTriggers = 0;
       unsigned spawns = 0;
@@ -411,7 +411,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
              function.getDomain() == sim::ExecutionDomain::Design &&
              eventWaits == 1 && delayedTriggers == 0 && spawns == 0;
     }
-    if (function->hasAttr("obelisk_sim.multiclock_sequence_eos_coordinator"))
+    if (function->hasAttr("simulation.multiclock_sequence_eos_coordinator"))
       return SymbolTable::getSymbolVisibility(function) ==
                  SymbolTable::Visibility::Private &&
              function->hasAttr("internal") &&
@@ -666,7 +666,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       result.runtimeOwnedFanoutActors.insert(function.getOperation());
     if (isRuntimeClockCoordinator(function)) {
       result.runtimeOwnedFanoutActors.insert(function.getOperation());
-      if (function->hasAttr("obelisk_sim.negative_timing_adjusted"))
+      if (function->hasAttr("simulation.negative_timing_adjusted"))
         result.negativeTimingFanoutActors.insert(function.getOperation());
     }
     if (!isNegativeTimingDelayMonitor(function))

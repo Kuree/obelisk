@@ -28,18 +28,18 @@ namespace obelisk {
 
 namespace {
 
-constexpr StringLiteral kExportAttr = "obelisk_sim.dpi_export";
-constexpr StringLiteral kExportBridgeAttr = "obelisk_sim.dpi_export_bridge";
+constexpr StringLiteral kExportAttr = "simulation.dpi_export";
+constexpr StringLiteral kExportBridgeAttr = "simulation.dpi_export_bridge";
 constexpr StringLiteral kExportBodySymbolAttr =
-    "obelisk_sim.dpi_export_body_symbol";
-constexpr StringLiteral kLogicalInputsAttr = "obelisk_sim.dpi_logical_inputs";
+    "simulation.dpi_export_body_symbol";
+constexpr StringLiteral kLogicalInputsAttr = "simulation.dpi_logical_inputs";
 constexpr std::array<StringLiteral, 8> kExportMetadata = {
     kExportAttr,
-    "obelisk_sim.dpi_c_identifier",
-    "obelisk_sim.dpi_scope_id",
-    "obelisk_sim.dpi_export_id",
-    "obelisk_sim.dpi_abi_signature",
-    "obelisk_sim.dpi_aggregate_layouts",
+    "simulation.dpi_c_identifier",
+    "simulation.dpi_scope_id",
+    "simulation.dpi_export_id",
+    "simulation.dpi_abi_signature",
+    "simulation.dpi_aggregate_layouts",
     kLogicalInputsAttr,
     sim::metadata::dpiElidedInputs,
 };
@@ -140,7 +140,7 @@ public:
 } // namespace
 
 LogicalResult materializeDPIExportBridges(ModuleOp module) {
-  if (!module->hasAttr("obelisk_sim.has_dpi_exports"))
+  if (!module->hasAttr("simulation.has_dpi_exports"))
     return success();
   SmallVector<sim::SimFuncOp> exports;
   module.walk([&](sim::SimFuncOp function) {
@@ -252,7 +252,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     }
     attrs.set(kExportBridgeAttr, UnitAttr::get(module.getContext()));
     if (task)
-      attrs.set("obelisk_sim.dpi_task", UnitAttr::get(module.getContext()));
+      attrs.set("simulation.dpi_task", UnitAttr::get(module.getContext()));
     attrs.set(kExportBodySymbolAttr,
               StringAttr::get(module.getContext(), function.getSymName()));
     attrs.set("code_unit_id",
@@ -310,7 +310,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     // marker on both functions would create duplicate scope registrations;
     // the ordinary body remains reachable through this bridge and internal
     // SystemVerilog calls.
-    function->setAttr("obelisk_sim.dpi_export_body",
+    function->setAttr("simulation.dpi_export_body",
                       UnitAttr::get(module.getContext()));
     for (StringLiteral name : kExportMetadata)
       function->removeAttr(name);

@@ -3,7 +3,7 @@
 // RUN: %if z3 %{ FileCheck %s --check-prefix=COMPOSE-FALLBACK < %t %}
 // RUN: %if !z3 %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=DEFINITION-FALLBACK %}
 
-// DEFINITION-LABEL: obelisk_sim.func private @unit_1
+// DEFINITION-LABEL: simulation.func private @unit_1
 // DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // DEFINITION: ^bb{{[0-9]+}}(%{{.*}}: i64, %{{.*}}: i64, %{{.*}}: i64):
 // Definition expressions use total fixed-width arithmetic in the generated
@@ -27,34 +27,34 @@
 // DEFINITION-DAG: arith.shli {{.*}}, %{{c2_i64.*}} : i64
 // DEFINITION-DAG: arith.ori
 // DEFINITION-DAG: arith.muli {{.*}}, %{{c5_i64.*}} : i64
-// DEFINITION: obelisk_sim.random.solve {{.*}} mutable
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: obelisk_sim.managed.store
+// DEFINITION: simulation.random.solve {{.*}} mutable
+// DEFINITION: simulation.managed.store
+// DEFINITION: simulation.managed.store
+// DEFINITION: simulation.managed.store
 // The generated retry path retains both solver attempts after materializing
 // the definition proposal.
-// DEFINITION-COUNT-2: obelisk_sim.random.solve {{.*}} mutable
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: obelisk_sim.managed.store
-// DEFINITION: obelisk_sim.managed.store
+// DEFINITION-COUNT-2: simulation.random.solve {{.*}} mutable
+// DEFINITION: simulation.managed.store
+// DEFINITION: simulation.managed.store
+// DEFINITION: simulation.managed.store
+// DEFINITION: simulation.managed.store
 
 // A definition target whose inferred domain is narrower than its bit width must
 // retain the checker and runtime fallback: overwriting the sampled domain with
 // the definition alone does not prove that their conjunction holds.
-// COMPOSE-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// COMPOSE-FALLBACK-LABEL: simulation.func private @unit_1
 // COMPOSE-FALLBACK: arith.xori
 // COMPOSE-FALLBACK: arith.cmpi ne
 // COMPOSE-FALLBACK: arith.cmpi ne
 // COMPOSE-FALLBACK: arith.andi
 // COMPOSE-FALLBACK: arith.extui
 // COMPOSE-FALLBACK: arith.cmpi eq
-// COMPOSE-FALLBACK: obelisk_sim.random.solve
+// COMPOSE-FALLBACK: simulation.random.solve
 
-// DEFINITION-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// DEFINITION-FALLBACK-LABEL: simulation.func private @unit_1
 // DEFINITION-FALLBACK: arith.addi
 // DEFINITION-FALLBACK: arith.cmpi eq
-// DEFINITION-FALLBACK: obelisk_sim.random.solve
+// DEFINITION-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

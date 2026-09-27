@@ -63,23 +63,23 @@ module {
 
 // One shared event-list monitor owns the mixed clocking event and publishes a
 // single event descriptor to every clocking consumer.
-// CHECK: %[[EVENT:.*]] = obelisk_sim.context.event %{{.*}}[0]
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: [[MON_EVENT:%arg[0-9]+]]: !obelisk_sim.event
-// CHECK-SAME: obelisk_sim.clocking_event_monitor_path = "top.cb"
-// CHECK: obelisk_sim.suspend.any %{{.*}}, %{{.*}} edges [1, 2]
-// CHECK: obelisk_sim.event.trigger [[MON_EVENT]] nonblocking = false
+// CHECK: %[[EVENT:.*]] = simulation.context.event %{{.*}}[0]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: [[MON_EVENT:%arg[0-9]+]]: !simulation.event
+// CHECK-SAME: simulation.clocking_event_monitor_path = "top.cb"
+// CHECK: simulation.suspend.any %{{.*}}, %{{.*}} edges [1, 2]
+// CHECK: simulation.event.trigger [[MON_EVENT]] nonblocking = false
 
 // Inputs sample the published occurrence in Observed. Procedural @(cb) and ##
 // consume the same event in Reactive.
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}$clocking_input.{{.*}}(
-// CHECK: obelisk_sim.suspend.event %{{[^ ]+}} {{.*}}resume_region = 8 : i32
+// CHECK-LABEL: simulation.func private @{{.*}}$clocking_input.{{.*}}(
+// CHECK: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 8 : i32
 
 // The drive follows a clocking-event continuation, so zero skew uses the
 // current occurrence and enqueues directly in NBA instead of waiting again.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$clocking_output.36(
-// CHECK-NOT: obelisk_sim.suspend
-// CHECK: obelisk_sim.nba.enqueue
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-COUNT-2: obelisk_sim.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
+// CHECK-LABEL: simulation.func private @unit_1.$clocking_output.36(
+// CHECK-NOT: simulation.suspend
+// CHECK: simulation.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-COUNT-2: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

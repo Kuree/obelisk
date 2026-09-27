@@ -147,45 +147,45 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // The weak assertion consequent owns four pair words plus matched history.
 // Pending source ages 2 and 1 each produce one coalesced weak EOS pass.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_branch.
-// CHECK-SAME: %arg5: !obelisk_sim.ref<i64>
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_branch.
+// CHECK-SAME: %arg5: !simulation.ref<i64>
 // CHECK-SAME: ) attributes
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-COUNT-5: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 2 : i64
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}obelisk_sim.branching_antecedent_eos_source_age = 1 : i64
-// CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_branch_report.
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-COUNT-5: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}simulation.branching_antecedent_eos_source_age = 2 : i64
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_branch_report.{{.*}}.pass{{.*}}simulation.branching_antecedent_eos_source_age = 1 : i64
+// CHECK-NOT: simulation.spawn @unit_0.$concurrent_eos_branch_report.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_monitor
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs = 4 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs_before_minimization = 4 : i64
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "z3"
-// CHECK-COUNT-5: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos_branch.
-// CHECK-COUNT-4: obelisk_sim.branching_antecedent_consequent_trigger
-// CHECK-NOT: obelisk_sim.branching_antecedent_consequent_trigger
-// CHECK: obelisk_sim.branching_antecedent_universal_failure
-// CHECK: obelisk_sim.branching_antecedent_universal_success
-// CHECK-COUNT-4: obelisk_sim.branching_consequent_alternative_cancel
-// CHECK-NOT: obelisk_sim.branching_consequent_alternative_cancel
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 3 : i64
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_monitor
+// CHECK-SAME: simulation.combined_bounded_branching_pairs = 4 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_pairs_before_minimization = 4 : i64
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
+// CHECK-COUNT-5: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos_branch.
+// CHECK-COUNT-4: simulation.branching_antecedent_consequent_trigger
+// CHECK-NOT: simulation.branching_antecedent_consequent_trigger
+// CHECK: simulation.branching_antecedent_universal_failure
+// CHECK: simulation.branching_antecedent_universal_success
+// CHECK-COUNT-4: simulation.branching_consequent_alternative_cancel
+// CHECK-NOT: simulation.branching_consequent_alternative_cancel
 
 // Followed-by uses the same four pair words in SSA-carried form and retains
 // existential completion across the two antecedent match channels.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 4 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_monitor
-// CHECK-SAME: obelisk_sim.combined_bounded_branching_pairs = 4 : i64
-// CHECK-SAME: obelisk_sim.followed_by_monitor
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 4 : i64
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.combined_bounded_branching_monitor
+// CHECK-SAME: simulation.combined_bounded_branching_pairs = 4 : i64
+// CHECK-SAME: simulation.followed_by_monitor
 // CHECK: cf.br ^bb{{[0-9]+}}({{%.*}}, {{%.*}}, {{%.*}}, {{%.*}}, {{%.*}} : i64, i64, i64, i64, i64)
-// CHECK: obelisk_sim.branching_antecedent_existential_success
-// CHECK: obelisk_sim.branching_antecedent_existential_failure
-// CHECK-COUNT-4: obelisk_sim.branching_consequent_alternative_cancel
-// CHECK-NOT: obelisk_sim.branching_consequent_alternative_cancel
+// CHECK: simulation.branching_antecedent_existential_success
+// CHECK: simulation.branching_antecedent_existential_failure
+// CHECK-COUNT-4: simulation.branching_consequent_alternative_cancel
+// CHECK-NOT: simulation.branching_consequent_alternative_cancel

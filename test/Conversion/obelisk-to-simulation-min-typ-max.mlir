@@ -35,6 +35,6 @@ module {
 // CHECK-NOT: arith.constant 4 : i64
 // CHECK: %[[SELECTED:.*]] = arith.constant 5 : i64
 // CHECK-NOT: arith.constant 6 : i64
-// CHECK: %[[DELAY:.*]] = obelisk_sim.time.scale %[[SELECTED]] by 1 signed = false : i64
-// CHECK: obelisk_sim.suspend.delay %[[DELAY]]
+// CHECK: %[[DELAY:.*]] = simulation.time.scale %[[SELECTED]] by 1 signed = false : i64
+// CHECK: simulation.suspend.delay %[[DELAY]]
 // CHECK-NOT: obelisk.sv.

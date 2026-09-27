@@ -114,14 +114,15 @@ ClassBitstreamAnalysis::compute(sim::SimDesignOp design,
     schema->fields = std::move(*fields);
     for (const ManagedClassLayoutAnalysis::Field *field : schema->fields) {
       sim::SimClassFieldDeclOp fieldDeclaration = field->declaration;
-      auto visibility = fieldDeclaration->getAttrOfType<IntegerAttr>(
-          sim::metadata::classBitstreamVisibility);
-      if (!visibility || visibility.getValue().isNegative() ||
-          visibility.getValue().getZExtValue() > 2) {
+      auto visibility =
+          fieldDeclaration->getAttrOfType<sim::MemberVisibilityAttr>(
+              sim::metadata::classBitstreamVisibility);
+      if (!visibility) {
         schema->invalidField = fieldDeclaration;
         break;
       }
-      schema->hasHiddenField |= visibility.getValue().getZExtValue() != 0;
+      schema->hasHiddenField |=
+          visibility.getValue() != sim::MemberVisibility::Public;
       Type fieldType = fieldDeclaration.getType();
       auto cached = nestedTypeCache.find(fieldType);
       if (cached == nestedTypeCache.end()) {

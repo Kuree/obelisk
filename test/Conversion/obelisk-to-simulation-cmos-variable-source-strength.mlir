@@ -37,26 +37,26 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.driver.decl [[LOW:[0-9]+]] in {{[0-9]+}} drives [[NET:[0-9]+]] : !obelisk_sim.logic<1> design
-// CHECK-SAME: obelisk_sim.strength_bank = 0 : i32
-// CHECK-SAME: obelisk_sim.strength_group = [[GROUP:[0-9]+]] : i64
+// CHECK: simulation.driver.decl [[LOW:[0-9]+]] in {{[0-9]+}} drives [[NET:[0-9]+]] : !simulation.logic<1> design
+// CHECK-SAME: simulation.strength_bank = 0 : i32
+// CHECK-SAME: simulation.strength_group = [[GROUP:[0-9]+]] : i64
 // CHECK-SAME: strength1 = 0 : i32
-// CHECK: obelisk_sim.driver.decl [[HIGH:[0-9]+]] in {{[0-9]+}} drives [[NET]] : !obelisk_sim.logic<1> design
-// CHECK-SAME: obelisk_sim.strength_bank = 1 : i32
-// CHECK-SAME: obelisk_sim.strength_group = [[GROUP]] : i64
+// CHECK: simulation.driver.decl [[HIGH:[0-9]+]] in {{[0-9]+}} drives [[NET]] : !simulation.logic<1> design
+// CHECK-SAME: simulation.strength_bank = 1 : i32
+// CHECK-SAME: simulation.strength_group = [[GROUP]] : i64
 // CHECK-SAME: strength0 = 0 : i32
-// CHECK-NOT: obelisk_sim.net.pass.decl
-// CHECK: %[[DATA:.*]] = obelisk_sim.ref.load
-// CHECK: %[[CONTROL_NOT:.*]] = obelisk_sim.logic.unary bit_not
-// CHECK: %[[ENABLED:.*]] = obelisk_sim.logic.binary or
-// CHECK: %[[DATA_NOT:.*]] = obelisk_sim.logic.unary bit_not %[[DATA]]
-// CHECK: %[[LOW_ENABLE:.*]] = obelisk_sim.logic.binary and %[[DATA_NOT]], %[[ENABLED]]
-// CHECK: %[[HIGH_ENABLE:.*]] = obelisk_sim.logic.binary and %[[DATA]], %[[ENABLED]]
-// CHECK: %[[LOW_RANGE:.*]] = obelisk_sim.logic.mux %[[LOW_ENABLE]]
-// CHECK: %[[HIGH_RANGE:.*]] = obelisk_sim.logic.mux %[[HIGH_ENABLE]]
-// CHECK: %[[DATA_IS_Z:.*]] = obelisk_sim.logic.compare case_eq
+// CHECK-NOT: simulation.net.pass.decl
+// CHECK: %[[DATA:.*]] = simulation.ref.load
+// CHECK: %[[CONTROL_NOT:.*]] = simulation.logic.unary bit_not
+// CHECK: %[[ENABLED:.*]] = simulation.logic.binary or
+// CHECK: %[[DATA_NOT:.*]] = simulation.logic.unary bit_not %[[DATA]]
+// CHECK: %[[LOW_ENABLE:.*]] = simulation.logic.binary and %[[DATA_NOT]], %[[ENABLED]]
+// CHECK: %[[HIGH_ENABLE:.*]] = simulation.logic.binary and %[[DATA]], %[[ENABLED]]
+// CHECK: %[[LOW_RANGE:.*]] = simulation.logic.mux %[[LOW_ENABLE]]
+// CHECK: %[[HIGH_RANGE:.*]] = simulation.logic.mux %[[HIGH_ENABLE]]
+// CHECK: %[[DATA_IS_Z:.*]] = simulation.logic.compare case_eq
 // CHECK: %[[LOW:.*]] = arith.select %[[DATA_IS_Z]], %{{.*}}, %[[LOW_RANGE]]
 // CHECK: %[[HIGH:.*]] = arith.select %[[DATA_IS_Z]], %{{.*}}, %[[HIGH_RANGE]]
-// CHECK: obelisk_sim.driver.drive {{.*}} = %[[LOW]]
+// CHECK: simulation.driver.drive {{.*}} = %[[LOW]]
 // CHECK-SAME: schedule.defer_net_resolution
-// CHECK: obelisk_sim.driver.drive {{.*}} = %[[HIGH]]
+// CHECK: simulation.driver.drive {{.*}} = %[[HIGH]]

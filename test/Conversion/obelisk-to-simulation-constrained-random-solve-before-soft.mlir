@@ -3,8 +3,8 @@
 // Dynamic constraint modes retain an ordered residual fallback. When Z3 can
 // resolve the soft priorities, the all-enabled path may additionally use its
 // exact structural plan.
-// SOLVE-BEFORE-SOFT-LABEL: obelisk_sim.func private @unit_1
-// SOLVE-BEFORE-SOFT: obelisk_sim.random.solve
+// SOLVE-BEFORE-SOFT-LABEL: simulation.func private @unit_1
+// SOLVE-BEFORE-SOFT: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

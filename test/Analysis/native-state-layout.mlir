@@ -1,25 +1,25 @@
 // RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
 
-!candidate = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = i64, ordinal = 1, packedOffset = 0>
+!candidate = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "bits", type = i64, ordinal = 1, packedOffset = 0>
 ], isTagged = false>
 
 module {
-  obelisk_sim.design @native_state_layout {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i1 design
-    obelisk_sim.storage.decl 1 in 0 : i8 design
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.driver.decl 0 in 0 drives 0 :
-        !obelisk_sim.logic<4> design {
+  simulation.design @native_state_layout {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i1 design
+    simulation.storage.decl 1 in 0 : i8 design
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
+    simulation.driver.decl 0 in 0 drives 0 :
+        !simulation.logic<4> design {
       driven_low = 1 : i64,
       driven_width = 2 : i64
     }
-    obelisk_sim.class.decl @Node id 1 {
+    simulation.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.storage.decl 2 in 0 : !candidate design
+    simulation.storage.decl 2 in 0 : !candidate design
   }
 }
 

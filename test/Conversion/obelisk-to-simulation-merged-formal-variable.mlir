@@ -50,7 +50,7 @@ module {
 // The formal has one storage descriptor and the function body reaches it
 // through its argument, not through a second capture of the same path.
 
-// CHECK: obelisk_sim.storage.decl [[VALUE:[0-9]+]] in {{[0-9]+}} : !obelisk_sim.logic<32> static hierarchy "dual_decl.clog2.value"
+// CHECK: simulation.storage.decl [[VALUE:[0-9]+]] in {{[0-9]+}} : !simulation.logic<32> static hierarchy "dual_decl.clog2.value"
 // CHECK-NOT: hierarchy "dual_decl.clog2.value"
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-NOT: obelisk_sim.descriptor_id = [[VALUE]]
+// CHECK: simulation.func private @unit_0(
+// CHECK-NOT: simulation.descriptor_id = [[VALUE]]

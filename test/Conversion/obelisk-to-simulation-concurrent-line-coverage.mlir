@@ -54,8 +54,8 @@ module attributes {
             has_fail_action = false, has_pass_action = false,
             node_id = 8 : i64,
             obelisk.coverage.line_point_index = 0 : i64,
-            obelisk_sim.assertion_control_target_id = 17 : i64,
-            obelisk_sim.assertion_controlled
+            simulation.assertion_control_target_id = 17 : i64,
+            simulation.assertion_controlled
           } {
             obelisk.sv.assertion.clocking attributes {node_id = 9 : i64} {
               obelisk.sv.timing.signal_event attributes {
@@ -87,7 +87,7 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[ENABLED:.*]] = obelisk_sim.assert.enabled %arg0 assertion 17 {obelisk_sim.concurrent_attempt_enable}
-// CHECK-NEXT: obelisk_sim.coverage.point_hit %arg0 if %[[ENABLED]][0]
-// CHECK-NOT: obelisk_sim.assert.enabled
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[ENABLED:.*]] = simulation.assert.enabled %arg0 assertion 17 {simulation.concurrent_attempt_enable}
+// CHECK-NEXT: simulation.coverage.point_hit %arg0 if %[[ENABLED]][0]
+// CHECK-NOT: simulation.assert.enabled

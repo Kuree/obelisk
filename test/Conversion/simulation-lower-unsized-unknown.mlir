@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // Declared-unsized X/Z numeric literals fill their most-significant unknown
 // bit through a wider expression context. An explicitly sized literal with the
@@ -8,22 +8,22 @@
 !logic68 = !obelisk.integral<68, false, true, 67 : 0, logic>
 
 module {
-  obelisk_sim.design @unsized_unknown {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.process"
+  simulation.design @unsized_unknown {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.process"
 
-    // CHECK-LABEL: obelisk_sim.func @process
-    // CHECK: %[[UNSIZED:.*]] = obelisk_sim.logic.constant 0 : i32, -1 : i32
-    // CHECK: obelisk_sim.logic.resize %[[UNSIZED]] signed = true : !obelisk_sim.logic<32> -> !obelisk_sim.logic<68>
-    // CHECK: %[[UNSIZED_Z:.*]] = obelisk_sim.logic.constant -1 : i32, -1 : i32
-    // CHECK: obelisk_sim.logic.resize %[[UNSIZED_Z]] signed = true : !obelisk_sim.logic<32> -> !obelisk_sim.logic<68>
-    // CHECK: %[[SIZED:.*]] = obelisk_sim.logic.constant 0 : i32, -1 : i32
-    // CHECK: obelisk_sim.logic.resize %[[SIZED]] signed = false : !obelisk_sim.logic<32> -> !obelisk_sim.logic<68>
-    // CHECK: %[[KNOWN:.*]] = obelisk_sim.logic.constant -2147483648 : i32, 0 : i32
-    // CHECK: obelisk_sim.logic.resize %[[KNOWN]] signed = false : !obelisk_sim.logic<32> -> !obelisk_sim.logic<68>
-    // CHECK: obelisk_sim.return
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    // CHECK-LABEL: simulation.func @process
+    // CHECK: %[[UNSIZED:.*]] = simulation.logic.constant 0 : i32, -1 : i32
+    // CHECK: simulation.logic.resize %[[UNSIZED]] signed = true : !simulation.logic<32> -> !simulation.logic<68>
+    // CHECK: %[[UNSIZED_Z:.*]] = simulation.logic.constant -1 : i32, -1 : i32
+    // CHECK: simulation.logic.resize %[[UNSIZED_Z]] signed = true : !simulation.logic<32> -> !simulation.logic<68>
+    // CHECK: %[[SIZED:.*]] = simulation.logic.constant 0 : i32, -1 : i32
+    // CHECK: simulation.logic.resize %[[SIZED]] signed = false : !simulation.logic<32> -> !simulation.logic<68>
+    // CHECK: %[[KNOWN:.*]] = simulation.logic.constant -2147483648 : i32, 0 : i32
+    // CHECK: simulation.logic.resize %[[KNOWN]] signed = false : !simulation.logic<32> -> !simulation.logic<68>
+    // CHECK: simulation.return
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
         obelisk.sv.expression.conversion attributes {
@@ -65,7 +65,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

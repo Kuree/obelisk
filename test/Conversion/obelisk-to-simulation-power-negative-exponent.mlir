@@ -58,30 +58,30 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[BASE:.*]] = obelisk_sim.packed.flatten
-// CHECK: %[[EXP:.*]] = obelisk_sim.packed.flatten
-// CHECK: %[[SIGN:.*]] = obelisk_sim.logic.extract %[[EXP]] from 7
-// CHECK: %[[MASKED:.*]] = obelisk_sim.logic.mux %[[SIGN]] ? %{{.*}} : %[[EXP]]
-// CHECK: %[[MAGNITUDE:.*]] = obelisk_sim.logic.power %[[BASE]], %[[MASKED]]
-// CHECK: %[[LOW:.*]] = obelisk_sim.logic.extract %[[EXP]] from 0
-// CHECK: %[[MINUS_ONE:.*]] = obelisk_sim.logic.constant -1 : i8, 0 : i8
-// CHECK: %[[ONE:.*]] = obelisk_sim.logic.constant 1 : i8, 0 : i8
-// CHECK: %[[PARITY:.*]] = obelisk_sim.logic.mux %[[LOW]] ? %[[MINUS_ONE]] : %[[ONE]]
-// CHECK: %[[IS_MINUS_ONE:.*]] = obelisk_sim.logic.compare eq %[[BASE]], %{{.*}}
-// CHECK: %[[ZERO:.*]] = obelisk_sim.logic.constant 0 : i8, 0 : i8
-// CHECK: %[[NEG1:.*]] = obelisk_sim.logic.mux %[[IS_MINUS_ONE]] ? %[[PARITY]] : %[[ZERO]]
-// CHECK: %[[IS_ONE:.*]] = obelisk_sim.logic.compare eq %[[BASE]], %{{.*}}
-// CHECK: %[[NEG2:.*]] = obelisk_sim.logic.mux %[[IS_ONE]] ? %{{.*}} : %[[NEG1]]
-// CHECK: %[[IS_ZERO:.*]] = obelisk_sim.logic.compare eq %[[BASE]], %{{.*}}
-// CHECK: %[[UNKNOWN:.*]] = obelisk_sim.logic.constant 0 : i8, -1 : i8
-// CHECK: %[[NEG3:.*]] = obelisk_sim.logic.mux %[[IS_ZERO]] ? %[[UNKNOWN]] : %[[NEG2]]
-// CHECK: obelisk_sim.logic.mux %[[SIGN]] ? %[[NEG3]] : %[[MAGNITUDE]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[BASE:.*]] = simulation.packed.flatten
+// CHECK: %[[EXP:.*]] = simulation.packed.flatten
+// CHECK: %[[SIGN:.*]] = simulation.logic.extract %[[EXP]] from 7
+// CHECK: %[[MASKED:.*]] = simulation.logic.mux %[[SIGN]] ? %{{.*}} : %[[EXP]]
+// CHECK: %[[MAGNITUDE:.*]] = simulation.logic.power %[[BASE]], %[[MASKED]]
+// CHECK: %[[LOW:.*]] = simulation.logic.extract %[[EXP]] from 0
+// CHECK: %[[MINUS_ONE:.*]] = simulation.logic.constant -1 : i8, 0 : i8
+// CHECK: %[[ONE:.*]] = simulation.logic.constant 1 : i8, 0 : i8
+// CHECK: %[[PARITY:.*]] = simulation.logic.mux %[[LOW]] ? %[[MINUS_ONE]] : %[[ONE]]
+// CHECK: %[[IS_MINUS_ONE:.*]] = simulation.logic.compare eq %[[BASE]], %{{.*}}
+// CHECK: %[[ZERO:.*]] = simulation.logic.constant 0 : i8, 0 : i8
+// CHECK: %[[NEG1:.*]] = simulation.logic.mux %[[IS_MINUS_ONE]] ? %[[PARITY]] : %[[ZERO]]
+// CHECK: %[[IS_ONE:.*]] = simulation.logic.compare eq %[[BASE]], %{{.*}}
+// CHECK: %[[NEG2:.*]] = simulation.logic.mux %[[IS_ONE]] ? %{{.*}} : %[[NEG1]]
+// CHECK: %[[IS_ZERO:.*]] = simulation.logic.compare eq %[[BASE]], %{{.*}}
+// CHECK: %[[UNKNOWN:.*]] = simulation.logic.constant 0 : i8, -1 : i8
+// CHECK: %[[NEG3:.*]] = simulation.logic.mux %[[IS_ZERO]] ? %[[UNKNOWN]] : %[[NEG2]]
+// CHECK: simulation.logic.mux %[[SIGN]] ? %[[NEG3]] : %[[MAGNITUDE]]
 
 // An unsigned exponent cannot be negative, so the table's lower half is not
 // selected for at all and only the compact power operation and the
 // x-propagating mux remain.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK-NOT: obelisk_sim.logic.constant -1 : i8, 0 : i8
-// CHECK: obelisk_sim.logic.power
-// CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK-NOT: simulation.logic.constant -1 : i8, 0 : i8
+// CHECK: simulation.logic.power
+// CHECK: simulation.ref.store

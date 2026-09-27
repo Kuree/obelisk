@@ -971,60 +971,60 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[RANDOM:.*]] = obelisk_sim.random.next
-// CHECK: %[[INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[RANDOM:.*]] = simulation.random.next
+// CHECK: %[[INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[RESULT:.*]] = math.ceil %[[INPUT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[RESULT]])
-// CHECK: %[[FLOOR_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[RESULT]])
+// CHECK: %[[FLOOR_INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[FLOOR_RESULT:.*]] = math.floor %[[FLOOR_INPUT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[FLOOR_RESULT]])
-// CHECK: %[[SQRT_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[FLOOR_RESULT]])
+// CHECK: %[[SQRT_INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[SQRT_RESULT:.*]] = math.sqrt %[[SQRT_INPUT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[SQRT_RESULT]])
-// CHECK: %[[EXP_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[SQRT_RESULT]])
+// CHECK: %[[EXP_INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[EXP_RESULT:.*]] = math.exp %[[EXP_INPUT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[EXP_RESULT]])
-// CHECK: %[[LN_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[EXP_RESULT]])
+// CHECK: %[[LN_INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[LN_RESULT:.*]] = math.log %[[LN_INPUT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[LN_RESULT]])
-// CHECK: %[[LOG10_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[LN_RESULT]])
+// CHECK: %[[LOG10_INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[LOG10_RESULT:.*]] = math.log10 %[[LOG10_INPUT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[LOG10_RESULT]])
-// CHECK: %[[POW_BASE:.*]] = obelisk_sim.real.from_integer
-// CHECK: %[[POW_EXPONENT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[LOG10_RESULT]])
+// CHECK: %[[POW_BASE:.*]] = simulation.real.from_integer
+// CHECK: %[[POW_EXPONENT:.*]] = simulation.real.from_integer
 // CHECK: %[[POW_RESULT:.*]] = math.powf %[[POW_BASE]], %[[POW_EXPONENT]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[POW_RESULT]])
-// CHECK: %[[ATAN2_Y:.*]] = obelisk_sim.real.from_integer
-// CHECK: %[[ATAN2_X:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[POW_RESULT]])
+// CHECK: %[[ATAN2_Y:.*]] = simulation.real.from_integer
+// CHECK: %[[ATAN2_X:.*]] = simulation.real.from_integer
 // CHECK: %[[ATAN2_RESULT:.*]] = math.atan2 %[[ATAN2_Y]], %[[ATAN2_X]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[ATAN2_RESULT]])
-// CHECK: %[[HYPOT_X:.*]] = obelisk_sim.real.from_integer
-// CHECK: %[[HYPOT_Y:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[ATAN2_RESULT]])
+// CHECK: %[[HYPOT_X:.*]] = simulation.real.from_integer
+// CHECK: %[[HYPOT_Y:.*]] = simulation.real.from_integer
 // CHECK: %[[HYPOT_X_SQUARED:.*]] = arith.mulf %[[HYPOT_X]], %[[HYPOT_X]] : f64
 // CHECK: %[[HYPOT_Y_SQUARED:.*]] = arith.mulf %[[HYPOT_Y]], %[[HYPOT_Y]] : f64
 // CHECK: %[[HYPOT_SUM:.*]] = arith.addf %[[HYPOT_X_SQUARED]], %[[HYPOT_Y_SQUARED]] : f64
 // CHECK: %[[HYPOT_RESULT:.*]] = math.sqrt %[[HYPOT_SUM]] : f64
-// CHECK: obelisk_sim.display {{.*}}(%[[HYPOT_RESULT]])
+// CHECK: simulation.display {{.*}}(%[[HYPOT_RESULT]])
 // IEEE 1800-2017 20.15.1 defines $random as a signed 32-bit integer.
-// CHECK: %[[ITOR_INPUT:.*]] = obelisk_sim.random.legacy
-// CHECK: %[[ITOR_RESULT:.*]] = obelisk_sim.real.from_integer %[[ITOR_INPUT]] signed = true : i32 -> f64
-// CHECK: obelisk_sim.display {{.*}}(%[[ITOR_RESULT]])
-// CHECK: %[[RTOI_REAL:.*]] = obelisk_sim.real.from_integer
+// CHECK: %[[ITOR_INPUT:.*]] = simulation.random.legacy
+// CHECK: %[[ITOR_RESULT:.*]] = simulation.real.from_integer %[[ITOR_INPUT]] signed = true : i32 -> f64
+// CHECK: simulation.display {{.*}}(%[[ITOR_RESULT]])
+// CHECK: %[[RTOI_REAL:.*]] = simulation.real.from_integer
 // CHECK: %[[RTOI_TRUNCATED:.*]] = math.trunc %[[RTOI_REAL]] : f64
-// CHECK: %[[RTOI_RESULT:.*]] = obelisk_sim.real.to_integer %[[RTOI_TRUNCATED]]
-// CHECK: obelisk_sim.display {{.*}}(%[[RTOI_RESULT]])
+// CHECK: %[[RTOI_RESULT:.*]] = simulation.real.to_integer %[[RTOI_TRUNCATED]]
+// CHECK: simulation.display {{.*}}(%[[RTOI_RESULT]])
 // CHECK: %[[BITSTOREAL_BITS:.*]] = arith.extui
 // CHECK: %[[BITSTOREAL_RESULT:.*]] = arith.bitcast %[[BITSTOREAL_BITS]] : i64 to f64
-// CHECK: obelisk_sim.display {{.*}}(%[[BITSTOREAL_RESULT]])
-// CHECK: %[[REALTOBITS_INPUT:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[BITSTOREAL_RESULT]])
+// CHECK: %[[REALTOBITS_INPUT:.*]] = simulation.real.from_integer
 // CHECK: %[[REALTOBITS_RESULT:.*]] = arith.bitcast %[[REALTOBITS_INPUT]] : f64 to i64
-// CHECK: obelisk_sim.display {{.*}}(%[[REALTOBITS_RESULT]])
+// CHECK: simulation.display {{.*}}(%[[REALTOBITS_RESULT]])
 // CHECK: %[[BITSTOSHORTREAL_BITS:.*]] = arith.trunci
 // CHECK: %[[BITSTOSHORTREAL_RESULT:.*]] = arith.bitcast %[[BITSTOSHORTREAL_BITS]] : i32 to f32
 // CHECK: %[[BITSTOSHORTREAL_WIDE:.*]] = arith.extf %[[BITSTOSHORTREAL_RESULT]] : f32 to f64
-// CHECK: obelisk_sim.display {{.*}}(%[[BITSTOSHORTREAL_WIDE]])
-// CHECK: %[[SHORTREALTOBITS_REAL:.*]] = obelisk_sim.real.from_integer
+// CHECK: simulation.display {{.*}}(%[[BITSTOSHORTREAL_WIDE]])
+// CHECK: %[[SHORTREALTOBITS_REAL:.*]] = simulation.real.from_integer
 // CHECK: %[[SHORTREALTOBITS_INPUT:.*]] = arith.truncf %[[SHORTREALTOBITS_REAL]] : f64 to f32
 // CHECK: %[[SHORTREALTOBITS_RESULT:.*]] = arith.bitcast %[[SHORTREALTOBITS_INPUT]] : f32 to i32
-// CHECK: obelisk_sim.display {{.*}}(%[[SHORTREALTOBITS_RESULT]])
+// CHECK: simulation.display {{.*}}(%[[SHORTREALTOBITS_RESULT]])

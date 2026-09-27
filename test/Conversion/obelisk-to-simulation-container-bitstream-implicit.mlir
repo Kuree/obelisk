@@ -4,9 +4,9 @@
 
 // A same-size element write must wake the implicit process that reads the
 // whole container through a bit-stream cast.
-// LOWER-DAG: obelisk_sim.managed.watch container_size
-// LOWER-DAG: obelisk_sim.container.export_bitstream
-// LOWER: obelisk_sim.suspend.any
+// LOWER-DAG: simulation.managed.watch container_size
+// LOWER-DAG: simulation.container.export_bitstream
+// LOWER: simulation.suspend.any
 
 !byte = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
 !bytes = !obelisk.dynarray<!byte>

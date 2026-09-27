@@ -35,21 +35,21 @@ module {
 
 // The static sampler binds the arbitrary condition locally and updates only
 // at qualified clocking events in Observed.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_input.
-// CHECK-NOT: !obelisk_sim.observer<
-// CHECK-COUNT-2: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.suspend.observe
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_input.
+// CHECK-NOT: !simulation.observer<
+// CHECK-COUNT-2: simulation.observer.bind
+// CHECK: simulation.ref.load
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.assert.clocked_sample_update
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.assert.clocked_sample_read
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.assert.clocked_sample_update
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.assert.clocked_sample_read
 // CHECK-NOT: obelisk.sv.
 
-// ZERO-LABEL: obelisk_sim.func private @unit_0.$clocking_input.
-// ZERO: obelisk_sim.suspend.observe
+// ZERO-LABEL: simulation.func private @unit_0.$clocking_input.
+// ZERO: simulation.suspend.observe
 // ZERO-SAME: resume_region = 8 : i32
-// ZERO: obelisk_sim.ref.load
-// ZERO: obelisk_sim.assert.clocked_sample_update
+// ZERO: simulation.ref.load
+// ZERO: simulation.assert.clocked_sample_update

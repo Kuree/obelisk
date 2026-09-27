@@ -12,6 +12,6 @@ endmodule
 // IEEE 1800-2017 28.12.2 and 30.5.1: the L/H strength banks form one logical
 // path destination, so every transition-delay group must schedule them with
 // one atomic masked operation.
-// SIM-COUNT-12: obelisk_sim.driver.drive_inertial_path_strength_pair
-// SIM-NOT: obelisk_sim.driver.drive_inertial_path {{.*}}
-// SIM-NOT: obelisk_sim.driver.drive_inertial_strength_pair
+// SIM-COUNT-12: simulation.driver.drive_inertial_path_strength_pair
+// SIM-NOT: simulation.driver.drive_inertial_path {{.*}}
+// SIM-NOT: simulation.driver.drive_inertial_strength_pair

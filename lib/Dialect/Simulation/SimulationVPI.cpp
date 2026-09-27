@@ -57,7 +57,7 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
   // Its code unit is only the executable ABI thunk and must not become a
   // second VPI function/task with the same hierarchical name.
   return !codeUnit.getInternalAttr() &&
-         !codeUnit->hasAttr("obelisk_sim.dpi_import") &&
+         !codeUnit->hasAttr("simulation.dpi_import") &&
          isVPIVisibleEntryKind(codeUnit.getCodeUnitKind());
 }
 

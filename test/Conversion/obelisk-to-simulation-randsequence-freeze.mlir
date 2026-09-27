@@ -45,8 +45,8 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-SAME: #obelisk_sim.local_binding<path = "m.leaf.value", type = i32, automatic = true
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-SAME: #simulation.local_binding<path = "m.leaf.value", type = i32, automatic = true
 // CHECK: obelisk.sv.statement.rand_sequence
 // CHECK-NEXT: obelisk.sv.rand_seq.frozen_production attributes {{.*}}formal_arguments = []{{.*}}referenced_path = "m.main"{{.*}}referenced_symbol = @s1.$root::@s3.m::@s4.m::@s5::@s6.main{{.*}}rule_item_counts = array<i64: 1>{{.*}}rule_variables =
 // CHECK: obelisk.sv.rand_seq.item attributes {{.*}}target_path = "m.leaf"

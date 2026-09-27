@@ -142,7 +142,7 @@ module {
 }
 
 // CHECK: timing_check_kind = 8 : i32
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: conditions 1 edges [1, 1, 1] indices [0, -1, -1]
 // CHECK-SAME: slot_final
 // CHECK: arith.cmpi ugt
@@ -152,7 +152,7 @@ module {
 // CHECK: arith.addi
 // CHECK: cf.br ^{{.*}}({{.*}} : i64, i1, i64, i64, i64)
 // CHECK: timing_check_kind = 9 : i32
-// CHECK: obelisk_sim.suspend.clock_set
+// CHECK: simulation.suspend.clock_set
 // CHECK-SAME: conditions 1 edges [1, 1, 1] indices [0, -1, -1]
 // CHECK-SAME: slot_final
 // CHECK: arith.cmpi ugt
@@ -163,23 +163,23 @@ module {
 // spawned helper.  The coordinator directly replaces/cancels the single
 // delayed maturity; the helper wakes only when that maturity becomes current.
 // There is no dynamic spawn, generic timing op, or runtime timing table.
-// CHECK: obelisk_sim.storage.decl 3
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
+// CHECK: simulation.storage.decl 3
+// CHECK-LABEL: simulation.func private @unit_2(
 // CHECK-SAME: timing_check_event_based = false
-// CHECK: obelisk_sim.event.create
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_2.$timing_timer
+// CHECK: simulation.event.create
+// CHECK-COUNT-1: simulation.spawn @unit_2.$timing_timer
 // Deadline addition saturates rather than wrapping to an early expiry.
 // CHECK: arith.cmpi ult
 // CHECK: arith.select
-// CHECK: obelisk_sim.event.trigger {{.*}} after {{.*}} nonblocking = true {replaceable
+// CHECK: simulation.event.trigger {{.*}} after {{.*}} nonblocking = true {replaceable
 // Cancellation uses the same compiler-private event without a delayed stale
 // entry.  No ordinary blocking trigger is introduced.
-// CHECK: obelisk_sim.event.trigger {{.*}} nonblocking = true {replaceable
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$timing_timer
-// CHECK: obelisk_sim.suspend.event
-// CHECK: obelisk_sim.ref.store
-// CHECK-NOT: obelisk_sim.event.trigger
-// CHECK-NOT: obelisk_sim.spawn
+// CHECK: simulation.event.trigger {{.*}} nonblocking = true {replaceable
+// CHECK-LABEL: simulation.func private @unit_2.$timing_timer
+// CHECK: simulation.suspend.event
+// CHECK: simulation.ref.store
+// CHECK-NOT: simulation.event.trigger
+// CHECK-NOT: simulation.spawn
 // CHECK-NOT: timing_check_table
 // CHECK-NOT: timing_check_timer
 // CHECK-NOT: sdf

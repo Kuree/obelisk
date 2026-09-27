@@ -4,7 +4,7 @@
 // against a non-wildcard bit of the right operand. A two-state left operand
 // never can, so `bit [2:0] ==? logic [2:0]` has type `bit` even though the
 // operands meet on the four-state plane. The comparison still belongs on that
-// plane -- obelisk_sim.logic.compare requires a four-state result for the
+// plane -- simulation.logic.compare requires a four-state result for the
 // wildcard kinds -- and is narrowed to the expression type afterwards.
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "m", name = "m", node_id = 0 : i64, sym_name = "s0.m"} {
@@ -40,6 +40,6 @@ module {
   }
 }
 
-// CHECK: %[[WILD:.*]] = obelisk_sim.logic.compare wild_eq %{{.*}}, %{{.*}} : (!obelisk_sim.logic<3>, !obelisk_sim.logic<3>) -> !obelisk_sim.logic<1>
-// CHECK-NEXT: %[[BIT:.*]] = obelisk_sim.logic.to_bits %[[WILD]] : !obelisk_sim.logic<1> -> i1
-// CHECK-NEXT: obelisk_sim.ref.store %[[BIT]]
+// CHECK: %[[WILD:.*]] = simulation.logic.compare wild_eq %{{.*}}, %{{.*}} : (!simulation.logic<3>, !simulation.logic<3>) -> !simulation.logic<1>
+// CHECK-NEXT: %[[BIT:.*]] = simulation.logic.to_bits %[[WILD]] : !simulation.logic<1> -> i1
+// CHECK-NEXT: simulation.ref.store %[[BIT]]

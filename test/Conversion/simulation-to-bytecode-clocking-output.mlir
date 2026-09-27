@@ -8,34 +8,34 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @clocking_output {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 9000000 in 0 root_initializer
+  simulation.design @clocking_output {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 9000000 in 0 root_initializer
         hierarchy "__obelisk_root"
-    obelisk_sim.code_unit.decl 9000001 in 0 initial
+    simulation.code_unit.decl 9000001 in 0 initial
         hierarchy "top.clocking_output"
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
         hierarchy "top.clk"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 9000000 : i64, entry_kind = 0 : i32} {
-      %clock = obelisk_sim.context.storage %ctx[0]
-          : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.clocking_output.track posedge %clock width 1
-          : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.return
+      %clock = simulation.context.storage %ctx[0]
+          : !simulation.ref<!simulation.logic<1>>
+      simulation.clocking_output.track posedge %clock width 1
+          : !simulation.ref<!simulation.logic<1>>
+      simulation.return
     }
 
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 9000001 : i64, entry_kind = 1 : i32} {
-      %clock = obelisk_sim.context.storage %ctx[0]
-          : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %current = obelisk_sim.clocking_output.current posedge %clock width 1
+      %clock = simulation.context.storage %ctx[0]
+          : !simulation.ref<!simulation.logic<1>>
+      %current = simulation.clocking_output.current posedge %clock width 1
           descriptor 0
-          : !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      obelisk_sim.return
+          : !simulation.ref<!simulation.logic<1>>
+      simulation.return
     }
   }
 }

@@ -73,17 +73,17 @@ module {
   }
 }
 
-// CHECK-NOT: obelisk_sim.has_dpi_exports
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.sv_add" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "dpi_imports.update" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
-// CHECK-DAG: obelisk_sim.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
-// CHECK: obelisk_sim.dpi.call "c_add" id {{-?[0-9]+}} scope 1
+// CHECK-NOT: simulation.has_dpi_exports
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.sv_add" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "dpi_imports.update" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK: simulation.dpi.call "c_add" id {{-?[0-9]+}} scope 1
 // CHECK-SAME: context
 // CHECK-SAME: kind = int
 // CHECK-SAME: direction = result
 // CHECK-SAME: is_pure = true
-// CHECK-NEXT: obelisk_sim.status.check
-// CHECK: obelisk_sim.dpi.call "update" id {{-?[0-9]+}} scope 1
+// CHECK-NEXT: simulation.status.check
+// CHECK: simulation.dpi.call "update" id {{-?[0-9]+}} scope 1
 // CHECK-SAME: kind = logic_vector
 // CHECK-SAME: width = 65
 // CHECK-SAME: kind = bit_vector
@@ -91,11 +91,11 @@ module {
 // CHECK-SAME: width = 33
 // CHECK-SAME: is_context = true
 // CHECK-SAME: is_task = true
-// CHECK-NEXT: obelisk_sim.status.check
-// CHECK: obelisk_sim.dpi.call "notify" id {{-?[0-9]+}} scope 1
+// CHECK-NEXT: simulation.status.check
+// CHECK: simulation.dpi.call "notify" id {{-?[0-9]+}} scope 1
 // CHECK-SAME: kind = int
 // CHECK-SAME: direction = input
 // CHECK-NOT: direction = result
-// CHECK-NEXT: obelisk_sim.status.check
+// CHECK-NEXT: simulation.status.check
 // CHECK-NOT: obelisk.sv.
-// CHECK-NOT: obelisk_sim.has_dpi_exports
+// CHECK-NOT: simulation.has_dpi_exports

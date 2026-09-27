@@ -69,23 +69,23 @@ module {
 
 // `{a3, 4, 5, a3, 6}` spreads the three elements of `a3` twice among the four
 // single-element items, filling the nine-element target in item order.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[C4:.*]] = arith.constant 4 : i32
 // CHECK-DAG: %[[C5:.*]] = arith.constant 5 : i32
 // CHECK-DAG: %[[C6:.*]] = arith.constant 6 : i32
-// CHECK: %[[A0:.*]] = obelisk_sim.ref.load
-// CHECK: %[[A1:.*]] = obelisk_sim.ref.load
-// CHECK: %[[A2:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.aggregate.construct %[[A0]], %[[A1]], %[[A2]], %[[C4]], %[[C5]], %[[A0]], %[[A1]], %[[A2]], %[[C6]] :
-// CHECK-SAME: -> !obelisk_sim.unpacked_array<1 : 9 x i32>
+// CHECK: %[[A0:.*]] = simulation.ref.load
+// CHECK: %[[A1:.*]] = simulation.ref.load
+// CHECK: %[[A2:.*]] = simulation.ref.load
+// CHECK: simulation.aggregate.construct %[[A0]], %[[A1]], %[[A2]], %[[C4]], %[[C5]], %[[A0]], %[[A1]], %[[A2]], %[[C6]] :
+// CHECK-SAME: -> !simulation.unpacked_array<1 : 9 x i32>
 
 // A descending item keeps its own left-to-right order, which is the order the
 // aggregate already indexes, so no reversal is introduced.
-// CHECK: %[[S0:.*]] = obelisk_sim.ref.load %arg3
-// CHECK: obelisk_sim.ref.subelement %arg4{{\[\[}}0]]
-// CHECK: %[[D0:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.subelement %arg4{{\[\[}}1]]
-// CHECK: %[[D1:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.subelement %arg4{{\[\[}}2]]
-// CHECK: %[[D2:.*]] = obelisk_sim.ref.load
-// CHECK: obelisk_sim.aggregate.construct %[[S0]], %[[D0]], %[[D1]], %[[D2]] :
+// CHECK: %[[S0:.*]] = simulation.ref.load %arg3
+// CHECK: simulation.ref.subelement %arg4{{\[\[}}0]]
+// CHECK: %[[D0:.*]] = simulation.ref.load
+// CHECK: simulation.ref.subelement %arg4{{\[\[}}1]]
+// CHECK: %[[D1:.*]] = simulation.ref.load
+// CHECK: simulation.ref.subelement %arg4{{\[\[}}2]]
+// CHECK: %[[D2:.*]] = simulation.ref.load
+// CHECK: simulation.aggregate.construct %[[S0]], %[[D0]], %[[D1]], %[[D2]] :

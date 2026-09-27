@@ -76,9 +76,9 @@ module top;
   end
 endmodule
 
-// SIM-COUNT-5: obelisk_sim.logic.replicate
-// SIM: obelisk_sim.logic.dyn_extract
-// SIM: obelisk_sim.string.repeat
-// SIM: obelisk_sim.aggregate.construct
+// SIM-COUNT-5: simulation.logic.replicate
+// SIM: simulation.logic.dyn_extract
+// SIM: simulation.string.repeat
+// SIM: simulation.aggregate.construct
 // CHECK-NOT: ERROR
 // CHECK: select concat replication matrix passed

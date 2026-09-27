@@ -42,10 +42,10 @@ module {
 }
 
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
-// CHECK: %[[LEVELS32:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<i32> -> i32
+// CHECK: %[[LEVELS32:.*]] = simulation.ref.load {{.*}} : !simulation.ref<i32> -> i32
 // CHECK: %[[LEVELS:.*]] = arith.extsi %[[LEVELS32]] : i32 to i64
 // CHECK: %[[ALL:.*]] = arith.cmpi eq, %[[LEVELS]], %[[ZERO]] : i64
 // CHECK: %[[INCLUDED:.*]] = arith.cmpi ugt, %[[LEVELS]], %[[ZERO]] : i64
 // CHECK: %[[SELECTED:.*]] = arith.ori %[[ALL]], %[[INCLUDED]] : i1
 // CHECK: cf.cond_br %[[SELECTED]]
-// CHECK: obelisk_sim.assert.control {{.*}} action 4 assertion
+// CHECK: simulation.assert.control {{.*}} action <off> assertion

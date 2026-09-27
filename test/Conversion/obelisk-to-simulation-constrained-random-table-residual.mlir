@@ -2,9 +2,9 @@
 
 // A 31-value solution set exceeds the bounded compile-time table cap. It stays
 // on the checker/runtime path and guards the structural reverse implication.
-// TABLE-RESIDUAL-LABEL: obelisk_sim.func private @unit_1
+// TABLE-RESIDUAL-LABEL: simulation.func private @unit_1
 // TABLE-RESIDUAL: arith.cmpi ne
-// TABLE-RESIDUAL: obelisk_sim.random.solve
+// TABLE-RESIDUAL: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

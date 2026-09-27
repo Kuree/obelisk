@@ -1,17 +1,17 @@
 // RUN: obelisk-opt %s -canonicalize | FileCheck %s
 
 module {
-  func.func @ambiguous_matching_z() -> !obelisk_sim.logic<1> {
-    %x = obelisk_sim.logic.constant 0 : i1, 1 : i1 : !obelisk_sim.logic<1>
-    %z = obelisk_sim.logic.constant 1 : i1, 1 : i1 : !obelisk_sim.logic<1>
-    %result = obelisk_sim.logic.mux %x ? %z : %z :
-        (!obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-         !obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-    return %result : !obelisk_sim.logic<1>
+  func.func @ambiguous_matching_z() -> !simulation.logic<1> {
+    %x = simulation.logic.constant 0 : i1, 1 : i1 : !simulation.logic<1>
+    %z = simulation.logic.constant 1 : i1, 1 : i1 : !simulation.logic<1>
+    %result = simulation.logic.mux %x ? %z : %z :
+        (!simulation.logic<1>, !simulation.logic<1>,
+         !simulation.logic<1>) -> !simulation.logic<1>
+    return %result : !simulation.logic<1>
   }
 }
 
 // CHECK-LABEL: func.func @ambiguous_matching_z
-// CHECK: %[[X:.*]] = obelisk_sim.logic.constant false, true
-// CHECK-NOT: obelisk_sim.logic.mux
+// CHECK: %[[X:.*]] = simulation.logic.constant false, true
+// CHECK-NOT: simulation.logic.mux
 // CHECK: return %[[X]]

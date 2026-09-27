@@ -2,10 +2,10 @@
 // RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-schedule-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
-// CHECK: error: 'obelisk_sim.func' op compute-graph fragment block is out of range
+// CHECK: error: 'simulation.func' op compute-graph fragment block is out of range
 
 module {
-  obelisk_sim.design @schedule_invalid attributes {
+  simulation.design @schedule_invalid attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -24,12 +24,12 @@ module {
         #schedule.region<kind = postponed, groups = []>
       ]>
   } {
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.scope.decl 0
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

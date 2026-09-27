@@ -41,10 +41,10 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
-// CHECK: obelisk_sim.time.constant 2000{{$|[^0-9]}}
-// CHECK: obelisk_sim.suspend.delay
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_input_delay.{{[0-9]+}}.commit
+// CHECK: simulation.time.constant 2000{{$|[^0-9]}}
+// CHECK: simulation.suspend.delay
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.21
-// CHECK: obelisk_sim.time.constant 2000{{$|[^0-9]}}
-// CHECK: obelisk_sim.nba.enqueue {{.*}} after
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.21
+// CHECK: simulation.time.constant 2000{{$|[^0-9]}}
+// CHECK: simulation.nba.enqueue {{.*}} after

@@ -45,9 +45,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // qualification suppresses the clock tick and therefore starts no attempt.
 // Predicate sampling still occurs only after the qualified edge resumes in
 // Observed.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: home_region = 8 : i32
-// CHECK: obelisk_sim.suspend.edge_iff posedge
+// CHECK: simulation.suspend.edge_iff posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK: simulation.assert.sampled_read
 // CHECK: cf.cond_br

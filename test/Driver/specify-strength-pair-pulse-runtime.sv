@@ -75,7 +75,7 @@ module specify_strength_pair_pulse_runtime;
 endmodule
 
 // CHECK: PASSED
-// SIM: obelisk_sim.driver.drive_inertial_path_strength_pair
+// SIM: simulation.driver.drive_inertial_path_strength_pair
 // SIM-SAME: group 0 of 1 pulse_transitions
 // SIM: pulse_error = 4000 : i64
 // SIM: pulse_on_detect = true

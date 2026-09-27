@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
@@ -19,42 +19,42 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @deferred_repeated_site {
-    obelisk_sim.scope.decl 0 hierarchy "deferred_repeated_site"
-    obelisk_sim.code_unit.decl 9981000 in 0 root_initializer
+  simulation.design @deferred_repeated_site {
+    simulation.scope.decl 0 hierarchy "deferred_repeated_site"
+    simulation.code_unit.decl 9981000 in 0 root_initializer
         hierarchy "deferred_repeated_site.root"
-    obelisk_sim.code_unit.decl 9981001 in 0 initial
+    simulation.code_unit.decl 9981001 in 0 initial
         hierarchy "deferred_repeated_site.initial"
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9981000 : i64} {
-      %process = obelisk_sim.spawn @initial(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @initial(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @initial(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @initial(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9981001 : i64} {
-      %first_ticket = obelisk_sim.assert.deferred_enqueue 41
-      %second_ticket = obelisk_sim.assert.deferred_enqueue 41
-      %first = obelisk_sim.assert.deferred_mature %first_ticket : i64
-      %second = obelisk_sim.assert.deferred_mature %second_ticket : i64
+      %first_ticket = simulation.assert.deferred_enqueue 41
+      %second_ticket = simulation.assert.deferred_enqueue 41
+      %first = simulation.assert.deferred_mature %first_ticket : i64
+      %second = simulation.assert.deferred_mature %second_ticket : i64
       %both = arith.andi %first, %second : i1
       cf.cond_br %both, ^passed, ^failed
     ^passed:
-      %passed_message = obelisk_sim.bytes.constant "PASSED"
+      %passed_message = simulation.bytes.constant "PASSED"
       %passed_stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %passed_stdout(%passed_message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %passed_stdout(%passed_message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     ^failed:
-      %failed_message = obelisk_sim.bytes.constant "FAILED"
+      %failed_message = simulation.bytes.constant "FAILED"
       %failed_stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %failed_stdout(%failed_message)
-          newline = true radix = 10 flags = [0] : !obelisk_sim.bytes
-      obelisk_sim.return
+      simulation.display %ctx to %failed_stdout(%failed_message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     }
   }
 }

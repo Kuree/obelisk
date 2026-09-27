@@ -636,7 +636,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, concreteType.getClassName());
       while (declaration &&
-             !declaration->hasAttr("obelisk_sim.random_mode_field")) {
+             !declaration->hasAttr("simulation.random_mode_field")) {
         if (!declaration.getBaseAttr())
           break;
         declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -644,7 +644,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       auto modeField = declaration
                            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                 "obelisk_sim.random_mode_field")
+                                 "simulation.random_mode_field")
                            : FlatSymbolRefAttr{};
       if (!modeField) {
         emitError(location)
@@ -757,7 +757,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
                   .getClassName());
       while (nestedDeclaration &&
-             !nestedDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+             !nestedDeclaration->hasAttr("simulation.random_mode_field")) {
         if (!nestedDeclaration.getBaseAttr())
           break;
         nestedDeclaration =
@@ -767,7 +767,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       nestedModeField =
           nestedDeclaration
               ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "obelisk_sim.random_mode_field")
+                    "simulation.random_mode_field")
               : FlatSymbolRefAttr{};
       if (!nestedModeField) {
         emitError(location) << "nested rand object has no rand_mode field";
@@ -1092,7 +1092,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
                   .getClassName());
       while (nestedDeclaration &&
-             !nestedDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+             !nestedDeclaration->hasAttr("simulation.random_mode_field")) {
         if (!nestedDeclaration.getBaseAttr())
           break;
         nestedDeclaration =
@@ -1102,7 +1102,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       nestedModeField =
           nestedDeclaration
               ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "obelisk_sim.random_mode_field")
+                    "simulation.random_mode_field")
               : FlatSymbolRefAttr{};
       if (!nestedModeField) {
         emitError(location) << "nested rand object has no rand_mode field";
@@ -1192,7 +1192,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, objectType.getClassName());
     while (declaration &&
-           !declaration->hasAttr("obelisk_sim.random_state_field")) {
+           !declaration->hasAttr("simulation.random_state_field")) {
       if (!declaration.getBaseAttr())
         break;
       declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1200,19 +1200,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     auto stateField = declaration
                           ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                "obelisk_sim.random_state_field")
+                                "simulation.random_state_field")
                           : FlatSymbolRefAttr{};
     auto incrementField = declaration
                               ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                    "obelisk_sim.random_increment_field")
+                                    "simulation.random_increment_field")
                               : FlatSymbolRefAttr{};
     auto modeField = declaration
                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                               "obelisk_sim.random_mode_field")
+                               "simulation.random_mode_field")
                          : FlatSymbolRefAttr{};
     auto constraintModeField =
         declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                          "obelisk_sim.constraint_mode_field")
+                          "simulation.constraint_mode_field")
                     : FlatSymbolRefAttr{};
     if (!declaration || !stateField || !incrementField || !modeField ||
         !constraintModeField) {
@@ -1301,7 +1301,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, rootConcreteType.getClassName());
     while (rootDeclaration &&
-           !rootDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+           !rootDeclaration->hasAttr("simulation.random_mode_field")) {
       if (!rootDeclaration.getBaseAttr())
         break;
       rootDeclaration =
@@ -1310,7 +1310,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     auto rootModeField =
         rootDeclaration ? rootDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                              "obelisk_sim.random_mode_field")
+                              "simulation.random_mode_field")
                         : FlatSymbolRefAttr{};
     if (!rootModeField) {
       emitError(location)
@@ -1541,7 +1541,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
                 function, currentType.getClassName());
         while (currentDeclaration &&
-               !currentDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+               !currentDeclaration->hasAttr("simulation.random_mode_field")) {
           if (!currentDeclaration.getBaseAttr())
             break;
           currentDeclaration =
@@ -1551,7 +1551,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         auto currentModeField =
             currentDeclaration
                 ? currentDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                      "obelisk_sim.random_mode_field")
+                      "simulation.random_mode_field")
                 : FlatSymbolRefAttr{};
         if (!currentModeField) {
           emitError(location) << "nested hook path has no rand_mode field";
@@ -1715,7 +1715,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, concreteType.getClassName());
       while (currentDeclaration &&
-             !currentDeclaration->hasAttr("obelisk_sim.random_mode_field")) {
+             !currentDeclaration->hasAttr("simulation.random_mode_field")) {
         if (!currentDeclaration.getBaseAttr())
           break;
         currentDeclaration =
@@ -1725,7 +1725,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       auto currentModeField =
           currentDeclaration
               ? currentDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "obelisk_sim.random_mode_field")
+                    "simulation.random_mode_field")
               : FlatSymbolRefAttr{};
       if (!currentModeField) {
         emitError(location) << "nested constraint path has no rand_mode field";
@@ -1769,7 +1769,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, concreteType.getClassName());
     while (nestedDeclaration &&
-           !nestedDeclaration->hasAttr("obelisk_sim.constraint_mode_field")) {
+           !nestedDeclaration->hasAttr("simulation.constraint_mode_field")) {
       if (!nestedDeclaration.getBaseAttr())
         break;
       nestedDeclaration =
@@ -1778,7 +1778,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     auto nestedModeField =
         nestedDeclaration ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                                "obelisk_sim.constraint_mode_field")
+                                "simulation.constraint_mode_field")
                           : FlatSymbolRefAttr{};
     if (!nestedModeField) {
       emitError(location) << "nested rand object has no constraint_mode field";

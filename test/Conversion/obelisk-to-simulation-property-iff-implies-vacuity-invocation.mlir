@@ -119,27 +119,27 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // CHECK-NOT: @unit_0.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK-SAME: obelisk_sim.vacuous_sequence_alternatives = {{[1-9][0-9]*}} : i64
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.21.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.21.0.0
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK-SAME: simulation.vacuous_sequence_alternatives = {{[1-9][0-9]*}} : i64
+// CHECK-COUNT-3: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.21.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.21.0.0
 // CHECK-NOT: @unit_0.$concurrent_eos
 // CHECK-NOT: obelisk.sv.assertion
 
 // Only q's expanded `a` body is executable; the retained iff/implies-like
 // property inventory contributes no samples, branching, vacuity, or EOS state.
 // CHECK-NOT: @unit_1.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-NOT: obelisk_sim.branching_sequence_monitor
-// CHECK-NOT: obelisk_sim.vacuous_sequence_alternatives
-// CHECK-COUNT-1: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.51.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.51.0.0
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-NOT: simulation.branching_sequence_monitor
+// CHECK-NOT: simulation.vacuous_sequence_alternatives
+// CHECK-COUNT-1: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.51.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.51.0.0
 // CHECK-NOT: @unit_1.$concurrent_eos
 // CHECK-NOT: obelisk.sv.assertion

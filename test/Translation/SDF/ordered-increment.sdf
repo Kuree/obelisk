@@ -36,5 +36,5 @@
 // CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-2">{{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}mode = 1 : i32
 // CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-12">{{.*}}mode = 1 : i32
 // CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"9">{{.*}}mode = 0 : i32
-// CHECK-NOT: obelisk_sim
+// CHECK-NOT: simulation
 // CHECK-NOT: runtime

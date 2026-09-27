@@ -43,10 +43,10 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.18
-// CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.18
+// CHECK-NOT: simulation.suspend.edge
+// CHECK: simulation.nba.enqueue
 
-// OTHER-EDGE-LABEL: obelisk_sim.func private @unit_0.$clocking_output.18
-// OTHER-EDGE: obelisk_sim.suspend.edge posedge
-// OTHER-EDGE: obelisk_sim.nba.enqueue
+// OTHER-EDGE-LABEL: simulation.func private @unit_0.$clocking_output.18
+// OTHER-EDGE: simulation.suspend.edge posedge
+// OTHER-EDGE: simulation.nba.enqueue

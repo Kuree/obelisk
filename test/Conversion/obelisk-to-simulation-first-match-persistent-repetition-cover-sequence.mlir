@@ -105,67 +105,67 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // four-state strict-false partition remains present, and one static report
 // loop drains the success count produced by the earliest terminal endpoint.
 // CHECK-NOT: @unit_0.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.12.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.12.0.0
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_first_match_equivalence
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.logic.compare case_eq
+// CHECK: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.12.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.12.0.0
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
 // Consecutive repetition without a continuation reaches its unique earliest
 // endpoint on the second true sample and consumes the two-state attempt.
 // CHECK-NOT: @unit_1.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[REPEATED:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_first_match_equivalence
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[REPEATED:[[:alnum:]_]+]] = simulation.logic.is_true
 // CHECK-NEXT: %[[NEW_ATTEMPT:[[:alnum:]_]+]] = arith.extui %[[REPEATED]] : i1 to i64
 // CHECK-NEXT: %[[ZERO:[[:alnum:]_]+]] = arith.constant {{.*}}0 : i64
 // CHECK-NEXT: %[[SUCCESS:[[:alnum:]_]+]] = arith.select %[[REPEATED]], %[[OLDER:[[:alnum:]_]+]], %[[ZERO]] : i64
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.logic.compare case_eq
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-NOT: simulation.logic.compare case_eq
 // CHECK: cf.br ^{{.*}}(%[[SUCCESS]] : i64)
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}}(%[[NEW_ATTEMPT]] : i64)
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.25.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.25.0.0
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.25.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.25.0.0
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion
 
 // Finite nonconsecutive repetition covers the other gap DFA. Its known-false
 // wait and terminal-success paths preserve one earliest report per attempt.
 // CHECK-NOT: @unit_2.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
-// CHECK-SAME: obelisk_sim.persistent_repetition_dfa
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.logic.compare case_eq
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_2.fork.35.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork.35.0.0
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_first_match_equivalence
+// CHECK-SAME: simulation.persistent_repetition_dfa
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_max = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.logic.compare case_eq
+// CHECK: simulation.assert.sampled_read
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_2.fork.35.0.0
+// CHECK-NOT: simulation.spawn @unit_2.fork.35.0.0
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion

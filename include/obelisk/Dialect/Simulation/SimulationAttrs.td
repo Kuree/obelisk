@@ -106,7 +106,7 @@ def SimFrozenConstantAttr
     Carries the exact value of a parameter, localparam, enum value, specparam,
     or elaborated genvar after whole-design elaboration has completed. Packed
     values use the same two-plane `[value, unknown]` representation as
-    `obelisk_sim.logic.constant`; real values use an f64 FloatAttr. Fixed
+    `simulation.logic.constant`; real values use an f64 FloatAttr. Fixed
     unpacked arrays use an ArrayAttr of recursively typed frozen constants.
     The declared normalized type is retained so aggregate shape is not lost.
   }];
@@ -308,5 +308,32 @@ def SimDPIAggregateABIAttr : SimAttr<"DPIAggregateABI", "dpi_aggregate_abi"> {
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }
+
+// Symbolic attributes for closed executable classifications.
+class SimEnumAttr<EnumAttrInfo info, string mnemonic>
+    : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {
+  let assemblyFormat = "`<` $value `>`";
+}
+def SimElementKindAttr
+    : SimEnumAttr<SimElementKind, "element_kind">;
+def SimElementFlagsAttr
+    : SimEnumAttr<SimElementFlags, "element_flags">;
+def SimContainerKindAttr
+    : SimEnumAttr<SimContainerKind, "container_kind">;
+def SimAssocKeyKindAttr
+    : SimEnumAttr<SimAssocKeyKind, "assoc_key_kind">;
+def SimRandomDistributionAttr
+    : SimEnumAttr<SimRandomDistribution, "random_distribution">;
+def SimStochasticQueueActionAttr
+    : SimEnumAttr<SimStochasticQueueAction, "stochastic_queue_action">;
+def SimAssertionControlActionAttr
+    : SimEnumAttr<SimAssertionControlAction, "assertion_control_action">;
+def SimBlockEventKindAttr
+    : SimEnumAttr<SimBlockEventKind, "block_event_kind">;
+def SimRadixAttr : SimEnumAttr<SimRadix, "radix">;
+def SimAssocTraversalDirectionAttr
+    : SimEnumAttr<SimAssocTraversalDirection, "assoc_traversal_direction">;
+def SimMemberVisibilityAttr
+    : SimEnumAttr<SimMemberVisibility, "member_visibility">;
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONATTRS_TD

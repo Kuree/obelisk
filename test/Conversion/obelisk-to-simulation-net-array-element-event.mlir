@@ -55,12 +55,12 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[NET:[^:]*]]: !obelisk_sim.net<!obelisk_sim.unpacked_array<1 : 0 x !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>>
-// CHECK: %[[OBSERVER:.*]] = obelisk_sim.observer.bind @observer_
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.unpacked_array<1 : 0 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>>>
+// CHECK: %[[OBSERVER:.*]] = simulation.observer.bind @observer_
 // CHECK-SAME: values(%[[NET]]
-// CHECK: obelisk_sim.suspend.observe %[[OBSERVER]],
+// CHECK: simulation.suspend.observe %[[OBSERVER]],
 
-// CHECK: obelisk_sim.func private @observer_
-// CHECK: %[[VALUE:.*]] = obelisk_sim.net.read
-// CHECK: obelisk_sim.aggregate.extract %[[VALUE]]
+// CHECK: simulation.func private @observer_
+// CHECK: %[[VALUE:.*]] = simulation.net.read
+// CHECK: simulation.aggregate.extract %[[VALUE]]

@@ -90,12 +90,12 @@ module {
 // A control-only activation has no applicable module path and therefore uses
 // the masked runtime's immediate outside-path update. Source activations retain
 // the declared two-tick path delay.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[ACTIVE:.+]] = obelisk_sim.logic.case_difference_mask
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[ACTIVE:.+]] = simulation.logic.case_difference_mask
 // CHECK: %[[TICKS:.+]] = arith.constant {{.*}} 2 : i64
-// CHECK: %[[DELAY:.+]] = obelisk_sim.time.scale %[[TICKS]]
-// CHECK: obelisk_sim.driver.drive_inertial_path
+// CHECK: %[[DELAY:.+]] = simulation.time.scale %[[TICKS]]
+// CHECK: simulation.driver.drive_inertial_path
 // CHECK-SAME: active %[[ACTIVE]]
 // CHECK-SAME: after[%[[DELAY]], %[[DELAY]], %[[DELAY]]]
-// CHECK: obelisk_sim.suspend.any
+// CHECK: simulation.suspend.any
 // CHECK-NOT: obelisk.sv.

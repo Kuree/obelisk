@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 18.17.1 requires every weight of the selected production to
 // be evaluated once before a rule is chosen. A zero total selects no rule;
@@ -8,19 +8,19 @@
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
 module {
-  obelisk_sim.design @randsequence {
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "test.randsequence"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "test.controls"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "test.single_weight"
-    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "test.rand_join"
-    obelisk_sim.scope.decl 0
+  simulation.design @randsequence {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "test.randsequence"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "test.controls"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "test.single_weight"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "test.rand_join"
+    simulation.scope.decl 0
 
-    // CHECK-LABEL: obelisk_sim.func @weighted
-    obelisk_sim.func @weighted(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    // CHECK-LABEL: simulation.func @weighted
+    simulation.func @weighted(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.bindings = [],
+          simulation.bindings = [],
           code_unit_id = 1 : i64
         } {
       obelisk.sv.statement.rand_sequence attributes {
@@ -88,14 +88,14 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @controls(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @controls(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.bindings = [],
+          simulation.bindings = [],
           code_unit_id = 2 : i64
         } {
       obelisk.sv.statement.rand_sequence attributes {
@@ -177,14 +177,14 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @single_weight(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @single_weight(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.bindings = [],
+          simulation.bindings = [],
           code_unit_id = 3 : i64
         } {
       obelisk.sv.statement.rand_sequence attributes {
@@ -221,14 +221,14 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @rand_join(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @rand_join(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.bindings = [],
+          simulation.bindings = [],
           code_unit_id = 4 : i64
         } {
       obelisk.sv.statement.rand_sequence attributes {
@@ -298,7 +298,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -317,19 +317,19 @@ module {
 // CHECK: %[[ANY:.*]] = arith.cmpi ne, %[[TOTAL]], %[[ZERO]]
 // CHECK: cf.cond_br %[[ANY]], ^[[SELECT:[^ ,]*]], ^[[EXIT:[^ ,]*]]
 // CHECK: ^[[SELECT]]:
-// CHECK: %[[DRAW:.*]] = obelisk_sim.random.bounded %arg0, %[[TOTAL]]
+// CHECK: %[[DRAW:.*]] = simulation.random.bounded %arg0, %[[TOTAL]]
 // CHECK: arith.cmpi ult, %[[DRAW]],
 
 // Each selected call allocates a fresh reference for the production formal.
-// CHECK: %[[ARG0:.*]] = obelisk_sim.ref.alloc
-// CHECK-NEXT: obelisk_sim.ref.load %[[ARG0]]
-// CHECK: %[[ARG1:.*]] = obelisk_sim.ref.alloc
-// CHECK-NEXT: obelisk_sim.ref.load %[[ARG1]]
+// CHECK: %[[ARG0:.*]] = simulation.ref.alloc
+// CHECK-NEXT: simulation.ref.load %[[ARG0]]
+// CHECK: %[[ARG1:.*]] = simulation.ref.alloc
+// CHECK-NEXT: simulation.ref.load %[[ARG1]]
 
 // IEEE 1800-2017 18.17.2-.6 control productions lower to ordinary CFG. The
 // selector/count are evaluated before their branches, production return joins
 // only the current production, and break targets the whole randsequence.
-// CHECK-LABEL: obelisk_sim.func @controls
+// CHECK-LABEL: simulation.func @controls
 // CHECK: arith.cmpi ne
 // CHECK: cf.cond_br
 // CHECK: arith.cmpi eq
@@ -344,20 +344,20 @@ module {
 // It therefore neither gates the sole rule nor consumes the process RNG.
 // An unreachable recursive production does not impose an execution requirement
 // on the selected top-level production.
-// CHECK-LABEL: obelisk_sim.func @single_weight
+// CHECK-LABEL: simulation.func @single_weight
 // CHECK: arith.cmpi slt
 // CHECK-NOT: arith.addi
-// CHECK-NOT: obelisk_sim.random.bounded
+// CHECK-NOT: simulation.random.bounded
 
 // Equal depth-one streams are randomly interleaved while preserving each
 // stream's internal order. The bias is evaluated and range-checked first; it
 // cannot favor either stream while their remaining lengths are equal.
-// CHECK-LABEL: obelisk_sim.func @rand_join
+// CHECK-LABEL: simulation.func @rand_join
 // CHECK: arith.cmpf oge
 // CHECK: arith.cmpf ole
 // CHECK: cf.cond_br
 // CHECK: ^{{.*}}(%{{.*}}: i1, %{{.*}}: i1, %[[REMAINING:.*]]: i64):
 // CHECK: arith.cmpi ne, %[[REMAINING]],
-// CHECK: obelisk_sim.random.bounded %arg0, %[[REMAINING]]
+// CHECK: simulation.random.bounded %arg0, %[[REMAINING]]
 // CHECK: arith.cmpi eq
 // CHECK: arith.select

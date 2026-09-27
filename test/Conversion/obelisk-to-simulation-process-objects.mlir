@@ -469,46 +469,46 @@ module attributes {
 // The standard process class is an opaque scheduler token, never a managed
 // class descriptor. Its default initialization and equality use typed process
 // operations, while every standard method maps to the matching control op.
-// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.process design hierarchy "process_front.p"
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK: simulation.storage.decl {{.*}} : !simulation.process design hierarchy "process_front.p"
+// CHECK-LABEL: simulation.func private @unit_0(
 // The signed int seed -1 is zero-extended to 0xffffffff. Constant folding
 // pins the canonical two-step PCG state and default increment, so explicit
 // seeding is independent of the process's ancestry-derived stream.
 // CHECK: %[[SEEDED_STATE:.*]] = arith.constant 1030331529624350213 : i64
 // CHECK: %[[DEFAULT_INCREMENT:.*]] = arith.constant 1442695040888963407 : i64
-// CHECK: %[[NULL:.*]] = obelisk_sim.process.null
-// CHECK: obelisk_sim.ref.store %[[NULL]] to {{.*}} : !obelisk_sim.process
-// CHECK: %[[CURRENT:.*]] = obelisk_sim.process.current
-// CHECK: obelisk_sim.ref.store %[[CURRENT]] to {{.*}} : !obelisk_sim.process
-// CHECK: %[[PROCESS0:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: %[[EQUAL:.*]] = obelisk_sim.process.equal %[[PROCESS0]], %[[NULL]]
-// CHECK: %[[PROCESS1:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: %[[STATUS:.*]] = obelisk_sim.process.status %[[PROCESS1]]
-// CHECK: obelisk_sim.ref.store %[[STATUS]] to {{.*}} : i32
-// CHECK: %[[PROCESS_SEED:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: obelisk_sim.process.set_random_state %[[PROCESS_SEED]], %[[SEEDED_STATE]], %[[DEFAULT_INCREMENT]]
-// CHECK: %[[PROCESS_STREAM:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: %[[RNG_STATE:.*]], %[[RNG_INCREMENT:.*]] = obelisk_sim.process.random_state %[[PROCESS_STREAM]]
-// CHECK: %[[STATE_TEXT:.*]] = obelisk_sim.string.format_integer %[[RNG_STATE]] radix = 16 signed = false
-// CHECK: %[[SEPARATOR:.*]] = obelisk_sim.string.literal ":"
-// CHECK: %[[INCREMENT_TEXT:.*]] = obelisk_sim.string.format_integer %[[RNG_INCREMENT]] radix = 16 signed = false
-// CHECK: %[[SNAPSHOT:.*]] = obelisk_sim.string.concat %[[STATE_TEXT]], %[[SEPARATOR]], %[[INCREMENT_TEXT]]
-// CHECK: %[[OLD_STATE:.*]], %[[OLD_INCREMENT:.*]] = obelisk_sim.process.random_state %[[PROCESS_STREAM]]
-// CHECK: obelisk_sim.string.scan_field %[[SNAPSHOT]]
-// CHECK: obelisk_sim.string.scan_field %[[SNAPSHOT]]
+// CHECK: %[[NULL:.*]] = simulation.process.null
+// CHECK: simulation.ref.store %[[NULL]] to {{.*}} : !simulation.process
+// CHECK: %[[CURRENT:.*]] = simulation.process.current
+// CHECK: simulation.ref.store %[[CURRENT]] to {{.*}} : !simulation.process
+// CHECK: %[[PROCESS0:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: %[[EQUAL:.*]] = simulation.process.equal %[[PROCESS0]], %[[NULL]]
+// CHECK: %[[PROCESS1:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: %[[STATUS:.*]] = simulation.process.status %[[PROCESS1]]
+// CHECK: simulation.ref.store %[[STATUS]] to {{.*}} : i32
+// CHECK: %[[PROCESS_SEED:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: simulation.process.set_random_state %[[PROCESS_SEED]], %[[SEEDED_STATE]], %[[DEFAULT_INCREMENT]]
+// CHECK: %[[PROCESS_STREAM:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: %[[RNG_STATE:.*]], %[[RNG_INCREMENT:.*]] = simulation.process.random_state %[[PROCESS_STREAM]]
+// CHECK: %[[STATE_TEXT:.*]] = simulation.string.format_integer %[[RNG_STATE]] radix = <hex> signed = false
+// CHECK: %[[SEPARATOR:.*]] = simulation.string.literal ":"
+// CHECK: %[[INCREMENT_TEXT:.*]] = simulation.string.format_integer %[[RNG_INCREMENT]] radix = <hex> signed = false
+// CHECK: %[[SNAPSHOT:.*]] = simulation.string.concat %[[STATE_TEXT]], %[[SEPARATOR]], %[[INCREMENT_TEXT]]
+// CHECK: %[[OLD_STATE:.*]], %[[OLD_INCREMENT:.*]] = simulation.process.random_state %[[PROCESS_STREAM]]
+// CHECK: simulation.string.scan_field %[[SNAPSHOT]]
+// CHECK: simulation.string.scan_field %[[SNAPSHOT]]
 // CHECK: %[[SELECTED_STATE:.*]] = arith.select {{.*}}, {{.*}}, %[[OLD_STATE]]
 // CHECK: %[[SELECTED_INCREMENT:.*]] = arith.select {{.*}}, {{.*}}, %[[OLD_INCREMENT]]
-// CHECK: obelisk_sim.process.set_random_state %[[PROCESS_STREAM]], %[[SELECTED_STATE]], %[[SELECTED_INCREMENT]]
-// CHECK: %[[PROCESS2:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: obelisk_sim.suspend.await %[[PROCESS2]] to ^[[AWAIT:bb[0-9]+]]
+// CHECK: simulation.process.set_random_state %[[PROCESS_STREAM]], %[[SELECTED_STATE]], %[[SELECTED_INCREMENT]]
+// CHECK: %[[PROCESS2:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: simulation.suspend.await %[[PROCESS2]] to ^[[AWAIT:bb[0-9]+]]
 // CHECK: ^[[AWAIT]]:
-// CHECK: %[[PROCESS3:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: obelisk_sim.process.control resume %[[PROCESS3]] to ^[[RESUME:bb[0-9]+]]
+// CHECK: %[[PROCESS3:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: simulation.process.control resume %[[PROCESS3]] to ^[[RESUME:bb[0-9]+]]
 // CHECK: ^[[RESUME]]:
-// CHECK: %[[PROCESS4:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: obelisk_sim.process.control suspend %[[PROCESS4]] to ^[[SUSPEND:bb[0-9]+]]
+// CHECK: %[[PROCESS4:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: simulation.process.control suspend %[[PROCESS4]] to ^[[SUSPEND:bb[0-9]+]]
 // CHECK: ^[[SUSPEND]]:
-// CHECK: %[[PROCESS5:.*]] = obelisk_sim.ref.load {{.*}} : {{.*}} -> !obelisk_sim.process
-// CHECK: obelisk_sim.process.control kill %[[PROCESS5]] to ^[[KILL:bb[0-9]+]]
+// CHECK: %[[PROCESS5:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.process
+// CHECK: simulation.process.control kill %[[PROCESS5]] to ^[[KILL:bb[0-9]+]]
 // CHECK: ^[[KILL]]:
-// CHECK: obelisk_sim.return
+// CHECK: simulation.return

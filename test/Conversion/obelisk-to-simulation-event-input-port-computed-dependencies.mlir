@@ -102,25 +102,25 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: obelisk_sim.spawn @unit_0
-// CHECK: obelisk_sim.spawn @unit_4
-// CHECK: obelisk_sim.spawn @unit_1
-// CHECK: obelisk_sim.spawn @unit_5
-// CHECK: obelisk_sim.spawn @unit_6
-// CHECK: obelisk_sim.spawn @unit_7
-// CHECK: obelisk_sim.spawn @unit_8
-// CHECK: obelisk_sim.spawn @unit_3
-// CHECK: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: simulation.spawn @unit_0
+// CHECK: simulation.spawn @unit_4
+// CHECK: simulation.spawn @unit_1
+// CHECK: simulation.spawn @unit_5
+// CHECK: simulation.spawn @unit_6
+// CHECK: simulation.spawn @unit_7
+// CHECK: simulation.spawn @unit_8
+// CHECK: simulation.spawn @unit_3
+// CHECK: simulation.func private @unit_1
 // CHECK-SAME: schedule.computed_event_startup
-// CHECK: obelisk_sim.func private @unit_4
+// CHECK: simulation.func private @unit_4
 // CHECK-SAME: schedule.computed_event_startup
-// CHECK: obelisk_sim.func private @unit_5
+// CHECK: simulation.func private @unit_5
 // CHECK-SAME: schedule.computed_event_startup
-// CHECK: obelisk_sim.func private @unit_6
+// CHECK: simulation.func private @unit_6
 // CHECK-SAME: schedule.computed_event_startup
-// CHECK: obelisk_sim.func private @unit_7
+// CHECK: simulation.func private @unit_7
 // CHECK-SAME: schedule.computed_event_startup
-// CHECK: obelisk_sim.func private @unit_8
+// CHECK: simulation.func private @unit_8
 // CHECK-SAME: schedule.computed_event_startup
 // CHECK-NOT: obelisk.sv.

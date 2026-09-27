@@ -716,8 +716,8 @@ public:
         runtime::RTScratchOp::create(rewriter, loc, mutableBytes, byteSize);
     Value unknownScratch =
         runtime::RTScratchOp::create(rewriter, loc, mutableBytes, byteSize);
-    Value radix =
-        iConstant(rewriter, loc, rewriter.getI32Type(), op.getRadix());
+    Value radix = iConstant(rewriter, loc, rewriter.getI32Type(),
+                            static_cast<uint32_t>(op.getRadix()));
     Value bitWidth =
         iConstant(rewriter, loc, rewriter.getI64Type(), packedType.getWidth());
     auto call = runtime::RTFileReadMemTokenOp::create(

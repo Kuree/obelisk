@@ -3,9 +3,9 @@
 // RUN: sed 's/array_range = array<i64: 0, 2>/array_range = array<i64: 0, 3>/g' %s | not obelisk-opt --obelisk-sim-prepare 2>&1 | FileCheck %s --check-prefix=INVALID
 // Forwarding a received interface array introduces a detached symbol stub.
 // It must not acquire a duplicate VPI array identity or fail extent checks.
-// CHECK: obelisk_sim.design
-// CHECK: obelisk_sim.vpi_object.anchor {{.*}} hierarchy "top.rif" debug "rif"
-// CHECK-NOT: obelisk_sim.vpi_object.anchor {{.*}} hierarchy "rif"
+// CHECK: simulation.design
+// CHECK: simulation.vpi_object.anchor {{.*}} hierarchy "top.rif" debug "rif"
+// CHECK-NOT: simulation.vpi_object.anchor {{.*}} hierarchy "rif"
 // INVALID: instance-array dimension has 3 elements but its source range requires 4
 
 module attributes {obelisk.coverage.language_version = 2023 : i32} {
@@ -18,13 +18,13 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 3 : i64, sym_name = "s3.top"} {
   }
   obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 4 : i64, sym_name = "s4.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 5 : i64, obelisk_sim.vpi_definition_name = "$unit", sym_name = "s5"} {
+    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 5 : i64, simulation.vpi_definition_name = "$unit", sym_name = "s5"} {
     }
     obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 6 : i64, referenced_path = "top", referenced_symbol = @s3.top, sym_name = "s6.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 7 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "top", obelisk_sim.vpi_top = true, sym_name = "s7.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
+      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 7 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "top", simulation.vpi_top = true, sym_name = "s7.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
         obelisk.sv.symbol.instance_array attributes {array_range = array<i64: 0, 2>, hierarchical_name = "top.rif", name = "rif", node_id = 8 : i64, sym_name = "s8.rif"} {
           obelisk.sv.symbol.instance attributes {hierarchical_name = "top.rif[0]", is_uninstantiated = false, node_id = 9 : i64, referenced_path = "simple_if", referenced_symbol = @s2.simple_if, sym_name = "s9"} {
-            obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.rif[0]", name = "simple_if", node_id = 10 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "simple_if", obelisk_sim.vpi_top = false, sym_name = "s10.simple_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s4.$root::@s7.top::@s8.rif::@s9, vpi_scope_kind = 601 : i32} {
+            obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.rif[0]", name = "simple_if", node_id = 10 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "simple_if", simulation.vpi_top = false, sym_name = "s10.simple_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s4.$root::@s7.top::@s8.rif::@s9, vpi_scope_kind = 601 : i32} {
               obelisk.sv.symbol.variable attributes {hierarchical_name = "top.rif[0].v", lifetime = 1 : i32, name = "v", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.v"} {
               }
               obelisk.sv.symbol.modport attributes {hierarchical_name = "top.rif[0].host", name = "host", node_id = 12 : i64, sym_name = "s12.host"} {
@@ -36,7 +36,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
             }
           }
           obelisk.sv.symbol.instance attributes {hierarchical_name = "top.rif[1]", is_uninstantiated = false, node_id = 15 : i64, referenced_path = "simple_if", referenced_symbol = @s2.simple_if, sym_name = "s14"} {
-            obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.rif[1]", name = "simple_if", node_id = 16 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "simple_if", obelisk_sim.vpi_top = false, sym_name = "s15.simple_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s4.$root::@s7.top::@s8.rif::@s9, vpi_scope_kind = 601 : i32} {
+            obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.rif[1]", name = "simple_if", node_id = 16 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "simple_if", simulation.vpi_top = false, sym_name = "s15.simple_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s4.$root::@s7.top::@s8.rif::@s9, vpi_scope_kind = 601 : i32} {
               obelisk.sv.symbol.variable attributes {hierarchical_name = "top.rif[1].v", lifetime = 1 : i32, name = "v", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s16.v"} {
               }
               obelisk.sv.symbol.modport attributes {hierarchical_name = "top.rif[1].host", name = "host", node_id = 18 : i64, sym_name = "s17.host"} {
@@ -48,7 +48,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
             }
           }
           obelisk.sv.symbol.instance attributes {hierarchical_name = "top.rif[2]", is_uninstantiated = false, node_id = 21 : i64, referenced_path = "simple_if", referenced_symbol = @s2.simple_if, sym_name = "s19"} {
-            obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.rif[2]", name = "simple_if", node_id = 22 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "simple_if", obelisk_sim.vpi_top = false, sym_name = "s20.simple_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s4.$root::@s7.top::@s8.rif::@s9, vpi_scope_kind = 601 : i32} {
+            obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.rif[2]", name = "simple_if", node_id = 22 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "simple_if", simulation.vpi_top = false, sym_name = "s20.simple_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s4.$root::@s7.top::@s8.rif::@s9, vpi_scope_kind = 601 : i32} {
               obelisk.sv.symbol.variable attributes {hierarchical_name = "top.rif[2].v", lifetime = 1 : i32, name = "v", node_id = 23 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s21.v"} {
               }
               obelisk.sv.symbol.modport attributes {hierarchical_name = "top.rif[2].host", name = "host", node_id = 24 : i64, sym_name = "s22.host"} {
@@ -66,7 +66,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
             obelisk.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 29 : i64, referenced_path = "top.rif", referenced_symbol = @s4.$root::@s6.top::@s7.top::@s8.rif, semantic_type = !obelisk.ranged_unpacked_array<0 : 2 x !obelisk.virtual_interface<@s4.$root::@s7.top::@s8.rif::@s9, "">>} {
             }
           }
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.u_ad", name = "adapter", node_id = 30 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "adapter", obelisk_sim.vpi_top = false, sym_name = "s25.adapter", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
+          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.u_ad", name = "adapter", node_id = 30 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "adapter", simulation.vpi_top = false, sym_name = "s25.adapter", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
             obelisk.sv.symbol.parameter attributes {constant_value = "3", hierarchical_name = "top.u_ad.N", name = "N", node_id = 31 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s26.N"} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "3", is_declared_unsized = true, is_signed = true, node_id = 32 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
@@ -79,7 +79,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
                 obelisk.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 36 : i64, referenced_path = "rif", referenced_symbol = @s35.rif, semantic_type = !obelisk.ranged_unpacked_array<0 : 2 x !obelisk.virtual_interface<@s4.$root::@s7.top::@s8.rif::@s9, "host">>} {
                 }
               }
-              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.u_ad.u_inner", name = "inner", node_id = 37 : i64, obelisk_sim.vpi_automatic = false, obelisk_sim.vpi_cell_instance = false, obelisk_sim.vpi_definition_name = "inner", obelisk_sim.vpi_top = false, sym_name = "s29.inner", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
+              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.u_ad.u_inner", name = "inner", node_id = 37 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "inner", simulation.vpi_top = false, sym_name = "s29.inner", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
                 obelisk.sv.symbol.parameter attributes {constant_value = "3", hierarchical_name = "top.u_ad.u_inner.N", name = "N", node_id = 38 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s30.N"} {
                   obelisk.sv.expression.named_value attributes {folded_constant = "3", is_signed = true, node_id = 39 : i64, referenced_path = "top.u_ad.N", referenced_symbol = @s4.$root::@s6.top::@s7.top::@s24.u_ad::@s25.adapter::@s26.N, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   }

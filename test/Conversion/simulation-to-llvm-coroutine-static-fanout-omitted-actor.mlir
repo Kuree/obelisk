@@ -1,6 +1,6 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/input.mlir \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-plan-static-superstep))' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' \
 // RUN:   > %t/planned.mlir
 // RUN: obelisk-opt %t/planned.mlir \
 // RUN:   --pass-pipeline='builtin.module(convert-obelisk-sim-processes-to-llvm-coroutines)' \
@@ -35,7 +35,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.native_scheduler = 3 : i32
 } {
-  obelisk_sim.design @mixed attributes {
+  simulation.design @mixed attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -116,77 +116,77 @@ module attributes {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "coordinator"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "ordinary"
-    obelisk_sim.code_unit.decl 4 in 0 always hierarchy "clock"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "coordinator"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "ordinary"
+    simulation.code_unit.decl 4 in 0 always hierarchy "clock"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %clock = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %coordinator = obelisk_sim.spawn @coordinator(%ctx, %clock) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> ->
-          !obelisk_sim.process
-      %ordinary = obelisk_sim.spawn @ordinary(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %periodic = obelisk_sim.spawn @clock(%ctx, %clock) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> ->
-          !obelisk_sim.process
-      obelisk_sim.return
+      %clock = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
+      %coordinator = simulation.spawn @coordinator(%ctx, %clock) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>> ->
+          !simulation.process
+      %ordinary = simulation.spawn @ordinary(%ctx) :
+          !simulation.context -> !simulation.process
+      %periodic = simulation.spawn @clock(%ctx, %clock) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>> ->
+          !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @coordinator(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func private @coordinator(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
                     domain = 0 : i32, home_region = 8 : i32,
-                    obelisk_sim.timing_check_coordinator} {
+                    simulation.timing_check_coordinator} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.clock_set %clock conditions 0 edges [1]
+      simulation.suspend.clock_set %clock conditions 0 edges [1]
           indices [-1] site 23 to ^wait :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     }
 
-    obelisk_sim.func @ordinary(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @ordinary(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64,
                     domain = 0 : i32, home_region = 8 : i32} {
-      %clock = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %clock = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.change %clock to ^wait
+      simulation.suspend.change %clock to ^wait
           {site = #schedule.continuation<id = 2>} :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     }
 
-    obelisk_sim.func @clock(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @clock(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64,
                     domain = 0 : i32, home_region = 2 : i32} {
       cf.br ^wait
     ^wait:
-      %delay = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %delay to ^toggle
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^toggle
           {site = #schedule.continuation<id = 1>,
            timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^toggle:
-      %old = obelisk_sim.ref.load %clock :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %new = obelisk_sim.logic.unary bit_not %old :
-          (!obelisk_sim.logic<1>) -> !obelisk_sim.logic<1>
-      obelisk_sim.ref.store %new to %clock : !obelisk_sim.logic<1>,
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+      %old = simulation.ref.load %clock :
+          !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+      %new = simulation.logic.unary bit_not %old :
+          (!simulation.logic<1>) -> !simulation.logic<1>
+      simulation.ref.store %new to %clock : !simulation.logic<1>,
+          !simulation.ref<!simulation.logic<1>>
       cf.br ^wait
     }
   }
@@ -194,6 +194,6 @@ module attributes {
 
 //--- noncertified.sed
 s/code_unit.decl 2 in 0 always/code_unit.decl 2 in 0 final/
-s/entry_kind = 3 : i32, home_region = 8 : i32, obelisk_sim.timing_check_coordinator/entry_kind = 2 : i32, home_region = 2 : i32, internal, obelisk_sim.multiclock_sequence_eos_coordinator, schedule.concurrent_eos_coordinator, schedule.concurrent_eos_counted, schedule.detached_controls/
-s/obelisk_sim.suspend.clock_set %arg1 conditions 0 edges \[1\] indices \[-1\] site 23 to \^bb1 : !obelisk_sim.ref<!obelisk_sim.logic<1>>/obelisk_sim.return/
-/obelisk_sim.func @ordinary/,/^    }/ s|      cf.br \^bb1|      %spawn = obelisk_sim.spawn @coordinator(%arg0, %0) : !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.process\n      cf.br ^bb1|
+s/entry_kind = 3 : i32, home_region = 8 : i32, simulation.timing_check_coordinator/entry_kind = 2 : i32, home_region = 2 : i32, internal, simulation.multiclock_sequence_eos_coordinator, schedule.concurrent_eos_coordinator, schedule.concurrent_eos_counted, schedule.detached_controls/
+s/simulation.suspend.clock_set %arg1 conditions 0 edges \[1\] indices \[-1\] site 23 to \^bb1 : !simulation.ref<!simulation.logic<1>>/simulation.return/
+/simulation.func @ordinary/,/^    }/ s|      cf.br \^bb1|      %spawn = simulation.spawn @coordinator(%arg0, %0) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process\n      cf.br ^bb1|

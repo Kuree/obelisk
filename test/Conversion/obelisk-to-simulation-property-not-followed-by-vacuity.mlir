@@ -71,26 +71,26 @@ module {
 // The two Boolean antecedent alternatives are coalesced before negation.
 // Their no-match path is the vacuous failure of followed-by; it joins the
 // matched-but-failed consequent path and executes one outer cover pass.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.16.0.0
-// CHECK: obelisk_sim.bytes.constant "vacuous-or-failed-hit"
+// CHECK-LABEL: simulation.func private @unit_0.fork.16.0.0
+// CHECK: simulation.bytes.constant "vacuous-or-failed-hit"
 // CHECK-NOT: $concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_coalescer
-// CHECK-SAME: obelisk_sim.branching_antecedent_result_horizon = 1 : i64
-// CHECK-SAME: obelisk_sim.followed_by_monitor
-// CHECK-SAME: obelisk_sim.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
-// CHECK-SAME: obelisk_sim.temporal_property_negation
-// CHECK: %[[A:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg2
-// CHECK: %[[AT:.*]] = obelisk_sim.logic.is_true %[[A]]
-// CHECK: %[[B:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg3
-// CHECK: %[[BT:.*]] = obelisk_sim.logic.is_true %[[B]]
-// CHECK: %[[C:.*]] = obelisk_sim.assert.sampled_read {{.*}} from %arg4
-// CHECK: %[[CT:.*]] = obelisk_sim.logic.is_true %[[C]]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_result_coalescer
+// CHECK-SAME: simulation.branching_antecedent_result_horizon = 1 : i64
+// CHECK-SAME: simulation.followed_by_monitor
+// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
+// CHECK-SAME: simulation.temporal_property_negation
+// CHECK: %[[A:.*]] = simulation.assert.sampled_read {{.*}} from %arg2
+// CHECK: %[[AT:.*]] = simulation.logic.is_true %[[A]]
+// CHECK: %[[B:.*]] = simulation.assert.sampled_read {{.*}} from %arg3
+// CHECK: %[[BT:.*]] = simulation.logic.is_true %[[B]]
+// CHECK: %[[C:.*]] = simulation.assert.sampled_read {{.*}} from %arg4
+// CHECK: %[[CT:.*]] = simulation.logic.is_true %[[C]]
 // CHECK: %[[MATCHED:.*]] = arith.ori %[[AT]], %[[BT]]
 // CHECK: %[[NOMATCH:.*]] = arith.xori %[[MATCHED]], {{%.*}}
-// CHECK: %[[FAILED:.*]] = arith.ori %[[NOMATCH]], {{%.*}} {obelisk_sim.branching_antecedent_existential_failure}
+// CHECK: %[[FAILED:.*]] = arith.ori %[[NOMATCH]], {{%.*}} {simulation.branching_antecedent_existential_failure}
 // CHECK: cf.cond_br %[[FAILED]],
-// CHECK: obelisk_sim.spawn @unit_0.fork.16.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.16.0.0
+// CHECK: simulation.spawn @unit_0.fork.16.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.16.0.0
 // CHECK-NOT: $concurrent_eos

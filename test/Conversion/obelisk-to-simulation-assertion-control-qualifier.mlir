@@ -46,7 +46,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.assert.control {{.*}} action 4 assertion [[ID:[0-9]+]]
-// CHECK: %[[ENABLED:.*]] = obelisk_sim.assert.enabled {{.*}} assertion [[ID]]
+// CHECK: simulation.assert.control {{.*}} action <off> assertion [[ID:[0-9]+]]
+// CHECK: %[[ENABLED:.*]] = simulation.assert.enabled {{.*}} assertion [[ID]]
 // CHECK: cf.cond_br %[[ENABLED]]
-// CHECK: obelisk_sim.bytes.constant "{{.*}}unique if violation: no match"
+// CHECK: simulation.bytes.constant "{{.*}}unique if violation: no match"

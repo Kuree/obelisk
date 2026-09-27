@@ -57,8 +57,8 @@
 // The queue-valued constructor expressions are ordinary covergroup-create
 // payloads. Native lowering passes each managed word through the descriptor's
 // owner field, and bytecode encoding accepts the same managed register shape.
-// SIM: obelisk_sim.covergroup.create
-// SIM: !obelisk_sim.queue<!obelisk_sim.unpacked_struct<{{.*}}>, 0>
+// SIM: simulation.covergroup.create
+// SIM: !simulation.queue<!simulation.unpacked_struct<{{.*}}>, 0>
 // NATIVE: %[[OWNER_SLOT:.*]] = llvm.getelementptr %{{.*}}[40] : (!llvm.ptr) -> !llvm.ptr, i8
 // NATIVE-NEXT: llvm.store %{{.*}}, %[[OWNER_SLOT]] {{.*}} : !llvm.ptr, !llvm.ptr
 // NATIVE: %[[QUEUE_KIND:.*]] = llvm.mlir.constant(6 : i32)

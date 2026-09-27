@@ -13,27 +13,27 @@
 // IEEE 1800-2023 19.7 permits these owner-local instance options to be
 // assigned after construction. The item selector is a stable template ID,
 // never a physical schema-table index.
-// SIM: obelisk_sim.covergroup.set_name
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item 0 option weight
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item 0 option goal
-// SIM: obelisk_sim.covergroup.set_string_option {{.*}} item 0 option comment
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item 0 option at_least
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item 0 option cross_num_print_missing
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item [[POINT:-?[0-9]+]] option weight
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item [[POINT]] option goal
-// SIM: obelisk_sim.covergroup.set_string_option {{.*}} item [[POINT]] option comment
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item [[POINT]] option at_least
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item [[CROSS:-?[0-9]+]] option at_least
-// SIM: obelisk_sim.covergroup.set_integer_option {{.*}} item [[CROSS]] option cross_num_print_missing
-// SIM: obelisk_sim.covergroup.get_integer_option {{.*}} item 0 option cross_num_print_missing
-// SIM: obelisk_sim.covergroup.get_integer_option {{.*}} item [[CROSS]] option cross_num_print_missing
-// SIM: obelisk_sim.covergroup.set_type_integer_option {{.*}} type [[TYPE:-?[0-9]+]] item 0 option weight
-// SIM: obelisk_sim.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item 0 option goal
-// SIM: obelisk_sim.covergroup.set_type_string_option {{.*}} type [[TYPE]] item 0 option comment
-// SIM: obelisk_sim.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item 0 option merge_instances
-// SIM: obelisk_sim.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item [[TYPE_POINT:-?[0-9]+]] option weight
-// SIM: obelisk_sim.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item [[TYPE_POINT]] option goal
-// SIM: obelisk_sim.covergroup.set_type_string_option {{.*}} type [[TYPE]] item [[TYPE_POINT]] option comment
+// SIM: simulation.covergroup.set_name
+// SIM: simulation.covergroup.set_integer_option {{.*}} item 0 option weight
+// SIM: simulation.covergroup.set_integer_option {{.*}} item 0 option goal
+// SIM: simulation.covergroup.set_string_option {{.*}} item 0 option comment
+// SIM: simulation.covergroup.set_integer_option {{.*}} item 0 option at_least
+// SIM: simulation.covergroup.set_integer_option {{.*}} item 0 option cross_num_print_missing
+// SIM: simulation.covergroup.set_integer_option {{.*}} item [[POINT:-?[0-9]+]] option weight
+// SIM: simulation.covergroup.set_integer_option {{.*}} item [[POINT]] option goal
+// SIM: simulation.covergroup.set_string_option {{.*}} item [[POINT]] option comment
+// SIM: simulation.covergroup.set_integer_option {{.*}} item [[POINT]] option at_least
+// SIM: simulation.covergroup.set_integer_option {{.*}} item [[CROSS:-?[0-9]+]] option at_least
+// SIM: simulation.covergroup.set_integer_option {{.*}} item [[CROSS]] option cross_num_print_missing
+// SIM: simulation.covergroup.get_integer_option {{.*}} item 0 option cross_num_print_missing
+// SIM: simulation.covergroup.get_integer_option {{.*}} item [[CROSS]] option cross_num_print_missing
+// SIM: simulation.covergroup.set_type_integer_option {{.*}} type [[TYPE:-?[0-9]+]] item 0 option weight
+// SIM: simulation.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item 0 option goal
+// SIM: simulation.covergroup.set_type_string_option {{.*}} type [[TYPE]] item 0 option comment
+// SIM: simulation.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item 0 option merge_instances
+// SIM: simulation.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item [[TYPE_POINT:-?[0-9]+]] option weight
+// SIM: simulation.covergroup.set_type_integer_option {{.*}} type [[TYPE]] item [[TYPE_POINT]] option goal
+// SIM: simulation.covergroup.set_type_string_option {{.*}} type [[TYPE]] item [[TYPE_POINT]] option comment
 
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_covergroup_set_name
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_covergroup_set_integer_option

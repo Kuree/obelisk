@@ -8,19 +8,19 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @packed_string {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.process"
+  simulation.design @packed_string {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.process"
 
-    obelisk_sim.func @process(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
       %packed = arith.constant 1107312896 : i32
-      %string = obelisk_sim.string.from_packed %packed :
-        (i32) -> !obelisk_sim.string
-      %length = obelisk_sim.string.length %string :
-        (!obelisk_sim.string) -> i64
-      obelisk_sim.return
+      %string = simulation.string.from_packed %packed :
+        (i32) -> !simulation.string
+      %length = simulation.string.length %string :
+        (!simulation.string) -> i64
+      simulation.return
     }
   }
 }

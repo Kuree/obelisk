@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-eval-promotion-word-scan.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-eval-promotion-word-scan.mlir --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: obelisk-opt %S/../Conversion/simulation-eval-promotion-word-scan.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: %python %S/Inputs/expose-promotion-state.py %t.mlir %t.exposed.mlir
 // RUN: mlir-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' -S -o %t.proof.ll
 // RUN: %llvm_dist/bin/clang++ -O0 %t.proof.ll %S/Inputs/check-promotion-word-scan.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir > %t.ll
 // RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
@@ -38,309 +38,309 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @specify_path_polarity_runtime {
-    obelisk_sim.scope.decl 0 hierarchy "specify_path_polarity_runtime"
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.driver.decl 0 in 0 drives 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.driver.decl 1 in 0 drives 1 : !obelisk_sim.logic<1> design
-    obelisk_sim.driver.decl 2 in 0 drives 2 : !obelisk_sim.logic<1> design
-    obelisk_sim.code_unit.decl 9915000 in 0 root_initializer
+  simulation.design @specify_path_polarity_runtime {
+    simulation.scope.decl 0 hierarchy "specify_path_polarity_runtime"
+    simulation.net.decl 0 in 0 : !simulation.logic<1> design
+    simulation.net.decl 1 in 0 : !simulation.logic<1> design
+    simulation.net.decl 2 in 0 : !simulation.logic<1> design
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<1> design
+    simulation.driver.decl 1 in 0 drives 1 : !simulation.logic<1> design
+    simulation.driver.decl 2 in 0 drives 2 : !simulation.logic<1> design
+    simulation.code_unit.decl 9915000 in 0 root_initializer
         hierarchy "specify_path_polarity_runtime.root"
-    obelisk_sim.code_unit.decl 9915001 in 0 initial
+    simulation.code_unit.decl 9915001 in 0 initial
         hierarchy "specify_path_polarity_runtime.initial"
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9915000 : i64,
-                    obelisk_sim.lowered} {
-      %positive_driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %negative_driver = obelisk_sim.context.driver %ctx[1] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %arbitrated_driver = obelisk_sim.context.driver %ctx[2] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %positive_net = obelisk_sim.context.net %ctx[0] :
-          !obelisk_sim.net<!obelisk_sim.logic<1>>
-      %negative_net = obelisk_sim.context.net %ctx[1] :
-          !obelisk_sim.net<!obelisk_sim.logic<1>>
-      %arbitrated_net = obelisk_sim.context.net %ctx[2] :
-          !obelisk_sim.net<!obelisk_sim.logic<1>>
-      %process = obelisk_sim.spawn @initial(
+                    simulation.lowered} {
+      %positive_driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<1>>
+      %negative_driver = simulation.context.driver %ctx[1] :
+          !simulation.driver<!simulation.logic<1>>
+      %arbitrated_driver = simulation.context.driver %ctx[2] :
+          !simulation.driver<!simulation.logic<1>>
+      %positive_net = simulation.context.net %ctx[0] :
+          !simulation.net<!simulation.logic<1>>
+      %negative_net = simulation.context.net %ctx[1] :
+          !simulation.net<!simulation.logic<1>>
+      %arbitrated_net = simulation.context.net %ctx[2] :
+          !simulation.net<!simulation.logic<1>>
+      %process = simulation.spawn @initial(
           %ctx, %positive_driver, %negative_driver, %arbitrated_driver,
           %positive_net, %negative_net, %arbitrated_net) :
-          !obelisk_sim.context, !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.net<!obelisk_sim.logic<1>>,
-          !obelisk_sim.net<!obelisk_sim.logic<1>>,
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.process
-      obelisk_sim.return
+          !simulation.context, !simulation.driver<!simulation.logic<1>>,
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.net<!simulation.logic<1>>,
+          !simulation.net<!simulation.logic<1>>,
+          !simulation.net<!simulation.logic<1>> -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @initial(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %positive_driver: !obelisk_sim.driver<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 5 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %negative_driver: !obelisk_sim.driver<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 5 : i32,
-             obelisk_sim.descriptor_id = 1 : i64},
-        %arbitrated_driver: !obelisk_sim.driver<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 5 : i32,
-             obelisk_sim.descriptor_id = 2 : i64},
-        %positive_net: !obelisk_sim.net<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 4 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %negative_net: !obelisk_sim.net<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 4 : i32,
-             obelisk_sim.descriptor_id = 1 : i64},
-        %arbitrated_net: !obelisk_sim.net<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 4 : i32,
-             obelisk_sim.descriptor_id = 2 : i64})
+    simulation.func private @initial(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %positive_driver: !simulation.driver<!simulation.logic<1>>
+            {simulation.capture_kind = 5 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %negative_driver: !simulation.driver<!simulation.logic<1>>
+            {simulation.capture_kind = 5 : i32,
+             simulation.descriptor_id = 1 : i64},
+        %arbitrated_driver: !simulation.driver<!simulation.logic<1>>
+            {simulation.capture_kind = 5 : i32,
+             simulation.descriptor_id = 2 : i64},
+        %positive_net: !simulation.net<!simulation.logic<1>>
+            {simulation.capture_kind = 4 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %negative_net: !simulation.net<!simulation.logic<1>>
+            {simulation.capture_kind = 4 : i32,
+             simulation.descriptor_id = 1 : i64},
+        %arbitrated_net: !simulation.net<!simulation.logic<1>>
+            {simulation.capture_kind = 4 : i32,
+             simulation.descriptor_id = 2 : i64})
         attributes {entry_kind = 1 : i32, code_unit_id = 9915001 : i64,
-                    obelisk_sim.lowered} {
-      %zero = obelisk_sim.logic.constant false, false :
-          !obelisk_sim.logic<1>
-      %one = obelisk_sim.logic.constant true, false :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %positive_driver = %zero :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %negative_driver = %one :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %arbitrated_driver = %zero :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      %settle = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %settle to ^base
+                    simulation.lowered} {
+      %zero = simulation.logic.constant false, false :
+          !simulation.logic<1>
+      %one = simulation.logic.constant true, false :
+          !simulation.logic<1>
+      simulation.driver.drive %positive_driver = %zero :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.driver.drive %negative_driver = %one :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.driver.drive %arbitrated_driver = %zero :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      %settle = simulation.time.constant 1
+      simulation.suspend.delay %settle to ^base
 
     ^base:
-      %p0 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n0 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a0 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %base_format = obelisk_sim.bytes.constant "base %b%b%b"
+      %p0 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n0 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a0 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %base_format = simulation.bytes.constant "base %b%b%b"
       %stdout0 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout0(%base_format, %p0, %n0, %a0)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
+      simulation.display %ctx to %stdout0(%base_format, %p0, %n0, %a0)
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
 
-      %one1 = obelisk_sim.logic.constant true, false :
-          !obelisk_sim.logic<1>
-      %zero1 = obelisk_sim.logic.constant false, false :
-          !obelisk_sim.logic<1>
-      %positive_rise = obelisk_sim.time.constant 2
-      %positive_fall = obelisk_sim.time.constant 3
-      %positive_off = obelisk_sim.time.constant 4
-      obelisk_sim.driver.drive_inertial %positive_driver = %one1
+      %one1 = simulation.logic.constant true, false :
+          !simulation.logic<1>
+      %zero1 = simulation.logic.constant false, false :
+          !simulation.logic<1>
+      %positive_rise = simulation.time.constant 2
+      %positive_fall = simulation.time.constant 3
+      %positive_off = simulation.time.constant 4
+      simulation.driver.drive_inertial %positive_driver = %one1
           after[%positive_rise, %positive_fall, %positive_off]
           site 9915001 : 0 vector = false :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      %negative_rise = obelisk_sim.time.constant 5
-      %negative_fall = obelisk_sim.time.constant 6
-      %negative_off = obelisk_sim.time.constant 7
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      %negative_rise = simulation.time.constant 5
+      %negative_fall = simulation.time.constant 6
+      %negative_off = simulation.time.constant 7
       // The modeled inverter output falls, so the source rise uses tfall=6.
-      obelisk_sim.driver.drive_inertial %negative_driver = %zero1
+      simulation.driver.drive_inertial %negative_driver = %zero1
           after[%negative_rise, %negative_fall, %negative_off]
           site 9915001 : 1 vector = false :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
 
       %fast_changed = arith.constant true
       %slow_rise_ticks = arith.constant 9 : i64
       %fast_rise_ticks = arith.constant 3 : i64
       %selected_rise_ticks = arith.select %fast_changed,
           %fast_rise_ticks, %slow_rise_ticks : i64
-      %selected_rise = obelisk_sim.time.scale %selected_rise_ticks by 1
+      %selected_rise = simulation.time.scale %selected_rise_ticks by 1
           signed = false : i64
       %slow_fall_ticks = arith.constant 10 : i64
       %fast_fall_ticks = arith.constant 4 : i64
       %selected_fall_ticks = arith.select %fast_changed,
           %fast_fall_ticks, %slow_fall_ticks : i64
-      %selected_fall = obelisk_sim.time.scale %selected_fall_ticks by 1
+      %selected_fall = simulation.time.scale %selected_fall_ticks by 1
           signed = false : i64
       %slow_off_ticks = arith.constant 11 : i64
       %fast_off_ticks = arith.constant 5 : i64
       %selected_off_ticks = arith.select %fast_changed,
           %fast_off_ticks, %slow_off_ticks : i64
-      %selected_off = obelisk_sim.time.scale %selected_off_ticks by 1
+      %selected_off = simulation.time.scale %selected_off_ticks by 1
           signed = false : i64
-      obelisk_sim.driver.drive_inertial %arbitrated_driver = %one1
+      simulation.driver.drive_inertial %arbitrated_driver = %one1
           after[%selected_rise, %selected_fall, %selected_off]
           site 9915001 : 2 vector = false :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      %one_tick = obelisk_sim.time.constant 1
-      obelisk_sim.suspend.delay %one_tick to ^early
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      %one_tick = simulation.time.constant 1
+      simulation.suspend.delay %one_tick to ^early
 
     ^early:
-      %p1 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n1 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a1 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %early_format = obelisk_sim.bytes.constant "early %b%b%b"
+      %p1 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n1 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a1 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %early_format = simulation.bytes.constant "early %b%b%b"
       %stdout1 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout1(%early_format, %p1, %n1, %a1)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
-      %three_ticks = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %three_ticks to ^simultaneous
+      simulation.display %ctx to %stdout1(%early_format, %p1, %n1, %a1)
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
+      %three_ticks = simulation.time.constant 3
+      simulation.suspend.delay %three_ticks to ^simultaneous
 
     ^simultaneous:
-      %p2 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n2 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a2 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %simultaneous_format = obelisk_sim.bytes.constant "simultaneous %b%b%b"
+      %p2 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n2 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a2 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %simultaneous_format = simulation.bytes.constant "simultaneous %b%b%b"
       %stdout2 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout2(
+      simulation.display %ctx to %stdout2(
           %simultaneous_format, %p2, %n2, %a2)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
-      %three_more = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %three_more to ^negative_fall
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
+      %three_more = simulation.time.constant 3
+      simulation.suspend.delay %three_more to ^negative_fall
 
     ^negative_fall:
-      %p3 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n3 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a3 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %fall_format = obelisk_sim.bytes.constant "negative-fall %b%b%b"
+      %p3 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n3 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a3 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %fall_format = simulation.bytes.constant "negative-fall %b%b%b"
       %stdout3 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout3(%fall_format, %p3, %n3, %a3)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
+      simulation.display %ctx to %stdout3(%fall_format, %p3, %n3, %a3)
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
 
-      %z = obelisk_sim.logic.constant true, true : !obelisk_sim.logic<1>
-      %one2 = obelisk_sim.logic.constant true, false :
-          !obelisk_sim.logic<1>
-      %positive_rise2 = obelisk_sim.time.constant 2
-      %positive_fall2 = obelisk_sim.time.constant 3
-      %positive_off2 = obelisk_sim.time.constant 4
-      obelisk_sim.driver.drive_inertial %positive_driver = %z
+      %z = simulation.logic.constant true, true : !simulation.logic<1>
+      %one2 = simulation.logic.constant true, false :
+          !simulation.logic<1>
+      %positive_rise2 = simulation.time.constant 2
+      %positive_fall2 = simulation.time.constant 3
+      %positive_off2 = simulation.time.constant 4
+      simulation.driver.drive_inertial %positive_driver = %z
           after[%positive_rise2, %positive_fall2, %positive_off2]
           site 9915001 : 0 vector = false :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      %negative_rise2 = obelisk_sim.time.constant 5
-      %negative_fall2 = obelisk_sim.time.constant 6
-      %negative_off2 = obelisk_sim.time.constant 7
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      %negative_rise2 = simulation.time.constant 5
+      %negative_fall2 = simulation.time.constant 6
+      %negative_off2 = simulation.time.constant 7
       // The modeled inverter output rises, so the source fall uses trise=5.
-      obelisk_sim.driver.drive_inertial %negative_driver = %one2
+      simulation.driver.drive_inertial %negative_driver = %one2
           after[%negative_rise2, %negative_fall2, %negative_off2]
           site 9915001 : 1 vector = false :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
 
       %fast_unchanged = arith.constant false
       %slow_rise_ticks2 = arith.constant 9 : i64
       %fast_rise_ticks2 = arith.constant 3 : i64
       %selected_rise_ticks2 = arith.select %fast_unchanged,
           %fast_rise_ticks2, %slow_rise_ticks2 : i64
-      %selected_rise2 = obelisk_sim.time.scale %selected_rise_ticks2 by 1
+      %selected_rise2 = simulation.time.scale %selected_rise_ticks2 by 1
           signed = false : i64
       %slow_fall_ticks2 = arith.constant 10 : i64
       %fast_fall_ticks2 = arith.constant 4 : i64
       %selected_fall_ticks2 = arith.select %fast_unchanged,
           %fast_fall_ticks2, %slow_fall_ticks2 : i64
-      %selected_fall2 = obelisk_sim.time.scale %selected_fall_ticks2 by 1
+      %selected_fall2 = simulation.time.scale %selected_fall_ticks2 by 1
           signed = false : i64
       %slow_off_ticks2 = arith.constant 11 : i64
       %fast_off_ticks2 = arith.constant 5 : i64
       %selected_off_ticks2 = arith.select %fast_unchanged,
           %fast_off_ticks2, %slow_off_ticks2 : i64
-      %selected_off2 = obelisk_sim.time.scale %selected_off_ticks2 by 1
+      %selected_off2 = simulation.time.scale %selected_off_ticks2 by 1
           signed = false : i64
-      %zero2 = obelisk_sim.logic.constant false, false :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive_inertial %arbitrated_driver = %zero2
+      %zero2 = simulation.logic.constant false, false :
+          !simulation.logic<1>
+      simulation.driver.drive_inertial %arbitrated_driver = %zero2
           after[%selected_rise2, %selected_fall2, %selected_off2]
           site 9915001 : 2 vector = false :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      %later_three = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %later_three to ^later_early
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      %later_three = simulation.time.constant 3
+      simulation.suspend.delay %later_three to ^later_early
 
     ^later_early:
-      %p4 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n4 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a4 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %later_early_format = obelisk_sim.bytes.constant "later-early %b%b%b"
+      %p4 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n4 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a4 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %later_early_format = simulation.bytes.constant "later-early %b%b%b"
       %stdout4 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout4(
+      simulation.display %ctx to %stdout4(
           %later_early_format, %p4, %n4, %a4)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
-      %later_three2 = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %later_three2 to ^destination_banks
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
+      %later_three2 = simulation.time.constant 3
+      simulation.suspend.delay %later_three2 to ^destination_banks
 
     ^destination_banks:
-      %p5 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n5 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a5 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %banks_format = obelisk_sim.bytes.constant "destination-banks %b%b%b"
+      %p5 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n5 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a5 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %banks_format = simulation.bytes.constant "destination-banks %b%b%b"
       %stdout5 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout5(%banks_format, %p5, %n5, %a5)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
-      %later_three3 = obelisk_sim.time.constant 3
-      obelisk_sim.suspend.delay %later_three3 to ^slow_path_early
+      simulation.display %ctx to %stdout5(%banks_format, %p5, %n5, %a5)
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
+      %later_three3 = simulation.time.constant 3
+      simulation.suspend.delay %later_three3 to ^slow_path_early
 
     ^slow_path_early:
-      %p6 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n6 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a6 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %slow_early_format = obelisk_sim.bytes.constant "slow-path-early %b%b%b"
+      %p6 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n6 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a6 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %slow_early_format = simulation.bytes.constant "slow-path-early %b%b%b"
       %stdout6 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout6(
+      simulation.display %ctx to %stdout6(
           %slow_early_format, %p6, %n6, %a6)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
-      %later_two = obelisk_sim.time.constant 2
-      obelisk_sim.suspend.delay %later_two to ^slow_path_done
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
+      %later_two = simulation.time.constant 2
+      simulation.suspend.delay %later_two to ^slow_path_done
 
     ^slow_path_done:
-      %p7 = obelisk_sim.net.read %positive_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %n7 = obelisk_sim.net.read %negative_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %a7 = obelisk_sim.net.read %arbitrated_net :
-          !obelisk_sim.net<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-      %done_format = obelisk_sim.bytes.constant "slow-path-done %b%b%b"
+      %p7 = simulation.net.read %positive_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %n7 = simulation.net.read %negative_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %a7 = simulation.net.read %arbitrated_net :
+          !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %done_format = simulation.bytes.constant "slow-path-done %b%b%b"
       %stdout7 = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout7(%done_format, %p7, %n7, %a7)
-          newline = true radix = 10 flags = [0, 0, 0, 0] :
-          !obelisk_sim.bytes, !obelisk_sim.logic<1>, !obelisk_sim.logic<1>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      simulation.display %ctx to %stdout7(%done_format, %p7, %n7, %a7)
+          newline = true radix = <decimal> flags = [0, 0, 0, 0] :
+          !simulation.bytes, !simulation.logic<1>, !simulation.logic<1>,
+          !simulation.logic<1>
+      simulation.return
     }
   }
 }

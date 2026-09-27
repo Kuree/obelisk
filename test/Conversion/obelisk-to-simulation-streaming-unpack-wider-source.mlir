@@ -36,5 +36,5 @@ module {
 
 // The export reads only the leading six bits. Truncation must not synthesize a
 // loop that deletes each unused bit from the internal queue.
-// CHECK-NOT: obelisk_sim.queue.delete
-// CHECK: obelisk_sim.container.export_bitstream %{{.*}} -> !obelisk_sim.logic<6>
+// CHECK-NOT: simulation.queue.delete
+// CHECK: simulation.container.export_bitstream %{{.*}} -> !simulation.logic<6>

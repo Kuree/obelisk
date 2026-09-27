@@ -6,9 +6,9 @@
 // so a real selector matches its labels with a floating-point comparison --
 // a real value carries no x or z bits for `===` to distinguish.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[LABEL:.*]] = arith.constant 1.500000e+00 : f64
-// CHECK: %[[SELECTOR:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<f64> -> f64
+// CHECK: %[[SELECTOR:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<f64> -> f64
 // CHECK: %[[MATCH:.*]] = arith.cmpf oeq, %[[SELECTOR]], %[[LABEL]] : f64
 // CHECK: cf.cond_br %[[MATCH]]
 

@@ -40,10 +40,10 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} : !obelisk_sim.packed_array<0 : 0 x !obelisk_sim.logic<1>> {{.*}}hierarchy "inout_width_top.actual"
-// CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} : !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>> {{.*}}hierarchy "inout_width_top.child.formal"
-// CHECK-DAG: obelisk_sim.port.decl 0 {{.*}} source 1 net = true at 0 : !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>> inout ordinal 0 hierarchy "inout_width_top.child.formal"
-// CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
+// CHECK-DAG: simulation.net.decl 0 {{.*}} : !simulation.packed_array<0 : 0 x !simulation.logic<1>> {{.*}}hierarchy "inout_width_top.actual"
+// CHECK-DAG: simulation.net.decl 1 {{.*}} : !simulation.packed_array<1 : 0 x !simulation.logic<1>> {{.*}}hierarchy "inout_width_top.child.formal"
+// CHECK-DAG: simulation.port.decl 0 {{.*}} source 1 net = true at 0 : !simulation.packed_array<1 : 0 x !simulation.logic<1>> inout ordinal 0 hierarchy "inout_width_top.child.formal"
+// CHECK: simulation.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered"
 // CHECK-NOT: port_output
 // CHECK-NOT: obelisk.sv.
 

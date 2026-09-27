@@ -12,8 +12,8 @@ endprogram
 // The frontend owns classification of program procedural roots. Runtime
 // ownership, descendant propagation, completion, and final behavior are
 // covered by simulation-program-exit-runtime.mlir.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-SAME: schedule.program_owner_id = [[OWNER:[0-9]+]] : i64
-// CHECK: obelisk_sim.program.exit
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK: simulation.program.exit
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK-SAME: schedule.program_owner_id = [[OWNER]] : i64

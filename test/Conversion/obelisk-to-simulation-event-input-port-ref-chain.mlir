@@ -60,9 +60,9 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.code_unit.decl {{.*}} port_input hierarchy "top.dut.sink.$port_connection_0"
-// CHECK: obelisk_sim.spawn @unit_3
-// CHECK: obelisk_sim.spawn @unit_2
-// CHECK: obelisk_sim.func private @unit_2({{.*}}entry_kind = 3 : i32
-// CHECK: obelisk_sim.func private @unit_3({{.*}}!obelisk_sim.ref<!obelisk_sim.event>{{.*}}!obelisk_sim.ref<!obelisk_sim.event>{{.*}}entry_kind = 9 : i32
+// CHECK: simulation.code_unit.decl {{.*}} port_input hierarchy "top.dut.sink.$port_connection_0"
+// CHECK: simulation.spawn @unit_3
+// CHECK: simulation.spawn @unit_2
+// CHECK: simulation.func private @unit_2({{.*}}entry_kind = 3 : i32
+// CHECK: simulation.func private @unit_3({{.*}}!simulation.ref<!simulation.event>{{.*}}!simulation.ref<!simulation.event>{{.*}}entry_kind = 9 : i32
 // CHECK-NOT: obelisk.sv.

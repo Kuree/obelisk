@@ -15,13 +15,13 @@ module attributes {
   llvm.mlir.global_ctors ctors = [@ctor], priorities = [0 : i32],
       data = [#llvm.zero]
 
-  obelisk_sim.design @fallback {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+  simulation.design @fallback {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

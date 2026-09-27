@@ -1,7 +1,7 @@
 //===- LowerUnit.cpp - Lower one frozen code unit to SSA and CF ---------===//
 //
 // Rewrites the semantic statement and expression tree cloned into one
-// `obelisk_sim.func` into an SSA CFG. The unit is isolated and every non-local
+// `simulation.func` into an SSA CFG. The unit is isolated and every non-local
 // resource is already an entry argument, so this pass never consults the
 // design or any sibling unit and can run on all units concurrently.
 //
@@ -113,6 +113,68 @@ static_assert(
                                 sim::EventRegion::Postponed),
     "Obelisk and simulation event-region enums must stay in lockstep");
 
+// Simulation enum values are serialized directly into the sole runtime ABI.
+static_assert(static_cast<uint32_t>(sim::ElementKind::Bits) ==
+              OBELISK_RT_ELEMENT_BITS);
+static_assert(static_cast<uint32_t>(sim::ElementKind::Logic) ==
+              OBELISK_RT_ELEMENT_LOGIC);
+static_assert(static_cast<uint32_t>(sim::ElementKind::Real) ==
+              OBELISK_RT_ELEMENT_REAL);
+static_assert(static_cast<uint32_t>(sim::ElementKind::ClassHandle) ==
+              OBELISK_RT_ELEMENT_CLASS_HANDLE);
+static_assert(static_cast<uint32_t>(sim::ElementKind::String) ==
+              OBELISK_RT_ELEMENT_STRING);
+static_assert(static_cast<uint32_t>(sim::ElementKind::ContainerHandle) ==
+              OBELISK_RT_ELEMENT_CONTAINER_HANDLE);
+static_assert(static_cast<uint32_t>(sim::ElementKind::Aggregate) ==
+              OBELISK_RT_ELEMENT_AGGREGATE);
+static_assert(static_cast<uint32_t>(sim::ElementKind::Event) ==
+              OBELISK_RT_ELEMENT_EVENT);
+static_assert(static_cast<uint32_t>(sim::ElementFlags::FourState) ==
+              OBELISK_RT_ELEMENT_FOUR_STATE);
+static_assert(static_cast<uint32_t>(sim::ElementFlags::Signed) ==
+              OBELISK_RT_ELEMENT_SIGNED);
+static_assert(static_cast<uint32_t>(sim::ContainerKind::DynamicArray) ==
+              OBELISK_RT_CONTAINER_DYNAMIC_ARRAY);
+static_assert(static_cast<uint32_t>(sim::ContainerKind::Queue) ==
+              OBELISK_RT_CONTAINER_QUEUE);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Unsigned) ==
+              OBELISK_RT_ASSOC_KEY_UNSIGNED);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Signed) ==
+              OBELISK_RT_ASSOC_KEY_SIGNED);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::String) ==
+              OBELISK_RT_ASSOC_KEY_STRING);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Class) ==
+              OBELISK_RT_ASSOC_KEY_CLASS);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Process) ==
+              OBELISK_RT_ASSOC_KEY_PROCESS);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Wildcard) ==
+              OBELISK_RT_ASSOC_KEY_WILDCARD);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::Uniform) ==
+              OBELISK_RT_DISTRIBUTION_UNIFORM);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::Normal) ==
+              OBELISK_RT_DISTRIBUTION_NORMAL);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::Exponential) ==
+              OBELISK_RT_DISTRIBUTION_EXPONENTIAL);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::Poisson) ==
+              OBELISK_RT_DISTRIBUTION_POISSON);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::ChiSquare) ==
+              OBELISK_RT_DISTRIBUTION_CHI_SQUARE);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::T) ==
+              OBELISK_RT_DISTRIBUTION_T);
+static_assert(static_cast<uint32_t>(sim::RandomDistribution::Erlang) ==
+              OBELISK_RT_DISTRIBUTION_ERLANG);
+static_assert(static_cast<uint32_t>(sim::StochasticQueueAction::Initialize) ==
+              OBELISK_RT_STOCHASTIC_QUEUE_INITIALIZE);
+static_assert(static_cast<uint32_t>(sim::StochasticQueueAction::Add) ==
+              OBELISK_RT_STOCHASTIC_QUEUE_ADD);
+static_assert(static_cast<uint32_t>(sim::StochasticQueueAction::Remove) ==
+              OBELISK_RT_STOCHASTIC_QUEUE_REMOVE);
+static_assert(static_cast<uint32_t>(sim::StochasticQueueAction::Full) ==
+              OBELISK_RT_STOCHASTIC_QUEUE_FULL);
+static_assert(static_cast<uint32_t>(sim::StochasticQueueAction::Exam) ==
+              OBELISK_RT_STOCHASTIC_QUEUE_EXAM);
+
 static uint64_t stableTypeID(Type type, uint32_t descriptorFlags = 0) {
   std::string spelling;
   llvm::raw_string_ostream stream(spelling);
@@ -131,43 +193,50 @@ static uint64_t stableTypeID(Type type, uint32_t descriptorFlags = 0) {
 
 FailureOr<simlowering::ContainerElementDescriptor>
 describeContainerElementImpl(Type type, Location location) {
-  ContainerElementDescriptor result{stableTypeID(type), 0, 0, 0, 1, 0, {}, {}};
+  ContainerElementDescriptor result{stableTypeID(type),
+                                    sim::ElementKind::Bits,
+                                    sim::ElementFlags::None,
+                                    0,
+                                    1,
+                                    0,
+                                    {},
+                                    {}};
   if (auto integer = dyn_cast<IntegerType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.kind = sim::ElementKind::Bits;
     result.valueSize = (integer.getWidth() + 7) / 8;
     result.bitWidth = integer.getWidth();
     return result;
   }
   if (auto logic = dyn_cast<sim::LogicType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_LOGIC;
-    result.flags = OBELISK_RT_ELEMENT_FOUR_STATE;
+    result.kind = sim::ElementKind::Logic;
+    result.flags = sim::ElementFlags::FourState;
     result.valueSize = (logic.getWidth() + 7) / 8;
     result.bitWidth = logic.getWidth();
     return result;
   }
   if (auto real = dyn_cast<FloatType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_REAL;
+    result.kind = sim::ElementKind::Real;
     result.valueSize = real.getWidth() / 8;
     result.bitWidth = real.getWidth();
     return result;
   }
   if (isa<sim::ClassHandleType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_CLASS_HANDLE;
+    result.kind = sim::ElementKind::ClassHandle;
     result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     return result;
   }
   if (isa<sim::StringType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_STRING;
+    result.kind = sim::ElementKind::String;
     result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     return result;
   }
   if (isa<sim::EventType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_EVENT;
+    result.kind = sim::ElementKind::Event;
     result.valueSize = sizeof(uint64_t);
     return result;
   }
   if (isa<sim::ProcessType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.kind = sim::ElementKind::Bits;
     result.valueSize = sizeof(uint64_t);
     result.bitWidth = 64;
     return result;
@@ -176,20 +245,20 @@ describeContainerElementImpl(Type type, Location location) {
   // contain no managed pointer and therefore use the ordinary bits container
   // ABI, just like process IDs.
   if (isa<sim::VirtualInterfaceType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.kind = sim::ElementKind::Bits;
     result.valueSize = sizeof(uint64_t);
     result.bitWidth = 64;
     return result;
   }
   if (isa<sim::ChandleType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_BITS;
+    result.kind = sim::ElementKind::Bits;
     result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     result.bitWidth = sizeof(obelisk_rt_managed_word_v1) * 8;
     return result;
   }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType, sim::BoxType,
           sim::SemaphoreType, sim::AssocArrayType>(type)) {
-    result.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
+    result.kind = sim::ElementKind::ContainerHandle;
     result.valueSize = sizeof(obelisk_rt_managed_word_v1);
     return result;
   }
@@ -198,9 +267,9 @@ describeContainerElementImpl(Type type, Location location) {
     if (!width || *width == 0)
       return failure();
     bool fourState = isa<sim::LogicType>(scalar);
-    result.kind =
-        fourState ? OBELISK_RT_ELEMENT_LOGIC : OBELISK_RT_ELEMENT_BITS;
-    result.flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
+    result.kind = fourState ? sim::ElementKind::Logic : sim::ElementKind::Bits;
+    result.flags =
+        fourState ? sim::ElementFlags::FourState : sim::ElementFlags::None;
     result.valueSize = (*width + 7) / 8;
     result.bitWidth = *width;
     return result;
@@ -234,8 +303,9 @@ describeContainerElementImpl(Type type, Location location) {
     }
     bool fourState = false;
     type.walk([&](sim::LogicType) { fourState = true; });
-    result.kind = OBELISK_RT_ELEMENT_AGGREGATE;
-    result.flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
+    result.kind = sim::ElementKind::Aggregate;
+    result.flags =
+        fourState ? sim::ElementFlags::FourState : sim::ElementFlags::None;
     result.valueSize = (*width + 7) / 8;
     result.bitWidth = result.valueSize * 8;
     return result;
@@ -272,7 +342,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
   }
   if (function.getEntryKind() == sim::EntryKind::Task)
     if (auto targetID = function->getAttrOfType<IntegerAttr>(
-            "obelisk_sim.control_target_id"))
+            "simulation.control_target_id"))
       taskControlActivation =
           sim::SimControlEnterOp::create(builder, function.getLoc(), targetID);
   // The return variable is an activation-local binding for an automatic
@@ -347,7 +417,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function)
       }
       if (argument.getKind() == sim::UnitArgumentKind::LValueOnly) {
         if (auto bank = function.getArgAttrOfType<IntegerAttr>(
-                argument.getArgument(), "obelisk_sim.strength_driver_bank")) {
+                argument.getArgument(), "simulation.strength_driver_bank")) {
           if (bank.getValue().isNegative() ||
               bank.getValue().getActiveBits() > 1 ||
               !isa<sim::DriverType>(value.getType())) {
@@ -523,7 +593,7 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
       virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
       auto scope = interfaceScopes.find(storage.getScopeId());
       StringAttr member = storage->getAttrOfType<StringAttr>(
-          "obelisk_sim.virtual_interface_member");
+          "simulation.virtual_interface_member");
       if (scope != interfaceScopes.end() && member)
         virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
                                                  member.getValue())]
@@ -534,7 +604,7 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
       virtualInterfaceNetTypes[net.getId()] = net.getType();
       auto scope = interfaceScopes.find(net.getScopeId());
       StringAttr member = net->getAttrOfType<StringAttr>(
-          "obelisk_sim.virtual_interface_member");
+          "simulation.virtual_interface_member");
       if (scope != interfaceScopes.end() && member)
         virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
                                              member.getValue())]
@@ -544,9 +614,9 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
     if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto scope = interfaceScopes.find(driver.getScopeId());
       StringAttr member = driver->getAttrOfType<StringAttr>(
-          "obelisk_sim.virtual_interface_member");
+          "simulation.virtual_interface_member");
       StringAttr output = driver->getAttrOfType<StringAttr>(
-          "obelisk_sim.virtual_interface_clocking_output");
+          "simulation.virtual_interface_clocking_output");
       if (scope != interfaceScopes.end() && member && output) {
         std::string key =
             (Twine(memberKey(scope->second.getValue(), member.getValue())) +
@@ -700,14 +770,14 @@ FailureOr<Value> UnitLowering::ensureSequentialContainer(Value value,
                                                          Location location) {
   Type type = value.getType();
   Type elementType;
-  uint32_t containerKind;
+  sim::ContainerKind containerKind;
   uint64_t bound = 0;
   if (auto array = dyn_cast<sim::DynamicArrayType>(type)) {
     elementType = array.getElementType();
-    containerKind = OBELISK_RT_CONTAINER_DYNAMIC_ARRAY;
+    containerKind = sim::ContainerKind::DynamicArray;
   } else if (auto queue = dyn_cast<sim::QueueType>(type)) {
     elementType = queue.getElementType();
-    containerKind = OBELISK_RT_CONTAINER_QUEUE;
+    containerKind = sim::ContainerKind::Queue;
     bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
   } else {
     return failure();
@@ -760,13 +830,13 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
         << "associative array key must be string, class, process, or integral";
     return failure();
   }
-  uint32_t keyKind =
-      wildcardKey  ? OBELISK_RT_ASSOC_KEY_WILDCARD
-      : stringKey  ? OBELISK_RT_ASSOC_KEY_STRING
-      : classKey   ? OBELISK_RT_ASSOC_KEY_CLASS
-      : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
-                   : (type.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
-                                          : OBELISK_RT_ASSOC_KEY_UNSIGNED);
+  sim::AssocKeyKind keyKind =
+      wildcardKey  ? sim::AssocKeyKind::Wildcard
+      : stringKey  ? sim::AssocKeyKind::String
+      : classKey   ? sim::AssocKeyKind::Class
+      : processKey ? sim::AssocKeyKind::Process
+                   : (type.getSignedKey() ? sim::AssocKeyKind::Signed
+                                          : sim::AssocKeyKind::Unsigned);
   return sim::SimAssocCreateOp::create(
              builder, location, type, descriptor->typeID, descriptor->kind,
              descriptor->flags, descriptor->valueSize, descriptor->alignment,
@@ -823,7 +893,9 @@ UnitLowering::traverseAssoc(Value array, Value key, int32_t direction,
   setCurrent(present);
   auto traversed = sim::SimAssocTraverseOp::create(
       builder, location, type.getKeyType(), builder.getI1Type(), array, key,
-      static_cast<uint32_t>(direction), endpoint);
+      static_cast<sim::AssocTraversalDirection>(
+          static_cast<uint32_t>(direction)),
+      endpoint);
   cf::BranchOp::create(
       builder, location, resume,
       ValueRange{traversed.getResultKey(), traversed.getSuccess()});
@@ -939,7 +1011,8 @@ void UnitLowering::emitCovergroupBlockEvent(uint64_t targetID,
   sim::SimCovergroupBlockEventFireOp::create(
       builder, location, function.getBody().front().getArgument(0), thisObject,
       builder.getI64IntegerAttr(targetID),
-      builder.getI32IntegerAttr(eventKind));
+      sim::BlockEventKindAttr::get(
+          builder.getContext(), static_cast<sim::BlockEventKind>(eventKind)));
 }
 
 InFlightDiagnostic UnitLowering::unsupported(Operation *op) {
@@ -1027,7 +1100,7 @@ FailureOr<Value> UnitLowering::bindObserver(
     bool includeStaticDependencies, const llvm::StringMap<Value> *overrides) {
   Location location = getSemanticLocation(expression);
   auto evaluator =
-      expression->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.observer");
+      expression->getAttrOfType<FlatSymbolRefAttr>("simulation.observer");
   auto capturePaths =
       expression->getAttrOfType<ArrayAttr>(observerCapturesAttrName);
   auto dependencyPaths =
@@ -1640,8 +1713,9 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
     if (failed(descriptor))
       return failure();
     if (sourceSigned) {
-      descriptor->flags |= OBELISK_RT_ELEMENT_SIGNED;
-      descriptor->typeID = getStableTypeID(value.getType(), descriptor->flags);
+      descriptor->flags |= sim::ElementFlags::Signed;
+      descriptor->typeID = getStableTypeID(
+          value.getType(), static_cast<uint32_t>(descriptor->flags));
     }
     Type arrayType =
         sim::DynamicArrayType::get(function.getContext(), value.getType());
@@ -1653,7 +1727,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
         descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+        sim::ContainerKind::DynamicArray, 0);
     sim::SimContainerWriteOp::create(builder, location, array, zero,
                                      cloneSequentialValue(value, location));
     return sim::SimBoxPackOp::create(builder, location, targetType, array)
@@ -1752,9 +1826,9 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
         return failure();
       Value size = sim::SimContainerSizeOp::create(builder, location,
                                                    builder.getI64Type(), value);
-      uint32_t containerKind = isa<sim::DynamicArrayType>(targetType)
-                                   ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                                   : OBELISK_RT_CONTAINER_QUEUE;
+      sim::ContainerKind containerKind = isa<sim::DynamicArrayType>(targetType)
+                                             ? sim::ContainerKind::DynamicArray
+                                             : sim::ContainerKind::Queue;
       uint64_t bound = 0;
       if (auto queue = dyn_cast<sim::QueueType>(targetType))
         bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
@@ -1779,7 +1853,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
         cf::BranchOp::create(builder, location, ready);
         setCurrent(ready);
       }
-      Value allocationSize = containerKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+      Value allocationSize = containerKind == sim::ContainerKind::DynamicArray
                                  ? size
                                  : Value(arith::ConstantOp::create(
                                        builder, location, builder.getI64Type(),
@@ -1957,8 +2031,7 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
           descriptor->alignment, descriptor->bitWidth,
           builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
           builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-          queue ? OBELISK_RT_CONTAINER_QUEUE
-                : OBELISK_RT_CONTAINER_DYNAMIC_ARRAY,
+          queue ? sim::ContainerKind::Queue : sim::ContainerKind::DynamicArray,
           bound);
       for (unsigned ordinal = 0; ordinal < copiedCount; ++ordinal) {
         Type elementType = sim::getAggregateElementType(sourceArray, ordinal);
@@ -2222,7 +2295,7 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
         formatted = sim::SimStringOutputFormatOp::create(
                         builder, location, stringType,
                         function.getBody().front().getArgument(0),
-                        ValueRange{formatValue, item}, 10,
+                        ValueRange{formatValue, item}, sim::Radix::Decimal,
                         builder.getDenseI32ArrayAttr(
                             {OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT,
                              static_cast<int32_t>(flags)}),
@@ -2379,9 +2452,9 @@ UnitLowering::emitFunctionReturn(Location location,
 
   TypeRange resultTypes = function.getFunctionType().getResults();
   bool hasPrimaryResult =
-      !function->hasAttr("obelisk_sim.constructor") &&
-      !function->hasAttr("obelisk_sim.static_initializer") &&
-      !function->hasAttr("obelisk_sim.void_function");
+      !function->hasAttr("simulation.constructor") &&
+      !function->hasAttr("simulation.static_initializer") &&
+      !function->hasAttr("simulation.void_function");
   if (!hasPrimaryResult && explicitResult) {
     emitError(location) << "constructor or initializer cannot return a value";
     return failure();
@@ -2475,7 +2548,7 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
   StringAttr scope =
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
   sim::SimDisplayOp::create(builder, location, context, descriptor,
-                            ValueRange{item}, true, 10,
+                            ValueRange{item}, true, sim::Radix::Decimal,
                             builder.getDenseI32ArrayAttr({0}), scope,
                             StringAttr{}, timeMultiplier, IntegerAttr{});
   Value verbosity = arith::ConstantOp::create(
@@ -2524,7 +2597,7 @@ void UnitLowering::emitRuntimeWarning(Location location, StringRef detail) {
   StringAttr scope =
       function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
   sim::SimDisplayOp::create(builder, location, context, descriptor,
-                            ValueRange{item}, true, 10,
+                            ValueRange{item}, true, sim::Radix::Decimal,
                             builder.getDenseI32ArrayAttr({0}), scope,
                             StringAttr{}, timeMultiplier, IntegerAttr{});
 }
@@ -2859,7 +2932,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         // recursive bulk export instead of the generic per-bit queue.
         if (!sourceWidth && isa<sim::ClassHandleType>(input->getType())) {
           IntegerAttr width = children.front()->getAttrOfType<IntegerAttr>(
-              "obelisk_sim.class_bitstream_width");
+              "simulation.class_bitstream_width");
           if (width && !width.getValue().isNegative() &&
               !width.getValue().isZero() &&
               width.getValue().getActiveBits() <= 64)
@@ -3021,7 +3094,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                            Value *nextUdpInputs) {
   Location location = function.getLoc();
   if (auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
-          "obelisk_sim.mos_topology_ids")) {
+          "simulation.mos_topology_ids")) {
     bool complementary = name == "cmos" || name == "rcmos";
     if (ids.empty() || operations.size() != (complementary ? 4u : 3u))
       return emitError(location)
@@ -3060,7 +3133,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                        sim::UnaryKind::BitNot, activeHigh);
     }
     auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.propagation_delays");
+        "simulation.propagation_delays");
     bool delayed =
         delays && llvm::any_of(delays.asArrayRef(),
                                [](int64_t value) { return value != 0; });
@@ -3098,7 +3171,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       return emitError(location) << "primitive '" << name
                                  << "' requires two terminals and one control";
     auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.pass_switch_ids");
+        "simulation.pass_switch_ids");
     if (!ids || ids.empty())
       return emitError(location)
              << "controlled pass primitive has no frozen topology IDs";
@@ -3122,7 +3195,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       activeHigh = sim::SimLogicUnaryOp::create(
           builder, location, controlType, sim::UnaryKind::BitNot, activeHigh);
     auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.propagation_delays");
+        "simulation.propagation_delays");
     if (delays && (delays.empty() || delays.size() > 2))
       return function.emitError(
           "controlled pass-switch delay must contain one or two values");
@@ -3339,7 +3412,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       auto initialize = sim::SimDriverDriveChangedOp::create(
           builder, location, output->reference, currentState);
       if (initialDriverX)
-        initialize->setAttr("obelisk_sim.initial_driver_x",
+        initialize->setAttr("simulation.initial_driver_x",
                             builder.getUnitAttr());
     }
 
@@ -3880,7 +3953,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       return true;
     };
     auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.propagation_delays");
+        "simulation.propagation_delays");
     bool hasMaskedStrengthPaths =
         timingPathMaskedPlan || !timingPathMaskedPlans.empty();
     if (hasMaskedStrengthPaths) {
@@ -4303,7 +4376,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   }
 
   if (auto path =
-          op->getAttrOfType<StringAttr>("obelisk_sim.initialize_static")) {
+          op->getAttrOfType<StringAttr>("simulation.initialize_static")) {
     Value destination = lvalues.lookup(path.getValue());
     auto referenceType = destination
                              ? dyn_cast<sim::RefType>(destination.getType())
@@ -4315,7 +4388,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       return failure();
     }
     if (auto ordinalAttr = op->getAttrOfType<IntegerAttr>(
-            "obelisk_sim.initialize_subelement")) {
+            "simulation.initialize_subelement")) {
       int64_t ordinal = ordinalAttr.getInt();
       Type aggregateType = referenceType.getElementType();
       if (ordinal < 0 || static_cast<uint64_t>(ordinal) >=
@@ -4343,13 +4416,13 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       return failure();
     sim::SimRefStoreOp::create(builder, location, *converted, destination);
     if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
-            "obelisk_sim.initialize_sample_default")) {
+            "simulation.initialize_sample_default")) {
       Value original = lvalues.lookup(path.getValue());
       Value snapshot = sim::SimContextStorageOp::create(
           builder, location, original.getType(),
           function.getBody().front().getArgument(0), snapshotID);
       if (auto ordinal = op->getAttrOfType<IntegerAttr>(
-              "obelisk_sim.initialize_subelement"))
+              "simulation.initialize_subelement"))
         snapshot = sim::SimRefSubelementOp::create(
             builder, location, destination.getType(), snapshot,
             builder.getDenseI64ArrayAttr({ordinal.getInt()}));
@@ -4357,7 +4430,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     }
     return success();
   }
-  if (auto path = op->getAttrOfType<StringAttr>("obelisk_sim.initialize_net")) {
+  if (auto path = op->getAttrOfType<StringAttr>("simulation.initialize_net")) {
     Value destination = lvalues.lookup(path.getValue());
     auto driverType = destination
                           ? dyn_cast<sim::DriverType>(destination.getType())
@@ -4378,7 +4451,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
                                location);
   }
   if (auto field = op->getAttrOfType<FlatSymbolRefAttr>(
-          "obelisk_sim.initialize_field")) {
+          "simulation.initialize_field")) {
     if (!thisObject) {
       emitError(location) << "class property initializer has no this object";
       return failure();
@@ -4614,7 +4687,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     // reevaluation is driven by its exact static dependencies rather than by
     // scheduler polling. A dependency-free expression needs only the immediate
     // publication below.
-    if (!rhs->hasAttr("obelisk_sim.observer")) {
+    if (!rhs->hasAttr("simulation.observer")) {
       FailureOr<SmallVector<Value>> parts =
           splitOverrideValue(builder, *converted);
       if (failed(parts))
@@ -5071,7 +5144,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     root->walk([&](semantic::SVBlockStatementOp block) {
       auto path = block.getBlockPathAttr();
       auto targetID =
-          block->getAttrOfType<IntegerAttr>("obelisk_sim.control_target_id");
+          block->getAttrOfType<IntegerAttr>("simulation.control_target_id");
       SmallVector<Operation *> contents = getChildren(block);
       if (path && targetID && contents.size() == 1 &&
           isa<semantic::SVImmediateAssertionStatementOp>(contents.front()))
@@ -5081,7 +5154,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   setCurrent(&function.getBody().front());
   auto functionCoveragePoint = function->getAttrOfType<IntegerAttr>(
       sim::metadata::coverageLinePointIndex);
-  if (function->hasAttr("obelisk_sim.timing_check_coordinator"))
+  if (function->hasAttr("simulation.timing_check_coordinator"))
     return lowerSystemTimingCheck(roots);
   if (function->hasAttr(sequenceEndpointMonitorAttrName))
     return lowerSequenceEndpointMonitor(roots);
@@ -5131,7 +5204,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     // dependency controls when that evaluator is invoked.
     sampleAssertionValues = roots.front()->hasAttr(sampledObserverAttrName);
     if (auto monitorRules = function->getAttrOfType<ArrayAttr>(
-            "obelisk_sim.timing_path_monitor_rules")) {
+            "simulation.timing_path_monitor_rules")) {
       struct MonitorSource {
         Value input;
         Value snapshot;
@@ -5582,7 +5655,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     return succeeded(scalar) ? *scalar : Value{};
   };
   if (auto rules =
-          function->getAttrOfType<ArrayAttr>("obelisk_sim.timing_path_rules")) {
+          function->getAttrOfType<ArrayAttr>("simulation.timing_path_rules")) {
     bool proceduralActor = entryKind == sim::EntryKind::Always ||
                            entryKind == sim::EntryKind::AlwaysComb ||
                            entryKind == sim::EntryKind::AlwaysFF ||
@@ -6767,7 +6840,7 @@ public:
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
       return;
     // Imported DPI declarations deliberately have no executable body. Their
-    // call sites lower to obelisk_sim.dpi.call in the caller instead.
+    // call sites lower to simulation.dpi.call in the caller instead.
     if (function.getBody().empty())
       return;
     if (failed(sim::verifyUnitBindings(function))) {

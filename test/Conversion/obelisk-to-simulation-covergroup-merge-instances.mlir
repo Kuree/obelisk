@@ -9,9 +9,9 @@
 // IEEE 1800-2017 Tables 19-1 and 19-3 couple the instance Boolean
 // get_inst_coverage option to the static Boolean merge_instances option. Keep
 // their distinct scopes in the typed v1 plan and constructor option batch.
-// SIM: obelisk_sim.covergroup.create
+// SIM: simulation.covergroup.create
 // SIM-SAME: payloads[{{.*}}]
-// SIM-SAME: : (i1, {{.*}}, i1, i1) -> !obelisk_sim.covergroup_handle
+// SIM-SAME: : (i1, {{.*}}, i1, i1) -> !simulation.covergroup_handle
 // SCHEMA: functional_type id=[[TYPE:[1-9][0-9]*]] name={{.*}} language={{2017|2023}} hierarchy=merge_instances_plan.cg
 // SCHEMA-DAG: functional_expression id=[[MERGE:[1-9][0-9]*]] owner=[[TYPE]] owner_kind=1 role=13 result_kind=1 width=0 signedness=3 owner_ordinal=8 owner_subordinal=2 phase=4 result_ordinal={{[0-9]+}}
 // SCHEMA-DAG: functional_expression id=[[TRACK:[1-9][0-9]*]] owner=[[TYPE]] owner_kind=1 role=13 result_kind=1 width=0 signedness=3 owner_ordinal=9 owner_subordinal=1 phase=4 result_ordinal={{[0-9]+}}

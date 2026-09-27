@@ -142,69 +142,69 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos_report.11.strong(
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_report.11.strong(
 // CHECK-SAME: schedule.concurrent_report
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$concurrent_eos.11.strong(
+// CHECK-SAME: simulation.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.11.strong(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-2: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK-NOT: obelisk_sim.spawn @unit_0.$concurrent_eos_report.11.strong
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_consequent_intrinsic_eos_strength = "strong"
-// CHECK-SAME: obelisk_sim.branching_consequent_monitor
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "strong"
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_0.$concurrent_eos.11.strong
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-2: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-NOT: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_consequent_eos_coalescer
+// CHECK-SAME: simulation.branching_consequent_intrinsic_eos_strength = "strong"
+// CHECK-SAME: simulation.branching_consequent_monitor
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.11.strong
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos_report.41.weak(
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.41.weak(
 // CHECK-SAME: schedule.concurrent_report
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$concurrent_eos.41.weak(
+// CHECK-SAME: simulation.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.41.weak(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-2: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.$concurrent_eos_report.41.weak
-// CHECK-NOT: obelisk_sim.spawn @unit_1.$concurrent_eos_report.41.weak
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_consequent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_consequent_intrinsic_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.branching_consequent_monitor
-// CHECK-SAME: obelisk_sim.end_of_simulation_strength = "weak"
-// CHECK-COUNT-2: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_1.$concurrent_eos.41.weak
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK-COUNT-1: simulation.spawn @unit_1.$concurrent_eos_report.41.weak
+// CHECK-NOT: simulation.spawn @unit_1.$concurrent_eos_report.41.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_consequent_eos_coalescer
+// CHECK-SAME: simulation.branching_consequent_intrinsic_eos_strength = "weak"
+// CHECK-SAME: simulation.branching_consequent_monitor
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.41.weak
 // CHECK-NOT: obelisk.sv.assertion
 
 // The combined Boolean route must carry the weak rule into the source-age
 // coalescer instead of replacing it with cover's default strong rule.
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch_report.71.pass(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_report
-// CHECK-SAME: obelisk_sim.concurrent_eos_report
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_branch_report.71.pass(
+// CHECK-SAME: simulation.branching_antecedent_eos_report
+// CHECK-SAME: simulation.concurrent_eos_report
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.fail
-// CHECK-LABEL: obelisk_sim.func private @unit_2.$concurrent_eos_branch.71(
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_branch.71(
 // CHECK-SAME: schedule.concurrent_eos_coordinator
-// CHECK-COUNT-3: obelisk_sim.ref.load
-// CHECK-NOT: obelisk_sim.ref.load
-// CHECK: cf.cond_br {{.*}} {obelisk_sim.branching_antecedent_eos_result = "pass", obelisk_sim.branching_antecedent_eos_source_age = 1 : i64}
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_2.$concurrent_eos_branch_report.71.pass
-// CHECK-NOT: obelisk_sim.spawn @unit_2.$concurrent_eos_branch_report.71.pass
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.branching_antecedent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_antecedent_consequent_eos_strength = "weak"
-// CHECK-SAME: obelisk_sim.branching_antecedent_eos_coalescer
-// CHECK-SAME: obelisk_sim.branching_consequent_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.combined_boolean_branching_monitor
-// CHECK-SAME: obelisk_sim.combined_boolean_branching_pairs = 4 : i64
-// CHECK-COUNT-3: obelisk_sim.ref.alloc
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.spawn @unit_2.$concurrent_eos_branch.71
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-COUNT-3: simulation.ref.load
+// CHECK-NOT: simulation.ref.load
+// CHECK: cf.cond_br {{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
+// CHECK-COUNT-1: simulation.spawn @unit_2.$concurrent_eos_branch_report.71.pass
+// CHECK-NOT: simulation.spawn @unit_2.$concurrent_eos_branch_report.71.pass
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
+// CHECK-SAME: simulation.branching_antecedent_eos_coalescer
+// CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
+// CHECK-SAME: simulation.combined_boolean_branching_monitor
+// CHECK-SAME: simulation.combined_boolean_branching_pairs = 4 : i64
+// CHECK-COUNT-3: simulation.ref.alloc
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos_branch.71
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.71.fail
 // CHECK-NOT: obelisk.sv.assertion

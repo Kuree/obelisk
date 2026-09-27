@@ -99,14 +99,14 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[L:.*]] = obelisk_sim.ref.load %arg1
-// CHECK: %[[R:.*]] = obelisk_sim.ref.load %arg2
-// CHECK: %[[LSIZE:.*]] = obelisk_sim.container.size %[[L]]
-// CHECK: %[[RSIZE:.*]] = obelisk_sim.container.size %[[R]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[L:.*]] = simulation.ref.load %arg1
+// CHECK: %[[R:.*]] = simulation.ref.load %arg2
+// CHECK: %[[LSIZE:.*]] = simulation.container.size %[[L]]
+// CHECK: %[[RSIZE:.*]] = simulation.container.size %[[R]]
 // CHECK: %[[SAME:.*]] = arith.cmpi eq, %[[LSIZE]], %[[RSIZE]] : i64
 // CHECK: ^bb2:
-// CHECK: %[[LE:.*]] = obelisk_sim.container.read %[[L]], %{{.*}} -> i32
-// CHECK: %[[RE:.*]] = obelisk_sim.container.read %[[R]], %{{.*}} -> !obelisk_sim.packed_array<31 : 0 x i1>
-// CHECK: %[[RN:.*]] = obelisk_sim.packed.flatten %[[RE]] : (!obelisk_sim.packed_array<31 : 0 x i1>) -> i32
+// CHECK: %[[LE:.*]] = simulation.container.read %[[L]], %{{.*}} -> i32
+// CHECK: %[[RE:.*]] = simulation.container.read %[[R]], %{{.*}} -> !simulation.packed_array<31 : 0 x i1>
+// CHECK: %[[RN:.*]] = simulation.packed.flatten %[[RE]] : (!simulation.packed_array<31 : 0 x i1>) -> i32
 // CHECK: arith.cmpi eq, %[[LE]], %[[RN]] : i32

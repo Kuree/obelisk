@@ -44,6 +44,6 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-COUNT-2: obelisk_sim.suspend.edge posedge
-// CHECK-NOT: obelisk_sim.suspend.edge
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-COUNT-2: simulation.suspend.edge posedge
+// CHECK-NOT: simulation.suspend.edge

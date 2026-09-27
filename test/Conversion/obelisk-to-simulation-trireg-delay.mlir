@@ -25,16 +25,16 @@ module {
 
 // IEEE 1800-2017 28.16.2: one and two delay values provide driven-state
 // rise/fall propagation without charge decay; the third value is decay.
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.one" {{.*}}charge_strength = 1 : i32{{.*}}propagation_delays = array<i64: 7, 7, -1>{{.*}}resolution_kind = 9 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.two" {{.*}}charge_strength = 2 : i32{{.*}}propagation_delays = array<i64: 7, 11, -1>{{.*}}resolution_kind = 9 : i32
-// CHECK-DAG: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.three" {{.*}}charge_strength = 4 : i32{{.*}}propagation_delays = array<i64: 7, 11, 13>{{.*}}resolution_kind = 9 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.one" {{.*}}charge_strength = 1 : i32{{.*}}propagation_delays = array<i64: 7, 7, -1>{{.*}}resolution_kind = 9 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.two" {{.*}}charge_strength = 2 : i32{{.*}}propagation_delays = array<i64: 7, 11, -1>{{.*}}resolution_kind = 9 : i32
+// CHECK-DAG: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.three" {{.*}}charge_strength = 4 : i32{{.*}}propagation_delays = array<i64: 7, 11, 13>{{.*}}resolution_kind = 9 : i32
 
 // IEEE 1800-2017 10.3.3: with a declaration assignment these values belong
 // to that continuous assignment and are not a net delay or charge decay.
-// CHECK: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.initialized"
+// CHECK: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.initialized"
 // CHECK-SAME: charge_strength = 2 : i32
 // CHECK-SAME: resolution_kind = 9 : i32
 // CHECK-NOT: propagation_delays
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.initialized.$net_initializer"
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-SAME: obelisk_sim.propagation_delays = array<i64: 2, 5, 13>
+// CHECK: simulation.code_unit.decl {{[0-9]+}} {{.*}} hierarchy "trireg_delay.initialized.$net_initializer"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-SAME: simulation.propagation_delays = array<i64: 2, 5, 13>

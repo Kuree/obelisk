@@ -35,8 +35,8 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[REFERENCE:arg[0-9]+]]: !obelisk_sim.argument_ref<
-// CHECK: %[[OLD:.*]] = obelisk_sim.argument_ref.load %[[REFERENCE]]
-// CHECK: %[[UPDATED:.*]] = obelisk_sim.aggregate.insert {{.*}} into %[[OLD]][0]
-// CHECK: obelisk_sim.argument_ref.store %[[UPDATED]] to %[[REFERENCE]]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: %[[REFERENCE:arg[0-9]+]]: !simulation.argument_ref<
+// CHECK: %[[OLD:.*]] = simulation.argument_ref.load %[[REFERENCE]]
+// CHECK: %[[UPDATED:.*]] = simulation.aggregate.insert {{.*}} into %[[OLD]][0]
+// CHECK: simulation.argument_ref.store %[[UPDATED]] to %[[REFERENCE]]

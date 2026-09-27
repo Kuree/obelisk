@@ -4,7 +4,7 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-callee-write.test.
 
-// CALLEE-WRITE-IR: obelisk_sim.func private @__obelisk_fused_
+// CALLEE-WRITE-IR: simulation.func private @__obelisk_fused_
 
 //--- fused-callee-write.sv
 module fused_callee_write;

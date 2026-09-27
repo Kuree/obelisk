@@ -430,17 +430,17 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.logic.constant 0 : i32, -1 : i32
+// CHECK-DAG: simulation.logic.constant 0 : i32, -1 : i32
 // CHECK-DAG: arith.constant 5 : i8
 // CHECK-DAG: arith.constant 6 : i32
 // CHECK-DAG: arith.constant 99 : i32
-// CHECK-COUNT-3: obelisk_sim.logic.is_true
-// CHECK: obelisk_sim.logic.to_bits
-// CHECK-DAG: obelisk_sim.logic.binary sub {{.*}} : !obelisk_sim.logic<66>
-// CHECK-DAG: obelisk_sim.logic.dyn_extract {{.*}} from {{.*}}!obelisk_sim.logic<66>
-// CHECK-DAG: obelisk_sim.logic.dyn_extract {{.*}} from {{.*}}i66
-// CHECK-DAG: obelisk_sim.ref.dyn_extract {{.*}} from {{.*}}!obelisk_sim.logic<66>
-// CHECK-DAG: obelisk_sim.ref.dyn_extract {{.*}} from {{.*}}i66
-// CHECK-DAG: obelisk_sim.bits.dyn_extract {{.*}} from {{.*}}!obelisk_sim.logic<66>
-// CHECK-DAG: obelisk_sim.bits.dyn_extract {{.*}} from {{.*}}i66
+// CHECK-COUNT-3: simulation.logic.is_true
+// CHECK: simulation.logic.to_bits
+// CHECK-DAG: simulation.logic.binary sub {{.*}} : !simulation.logic<66>
+// CHECK-DAG: simulation.logic.dyn_extract {{.*}} from {{.*}}!simulation.logic<66>
+// CHECK-DAG: simulation.logic.dyn_extract {{.*}} from {{.*}}i66
+// CHECK-DAG: simulation.ref.dyn_extract {{.*}} from {{.*}}!simulation.logic<66>
+// CHECK-DAG: simulation.ref.dyn_extract {{.*}} from {{.*}}i66
+// CHECK-DAG: simulation.bits.dyn_extract {{.*}} from {{.*}}!simulation.logic<66>
+// CHECK-DAG: simulation.bits.dyn_extract {{.*}} from {{.*}}i66
 // CHECK-NOT: obelisk.sv.

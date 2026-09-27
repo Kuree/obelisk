@@ -62,16 +62,16 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.observer.bind
-// CHECK-SAME: captures 2 : <!obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.observer.bind
+// CHECK-SAME: captures 2 : <!simulation.logic<1>>
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 0 edges [0] indices [-1]
-// CHECK: %[[SELECTED_EVENT:.*]] = obelisk_sim.assoc.read
-// CHECK: %[[EVENT_OBSERVER:.*]] = obelisk_sim.observer.bind
+// CHECK: %[[SELECTED_EVENT:.*]] = simulation.assoc.read
+// CHECK: %[[EVENT_OBSERVER:.*]] = simulation.observer.bind
 // CHECK-SAME: %[[SELECTED_EVENT]]
-// CHECK-SAME: !obelisk_sim.event
-// CHECK: obelisk_sim.suspend.observe %[[EVENT_OBSERVER]],
-// CHECK: obelisk_sim.func private @observer_
-// CHECK: %[[ELEMENT:.*]] = obelisk_sim.ref.array_element
-// CHECK: obelisk_sim.ref.load %[[ELEMENT]]
+// CHECK-SAME: !simulation.event
+// CHECK: simulation.suspend.observe %[[EVENT_OBSERVER]],
+// CHECK: simulation.func private @observer_
+// CHECK: %[[ELEMENT:.*]] = simulation.ref.array_element
+// CHECK: simulation.ref.load %[[ELEMENT]]
 // CHECK-NOT: obelisk.sv.

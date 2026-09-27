@@ -4,40 +4,40 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @random_layout {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.class.decl @Node id 1 {
+  simulation.design @random_layout {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false,
-      obelisk_sim.random_mode_field = @Node_mode
+      simulation.random_mode_field = @Node_mode
     }
-    obelisk_sim.class.field @Node_child of @Node at 0 :
-        !obelisk_sim.class_handle<@Node> {
+    simulation.class.field @Node_child of @Node at 0 :
+        !simulation.class_handle<@Node> {
       is_static = false, is_weak = false,
-      obelisk_sim.random_mode_index = 2 : i64,
-      obelisk_sim.random_object_edge
+      simulation.random_mode_index = 2 : i64,
+      simulation.random_object_edge
     }
-    obelisk_sim.class.field @Node_value of @Node at 1 : i16 {
+    simulation.class.field @Node_value of @Node at 1 : i16 {
       is_static = false, is_weak = false,
-      obelisk_sim.random_mode_index = 0 : i64,
-      obelisk_sim.random_variable_kind = 1 : i32,
-      obelisk_sim.random_variable_signed = true
+      simulation.random_mode_index = 0 : i64,
+      simulation.random_variable_kind = 1 : i32,
+      simulation.random_variable_signed = true
     }
-    obelisk_sim.class.field @Node_cycle of @Node at 2 :
-        !obelisk_sim.logic<8> {
+    simulation.class.field @Node_cycle of @Node at 2 :
+        !simulation.logic<8> {
       is_static = false, is_weak = false,
-      obelisk_sim.random_cycle_key_field = @Node_cycle_key,
-      obelisk_sim.random_cycle_position_field = @Node_cycle_position,
-      obelisk_sim.random_mode_index = 1 : i64,
-      obelisk_sim.random_variable_kind = 2 : i32,
-      obelisk_sim.random_variable_signed = false
+      simulation.random_cycle_key_field = @Node_cycle_key,
+      simulation.random_cycle_position_field = @Node_cycle_position,
+      simulation.random_mode_index = 1 : i64,
+      simulation.random_variable_kind = 2 : i32,
+      simulation.random_variable_signed = false
     }
-    obelisk_sim.class.field @Node_cycle_key of @Node at 3 : i64 {
+    simulation.class.field @Node_cycle_key of @Node at 3 : i64 {
       is_static = false, is_weak = false
     }
-    obelisk_sim.class.field @Node_cycle_position of @Node at 4 : i64 {
+    simulation.class.field @Node_cycle_position of @Node at 4 : i64 {
       is_static = false, is_weak = false
     }
-    obelisk_sim.class.field @Node_mode of @Node at 5 : i64 {
+    simulation.class.field @Node_mode of @Node at 5 : i64 {
       is_static = false, is_weak = false
     }
   }

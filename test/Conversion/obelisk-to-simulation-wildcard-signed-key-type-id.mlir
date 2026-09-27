@@ -98,6 +98,6 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.container.create {{.*}}element_flags = 0 : i32{{.*}}type_id = [[PLAIN:[0-9]+]] : i64
-// CHECK-NOT: obelisk_sim.container.create {{.*}}element_flags = 2 : i32{{.*}}type_id = [[PLAIN]] : i64
-// CHECK: obelisk_sim.container.create {{.*}}element_flags = 2 : i32
+// CHECK: simulation.container.create {{.*}}element_flags = #simulation.element_flags<none>{{.*}}type_id = [[PLAIN:[0-9]+]] : i64
+// CHECK-NOT: simulation.container.create {{.*}}element_flags = #simulation.element_flags<signed>{{.*}}type_id = [[PLAIN]] : i64
+// CHECK: simulation.container.create {{.*}}element_flags = #simulation.element_flags<signed>

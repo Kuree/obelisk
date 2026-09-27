@@ -59,16 +59,16 @@ if (
     or args.mode.startswith("stop-control-")
 ):
     instance_pattern = re.compile(
-        r"(?m)^.*?obelisk_sim\.covergroup\.instance_query\b.*?\bitem\s+"
-        r"(-?[0-9]+).*?!obelisk_sim\.covergroup_handle<@([^>]+)>.*$"
+        r"(?m)^.*?simulation\.covergroup\.instance_query\b.*?\bitem\s+"
+        r"(-?[0-9]+).*?!simulation\.covergroup_handle<@([^>]+)>.*$"
     )
     type_pattern = re.compile(
-        r"(?m)^.*?obelisk_sim\.covergroup\.type_query\b.*?\bfrom\s+@([^ ]+)"
+        r"(?m)^.*?simulation\.covergroup\.type_query\b.*?\bfrom\s+@([^ ]+)"
         r"\s+item\s+(-?[0-9]+).*$"
     )
     control_pattern = re.compile(
-        r"(?m)^.*?obelisk_sim\.covergroup\.(start|stop)\b.*?\bitem\s+"
-        r"(-?[0-9]+).*?!obelisk_sim\.covergroup_handle<@([^>]+)>.*$"
+        r"(?m)^.*?simulation\.covergroup\.(start|stop)\b.*?\bitem\s+"
+        r"(-?[0-9]+).*?!simulation\.covergroup_handle<@([^>]+)>.*$"
     )
     records = []
     for match in instance_pattern.finditer(text):
@@ -113,21 +113,21 @@ if args.mode == "add-layout":
     raise SystemExit(0)
 elif args.mode == "create-null":
     pattern = re.compile(
-        r"(?m)^(\s*)(%\S+) = obelisk_sim\.covergroup\.create[^\n]*"
-        r"->\s*(!obelisk_sim\.covergroup_handle<[^>]+>)[ \t]*$"
+        r"(?m)^(\s*)(%\S+) = simulation\.covergroup\.create[^\n]*"
+        r"->\s*(!simulation\.covergroup_handle<[^>]+>)[ \t]*$"
     )
 
     def mutate(match):
         return (
             match.group(1)
             + match.group(2)
-            + " = obelisk_sim.covergroup.null : "
+            + " = simulation.covergroup.null : "
             + match.group(3)
         )
 
 elif args.mode == "formal-read-zero":
     pattern = re.compile(
-        r"(?m)^(\s*)(%\S+) = obelisk_sim\.covergroup\.formal_read[^\n]*"
+        r"(?m)^(\s*)(%\S+) = simulation\.covergroup\.formal_read[^\n]*"
         r"->\s*(i[1-9][0-9]*)[ \t]*$"
     )
 
@@ -141,9 +141,9 @@ elif args.mode == "formal-read-zero":
 
 elif args.mode == "insert-string-formal-read":
     pattern = re.compile(
-        r"(?m)^(\s*)((%\S+) = obelisk_sim\.covergroup\.create\s+(%\S+)\s+"
+        r"(?m)^(\s*)((%\S+) = simulation\.covergroup\.create\s+(%\S+)\s+"
         r"from\s+\S+[^\n]*formal_ids\s*\[([1-9][0-9]*)[^]]*\][^\n]*"
-        r"->\s*(!obelisk_sim\.covergroup_handle<[^>]+>)[ \t]*)$"
+        r"->\s*(!simulation\.covergroup_handle<[^>]+>)[ \t]*)$"
     )
 
     def mutate(match):
@@ -153,15 +153,15 @@ elif args.mode == "insert-string-formal-read":
             + "\n"
             + match.group(1)
             + "%__bad_functional_string_read = "
-            + "obelisk_sim.covergroup.formal_read "
+            + "simulation.covergroup.formal_read "
             + match.group(4)
             + ", "
             + match.group(3)
             + "["
             + match.group(5)
-            + "] : !obelisk_sim.context, "
+            + "] : !simulation.context, "
             + match.group(6)
-            + " -> !obelisk_sim.string"
+            + " -> !simulation.string"
         )
 
 elif args.mode in (
@@ -169,7 +169,7 @@ elif args.mode in (
     "constructor-formal-string-type-mismatch",
 ):
     pattern = re.compile(
-        r"(?m)^(\s*)([^\n]*\bobelisk_sim\.covergroup\.create\b[^\n]*?"
+        r"(?m)^(\s*)([^\n]*\bsimulation\.covergroup\.create\b[^\n]*?"
         r"\bpayloads\[)([^]]+)(\]\s*argument_count\s+([0-9]+)\s+"
         r"formal_ids\s*\[[^]]*\]\s*expression_ids\s*\[[^]]*\]\s*:\s*\()"
         r"([^)]*)(\)\s*->[^\n]+)$"
@@ -189,7 +189,7 @@ elif args.mode in (
             name = "%__bad_functional_string_expression"
         index = next(
             (candidate for candidate in candidates
-             if types[candidate] == "!obelisk_sim.string"),
+             if types[candidate] == "!simulation.string"),
             None,
         )
         if index is None:
@@ -210,7 +210,7 @@ elif args.mode in (
 
 elif args.mode == "constructor-expression-reorder":
     pattern = re.compile(
-        r"(obelisk_sim\.covergroup\.create\b[^\n]*?\bexpression_ids\s*\[)"
+        r"(simulation\.covergroup\.create\b[^\n]*?\bexpression_ids\s*\[)"
         r"([^]]+)(\])"
     )
 
@@ -223,7 +223,7 @@ elif args.mode == "constructor-expression-reorder":
 
 elif args.mode == "constructor-expression-subset":
     pattern = re.compile(
-        r"(obelisk_sim\.covergroup\.create\b[^\n]*?\bpayloads\s*\[)"
+        r"(simulation\.covergroup\.create\b[^\n]*?\bpayloads\s*\[)"
         r"([^]]+)(\]\s*argument_count\s+([0-9]+)\s+formal_ids\s*\[[^]]*\]"
         r"\s*expression_ids\s*\[)([^]]+)(\]\s*:\s*\()([^)]*)(\)\s*->)"
     )
@@ -261,7 +261,7 @@ elif args.mode == "formal-reorder":
 
 elif args.mode == "sample-reorder":
     pattern = re.compile(
-        r"(obelisk_sim\.covergroup\.sample\b[^\n]*?\bids\s*\[)([^]]+)(\])"
+        r"(simulation\.covergroup\.sample\b[^\n]*?\bids\s*\[)([^]]+)(\])"
     )
 
     def mutate(match):
@@ -273,7 +273,7 @@ elif args.mode == "sample-reorder":
 
 else:
     pattern = re.compile(
-        r"(obelisk_sim\.covergroup\.sample\b[^\n]*?\bvalues\s*\[)"
+        r"(simulation\.covergroup\.sample\b[^\n]*?\bvalues\s*\[)"
         r"([^]]+)(\]\s*ids\s*\[)([^]]+)(\][^\n]*?:\s*\()([^)]*)(\)\s*->\s*\(\))"
     )
 

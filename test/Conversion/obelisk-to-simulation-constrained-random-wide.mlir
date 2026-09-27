@@ -25,20 +25,20 @@
 // RUN:     '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null \
 // RUN: %}
 
-// WIDE-LABEL: obelisk_sim.func private @unit_1
+// WIDE-LABEL: simulation.func private @unit_1
 // WIDE-COUNT-4: arith.muli
 // WIDE: %[[TOP:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // WIDE-NEXT: arith.extui %[[TOP]] : i64 to i65
 // WIDE: arith.shli {{.*}} : i65
-// WIDE: obelisk_sim.managed.store
-// WIDE-NOT: obelisk_sim.random.solve
+// WIDE: simulation.managed.store
+// WIDE-NOT: simulation.random.solve
 
-// EQUALITY-LABEL: obelisk_sim.func private @unit_1
+// EQUALITY-LABEL: simulation.func private @unit_1
 // EQUALITY: arith.constant 18446744073709551620 : i128
 // EQUALITY: arith.cmpi eq, {{.*}} : i128
-// EQUALITY-NOT: obelisk_sim.random.solve %
+// EQUALITY-NOT: simulation.random.solve %
 
-// WIDE-TABLE-LABEL: obelisk_sim.func private @unit_1
+// WIDE-TABLE-LABEL: simulation.func private @unit_1
 // WIDE-TABLE: %[[ALL_RAND:.*]] = arith.cmpi eq, {{.*}} : i64
 // WIDE-TABLE: arith.cmpi eq, {{.*}} : i64
 // WIDE-TABLE: %[[ALL_CONSTRAINTS:.*]] = arith.cmpi eq, {{.*}} : i64
@@ -52,9 +52,9 @@
 // WIDE-TABLE: arith.cmpi eq, %[[ROW]], {{.*}} : i128
 // WIDE-TABLE: arith.select {{.*}}, {{.*}}, {{.*}} : i128
 
-// RESIDUAL-LABEL: obelisk_sim.func private @unit_1
-// RESIDUAL: obelisk_sim.random.solve_wide
-// RESIDUAL-SAME: : (!obelisk_sim.context, i128, i128, i64, i64, i64, i64, i128) -> (i128, i1, i64)
+// RESIDUAL-LABEL: simulation.func private @unit_1
+// RESIDUAL: simulation.random.solve_wide
+// RESIDUAL-SAME: : (!simulation.context, i128, i128, i64, i64, i64, i64, i128) -> (i128, i1, i64)
 
 // RESIDUAL-NATIVE: llvm.call @obelisk_rt_v1_random_solve_wide_modes_state
 

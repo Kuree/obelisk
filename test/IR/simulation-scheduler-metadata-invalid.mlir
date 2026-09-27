@@ -1,6 +1,6 @@
 // RUN: obelisk-opt --split-input-file --verify-diagnostics %s
 
-obelisk_sim.design @wrong_ingress attributes {
+simulation.design @wrong_ingress attributes {
   compute_graph = #schedule.graph<
     version = 1, vpi = off, workers = 1,
     nodes = [#schedule.fragment<id = 0, function = @watch, block = 0,
@@ -49,7 +49,7 @@ obelisk_sim.design @wrong_ingress attributes {
         #schedule.scheduler_ingress<trigger = 1, owner = 0, readyBit = 0,
           fragment = 0>]>
 } {
-  obelisk_sim.scope.decl 0
+  simulation.scope.decl 0
 }
 
 // -----
@@ -64,7 +64,7 @@ module attributes {
 
 // -----
 
-obelisk_sim.design @wrong_root attributes {
+simulation.design @wrong_root attributes {
   compute_graph = #schedule.graph<
     version = 1, vpi = off, workers = 1,
     nodes = [#schedule.fragment<id = 0, function = @writer, block = 0,
@@ -107,12 +107,12 @@ obelisk_sim.design @wrong_root attributes {
       #schedule.scheduled_root<resource = storage, descriptor = 9,
         low = 0, width = 8, owner = 0, tier = tier3>], ingress = []>
 } {
-  obelisk_sim.scope.decl 0
+  simulation.scope.decl 0
 }
 
 // -----
 
-obelisk_sim.design @arbitrary_mixed_writer_owner attributes {
+simulation.design @arbitrary_mixed_writer_owner attributes {
   compute_graph = #schedule.graph<
     version = 1, vpi = off, workers = 1,
     nodes = [
@@ -180,5 +180,5 @@ obelisk_sim.design @arbitrary_mixed_writer_owner attributes {
       #schedule.scheduled_root<resource = storage, descriptor = 10,
         low = 0, width = 8, owner = 3, tier = tier2>], ingress = []>
 } {
-  obelisk_sim.scope.decl 0
+  simulation.scope.decl 0
 }

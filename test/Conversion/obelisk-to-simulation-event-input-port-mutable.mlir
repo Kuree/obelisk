@@ -39,9 +39,9 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.event {{.*}} hierarchy "top.mutable"
+// CHECK: simulation.storage.decl {{.*}} : !simulation.event {{.*}} hierarchy "top.mutable"
 // CHECK-NOT: hierarchy "top.dut.wake"
 // CHECK-NOT: hierarchy "top.dut.$port_connection_0"
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.suspend.event
+// CHECK: simulation.ref.load
+// CHECK: simulation.suspend.event
 // CHECK-NOT: obelisk.sv.

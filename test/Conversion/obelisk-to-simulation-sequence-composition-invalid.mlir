@@ -6,12 +6,12 @@
 // RUN: not obelisk-opt %t/repeated-first-match.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=REPEATED-FIRST-MATCH
 // RUN: not obelisk-opt %t/nested-persistent-first-match.mlir '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=NESTED-PERSISTENT-FIRST-MATCH
 
-// COVER: obelisk_sim.func private @[[COVER_ACTION:[^(]+]](
+// COVER: simulation.func private @[[COVER_ACTION:[^(]+]](
 // COVER-SAME: schedule.concurrent_report
-// COVER-LABEL: obelisk_sim.func private @unit_0(
-// COVER-SAME: obelisk_sim.branching_sequence_alternatives = 3 : i64
-// COVER-SAME: obelisk_sim.cover_sequence_per_match
-// COVER-COUNT-3: obelisk_sim.spawn @[[COVER_ACTION]]
+// COVER-LABEL: simulation.func private @unit_0(
+// COVER-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// COVER-SAME: simulation.cover_sequence_per_match
+// COVER-COUNT-3: simulation.spawn @[[COVER_ACTION]]
 // MATCH: branching bounded sequences do not yet support match items
 // FIRST-MATCH: bounded first_match does not yet support match items
 // REPEATED-FIRST-MATCH: repetition of a sequence containing first_match is not executable yet; each repetition occurrence requires an independent priority scope

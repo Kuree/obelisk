@@ -15,5 +15,5 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.covergroup.decl
+// CHECK: simulation.covergroup.decl
 // CHECK-NOT: obelisk.sv.

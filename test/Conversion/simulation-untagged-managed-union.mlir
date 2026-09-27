@@ -3,89 +3,89 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | %python %S/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=INSTRUCTIONS
 
-!choice = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = !obelisk_sim.logic<64>, ordinal = 2, packedOffset = 0>
+!choice = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>,
+  #simulation.field<name = "bits", type = !simulation.logic<64>, ordinal = 2, packedOffset = 0>
 ], isTagged = false>
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @untagged_managed_union {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
-    obelisk_sim.storage.decl 0 in 0 : !choice design hierarchy "top.shared"
+  simulation.design @untagged_managed_union {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.storage.decl 0 in 0 : !choice design hierarchy "top.shared"
 
-    obelisk_sim.class.decl @Node id 1 {
+    simulation.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.decl @Holder id 2 {
+    simulation.class.decl @Holder id 2 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.field @Holder_value of @Holder at 0 : !choice {
+    simulation.class.field @Holder_value of @Holder at 0 : !choice {
       is_static = false, is_weak = false
     }
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
-      %holder = obelisk_sim.class.alloc %ctx :
-          !obelisk_sim.context -> !obelisk_sim.class_handle<@Holder>
-      %node = obelisk_sim.class.alloc %ctx :
-          !obelisk_sim.context -> !obelisk_sim.class_handle<@Node>
-      %value = obelisk_sim.union.construct %node as 0 :
-          (!obelisk_sim.class_handle<@Node>) -> !choice
+      %holder = simulation.class.alloc %ctx :
+          !simulation.context -> !simulation.class_handle<@Holder>
+      %node = simulation.class.alloc %ctx :
+          !simulation.context -> !simulation.class_handle<@Node>
+      %value = simulation.union.construct %node as 0 :
+          (!simulation.class_handle<@Node>) -> !choice
 
-      %shared = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!choice>
-      obelisk_sim.ref.store %value to %shared :
-          !choice, !obelisk_sim.ref<!choice>
-      %field = obelisk_sim.class.field_ref %holder[@Holder_value] :
-          !obelisk_sim.class_handle<@Holder> ->
-          !obelisk_sim.managed_ref<!choice, @Holder>
-      obelisk_sim.managed.store %value to %field :
-          !choice, !obelisk_sim.managed_ref<!choice, @Holder>
+      %shared = simulation.context.storage %ctx[0] :
+          !simulation.ref<!choice>
+      simulation.ref.store %value to %shared :
+          !choice, !simulation.ref<!choice>
+      %field = simulation.class.field_ref %holder[@Holder_value] :
+          !simulation.class_handle<@Holder> ->
+          !simulation.managed_ref<!choice, @Holder>
+      simulation.managed.store %value to %field :
+          !choice, !simulation.managed_ref<!choice, @Holder>
 
-      %local = obelisk_sim.ref.alloc %value :
-          !choice -> !obelisk_sim.ref<!choice>
-      obelisk_sim.gc.safepoint %ctx : !obelisk_sim.context
-      %live_raw = obelisk_sim.union.extract %value[0] :
-          (!choice) -> !obelisk_sim.class_handle<@Node>
-      %live_checked = obelisk_sim.class.cast %live_raw :
-          !obelisk_sim.class_handle<@Node> to
-          !obelisk_sim.class_handle<@Node>
-      %loaded = obelisk_sim.ref.load %local :
-          !obelisk_sim.ref<!choice> -> !choice
-      %raw = obelisk_sim.union.extract %loaded[0] :
-          (!choice) -> !obelisk_sim.class_handle<@Node>
-      %checked = obelisk_sim.class.cast %raw :
-          !obelisk_sim.class_handle<@Node> to
-          !obelisk_sim.class_handle<@Node>
-      %is_node = obelisk_sim.class.is_instance %checked is @Node :
-          !obelisk_sim.class_handle<@Node>
+      %local = simulation.ref.alloc %value :
+          !choice -> !simulation.ref<!choice>
+      simulation.gc.safepoint %ctx : !simulation.context
+      %live_raw = simulation.union.extract %value[0] :
+          (!choice) -> !simulation.class_handle<@Node>
+      %live_checked = simulation.class.cast %live_raw :
+          !simulation.class_handle<@Node> to
+          !simulation.class_handle<@Node>
+      %loaded = simulation.ref.load %local :
+          !simulation.ref<!choice> -> !choice
+      %raw = simulation.union.extract %loaded[0] :
+          (!choice) -> !simulation.class_handle<@Node>
+      %checked = simulation.class.cast %raw :
+          !simulation.class_handle<@Node> to
+          !simulation.class_handle<@Node>
+      %is_node = simulation.class.is_instance %checked is @Node :
+          !simulation.class_handle<@Node>
 
       // Untagged member assignment is a preserving read-modify-write. It must
       // not clear the bytes outside the selected arm as union.construct does.
       // A four-state member shares its value plane with the candidate handle
       // word. Its unknown plane never participates in candidate validation.
-      %bits = obelisk_sim.logic.constant 17 : i64, -1 : i64 :
-          !obelisk_sim.logic<64>
-      %updated = obelisk_sim.aggregate.insert %bits into %loaded[2] :
-          (!choice, !obelisk_sim.logic<64>) -> !choice
-      obelisk_sim.ref.store %updated to %local :
-          !choice, !obelisk_sim.ref<!choice>
-      obelisk_sim.return
+      %bits = simulation.logic.constant 17 : i64, -1 : i64 :
+          !simulation.logic<64>
+      %updated = simulation.aggregate.insert %bits into %loaded[2] :
+          (!choice, !simulation.logic<64>) -> !choice
+      simulation.ref.store %updated to %local :
+          !choice, !simulation.ref<!choice>
+      simulation.return
     }
   }
 }
 
-// SIM: obelisk_sim.storage.decl 0
-// SIM: obelisk_sim.class.field @Holder_value
-// SIM: obelisk_sim.class.cast
-// SIM: %[[UPDATED:.*]] = obelisk_sim.aggregate.insert %{{.*}} into %{{.*}}[2]
-// SIM: obelisk_sim.ref.store %[[UPDATED]]
+// SIM: simulation.storage.decl 0
+// SIM: simulation.class.field @Holder_value
+// SIM: simulation.class.cast
+// SIM: %[[UPDATED:.*]] = simulation.aggregate.insert %{{.*}} into %{{.*}}[2]
+// SIM: simulation.ref.store %[[UPDATED]]
 
 // The same conditional slot is used by the class descriptor, static design
 // state, SSA shadow root, and automatic state allocation.
@@ -100,7 +100,7 @@ module attributes {
 // The encoded image retains the class field and the candidate static root.
 // Automatic state uses the append-only typed allocation intrinsic.
 // BYTECODE: obelisk.bytecode.image = array<i8:
-// BYTECODE: obelisk_sim.class.field @Holder_value
+// BYTECODE: simulation.class.field @Holder_value
 
 // Candidate SSA rooting uses MANAGED_CANDIDATE_ROOT. Automatic state receives
 // offset/mask/flag triples through STATE_ALLOC_TYPED (0x00010230).

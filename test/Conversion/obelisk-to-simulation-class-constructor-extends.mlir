@@ -95,37 +95,37 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[BASE_NEW:unit_[0-9]+]]({{.*}}!obelisk_sim.class_handle<@[[BASE:__obelisk_class_[^>]+]]>{{.*}}i32
-// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}(%[[CONTEXT:arg[0-9]+]]: !obelisk_sim.context{{.*}}, %[[DERIVED_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[DERIVED:__obelisk_class_[^>]+]]>
+// CHECK: simulation.func private @[[BASE_NEW:unit_[0-9]+]]({{.*}}!simulation.class_handle<@[[BASE:__obelisk_class_[^>]+]]>{{.*}}i32
+// CHECK: simulation.func private @{{unit_[0-9]+}}(%[[CONTEXT:arg[0-9]+]]: !simulation.context{{.*}}, %[[DERIVED_THIS:arg[0-9]+]]: !simulation.class_handle<@[[DERIVED:__obelisk_class_[^>]+]]>
 // CHECK: %[[FIVE:.*]] = arith.constant 5 : i32
-// CHECK: %[[BASE_THIS:.*]] = obelisk_sim.class.cast %[[DERIVED_THIS]] : !obelisk_sim.class_handle<@[[DERIVED]]> to !obelisk_sim.class_handle<@[[BASE]]>
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_NEW]] %[[BASE_THIS]](%[[FIVE]])
-// CHECK: %[[FIELD:.*]] = obelisk_sim.class.field_ref %[[DERIVED_THIS]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[FIELD]]
-// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}({{.*}}%[[DEFAULT_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[DEFAULT_DERIVED:__obelisk_class_[^>]+]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "DefaultDerived::new"
+// CHECK: %[[BASE_THIS:.*]] = simulation.class.cast %[[DERIVED_THIS]] : !simulation.class_handle<@[[DERIVED]]> to !simulation.class_handle<@[[BASE]]>
+// CHECK-NEXT: simulation.class.direct_call @[[BASE_NEW]] %[[BASE_THIS]](%[[FIVE]])
+// CHECK: %[[FIELD:.*]] = simulation.class.field_ref %[[DERIVED_THIS]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[FIELD]]
+// CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%[[DEFAULT_THIS:arg[0-9]+]]: !simulation.class_handle<@[[DEFAULT_DERIVED:__obelisk_class_[^>]+]]>
+// CHECK-SAME: simulation.hierarchical_name = "DefaultDerived::new"
 // CHECK: %[[THREE:.*]] = arith.constant 3 : i32
-// CHECK: %[[DEFAULT_BASE_THIS:.*]] = obelisk_sim.class.cast %[[DEFAULT_THIS]] : !obelisk_sim.class_handle<@[[DEFAULT_DERIVED]]> to !obelisk_sim.class_handle<@[[BASE]]>
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_NEW]] %[[DEFAULT_BASE_THIS]](%[[THREE]])
-// CHECK: %[[DEFAULT_FIELD:.*]] = obelisk_sim.class.field_ref %[[DEFAULT_THIS]]
-// CHECK-NEXT: obelisk_sim.managed.store {{.*}} to %[[DEFAULT_FIELD]]
-// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}({{.*}}%[[EXPLICIT_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[EXPLICIT_DERIVED:__obelisk_class_[^>]+]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "ExplicitSuperDerived::new"
+// CHECK: %[[DEFAULT_BASE_THIS:.*]] = simulation.class.cast %[[DEFAULT_THIS]] : !simulation.class_handle<@[[DEFAULT_DERIVED]]> to !simulation.class_handle<@[[BASE]]>
+// CHECK-NEXT: simulation.class.direct_call @[[BASE_NEW]] %[[DEFAULT_BASE_THIS]](%[[THREE]])
+// CHECK: %[[DEFAULT_FIELD:.*]] = simulation.class.field_ref %[[DEFAULT_THIS]]
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[DEFAULT_FIELD]]
+// CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%[[EXPLICIT_THIS:arg[0-9]+]]: !simulation.class_handle<@[[EXPLICIT_DERIVED:__obelisk_class_[^>]+]]>
+// CHECK-SAME: simulation.hierarchical_name = "ExplicitSuperDerived::new"
 // CHECK-DAG: %[[SEVEN:.*]] = arith.constant 7 : i32
 // CHECK-DAG: %[[SEVENTEEN:.*]] = arith.constant 17 : i32
 // CHECK-DAG: %[[NINETEEN:.*]] = arith.constant 19 : i32
-// CHECK: %[[EXPLICIT_BASE_THIS:.*]] = obelisk_sim.class.cast %[[EXPLICIT_THIS]] : !obelisk_sim.class_handle<@[[EXPLICIT_DERIVED]]> to !obelisk_sim.class_handle<@[[BASE]]>
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[BASE_NEW]] %[[EXPLICIT_BASE_THIS]](%[[SEVEN]])
-// CHECK-NEXT: %[[EXPLICIT_FIELD:.*]] = obelisk_sim.class.field_ref %[[EXPLICIT_THIS]]
-// CHECK-NEXT: obelisk_sim.managed.store %[[SEVENTEEN]] to %[[EXPLICIT_FIELD]]
-// CHECK-NEXT: %[[READY:.*]] = obelisk_sim.event.create
-// CHECK-NEXT: %[[READY_REF:.*]] = obelisk_sim.class.field_ref %[[EXPLICIT_THIS]][{{.*}}] : !obelisk_sim.class_handle<@[[EXPLICIT_DERIVED]]> -> !obelisk_sim.managed_ref<!obelisk_sim.event, @[[EXPLICIT_DERIVED]]>
-// CHECK-NEXT: obelisk_sim.managed.store %[[READY]] to %[[READY_REF]] : !obelisk_sim.event, !obelisk_sim.managed_ref<!obelisk_sim.event, @[[EXPLICIT_DERIVED]]>
-// CHECK-NEXT: obelisk_sim.managed.store %[[NINETEEN]] to %[[EXPLICIT_FIELD]]
-// CHECK-LABEL: obelisk_sim.func private @unit_4
-// CHECK-SAME: ({{.*}}%[[OUT_OF_BLOCK_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[OUT_OF_BLOCK:__obelisk_class_[^>]+]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "OutOfBlock::new"
+// CHECK: %[[EXPLICIT_BASE_THIS:.*]] = simulation.class.cast %[[EXPLICIT_THIS]] : !simulation.class_handle<@[[EXPLICIT_DERIVED]]> to !simulation.class_handle<@[[BASE]]>
+// CHECK-NEXT: simulation.class.direct_call @[[BASE_NEW]] %[[EXPLICIT_BASE_THIS]](%[[SEVEN]])
+// CHECK-NEXT: %[[EXPLICIT_FIELD:.*]] = simulation.class.field_ref %[[EXPLICIT_THIS]]
+// CHECK-NEXT: simulation.managed.store %[[SEVENTEEN]] to %[[EXPLICIT_FIELD]]
+// CHECK-NEXT: %[[READY:.*]] = simulation.event.create
+// CHECK-NEXT: %[[READY_REF:.*]] = simulation.class.field_ref %[[EXPLICIT_THIS]][{{.*}}] : !simulation.class_handle<@[[EXPLICIT_DERIVED]]> -> !simulation.managed_ref<!simulation.event, @[[EXPLICIT_DERIVED]]>
+// CHECK-NEXT: simulation.managed.store %[[READY]] to %[[READY_REF]] : !simulation.event, !simulation.managed_ref<!simulation.event, @[[EXPLICIT_DERIVED]]>
+// CHECK-NEXT: simulation.managed.store %[[NINETEEN]] to %[[EXPLICIT_FIELD]]
+// CHECK-LABEL: simulation.func private @unit_4
+// CHECK-SAME: ({{.*}}%[[OUT_OF_BLOCK_THIS:arg[0-9]+]]: !simulation.class_handle<@[[OUT_OF_BLOCK:__obelisk_class_[^>]+]]>
+// CHECK-SAME: simulation.hierarchical_name = "OutOfBlock::new"
 // CHECK-NEXT: %[[ENABLED:.*]] = arith.constant true
-// CHECK-NEXT: %[[ENABLED_FIELD:.*]] = obelisk_sim.class.field_ref %[[OUT_OF_BLOCK_THIS]][@[[OUT_OF_BLOCK]]_field_0]
-// CHECK-NEXT: obelisk_sim.managed.store %[[ENABLED]] to %[[ENABLED_FIELD]]
-// CHECK-NOT: obelisk_sim.prepared_initializer
+// CHECK-NEXT: %[[ENABLED_FIELD:.*]] = simulation.class.field_ref %[[OUT_OF_BLOCK_THIS]][@[[OUT_OF_BLOCK]]_field_0]
+// CHECK-NEXT: simulation.managed.store %[[ENABLED]] to %[[ENABLED_FIELD]]
+// CHECK-NOT: simulation.prepared_initializer

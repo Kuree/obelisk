@@ -5,25 +5,25 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @continuous_store {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 port_output hierarchy "top.port"
+  simulation.design @continuous_store {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 port_output hierarchy "top.port"
         {internal}
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<8> design
+    simulation.storage.decl 0 in 0 : !simulation.logic<8> design
         hierarchy "top.value"
 
     // Port propagation is a continuous driver even though the store does not
     // need a transient marker attribute to retain that source-level meaning.
-    obelisk_sim.func @port(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @port(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 10 : i32, internal} {
-      %value = obelisk_sim.logic.constant 42 : i8, 0 : i8
-          : !obelisk_sim.logic<8>
-      %storage = obelisk_sim.context.storage %ctx[0]
-          : !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      obelisk_sim.ref.store %value to %storage
-          : !obelisk_sim.logic<8>, !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      obelisk_sim.return
+      %value = simulation.logic.constant 42 : i8, 0 : i8
+          : !simulation.logic<8>
+      %storage = simulation.context.storage %ctx[0]
+          : !simulation.ref<!simulation.logic<8>>
+      simulation.ref.store %value to %storage
+          : !simulation.logic<8>, !simulation.ref<!simulation.logic<8>>
+      simulation.return
     }
   }
 }

@@ -186,7 +186,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       std::optional<uint64_t> strengthGroup;
       std::optional<unsigned> strengthBank;
       if (auto group = declaration->getAttrOfType<IntegerAttr>(
-              "obelisk_sim.strength_group")) {
+              "simulation.strength_group")) {
         if (group.getValue().isNegative() ||
             group.getValue().getActiveBits() > 64) {
           declaration.emitError("driver strength group is not unsigned");
@@ -195,7 +195,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         strengthGroup = group.getValue().getZExtValue();
       }
       if (auto bank = declaration->getAttrOfType<IntegerAttr>(
-              "obelisk_sim.strength_bank")) {
+              "simulation.strength_bank")) {
         if (bank.getValue().isNegative() ||
             bank.getValue().getActiveBits() > 1) {
           declaration.emitError("driver strength bank must be zero or one");
@@ -227,7 +227,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
         initialXDrivers.insert(*id);
     } else if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation);
-               drive && drive->hasAttr("obelisk_sim.initial_driver_x")) {
+               drive && drive->hasAttr("simulation.initial_driver_x")) {
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
         initialXDrivers.insert(*id);
     } else if (isa<sim::SimPassSwitchDeclOp>(operation)) {

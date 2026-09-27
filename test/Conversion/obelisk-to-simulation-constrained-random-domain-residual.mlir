@@ -3,8 +3,8 @@
 // Two bounded domains coupled by inequality are not an exact product. Their
 // independent unbiased samples feed the checker, and every retry samples both
 // intervals again before preserving the runtime fallback.
-// DOMAIN-RESIDUAL-LABEL: obelisk_sim.func private @unit_1
-// DOMAIN-RESIDUAL: obelisk_sim.random.solve
+// DOMAIN-RESIDUAL-LABEL: simulation.func private @unit_1
+// DOMAIN-RESIDUAL: simulation.random.solve
 // DOMAIN-RESIDUAL-COUNT-2: arith.cmpi ult
 
 module {

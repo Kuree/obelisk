@@ -24,38 +24,38 @@
 // RUN:     | FileCheck %s --check-prefix=UNSAT \
 // RUN: %}
 
-// ENUM: obelisk_sim.class.field
+// ENUM: simulation.class.field
 // ENUM-SAME: : i4
 // ENUM-SAME: debug_name = "e"
-// ENUM: obelisk_sim.random.cycle_next
+// ENUM: simulation.random.cycle_next
 // ENUM-SAME: width = 2 : i32
 // ENUM: arith.cmpi ult
 // ENUM-DAG: arith.constant {{.*}} 1 : i64
 // ENUM-DAG: arith.constant {{.*}} 4 : i64
 // ENUM-DAG: arith.constant {{.*}} 9 : i64
-// ENUM: obelisk_sim.random.solve
+// ENUM: simulation.random.solve
 
-// TAGGED: obelisk_sim.class.field
-// TAGGED-SAME: !obelisk_sim.packed_union
+// TAGGED: simulation.class.field
+// TAGGED-SAME: !simulation.packed_union
 // TAGGED-DAG: arith.constant {{.*}} 21 : i64
 // TAGGED-DAG: arith.constant {{.*}} 60 : i64
 // TAGGED-DAG: arith.constant {{.*}} 48 : i64
 // TAGGED-DAG: arith.constant {{.*}} 16 : i64
 // TAGGED-DAG: arith.constant {{.*}} 63 : i64
 // TAGGED-DAG: arith.constant {{.*}} 32 : i64
-// TAGGED-DAG: obelisk_sim.random.solve {{.*}} limit
-// TAGGED-DAG: obelisk_sim.packed.unflatten
+// TAGGED-DAG: simulation.random.solve {{.*}} limit
+// TAGGED-DAG: simulation.packed.unflatten
 
 // DIST: arith.constant {{.*}} 6 : i64
 // DIST: arith.constant {{.*}} 3 : i64
-// DIST-NOT: obelisk_sim.random.bounded
-// DIST: obelisk_sim.random.solve
+// DIST-NOT: simulation.random.bounded
+// DIST: simulation.random.solve
 // DIST-SAME: limit
 
 // IEEE 1800-2017 18.3 restricts every active random enum variable to its
 // named constants. Preserve that finite domain in the arbitrary-width,
 // mode-sensitive residual program as well as in the Z3-proven fast proposal.
-// WIDE-ENUM: obelisk_sim.random.solve_wide
+// WIDE-ENUM: simulation.random.solve_wide
 // WIDE-ENUM-SAME: program =
 
 // UNSAT: warning: randomize hard constraints are statically unsatisfiable (z3-4.13.4)

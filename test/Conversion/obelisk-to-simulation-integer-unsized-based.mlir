@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 5.7.1: a based literal without an explicit size is at
 // least 32 bits, but grows to retain the significant written digits. Leading
@@ -11,11 +11,11 @@
 !signed_logic64 = !obelisk.integral<64, true, true, 63 : 0, logic>
 
 module {
-  obelisk_sim.design @integer_unsized_based {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.width"
+  simulation.design @integer_unsized_based {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.width"
 
-    // CHECK-LABEL: obelisk_sim.func @width
+    // CHECK-LABEL: simulation.func @width
     // A signed hexadecimal literal sign-extends from its 32-bit minimum.
     // CHECK: arith.constant -1 : i64
     // CHECK: arith.constant -2147483648 : i64
@@ -24,19 +24,19 @@ module {
     // The literal first grows to 33 bits, then a narrower context truncates it.
     // CHECK: arith.constant -1 : i32
     // A known leading sign bit above 32 unknown low bits extends from bit 35.
-    // CHECK: obelisk_sim.logic.constant -4294967296 : i64, 4294967295 : i64
+    // CHECK: simulation.logic.constant -4294967296 : i64, 4294967295 : i64
     // A leading X group above 32 lower bits contributes no additional width.
-    // CHECK: obelisk_sim.logic.constant 0 : i64, 0 : i64
+    // CHECK: simulation.logic.constant 0 : i64, 0 : i64
     // An unsized high X/Z fills through the wider expression context.
-    // CHECK: obelisk_sim.logic.constant 0 : i64, -1 : i64
-    // CHECK: obelisk_sim.logic.constant -1 : i64, -1 : i64
+    // CHECK: simulation.logic.constant 0 : i64, -1 : i64
+    // CHECK: simulation.logic.constant -1 : i64, -1 : i64
     // A leading known zero prevents the following X group from filling.
-    // CHECK: obelisk_sim.logic.constant 0 : i64, 15 : i64
+    // CHECK: simulation.logic.constant 0 : i64, 15 : i64
     // Signed high X uses ordinary signed four-state extension.
-    // CHECK: obelisk_sim.logic.constant 0 : i64, -1 : i64
-    // CHECK: obelisk_sim.return
-    obelisk_sim.func @width(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    // CHECK: simulation.logic.constant 0 : i64, -1 : i64
+    // CHECK: simulation.return
+    simulation.func @width(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
         obelisk.sv.expression.integer_literal attributes {
@@ -104,7 +104,7 @@ module {
             semantic_type = !signed_logic64} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

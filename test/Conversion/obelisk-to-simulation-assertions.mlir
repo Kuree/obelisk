@@ -145,14 +145,14 @@ module {
 
 // Ordinary immediate assertions are explicit control flow.
 // CHECK-DAG: cf.cond_br
-// CHECK-DAG: obelisk_sim.ref.store
+// CHECK-DAG: simulation.ref.store
 // CHECK-DAG: "ERROR: {{.*}}immediate assertion failed."
 
 // Deferred expressions branch at encounter time. Every evaluation receives
 // an independent report ticket that remains pending until its evaluator runs.
 // CHECK-DAG: cf.cond_br
-// CHECK-DAG: obelisk_sim.assert.deferred_enqueue
-// CHECK-DAG: obelisk_sim.assert.deferred_mature
+// CHECK-DAG: simulation.assert.deferred_enqueue
+// CHECK-DAG: simulation.assert.deferred_mature
 // CHECK-DAG: home_region = 8 : i32
 // CHECK-DAG: home_region = 10 : i32
 // CHECK-DAG: home_region = 16 : i32

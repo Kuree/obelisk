@@ -33,25 +33,25 @@ module {
 
 // Each fixed unpacked element is sampled independently at the Preponed
 // boundary and retained independently at the clocking event.
-// CHECK-COUNT-2: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-2: obelisk_sim.assert.clocked_sample_update
+// CHECK-COUNT-2: simulation.assert.sampled_read
+// CHECK-COUNT-2: simulation.assert.clocked_sample_update
 // The source-level read reconstructs the declared array. The sampler's
 // temporary construction is folded into its two leaf updates.
-// CHECK-COUNT-2: obelisk_sim.assert.clocked_sample_read
-// CHECK: obelisk_sim.aggregate.construct
+// CHECK-COUNT-2: simulation.assert.clocked_sample_read
+// CHECK: simulation.aggregate.construct
 // CHECK-NOT: obelisk.sv.
 
 // A #0 sample may load the aggregate in Observed, but retention remains one
 // independent ring per packed leaf.
-// ZERO: obelisk_sim.ref.load
-// ZERO-COUNT-2: obelisk_sim.assert.clocked_sample_update
-// ZERO-COUNT-2: obelisk_sim.assert.clocked_sample_read
-// ZERO: obelisk_sim.aggregate.construct
+// ZERO: simulation.ref.load
+// ZERO-COUNT-2: simulation.assert.clocked_sample_update
+// ZERO-COUNT-2: simulation.assert.clocked_sample_read
+// ZERO: simulation.aggregate.construct
 // ZERO-NOT: obelisk.sv.
 
 // A positive skew likewise decomposes both its delayed mirror and its final
 // clocking-input ring, so no aggregate value is aliased across time slots.
-// SKEW: obelisk_sim.suspend.delay
-// SKEW-COUNT-4: obelisk_sim.assert.clocked_sample_update
-// SKEW-COUNT-4: obelisk_sim.assert.clocked_sample_read
+// SKEW: simulation.suspend.delay
+// SKEW-COUNT-4: simulation.assert.clocked_sample_update
+// SKEW-COUNT-4: simulation.assert.clocked_sample_read
 // SKEW-NOT: obelisk.sv.

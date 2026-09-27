@@ -76,7 +76,7 @@ module {
   }
 }
 
-// CHECK: %[[INDEX:.*]] = obelisk_sim.assert.sampled_read
-// CHECK: %[[DATA:.*]] = obelisk_sim.assert.sampled_read {{.*}} : {{.*}} -> !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
-// CHECK-NOT: obelisk_sim.ref.array_element
-// CHECK: obelisk_sim.array.extract_dynamic %[[DATA]]
+// CHECK: %[[INDEX:.*]] = simulation.assert.sampled_read
+// CHECK: %[[DATA:.*]] = simulation.assert.sampled_read {{.*}} : {{.*}} -> !simulation.packed_array<7 : 0 x !simulation.logic<1>>
+// CHECK-NOT: simulation.ref.array_element
+// CHECK: simulation.array.extract_dynamic %[[DATA]]

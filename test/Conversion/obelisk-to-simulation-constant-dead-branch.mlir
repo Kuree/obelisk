@@ -42,5 +42,5 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func
-// CHECK-NOT: obelisk_sim.nba
+// CHECK: simulation.func
+// CHECK-NOT: simulation.nba

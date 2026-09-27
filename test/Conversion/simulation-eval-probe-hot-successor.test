@@ -1,4 +1,4 @@
-// RUN: sed 's/cf.cond_br %bad, ^cold, ^wait/cf.cond_br %bad, ^cold, ^after_cold/' %S/simulation-eval-probe-cold-successors.mlir | not obelisk-opt --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s
+// RUN: sed 's/cf.cond_br %bad, ^cold, ^wait/cf.cond_br %bad, ^cold, ^after_cold/' %S/simulation-eval-probe-cold-successors.mlir | not obelisk-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s
 
 // A second hot edge makes the checkpoint successor part of the predicate.
 // CHECK: unguarded runtime leaf

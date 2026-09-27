@@ -23,7 +23,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   auto edges = function->getAttrOfType<DenseI32ArrayAttr>(
       "timing_check_arg_effective_edges");
   auto ticks = function->getAttrOfType<DenseI64ArrayAttr>(
-      "obelisk_sim.timing_check_arg_ticks");
+      "simulation.timing_check_arg_ticks");
   if (!kindAttr || !expressionChildren || !conditionChildren || !edges ||
       !ticks || expressionChildren.size() != conditionChildren.size() ||
       static_cast<size_t>(expressionChildren.size()) !=
@@ -116,7 +116,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   bool emitTimerMode = skewWithMode && (!eventMode || !*eventMode);
   Value context = function.getBody().front().getArgument(0);
   auto delayedStorageIDs = function->getAttrOfType<DenseI64ArrayAttr>(
-      "obelisk_sim.timing_delayed_storage_ids");
+      "simulation.timing_delayed_storage_ids");
   if (delayedStorageIDs && delayedStorageIDs.size() != 2)
     return function.emitError(
         "negative timing check has a malformed delayed-terminal ABI");
@@ -178,7 +178,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       return function.emitError(
           "basic timing-check condition has no normalized operand");
     FailureOr<Value> condition = failure();
-    if (conditionOperand->hasAttr("obelisk_sim.observer"))
+    if (conditionOperand->hasAttr("simulation.observer"))
       condition = bindObserver(conditionOperand);
     else
       condition = lowerExpression(conditionOperand, true);
@@ -399,14 +399,14 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         falseValue);
 
     auto timerStorage = function->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.timing_timer_storage");
+        "simulation.timing_timer_storage");
     auto helperSymbol = function->getAttrOfType<FlatSymbolRefAttr>(
-        "obelisk_sim.timing_timer_helper");
+        "simulation.timing_timer_helper");
     if (!timerStorage || !helperSymbol)
       return function.emitError(
           "timer timing check has no serial helper inventory");
-    function->removeAttr("obelisk_sim.timing_timer_storage");
-    function->removeAttr("obelisk_sim.timing_timer_helper");
+    function->removeAttr("simulation.timing_timer_storage");
+    function->removeAttr("simulation.timing_timer_helper");
     timerSignal = sim::SimContextStorageOp::create(
         builder, location, sim::RefType::get(function.getContext(), i1),
         context, timerStorage);
@@ -923,7 +923,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         builder, location, arith::CmpIPredicate::ne, baseReportCount, zero64);
   } else if (combined) {
     bool negativeAdjusted =
-        function->hasAttr("obelisk_sim.negative_timing_adjusted");
+        function->hasAttr("simulation.negative_timing_adjusted");
     bool sharedTimestampIsInterior = ticks[2] > 0 && ticks[3] > 0;
     Value previous1 =
         sim::SimRefLoadOp::create(builder, location, i64, oppositeTimestamp);
@@ -1341,8 +1341,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     Value message = sim::SimBytesConstantOp::create(
         builder, location, "warning: system timing check violation");
     sim::SimDisplayOp::create(
-        builder, location, context, descriptor, ValueRange{message}, true, 10,
-        builder.getDenseI32ArrayAttr({0}),
+        builder, location, context, descriptor, ValueRange{message}, true,
+        sim::Radix::Decimal, builder.getDenseI32ArrayAttr({0}),
         function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName),
         StringAttr{}, function->getAttrOfType<IntegerAttr>(delayScaleAttrName),
         IntegerAttr{});

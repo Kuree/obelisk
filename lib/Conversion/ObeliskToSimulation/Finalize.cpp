@@ -121,7 +121,7 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
     if (!isExecutableOperation(op, module)) {
       op->emitError() << "operation from dialect '"
                       << op->getName().getDialectNamespace()
-                      << "' survived obelisk_sim finalization";
+                      << "' survived simulation finalization";
       invalid = true;
     }
     for (Type type : op->getOperandTypes())
@@ -294,7 +294,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
         function->removeAttr(delayQuantumAttrName);
         function->removeAttr(sim::metadata::lowered);
         function->removeAttr(sim::metadata::thisArgument);
-        function->removeAttr("obelisk_sim.constructor");
+        function->removeAttr("simulation.constructor");
         return verified;
       }));
 
@@ -514,7 +514,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
 void registerObeliskToSimulationPipeline() {
   PassPipelineRegistration<ObeliskToSimulationPipelineOptions>(
       "lower-obelisk-to-sim",
-      "Lower elaborated obelisk.sv semantic IR to isolated obelisk_sim SSA",
+      "Lower elaborated obelisk.sv semantic IR to isolated simulation SSA",
       [](OpPassManager &manager,
          const ObeliskToSimulationPipelineOptions &options) {
         buildObeliskToSimulationPipeline(

@@ -148,25 +148,25 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // `a -> b` negates the left operand and branches on the negation, so the
 // right operand is only loaded on the path that needs it.
-// CHECK: %[[A:.*]] = obelisk_sim.logic.reduction or
-// CHECK: %[[NOT_A:.*]] = obelisk_sim.logic.unary logical_not %[[A]]
-// CHECK: %[[TAKEN:.*]] = obelisk_sim.logic.is_true %[[NOT_A]]
-// CHECK: cf.cond_br %[[TAKEN]], ^bb2(%{{.*}} : !obelisk_sim.logic<1>), ^bb1
+// CHECK: %[[A:.*]] = simulation.logic.reduction or
+// CHECK: %[[NOT_A:.*]] = simulation.logic.unary logical_not %[[A]]
+// CHECK: %[[TAKEN:.*]] = simulation.logic.is_true %[[NOT_A]]
+// CHECK: cf.cond_br %[[TAKEN]], ^bb2(%{{.*}} : !simulation.logic<1>), ^bb1
 // CHECK: ^bb1:
-// CHECK: %[[B:.*]] = obelisk_sim.logic.reduction or
-// CHECK: %[[IMPLY:.*]] = obelisk_sim.logic.logical or %[[NOT_A]], %[[B]]
-// CHECK: cf.br ^bb2(%[[IMPLY]] : !obelisk_sim.logic<1>)
+// CHECK: %[[B:.*]] = simulation.logic.reduction or
+// CHECK: %[[IMPLY:.*]] = simulation.logic.logical or %[[NOT_A]], %[[B]]
+// CHECK: cf.br ^bb2(%[[IMPLY]] : !simulation.logic<1>)
 
 // `a <-> b` evaluates both operands unconditionally and conjoins the two
 // implications.
 // CHECK: ^bb2(
-// CHECK: %[[EA:.*]] = obelisk_sim.logic.reduction or
-// CHECK: %[[EB:.*]] = obelisk_sim.logic.reduction or
-// CHECK: %[[NOT_EB:.*]] = obelisk_sim.logic.unary logical_not %[[EB]]
-// CHECK: %[[BACKWARD:.*]] = obelisk_sim.logic.logical or %[[NOT_EB]], %[[EA]]
-// CHECK: %[[NOT_EA:.*]] = obelisk_sim.logic.unary logical_not %[[EA]]
-// CHECK: %[[FORWARD:.*]] = obelisk_sim.logic.logical or %[[NOT_EA]], %[[EB]]
-// CHECK: obelisk_sim.logic.logical and %[[FORWARD]], %[[BACKWARD]]
+// CHECK: %[[EA:.*]] = simulation.logic.reduction or
+// CHECK: %[[EB:.*]] = simulation.logic.reduction or
+// CHECK: %[[NOT_EB:.*]] = simulation.logic.unary logical_not %[[EB]]
+// CHECK: %[[BACKWARD:.*]] = simulation.logic.logical or %[[NOT_EB]], %[[EA]]
+// CHECK: %[[NOT_EA:.*]] = simulation.logic.unary logical_not %[[EA]]
+// CHECK: %[[FORWARD:.*]] = simulation.logic.logical or %[[NOT_EA]], %[[EB]]
+// CHECK: simulation.logic.logical and %[[FORWARD]], %[[BACKWARD]]

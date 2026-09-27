@@ -6,30 +6,30 @@
 // success flag branches around each store and gates the cursor, so a failed
 // conversion leaves every later destination untouched.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[OK0]]
-// CHECK: obelisk_sim.string.parse_logic %[[FIELD0]] radix = 10 : <32>
+// CHECK: simulation.string.parse_logic %[[FIELD0]] radix = <decimal> : <32>
 // CHECK: cf.cond_br
-// CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32, width = 0 : i64}
-// CHECK: obelisk_sim.string.parse_real %[[FIELD1]]
-// CHECK: %[[FIELD2:.*]], %[[CURSOR2:.*]], %[[OK2:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = " ", specifier = 115 : i32, width = 0 : i64}
+// CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = simulation.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32, width = 0 : i64}
+// CHECK: simulation.string.parse_real %[[FIELD1]]
+// CHECK: %[[FIELD2:.*]], %[[CURSOR2:.*]], %[[OK2:.*]] = simulation.string.scan_field {{.*}} {prefix = " ", specifier = 115 : i32, width = 0 : i64}
 // CHECK: %[[MATCHED2:.*]] = arith.cmpi ne, %[[OK2]]
 // CHECK: %[[LIVE2:.*]] = arith.andi {{.*}}, %[[MATCHED2]]
 // CHECK: cf.cond_br %[[LIVE2]]
-// CHECK: obelisk_sim.ref.store %[[FIELD2]]
-// CHECK: %[[SUPPRESSED:.*]], %[[SUPPRESSED_CURSOR:.*]], %[[SUPPRESSED_OK:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 77 : i32, width = 0 : i64}
-// CHECK: %[[FIELD3:.*]], %[[CURSOR3:.*]], %[[OK3:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 109 : i32, width = 0 : i64}
-// CHECK: %[[HIERARCHY:.*]] = obelisk_sim.string.literal "top"
+// CHECK: simulation.ref.store %[[FIELD2]]
+// CHECK: %[[SUPPRESSED:.*]], %[[SUPPRESSED_CURSOR:.*]], %[[SUPPRESSED_OK:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 77 : i32, width = 0 : i64}
+// CHECK: %[[FIELD3:.*]], %[[CURSOR3:.*]], %[[OK3:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 109 : i32, width = 0 : i64}
+// CHECK: %[[HIERARCHY:.*]] = simulation.string.literal "top"
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.ref.store %[[HIERARCHY]]
-// CHECK: %[[TIME_FIELD:.*]], %[[TIME_CURSOR:.*]], %[[TIME_OK:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 84 : i32, width = 0 : i64}
-// CHECK: %[[TIME_REAL:.*]] = obelisk_sim.string.parse_real %[[TIME_FIELD]]
-// CHECK: %[[SCALED_TIME:.*]] = obelisk_sim.time.scan_scale {{.*}}, %[[TIME_REAL]] time_multiplier = 1 time_precision = -9
-// CHECK: obelisk_sim.ref.store %[[SCALED_TIME]]
-// CHECK: %[[STRENGTH_FIELD:.*]], %[[STRENGTH_CURSOR:.*]], %[[STRENGTH_OK:.*]] = obelisk_sim.string.scan_field {{.*}} {prefix = "", specifier = 86 : i32, width = 0 : i64}
-// CHECK: %[[STRENGTH:.*]] = obelisk_sim.string.parse_logic %[[STRENGTH_FIELD]] radix = 2 : <1>
-// CHECK: obelisk_sim.ref.store %[[STRENGTH]]
+// CHECK: simulation.ref.store %[[HIERARCHY]]
+// CHECK: %[[TIME_FIELD:.*]], %[[TIME_CURSOR:.*]], %[[TIME_OK:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 84 : i32, width = 0 : i64}
+// CHECK: %[[TIME_REAL:.*]] = simulation.string.parse_real %[[TIME_FIELD]]
+// CHECK: %[[SCALED_TIME:.*]] = simulation.time.scan_scale {{.*}}, %[[TIME_REAL]] time_multiplier = 1 time_precision = -9
+// CHECK: simulation.ref.store %[[SCALED_TIME]]
+// CHECK: %[[STRENGTH_FIELD:.*]], %[[STRENGTH_CURSOR:.*]], %[[STRENGTH_OK:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 86 : i32, width = 0 : i64}
+// CHECK: %[[STRENGTH:.*]] = simulation.string.parse_logic %[[STRENGTH_FIELD]] radix = <binary> : <1>
+// CHECK: simulation.ref.store %[[STRENGTH]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

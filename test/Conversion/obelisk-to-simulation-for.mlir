@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --implicit-check-not=obelisk_sim.static.once
+// RUN:   | FileCheck %s --implicit-check-not=simulation.static.once
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_for", name = "simulation_for", node_id = 0 : i64, sym_name = "s0.simulation_for"} {
@@ -91,7 +91,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func
+// CHECK: simulation.func
 // CHECK: %[[INITIAL:.*]] = arith.constant 2 : i32
 // CHECK: cf.br ^[[LOOP:bb[0-9]+]](%[[INITIAL]] : i32)
 // CHECK: ^[[LOOP]](%[[LOCAL:.*]]: i32):

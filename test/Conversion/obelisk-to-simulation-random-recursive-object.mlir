@@ -168,42 +168,42 @@ module {
 // the root's single assignment and randomizes existing container elements.
 // Every handle remains unchanged. A null intermediate object or a disabled
 // rand handle/leaf removes only that descendant from the mutable set.
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: %[[MIDDLE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s32_root_field_0]
-// CHECK: %[[MIDDLE:.*]] = obelisk_sim.managed.load %[[MIDDLE_REF]]
-// CHECK: %[[MIDDLE_NULL:.*]] = obelisk_sim.managed.is_null %[[MIDDLE]]
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK: %[[MIDDLE_REF:.*]] = simulation.class.field_ref {{.*}}[@__obelisk_class_s32_root_field_0]
+// CHECK: %[[MIDDLE:.*]] = simulation.managed.load %[[MIDDLE_REF]]
+// CHECK: %[[MIDDLE_NULL:.*]] = simulation.managed.is_null %[[MIDDLE]]
 // CHECK: cf.cond_br %[[MIDDLE_NULL]], ^[[VALUE_MERGE:bb[0-9]+]]({{.*}}%false{{.*}}), ^[[MIDDLE_ACTIVE:bb[0-9]+]]
 // CHECK: ^[[MIDDLE_ACTIVE]]:
-// CHECK: %[[MIDDLE_MODE_REF:.*]] = obelisk_sim.class.field_ref %[[MIDDLE]][@__obelisk_class_s18_middle_field___obelisk_rand_mode]
-// CHECK: %[[MIDDLE_MODES:.*]] = obelisk_sim.managed.load %[[MIDDLE_MODE_REF]]
+// CHECK: %[[MIDDLE_MODE_REF:.*]] = simulation.class.field_ref %[[MIDDLE]][@__obelisk_class_s18_middle_field___obelisk_rand_mode]
+// CHECK: %[[MIDDLE_MODES:.*]] = simulation.managed.load %[[MIDDLE_MODE_REF]]
 // CHECK: arith.andi %[[MIDDLE_MODES]], {{.*}}1
-// CHECK: %[[LEAF_REF:.*]] = obelisk_sim.class.field_ref %[[MIDDLE]][@__obelisk_class_s18_middle_field_0]
-// CHECK: %[[LEAF:.*]] = obelisk_sim.managed.load %[[LEAF_REF]]
-// CHECK: %[[LEAF_NULL:.*]] = obelisk_sim.managed.is_null %[[LEAF]]
+// CHECK: %[[LEAF_REF:.*]] = simulation.class.field_ref %[[MIDDLE]][@__obelisk_class_s18_middle_field_0]
+// CHECK: %[[LEAF:.*]] = simulation.managed.load %[[LEAF_REF]]
+// CHECK: %[[LEAF_NULL:.*]] = simulation.managed.is_null %[[LEAF]]
 // CHECK: arith.andi {{.*}}, {{.*}} : i1
 // CHECK: cf.cond_br {{.*}}, ^[[LEAF_ACTIVE:bb[0-9]+]], ^[[VALUE_MERGE]]({{.*}}%false{{.*}})
 // CHECK: ^[[VALUE_MERGE]]({{.*}}, %[[PATH_ENABLED:.*]]: i1):
 // CHECK: arith.andi {{.*}}, %[[PATH_ENABLED]] : i1
 // CHECK: ^[[LEAF_ACTIVE]]:
-// CHECK: %[[X_REF:.*]] = obelisk_sim.class.field_ref %[[LEAF]][@__obelisk_class_s3_leaf_field_0]
-// CHECK: obelisk_sim.managed.load %[[X_REF]]
-// CHECK: %[[LEAF_MODE_REF:.*]] = obelisk_sim.class.field_ref %[[LEAF]][@__obelisk_class_s3_leaf_field___obelisk_rand_mode]
-// CHECK: %[[LEAF_MODES:.*]] = obelisk_sim.managed.load %[[LEAF_MODE_REF]]
+// CHECK: %[[X_REF:.*]] = simulation.class.field_ref %[[LEAF]][@__obelisk_class_s3_leaf_field_0]
+// CHECK: simulation.managed.load %[[X_REF]]
+// CHECK: %[[LEAF_MODE_REF:.*]] = simulation.class.field_ref %[[LEAF]][@__obelisk_class_s3_leaf_field___obelisk_rand_mode]
+// CHECK: %[[LEAF_MODES:.*]] = simulation.managed.load %[[LEAF_MODE_REF]]
 // CHECK: arith.andi %[[LEAF_MODES]], {{.*}}1
-// CHECK: %[[COMMIT_MIDDLE:.*]] = obelisk_sim.managed.load %[[MIDDLE_REF]]
-// CHECK: %[[COMMIT_LEAF_REF:.*]] = obelisk_sim.class.field_ref %[[COMMIT_MIDDLE]][@__obelisk_class_s18_middle_field_0]
-// CHECK: %[[COMMIT_LEAF:.*]] = obelisk_sim.managed.load %[[COMMIT_LEAF_REF]]
-// CHECK: %[[COMMIT_X_REF:.*]] = obelisk_sim.class.field_ref %[[COMMIT_LEAF]][@__obelisk_class_s3_leaf_field_0]
-// CHECK: obelisk_sim.managed.store {{.*}} to %[[COMMIT_X_REF]]
-// CHECK: %[[CONTAINER_MIDDLE:.*]] = obelisk_sim.managed.load %[[MIDDLE_REF]]
-// CHECK: obelisk_sim.managed.is_null %[[CONTAINER_MIDDLE]]
-// CHECK: obelisk_sim.container.write [[DATA:%[^,]+]],
-// CHECK: obelisk_sim.class.field_ref %[[CONTAINER_MIDDLE]][@__obelisk_class_s18_middle_field___obelisk_rand_mode]
-// CHECK: %[[CONTAINER_LEAF_REF:.*]] = obelisk_sim.class.field_ref %[[CONTAINER_MIDDLE]][@__obelisk_class_s18_middle_field_0]
-// CHECK: %[[CONTAINER_LEAF:.*]] = obelisk_sim.managed.load %[[CONTAINER_LEAF_REF]]
-// CHECK: obelisk_sim.managed.is_null %[[CONTAINER_LEAF]]
-// CHECK: obelisk_sim.class.field_ref %[[CONTAINER_LEAF]][@__obelisk_class_s3_leaf_field___obelisk_rand_mode]
-// CHECK: %[[DATA_REF:.*]] = obelisk_sim.class.field_ref %[[CONTAINER_LEAF]][@__obelisk_class_s3_leaf_field_1]
-// CHECK: [[DATA]] = obelisk_sim.managed.load %[[DATA_REF]]
-// CHECK: obelisk_sim.container.size [[DATA]]
-// CHECK-NOT: obelisk_sim.managed.store {{.*}} to %[[MIDDLE_REF]]
+// CHECK: %[[COMMIT_MIDDLE:.*]] = simulation.managed.load %[[MIDDLE_REF]]
+// CHECK: %[[COMMIT_LEAF_REF:.*]] = simulation.class.field_ref %[[COMMIT_MIDDLE]][@__obelisk_class_s18_middle_field_0]
+// CHECK: %[[COMMIT_LEAF:.*]] = simulation.managed.load %[[COMMIT_LEAF_REF]]
+// CHECK: %[[COMMIT_X_REF:.*]] = simulation.class.field_ref %[[COMMIT_LEAF]][@__obelisk_class_s3_leaf_field_0]
+// CHECK: simulation.managed.store {{.*}} to %[[COMMIT_X_REF]]
+// CHECK: %[[CONTAINER_MIDDLE:.*]] = simulation.managed.load %[[MIDDLE_REF]]
+// CHECK: simulation.managed.is_null %[[CONTAINER_MIDDLE]]
+// CHECK: simulation.container.write [[DATA:%[^,]+]],
+// CHECK: simulation.class.field_ref %[[CONTAINER_MIDDLE]][@__obelisk_class_s18_middle_field___obelisk_rand_mode]
+// CHECK: %[[CONTAINER_LEAF_REF:.*]] = simulation.class.field_ref %[[CONTAINER_MIDDLE]][@__obelisk_class_s18_middle_field_0]
+// CHECK: %[[CONTAINER_LEAF:.*]] = simulation.managed.load %[[CONTAINER_LEAF_REF]]
+// CHECK: simulation.managed.is_null %[[CONTAINER_LEAF]]
+// CHECK: simulation.class.field_ref %[[CONTAINER_LEAF]][@__obelisk_class_s3_leaf_field___obelisk_rand_mode]
+// CHECK: %[[DATA_REF:.*]] = simulation.class.field_ref %[[CONTAINER_LEAF]][@__obelisk_class_s3_leaf_field_1]
+// CHECK: [[DATA]] = simulation.managed.load %[[DATA_REF]]
+// CHECK: simulation.container.size [[DATA]]
+// CHECK-NOT: simulation.managed.store {{.*}} to %[[MIDDLE_REF]]

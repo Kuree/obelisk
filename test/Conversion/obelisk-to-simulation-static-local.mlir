@@ -35,16 +35,16 @@ module {
 
 // A static initializer is called once by the root before the initial process;
 // its procedural declaration must not evaluate the initializer again.
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: obelisk_sim.call @unit_0
-// CHECK: obelisk_sim.call @unit_1
-// CHECK: obelisk_sim.spawn @unit_2
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
-// CHECK-LABEL: obelisk_sim.func private @unit_2
-// CHECK-NOT: obelisk_sim.static.once
-// CHECK-NOT: obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: simulation.call @unit_0
+// CHECK: simulation.call @unit_1
+// CHECK: simulation.spawn @unit_2
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_2
+// CHECK-NOT: simulation.static.once
+// CHECK-NOT: simulation.ref.store
 // CHECK-NOT: obelisk.sv.

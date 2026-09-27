@@ -52,18 +52,18 @@ module {
 }
 
 // IEEE 1800-2023 6.24.3: a dynamic source requires an exact runtime size.
-// CHECK-DAG: %[[SOURCE:.*]] = obelisk_sim.ref.load
+// CHECK-DAG: %[[SOURCE:.*]] = simulation.ref.load
 // CHECK-DAG: %[[THREE:.*]] = arith.constant 3 : i64
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size %[[SOURCE]]
+// CHECK: %[[SIZE:.*]] = simulation.container.size %[[SOURCE]]
 // CHECK: %[[MATCH:.*]] = arith.cmpi eq, %[[SIZE]], %[[THREE]] : i64
 // CHECK: cf.cond_br %[[MATCH]], ^[[ACCEPT:.*]], ^[[REJECT:.*]]
 // CHECK: ^[[ACCEPT]]:
-// CHECK: obelisk_sim.container.export_bitstream %[[SOURCE]]
+// CHECK: simulation.container.export_bitstream %[[SOURCE]]
 // CHECK: ^[[REJECT]]:
 // CHECK: bit-stream cast source and destination widths differ
 // IEEE 1800-2023 11.4.14 streams typed associative values in sorted-key order.
-// CHECK: obelisk_sim.assoc.traverse
-// CHECK: obelisk_sim.assoc.read
+// CHECK: simulation.assoc.traverse
+// CHECK: simulation.assoc.read
 
 // -----
 
@@ -151,12 +151,12 @@ module {
 
 // Wildcard indices lower to a boxed integral key; bit-stream export reuses the
 // runtime's deterministic key ordering and remains one bulk operation.
-// CHECK: obelisk_sim.container.create
-// CHECK-SAME: bit_width = 16 : i64{{.*}}element_flags = 2 : i32
-// CHECK: obelisk_sim.box.pack
-// CHECK: obelisk_sim.assoc.create {{.*}}key_kind = 6 : i32
-// CHECK: obelisk_sim.assoc.write
-// CHECK: obelisk_sim.container.export_bitstream
+// CHECK: simulation.container.create
+// CHECK-SAME: bit_width = 16 : i64{{.*}}element_flags = #simulation.element_flags<signed>
+// CHECK: simulation.box.pack
+// CHECK: simulation.assoc.create {{.*}}key_kind = #simulation.assoc_key_kind<wildcard>
+// CHECK: simulation.assoc.write
+// CHECK: simulation.container.export_bitstream
 
 // -----
 

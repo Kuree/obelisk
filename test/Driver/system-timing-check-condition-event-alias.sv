@@ -48,6 +48,6 @@ endmodule
 
 // CHECK: alias-rise 1 1 1
 // CHECK-NEXT: alias-fall 1 1 1
-// SIM: obelisk_sim.observer.bind
-// SIM: obelisk_sim.suspend.clock_set
-// SIM-SAME: !obelisk_sim.observer
+// SIM: simulation.observer.bind
+// SIM: simulation.suspend.clock_set
+// SIM-SAME: !simulation.observer

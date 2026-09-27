@@ -5,15 +5,15 @@
 // The declaration remains the sole owner of the semantic constraint list. The
 // exact randomize alternative references its reusable template without cloning
 // that list into the call.
-// TEMPLATE-PREPARED: obelisk_sim.random.constraint_template @[[UNSAT_TEMPLATE:[A-Za-z0-9_.$]+]]
-// TEMPLATE-PREPARED: obelisk.sv.expression.call attributes {{.*}}obelisk_sim.randomize_constraint_template = @[[UNSAT_TEMPLATE]]
+// TEMPLATE-PREPARED: simulation.random.constraint_template @[[UNSAT_TEMPLATE:[A-Za-z0-9_.$]+]]
+// TEMPLATE-PREPARED: obelisk.sv.expression.call attributes {{.*}}simulation.randomize_constraint_template = @[[UNSAT_TEMPLATE]]
 // TEMPLATE-PREPARED-NOT: obelisk.sv.constraint.list
 // TEMPLATE-PREPARED: obelisk.sv.expression.named_value
 
 // The template makes the contradiction visible to Z3 at compile time. Dynamic
 // constraint_mode state still retains the cold runtime path because disabling
 // the block makes the otherwise contradictory plan satisfiable.
-// UNSAT: obelisk_sim.random.solve {{.*}} constraints
+// UNSAT: simulation.random.solve {{.*}} constraints
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

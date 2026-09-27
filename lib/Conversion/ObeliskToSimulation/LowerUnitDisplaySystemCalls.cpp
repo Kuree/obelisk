@@ -143,8 +143,9 @@ LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
   Value text = sim::SimBytesConstantOp::create(builder, location, format);
   sim::SimDisplayOp::create(
       builder, location, context, descriptor, ValueRange{text, *time},
-      /*newline=*/false, 10, builder.getDenseI32ArrayAttr({0, 0}), lexicalScope,
-      StringAttr{}, timeMultiplier, designTimePrecisionExponent());
+      /*newline=*/false, sim::Radix::Decimal,
+      builder.getDenseI32ArrayAttr({0, 0}), lexicalScope, StringAttr{},
+      timeMultiplier, designTimePrecisionExponent());
   if (merge) {
     cf::BranchOp::create(builder, location, merge, ValueRange{});
     setCurrent(merge);
@@ -257,9 +258,9 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
   items.front() = sim::SimBytesConstantOp::create(builder, location, format);
   return sim::SimStringOutputFormatOp::create(
              builder, location, sim::StringType::get(function.getContext()),
-             function.getBody().front().getArgument(0), items, 10, flags,
-             lexicalScope, StringAttr{}, timeMultiplier,
-             designTimePrecisionExponent())
+             function.getBody().front().getArgument(0), items,
+             sim::Radix::Decimal, flags, lexicalScope, StringAttr{},
+             timeMultiplier, designTimePrecisionExponent())
       .getResult();
 }
 
@@ -336,9 +337,9 @@ UnitLowering::formatUnpackedAggregateRaw(Value value, Location location,
                  sim::SimBytesConstantOp::create(builder, location, format));
     return sim::SimStringOutputFormatOp::create(
                builder, location, stringType,
-               function.getBody().front().getArgument(0), items, 10, flags,
-               lexicalScope, StringAttr{}, timeMultiplier,
-               designTimePrecisionExponent())
+               function.getBody().front().getArgument(0), items,
+               sim::Radix::Decimal, flags, lexicalScope, StringAttr{},
+               timeMultiplier, designTimePrecisionExponent())
         .getResult();
   };
   return std::pair<Value, Value>{mode == 'z' ? Value{} : formatLeaves('u'),
@@ -759,7 +760,7 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
   Type stringType = sim::StringType::get(function.getContext());
   Value result = sim::SimStringOutputFormatOp::create(
       builder, location, stringType, function.getBody().front().getArgument(0),
-      output->items, 10, output->flags, lexicalScope,
+      output->items, sim::Radix::Decimal, output->flags, lexicalScope,
       op.getSystemLibraryCellAttr(), timeMultiplier, timePrecision);
   if (!task)
     return result;
@@ -922,9 +923,9 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         sim::SimBytesConstantOp::create(builder, location, text).getResult();
     Value descriptor = constant(i32, 1);
     sim::SimDisplayOp::create(builder, location, context, descriptor, item,
-                              true, 10, ArrayRef<int32_t>{0}, targetPath,
-                              StringAttr{}, builder.getI64IntegerAttr(1),
-                              IntegerAttr{});
+                              true, sim::Radix::Decimal, ArrayRef<int32_t>{0},
+                              targetPath, StringAttr{},
+                              builder.getI64IntegerAttr(1), IntegerAttr{});
     return dummyTaskResult();
   }
 
@@ -1119,15 +1120,15 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         lowerOutputListItems(ArrayRef(children).drop_front(firstItem), true);
     if (failed(output))
       return failure();
-    if (op->hasAttr("obelisk_sim.monitor_callback")) {
+    if (op->hasAttr("simulation.monitor_callback")) {
       auto complete = op->getAttrOfType<BoolAttr>(
-          "obelisk_sim.monitor_observation_complete");
+          "simulation.monitor_observation_complete");
       monitorObservationComplete = complete && complete.getValue();
       if (monitorObservationComplete) {
         ArrayRef<Operation *> monitored =
             ArrayRef(children).drop_front(firstItem);
         for (auto [index, child] : llvm::enumerate(monitored)) {
-          if (!child->hasAttr("obelisk_sim.observer"))
+          if (!child->hasAttr("simulation.observer"))
             continue;
           Value initial = output->sourceValues[index];
           if (!initial) {
@@ -1222,8 +1223,9 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
       }
       Value result = sim::SimStringOutputFormatOp::create(
           builder, location, sim::StringType::get(function.getContext()),
-          context, items, display->radix, flags, lexicalScope,
-          op.getSystemLibraryCellAttr(), timeMultiplier, timePrecision);
+          context, items, static_cast<sim::Radix>(display->radix), flags,
+          lexicalScope, op.getSystemLibraryCellAttr(), timeMultiplier,
+          timePrecision);
       FailureOr<Value> converted = failure();
       if (byteArray) {
         // IEEE 1800-2017 5.9 and 21.3.3: string assignment to an unpacked
@@ -1256,10 +1258,10 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
       sim::SimErrorOp::create(builder, location, context);
     if (display->fatal)
       sim::SimFatalOp::create(builder, location, context, verbosity);
-    sim::SimDisplayOp::create(builder, location, context, descriptor, items,
-                              display->newline, display->radix, flags,
-                              lexicalScope, op.getSystemLibraryCellAttr(),
-                              timeMultiplier, timePrecision);
+    sim::SimDisplayOp::create(
+        builder, location, context, descriptor, items, display->newline,
+        static_cast<sim::Radix>(display->radix), flags, lexicalScope,
+        op.getSystemLibraryCellAttr(), timeMultiplier, timePrecision);
     if (display->fatal) {
       if (failed(emitFunctionReturn(location, std::nullopt, false,
                                     /*emitBlockEventEnd=*/false)))

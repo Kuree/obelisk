@@ -4,17 +4,17 @@
 // A signed widening conversion of runtime state is evaluated once and exposed
 // to Z3 as one capture. The interval sampler therefore uses the converted
 // eight-bit endpoint directly instead of leaving the comparison to rejection.
-// CAPTURE-DOMAIN-EXPRESSION-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-EXPRESSION-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-EXPRESSION: arith.addi {{.*}} : i4
 // CAPTURE-DOMAIN-EXPRESSION: arith.extsi {{.*}} : i4 to i8
 // CAPTURE-DOMAIN-EXPRESSION: arith.xori {{.*}}, %{{c128_i64.*}} : i64
 // CAPTURE-DOMAIN-EXPRESSION: arith.subi
 // CAPTURE-DOMAIN-EXPRESSION: arith.addi
-// CAPTURE-DOMAIN-EXPRESSION: obelisk_sim.random.solve {{.*}} mutable
+// CAPTURE-DOMAIN-EXPRESSION: simulation.random.solve {{.*}} mutable
 
-// CAPTURE-DOMAIN-EXPRESSION-FALLBACK-LABEL: obelisk_sim.func private @unit_1
+// CAPTURE-DOMAIN-EXPRESSION-FALLBACK-LABEL: simulation.func private @unit_1
 // CAPTURE-DOMAIN-EXPRESSION-FALLBACK: arith.cmpi sge
-// CAPTURE-DOMAIN-EXPRESSION-FALLBACK: obelisk_sim.random.solve
+// CAPTURE-DOMAIN-EXPRESSION-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

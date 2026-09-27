@@ -54,7 +54,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.suspend.any %[[B:.*]], %[[C:.*]] edges
-// CHECK: obelisk_sim.ref.load %[[B]]
-// CHECK: obelisk_sim.suspend.change %[[C]]
+// CHECK: simulation.func private @unit_0(
+// CHECK: simulation.suspend.any %[[B:.*]], %[[C:.*]] edges
+// CHECK: simulation.ref.load %[[B]]
+// CHECK: simulation.suspend.change %[[C]]

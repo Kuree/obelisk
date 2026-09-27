@@ -48,16 +48,16 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.assoc.create {{.*}}key_kind = 2 : i32, key_width = 32
-// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = obelisk_sim.file.readmem_token
+// CHECK: simulation.assoc.create {{.*}}key_kind = #simulation.assoc_key_kind<signed>, key_width = 32
+// CHECK: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = simulation.file.readmem_token
 // CHECK: %[[NARROW:.*]] = arith.trunci %[[ADDRESS]] : i64 to i32
 // CHECK: %[[NORMALIZED:.*]] = arith.extsi %[[NARROW]] : i32 to i64
 // CHECK: arith.cmpi eq, %[[NORMALIZED]], %{{.*-2.*}} : i64
 // CHECK: arith.cmpi eq, %[[NORMALIZED]], %{{.*3.*}} : i64
 // CHECK: arith.cmpi eq, %[[NORMALIZED]], %{{.*9.*}} : i64
-// CHECK: obelisk_sim.logic.compare case_eq %[[DATA]],
+// CHECK: simulation.logic.compare case_eq %[[DATA]],
 // CHECK: cf.cond_br {{.*}}, ^[[WRITE:bb[0-9]+]], ^[[ENUM_ERROR:bb[0-9]+]]
 // CHECK: ^[[WRITE]]:
-// CHECK: obelisk_sim.assoc.write
+// CHECK: simulation.assoc.write
 // CHECK: ^[[ENUM_ERROR]]:
-// CHECK: obelisk_sim.display
+// CHECK: simulation.display

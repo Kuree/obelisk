@@ -35,14 +35,14 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "unconnected_drive_top.child.$port_connection_0"
-// CHECK-DAG: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "unconnected_drive_top.child.$port_connection_1"
-// CHECK-DAG: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design hierarchy "unconnected_drive_top.child.pull0"
-// CHECK-DAG: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design hierarchy "unconnected_drive_top.child.pull1"
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.logic.constant false, false
-// CHECK: obelisk_sim.driver.drive
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: obelisk_sim.logic.constant true, false
-// CHECK: obelisk_sim.driver.drive
+// CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "unconnected_drive_top.child.$port_connection_0"
+// CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_initialize hierarchy "unconnected_drive_top.child.$port_connection_1"
+// CHECK-DAG: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design hierarchy "unconnected_drive_top.child.pull0"
+// CHECK-DAG: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design hierarchy "unconnected_drive_top.child.pull1"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.logic.constant false, false
+// CHECK: simulation.driver.drive
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.logic.constant true, false
+// CHECK: simulation.driver.drive
 // CHECK-NOT: obelisk.sv.

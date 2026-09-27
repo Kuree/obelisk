@@ -394,7 +394,7 @@ uint32_t Encoder::emitOutputFormatMetadata(FunctionPlan &plan, Op op) {
     append32(metadata, op.getAppendNewline() ? 1 : 0);
   else
     append32(metadata, 0);
-  append32(metadata, op.getDefaultRadix());
+  append32(metadata, static_cast<uint32_t>(op.getDefaultRadix()));
   append32(metadata, op.getItemFlags().size());
   StringRef scope = op.getScope().value_or("");
   if (scope.empty())

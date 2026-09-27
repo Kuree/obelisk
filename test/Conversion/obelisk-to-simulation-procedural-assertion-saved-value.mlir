@@ -55,16 +55,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.17.0.48(
-// CHECK-SAME: %[[SAVED_ARG:[^:]+]]: !obelisk_sim.logic<1>
-// CHECK-SAME: %[[EPOCH_REF:[^:]+]]: !obelisk_sim.ref<i64> {obelisk_sim.automatic_reference_capture
+// CHECK-LABEL: simulation.func private @unit_0.fork.17.0.48(
+// CHECK-SAME: %[[SAVED_ARG:[^:]+]]: !simulation.logic<1>
+// CHECK-SAME: %[[EPOCH_REF:[^:]+]]: !simulation.ref<i64> {simulation.automatic_reference_capture
 // CHECK-SAME: %[[QUEUED_EPOCH:[^:]+]]: i64
-// CHECK: %[[LIVE_EPOCH:[^ ]+]] = obelisk_sim.ref.load %[[EPOCH_REF]] : !obelisk_sim.ref<i64> -> i64
+// CHECK: %[[LIVE_EPOCH:[^ ]+]] = simulation.ref.load %[[EPOCH_REF]] : !simulation.ref<i64> -> i64
 // CHECK: %[[CURRENT:[^ ]+]] = arith.cmpi eq, %[[LIVE_EPOCH]], %[[QUEUED_EPOCH]] : i64
-// CHECK: obelisk_sim.logic.is_true %[[SAVED_ARG]]
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %{{[^:]+}}: !obelisk_sim.context
-// CHECK-SAME: %{{[^:]+}}: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %[[SOURCE:[^:]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK: %[[SAVED_VALUE:[^ ]+]] = obelisk_sim.ref.load %[[SOURCE]] : !obelisk_sim.ref<!obelisk_sim.logic<1>> -> !obelisk_sim.logic<1>
-// CHECK: obelisk_sim.spawn @unit_0.fork.17.0.48({{.*}}%[[SAVED_VALUE]]
+// CHECK: simulation.logic.is_true %[[SAVED_ARG]]
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: %{{[^:]+}}: !simulation.context
+// CHECK-SAME: %{{[^:]+}}: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %[[SOURCE:[^:]+]]: !simulation.ref<!simulation.logic<1>>
+// CHECK: %[[SAVED_VALUE:[^ ]+]] = simulation.ref.load %[[SOURCE]] : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
+// CHECK: simulation.spawn @unit_0.fork.17.0.48({{.*}}%[[SAVED_VALUE]]

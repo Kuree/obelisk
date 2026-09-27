@@ -301,23 +301,23 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[DEFAULT:unit_[0-9]+]]({{.*}}!obelisk_sim.class_handle<@[[CALLEE:__obelisk_class_[^>]+]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "callee::default_value"
-// CHECK: obelisk_sim.func private @[[READ:unit_[0-9]+]]({{.*}}!obelisk_sim.class_handle<@[[CALLEE]]>{{.*}}i32
-// CHECK-SAME: obelisk_sim.hierarchical_name = "callee::read"
-// CHECK: obelisk_sim.func private @[[NEW:unit_[0-9]+]]({{.*}}!obelisk_sim.class_handle<@[[CALLEE]]>{{.*}}i32
-// CHECK-SAME: obelisk_sim.hierarchical_name = "callee::new"
-// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}({{.*}}%[[CALLER_THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@[[CALLER:__obelisk_class_[^>]+]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "caller::invoke"
-// CHECK: %[[TARGET_REF:.*]] = obelisk_sim.class.field_ref %[[CALLER_THIS]]{{.*}} -> !obelisk_sim.managed_ref<!obelisk_sim.class_handle<@[[CALLEE]]>, @[[CALLER]]>
-// CHECK: %[[TARGET:.*]] = obelisk_sim.managed.load %[[TARGET_REF]]{{.*}} -> !obelisk_sim.class_handle<@[[CALLEE]]>
-// CHECK-NOT: obelisk_sim.class.cast
-// CHECK: %[[DEFAULT_VALUE:.*]] = obelisk_sim.class.direct_call @[[DEFAULT]] %[[TARGET]]()
-// CHECK-NEXT: %[[RESULT:.*]] = obelisk_sim.class.direct_call @[[READ]] %[[TARGET]](%[[DEFAULT_VALUE]])
-// CHECK-NEXT: obelisk_sim.return %[[RESULT]] : i32
-// CHECK: obelisk_sim.func private @{{unit_[0-9]+}}(%[[CONTEXT:arg[0-9]+]]: !obelisk_sim.context{{.*}}) -> !obelisk_sim.class_handle<@[[CALLEE]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "caller::make"
-// CHECK: %[[OBJECT:.*]] = obelisk_sim.class.alloc %[[CONTEXT]] : !obelisk_sim.context -> !obelisk_sim.class_handle<@[[CALLEE]]>
-// CHECK: %[[CONSTRUCTOR_DEFAULT:.*]] = obelisk_sim.class.direct_call @[[DEFAULT]] %[[OBJECT]]()
-// CHECK-NEXT: obelisk_sim.class.direct_call @[[NEW]] %[[OBJECT]](%[[CONSTRUCTOR_DEFAULT]])
-// CHECK: obelisk_sim.return %[[OBJECT]] : !obelisk_sim.class_handle<@[[CALLEE]]>
+// CHECK: simulation.func private @[[DEFAULT:unit_[0-9]+]]({{.*}}!simulation.class_handle<@[[CALLEE:__obelisk_class_[^>]+]]>
+// CHECK-SAME: simulation.hierarchical_name = "callee::default_value"
+// CHECK: simulation.func private @[[READ:unit_[0-9]+]]({{.*}}!simulation.class_handle<@[[CALLEE]]>{{.*}}i32
+// CHECK-SAME: simulation.hierarchical_name = "callee::read"
+// CHECK: simulation.func private @[[NEW:unit_[0-9]+]]({{.*}}!simulation.class_handle<@[[CALLEE]]>{{.*}}i32
+// CHECK-SAME: simulation.hierarchical_name = "callee::new"
+// CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%[[CALLER_THIS:arg[0-9]+]]: !simulation.class_handle<@[[CALLER:__obelisk_class_[^>]+]]>
+// CHECK-SAME: simulation.hierarchical_name = "caller::invoke"
+// CHECK: %[[TARGET_REF:.*]] = simulation.class.field_ref %[[CALLER_THIS]]{{.*}} -> !simulation.managed_ref<!simulation.class_handle<@[[CALLEE]]>, @[[CALLER]]>
+// CHECK: %[[TARGET:.*]] = simulation.managed.load %[[TARGET_REF]]{{.*}} -> !simulation.class_handle<@[[CALLEE]]>
+// CHECK-NOT: simulation.class.cast
+// CHECK: %[[DEFAULT_VALUE:.*]] = simulation.class.direct_call @[[DEFAULT]] %[[TARGET]]()
+// CHECK-NEXT: %[[RESULT:.*]] = simulation.class.direct_call @[[READ]] %[[TARGET]](%[[DEFAULT_VALUE]])
+// CHECK-NEXT: simulation.return %[[RESULT]] : i32
+// CHECK: simulation.func private @{{unit_[0-9]+}}(%[[CONTEXT:arg[0-9]+]]: !simulation.context{{.*}}) -> !simulation.class_handle<@[[CALLEE]]>
+// CHECK-SAME: simulation.hierarchical_name = "caller::make"
+// CHECK: %[[OBJECT:.*]] = simulation.class.alloc %[[CONTEXT]] : !simulation.context -> !simulation.class_handle<@[[CALLEE]]>
+// CHECK: %[[CONSTRUCTOR_DEFAULT:.*]] = simulation.class.direct_call @[[DEFAULT]] %[[OBJECT]]()
+// CHECK-NEXT: simulation.class.direct_call @[[NEW]] %[[OBJECT]](%[[CONSTRUCTOR_DEFAULT]])
+// CHECK: simulation.return %[[OBJECT]] : !simulation.class_handle<@[[CALLEE]]>

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {
@@ -83,4 +83,4 @@ module {
 
 // The same semantic match-call node is copied into both fixed-repetition ages.
 // Each occurrence gets a distinct callback/code-unit identity.
-// CHECK-COUNT-2: obelisk_sim.concurrent_match_call
+// CHECK-COUNT-2: simulation.concurrent_match_call

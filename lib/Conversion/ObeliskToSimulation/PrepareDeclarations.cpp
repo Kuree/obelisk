@@ -485,7 +485,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       auto found = semanticType ? fixedClassWidths.find(semanticType.getValue())
                                 : fixedClassWidths.end();
       if (found != fixedClassWidths.end())
-        operation->setAttr("obelisk_sim.class_bitstream_width",
+        operation->setAttr("simulation.class_bitstream_width",
                            builder.getI64IntegerAttr(found->second));
     });
   }
@@ -715,9 +715,11 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       if (needsClassBitstreamMetadata && !isStatic) {
         field->setAttr(sim::metadata::classBitstreamMember,
                        builder.getUnitAttr());
-        field->setAttr(sim::metadata::classBitstreamVisibility,
-                       builder.getI32IntegerAttr(static_cast<int32_t>(
-                           property.getMemberVisibility())));
+        field->setAttr(
+            sim::metadata::classBitstreamVisibility,
+            sim::MemberVisibilityAttr::get(
+                builder.getContext(), static_cast<sim::MemberVisibility>(
+                                          property.getMemberVisibility())));
       }
       fieldDeclarations[property] = field;
       if (property.getRandMode() != semantic::SVRandMode::None) {
@@ -788,15 +790,15 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         return symbol;
       };
       declaration->setAttr(
-          "obelisk_sim.random_state_field",
+          "simulation.random_state_field",
           addRandomField("__obelisk_rng_state", "__obelisk_rng_state"));
       declaration->setAttr(
-          "obelisk_sim.random_increment_field",
+          "simulation.random_increment_field",
           addRandomField("__obelisk_rng_increment", "__obelisk_rng_increment"));
       declaration->setAttr(
           sim::metadata::randomModeField,
           addRandomField("__obelisk_rand_mode", "__obelisk_rand_mode"));
-      declaration->setAttr("obelisk_sim.constraint_mode_field",
+      declaration->setAttr("simulation.constraint_mode_field",
                            addRandomField("__obelisk_constraint_mode",
                                           "__obelisk_constraint_mode"));
     }
@@ -1037,7 +1039,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     if (!definition)
       return {};
     StringAttr definitionName =
-        body->getAttrOfType<StringAttr>("obelisk_sim.vpi_definition_name");
+        body->getAttrOfType<StringAttr>("simulation.vpi_definition_name");
     if (!definitionName)
       definitionName = definition->getAttrOfType<StringAttr>("name");
     if (!definitionName)

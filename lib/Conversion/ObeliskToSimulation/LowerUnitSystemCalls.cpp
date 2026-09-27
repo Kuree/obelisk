@@ -21,10 +21,10 @@ namespace {
 bool needsExpressionHistoryDefault(Operation *expression) {
   return !isa<semantic::SVNamedValueExpressionOp>(expression) ||
          getConstantSpelling(expression).has_value() ||
-         expression->hasAttr("obelisk_sim.sample_default_constant") ||
-         expression->hasAttr("obelisk_sim.sample_default_snapshot") ||
-         expression->hasAttr("obelisk_sim.sample_default_dynamic") ||
-         expression->hasAttr("obelisk_sim.sample_default_current");
+         expression->hasAttr("simulation.sample_default_constant") ||
+         expression->hasAttr("simulation.sample_default_snapshot") ||
+         expression->hasAttr("simulation.sample_default_dynamic") ||
+         expression->hasAttr("simulation.sample_default_current");
 }
 
 uint64_t historyValidityID(uint64_t siteID) {
@@ -493,11 +493,11 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       name == "$assertnonvacuouson" || name == "$assertvacuousoff" ||
       name == "$assertcontrol") {
     auto action =
-        op->getAttrOfType<IntegerAttr>("obelisk_sim.assertion_control_action");
+        op->getAttrOfType<IntegerAttr>("simulation.assertion_control_action");
     auto actionArgument = op->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.assertion_control_action_argument");
+        "simulation.assertion_control_action_argument");
     auto targets = op->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.assertion_control_ids");
+        "simulation.assertion_control_ids");
     if (static_cast<bool>(action) == static_cast<bool>(actionArgument) ||
         !targets) {
       emitError(location) << name
@@ -505,17 +505,17 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     auto depths = op->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.assertion_control_depths");
+        "simulation.assertion_control_depths");
     auto levelsArgument = op->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.assertion_control_levels_argument");
+        "simulation.assertion_control_levels_argument");
     auto assertionTypes = op->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.assertion_control_assertion_types");
+        "simulation.assertion_control_assertion_types");
     auto assertionTypesArgument = op->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.assertion_control_assertion_types_argument");
+        "simulation.assertion_control_assertion_types_argument");
     auto directiveTypes = op->getAttrOfType<DenseI64ArrayAttr>(
-        "obelisk_sim.assertion_control_directive_types");
+        "simulation.assertion_control_directive_types");
     auto directiveTypesArgument = op->getAttrOfType<IntegerAttr>(
-        "obelisk_sim.assertion_control_directive_types_argument");
+        "simulation.assertion_control_directive_types_argument");
     if (static_cast<bool>(depths) != static_cast<bool>(levelsArgument) ||
         static_cast<bool>(assertionTypes) !=
             static_cast<bool>(assertionTypesArgument) ||
@@ -689,7 +689,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         else
           sim::SimAssertionControlOp::create(
               builder, location, context,
-              builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
+              sim::AssertionControlActionAttr::get(
+                  builder.getContext(),
+                  static_cast<sim::AssertionControlAction>(
+                      static_cast<int32_t>(action.getInt()))),
               builder.getI64IntegerAttr(target));
         continue;
       }
@@ -705,7 +708,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       else
         sim::SimAssertionControlOp::create(
             builder, location, context,
-            builder.getI32IntegerAttr(static_cast<int32_t>(action.getInt())),
+            sim::AssertionControlActionAttr::get(
+                builder.getContext(),
+                static_cast<sim::AssertionControlAction>(
+                    static_cast<int32_t>(action.getInt()))),
             builder.getI64IntegerAttr(target));
       emitBranch(resume);
       setCurrent(resume);
@@ -873,7 +879,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       Value high = constant(i32, INT32_MAX);
       auto draw = sim::SimRandomDistributionOp::create(
           builder, location, TypeRange{i32, i32}, context,
-          OBELISK_RT_DISTRIBUTION_UNIFORM, *seed32, low, high);
+          sim::RandomDistribution::Uniform, *seed32, low, high);
 
       Type destinationType = getReferenceElementType(*seedDestination);
       FailureOr<Value> updated =
@@ -892,20 +898,20 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
   // an inout seed and is followed by one or two shape parameters. Annex N
   // defines a separate seed-threaded generator for these functions; it does
   // not draw from or reseed the active process stream.
-  std::optional<uint32_t> distribution =
-      llvm::StringSwitch<std::optional<uint32_t>>(name)
-          .Case("$dist_uniform", OBELISK_RT_DISTRIBUTION_UNIFORM)
-          .Case("$dist_normal", OBELISK_RT_DISTRIBUTION_NORMAL)
-          .Case("$dist_exponential", OBELISK_RT_DISTRIBUTION_EXPONENTIAL)
-          .Case("$dist_poisson", OBELISK_RT_DISTRIBUTION_POISSON)
-          .Case("$dist_chi_square", OBELISK_RT_DISTRIBUTION_CHI_SQUARE)
-          .Case("$dist_t", OBELISK_RT_DISTRIBUTION_T)
-          .Case("$dist_erlang", OBELISK_RT_DISTRIBUTION_ERLANG)
+  std::optional<sim::RandomDistribution> distribution =
+      llvm::StringSwitch<std::optional<sim::RandomDistribution>>(name)
+          .Case("$dist_uniform", sim::RandomDistribution::Uniform)
+          .Case("$dist_normal", sim::RandomDistribution::Normal)
+          .Case("$dist_exponential", sim::RandomDistribution::Exponential)
+          .Case("$dist_poisson", sim::RandomDistribution::Poisson)
+          .Case("$dist_chi_square", sim::RandomDistribution::ChiSquare)
+          .Case("$dist_t", sim::RandomDistribution::T)
+          .Case("$dist_erlang", sim::RandomDistribution::Erlang)
           .Default(std::nullopt);
   if (distribution) {
-    bool twoParameters = *distribution == OBELISK_RT_DISTRIBUTION_UNIFORM ||
-                         *distribution == OBELISK_RT_DISTRIBUTION_NORMAL ||
-                         *distribution == OBELISK_RT_DISTRIBUTION_ERLANG;
+    bool twoParameters = *distribution == sim::RandomDistribution::Uniform ||
+                         *distribution == sim::RandomDistribution::Normal ||
+                         *distribution == sim::RandomDistribution::Erlang;
     size_t expected = twoParameters ? 3 : 2;
     if (children.size() != expected) {
       emitError(location) << name << " requires exactly " << expected
@@ -955,13 +961,13 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     return convertResult(draw.getResult());
   }
 
-  std::optional<uint32_t> queueAction =
-      llvm::StringSwitch<std::optional<uint32_t>>(name)
-          .Case("$q_initialize", OBELISK_RT_STOCHASTIC_QUEUE_INITIALIZE)
-          .Case("$q_add", OBELISK_RT_STOCHASTIC_QUEUE_ADD)
-          .Case("$q_remove", OBELISK_RT_STOCHASTIC_QUEUE_REMOVE)
-          .Case("$q_full", OBELISK_RT_STOCHASTIC_QUEUE_FULL)
-          .Case("$q_exam", OBELISK_RT_STOCHASTIC_QUEUE_EXAM)
+  std::optional<sim::StochasticQueueAction> queueAction =
+      llvm::StringSwitch<std::optional<sim::StochasticQueueAction>>(name)
+          .Case("$q_initialize", sim::StochasticQueueAction::Initialize)
+          .Case("$q_add", sim::StochasticQueueAction::Add)
+          .Case("$q_remove", sim::StochasticQueueAction::Remove)
+          .Case("$q_full", sim::StochasticQueueAction::Full)
+          .Case("$q_exam", sim::StochasticQueueAction::Exam)
           .Default(std::nullopt);
   if (queueAction) {
     size_t expected = name == "$q_full" ? 2 : 4;
@@ -1026,15 +1032,15 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         builder.getIntegerAttr(plane, 0));
     Value first = zero;
     Value second = zero;
-    if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_INITIALIZE ||
-        *queueAction == OBELISK_RT_STOCHASTIC_QUEUE_ADD) {
+    if (*queueAction == sim::StochasticQueueAction::Initialize ||
+        *queueAction == sim::StochasticQueueAction::Add) {
       FailureOr<Value> loweredFirst = lowerLogic32(children[1]);
       FailureOr<Value> loweredSecond = lowerLogic32(children[2]);
       if (failed(loweredFirst) || failed(loweredSecond))
         return failure();
       first = *loweredFirst;
       second = *loweredSecond;
-    } else if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_EXAM) {
+    } else if (*queueAction == sim::StochasticQueueAction::Exam) {
       FailureOr<Value> loweredCode = lowerLogic32(children[1]);
       if (failed(loweredCode))
         return failure();
@@ -1051,17 +1057,17 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
         *queueAction, *id, first, second, scale.getValue().getZExtValue());
 
     size_t statusIndex = name == "$q_full" ? 1 : 3;
-    if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_REMOVE) {
+    if (*queueAction == sim::StochasticQueueAction::Remove) {
       if (failed(storeOutput(children[1], queue.getPrimary())) ||
           failed(storeOutput(children[2], queue.getSecondary())))
         return failure();
-    } else if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_EXAM) {
+    } else if (*queueAction == sim::StochasticQueueAction::Exam) {
       if (failed(storeOutput(children[2], queue.getPrimary())))
         return failure();
     }
     if (failed(storeOutput(children[statusIndex], queue.getStatus())))
       return failure();
-    if (*queueAction == OBELISK_RT_STOCHASTIC_QUEUE_FULL)
+    if (*queueAction == sim::StochasticQueueAction::Full)
       return convertResult(queue.getPrimary());
     return dummyTaskResult();
   }
@@ -1127,7 +1133,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << name << " requires exactly one argument";
       return failure();
     }
-    if (!function->hasAttr("obelisk_sim.global_future_resolver")) {
+    if (!function->hasAttr("simulation.global_future_resolver")) {
       emitError(location)
           << name << " requires the detached global-future assertion resolver";
       return failure();

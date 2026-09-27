@@ -1,15 +1,15 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
+// CHECK-LABEL: simulation.func private @unit_1(
 // CHECK-DAG: %[[HIGH:.*]] = arith.constant 100 : i32
 // CHECK-DAG: %[[LOW:.*]] = arith.constant 0 : i32
-// CHECK: %[[SEED_LOGIC:.*]] = obelisk_sim.ref.load
-// CHECK: %[[SEED_BITS:.*]] = obelisk_sim.logic.to_bits %[[SEED_LOGIC]]
-// CHECK-NOT: obelisk_sim.random.seed
-// CHECK: %[[RESULT:.*]], %[[NEXT_SEED:.*]] = obelisk_sim.random.distribution {{.*}}, %[[SEED_BITS]], %[[LOW]], %[[HIGH]] {distribution = 0 : i32}
-// CHECK: %[[UPDATED:.*]] = obelisk_sim.logic.from_bits %[[NEXT_SEED]]
-// CHECK: obelisk_sim.ref.store %[[UPDATED]]
-// CHECK: obelisk_sim.display {{.*}}({{.*}}, %[[RESULT]])
+// CHECK: %[[SEED_LOGIC:.*]] = simulation.ref.load
+// CHECK: %[[SEED_BITS:.*]] = simulation.logic.to_bits %[[SEED_LOGIC]]
+// CHECK-NOT: simulation.random.seed
+// CHECK: %[[RESULT:.*]], %[[NEXT_SEED:.*]] = simulation.random.distribution {{.*}}, %[[SEED_BITS]], %[[LOW]], %[[HIGH]] {distribution = #simulation.random_distribution<uniform>}
+// CHECK: %[[UPDATED:.*]] = simulation.logic.from_bits %[[NEXT_SEED]]
+// CHECK: simulation.ref.store %[[UPDATED]]
+// CHECK: simulation.display {{.*}}({{.*}}, %[[RESULT]])
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

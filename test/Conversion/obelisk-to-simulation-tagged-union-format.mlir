@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 !logic4 = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
 !tagged = !obelisk.source_aggregate<"top", false, true, true, false, false,
@@ -8,47 +8,47 @@
       {name = "valid", ordinal = 1 : i32, packed_offset = 0 : i64,
        type = !logic4}
     ]>
-!sim_tagged = !obelisk_sim.unpacked_union<fields = [
-    #obelisk_sim.field<name = "invalid", type = i1, ordinal = 0,
+!sim_tagged = !simulation.unpacked_union<fields = [
+    #simulation.field<name = "invalid", type = i1, ordinal = 0,
         packedOffset = 0>,
-    #obelisk_sim.field<name = "valid",
-        type = !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>,
+    #simulation.field<name = "valid",
+        type = !simulation.packed_array<3 : 0 x !simulation.logic<1>>,
         ordinal = 1,
         packedOffset = 0>
   ], isTagged = true>
 
 module {
-  obelisk_sim.design @tagged_union_format {
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !sim_tagged design
+  simulation.design @tagged_union_format {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !sim_tagged design
         hierarchy "top.value"
 
-    // CHECK-LABEL: obelisk_sim.func @unit
-    // CHECK: %[[VALUE:.*]] = obelisk_sim.ref.load %arg1
-    // CHECK: %[[VALID:.*]] = obelisk_sim.union.extract %[[VALUE]][1]
-    // CHECK: %[[FLAT:.*]] = obelisk_sim.packed.flatten %[[VALID]]
-    // CHECK-SAME: !obelisk_sim.logic<4>
-    // CHECK: %[[TEXT:.*]] = obelisk_sim.string.output_format
+    // CHECK-LABEL: simulation.func @unit
+    // CHECK: %[[VALUE:.*]] = simulation.ref.load %arg1
+    // CHECK: %[[VALID:.*]] = simulation.union.extract %[[VALUE]][1]
+    // CHECK: %[[FLAT:.*]] = simulation.packed.flatten %[[VALID]]
+    // CHECK-SAME: !simulation.logic<4>
+    // CHECK: %[[TEXT:.*]] = simulation.string.output_format
     // CHECK-SAME: %[[FLAT]]
     // CHECK-SAME: flags = [32, 0]
-    // CHECK: %[[PREFIX:.*]] = obelisk_sim.string.literal "'{valid:"
-    // CHECK: %[[PATTERN:.*]] = obelisk_sim.string.concat %[[PREFIX]], %[[TEXT]]
-    // CHECK: %[[ACTIVE:.*]] = obelisk_sim.union.is_active %[[VALUE]][1]
+    // CHECK: %[[PREFIX:.*]] = simulation.string.literal "'{valid:"
+    // CHECK: %[[PATTERN:.*]] = simulation.string.concat %[[PREFIX]], %[[TEXT]]
+    // CHECK: %[[ACTIVE:.*]] = simulation.union.is_active %[[VALUE]][1]
     // CHECK: arith.select %[[ACTIVE]], %[[PATTERN]]
-    // CHECK: obelisk_sim.display {{.*}}({{.*}}, {{.*}}) newline = true radix = 10 flags = [0, 8]
-    obelisk_sim.func @unit(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<!sim_tagged>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    // CHECK: simulation.display {{.*}}({{.*}}, {{.*}}) newline = true radix = <decimal> flags = [0, 8]
+    simulation.func @unit(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<!sim_tagged>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {
           entry_kind = 1 : i32,
-          obelisk_sim.delay_scale = 1 : i64,
-          obelisk_sim.hierarchical_name = "top",
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.value", argument = 1,
+          simulation.delay_scale = 1 : i64,
+          simulation.hierarchical_name = "top",
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.value", argument = 1,
                 kind = direct, copyOut = false>
           ],
           code_unit_id = 1 : i64
@@ -83,7 +83,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

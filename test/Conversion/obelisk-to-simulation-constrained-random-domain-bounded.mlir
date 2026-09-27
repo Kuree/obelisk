@@ -5,16 +5,16 @@
 // draw a fresh rejection-sampled domain index. The exact Z3 domain commits
 // directly when all properties are enabled; partial modes retain a masked
 // runtime solver path.
-// DOMAIN-BOUNDED-LABEL: obelisk_sim.func private @unit_1
+// DOMAIN-BOUNDED-LABEL: simulation.func private @unit_1
 // DOMAIN-BOUNDED: arith.constant 10 : i64
 // DOMAIN-BOUNDED: arith.remui {{.*}}, {{.*}} : i64
 // DOMAIN-BOUNDED: arith.cmpi ult
-// DOMAIN-BOUNDED: obelisk_sim.random.solve {{.*}} mutable
+// DOMAIN-BOUNDED: simulation.random.solve {{.*}} mutable
 // DOMAIN-BOUNDED: arith.trunci {{.*}} : i64 to i4
-// DOMAIN-BOUNDED: obelisk_sim.managed.store
+// DOMAIN-BOUNDED: simulation.managed.store
 
-// DOMAIN-BOUNDED-FALLBACK-LABEL: obelisk_sim.func private @unit_1
-// DOMAIN-BOUNDED-FALLBACK: obelisk_sim.random.solve
+// DOMAIN-BOUNDED-FALLBACK-LABEL: simulation.func private @unit_1
+// DOMAIN-BOUNDED-FALLBACK: simulation.random.solve
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

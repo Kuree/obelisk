@@ -138,48 +138,48 @@ module {
 // size is resized before element randomization. Both the constrained dynamic
 // array and the unconstrained queue are gated by the outer rand handle, a
 // non-null child, and their respective child rand_mode bits.
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: %[[CHILD_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@__obelisk_class_s20_parent_field_0]
-// CHECK: %[[MODE_CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
-// CHECK: obelisk_sim.class.field_ref %[[MODE_CHILD]][@__obelisk_class_s3_child_field___obelisk_constraint_mode]
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK: %[[CHILD_REF:.*]] = simulation.class.field_ref {{.*}}[@__obelisk_class_s20_parent_field_0]
+// CHECK: %[[MODE_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
+// CHECK: simulation.class.field_ref %[[MODE_CHILD]][@__obelisk_class_s3_child_field___obelisk_constraint_mode]
 // CHECK: ^{{bb[0-9]+}}({{.*}}):
-// CHECK: %[[SIZE_CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
-// CHECK: %[[SIZE_NULL:.*]] = obelisk_sim.managed.is_null %[[SIZE_CHILD]]
+// CHECK: %[[SIZE_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
+// CHECK: %[[SIZE_NULL:.*]] = simulation.managed.is_null %[[SIZE_CHILD]]
 // CHECK: cf.cond_br %[[SIZE_NULL]], ^[[SIZE_MERGE:bb[0-9]+]]({{.*}}%false{{.*}}), ^[[SIZE_OBJECT:bb[0-9]+]]
 // CHECK: ^[[SIZE_OBJECT]]:
-// CHECK: %[[SIZE_REF:.*]] = obelisk_sim.class.field_ref %[[SIZE_CHILD]][@__obelisk_class_s3_child_field_0]
-// CHECK: %[[OLD_ARRAY:.*]] = obelisk_sim.managed.load %[[SIZE_REF]]
-// CHECK: obelisk_sim.class.field_ref %[[SIZE_CHILD]][@__obelisk_class_s3_child_field___obelisk_rand_mode]
-// CHECK: obelisk_sim.container.size %[[OLD_ARRAY]]
+// CHECK: %[[SIZE_REF:.*]] = simulation.class.field_ref %[[SIZE_CHILD]][@__obelisk_class_s3_child_field_0]
+// CHECK: %[[OLD_ARRAY:.*]] = simulation.managed.load %[[SIZE_REF]]
+// CHECK: simulation.class.field_ref %[[SIZE_CHILD]][@__obelisk_class_s3_child_field___obelisk_rand_mode]
+// CHECK: simulation.container.size %[[OLD_ARRAY]]
 // CHECK: ^[[SIZE_MERGE]]({{.*}}, %[[CHILD_SIZE_ENABLED:.*]]: i1):
 // CHECK: arith.andi {{.*}}, %[[CHILD_SIZE_ENABLED]] : i1
-// CHECK: %[[COMMIT_CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
-// CHECK: %[[COMMIT_ARRAY_REF:.*]] = obelisk_sim.class.field_ref %[[COMMIT_CHILD]][@__obelisk_class_s3_child_field_0]
-// CHECK: %[[COMMIT_OLD:.*]] = obelisk_sim.managed.load %[[COMMIT_ARRAY_REF]]
-// CHECK: %[[RESIZED:.*]] = obelisk_sim.container.create_like %[[COMMIT_OLD]], %[[COMMIT_OLD]],
-// CHECK: obelisk_sim.managed.store %[[RESIZED]] to %[[COMMIT_ARRAY_REF]]
-// CHECK: %[[ARRAY_CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
-// CHECK: %[[ARRAY_NULL:.*]] = obelisk_sim.managed.is_null %[[ARRAY_CHILD]]
+// CHECK: %[[COMMIT_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
+// CHECK: %[[COMMIT_ARRAY_REF:.*]] = simulation.class.field_ref %[[COMMIT_CHILD]][@__obelisk_class_s3_child_field_0]
+// CHECK: %[[COMMIT_OLD:.*]] = simulation.managed.load %[[COMMIT_ARRAY_REF]]
+// CHECK: %[[RESIZED:.*]] = simulation.container.create_like %[[COMMIT_OLD]], %[[COMMIT_OLD]],
+// CHECK: simulation.managed.store %[[RESIZED]] to %[[COMMIT_ARRAY_REF]]
+// CHECK: %[[ARRAY_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
+// CHECK: %[[ARRAY_NULL:.*]] = simulation.managed.is_null %[[ARRAY_CHILD]]
 // CHECK: cf.cond_br %[[ARRAY_NULL]], ^[[AFTER_ARRAY:bb[0-9]+]], ^[[ARRAY_MODE:bb[0-9]+]]
-// CHECK: obelisk_sim.container.write [[ARRAY:%[^,]+]],
+// CHECK: simulation.container.write [[ARRAY:%[^,]+]],
 // CHECK: ^[[ARRAY_MODE]]:
-// CHECK: %[[ARRAY_MODE_REF:.*]] = obelisk_sim.class.field_ref %[[ARRAY_CHILD]][@__obelisk_class_s3_child_field___obelisk_rand_mode]
-// CHECK: %[[ARRAY_MODES:.*]] = obelisk_sim.managed.load %[[ARRAY_MODE_REF]]
+// CHECK: %[[ARRAY_MODE_REF:.*]] = simulation.class.field_ref %[[ARRAY_CHILD]][@__obelisk_class_s3_child_field___obelisk_rand_mode]
+// CHECK: %[[ARRAY_MODES:.*]] = simulation.managed.load %[[ARRAY_MODE_REF]]
 // CHECK: arith.andi %[[ARRAY_MODES]], {{.*}}1
 // CHECK: cf.cond_br {{.*}}, ^[[ARRAY_ACTIVE:bb[0-9]+]], ^[[AFTER_ARRAY]]
 // CHECK: ^[[ARRAY_ACTIVE]]:
-// CHECK: %[[ARRAY_REF:.*]] = obelisk_sim.class.field_ref %[[ARRAY_CHILD]][@__obelisk_class_s3_child_field_0]
-// CHECK: [[ARRAY]] = obelisk_sim.managed.load %[[ARRAY_REF]]
-// CHECK: %[[ARRAY_SIZE:.*]] = obelisk_sim.container.size [[ARRAY]]
-// CHECK: %[[QUEUE_CHILD:.*]] = obelisk_sim.managed.load %[[CHILD_REF]]
-// CHECK: %[[QUEUE_NULL:.*]] = obelisk_sim.managed.is_null %[[QUEUE_CHILD]]
+// CHECK: %[[ARRAY_REF:.*]] = simulation.class.field_ref %[[ARRAY_CHILD]][@__obelisk_class_s3_child_field_0]
+// CHECK: [[ARRAY]] = simulation.managed.load %[[ARRAY_REF]]
+// CHECK: %[[ARRAY_SIZE:.*]] = simulation.container.size [[ARRAY]]
+// CHECK: %[[QUEUE_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
+// CHECK: %[[QUEUE_NULL:.*]] = simulation.managed.is_null %[[QUEUE_CHILD]]
 // CHECK: cf.cond_br %[[QUEUE_NULL]], {{.*}}, ^[[QUEUE_MODE:bb[0-9]+]]
-// CHECK: obelisk_sim.container.write [[QUEUE:%[^,]+]],
+// CHECK: simulation.container.write [[QUEUE:%[^,]+]],
 // CHECK: ^[[QUEUE_MODE]]:
-// CHECK: %[[QUEUE_MODE_REF:.*]] = obelisk_sim.class.field_ref %[[QUEUE_CHILD]][@__obelisk_class_s3_child_field___obelisk_rand_mode]
-// CHECK: %[[QUEUE_MODES:.*]] = obelisk_sim.managed.load %[[QUEUE_MODE_REF]]
+// CHECK: %[[QUEUE_MODE_REF:.*]] = simulation.class.field_ref %[[QUEUE_CHILD]][@__obelisk_class_s3_child_field___obelisk_rand_mode]
+// CHECK: %[[QUEUE_MODES:.*]] = simulation.managed.load %[[QUEUE_MODE_REF]]
 // CHECK: arith.andi %[[QUEUE_MODES]], {{.*}}2
-// CHECK: %[[QUEUE_REF:.*]] = obelisk_sim.class.field_ref %[[QUEUE_CHILD]][@__obelisk_class_s3_child_field_1]
-// CHECK: [[QUEUE]] = obelisk_sim.managed.load %[[QUEUE_REF]]
-// CHECK: obelisk_sim.container.size [[QUEUE]]
-// CHECK-NOT: obelisk_sim.container.create_like [[QUEUE]]
+// CHECK: %[[QUEUE_REF:.*]] = simulation.class.field_ref %[[QUEUE_CHILD]][@__obelisk_class_s3_child_field_1]
+// CHECK: [[QUEUE]] = simulation.managed.load %[[QUEUE_REF]]
+// CHECK: simulation.container.size [[QUEUE]]
+// CHECK-NOT: simulation.container.create_like [[QUEUE]]

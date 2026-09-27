@@ -69,9 +69,9 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.string.literal "  a  "
-// CHECK: obelisk_sim.string.literal "x,y"
-// CHECK: obelisk_sim.string.literal "z"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.string.literal "  a  "
+// CHECK: simulation.string.literal "x,y"
+// CHECK: simulation.string.literal "z"
 // Splitting on the comma would leave `"x` and `y"` and one element too many.
-// CHECK-NOT: obelisk_sim.string.literal "y
+// CHECK-NOT: simulation.string.literal "y

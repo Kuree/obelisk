@@ -179,10 +179,13 @@ public:
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
                                "obelisk_rt_v1_assoc_create_typed"),
-            ValueRange{lane, c64(op.getTypeId()), c32(op.getElementKind()),
-                       c32(op.getElementFlags()), c64(op.getValueSize()),
-                       c64(op.getAlignment()), c64(op.getBitWidth()), trace,
-                       c64(op.getTraceOffsets().size()), c32(op.getKeyKind()),
+            ValueRange{lane, c64(op.getTypeId()),
+                       c32(static_cast<uint32_t>(op.getElementKind())),
+                       c32(static_cast<uint32_t>(op.getElementFlags())),
+                       c64(op.getValueSize()), c64(op.getAlignment()),
+                       c64(op.getBitWidth()), trace,
+                       c64(op.getTraceOffsets().size()),
+                       c32(static_cast<uint32_t>(op.getKeyKind())),
                        c64(op.getKeyWidth()), output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);

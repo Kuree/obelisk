@@ -137,10 +137,10 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[NULL:.*]] = obelisk_sim.process.null
-// CHECK: obelisk_sim.process.equal %{{.*}}, %[[NULL]]
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[NULL:.*]] = simulation.process.null
+// CHECK: simulation.process.equal %{{.*}}, %[[NULL]]
 // The handle reaches the output list as a handle, not as a packed value.
-// CHECK: obelisk_sim.display
+// CHECK: simulation.display
 // CHECK-SAME: flags = [0, 512]
-// CHECK-SAME: !obelisk_sim.bytes, !obelisk_sim.process
+// CHECK-SAME: !simulation.bytes, !simulation.process

@@ -77,8 +77,8 @@ module native_sampled_values;
 endmodule
 
 // CHECK: SAMPLED PASS
-// SIM: obelisk_sim.assert.sampled_read
-// SIM: obelisk_sim.assert.sampled_history
+// SIM: simulation.assert.sampled_read
+// SIM: simulation.assert.sampled_history
 // LLVM-FLAG: @__obelisk_execution_descriptor_v1 = constant
 // LLVM-FLAG-SAME: { i32 1, i32 33, i64 120,
 // LLVM-FLAG-SAME: { i32 1, i32 72, ptr @__obelisk_sampled_ranges_v1, i64 2,

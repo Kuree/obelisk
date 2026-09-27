@@ -84,9 +84,9 @@ module specify_edge_procedural_derived_control;
 endmodule
 
 // SIM: procedural_wake_kind = 2 : i32
-// SIM: obelisk_sim.suspend.observe
-// SIM-COUNT-1: obelisk_sim.ref.store_inertial_path
-// SIM: obelisk_sim.timing_path_monitor_rules
+// SIM: simulation.suspend.observe
+// SIM-COUNT-1: simulation.ref.store_inertial_path
+// SIM: simulation.timing_path_monitor_rules
 // CHECK: qualified-pending x
 // CHECK-NEXT: qualified-done 1
 // CHECK-NEXT: later-wake-immediate 0

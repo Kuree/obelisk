@@ -7,20 +7,20 @@
 // sharing bits with whatever the parent stores next -- for these two types,
 // with the parent's own tag.
 
-!jmp = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "JmpU", type = i10, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "JmpC", type = i12, ordinal = 1, packedOffset = 0>
+!jmp = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "JmpU", type = i10, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "JmpC", type = i12, ordinal = 1, packedOffset = 0>
 ], isTagged = true>
-!instr = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "Add", type = i15, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "Jmp", type = !jmp, ordinal = 1, packedOffset = 0>
+!instr = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "Add", type = i15, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "Jmp", type = !jmp, ordinal = 1, packedOffset = 0>
 ], isTagged = true>
 
 module {
-  obelisk_sim.design @nested_tagged_union {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !jmp design
-    obelisk_sim.storage.decl 1 in 0 : !instr design
+  simulation.design @nested_tagged_union {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !jmp design
+    simulation.storage.decl 1 in 0 : !instr design
   }
 }
 

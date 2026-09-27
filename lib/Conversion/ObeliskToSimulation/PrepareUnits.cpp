@@ -834,7 +834,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                     semantic::SVUnbasedUnsizedIntegerLiteralOp,
                     semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(
                     spelling) ||
-                spelling->hasAttr("obelisk_sim.constant_value"))
+                spelling->hasAttr("simulation.constant_value"))
               continue;
             if (auto system = dyn_cast<semantic::SVCallExpressionOp>(spelling);
                 system && system.getIsSystemCall() &&
@@ -866,7 +866,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                                             "monitor", unit.id,
                                             unit.hierarchy});
           }
-          call->setAttr("obelisk_sim.monitor_observation_complete",
+          call->setAttr("simulation.monitor_observation_complete",
                         builder.getBoolAttr(complete));
         }
       }
@@ -1122,7 +1122,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     }
     std::string symbol =
         llvm::formatv("observer_{0}_{1}", candidate.parentID, ordinal).str();
-    candidate.expression->setAttr("obelisk_sim.observer",
+    candidate.expression->setAttr("simulation.observer",
                                   FlatSymbolRefAttr::get(context, symbol));
     candidate.expression->setAttr(
         observerResultAttrName,
@@ -1177,9 +1177,9 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           invalid = true;
         } else {
           assignment->setAttr(
-              "obelisk_sim.nba_event_code_unit_id",
+              "simulation.nba_event_code_unit_id",
               IntegerAttr::get(IntegerType::get(context, 64), id));
-          assignment->setAttr("obelisk_sim.nba_event_hierarchy",
+          assignment->setAttr("simulation.nba_event_hierarchy",
                               builder.getStringAttr(hierarchy));
         }
       }
@@ -1210,7 +1210,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           invalid = true;
           continue;
         }
-        branch->setAttr("obelisk_sim.fork_code_unit_id",
+        branch->setAttr("simulation.fork_code_unit_id",
                         IntegerAttr::get(IntegerType::get(context, 64), id));
         assignForkCodeUnits(branch, hierarchy);
       }

@@ -5,13 +5,13 @@
 // declaration inventory on enum method calls.  Formatted output must reuse
 // that inventory even when the method follows the output in source order.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[EMPTY:.*]] = obelisk_sim.string.literal ""
-// CHECK: %[[A:.*]] = obelisk_sim.string.literal "A"
-// CHECK: arith.select {{.*}}, %[[A]], %[[EMPTY]] : !obelisk_sim.string
-// CHECK: %[[B:.*]] = obelisk_sim.string.literal "B"
-// CHECK: arith.select {{.*}}, %[[B]], {{.*}} : !obelisk_sim.string
-// CHECK: obelisk_sim.display
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[EMPTY:.*]] = simulation.string.literal ""
+// CHECK: %[[A:.*]] = simulation.string.literal "A"
+// CHECK: arith.select {{.*}}, %[[A]], %[[EMPTY]] : !simulation.string
+// CHECK: %[[B:.*]] = simulation.string.literal "B"
+// CHECK: arith.select {{.*}}, %[[B]], {{.*}} : !simulation.string
+// CHECK: simulation.display
 
 module {
   obelisk.sv.symbol.definition attributes {

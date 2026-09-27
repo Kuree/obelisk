@@ -1,9 +1,9 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/positive.mlir \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-plan-static-superstep))' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' \
 // RUN:   | FileCheck %s --check-prefix=POSITIVE
 // RUN: obelisk-opt %t/residual-cycle.mlir \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-plan-static-superstep{missed-remarks=true}))' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep{missed-remarks=true}))' \
 // RUN:   > %t/residual-cycle.out 2> %t/residual-cycle.err
 // RUN: FileCheck %s --check-prefix=PARTIAL < %t/residual-cycle.out
 
@@ -13,10 +13,10 @@
 
 //--- positive.mlir
 module {
-  // POSITIVE: obelisk_sim.design @mixed attributes {
+  // POSITIVE: simulation.design @mixed attributes {
   // POSITIVE-SAME: schedule.static_superstep = #schedule.static_superstep<version = 1
   // POSITIVE-SAME: actors = [@root, @ordinary]
-  obelisk_sim.design @mixed attributes {
+  simulation.design @mixed attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -53,45 +53,45 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "coordinator"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "ordinary"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "coordinator"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "ordinary"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %clock = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %coordinator = obelisk_sim.spawn @coordinator(%ctx, %clock) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> ->
-          !obelisk_sim.process
-      %ordinary = obelisk_sim.spawn @ordinary(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %clock = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
+      %coordinator = simulation.spawn @coordinator(%ctx, %clock) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>> ->
+          !simulation.process
+      %ordinary = simulation.spawn @ordinary(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @coordinator(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func private @coordinator(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
                     domain = 0 : i32, home_region = 8 : i32,
-                    obelisk_sim.timing_check_coordinator} {
+                    simulation.timing_check_coordinator} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.clock_set %clock conditions 0 edges [1]
+      simulation.suspend.clock_set %clock conditions 0 edges [1]
           indices [-1] site 23 to ^wait :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     }
 
-    obelisk_sim.func @ordinary(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @ordinary(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64,
                     domain = 0 : i32, home_region = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -101,10 +101,10 @@ module {
 
 //--- residual-cycle.mlir
 module {
-  // PARTIAL: obelisk_sim.design @residual_cycle attributes {
+  // PARTIAL: simulation.design @residual_cycle attributes {
   // PARTIAL-SAME: schedule.static_superstep = #schedule.static_superstep<version = 1
   // PARTIAL-SAME: actors = [@root, @ordinary_a, @ordinary_b]
-  obelisk_sim.design @residual_cycle attributes {
+  simulation.design @residual_cycle attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
       nodes = [
@@ -147,55 +147,55 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "root"
-    obelisk_sim.code_unit.decl 2 in 0 always hierarchy "coordinator"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "ordinary_a"
-    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "ordinary_b"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 always hierarchy "coordinator"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "ordinary_a"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "ordinary_b"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %clock = obelisk_sim.context.storage %ctx[0] :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
-      %coordinator = obelisk_sim.spawn @coordinator(%ctx, %clock) :
-          !obelisk_sim.context, !obelisk_sim.ref<!obelisk_sim.logic<1>> ->
-          !obelisk_sim.process
-      %a = obelisk_sim.spawn @ordinary_a(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      %b = obelisk_sim.spawn @ordinary_b(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %clock = simulation.context.storage %ctx[0] :
+          !simulation.ref<!simulation.logic<1>>
+      %coordinator = simulation.spawn @coordinator(%ctx, %clock) :
+          !simulation.context, !simulation.ref<!simulation.logic<1>> ->
+          !simulation.process
+      %a = simulation.spawn @ordinary_a(%ctx) :
+          !simulation.context -> !simulation.process
+      %b = simulation.spawn @ordinary_b(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @coordinator(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %clock: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func private @coordinator(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64,
                     domain = 0 : i32, home_region = 8 : i32,
-                    obelisk_sim.timing_check_coordinator} {
+                    simulation.timing_check_coordinator} {
       cf.br ^wait
     ^wait:
-      obelisk_sim.suspend.clock_set %clock conditions 0 edges [1]
+      simulation.suspend.clock_set %clock conditions 0 edges [1]
           indices [-1] site 23 to ^wait :
-          !obelisk_sim.ref<!obelisk_sim.logic<1>>
+          !simulation.ref<!simulation.logic<1>>
     }
 
-    obelisk_sim.func @ordinary_a(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @ordinary_a(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64,
                     domain = 0 : i32, home_region = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @ordinary_b(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @ordinary_b(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64,
                     domain = 0 : i32, home_region = 8 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

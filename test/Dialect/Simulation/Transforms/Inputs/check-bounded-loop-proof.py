@@ -41,13 +41,13 @@ def terminates(predicate, start, bound, stride, subtract):
 
 cases = list(itertools.product(predicates, range(modulus), range(modulus),
                                range(modulus), (False, True)))
-lines = ["module { obelisk_sim.design @proof { obelisk_sim.scope.decl 0"]
+lines = ["module { simulation.design @proof { simulation.scope.decl 0"]
 for index, _ in enumerate(cases):
-    lines.append(f'obelisk_sim.code_unit.decl {index + 1} in 0 initial hierarchy "f{index}"')
+    lines.append(f'simulation.code_unit.decl {index + 1} in 0 initial hierarchy "f{index}"')
 for index, (predicate, start, bound, stride, subtract) in enumerate(cases):
     step_op = "subi" if subtract else "addi"
     lines.append(f"""
-obelisk_sim.func @f{index}(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind = 0 : i32}})
+simulation.func @f{index}(%ctx: !simulation.context {{simulation.capture_kind = 0 : i32}})
     attributes {{entry_kind = 1 : i32, code_unit_id = {index + 1} : i64}} {{
   %start = arith.constant {start} : i{width}
   cf.br ^head(%start : i{width})
@@ -60,16 +60,16 @@ obelisk_sim.func @f{index}(%ctx: !obelisk_sim.context {{obelisk_sim.capture_kind
   %next = arith.{step_op} %i, %step : i{width}
   cf.br ^head(%next : i{width})
 ^exit:
-  obelisk_sim.return
+  simulation.return
 }}
 """)
 lines.append("} }")
 result = subprocess.run(
-    [sys.argv[1], "--pass-pipeline=builtin.module(obelisk_sim.design("
-     "obelisk_sim.func(obelisk-sim-mark-bounded-loops)))"],
+    [sys.argv[1], "--pass-pipeline=builtin.module(simulation.design("
+     "simulation.func(obelisk-sim-mark-bounded-loops)))"],
     input="\n".join(lines), text=True, capture_output=True)
 assert result.returncode == 0, result.stderr
-functions = re.findall(r"obelisk_sim.func @f(\d+)\((.*?)(?=obelisk_sim.func|\Z)",
+functions = re.findall(r"simulation.func @f(\d+)\((.*?)(?=simulation.func|\Z)",
                        result.stdout, re.S)
 assert len(functions) == len(cases), (len(functions), len(cases))
 marked_count = 0

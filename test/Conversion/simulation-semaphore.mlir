@@ -5,38 +5,38 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @semaphore {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
-    obelisk_sim.code_unit.decl 2 in 0 initial hierarchy "top.worker"
+  simulation.design @semaphore {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "top.worker"
 
-    obelisk_sim.func @root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
-      %worker = obelisk_sim.spawn @worker(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %worker = simulation.spawn @worker(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func @worker(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @worker(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
       %zero = arith.constant 0 : i32
       %one = arith.constant 1 : i32
-      %semaphore = obelisk_sim.semaphore.create %zero :
-          (i32) -> !obelisk_sim.semaphore
-      obelisk_sim.semaphore.put %semaphore, %one :
-          (!obelisk_sim.semaphore, i32) -> ()
-      cf.br ^attempt(%semaphore : !obelisk_sim.semaphore)
-    ^attempt(%candidate: !obelisk_sim.semaphore):
-      %success = obelisk_sim.semaphore.try_get %candidate, %one :
-          (!obelisk_sim.semaphore, i32) -> i1
-      cf.cond_br %success, ^done, ^wait(%candidate : !obelisk_sim.semaphore)
-    ^wait(%waiting: !obelisk_sim.semaphore):
-      obelisk_sim.suspend.semaphore %one from %waiting to ^done :
-          !obelisk_sim.semaphore
+      %semaphore = simulation.semaphore.create %zero :
+          (i32) -> !simulation.semaphore
+      simulation.semaphore.put %semaphore, %one :
+          (!simulation.semaphore, i32) -> ()
+      cf.br ^attempt(%semaphore : !simulation.semaphore)
+    ^attempt(%candidate: !simulation.semaphore):
+      %success = simulation.semaphore.try_get %candidate, %one :
+          (!simulation.semaphore, i32) -> i1
+      cf.cond_br %success, ^done, ^wait(%candidate : !simulation.semaphore)
+    ^wait(%waiting: !simulation.semaphore):
+      simulation.suspend.semaphore %one from %waiting to ^done :
+          !simulation.semaphore
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

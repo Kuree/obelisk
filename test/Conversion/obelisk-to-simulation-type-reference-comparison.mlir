@@ -238,13 +238,13 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[TWO:.*]] = arith.constant 2 : i32
 // CHECK-DAG: %[[FALSE:.*]] = arith.constant false
 // CHECK-DAG: %[[TRUE:.*]] = arith.constant true
 // A typedef matches the type it renames, and `real` matches neither.
-// CHECK: obelisk_sim.ref.store %[[TRUE]] to %arg1
-// CHECK: obelisk_sim.ref.store %[[FALSE]] to %arg2
+// CHECK: simulation.ref.store %[[TRUE]] to %arg1
+// CHECK: simulation.ref.store %[[FALSE]] to %arg2
 // Only the matching case item survives; no comparison is left to run.
 // CHECK-NOT: cf.cond_br
-// CHECK: obelisk_sim.ref.store %[[TWO]] to %arg3
+// CHECK: simulation.ref.store %[[TWO]] to %arg3

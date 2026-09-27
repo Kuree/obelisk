@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
-// RUN:   | FileCheck %s --implicit-check-not=!obelisk_sim.logic \
+// RUN:   | FileCheck %s --implicit-check-not=!simulation.logic \
 // RUN:       --implicit-check-not=unrealized_conversion_cast
 
 // A full-width dynamic selection still uses a fixed number of operations: one
@@ -8,18 +8,18 @@
 // CHECK-LABEL: func.func @logic_wide(
 // CHECK-COUNT-2: arith.shrui
 // CHECK: return
-func.func @logic_wide(%input: !obelisk_sim.logic<65>, %low: i65)
-    -> !obelisk_sim.logic<65> {
-  %result = obelisk_sim.logic.dyn_extract %input from %low
-      : (!obelisk_sim.logic<65>, i65) -> !obelisk_sim.logic<65>
-  return %result : !obelisk_sim.logic<65>
+func.func @logic_wide(%input: !simulation.logic<65>, %low: i65)
+    -> !simulation.logic<65> {
+  %result = simulation.logic.dyn_extract %input from %low
+      : (!simulation.logic<65>, i65) -> !simulation.logic<65>
+  return %result : !simulation.logic<65>
 }
 
 // CHECK-LABEL: func.func @bits_wide(
 // CHECK-COUNT-1: arith.shrui
 // CHECK: return
-func.func @bits_wide(%input: i65, %low: !obelisk_sim.logic<65>) -> i65 {
-  %result = obelisk_sim.bits.dyn_extract %input from %low
-      : (i65, !obelisk_sim.logic<65>) -> i65
+func.func @bits_wide(%input: i65, %low: !simulation.logic<65>) -> i65 {
+  %result = simulation.bits.dyn_extract %input from %low
+      : (i65, !simulation.logic<65>) -> i65
   return %result : i65
 }

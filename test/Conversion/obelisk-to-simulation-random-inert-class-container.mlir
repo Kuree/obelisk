@@ -118,9 +118,9 @@ module {
 // element of the abstract-class array is necessarily null. IEEE 1800-2023
 // 18.4 requires no allocation or randomization and retains its unconstrained
 // size, so the call neither reads/writes the container nor advances RNG state.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-NOT: @__obelisk_class_s16_root_field_0
-// CHECK-NOT: obelisk_sim.random
-// CHECK-NOT: obelisk_sim.container
-// CHECK-NOT: obelisk_sim.managed.store
-// CHECK: obelisk_sim.return
+// CHECK-NOT: simulation.random
+// CHECK-NOT: simulation.container
+// CHECK-NOT: simulation.managed.store
+// CHECK: simulation.return

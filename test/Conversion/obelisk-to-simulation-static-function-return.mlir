@@ -62,6 +62,6 @@ module {
 }
 
 
-// CHECK: obelisk_sim.storage.decl {{[0-9]+}} {{.*}} hierarchy "static_function_return.accumulate.accumulate"
-// CHECK-COUNT-2: obelisk_sim.call
+// CHECK: simulation.storage.decl {{[0-9]+}} {{.*}} hierarchy "static_function_return.accumulate.accumulate"
+// CHECK-COUNT-2: simulation.call
 // CHECK-NOT: obelisk.sv.

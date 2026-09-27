@@ -48,8 +48,8 @@ module {
 }
 
 
-// CHECK: obelisk_sim.net.decl [[NET:[0-9]+]] in {{[0-9]+}} : !obelisk_sim.unpacked_array<1 : 0 x !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>
+// CHECK: simulation.net.decl [[NET:[0-9]+]] in {{[0-9]+}} : !simulation.unpacked_array<1 : 0 x !simulation.packed_array<1 : 0 x !simulation.logic<1>>>
 // CHECK-SAME: hierarchy "net_array_driver.n"
 
-// CHECK-DAG: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives [[NET]] {{.*}} {driven_low = 0 : i64, driven_width = 2 : i64}
-// CHECK-DAG: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives [[NET]] {{.*}} {driven_low = 2 : i64, driven_width = 2 : i64}
+// CHECK-DAG: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives [[NET]] {{.*}} {driven_low = 0 : i64, driven_width = 2 : i64}
+// CHECK-DAG: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives [[NET]] {{.*}} {driven_low = 2 : i64, driven_width = 2 : i64}

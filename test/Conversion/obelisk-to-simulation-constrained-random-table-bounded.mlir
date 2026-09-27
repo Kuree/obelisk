@@ -3,16 +3,16 @@
 // A three-value solution table uses generated rejection sampling over the full
 // 64-bit object draw. Only UINT64_MAX is rejected, and retry PCG state is
 // committed only on that edge. The accepted uniform index selects 0, 2, or 3.
-// TABLE-BOUNDED-LABEL: obelisk_sim.func private @unit_1
+// TABLE-BOUNDED-LABEL: simulation.func private @unit_1
 // TABLE-BOUNDED: %[[INDEX:.*]] = arith.remui {{.*}}, {{.*}} : i64
 // TABLE-BOUNDED: %[[ACCEPTED:.*]] = arith.cmpi ult
 // TABLE-BOUNDED: cf.cond_br %[[ACCEPTED]]
-// TABLE-BOUNDED: obelisk_sim.managed.store
+// TABLE-BOUNDED: simulation.managed.store
 // TABLE-BOUNDED: arith.remui {{.*}}, {{.*}} : i64
 // TABLE-BOUNDED: arith.select
 // TABLE-BOUNDED: arith.select
-// TABLE-BOUNDED: obelisk_sim.random.solve {{.*}} mutable
-// TABLE-BOUNDED: obelisk_sim.managed.store
+// TABLE-BOUNDED: simulation.random.solve {{.*}} mutable
+// TABLE-BOUNDED: simulation.managed.store
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

@@ -97,12 +97,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The expanded property body substitutes p(a)'s explicit a/default c, then
 // the nested s(c)'s explicit c/default b. Retained actual/default children are
 // semantic inventory and must not be evaluated again.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[CLK:[^:]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %[[A:[^:]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %[[B:[^:]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK-SAME: %[[C:[^:]+]]: !obelisk_sim.ref<!obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.assert.sampled_read {{.*}} from %[[C]]
-// CHECK: obelisk_sim.assert.sampled_read {{.*}} from %[[B]]
-// CHECK: obelisk_sim.assert.sampled_read {{.*}} from %[[A]]
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: %[[CLK:[^:]+]]: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %[[A:[^:]+]]: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %[[B:[^:]+]]: !simulation.ref<!simulation.logic<1>>
+// CHECK-SAME: %[[C:[^:]+]]: !simulation.ref<!simulation.logic<1>>
+// CHECK: simulation.assert.sampled_read {{.*}} from %[[C]]
+// CHECK: simulation.assert.sampled_read {{.*}} from %[[B]]
+// CHECK: simulation.assert.sampled_read {{.*}} from %[[A]]
+// CHECK-NOT: simulation.assert.sampled_read

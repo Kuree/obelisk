@@ -32,7 +32,7 @@ void addSimulationPackedAggregateTypeConversions(
 void populateSimulationPackedAggregateViewPatterns(
     const mlir::TypeConverter &converter, mlir::RewritePatternSet &patterns);
 
-/// Adds conversions for the pure obelisk_sim packed-value operations and the
+/// Adds conversions for the pure simulation packed-value operations and the
 /// standard func/cf boundaries through which their 1:N values may flow.
 /// `converter` must map every `sim::LogicType<W>` to exactly two `iW` values.
 /// Function and call argument/result dictionaries are duplicated onto every

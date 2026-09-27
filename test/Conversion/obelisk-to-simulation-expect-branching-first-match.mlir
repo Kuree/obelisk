@@ -57,23 +57,23 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // In expect, an outer first_match is truth-equivalent under the directive's
 // implicit strong sequence semantics. The compact branching evaluator already
 // completes at the first successful endpoint, so it needs no priority DFA.
-// CHECK: obelisk_sim.func private @[[MONITOR:unit_0.fork.7.0.16]](
-// CHECK-SAME: obelisk_sim.expect_bounded_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.expect_bounded_branching
-// CHECK-SAME: obelisk_sim.expect_bounded_horizon = 3 : i64
-// CHECK-SAME: obelisk_sim.expect_bounded_state_words = 1 : i64
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.func private @[[MONITOR]].$expect_eos.7(
-// CHECK-SAME: obelisk_sim.expect_operand_strength = "strong"
+// CHECK: simulation.func private @[[MONITOR:unit_0.fork.7.0.16]](
+// CHECK-SAME: simulation.expect_bounded_alternatives = 2 : i64
+// CHECK-SAME: simulation.expect_bounded_branching
+// CHECK-SAME: simulation.expect_bounded_horizon = 3 : i64
+// CHECK-SAME: simulation.expect_bounded_state_words = 1 : i64
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.func private @[[MONITOR]].$expect_eos.7(
+// CHECK-SAME: simulation.expect_operand_strength = "strong"
 
-// NO-PRIORITY-NOT: obelisk_sim.first_match_priority
-// EXACT-SUSPENDS-COUNT-3: obelisk_sim.suspend.edge posedge
-// EXACT-SUSPENDS-NOT: obelisk_sim.suspend.edge posedge
-// EXACT-READS-COUNT-3: obelisk_sim.assert.sampled_read
-// EXACT-READS-NOT: obelisk_sim.assert.sampled_read
+// NO-PRIORITY-NOT: simulation.first_match_priority
+// EXACT-SUSPENDS-COUNT-3: simulation.suspend.edge posedge
+// EXACT-SUSPENDS-NOT: simulation.suspend.edge posedge
+// EXACT-READS-COUNT-3: simulation.assert.sampled_read
+// EXACT-READS-NOT: simulation.assert.sampled_read

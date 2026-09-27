@@ -73,12 +73,12 @@ module {
   }
 }
 
-// CHECK-COUNT-3: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "supported_fork.{{.*}}.$fork.
-// CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}entry_kind = 13 : i32
-// CHECK: obelisk_sim.control.enter
-// CHECK: obelisk_sim.control.leave
-// CHECK: obelisk_sim.spawn @
-// CHECK: obelisk_sim.suspend.join any
-// CHECK: obelisk_sim.suspend.children
-// CHECK: obelisk_sim.children.disable
+// CHECK-COUNT-3: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "supported_fork.{{.*}}.$fork.
+// CHECK: simulation.func private @{{.*}} attributes {{.*}}entry_kind = 13 : i32
+// CHECK: simulation.control.enter
+// CHECK: simulation.control.leave
+// CHECK: simulation.spawn @
+// CHECK: simulation.suspend.join any
+// CHECK: simulation.suspend.children
+// CHECK: simulation.children.disable
 // CHECK-NOT: obelisk.sv.

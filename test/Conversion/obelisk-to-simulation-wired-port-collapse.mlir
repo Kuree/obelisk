@@ -39,6 +39,6 @@ module attributes {
 // IEEE 1800-2017 Table 23-1: an internal tri0 connected to an external wand
 // uses the external wand type and issues a warning.
 // CHECK: warning: dissimilar net types require a port-collapse warning
-// CHECK-DAG: obelisk_sim.net.decl 0 {{.*}} hierarchy "wired_parent.value" {{.*}}resolution_kind = 3 : i32
-// CHECK-DAG: obelisk_sim.net.decl 1 {{.*}} hierarchy "wired_parent.child.value" {{.*}}resolution_kind = 5 : i32
-// CHECK: obelisk_sim.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = false
+// CHECK-DAG: simulation.net.decl 0 {{.*}} hierarchy "wired_parent.value" {{.*}}resolution_kind = 3 : i32
+// CHECK-DAG: simulation.net.decl 1 {{.*}} hierarchy "wired_parent.child.value" {{.*}}resolution_kind = 5 : i32
+// CHECK: simulation.net.connect.decl 0 {{.*}} 0[0] to 1[0] width 1 reversed = false provenance "ordered" rhs_dominates = false

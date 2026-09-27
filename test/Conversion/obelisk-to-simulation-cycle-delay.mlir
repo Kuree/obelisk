@@ -75,37 +75,37 @@ module {
 // IEEE 1800-2017 14.11: the leading zero count has no clocking event behind
 // it, so it waits for one; one, constant-many, and dynamic-many each need only
 // one static suspension site, all resuming in Reactive.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.31
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.31
 // CHECK-SAME: %arg3: i1
 // CHECK-SAME: home_region = 10 : i32
 // CHECK: cf.cond_br %arg3
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.nba.enqueue
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.nba.enqueue
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-COUNT-4: obelisk_sim.suspend.edge posedge {{.*}}resume_region = 10 : i32
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-COUNT-4: simulation.suspend.edge posedge {{.*}}resume_region = 10 : i32
 
-// STRUCT-LABEL: obelisk_sim.func private @unit_0(
+// STRUCT-LABEL: simulation.func private @unit_0(
 // The constant three-cycle delay is a counter loop, not three unrolled waits.
 // STRUCT-DAG: arith.constant 3 : i96
 // STRUCT-DAG: arith.subi
 // STRUCT-DAG: arith.cmpi ne
 // The dynamic count is evaluated once; nonpositive values take the false path.
-// STRUCT-DAG: obelisk_sim.ref.load
+// STRUCT-DAG: simulation.ref.load
 // STRUCT-DAG: arith.cmpi sgt
 // STRUCT-DAG: cf.cond_br
-// STRUCT-DAG: obelisk_sim.spawn @unit_0.$clocking_output.31({{.*}}) : {{.*}}, i1
+// STRUCT-DAG: simulation.spawn @unit_0.$clocking_output.31({{.*}}) : {{.*}}, i1
 // STRUCT-NOT: obelisk.sv.
 
 // An intra-assignment ## retains its pre-delay RHS and does not add another
 // output-edge wait after its final clock cycle. The cycle counter runs in the
 // outlined drive process so the issuing process does not suspend.
-// CHECK-LABEL: obelisk_sim.func private @unit_1.$clocking_output.55
+// CHECK-LABEL: simulation.func private @unit_1.$clocking_output.55
 // CHECK-SAME: home_region = 10 : i32
-// CHECK: obelisk_sim.suspend.edge posedge {{.*}}resume_region = 10 : i32
-// CHECK: obelisk_sim.nba.enqueue
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.spawn @unit_1.$clocking_output.55
+// CHECK: simulation.suspend.edge posedge {{.*}}resume_region = 10 : i32
+// CHECK: simulation.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-NOT: simulation.suspend.edge
+// CHECK: simulation.spawn @unit_1.$clocking_output.55
 
-// NEGEDGE-COUNT-5: obelisk_sim.suspend.edge negedge
+// NEGEDGE-COUNT-5: simulation.suspend.edge negedge

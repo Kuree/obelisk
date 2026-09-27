@@ -55,16 +55,16 @@
 // IEEE 1800-2023 19.5.1.1 evaluates `with` once per source candidate
 // occurrence and preserves duplicate values and source order. Constant and
 // item-dependent predicates use the same typed v1 batch contract.
-// PREPARE: obelisk_sim.coverage.functional.with_candidate_values = [2 : i4, 0 : i4, 1 : i4, 2 : i4, 2 : i4]
-// PREPARE-SAME: obelisk_sim.coverage.functional.with_iterator_path = "constant_with.cg.cp.item"
-// PREPARE: obelisk_sim.coverage.functional.with_candidate_values = [4 : i4, 5 : i4, 6 : i4, 7 : i4]
-// PREPARE-SAME: obelisk_sim.coverage.functional.with_iterator_path = ""
+// PREPARE: simulation.coverage.functional.with_candidate_values = [2 : i4, 0 : i4, 1 : i4, 2 : i4, 2 : i4]
+// PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "constant_with.cg.cp.item"
+// PREPARE: simulation.coverage.functional.with_candidate_values = [4 : i4, 5 : i4, 6 : i4, 7 : i4]
+// PREPARE-SAME: simulation.coverage.functional.with_iterator_path = ""
 // SIM: %[[FALSE:.+]] = arith.constant false
 // SIM: %[[TRUE:.+]] = arith.constant true
-// SIM: obelisk_sim.covergroup.create
+// SIM: simulation.covergroup.create
 // SIM-SAME: payloads[%[[FALSE]], %[[FALSE]], %[[TRUE]], %[[FALSE]], %[[FALSE]],
 // SIM-SAME: expression_ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}
-// SIM: obelisk_sim.covergroup.sample {{.*}} values[{{.*}}] ids [{{[1-9][0-9]*}}]
+// SIM: simulation.covergroup.sample {{.*}} values[{{.*}}] ids [{{[1-9][0-9]*}}]
 // Stable-ID order is intentionally unrelated to source order.
 // SCHEMA: functional_type id=[[TYPE:[1-9][0-9]*]] name=cg
 // SCHEMA-DAG: functional_bin id=[[UNSIZED:[1-9][0-9]*]] {{.*}} name=drop_unsized kind=1
@@ -86,14 +86,14 @@
 // SCHEMA-DAG: functional_expression id={{[1-9][0-9]*}} owner=[[FIXED]] owner_kind=3 role=7 result_kind=1 {{.*}} owner_ordinal=1 owner_subordinal=0 phase=1
 // SCHEMA-DAG: functional_expression id=[[DISTRIBUTE:[1-9][0-9]*]] owner=[[TYPE]] owner_kind=1 role=13 result_kind=1 width=0 signedness=3 owner_ordinal=10 owner_subordinal=2 phase=4
 // SCHEMA-DAG: functional_option_plan owner=[[TYPE]] expression=[[DISTRIBUTE]] owner_kind=1 scope=2 option=10 ordinal=10 flags=0
-// ITEM-PREPARE: obelisk_sim.coverage.functional.with_candidate_values = [0 : i4, 1 : i4, 2 : i4, 3 : i4, 4 : i4, 5 : i4, 6 : i4, 7 : i4]
-// ITEM-PREPARE-SAME: obelisk_sim.coverage.functional.with_iterator_path = "item_with.cg.cp.item"
+// ITEM-PREPARE: simulation.coverage.functional.with_candidate_values = [0 : i4, 1 : i4, 2 : i4, 3 : i4, 4 : i4, 5 : i4, 6 : i4, 7 : i4]
+// ITEM-PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "item_with.cg.cp.item"
 // ITEM: %[[ITEM_FALSE:.+]] = arith.constant false
 // ITEM: %[[ITEM_TRUE:.+]] = arith.constant true
-// ITEM: obelisk_sim.covergroup.create
+// ITEM: simulation.covergroup.create
 // ITEM-SAME: payloads[%[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]],
-// SIGNED-PREPARE: obelisk_sim.coverage.functional.with_candidate_values = [-3 : i4, -2 : i4, -1 : i4, 0 : i4, 1 : i4, 2 : i4]
-// SIGNED-PREPARE-SAME: obelisk_sim.coverage.functional.with_iterator_path = "signed_with.cg.cp.item"
+// SIGNED-PREPARE: simulation.coverage.functional.with_candidate_values = [-3 : i4, -2 : i4, -1 : i4, 0 : i4, 1 : i4, 2 : i4]
+// SIGNED-PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "signed_with.cg.cp.item"
 // WILDCARD: coverage bin with expressions require a finite explicit non-wildcard integral state range list
 // ALL-DOMAIN: coverage bin with expressions require a finite explicit non-wildcard integral state range list
 // DYNAMIC-ENDPOINT: coverage bin with range endpoints must be compiler-folded constants

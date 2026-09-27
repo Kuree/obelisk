@@ -45,15 +45,15 @@ module {
 
 // The function remains a zero-time function; only its detached branch owns
 // the suspension.
-// CHECK: obelisk_sim.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "top.spawn" {{.*}}vpi_properties = #obelisk_sim.vpi_properties<[#obelisk_sim.vpi_property<selector = 50 : i32, value = true>]>
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "top.spawn"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "top.spawn.$fork.6.0"
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.6.0.0(%{{.*}}: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) attributes
-// CHECK-NOT: obelisk_sim.static.once
-// CHECK: obelisk_sim.suspend.delay
-// CHECK: obelisk_sim.return
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.spawn @unit_0.fork.6.0.0
-// CHECK-NOT: obelisk_sim.suspend.delay
-// CHECK: obelisk_sim.return
+// CHECK: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "top.spawn" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "top.spawn"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "top.spawn.$fork.6.0"
+// CHECK-LABEL: simulation.func private @unit_0.fork.6.0.0(%{{.*}}: !simulation.context {simulation.capture_kind = 0 : i32}) attributes
+// CHECK-NOT: simulation.static.once
+// CHECK: simulation.suspend.delay
+// CHECK: simulation.return
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.spawn @unit_0.fork.6.0.0
+// CHECK-NOT: simulation.suspend.delay
+// CHECK: simulation.return
 // CHECK-NOT: obelisk.sv.

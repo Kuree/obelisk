@@ -60,7 +60,7 @@ module {
 }
 
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-DAG: %[[NET:[^:]*]]: !obelisk_sim.net<!obelisk_sim.logic<1>>
-// CHECK-DAG: !obelisk_sim.driver<!obelisk_sim.logic<1>>
-// CHECK: obelisk_sim.suspend.edge posedge %[[NET]]
+// CHECK: simulation.func private @unit_0(
+// CHECK-DAG: %[[NET:[^:]*]]: !simulation.net<!simulation.logic<1>>
+// CHECK-DAG: !simulation.driver<!simulation.logic<1>>
+// CHECK: simulation.suspend.edge posedge %[[NET]]

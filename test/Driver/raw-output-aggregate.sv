@@ -138,8 +138,8 @@ endmodule
 
 // A logical aggregate item owns three physical managed strings: its existing
 // pattern rendering plus the two leaf-padded raw encodings.
-// SIM: obelisk_sim.string.output_format
-// SIM: obelisk_sim.display{{.*}}flags = [0, 4096]
+// SIM: simulation.string.output_format
+// SIM: simulation.display{{.*}}flags = [0, 4096]
 
 // CHECK: pair-z=1:16
 // CHECK-NEXT: nested-z=1:24

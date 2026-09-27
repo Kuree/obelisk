@@ -141,7 +141,7 @@ bool containsLateInlineMetadata(SimDesignOp design) {
 bool hasUnknownInlineMetadata(Operation *operation) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if (!name.starts_with("obelisk_sim.") && !name.starts_with("schedule."))
+    if (!name.starts_with("simulation.") && !name.starts_with("schedule."))
       continue;
     if (metadata::isKnownOperation(name))
       continue;
@@ -159,7 +159,7 @@ bool hasUnknownInlineBoundaryMetadata(ArrayAttr dictionaries) {
       return true;
     for (NamedAttribute named : dictionary) {
       StringRef name = named.getName().strref();
-      if ((name.starts_with("obelisk_sim.") || name.starts_with("schedule.")) &&
+      if ((name.starts_with("simulation.") || name.starts_with("schedule.")) &&
           !metadata::isKnownBoundary(name))
         return true;
     }
@@ -360,11 +360,11 @@ StringRef getInlineLegalityReason(InlineLegality legality) {
   case InlineLegality::Recursive:
     return "call is in a recursive SCC";
   case InlineLegality::UnknownMetadata:
-    return "callee contains unknown obelisk_sim metadata";
+    return "callee contains unknown simulation metadata";
   case InlineLegality::UnfrozenDisplayScope:
     return "display has no frozen lexical scope";
   case InlineLegality::UnknownBoundaryMetadata:
-    return "call boundary contains unknown obelisk_sim metadata";
+    return "call boundary contains unknown simulation metadata";
   }
   llvm_unreachable("unknown simulation inline legality");
 }

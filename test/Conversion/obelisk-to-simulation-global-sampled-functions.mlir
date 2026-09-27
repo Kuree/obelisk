@@ -6,18 +6,19 @@
 // for the strictly later global-clock occurrence and resumes in Reactive.
 //
 // CHECK-COUNT-1: debug "alternate-clock sampler"
-// CHECK-COUNT-1: obelisk_sim.assert.clocked_sample_update
-// CHECK-COUNT-5: obelisk_sim.assert.clocked_sample_read
-// CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}obelisk_sim.global_future_resolver{{.*}}schedule.detached_controls
+// CHECK-COUNT-1: simulation.assert.clocked_sample_update
+// CHECK-COUNT-5: simulation.assert.clocked_sample_read
+// CHECK: simulation.func private @{{.*}} attributes {{.*}}schedule.detached_controls
 // CHECK-SAME: schedule.prime_on_spawn
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK-SAME: obelisk_sim.global_future_wait
+// CHECK-SAME: simulation.global_future_resolver
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 10 : i32
-// CHECK-COUNT-5: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.func private @{{.*}} attributes {{.*}}obelisk_sim.global_future_monitor
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK-SAME: simulation.global_future_wait
+// CHECK-COUNT-5: simulation.assert.sampled_read
+// CHECK: simulation.func private @{{.*}} attributes {{.*}}simulation.global_future_monitor
+// CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
-// CHECK: obelisk_sim.spawn @{{.*}}fork{{.*}}
+// CHECK: simulation.spawn @{{.*}}fork{{.*}}
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

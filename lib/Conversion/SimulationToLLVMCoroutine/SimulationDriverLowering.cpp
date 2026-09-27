@@ -427,7 +427,7 @@ public:
       if (cleanLayout && !op->hasAttr(guardedBulkDriveAttr) &&
           !::obelisk::schedule::has<
               ::obelisk::schedule::Field::DeferNetResolution>(op) &&
-          !op->hasAttr("obelisk_sim.user_net_raw_drive")) {
+          !op->hasAttr("simulation.user_net_raw_drive")) {
         auto id =
             op->template getAttrOfType<IntegerAttr>("obelisk.native.driver_id");
         auto found = id ? cleanIndex->driverByID.find(id.getUInt())
@@ -521,7 +521,7 @@ public:
     const NativeStateLayout *storeLayout = &layout;
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       storeLayout = nullptr;
-    bool userRaw = op->hasAttr("obelisk_sim.user_net_raw_drive");
+    bool userRaw = op->hasAttr("simulation.user_net_raw_drive");
     Value oldRawValue;
     Value oldRawUnknown;
     if (userRaw) {

@@ -817,7 +817,7 @@ public:
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     op.getTargetId()),
                        llvmConstant(rewriter, location, rewriter.getI32Type(),
-                                    op.getEventKind()),
+                                    static_cast<uint32_t>(op.getEventKind())),
                        receiver})
             .getResult();
     reportManagedStatus(rewriter, location, context, status);

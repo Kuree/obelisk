@@ -30,7 +30,7 @@ endmodule
 // SLANG-SAME: folded_constant = "7"
 
 // It reaches lowering as a static extract, exactly as wide[7:0] would.
-// SIM: obelisk_sim.logic.extract %{{.*}} from 0 : !obelisk_sim.logic<16> -> !obelisk_sim.logic<8>
+// SIM: simulation.logic.extract %{{.*}} from 0 : !simulation.logic<16> -> !simulation.logic<8>
 // SIM-NOT: dynamic_extract
 
 // LITERAL-NOT: folded_constant

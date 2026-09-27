@@ -5,280 +5,280 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @driver_lowering {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "driver_lowering.drive"
-    obelisk_sim.code_unit.decl 2 in 0 function hierarchy "driver_lowering.drive_changed"
-    obelisk_sim.code_unit.decl 3 in 0 function hierarchy "driver_lowering.drive_wide"
-    obelisk_sim.code_unit.decl 4 in 0 initial hierarchy "driver_lowering.drive_nba"
-    obelisk_sim.code_unit.decl 5 in 0 function hierarchy "driver_lowering.drive_strength"
-    obelisk_sim.code_unit.decl 6 in 0 function hierarchy "driver_lowering.drive_inertial"
-    obelisk_sim.code_unit.decl 7 in 0 function hierarchy "driver_lowering.drive_delayed_net"
-    obelisk_sim.code_unit.decl 8 in 0 function hierarchy "driver_lowering.drive_wand"
-    obelisk_sim.code_unit.decl 9 in 0 function hierarchy "driver_lowering.drive_tri0"
-    obelisk_sim.code_unit.decl 10 in 0 function hierarchy "driver_lowering.drive_trireg"
-    obelisk_sim.code_unit.decl 11 in 0 function hierarchy "driver_lowering.drive_delayed_trireg"
-    obelisk_sim.code_unit.decl 12 in 0 function hierarchy "driver_lowering.drive_inertial_strength_pair"
-    obelisk_sim.code_unit.decl 13 in 0 function hierarchy "driver_lowering.drive_inertial_real"
-    obelisk_sim.code_unit.decl 14 in 0 function hierarchy "driver_lowering.drive_inertial_path"
-    obelisk_sim.code_unit.decl 15 in 0 function hierarchy "driver_lowering.case_difference"
-    obelisk_sim.code_unit.decl 16 in 0 function hierarchy "driver_lowering.drive_inertial_path_strength_pair"
-    obelisk_sim.code_unit.decl 17 in 0 function hierarchy "driver_lowering.drive_inertial_path_strength_pair_pulse"
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<2> design
-    obelisk_sim.driver.decl 0 in 0 drives 0 :
-        !obelisk_sim.logic<2> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<65536> design
-    obelisk_sim.driver.decl 1 in 0 drives 1 :
-        !obelisk_sim.logic<65536> design
-    obelisk_sim.net.decl 2 in 0 : !obelisk_sim.logic<1> design
-    obelisk_sim.driver.decl 2 in 0 drives 2 :
-        !obelisk_sim.logic<1> design {
+  simulation.design @driver_lowering {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "driver_lowering.drive"
+    simulation.code_unit.decl 2 in 0 function hierarchy "driver_lowering.drive_changed"
+    simulation.code_unit.decl 3 in 0 function hierarchy "driver_lowering.drive_wide"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "driver_lowering.drive_nba"
+    simulation.code_unit.decl 5 in 0 function hierarchy "driver_lowering.drive_strength"
+    simulation.code_unit.decl 6 in 0 function hierarchy "driver_lowering.drive_inertial"
+    simulation.code_unit.decl 7 in 0 function hierarchy "driver_lowering.drive_delayed_net"
+    simulation.code_unit.decl 8 in 0 function hierarchy "driver_lowering.drive_wand"
+    simulation.code_unit.decl 9 in 0 function hierarchy "driver_lowering.drive_tri0"
+    simulation.code_unit.decl 10 in 0 function hierarchy "driver_lowering.drive_trireg"
+    simulation.code_unit.decl 11 in 0 function hierarchy "driver_lowering.drive_delayed_trireg"
+    simulation.code_unit.decl 12 in 0 function hierarchy "driver_lowering.drive_inertial_strength_pair"
+    simulation.code_unit.decl 13 in 0 function hierarchy "driver_lowering.drive_inertial_real"
+    simulation.code_unit.decl 14 in 0 function hierarchy "driver_lowering.drive_inertial_path"
+    simulation.code_unit.decl 15 in 0 function hierarchy "driver_lowering.case_difference"
+    simulation.code_unit.decl 16 in 0 function hierarchy "driver_lowering.drive_inertial_path_strength_pair"
+    simulation.code_unit.decl 17 in 0 function hierarchy "driver_lowering.drive_inertial_path_strength_pair_pulse"
+    simulation.net.decl 0 in 0 : !simulation.logic<2> design
+    simulation.driver.decl 0 in 0 drives 0 :
+        !simulation.logic<2> design
+    simulation.net.decl 1 in 0 : !simulation.logic<65536> design
+    simulation.driver.decl 1 in 0 drives 1 :
+        !simulation.logic<65536> design
+    simulation.net.decl 2 in 0 : !simulation.logic<1> design
+    simulation.driver.decl 2 in 0 drives 2 :
+        !simulation.logic<1> design {
       strength1 = 0 : i32,
-      obelisk_sim.strength_group = 1 : i64,
-      obelisk_sim.strength_bank = 0 : i32
+      simulation.strength_group = 1 : i64,
+      simulation.strength_bank = 0 : i32
     }
-    obelisk_sim.driver.decl 3 in 0 drives 2 :
-        !obelisk_sim.logic<1> design {
+    simulation.driver.decl 3 in 0 drives 2 :
+        !simulation.logic<1> design {
       strength0 = 0 : i32,
-      obelisk_sim.strength_group = 1 : i64,
-      obelisk_sim.strength_bank = 1 : i32
+      simulation.strength_group = 1 : i64,
+      simulation.strength_bank = 1 : i32
     }
-    obelisk_sim.net.decl 3 in 0 : !obelisk_sim.logic<1> design {
+    simulation.net.decl 3 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 7, 11, 13>
     }
-    obelisk_sim.driver.decl 4 in 0 drives 3 :
-        !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 4 in 0 : !obelisk_sim.logic<1> design {
+    simulation.driver.decl 4 in 0 drives 3 :
+        !simulation.logic<1> design
+    simulation.net.decl 4 in 0 : !simulation.logic<1> design {
       resolution_kind = 3 : i32
     }
-    obelisk_sim.driver.decl 5 in 0 drives 4 :
-        !obelisk_sim.logic<1> design
-    obelisk_sim.driver.decl 6 in 0 drives 4 :
-        !obelisk_sim.logic<1> design
-    obelisk_sim.net.decl 5 in 0 : !obelisk_sim.logic<1> design {
+    simulation.driver.decl 5 in 0 drives 4 :
+        !simulation.logic<1> design
+    simulation.driver.decl 6 in 0 drives 4 :
+        !simulation.logic<1> design
+    simulation.net.decl 5 in 0 : !simulation.logic<1> design {
       resolution_kind = 5 : i32
     }
-    obelisk_sim.driver.decl 7 in 0 drives 5 :
-        !obelisk_sim.logic<1> design {resolution_kind = 5 : i32}
-    obelisk_sim.net.decl 6 in 0 : !obelisk_sim.logic<1> design {
+    simulation.driver.decl 7 in 0 drives 5 :
+        !simulation.logic<1> design {resolution_kind = 5 : i32}
+    simulation.net.decl 6 in 0 : !simulation.logic<1> design {
       resolution_kind = 9 : i32
     }
-    obelisk_sim.driver.decl 8 in 0 drives 6 :
-        !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
-    obelisk_sim.net.decl 7 in 0 : !obelisk_sim.logic<1> design {
+    simulation.driver.decl 8 in 0 drives 6 :
+        !simulation.logic<1> design {resolution_kind = 9 : i32}
+    simulation.net.decl 7 in 0 : !simulation.logic<1> design {
       propagation_delays = array<i64: 7, 11, -1>,
       resolution_kind = 9 : i32
     }
-    obelisk_sim.driver.decl 9 in 0 drives 7 :
-        !obelisk_sim.logic<1> design {resolution_kind = 9 : i32}
-    obelisk_sim.net.decl 8 in 0 : f64 design {
-      obelisk_sim.user_defined_net
+    simulation.driver.decl 9 in 0 drives 7 :
+        !simulation.logic<1> design {resolution_kind = 9 : i32}
+    simulation.net.decl 8 in 0 : f64 design {
+      simulation.user_defined_net
     }
-    obelisk_sim.driver.decl 10 in 0 drives 8 : f64 design
+    simulation.driver.decl 10 in 0 drives 8 : f64 design
 
-    obelisk_sim.func @drive(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>
-      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
-          !obelisk_sim.logic<2>
-      obelisk_sim.driver.drive %driver = %value :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
-          !obelisk_sim.logic<2>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<2>>
+      %value = simulation.logic.constant 1 : i2, 0 : i2 :
+          !simulation.logic<2>
+      simulation.driver.drive %driver = %value :
+          !simulation.driver<!simulation.logic<2>>,
+          !simulation.logic<2>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_changed(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32}) -> i1
+    simulation.func @drive_changed(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i1
         attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>
-      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
-          !obelisk_sim.logic<2>
-      %changed = obelisk_sim.driver.drive_changed %driver = %value :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
-          !obelisk_sim.logic<2>
-      obelisk_sim.return %changed : i1
+      %driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<2>>
+      %value = simulation.logic.constant 1 : i2, 0 : i2 :
+          !simulation.logic<2>
+      %changed = simulation.driver.drive_changed %driver = %value :
+          !simulation.driver<!simulation.logic<2>>,
+          !simulation.logic<2>
+      simulation.return %changed : i1
     }
 
-    obelisk_sim.func @drive_wide(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.logic<65536>
-            {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @drive_wide(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: !simulation.logic<65536>
+            {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[1] :
-          !obelisk_sim.driver<!obelisk_sim.logic<65536>>
-      obelisk_sim.driver.drive %driver = %value :
-          !obelisk_sim.driver<!obelisk_sim.logic<65536>>,
-          !obelisk_sim.logic<65536>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[1] :
+          !simulation.driver<!simulation.logic<65536>>
+      simulation.driver.drive %driver = %value :
+          !simulation.driver<!simulation.logic<65536>>,
+          !simulation.logic<65536>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_nba(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_nba(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>
-      %value = obelisk_sim.logic.constant 2 : i2, 0 : i2 :
-          !obelisk_sim.logic<2>
-      obelisk_sim.nba.enqueue %value to %driver
+      %driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<2>>
+      %value = simulation.logic.constant 2 : i2, 0 : i2 :
+          !simulation.logic<2>
+      simulation.nba.enqueue %value to %driver
           {clocking_output = 42 : i64} :
-          (!obelisk_sim.logic<2>,
-           !obelisk_sim.driver<!obelisk_sim.logic<2>>) -> ()
-      obelisk_sim.return
+          (!simulation.logic<2>,
+           !simulation.driver<!simulation.logic<2>>) -> ()
+      simulation.return
     }
 
-    obelisk_sim.func @drive_strength(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_strength(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[2] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %z = obelisk_sim.logic.constant 1 : i1, 1 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver = %z {
+      %driver = simulation.context.driver %ctx[2] :
+          !simulation.driver<!simulation.logic<1>>
+      %z = simulation.logic.constant 1 : i1, 1 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive %driver = %z {
         schedule.defer_net_resolution
-      } : !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      %driver_high = obelisk_sim.context.driver %ctx[3] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver_high = %one :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      } : !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      %driver_high = simulation.context.driver %ctx[3] :
+          !simulation.driver<!simulation.logic<1>>
+      %one = simulation.logic.constant 1 : i1, 0 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive %driver_high = %one :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_inertial(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %index: !obelisk_sim.logic<3> {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @drive_inertial(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %index: !simulation.logic<3> {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>
-      %selected = obelisk_sim.driver.dyn_extract %driver from %index :
-          (!obelisk_sim.driver<!obelisk_sim.logic<2>>,
-           !obelisk_sim.logic<3>) ->
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>
-      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
-          !obelisk_sim.logic<2>
-      %rise = obelisk_sim.time.constant 7
-      %fall = obelisk_sim.time.constant 11
-      %turnoff = obelisk_sim.time.constant 13
-      obelisk_sim.driver.drive_inertial %selected = %value
+      %driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<2>>
+      %selected = simulation.driver.dyn_extract %driver from %index :
+          (!simulation.driver<!simulation.logic<2>>,
+           !simulation.logic<3>) ->
+          !simulation.driver<!simulation.logic<2>>
+      %value = simulation.logic.constant 1 : i2, 0 : i2 :
+          !simulation.logic<2>
+      %rise = simulation.time.constant 7
+      %fall = simulation.time.constant 11
+      %turnoff = simulation.time.constant 13
+      simulation.driver.drive_inertial %selected = %value
           after[%rise, %fall, %turnoff] site 6 : 4 vector = true
           {defer_resolution = true} :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
-          !obelisk_sim.logic<2>
-      obelisk_sim.return
+          !simulation.driver<!simulation.logic<2>>,
+          !simulation.logic<2>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_inertial_path(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_inertial_path(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 14 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[0] :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>
-      %value = obelisk_sim.logic.constant 1 : i2, 0 : i2 :
-          !obelisk_sim.logic<2>
+      %driver = simulation.context.driver %ctx[0] :
+          !simulation.driver<!simulation.logic<2>>
+      %value = simulation.logic.constant 1 : i2, 0 : i2 :
+          !simulation.logic<2>
       %active = arith.constant 3 : i2
       %rise_mask = arith.constant 1 : i2
       %fall_mask = arith.constant 2 : i2
       %turnoff_mask = arith.constant 3 : i2
-      %rise = obelisk_sim.time.constant 7
-      %fall = obelisk_sim.time.constant 11
-      %turnoff = obelisk_sim.time.constant 13
-      obelisk_sim.driver.drive_inertial_path %driver = %value
+      %rise = simulation.time.constant 7
+      %fall = simulation.time.constant 11
+      %turnoff = simulation.time.constant 13
+      simulation.driver.drive_inertial_path %driver = %value
           active %active masks [%rise_mask, %fall_mask, %turnoff_mask]
           after [%rise, %fall, %turnoff] site 14 : 2 group 0 of 1
           {defer_resolution = true} :
-          !obelisk_sim.driver<!obelisk_sim.logic<2>>,
-          !obelisk_sim.logic<2>, i2
-      obelisk_sim.return
+          !simulation.driver<!simulation.logic<2>>,
+          !simulation.logic<2>, i2
+      simulation.return
     }
 
-    obelisk_sim.func @case_difference(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %lhs: !obelisk_sim.logic<2> {obelisk_sim.capture_kind = 2 : i32},
-        %rhs: !obelisk_sim.logic<2> {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @case_difference(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %lhs: !simulation.logic<2> {simulation.capture_kind = 2 : i32},
+        %rhs: !simulation.logic<2> {simulation.capture_kind = 2 : i32})
         -> i2 attributes {entry_kind = 8 : i32, code_unit_id = 15 : i64} {
-      %mask = obelisk_sim.logic.case_difference_mask %lhs, %rhs :
-          (!obelisk_sim.logic<2>, !obelisk_sim.logic<2>) -> i2
-      obelisk_sim.return %mask : i2
+      %mask = simulation.logic.case_difference_mask %lhs, %rhs :
+          (!simulation.logic<2>, !simulation.logic<2>) -> i2
+      simulation.return %mask : i2
     }
 
-    obelisk_sim.func @drive_inertial_strength_pair(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_inertial_strength_pair(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 12 : i64} {
-      %low = obelisk_sim.context.driver %ctx[2] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %high = obelisk_sim.context.driver %ctx[3] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %z = obelisk_sim.logic.constant 1 : i1, 1 : i1 :
-          !obelisk_sim.logic<1>
-      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      %rise = obelisk_sim.time.constant 7
-      %fall = obelisk_sim.time.constant 11
-      %turnoff = obelisk_sim.time.constant 13
-      obelisk_sim.driver.drive_inertial_strength_pair
+      %low = simulation.context.driver %ctx[2] :
+          !simulation.driver<!simulation.logic<1>>
+      %high = simulation.context.driver %ctx[3] :
+          !simulation.driver<!simulation.logic<1>>
+      %z = simulation.logic.constant 1 : i1, 1 : i1 :
+          !simulation.logic<1>
+      %one = simulation.logic.constant 1 : i1, 0 : i1 :
+          !simulation.logic<1>
+      %rise = simulation.time.constant 7
+      %fall = simulation.time.constant 11
+      %turnoff = simulation.time.constant 13
+      simulation.driver.drive_inertial_strength_pair
           %low = %z, %high = %one transition %one
           after[%rise, %fall, %turnoff] site 12 : 0 :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>,
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>, !obelisk_sim.logic<1>
-      obelisk_sim.return
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>,
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>, !simulation.logic<1>
+      simulation.return
     }
 
     // IEEE 1800-2017 28.12.2 and 30.5.1 require the complementary L/H banks
     // to mature atomically after per-path transition-delay arbitration.
-    obelisk_sim.func @drive_inertial_path_strength_pair(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_inertial_path_strength_pair(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 16 : i64} {
-      %low = obelisk_sim.context.driver %ctx[2] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %high = obelisk_sim.context.driver %ctx[3] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %z = obelisk_sim.logic.constant true, true : !obelisk_sim.logic<1>
-      %one = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
+      %low = simulation.context.driver %ctx[2] :
+          !simulation.driver<!simulation.logic<1>>
+      %high = simulation.context.driver %ctx[3] :
+          !simulation.driver<!simulation.logic<1>>
+      %z = simulation.logic.constant true, true : !simulation.logic<1>
+      %one = simulation.logic.constant true, false : !simulation.logic<1>
       %active = arith.constant true
       %rise_mask = arith.constant true
       %fall_mask = arith.constant false
       %turnoff_mask = arith.constant false
-      %rise = obelisk_sim.time.constant 7
-      %fall = obelisk_sim.time.constant 11
-      %turnoff = obelisk_sim.time.constant 13
-      obelisk_sim.driver.drive_inertial_path_strength_pair
+      %rise = simulation.time.constant 7
+      %fall = simulation.time.constant 11
+      %turnoff = simulation.time.constant 13
+      simulation.driver.drive_inertial_path_strength_pair
           %low = %z, %high = %one transition %one active %active
           masks [%rise_mask, %fall_mask, %turnoff_mask]
           after [%rise, %fall, %turnoff] site 16 : 0 group 0 of 1 :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>,
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1
-      obelisk_sim.return
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>,
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>, !simulation.logic<1>, i1
+      simulation.return
     }
 
     // IEEE 1800-2017 30.7 and 30.7.4.1 require PATHPULSE rejection and
     // error limits to compose with the same atomic strength-pair update.
-    obelisk_sim.func @drive_inertial_path_strength_pair_pulse(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_inertial_path_strength_pair_pulse(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 17 : i64} {
-      %low = obelisk_sim.context.driver %ctx[2] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %high = obelisk_sim.context.driver %ctx[3] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %z = obelisk_sim.logic.constant true, true : !obelisk_sim.logic<1>
-      %one = obelisk_sim.logic.constant true, false : !obelisk_sim.logic<1>
+      %low = simulation.context.driver %ctx[2] :
+          !simulation.driver<!simulation.logic<1>>
+      %high = simulation.context.driver %ctx[3] :
+          !simulation.driver<!simulation.logic<1>>
+      %z = simulation.logic.constant true, true : !simulation.logic<1>
+      %one = simulation.logic.constant true, false : !simulation.logic<1>
       %active = arith.constant true
       %rise_mask = arith.constant true
       %fall_mask = arith.constant false
       %turnoff_mask = arith.constant false
       %pulse_masks = arith.constant 4095 : i12
-      %rise = obelisk_sim.time.constant 7
-      %fall = obelisk_sim.time.constant 11
-      %turnoff = obelisk_sim.time.constant 13
-      obelisk_sim.driver.drive_inertial_path_strength_pair
+      %rise = simulation.time.constant 7
+      %fall = simulation.time.constant 11
+      %turnoff = simulation.time.constant 13
+      simulation.driver.drive_inertial_path_strength_pair
           %low = %z, %high = %one transition %one active %active
           masks [%rise_mask, %fall_mask, %turnoff_mask]
           after [%rise, %fall, %turnoff] site 17 : 0 group 0 of 1
@@ -287,92 +287,92 @@ module attributes {
             pulse_on_detect = true,
             pulse_reject = 3 : i64,
             pulse_show_cancelled = true
-          } : !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>,
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>, !obelisk_sim.logic<1>, i1
-      obelisk_sim.return
+          } : !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>,
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>, !simulation.logic<1>, i1
+      simulation.return
     }
 
-    obelisk_sim.func @drive_delayed_net(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_delayed_net(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[4] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive_delayed_net %driver = %one :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[4] :
+          !simulation.driver<!simulation.logic<1>>
+      %one = simulation.logic.constant 1 : i1, 0 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive_delayed_net %driver = %one :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_wand(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_wand(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 8 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[5] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %zero = obelisk_sim.logic.constant 0 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver = %zero :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[5] :
+          !simulation.driver<!simulation.logic<1>>
+      %zero = simulation.logic.constant 0 : i1, 0 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive %driver = %zero :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_tri0(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_tri0(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 9 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[7] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver = %one :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[7] :
+          !simulation.driver<!simulation.logic<1>>
+      %one = simulation.logic.constant 1 : i1, 0 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive %driver = %one :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_trireg(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_trireg(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 10 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[8] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %z = obelisk_sim.logic.constant 1 : i1, 1 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive %driver = %z :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[8] :
+          !simulation.driver<!simulation.logic<1>>
+      %z = simulation.logic.constant 1 : i1, 1 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive %driver = %z :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
 
-    obelisk_sim.func @drive_delayed_trireg(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @drive_delayed_trireg(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 11 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[9] :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>
-      %one = obelisk_sim.logic.constant 1 : i1, 0 : i1 :
-          !obelisk_sim.logic<1>
-      obelisk_sim.driver.drive_delayed_net %driver = %one :
-          !obelisk_sim.driver<!obelisk_sim.logic<1>>,
-          !obelisk_sim.logic<1>
-      obelisk_sim.return
+      %driver = simulation.context.driver %ctx[9] :
+          !simulation.driver<!simulation.logic<1>>
+      %one = simulation.logic.constant 1 : i1, 0 : i1 :
+          !simulation.logic<1>
+      simulation.driver.drive_delayed_net %driver = %one :
+          !simulation.driver<!simulation.logic<1>>,
+          !simulation.logic<1>
+      simulation.return
     }
 
     // IEEE 1800-2017 6.6.7 and 10.3.3: one delay applies to the atomic real
     // UDNT contribution, whose publication wakes the generated resolver.
-    obelisk_sim.func @drive_inertial_real(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %value: f64 {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @drive_inertial_real(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: f64 {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 13 : i64} {
-      %driver = obelisk_sim.context.driver %ctx[10] :
-          !obelisk_sim.driver<f64>
-      %delay = obelisk_sim.time.constant 7
-      obelisk_sim.driver.drive_inertial %driver = %value
+      %driver = simulation.context.driver %ctx[10] :
+          !simulation.driver<f64>
+      %delay = simulation.time.constant 7
+      simulation.driver.drive_inertial %driver = %value
           after[%delay, %delay, %delay] site 13 : 0 vector = true
-          {defer_resolution = true, obelisk_sim.user_net_raw_drive} :
-          !obelisk_sim.driver<f64>, f64
-      obelisk_sim.return
+          {defer_resolution = true, simulation.user_net_raw_drive} :
+          !simulation.driver<f64>, f64
+      simulation.return
     }
   }
 }
@@ -391,46 +391,46 @@ module attributes {
 // CHECK: %[[WIDTH:.*]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ROOT]], %[[OFFSET]], %[[WIDTH]], {{.*}})
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
-// CHECK-NOT: obelisk_sim.driver.drive
+// CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_changed
 // CHECK: llvm.or
 // CHECK: llvm.return %{{.*}} : i1
-// CHECK-NOT: obelisk_sim.driver.drive_changed
+// CHECK-NOT: simulation.driver.drive_changed
 
 // CHECK-LABEL: llvm.func @drive_wide
 // CHECK: llvm.store %{{.*}}, %{{.*}} : i65536, !llvm.ptr
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
-// CHECK-NOT: obelisk_sim.driver.drive
+// CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_nba
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_clocking_driver_nba
-// CHECK-NOT: obelisk_sim.nba.enqueue
+// CHECK-NOT: simulation.nba.enqueue
 
 // A highz1 driver cannot use the single-driver memcpy shortcut. Native
 // lowering resolves the same Figure 28-2 range representation as bytecode.
 // CHECK-LABEL: llvm.func @drive_strength
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: obelisk_sim.driver.drive
+// CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_inertial
 // CHECK: llvm.icmp
 // CHECK: llvm.select
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_inertial
+// CHECK-NOT: simulation.driver.drive_inertial
 
 // CHECK-LABEL: llvm.func @drive_inertial_path
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_driver
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_inertial_path
+// CHECK-NOT: simulation.driver.drive_inertial_path
 
 // CHECK-LABEL: llvm.func @case_difference
 // CHECK: llvm.xor
 // CHECK: llvm.xor
 // CHECK: llvm.or
-// CHECK-NOT: obelisk_sim.logic.case_difference_mask
+// CHECK-NOT: simulation.logic.case_difference_mask
 
 // The two polarity banks of a delayed three-state primitive lower through one
 // atomic scheduler ABI call. Its separate logical transition planes select
@@ -438,19 +438,19 @@ module attributes {
 // CHECK-LABEL: llvm.func @drive_inertial_strength_pair
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver_strength_pair
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_inertial_strength_pair
+// CHECK-NOT: simulation.driver.drive_inertial_strength_pair
 
 // CHECK-LABEL: llvm.func @drive_inertial_path_strength_pair
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_strength_pair
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_inertial_path_strength_pair
+// CHECK-NOT: simulation.driver.drive_inertial_path_strength_pair
 
 // The pulse-free operation above retains the compact ABI. Only a path with
 // pulse metadata pays for the extended scheduler call and packed 12-class mask.
 // CHECK-LABEL: llvm.func @drive_inertial_path_strength_pair_pulse
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_inertial_path_strength_pair
+// CHECK-NOT: simulation.driver.drive_inertial_path_strength_pair
 
 // The driver contribution is stored immediately, then resolution schedules
 // the delayed visible-net update through the runtime.
@@ -458,14 +458,14 @@ module attributes {
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_delayed_net
+// CHECK-NOT: simulation.driver.drive_delayed_net
 
 // Native wired resolution passes the effective kind to the shared exact
 // strength resolver. 3 is the canonical wand/triand kind.
 // CHECK-LABEL: llvm.func @drive_wand
 // CHECK: %[[WAND:.*]] = llvm.mlir.constant(3 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[WAND]])
-// CHECK-NOT: obelisk_sim.driver.drive
+// CHECK-NOT: simulation.driver.drive
 
 // IEEE 1800-2017 6.6.5 gives tri0 an implicit pull0 contribution. Native
 // resolution seeds Figure 28-2 position -5 (bit index 2) and passes kind 5.
@@ -473,7 +473,7 @@ module attributes {
 // CHECK: %[[PULL0:.*]] = llvm.mlir.constant(4 : i16) : i16
 // CHECK: %[[TRI0:.*]] = llvm.mlir.constant(5 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind(%[[PULL0]], {{.*}}, %[[TRI0]])
-// CHECK-NOT: obelisk_sim.driver.drive
+// CHECK-NOT: simulation.driver.drive
 
 // IEEE 1800-2017 6.6.4: native trireg resolution uses ordinary wire
 // strengths while driven and selects the old resolved planes when all
@@ -483,7 +483,7 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[TRIREG]])
 // CHECK: llvm.select
 // CHECK: llvm.select
-// CHECK-NOT: obelisk_sim.driver.drive
+// CHECK-NOT: simulation.driver.drive
 
 // IEEE 1800-2017 28.16.2 delayed trireg publication uses the same runtime
 // scheduler in native execution as in bytecode execution.
@@ -491,7 +491,7 @@ module attributes {
 // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_delayed_net
+// CHECK-NOT: simulation.driver.drive_delayed_net
 
 // Raw delayed real contributions use vector-delay, deferred-resolution,
 // raw-publication, and f64 flags: 1 | 2 | 4 | 16 = 23.
@@ -499,7 +499,7 @@ module attributes {
 // CHECK: %[[REAL_FLAGS:.*]] = llvm.mlir.constant(23 : i32) : i32
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NOT: obelisk_sim.driver.drive_inertial
+// CHECK-NOT: simulation.driver.drive_inertial
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010237 inputs=10 outputs=0 flags=0

@@ -25,7 +25,7 @@ class ClassifyLineTest(unittest.TestCase):
         self.assertEqual(self.classify(line), "Interfaces and modports")
 
     def test_builtin_class_is_recognized_from_its_mangled_symbol(self):
-        line = ('error: \'obelisk_sim.storage.decl\' op cannot resolve "type" '
+        line = ('error: \'simulation.storage.decl\' op cannot resolve "type" '
                 "@__obelisk_class_s6_mailbox")
         self.assertEqual(self.classify(line), "std::mailbox")
 

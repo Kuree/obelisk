@@ -50,28 +50,28 @@ module {
 
 // A verbosity of 0 selects Table 20-1's "prints nothing" row, so the finish
 // request stands alone.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-NOT: obelisk_sim.display
-// CHECK: obelisk_sim.finish
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-NOT: simulation.display
+// CHECK: simulation.finish
 
 // The default verbosity of 1 prints the time and the location. The message is
 // a byte-string format with the time as its argument: rendering it into an
-// !obelisk_sim.string would make the message managed state and cost the whole
+// !simulation.string would make the message managed state and cost the whole
 // design its native schedule.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: obelisk_sim.bytes.constant "$stop: termination-diagnostic.sv:7: simulation time %0t\0A"
-// CHECK-NOT: obelisk_sim.string
-// CHECK: obelisk_sim.time.now
-// CHECK: obelisk_sim.display
-// CHECK: obelisk_sim.stop
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.bytes.constant "$stop: termination-diagnostic.sv:7: simulation time %0t\0A"
+// CHECK-NOT: simulation.string
+// CHECK: simulation.time.now
+// CHECK: simulation.display
+// CHECK: simulation.stop
 
 // A verbosity the compiler cannot fold picks its Table 20-1 row at run time,
 // by branching around the diagnostic rather than by emptying a message.
-// CHECK-LABEL: obelisk_sim.func private @unit_2
+// CHECK-LABEL: simulation.func private @unit_2
 // CHECK: %[[WANTED:.*]] = arith.cmpi ne
 // CHECK: cf.cond_br %[[WANTED]], ^[[REPORT:.*]], ^[[MERGE:.*]]
 // CHECK: ^[[REPORT]]:
-// CHECK: obelisk_sim.display
+// CHECK: simulation.display
 // CHECK: cf.br ^[[MERGE]]
 // CHECK: ^[[MERGE]]:
-// CHECK: obelisk_sim.stop
+// CHECK: simulation.stop

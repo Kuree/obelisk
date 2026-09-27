@@ -150,12 +150,12 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "C::spawn.$fork.6.0"
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}.fork.6.0.0(
-// CHECK-SAME: %[[THIS:arg[0-9]+]]: !obelisk_sim.class_handle<@__obelisk_class_s3_C>
-// CHECK: obelisk_sim.suspend.delay
-// CHECK: obelisk_sim.class.field_ref %[[THIS]][@{{.*}}]
-// CHECK: obelisk_sim.hierarchical_name = "C::wait_value.$fork.101.0"
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "C::spawn.$fork.6.0"
+// CHECK-LABEL: simulation.func private @{{.*}}.fork.6.0.0(
+// CHECK-SAME: %[[THIS:arg[0-9]+]]: !simulation.class_handle<@__obelisk_class_s3_C>
+// CHECK: simulation.suspend.delay
+// CHECK: simulation.class.field_ref %[[THIS]][@{{.*}}]
+// CHECK: simulation.hierarchical_name = "C::wait_value.$fork.101.0"
+// CHECK: simulation.observer.bind
+// CHECK: simulation.suspend.observe
 // CHECK-NOT: obelisk.sv.

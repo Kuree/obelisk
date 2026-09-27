@@ -32,7 +32,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 RULES: list[tuple[str, str, str]] = [
     # --- time / scheduling ------------------------------------------------
     (r"system call \$time\b", "$time / $stime / $realtime", "IEEE 1800 Ch. 20"),
-    (r"conversion 'i32' to '!obelisk_sim\.time'", "$time / $stime / $realtime", "IEEE 1800 Ch. 20"),
+    (r"conversion 'i32' to '!simulation\.time'", "$time / $stime / $realtime", "IEEE 1800 Ch. 20"),
     (r"continuous-assignment delays", "Continuous-assign delays (assign #N)", "IEEE 1800 Ch. 10"),
     (r"continuous-assignment strengths", "Continuous-assign strengths", "IEEE 1800 Ch. 10"),
     (r"wait_order occurrence sequencing", "wait_order sequencing", "IEEE 1800 Ch. 9"),

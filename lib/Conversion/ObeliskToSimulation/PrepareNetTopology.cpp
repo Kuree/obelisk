@@ -973,19 +973,19 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         Operation *representative = arrayMembers.front();
         SmallVector<int64_t> representativeIds;
         if (auto existing = representative->getAttrOfType<DenseI64ArrayAttr>(
-                "obelisk_sim.pass_switch_ids"))
+                "simulation.pass_switch_ids"))
           llvm::append_range(representativeIds, existing.asArrayRef());
         for (int64_t id : passSwitchIds)
           if (!llvm::is_contained(representativeIds, id))
             representativeIds.push_back(id);
         representative->setAttr(
-            "obelisk_sim.pass_switch_ids",
+            "simulation.pass_switch_ids",
             builder.getDenseI64ArrayAttr(representativeIds));
         if (arrayOrdinal == 0)
           executableUnits.push_back(representative);
       } else {
-        unit->setAttr(topologyMos ? "obelisk_sim.mos_topology_ids"
-                                  : "obelisk_sim.pass_switch_ids",
+        unit->setAttr(topologyMos ? "simulation.mos_topology_ids"
+                                  : "simulation.pass_switch_ids",
                       builder.getDenseI64ArrayAttr(passSwitchIds));
         executableUnits.push_back(unit);
       }
@@ -1163,7 +1163,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   };
   for (Operation *unit : sourceUnits) {
     if (isControlledPassSwitch(unit) ||
-        unit->hasAttr("obelisk_sim.mos_topology_ids"))
+        unit->hasAttr("simulation.mos_topology_ids"))
       continue;
     bool continuous =
         isa<semantic::SVContinuousAssignSymbolOp,
@@ -1296,9 +1296,9 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             "strength1",
             sim::StrengthAttr::get(builder.getContext(), driverStrength1));
         if (strengthBanks) {
-          driver->setAttr("obelisk_sim.strength_group",
+          driver->setAttr("simulation.strength_group",
                           builder.getI64IntegerAttr(strengthGroup));
-          driver->setAttr("obelisk_sim.strength_bank",
+          driver->setAttr("simulation.strength_bank",
                           builder.getI32IntegerAttr(bank));
         }
       }
@@ -1434,7 +1434,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       continue;
     auto scope = interfaceScopes.find(net.getScopeId());
     StringAttr member =
-        net->getAttrOfType<StringAttr>("obelisk_sim.virtual_interface_member");
+        net->getAttrOfType<StringAttr>("simulation.virtual_interface_member");
     if (scope == interfaceScopes.end() || !member)
       continue;
     std::string key =
@@ -1527,8 +1527,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
               builder.getStringAttr(hierarchy),
               builder.getStringAttr("virtual clocking output"),
               builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
-          driver->setAttr("obelisk_sim.virtual_interface_member", member);
-          driver->setAttr("obelisk_sim.virtual_interface_clocking_output",
+          driver->setAttr("simulation.virtual_interface_member", member);
+          driver->setAttr("simulation.virtual_interface_clocking_output",
                           clockingPath);
         } else if (shared->second.netID != net.getId() ||
                    shared->second.descriptor.type != net.getType()) {

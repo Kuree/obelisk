@@ -33,15 +33,15 @@ module {
 
 // Observer closures remain local to the spawned helper. Only their ordinary
 // capture and dependency handles cross the process boundary.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.$clocking_output.13
-// CHECK-NOT: !obelisk_sim.observer<
-// CHECK-COUNT-2: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.suspend.observe
+// CHECK-LABEL: simulation.func private @unit_0.$clocking_output.13
+// CHECK-NOT: !simulation.observer<
+// CHECK-COUNT-2: simulation.observer.bind
+// CHECK: simulation.ref.load
+// CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
 // CHECK-SAME: resume_region = 10 : i32
-// CHECK: obelisk_sim.nba.enqueue
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.spawn @unit_0.$clocking_output.13
-// CHECK-NOT: !obelisk_sim.observer<
+// CHECK: simulation.nba.enqueue
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.spawn @unit_0.$clocking_output.13
+// CHECK-NOT: !simulation.observer<
 // CHECK-NOT: obelisk.sv.

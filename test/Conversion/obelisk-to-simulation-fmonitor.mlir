@@ -84,11 +84,11 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @[[CALLBACK:unit_0[.][^(]+]](
-// CHECK: obelisk_sim.monitor.current
-// CHECK: obelisk_sim.display
-// CHECK-SAME: radix = 10
-// CHECK: obelisk_sim.suspend.forever
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[PROCESS:.*]] = obelisk_sim.spawn @[[CALLBACK]]
-// CHECK: obelisk_sim.monitor.register %[[PROCESS]]
+// CHECK: simulation.func private @[[CALLBACK:unit_0[.][^(]+]](
+// CHECK: simulation.monitor.current
+// CHECK: simulation.display
+// CHECK-SAME: radix = <decimal>
+// CHECK: simulation.suspend.forever
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[PROCESS:.*]] = simulation.spawn @[[CALLBACK]]
+// CHECK: simulation.monitor.register %[[PROCESS]]

@@ -20,81 +20,81 @@ namespace obelisk::sim::metadata {
 
 /// Transient function attribute containing ArgumentBindingAttr,
 /// LocalBindingAttr, and ConstantBindingAttr entries.
-inline constexpr llvm::StringLiteral bindings = "obelisk_sim.bindings";
-inline constexpr llvm::StringLiteral delayScale = "obelisk_sim.delay_scale";
-inline constexpr llvm::StringLiteral delayQuantum = "obelisk_sim.delay_quantum";
-inline constexpr llvm::StringLiteral captureKind = "obelisk_sim.capture_kind";
-inline constexpr llvm::StringLiteral descriptorId = "obelisk_sim.descriptor_id";
+inline constexpr llvm::StringLiteral bindings = "simulation.bindings";
+inline constexpr llvm::StringLiteral delayScale = "simulation.delay_scale";
+inline constexpr llvm::StringLiteral delayQuantum = "simulation.delay_quantum";
+inline constexpr llvm::StringLiteral captureKind = "simulation.capture_kind";
+inline constexpr llvm::StringLiteral descriptorId = "simulation.descriptor_id";
 inline constexpr llvm::StringLiteral descriptorRootType =
-    "obelisk_sim.descriptor_root_type";
+    "simulation.descriptor_root_type";
 inline constexpr llvm::StringLiteral descriptorLow =
-    "obelisk_sim.descriptor_low";
+    "simulation.descriptor_low";
 inline constexpr llvm::StringLiteral descriptorIndices =
-    "obelisk_sim.descriptor_indices";
+    "simulation.descriptor_indices";
 inline constexpr llvm::StringLiteral descriptorAggregateType =
-    "obelisk_sim.descriptor_aggregate_type";
+    "simulation.descriptor_aggregate_type";
 inline constexpr llvm::StringLiteral descriptorPackedLow =
-    "obelisk_sim.descriptor_packed_low";
+    "simulation.descriptor_packed_low";
 inline constexpr llvm::StringLiteral hierarchicalName =
-    "obelisk_sim.hierarchical_name";
+    "simulation.hierarchical_name";
 /// Exact frontend enum identity retained solely to reconnect a value object
 /// to its anonymous enum typespec in the immutable VPI relation image.
 inline constexpr llvm::StringLiteral vpiSourceTypeIdentity =
-    "obelisk_sim.vpi_source_type_identity";
+    "simulation.vpi_source_type_identity";
 /// FlatSymbolRefAttr naming the immutable relation-backed anchor that owns the
 /// public VPI identity of executable named-event-array storage. The storage
 /// remains in the execution layout but is omitted from the VPI object
 /// inventory.
 inline constexpr llvm::StringLiteral vpiIdentityDelegated =
-    "obelisk_sim.vpi_identity_delegated";
+    "simulation.vpi_identity_delegated";
 /// Marks a storage descriptor that a subroutine owns. Its writers are the
 /// subroutine's callers rather than drivers of a design variable.
 inline constexpr llvm::StringLiteral subroutineStorage =
-    "obelisk_sim.subroutine_storage";
+    "simulation.subroutine_storage";
 /// Hierarchical path of the variable that holds a function's return value.
 inline constexpr llvm::StringLiteral returnVariablePath =
-    "obelisk_sim.return_variable_path";
+    "simulation.return_variable_path";
 /// Stable base-to-derived index of an effective rand/randc class property.
 inline constexpr llvm::StringLiteral randomModeIndex =
-    "obelisk_sim.random_mode_index";
+    "simulation.random_mode_index";
 /// Marks a non-static rand class-handle field as a recursive object edge.
 inline constexpr llvm::StringLiteral randomObjectEdge =
-    "obelisk_sim.random_object_edge";
+    "simulation.random_object_edge";
 /// Typed RandomVariableKindAttr on a direct packed instance rand property.
 inline constexpr llvm::StringLiteral randomVariableKind =
-    "obelisk_sim.random_variable_kind";
+    "simulation.random_variable_kind";
 /// Source signedness of a direct packed random variable.
 inline constexpr llvm::StringLiteral randomVariableSigned =
-    "obelisk_sim.random_variable_signed";
+    "simulation.random_variable_signed";
 /// Hidden i64 fields that carry one randc property's permutation state.
 inline constexpr llvm::StringLiteral randomCycleKeyField =
-    "obelisk_sim.random_cycle_key_field";
+    "simulation.random_cycle_key_field";
 inline constexpr llvm::StringLiteral randomCyclePositionField =
-    "obelisk_sim.random_cycle_position_field";
+    "simulation.random_cycle_position_field";
 /// Root-class field containing the 64-bit disabled-property mask.
 inline constexpr llvm::StringLiteral randomModeField =
-    "obelisk_sim.random_mode_field";
+    "simulation.random_mode_field";
 /// Marks an executable class field that corresponds to a source-declared
 /// instance property. Compiler-owned fields and static properties are absent
 /// from the object bit-stream inventory.
 inline constexpr llvm::StringLiteral classBitstreamMember =
-    "obelisk_sim.class_bitstream_member";
+    "simulation.class_bitstream_member";
 /// Source member visibility retained for recursive class bit-stream legality.
 inline constexpr llvm::StringLiteral classBitstreamVisibility =
-    "obelisk_sim.class_bitstream_visibility";
+    "simulation.class_bitstream_visibility";
 /// Marks an explicit class-containing bit-stream conversion whose source is
 /// exactly the enclosing method's current-instance `this`.  This exception is
 /// semantic: aliases and handles reached through another expression never
 /// inherit it.
 inline constexpr llvm::StringLiteral classBitstreamAllowHiddenRoot =
-    "obelisk_sim.class_bitstream_allow_hidden_root";
+    "simulation.class_bitstream_allow_hidden_root";
 /// Dense nonzero identifier of a materialized class bit-stream cast site.
 inline constexpr llvm::StringLiteral classBitstreamSiteID =
-    "obelisk_sim.class_bitstream_site_id";
+    "simulation.class_bitstream_site_id";
 inline constexpr llvm::StringLiteral classBitstreamBytecodeFunction =
-    "obelisk_sim.class_bitstream_bytecode_function";
+    "simulation.class_bitstream_bytecode_function";
 inline constexpr llvm::StringLiteral classBitstreamBytecodeSite =
-    "obelisk_sim.class_bitstream_bytecode_site";
+    "simulation.class_bitstream_bytecode_site";
 /// Module-level canonical pointer-free class schema/group/site blob.
 inline constexpr llvm::StringLiteral classBitstreamBlob =
     "obelisk.execution.class_bitstream_blob";
@@ -128,22 +128,22 @@ inline constexpr llvm::StringLiteral coverageFunctionalExpressionRole =
 /// occurrence. These transient arrays keep that one-to-many helper contract
 /// on the semantic predicate without introducing another runtime ABI shape.
 inline constexpr llvm::StringLiteral coverageFunctionalWithExpressionIds =
-    "obelisk_sim.coverage.functional.with_expression_ids";
+    "simulation.coverage.functional.with_expression_ids";
 inline constexpr llvm::StringLiteral coverageFunctionalWithExpressionOrdinals =
-    "obelisk_sim.coverage.functional.with_expression_ordinals";
+    "simulation.coverage.functional.with_expression_ordinals";
 inline constexpr llvm::StringLiteral coverageFunctionalWithCandidateValues =
-    "obelisk_sim.coverage.functional.with_candidate_values";
+    "simulation.coverage.functional.with_candidate_values";
 inline constexpr llvm::StringLiteral coverageFunctionalWithIteratorPath =
-    "obelisk_sim.coverage.functional.with_iterator_path";
+    "simulation.coverage.functional.with_iterator_path";
 /// Constructor-time cross-selector predicates are evaluated once for every
 /// tuple in the finite Cartesian product of their cross targets. The values
 /// are flattened tuple-major (the final target varies fastest); target paths
 /// identify the semantic iterator bindings restored around each evaluation.
 inline constexpr llvm::StringLiteral
     coverageFunctionalCrossWithCandidateValues =
-        "obelisk_sim.coverage.functional.cross_with_candidate_values";
+        "simulation.coverage.functional.cross_with_candidate_values";
 inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTargetPaths =
-    "obelisk_sim.coverage.functional.cross_with_target_paths";
+    "simulation.coverage.functional.cross_with_target_paths";
 inline constexpr llvm::StringLiteral coverageFunctionalFormalId =
     "obelisk.coverage.functional_formal_id";
 /// Stable FunctionalItem identity assigned to its semantic declaration.
@@ -194,11 +194,11 @@ inline constexpr llvm::StringLiteral coverageToggleInitialUnknown =
 /// off ordinary compilation paths.
 inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
     "obelisk.feature.class_bitstream_source";
-inline constexpr llvm::StringLiteral thisArgument = "obelisk_sim.this_argument";
-inline constexpr llvm::StringLiteral lowered = "obelisk_sim.lowered";
+inline constexpr llvm::StringLiteral thisArgument = "simulation.this_argument";
+inline constexpr llvm::StringLiteral lowered = "simulation.lowered";
 
 inline constexpr llvm::StringLiteral dpiElidedInputs =
-    "obelisk_sim.dpi_elided_inputs";
+    "simulation.dpi_elided_inputs";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
 /// Marks an AOT region body whose bytecode fallback may be frozen before

@@ -9,14 +9,14 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @state_planes {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design
-    obelisk_sim.storage.decl 1 in 0 : !obelisk_sim.logic<8> design
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.net.decl 1 in 0 : !obelisk_sim.logic<4> design
-    obelisk_sim.driver.decl 0 in 0 drives 1 :
-        !obelisk_sim.logic<4> design
+  simulation.design @state_planes {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design
+    simulation.storage.decl 1 in 0 : !simulation.logic<8> design
+    simulation.net.decl 0 in 0 : !simulation.logic<4> design
+    simulation.net.decl 1 in 0 : !simulation.logic<4> design
+    simulation.driver.decl 0 in 0 drives 1 :
+        !simulation.logic<4> design
   }
 }
 

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
@@ -14,48 +14,48 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @dynamic_insert {
-    obelisk_sim.scope.decl 0 hierarchy "dynamic_insert"
-    obelisk_sim.code_unit.decl 9910000 in 0 root_initializer
+  simulation.design @dynamic_insert {
+    simulation.scope.decl 0 hierarchy "dynamic_insert"
+    simulation.code_unit.decl 9910000 in 0 root_initializer
         hierarchy "dynamic_insert.root"
-    obelisk_sim.code_unit.decl 9910001 in 0 initial
+    simulation.code_unit.decl 9910001 in 0 initial
         hierarchy "dynamic_insert.initial"
 
-    obelisk_sim.func @__obelisk_root(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @__obelisk_root(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9910000 : i64} {
-      %process = obelisk_sim.spawn @initial(%ctx) :
-          !obelisk_sim.context -> !obelisk_sim.process
-      obelisk_sim.return
+      %process = simulation.spawn @initial(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
     }
 
-    obelisk_sim.func private @initial(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func private @initial(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9910001 : i64} {
-      %base = obelisk_sim.logic.constant 21 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %replacement = obelisk_sim.logic.constant 6 : i3, 0 : i3 : !obelisk_sim.logic<3>
-      %negative = obelisk_sim.logic.constant -1 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %high = obelisk_sim.logic.constant 4 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %outside = obelisk_sim.logic.constant 6 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %unknown = obelisk_sim.logic.constant 0 : i5, 1 : i5 : !obelisk_sim.logic<5>
+      %base = simulation.logic.constant 21 : i5, 0 : i5 : !simulation.logic<5>
+      %replacement = simulation.logic.constant 6 : i3, 0 : i3 : !simulation.logic<3>
+      %negative = simulation.logic.constant -1 : i5, 0 : i5 : !simulation.logic<5>
+      %high = simulation.logic.constant 4 : i5, 0 : i5 : !simulation.logic<5>
+      %outside = simulation.logic.constant 6 : i5, 0 : i5 : !simulation.logic<5>
+      %unknown = simulation.logic.constant 0 : i5, 1 : i5 : !simulation.logic<5>
 
-      %logic_low = obelisk_sim.logic.dyn_insert %replacement into %base at %negative : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-      %logic_high = obelisk_sim.logic.dyn_insert %replacement into %base at %high : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-      %logic_outside = obelisk_sim.logic.dyn_insert %replacement into %base at %outside : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-      %logic_unknown = obelisk_sim.logic.dyn_insert %replacement into %base at %unknown : (!obelisk_sim.logic<5>, !obelisk_sim.logic<3>, !obelisk_sim.logic<5>) -> !obelisk_sim.logic<5>
-      %expected_low = obelisk_sim.logic.constant 23 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %expected_high = obelisk_sim.logic.constant 5 : i5, 0 : i5 : !obelisk_sim.logic<5>
-      %ok_logic_low = obelisk_sim.logic.compare case_eq %logic_low, %expected_low : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
-      %ok_logic_high = obelisk_sim.logic.compare case_eq %logic_high, %expected_high : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
-      %ok_logic_outside = obelisk_sim.logic.compare case_eq %logic_outside, %base : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
-      %ok_logic_unknown = obelisk_sim.logic.compare case_eq %logic_unknown, %base : (!obelisk_sim.logic<5>, !obelisk_sim.logic<5>) -> i1
+      %logic_low = simulation.logic.dyn_insert %replacement into %base at %negative : (!simulation.logic<5>, !simulation.logic<3>, !simulation.logic<5>) -> !simulation.logic<5>
+      %logic_high = simulation.logic.dyn_insert %replacement into %base at %high : (!simulation.logic<5>, !simulation.logic<3>, !simulation.logic<5>) -> !simulation.logic<5>
+      %logic_outside = simulation.logic.dyn_insert %replacement into %base at %outside : (!simulation.logic<5>, !simulation.logic<3>, !simulation.logic<5>) -> !simulation.logic<5>
+      %logic_unknown = simulation.logic.dyn_insert %replacement into %base at %unknown : (!simulation.logic<5>, !simulation.logic<3>, !simulation.logic<5>) -> !simulation.logic<5>
+      %expected_low = simulation.logic.constant 23 : i5, 0 : i5 : !simulation.logic<5>
+      %expected_high = simulation.logic.constant 5 : i5, 0 : i5 : !simulation.logic<5>
+      %ok_logic_low = simulation.logic.compare case_eq %logic_low, %expected_low : (!simulation.logic<5>, !simulation.logic<5>) -> i1
+      %ok_logic_high = simulation.logic.compare case_eq %logic_high, %expected_high : (!simulation.logic<5>, !simulation.logic<5>) -> i1
+      %ok_logic_outside = simulation.logic.compare case_eq %logic_outside, %base : (!simulation.logic<5>, !simulation.logic<5>) -> i1
+      %ok_logic_unknown = simulation.logic.compare case_eq %logic_unknown, %base : (!simulation.logic<5>, !simulation.logic<5>) -> i1
 
       %bits_base = arith.constant 21 : i5
       %bits_replacement = arith.constant 6 : i3
-      %bits_low = obelisk_sim.bits.dyn_insert %bits_replacement into %bits_base at %negative : (i5, i3, !obelisk_sim.logic<5>) -> i5
-      %bits_high = obelisk_sim.bits.dyn_insert %bits_replacement into %bits_base at %high : (i5, i3, !obelisk_sim.logic<5>) -> i5
-      %bits_outside = obelisk_sim.bits.dyn_insert %bits_replacement into %bits_base at %outside : (i5, i3, !obelisk_sim.logic<5>) -> i5
-      %bits_unknown = obelisk_sim.bits.dyn_insert %bits_replacement into %bits_base at %unknown : (i5, i3, !obelisk_sim.logic<5>) -> i5
+      %bits_low = simulation.bits.dyn_insert %bits_replacement into %bits_base at %negative : (i5, i3, !simulation.logic<5>) -> i5
+      %bits_high = simulation.bits.dyn_insert %bits_replacement into %bits_base at %high : (i5, i3, !simulation.logic<5>) -> i5
+      %bits_outside = simulation.bits.dyn_insert %bits_replacement into %bits_base at %outside : (i5, i3, !simulation.logic<5>) -> i5
+      %bits_unknown = simulation.bits.dyn_insert %bits_replacement into %bits_base at %unknown : (i5, i3, !simulation.logic<5>) -> i5
       %bits_expected_low = arith.constant 23 : i5
       %bits_expected_high = arith.constant 5 : i5
       %ok_bits_low = arith.cmpi eq, %bits_low, %bits_expected_low : i5
@@ -70,12 +70,12 @@ module attributes {
       %ok4 = arith.andi %ok0, %ok1 : i1
       %ok5 = arith.andi %ok2, %ok3 : i1
       %ok = arith.andi %ok4, %ok5 : i1
-      %format = obelisk_sim.bytes.constant "%0d"
+      %format = simulation.bytes.constant "%0d"
       %stdout = arith.constant 1 : i32
-      obelisk_sim.display %ctx to %stdout(%format, %ok)
-          newline = true radix = 10 flags = [0, 0] :
-          !obelisk_sim.bytes, i1
-      obelisk_sim.return
+      simulation.display %ctx to %stdout(%format, %ok)
+          newline = true radix = <decimal> flags = [0, 0] :
+          !simulation.bytes, i1
+      simulation.return
     }
   }
 }

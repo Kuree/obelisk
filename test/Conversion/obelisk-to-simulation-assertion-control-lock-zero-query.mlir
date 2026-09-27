@@ -73,6 +73,6 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.assert.control
-// CHECK-NOT: obelisk_sim.assert.enabled
-// CHECK-NOT: obelisk_sim.assert.action_state
+// CHECK: simulation.assert.control
+// CHECK-NOT: simulation.assert.enabled
+// CHECK-NOT: simulation.assert.action_state

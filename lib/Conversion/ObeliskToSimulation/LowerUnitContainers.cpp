@@ -158,7 +158,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+        sim::ContainerKind::DynamicArray, 0);
     std::optional<uint64_t> elementSpan =
         sim::getProvenanceSpan(fixed.getElementType());
     if (!elementSpan || *elementSpan == 0)
@@ -177,7 +177,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         keyDescriptor->alignment, keyDescriptor->bitWidth,
         builder.getDenseI64ArrayAttr(keyDescriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(keyDescriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, UINT64_MAX);
+        sim::ContainerKind::Queue, UINT64_MAX);
     Value zero = arith::ConstantOp::create(
         builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
     Value one = arith::ConstantOp::create(
@@ -867,7 +867,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, bound);
+        sim::ContainerKind::Queue, bound);
     SavedIterator saved = saveIterator(*path);
     Value size = inputSize();
     Block *header = addBlock();
@@ -1015,7 +1015,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         keyDescriptor->alignment, keyDescriptor->bitWidth,
         builder.getDenseI64ArrayAttr(keyDescriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(keyDescriptor->traceKinds),
-        OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+        sim::ContainerKind::DynamicArray, 0);
     Block *keyHeader = addBlock();
     keyHeader->addArgument(builder.getI64Type(), location);
     Block *keyBody = addBlock();
@@ -1136,15 +1136,15 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return emitError(location) << "map requires a with clause", failure();
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     Type resultElement;
-    uint32_t resultKind = 0;
+    sim::ContainerKind resultKind = sim::ContainerKind::DynamicArray;
     uint64_t bound = 0;
     if (succeeded(resultType)) {
       if (auto array = dyn_cast<sim::DynamicArrayType>(*resultType)) {
         resultElement = array.getElementType();
-        resultKind = OBELISK_RT_CONTAINER_DYNAMIC_ARRAY;
+        resultKind = sim::ContainerKind::DynamicArray;
       } else if (auto queue = dyn_cast<sim::QueueType>(*resultType)) {
         resultElement = queue.getElementType();
-        resultKind = OBELISK_RT_CONTAINER_QUEUE;
+        resultKind = sim::ContainerKind::Queue;
         bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
       }
     }
@@ -1156,7 +1156,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (failed(descriptor))
       return failure();
     Value size = inputSize();
-    Value allocationSize = resultKind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
+    Value allocationSize = resultKind == sim::ContainerKind::DynamicArray
                                ? size
                                : indexConstant(0);
     Value result = sim::SimContainerCreateOp::create(
@@ -1218,7 +1218,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, bound);
+        sim::ContainerKind::Queue, bound);
     SavedIterator saved = saveIterator(*path);
 
     // Keep fixed-array selection in SSA form.  Static aggregate extracts are
@@ -1354,7 +1354,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         resultDescriptor->alignment, resultDescriptor->bitWidth,
         builder.getDenseI64ArrayAttr(resultDescriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(resultDescriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, resultBound);
+        sim::ContainerKind::Queue, resultBound);
     Type keyQueueType = sim::QueueType::get(function.getContext(), *keyType, 0);
     Value keys = sim::SimContainerCreateOp::create(
         builder, location, keyQueueType, indexConstant(0),
@@ -1363,7 +1363,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         keyDescriptor->bitWidth,
         builder.getDenseI64ArrayAttr(keyDescriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(keyDescriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, UINT64_MAX);
+        sim::ContainerKind::Queue, UINT64_MAX);
     SavedIterator saved = saveIterator(*path);
     Value size = inputSize();
     Block *outerHeader = addBlock();
@@ -1670,12 +1670,13 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
     auto createQueue = [&](Type type,
                            const ContainerElementDescriptor &descriptor) {
       return sim::SimContainerCreateOp::create(
-          builder, location, type, zero, descriptor.typeID, descriptor.kind,
-          descriptor.flags, descriptor.valueSize, descriptor.alignment,
-          descriptor.bitWidth,
+          builder, location, type, zero, descriptor.typeID,
+          static_cast<sim::ElementKind>(descriptor.kind),
+          static_cast<sim::ElementFlags>(descriptor.flags),
+          descriptor.valueSize, descriptor.alignment, descriptor.bitWidth,
           builder.getDenseI64ArrayAttr(descriptor.traceOffsets),
           builder.getDenseI32ArrayAttr(descriptor.traceKinds),
-          OBELISK_RT_CONTAINER_QUEUE, UINT64_MAX);
+          sim::ContainerKind::Queue, UINT64_MAX);
     };
     Value orderedValues = createQueue(valueQueueType, *valueDescriptor);
     Value orderedKeys = createQueue(keyQueueType, *keyDescriptor);

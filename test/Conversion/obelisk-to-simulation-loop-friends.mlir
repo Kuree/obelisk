@@ -100,8 +100,8 @@ module {
 }
 
 // The fixed foreach collection is not a process capture or aggregate read.
-// CHECK-LABEL: obelisk_sim.func{{.*}}@unit_0(
-// CHECK-NOT: !obelisk_sim.ref<!obelisk_sim.packed_array
+// CHECK-LABEL: simulation.func{{.*}}@unit_0(
+// CHECK-NOT: !simulation.ref<!simulation.packed_array
 // CHECK: arith.cmpi ult
 // CHECK: arith.remui
 // CHECK-NOT: obelisk.sv.

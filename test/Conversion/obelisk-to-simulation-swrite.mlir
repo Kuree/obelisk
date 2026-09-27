@@ -121,23 +121,23 @@ module attributes {
 }
 
 // CHECK-DAG: %[[EMPTY_LITERAL:.*]] = arith.constant 0 : i8
-// CHECK: %[[DECIMAL:.*]] = obelisk_sim.string.output_format {{.*}} radix = 10 flags = [0, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
-// CHECK-NEXT: obelisk_sim.ref.store %[[DECIMAL]]
-// CHECK: %[[HEX:.*]] = obelisk_sim.string.output_format {{.*}} radix = 16 flags = [1, 2, 136] {library_cell = "work.swrite_test", scope = "swrite_test"
-// CHECK-NEXT: %[[PACKED:.*]] = obelisk_sim.string.to_packed %[[HEX]] : (!obelisk_sim.string) -> i128
-// CHECK: %[[BYTES:.*]] = obelisk_sim.string.output_format {{.*}} radix = 10 flags = [0, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
-// CHECK: %[[BYTE0:.*]] = obelisk_sim.string.getc %[[BYTES]], {{.*}} : (!obelisk_sim.string, i64) -> i8
-// CHECK: obelisk_sim.aggregate.construct %[[BYTE0]], {{.*}} -> !obelisk_sim.unpacked_array<0 : 15 x i8>
-// CHECK: %[[ARRAY_REF0:.*]] = obelisk_sim.ref.subelement {{.*}}{{\[\[0\]\]}}
-// CHECK-NEXT: %[[ARRAY_BYTE0:.*]] = obelisk_sim.ref.load %[[ARRAY_REF0]] : !obelisk_sim.ref<i8> -> i8
-// CHECK: %[[ARRAY_LOGIC0:.*]] = obelisk_sim.logic.from_bits %[[ARRAY_BYTE0]] : i8 -> !obelisk_sim.logic<8>
-// CHECK: %[[ARRAY_PACKED:.*]] = obelisk_sim.logic.concat %[[ARRAY_LOGIC0]], {{.*}} -> !obelisk_sim.logic<128>
-// CHECK: %[[ARRAY_STRING:.*]] = obelisk_sim.string.from_packed %[[ARRAY_PACKED]] : (!obelisk_sim.logic<128>) -> !obelisk_sim.string
-// CHECK: obelisk_sim.string.output_format {{.*}}(%{{.*}}, %[[ARRAY_STRING]]) radix = 10 flags = [0, 8]
-// CHECK: %[[DYNAMIC_FORMAT:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.string> -> !obelisk_sim.string
+// CHECK: %[[DECIMAL:.*]] = simulation.string.output_format {{.*}} radix = <decimal> flags = [0, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK-NEXT: simulation.ref.store %[[DECIMAL]]
+// CHECK: %[[HEX:.*]] = simulation.string.output_format {{.*}} radix = <hex> flags = [1, 2, 136] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK-NEXT: %[[PACKED:.*]] = simulation.string.to_packed %[[HEX]] : (!simulation.string) -> i128
+// CHECK: %[[BYTES:.*]] = simulation.string.output_format {{.*}} radix = <decimal> flags = [0, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK: %[[BYTE0:.*]] = simulation.string.getc %[[BYTES]], {{.*}} : (!simulation.string, i64) -> i8
+// CHECK: simulation.aggregate.construct %[[BYTE0]], {{.*}} -> !simulation.unpacked_array<0 : 15 x i8>
+// CHECK: %[[ARRAY_REF0:.*]] = simulation.ref.subelement {{.*}}{{\[\[0\]\]}}
+// CHECK-NEXT: %[[ARRAY_BYTE0:.*]] = simulation.ref.load %[[ARRAY_REF0]] : !simulation.ref<i8> -> i8
+// CHECK: %[[ARRAY_LOGIC0:.*]] = simulation.logic.from_bits %[[ARRAY_BYTE0]] : i8 -> !simulation.logic<8>
+// CHECK: %[[ARRAY_PACKED:.*]] = simulation.logic.concat %[[ARRAY_LOGIC0]], {{.*}} -> !simulation.logic<128>
+// CHECK: %[[ARRAY_STRING:.*]] = simulation.string.from_packed %[[ARRAY_PACKED]] : (!simulation.logic<128>) -> !simulation.string
+// CHECK: simulation.string.output_format {{.*}}(%{{.*}}, %[[ARRAY_STRING]]) radix = <decimal> flags = [0, 8]
+// CHECK: %[[DYNAMIC_FORMAT:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.string> -> !simulation.string
 // A non-format string literal remains its packed value. In particular, the
 // empty literal is one null byte, so %s renders one space while %0s trims it.
-// CHECK: %[[SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%[[DYNAMIC_FORMAT]], %{{.*}}, %[[EMPTY_LITERAL]]) radix = 10 flags = [40, 1, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
-// CHECK-NEXT: obelisk_sim.ref.store %[[SFORMAT]]
-// CHECK: %[[LITERAL_SFORMAT:.*]] = obelisk_sim.string.output_format {{.*}}(%{{.*}}, %{{.*}}) radix = 10 flags = [32, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
-// CHECK-NEXT: obelisk_sim.ref.store %[[LITERAL_SFORMAT]]
+// CHECK: %[[SFORMAT:.*]] = simulation.string.output_format {{.*}}(%[[DYNAMIC_FORMAT]], %{{.*}}, %[[EMPTY_LITERAL]]) radix = <decimal> flags = [40, 1, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK-NEXT: simulation.ref.store %[[SFORMAT]]
+// CHECK: %[[LITERAL_SFORMAT:.*]] = simulation.string.output_format {{.*}}(%{{.*}}, %{{.*}}) radix = <decimal> flags = [32, 1] {library_cell = "work.swrite_test", scope = "swrite_test"
+// CHECK-NEXT: simulation.ref.store %[[LITERAL_SFORMAT]]

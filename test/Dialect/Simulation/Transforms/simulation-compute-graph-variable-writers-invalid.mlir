@@ -1,41 +1,41 @@
 // RUN: obelisk-opt %s --split-input-file --verify-diagnostics \
-// RUN:   --pass-pipeline='builtin.module(obelisk_sim.design(obelisk-sim-build-compute-graph))'
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph))'
 
 // The compute-effect analysis distinguishes mutable variable storage from
 // resolved nets and rejects multiple continuous writers to one variable.
 module {
-  obelisk_sim.design @multiple_continuous {
-    obelisk_sim.code_unit.decl 9300001 in 0 continuous
+  simulation.design @multiple_continuous {
+    simulation.code_unit.decl 9300001 in 0 continuous
         hierarchy "top.first"
-    obelisk_sim.code_unit.decl 9300002 in 0 continuous
+    simulation.code_unit.decl 9300002 in 0 continuous
         hierarchy "top.second"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i32 design hierarchy "top.v"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i32 design hierarchy "top.v"
 
     // expected-remark @below {{first continuous assignment is here}}
-    obelisk_sim.func @first(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @first(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300001 : i64} {
       %constant = arith.constant 12 : i32
-      obelisk_sim.ref.store %constant to %value : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.return
+      simulation.ref.store %constant to %value : i32, !simulation.ref<i32>
+      simulation.return
     }
 
     // expected-error @below {{variable 'top.v' is driven by multiple continuous assignments}}
-    obelisk_sim.func @second(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @second(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300002 : i64} {
       %constant = arith.constant 13 : i32
-      obelisk_sim.ref.store %constant to %value : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.return
+      simulation.ref.store %constant to %value : i32, !simulation.ref<i32>
+      simulation.return
     }
   }
 }
@@ -44,39 +44,39 @@ module {
 
 // A procedural NBA is also a writer for the variable-driver legality rule.
 module {
-  obelisk_sim.design @mixed_writers {
-    obelisk_sim.code_unit.decl 9300011 in 0 continuous
+  simulation.design @mixed_writers {
+    simulation.code_unit.decl 9300011 in 0 continuous
         hierarchy "top.continuous"
-    obelisk_sim.code_unit.decl 9300012 in 0 always
+    simulation.code_unit.decl 9300012 in 0 always
         hierarchy "top.procedural"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i32 design hierarchy "top.v"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i32 design hierarchy "top.v"
 
     // expected-remark @below {{continuous assignment is here}}
-    obelisk_sim.func @continuous(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @continuous(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300011 : i64} {
       %constant = arith.constant 12 : i32
-      obelisk_sim.ref.store %constant to %value : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.return
+      simulation.ref.store %constant to %value : i32, !simulation.ref<i32>
+      simulation.return
     }
 
     // expected-error @below {{variable 'top.v' is written by both continuous and procedural assignments}}
-    obelisk_sim.func @procedural(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @procedural(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 9300012 : i64} {
       %constant = arith.constant 13 : i32
-      obelisk_sim.nba.enqueue %constant to %value :
-          (i32, !obelisk_sim.ref<i32>) -> ()
-      obelisk_sim.return
+      simulation.nba.enqueue %constant to %value :
+          (i32, !simulation.ref<i32>) -> ()
+      simulation.return
     }
   }
 }
@@ -88,52 +88,52 @@ module {
 // legality rule, so two continuous RHS evaluations may legally race on shared
 // procedural state while driving distinct targets.
 module {
-  obelisk_sim.design @continuous_rhs_side_effects {
-    obelisk_sim.code_unit.decl 9300021 in 0 continuous
+  simulation.design @continuous_rhs_side_effects {
+    simulation.code_unit.decl 9300021 in 0 continuous
         hierarchy "top.first"
-    obelisk_sim.code_unit.decl 9300022 in 0 continuous
+    simulation.code_unit.decl 9300022 in 0 continuous
         hierarchy "top.second"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i32 design hierarchy "top.side"
-    obelisk_sim.storage.decl 1 in 0 : i32 design hierarchy "top.first_target"
-    obelisk_sim.storage.decl 2 in 0 : i32 design hierarchy "top.second_target"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i32 design hierarchy "top.side"
+    simulation.storage.decl 1 in 0 : i32 design hierarchy "top.first_target"
+    simulation.storage.decl 2 in 0 : i32 design hierarchy "top.second_target"
 
-    obelisk_sim.func @first_side_effect(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %side: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %target: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 1 : i64})
+    simulation.func @first_side_effect(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %side: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %target: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300021 : i64,
-                    obelisk_sim.bindings = [
-                      #obelisk_sim.argument_binding<path = "top.side", argument = 1, kind = direct, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.first_target", argument = 2, kind = lvalue_only, copyOut = false>]} {
+                    simulation.bindings = [
+                      #simulation.argument_binding<path = "top.side", argument = 1, kind = direct, copyOut = false>,
+                      #simulation.argument_binding<path = "top.first_target", argument = 2, kind = lvalue_only, copyOut = false>]} {
       %constant = arith.constant 12 : i32
-      obelisk_sim.ref.store %constant to %side : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.ref.store %constant to %target : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.return
+      simulation.ref.store %constant to %side : i32, !simulation.ref<i32>
+      simulation.ref.store %constant to %target : i32, !simulation.ref<i32>
+      simulation.return
     }
 
-    obelisk_sim.func @second_side_effect(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %side: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64},
-        %target: !obelisk_sim.ref<i32>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 2 : i64})
+    simulation.func @second_side_effect(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %side: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64},
+        %target: !simulation.ref<i32>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 2 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300022 : i64,
-                    obelisk_sim.bindings = [
-                      #obelisk_sim.argument_binding<path = "top.side", argument = 1, kind = direct, copyOut = false>,
-                      #obelisk_sim.argument_binding<path = "top.second_target", argument = 2, kind = lvalue_only, copyOut = false>]} {
+                    simulation.bindings = [
+                      #simulation.argument_binding<path = "top.side", argument = 1, kind = direct, copyOut = false>,
+                      #simulation.argument_binding<path = "top.second_target", argument = 2, kind = lvalue_only, copyOut = false>]} {
       %constant = arith.constant 13 : i32
-      obelisk_sim.ref.store %constant to %side : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.ref.store %constant to %target : i32, !obelisk_sim.ref<i32>
-      obelisk_sim.return
+      simulation.ref.store %constant to %side : i32, !simulation.ref<i32>
+      simulation.ref.store %constant to %target : i32, !simulation.ref<i32>
+      simulation.return
     }
   }
 }
@@ -147,66 +147,66 @@ module {
 // rule compares the bits each writer reaches, not just the descriptor they
 // share. No diagnostic is expected here.
 module {
-  obelisk_sim.design @disjoint_continuous {
-    obelisk_sim.code_unit.decl 9300021 in 0 continuous
+  simulation.design @disjoint_continuous {
+    simulation.code_unit.decl 9300021 in 0 continuous
         hierarchy "top.low"
-    obelisk_sim.code_unit.decl 9300022 in 0 continuous
+    simulation.code_unit.decl 9300022 in 0 continuous
         hierarchy "top.high"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 :
-        !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 :
+        !simulation.packed_array<7 : 0 x !simulation.logic<1>>
         design hierarchy "top.v"
 
-    obelisk_sim.func @low(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<
-            !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @low(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<
+            !simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300021 : i64} {
-      %constant = obelisk_sim.logic.constant 0 : i4, 0 : i4 :
-          !obelisk_sim.logic<4>
-      %packed = obelisk_sim.packed.unflatten %constant :
-          (!obelisk_sim.logic<4>) ->
-          !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
-      %part = obelisk_sim.ref.extract %value from 0 :
-          !obelisk_sim.ref<
-              !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>> ->
-          !obelisk_sim.ref<
-              !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-      obelisk_sim.ref.store %packed to %part
-          {obelisk_sim.continuous_store} :
-          !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>,
-          !obelisk_sim.ref<
-              !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>>
-      obelisk_sim.return
+      %constant = simulation.logic.constant 0 : i4, 0 : i4 :
+          !simulation.logic<4>
+      %packed = simulation.packed.unflatten %constant :
+          (!simulation.logic<4>) ->
+          !simulation.packed_array<3 : 0 x !simulation.logic<1>>
+      %part = simulation.ref.extract %value from 0 :
+          !simulation.ref<
+              !simulation.packed_array<7 : 0 x !simulation.logic<1>>> ->
+          !simulation.ref<
+              !simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+      simulation.ref.store %packed to %part
+          {simulation.continuous_store} :
+          !simulation.packed_array<3 : 0 x !simulation.logic<1>>,
+          !simulation.ref<
+              !simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+      simulation.return
     }
 
-    obelisk_sim.func @high(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32},
-        %value: !obelisk_sim.ref<
-            !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>>
-            {obelisk_sim.capture_kind = 3 : i32,
-             obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @high(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32},
+        %value: !simulation.ref<
+            !simulation.packed_array<7 : 0 x !simulation.logic<1>>>
+            {simulation.capture_kind = 3 : i32,
+             simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9300022 : i64} {
-      %constant = obelisk_sim.logic.constant 0 : i4, 0 : i4 :
-          !obelisk_sim.logic<4>
-      %packed = obelisk_sim.packed.unflatten %constant :
-          (!obelisk_sim.logic<4>) ->
-          !obelisk_sim.packed_array<7 : 4 x !obelisk_sim.logic<1>>
-      %part = obelisk_sim.ref.extract %value from 4 :
-          !obelisk_sim.ref<
-              !obelisk_sim.packed_array<7 : 0 x !obelisk_sim.logic<1>>> ->
-          !obelisk_sim.ref<
-              !obelisk_sim.packed_array<7 : 4 x !obelisk_sim.logic<1>>>
-      obelisk_sim.ref.store %packed to %part
-          {obelisk_sim.continuous_store} :
-          !obelisk_sim.packed_array<7 : 4 x !obelisk_sim.logic<1>>,
-          !obelisk_sim.ref<
-              !obelisk_sim.packed_array<7 : 4 x !obelisk_sim.logic<1>>>
-      obelisk_sim.return
+      %constant = simulation.logic.constant 0 : i4, 0 : i4 :
+          !simulation.logic<4>
+      %packed = simulation.packed.unflatten %constant :
+          (!simulation.logic<4>) ->
+          !simulation.packed_array<7 : 4 x !simulation.logic<1>>
+      %part = simulation.ref.extract %value from 4 :
+          !simulation.ref<
+              !simulation.packed_array<7 : 0 x !simulation.logic<1>>> ->
+          !simulation.ref<
+              !simulation.packed_array<7 : 4 x !simulation.logic<1>>>
+      simulation.ref.store %packed to %part
+          {simulation.continuous_store} :
+          !simulation.packed_array<7 : 4 x !simulation.logic<1>>,
+          !simulation.ref<
+              !simulation.packed_array<7 : 4 x !simulation.logic<1>>>
+      simulation.return
     }
   }
 }

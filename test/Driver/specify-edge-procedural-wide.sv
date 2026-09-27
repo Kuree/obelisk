@@ -15,4 +15,4 @@ endmodule
 // One packed qualification state and one packed write operation: neither the
 // frontend plan nor runtime actor state grows per destination bit.
 // CHECK-COUNT-1: debug "__obelisk_timing_path_edge_pending"
-// CHECK-COUNT-1: obelisk_sim.ref.store_inertial_path
+// CHECK-COUNT-1: simulation.ref.store_inertial_path

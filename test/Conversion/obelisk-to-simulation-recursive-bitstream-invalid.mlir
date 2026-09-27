@@ -51,4 +51,4 @@ module {
   }
 }
 
-// CHECK: unsupported bit-stream cast from '!obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<i8>>' to 'i32'
+// CHECK: unsupported bit-stream cast from '!simulation.dynamic_array<!simulation.dynamic_array<i8>>' to 'i32'

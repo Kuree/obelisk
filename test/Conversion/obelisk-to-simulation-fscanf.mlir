@@ -4,12 +4,12 @@
 // discarding a complete line. EOF is carried separately so zero assignments
 // can be distinguished from an input failure.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-NOT: obelisk_sim.file.getline_string
-// CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = obelisk_sim.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-NOT: simulation.file.getline_string
+// CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = simulation.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[EOF]]
 // CHECK: %[[MATCHED:.*]] = arith.cmpi ne, %[[OK]]
-// CHECK: obelisk_sim.string.parse_logic %[[FIELD]] radix = 10 : <32>
+// CHECK: simulation.string.parse_logic %[[FIELD]] radix = <decimal> : <32>
 // CHECK: %[[ASSIGNED:.*]] = arith.extui %[[MATCHED]] : i1 to i32
 // CHECK: %[[NONE:.*]] = arith.cmpi eq, %[[ASSIGNED]]
 // CHECK: %[[INPUT_FAILURE:.*]] = arith.andi %[[NONE]], {{.*}} : i1

@@ -90,13 +90,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 8 : i32
-// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
-// CHECK: obelisk_sim.suspend.clock_set %arg1, %arg2{{.*}}conditions 0 edges [1, 1] indices [-1, -1] site
-// CHECK: obelisk_sim.assert.clock_occurrence.consume
+// CHECK-SAME: simulation.multiclock_sequence_coordinator
+// CHECK: simulation.suspend.clock_set %arg1, %arg2{{.*}}conditions 0 edges [1, 1] indices [-1, -1] site
+// CHECK: simulation.assert.clock_occurrence.consume
 // CHECK: arith.select
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg3
-// CHECK: obelisk_sim.assert.sampled_read %arg0 from %arg4
-// CHECK-NOT: obelisk_sim.multiclock_sequence_attempt_actor
+// CHECK: simulation.assert.sampled_read %arg0 from %arg3
+// CHECK: simulation.assert.sampled_read %arg0 from %arg4
+// CHECK-NOT: simulation.multiclock_sequence_attempt_actor

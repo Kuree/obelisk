@@ -2,7 +2,7 @@
 // RUN: obelisk -O3 -emit-sim %t/multiple-producers.sv -o %t/multiple-producers.mlir
 // RUN: FileCheck %s --check-prefix=MULTIPLE-PRODUCERS < %t/multiple-producers.mlir
 
-// MULTIPLE-PRODUCERS: obelisk_sim.design
+// MULTIPLE-PRODUCERS: simulation.design
 // MULTIPLE-PRODUCERS-NOT: schedule.static_fusion
 // MULTIPLE-PRODUCERS: __obelisk_fused_
 

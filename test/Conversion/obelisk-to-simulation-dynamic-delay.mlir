@@ -39,12 +39,12 @@ module {
 
 // CHECK-DAG: %[[MAX:.*]] = arith.constant 9223372036854775807 : i64
 // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
-// CHECK: %[[AMOUNT:.*]] = obelisk_sim.ref.load {{.*}} -> i32
+// CHECK: %[[AMOUNT:.*]] = simulation.ref.load {{.*}} -> i32
 // CHECK: %[[NONNEGATIVE:.*]] = arith.cmpi sge, %[[AMOUNT]], %[[ZERO]] : i32
 // CHECK: %[[CLAMPED_LOW:.*]] = arith.select %[[NONNEGATIVE]], %[[AMOUNT]], %[[ZERO]] : i32
 // CHECK: %[[WIDENED:.*]] = arith.extui %[[CLAMPED_LOW]] : i32 to i64
 // CHECK: %[[IN_RANGE:.*]] = arith.cmpi ule, %[[WIDENED]], %[[MAX]] : i64
 // CHECK: %[[CLAMPED_HIGH:.*]] = arith.select %[[IN_RANGE]], %[[WIDENED]], %[[MAX]] : i64
-// CHECK: %[[DELAY:.*]] = obelisk_sim.time.scale %[[CLAMPED_HIGH]] by 1 signed = false : i64
-// CHECK: obelisk_sim.suspend.delay %[[DELAY]]
+// CHECK: %[[DELAY:.*]] = simulation.time.scale %[[CLAMPED_HIGH]] by 1 signed = false : i64
+// CHECK: simulation.suspend.delay %[[DELAY]]
 // CHECK-NOT: obelisk.sv.

@@ -37,7 +37,7 @@ def unpack_from(fmt, data, offset):
 text = sys.stdin.read()
 sample_calls = []
 for match in re.finditer(
-    r"obelisk_sim\.covergroup\.sample .*? ids \[([^]]*)\]"
+    r"simulation\.covergroup\.sample .*? ids \[([^]]*)\]"
     r"\s*: \(([^)]*)\) -> \(\)",
     text,
 ):
@@ -329,7 +329,7 @@ for ids, value_types in sample_calls:
                 f"sample FunctionalExpression {expression_id} has wrong phase/ordinal"
             )
         integral = re.fullmatch(r"i([1-9][0-9]*)", value_type)
-        logic = re.fullmatch(r"!obelisk_sim\.logic<([1-9][0-9]*)>", value_type)
+        logic = re.fullmatch(r"!simulation\.logic<([1-9][0-9]*)>", value_type)
         if result_kind == 1 and value_type != "i1":
             raise SystemExit(
                 f"boolean FunctionalExpression {expression_id} is {value_type}"

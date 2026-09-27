@@ -86,20 +86,20 @@ module {
   }
 }
 
-// CHECK: %[[D1:.*]] = obelisk_sim.virtual_interface.bind 3
-// CHECK: %[[D0:.*]] = obelisk_sim.virtual_interface.bind 2
-// CHECK: %[[DESC:.*]] = obelisk_sim.aggregate.construct %[[D1]], %[[D0]]
-// CHECK: %[[A0:.*]] = obelisk_sim.virtual_interface.bind 4
-// CHECK: %[[A1:.*]] = obelisk_sim.virtual_interface.bind 5
-// CHECK: %[[ASC:.*]] = obelisk_sim.aggregate.construct %[[A0]], %[[A1]]
-// CHECK: %[[N10:.*]] = obelisk_sim.virtual_interface.bind 8
-// CHECK: %[[N11:.*]] = obelisk_sim.virtual_interface.bind 9
-// CHECK: %[[N1:.*]] = obelisk_sim.aggregate.construct %[[N10]], %[[N11]]
-// CHECK: %[[N00:.*]] = obelisk_sim.virtual_interface.bind 6
-// CHECK: %[[N01:.*]] = obelisk_sim.virtual_interface.bind 7
-// CHECK: %[[N0:.*]] = obelisk_sim.aggregate.construct %[[N00]], %[[N01]]
-// CHECK: obelisk_sim.aggregate.construct %[[N1]], %[[N0]]
-// CHECK-NOT: obelisk_sim.container
+// CHECK: %[[D1:.*]] = simulation.virtual_interface.bind 3
+// CHECK: %[[D0:.*]] = simulation.virtual_interface.bind 2
+// CHECK: %[[DESC:.*]] = simulation.aggregate.construct %[[D1]], %[[D0]]
+// CHECK: %[[A0:.*]] = simulation.virtual_interface.bind 4
+// CHECK: %[[A1:.*]] = simulation.virtual_interface.bind 5
+// CHECK: %[[ASC:.*]] = simulation.aggregate.construct %[[A0]], %[[A1]]
+// CHECK: %[[N10:.*]] = simulation.virtual_interface.bind 8
+// CHECK: %[[N11:.*]] = simulation.virtual_interface.bind 9
+// CHECK: %[[N1:.*]] = simulation.aggregate.construct %[[N10]], %[[N11]]
+// CHECK: %[[N00:.*]] = simulation.virtual_interface.bind 6
+// CHECK: %[[N01:.*]] = simulation.virtual_interface.bind 7
+// CHECK: %[[N0:.*]] = simulation.aggregate.construct %[[N00]], %[[N01]]
+// CHECK: simulation.aggregate.construct %[[N1]], %[[N0]]
+// CHECK-NOT: simulation.container
 // CHECK-NOT: obelisk.sv.
 // SHAPE: interface reference has no executable elaborated scope: top.descending[2]
 // ELEMENT: interface reference has no executable value type: 'i32'

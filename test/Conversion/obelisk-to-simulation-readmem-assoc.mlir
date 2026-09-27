@@ -54,14 +54,14 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.container.clone
-// CHECK: obelisk_sim.assoc.create {{.*}}key_kind = 2 : i32, key_width = 32
-// CHECK: obelisk_sim.file.readmem_token {{.*}} {radix = 16 : i32}
+// CHECK: simulation.container.clone
+// CHECK: simulation.assoc.create {{.*}}key_kind = #simulation.assoc_key_kind<signed>, key_width = 32
+// CHECK: simulation.file.readmem_token {{.*}} {radix = #simulation.radix<hex>}
 // CHECK: arith.cmpi sge, {{.*}}, %{{.*-2147483648.*}} : i64
 // CHECK: arith.cmpi sle, {{.*}}, %{{.*2147483647.*}} : i64
-// CHECK: obelisk_sim.assoc.write {{.*}} : (!obelisk_sim.assoc_array<i32,
-// CHECK: obelisk_sim.assoc.create {{.*}}key_kind = 1 : i32, key_width = 8
-// CHECK: obelisk_sim.file.readmem_token {{.*}} {radix = 2 : i32}
+// CHECK: simulation.assoc.write {{.*}} : (!simulation.assoc_array<i32,
+// CHECK: simulation.assoc.create {{.*}}key_kind = #simulation.assoc_key_kind<unsigned>, key_width = 8
+// CHECK: simulation.file.readmem_token {{.*}} {radix = #simulation.radix<binary>}
 // CHECK: arith.cmpi uge
 // CHECK: arith.cmpi ule
-// CHECK: obelisk_sim.assoc.write {{.*}} : (!obelisk_sim.assoc_array<i8,
+// CHECK: simulation.assoc.write {{.*}} : (!simulation.assoc_array<i8,

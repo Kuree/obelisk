@@ -57,6 +57,6 @@ module attributes {
   }
 }
 
-// TOPOLOGY: obelisk_sim.net.decl [[NET:[0-9]+]] {{.*}} hierarchy "t.source"
-// TOPOLOGY: obelisk_sim.vpi_net_identity.decl {{[0-9]+}} backed_by [[NET]] {{.*}} hierarchy "t.alias_name"
-// TOPOLOGY-NOT: obelisk_sim.net.decl {{[0-9]+}} {{.*}} hierarchy "t.alias_name"
+// TOPOLOGY: simulation.net.decl [[NET:[0-9]+]] {{.*}} hierarchy "t.source"
+// TOPOLOGY: simulation.vpi_net_identity.decl {{[0-9]+}} backed_by [[NET]] {{.*}} hierarchy "t.alias_name"
+// TOPOLOGY-NOT: simulation.net.decl {{[0-9]+}} {{.*}} hierarchy "t.alias_name"

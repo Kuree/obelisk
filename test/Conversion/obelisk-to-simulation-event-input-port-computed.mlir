@@ -32,20 +32,20 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.design @design attributes {{.*}}schedule.computed_event_startup
-// CHECK: obelisk_sim.storage.decl {{.*}} : !obelisk_sim.event {{.*}} hierarchy "top.dut.wake"
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[TRUE_ARG:[^:]+]]: !obelisk_sim.event
-// CHECK-SAME: %[[FALSE_ARG:[^:]+]]: !obelisk_sim.event
+// CHECK: simulation.design @design attributes {{.*}}schedule.computed_event_startup
+// CHECK: simulation.storage.decl {{.*}} : !simulation.event {{.*}} hierarchy "top.dut.wake"
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[TRUE_ARG:[^:]+]]: !simulation.event
+// CHECK-SAME: %[[FALSE_ARG:[^:]+]]: !simulation.event
 // CHECK-SAME: entry_kind = 9 : i32
 // CHECK-SAME: schedule.computed_event_startup
 // The ABI evaluates and captures each arm once. IEEE 1800-2017 11.4.11 then
 // requires an unknown selector to publish the default null event even when
 // both captured values happen to name the same event object.
-// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[TRUE_ARG]] : !obelisk_sim.event)
-// CHECK: %[[NULL:.*]] = obelisk_sim.event.null
-// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[NULL]] : !obelisk_sim.event), ^{{bb[0-9]+}}(%[[FALSE_ARG]] : !obelisk_sim.event)
-// CHECK-NOT: obelisk_sim.event.equal
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.suspend.change
+// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[TRUE_ARG]] : !simulation.event)
+// CHECK: %[[NULL:.*]] = simulation.event.null
+// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[NULL]] : !simulation.event), ^{{bb[0-9]+}}(%[[FALSE_ARG]] : !simulation.event)
+// CHECK-NOT: simulation.event.equal
+// CHECK: simulation.ref.store
+// CHECK: simulation.suspend.change
 // CHECK-NOT: obelisk.sv.

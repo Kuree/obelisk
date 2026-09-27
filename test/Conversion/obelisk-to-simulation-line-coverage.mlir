@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare-coverage | FileCheck %s --check-prefix=INVENTORY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
 // RUN: obelisk-opt %s --obelisk-sim-prepare-coverage \
 // RUN:   | %python %S/Inputs/dump-coverage-schema.py \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
@@ -9,14 +9,14 @@
 module attributes {
   obelisk.coverage.metrics = ["line"]
 } {
-  obelisk_sim.design @coverage {
-    obelisk_sim.scope.decl 0 hierarchy "$root"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT"
-    obelisk_sim.code_unit.decl 7 in 1 initial hierarchy "top.initial"
+  simulation.design @coverage {
+    simulation.scope.decl 0 hierarchy "$root"
+    simulation.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT"
+    simulation.code_unit.decl 7 in 1 initial hierarchy "top.initial"
 
-    obelisk_sim.func @unit(
-        %ctx: !obelisk_sim.context
-            {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @unit(
+        %ctx: !simulation.context
+            {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 7 : i64, entry_kind = 1 : i32} {
       obelisk.sv.statement.expression_statement attributes {
           node_id = 10 : i64,
@@ -88,7 +88,7 @@ module attributes {
             semantic_type = !int} {
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }
@@ -96,11 +96,11 @@ module attributes {
 // INVENTORY: module attributes {
 // INVENTORY-SAME: obelisk.coverage.line_point_count = 4 : i64
 // INVENTORY-SAME: obelisk.execution.coverage_schema_blob = array<i8:
-// INVENTORY: obelisk_sim.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT" coverage_id {{-?[1-9][0-9]*}}
+// INVENTORY: simulation.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT" coverage_id {{-?[1-9][0-9]*}}
 // INVENTORY-COUNT-4: obelisk.coverage.line_point_index = {{[0-3]}} : i64
 
 // SCHEMA: scope id={{[1-9][0-9]*}} parent={{[1-9][0-9]*}} name=top kind=0 definition=DUT
 
-// LOWER-LABEL: obelisk_sim.func @unit
-// LOWER-COUNT-4: obelisk_sim.coverage.point_hit %arg0 if {{.*}}[{{[0-3]}}]
+// LOWER-LABEL: simulation.func @unit
+// LOWER-COUNT-4: simulation.coverage.point_hit %arg0 if {{.*}}[{{[0-3]}}]
 // LOWER-NOT: obelisk.sv.statement

@@ -82,8 +82,8 @@ module specify_edge_procedural_output;
   end
 endmodule
 
-// SIM-DAG: obelisk_sim.ref.store_inertial_path{{.*}}nonblocking = true
-// SIM-DAG: obelisk_sim.ref.store_inertial_path{{.*}}nonblocking = false
+// SIM-DAG: simulation.ref.store_inertial_path{{.*}}nonblocking = true
+// SIM-DAG: simulation.ref.store_inertial_path{{.*}}nonblocking = false
 // SIM-DAG: procedural_wake_kind = 1 : i32
 // SIM-DAG: procedural_wake_kind = 3 : i32
 // CHECK: pending 5 0 0000

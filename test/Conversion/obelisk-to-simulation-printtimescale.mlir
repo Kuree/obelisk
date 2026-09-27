@@ -92,17 +92,17 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.scope.decl 0
+// CHECK: simulation.scope.decl 0
 // CHECK-SAME: dpi_precision_femtoseconds = 1000
 // CHECK-SAME: dpi_unit_femtoseconds = 1000
-// CHECK: obelisk_sim.scope.decl 1
+// CHECK: simulation.scope.decl 1
 // CHECK-SAME: hierarchy "top"
 // CHECK-SAME: dpi_precision_femtoseconds = 1000000000
 // CHECK-SAME: dpi_unit_femtoseconds = 1000000000000
-// CHECK: obelisk_sim.scope.decl 2 parent 1
+// CHECK: simulation.scope.decl 2 parent 1
 // CHECK-SAME: hierarchy "top.empty"
 // CHECK-SAME: dpi_precision_femtoseconds = 1000
 // CHECK-SAME: dpi_unit_femtoseconds = 1000000
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[TEXT:.*]] = obelisk_sim.bytes.constant "Time scale of (top) is 1ms / 1us"
-// CHECK: obelisk_sim.display {{.*}}(%[[TEXT]])
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[TEXT:.*]] = simulation.bytes.constant "Time scale of (top) is 1ms / 1us"
+// CHECK: simulation.display {{.*}}(%[[TEXT]])

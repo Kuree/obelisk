@@ -32,20 +32,20 @@ module {
 
 // A declaration with an initializer is a continuous assignment, so its delay
 // belongs to that assignment rather than to the net (IEEE 1800-2017 10.3.3).
-// CHECK: obelisk_sim.net.decl
+// CHECK: simulation.net.decl
 // CHECK-NOT: propagation_delays
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in 1 continuous hierarchy "initializer_delay.value.$net_initializer"
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-SAME: obelisk_sim.propagation_delays = array<i64: 2, 5>
-// CHECK-DAG: %[[RISE:.*]] = obelisk_sim.time.constant 2
-// CHECK-DAG: %[[FALL:.*]] = obelisk_sim.time.constant 5
-// CHECK: obelisk_sim.driver.drive_inertial {{.*}} after[%[[RISE]], %[[FALL]], %[[RISE]]] site {{[0-9]+}} : 0 vector = false
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in 1 continuous hierarchy "initializer_delay.value.$net_initializer"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-SAME: simulation.propagation_delays = array<i64: 2, 5>
+// CHECK-DAG: %[[RISE:.*]] = simulation.time.constant 2
+// CHECK-DAG: %[[FALL:.*]] = simulation.time.constant 5
+// CHECK: simulation.driver.drive_inertial {{.*}} after[%[[RISE]], %[[FALL]], %[[RISE]]] site {{[0-9]+}} : 0 vector = false
 // CHECK-NOT: obelisk.sv.timing
 // The net is still Z while static initialization runs; the delayed literal
 // driver must not participate in the time-zero constant-net fold.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: obelisk_sim.net.read
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.net.read
 
-// O3-LABEL: obelisk_sim.func private @unit_0
-// O3-COUNT-1: obelisk_sim.driver.drive_inertial
-// O3-NOT: obelisk_sim.driver.drive %
+// O3-LABEL: simulation.func private @unit_0
+// O3-COUNT-1: simulation.driver.drive_inertial
+// O3-NOT: simulation.driver.drive %

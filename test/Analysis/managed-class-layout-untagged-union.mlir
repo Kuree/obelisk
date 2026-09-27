@@ -1,22 +1,22 @@
 // RUN: obelisk-opt %s --test-obelisk-managed-class-layout-analysis 2>&1 | FileCheck %s
 
-!untagged = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = !obelisk_sim.logic<64>, ordinal = 1, packedOffset = 0>
+!untagged = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "bits", type = !simulation.logic<64>, ordinal = 1, packedOffset = 0>
 ], isTagged = false>
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
-  obelisk_sim.design @classes {
-    obelisk_sim.scope.decl 0
-    obelisk_sim.class.decl @Node id 1 {
+  simulation.design @classes {
+    simulation.scope.decl 0
+    simulation.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.decl @Holder id 2 {
+    simulation.class.decl @Holder id 2 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.field @Holder_value of @Holder at 0 : !untagged {
+    simulation.class.field @Holder_value of @Holder at 0 : !untagged {
       is_static = false, is_weak = false
     }
   }

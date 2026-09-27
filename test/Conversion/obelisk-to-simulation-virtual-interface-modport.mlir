@@ -86,13 +86,13 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.scope.decl [[OTHER:[0-9]+]] {{.*}} hierarchy "top.other" {{.*}} interface "@s2.$root::@s5.top::@s200.other::@s201.bus_if"
-// CHECK: !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s12.bus_if", "master">
-// CHECK: obelisk_sim.virtual_interface.bind [[OTHER]] : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s200.other::@s201.bus_if", "">
-// CHECK: obelisk_sim.virtual_interface.cast {{.*}} : !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s12.bus_if", ""> to !obelisk_sim.virtual_interface<"@s2.$root::@s5.top::@s12.bus_if", "master">
-// CHECK: obelisk_sim.virtual_interface.equal
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
+// CHECK-DAG: simulation.scope.decl [[OTHER:[0-9]+]] {{.*}} hierarchy "top.other" {{.*}} interface "@s2.$root::@s5.top::@s200.other::@s201.bus_if"
+// CHECK: !simulation.virtual_interface<"@s2.$root::@s5.top::@s12.bus_if", "master">
+// CHECK: simulation.virtual_interface.bind [[OTHER]] : !simulation.virtual_interface<"@s2.$root::@s5.top::@s200.other::@s201.bus_if", "">
+// CHECK: simulation.virtual_interface.cast {{.*}} : !simulation.virtual_interface<"@s2.$root::@s5.top::@s12.bus_if", ""> to !simulation.virtual_interface<"@s2.$root::@s5.top::@s12.bus_if", "master">
+// CHECK: simulation.virtual_interface.equal
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
 // CHECK-NOT: obelisk.sv.
 // INPUT-WRITE: cannot write an input virtual-interface member
 // SPECIALIZATION: cannot convert between different virtual-interface specializations

@@ -90,7 +90,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 39 : i64, procedure_kind = 2 : i32, sym_name = "s19", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.det", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s18.det, node_id = 40 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 41 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 41 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 42 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 43 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 44 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -116,7 +116,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 52 : i64, procedure_kind = 2 : i32, sym_name = "s21", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.delay", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s20.delay, node_id = 53 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 54 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 54 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 55 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 56 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 57 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -142,7 +142,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 65 : i64, procedure_kind = 2 : i32, sym_name = "s23", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.unary", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s22.unary, node_id = 66 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 67 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 67 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 68 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 69 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 70 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -164,7 +164,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 76 : i64, procedure_kind = 2 : i32, sym_name = "s25", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.until_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s24.until_p, node_id = 77 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 78 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 78 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 79 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 80 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 81 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -190,7 +190,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 89 : i64, procedure_kind = 2 : i32, sym_name = "s27", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.repeat_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s26.repeat_p, node_id = 90 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 91 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 91 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 92 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 93 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 94 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -210,7 +210,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 99 : i64, procedure_kind = 2 : i32, sym_name = "s29", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.branch", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s28.branch, node_id = 100 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 101 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 101 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 102 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 103 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 104 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -248,7 +248,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 118 : i64, procedure_kind = 2 : i32, sym_name = "s31", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.impl", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s30.impl, node_id = 119 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 120 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 120 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 121 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 122 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 123 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -292,7 +292,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 140 : i64, procedure_kind = 2 : i32, sym_name = "s33", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.bante", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s32.bante, node_id = 141 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 142 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 142 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 143 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 144 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 145 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -330,7 +330,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 162 : i64, procedure_kind = 2 : i32, sym_name = "s35", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.abort_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s34.abort_p, node_id = 163 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = true, has_pass_action = true, node_id = 164 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = true, has_pass_action = true, node_id = 164 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 165 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 166 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 167 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -370,7 +370,7 @@ module {
         }
         obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 182 : i64, procedure_kind = 2 : i32, sym_name = "s37", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.disable_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s36.disable_p, node_id = 183 : i64} {
-            obelisk.sv.statement.concurrent_assertion attributes {obelisk_sim.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 184 : i64} {
+            obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 184 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 185 : i64} {
                 obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 186 : i64} {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 187 : i64, referenced_path = "assertion_control_concurrent.clk", referenced_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s6.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -436,95 +436,95 @@ module {
 // All eleven concurrent directives receive stable IDs. Lock/Unlock mutate
 // only runtime control state; Off/On additionally cause exactly one enabled
 // query in each monitor and no action-state query.
-// COUNT-LABEL: obelisk_sim.func private @unit_0(
-// COUNT-COUNT-11: obelisk_sim.assert.control {{.*}} action 1 assertion
-// COUNT-COUNT-11: obelisk_sim.assert.control {{.*}} action 2 assertion
-// COUNT-COUNT-11: obelisk_sim.assert.control {{.*}} action 4 assertion
-// COUNT-COUNT-11: obelisk_sim.assert.control {{.*}} action 3 assertion
-// COUNT-NOT: obelisk_sim.assert.control
-// COUNT-COUNT-11: obelisk_sim.assert.enabled
-// COUNT-NOT: obelisk_sim.assert.enabled
-// COUNT-NOT: obelisk_sim.assert.action_state
+// COUNT-LABEL: simulation.func private @unit_0(
+// COUNT-COUNT-11: simulation.assert.control {{.*}} action <lock> assertion
+// COUNT-COUNT-11: simulation.assert.control {{.*}} action <unlock> assertion
+// COUNT-COUNT-11: simulation.assert.control {{.*}} action <off> assertion
+// COUNT-COUNT-11: simulation.assert.control {{.*}} action <on> assertion
+// COUNT-NOT: simulation.assert.control
+// COUNT-COUNT-11: simulation.assert.enabled
+// COUNT-NOT: simulation.assert.enabled
+// COUNT-NOT: simulation.assert.action_state
 
 // A deterministic monitor advances and reports older age bits independently
 // of the enable value. Only the current age-zero truth and failure are gated.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.assertion_path = "assertion_control_concurrent.det"
-// CHECK-SAME: obelisk_sim.assertion_target_id = [[DET_ID:[0-9]+]] : i64
-// CHECK: obelisk_sim.assert.kill_epoch %arg0 assertion [[DET_ID]] {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: obelisk_sim.ref.store
-// CHECK: [[DET_ENABLE:%.*]] = obelisk_sim.assert.enabled %arg0 assertion [[DET_ID]] {obelisk_sim.concurrent_attempt_enable}
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.assertion_path = "assertion_control_concurrent.det"
+// CHECK-SAME: simulation.assertion_target_id = [[DET_ID:[0-9]+]] : i64
+// CHECK: simulation.assert.kill_epoch %arg0 assertion [[DET_ID]] {simulation.concurrent_kill_epoch_check}
+// CHECK: simulation.ref.store
+// CHECK: [[DET_ENABLE:%.*]] = simulation.assert.enabled %arg0 assertion [[DET_ID]] {simulation.concurrent_attempt_enable}
 // CHECK: arith.cmpi ne
 // CHECK: [[OLD_MASK:%.*]] = arith.andi {{.*}} : i64
 // CHECK: [[OLD_ACTIVE:%.*]] = arith.cmpi ne, [[OLD_MASK]], {{.*}} : i64
-// CHECK: [[OLD_TRUTH:%.*]] = obelisk_sim.logic.is_true
+// CHECK: [[OLD_TRUTH:%.*]] = simulation.logic.is_true
 // CHECK: [[OLD_FALSE:%.*]] = arith.xori [[OLD_TRUTH]], {{.*}} : i1
 // CHECK: arith.andi [[OLD_ACTIVE]], [[OLD_FALSE]] : i1
-// CHECK: [[START_TRUTH:%.*]] = obelisk_sim.logic.is_true
-// CHECK: arith.andi [[START_TRUTH]], [[DET_ENABLE]] {obelisk_sim.concurrent_attempt_start} : i1
+// CHECK: [[START_TRUTH:%.*]] = simulation.logic.is_true
+// CHECK: arith.andi [[START_TRUTH]], [[DET_ENABLE]] {simulation.concurrent_attempt_start} : i1
 
 // Persistent delay and unary monitors use the same prepared identity. For
 // ranged eventuality, Off can create holes in the M-cycle warm-up pipeline;
 // its second cell is therefore an age bitset shifted every clock, with only
 // the enabled start inserted into bit zero.
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_delay_monitor
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: obelisk_sim.ref.store
-// CHECK: [[DELAY_ENABLE:%.*]] = obelisk_sim.assert.enabled {{.*}} {obelisk_sim.concurrent_attempt_enable}
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_delay_monitor
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: simulation.ref.store
+// CHECK: [[DELAY_ENABLE:%.*]] = simulation.assert.enabled {{.*}} {simulation.concurrent_attempt_enable}
 // CHECK: arith.andi {{.*}}, [[DELAY_ENABLE]]
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_unary_minimum = 2 : i64
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK-COUNT-3: obelisk_sim.ref.store
-// CHECK: [[UNARY_ENABLE:%.*]] = obelisk_sim.assert.enabled {{.*}} {obelisk_sim.concurrent_attempt_enable}
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_unary_minimum = 2 : i64
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK-COUNT-3: simulation.ref.store
+// CHECK: [[UNARY_ENABLE:%.*]] = simulation.assert.enabled {{.*}} {simulation.concurrent_attempt_enable}
 // CHECK: [[UNARY_START:%.*]] = arith.extui [[UNARY_ENABLE]] : i1 to i64
-// CHECK: [[ELIGIBLE:%.*]] = obelisk_sim.ref.load
-// CHECK: [[IMMATURE:%.*]] = obelisk_sim.ref.load
+// CHECK: [[ELIGIBLE:%.*]] = simulation.ref.load
+// CHECK: [[IMMATURE:%.*]] = simulation.ref.load
 // CHECK: [[SHIFTED:%.*]] = arith.shli [[IMMATURE]],
 // CHECK: [[RETAINED:%.*]] = arith.andi [[SHIFTED]],
 // CHECK: arith.ori [[RETAINED]], [[UNARY_START]] : i64
 
 // Age-insensitive aggregate DFAs add at most the enabled current attempt; the
 // already-live count/token state still takes its ordinary transition.
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.persistent_until_monitor
-// CHECK: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.persistent_until_monitor
+// CHECK: simulation.suspend.edge
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
 // CHECK: [[UNTIL_BODY:\^bb[0-9]+]]([[UNTIL_LIVE:%[0-9]+]]: i64):
-// CHECK: [[UNTIL_ENABLE:%.*]] = obelisk_sim.assert.enabled
+// CHECK: [[UNTIL_ENABLE:%.*]] = simulation.assert.enabled
 // CHECK: [[UNTIL_START:%.*]] = arith.extui [[UNTIL_ENABLE]] : i1 to i64
 // CHECK: arith.addi [[UNTIL_LIVE]], [[UNTIL_START]] : i64
-// CHECK-LABEL: obelisk_sim.func private @unit_5(
-// CHECK-SAME: obelisk_sim.persistent_repetition_monitor
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: obelisk_sim.ref.store
-// CHECK: [[REPEAT_ENABLE:%.*]] = obelisk_sim.assert.enabled
+// CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.persistent_repetition_monitor
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: simulation.ref.store
+// CHECK: [[REPEAT_ENABLE:%.*]] = simulation.assert.enabled
 // CHECK: [[REPEAT_START:%.*]] = arith.extui [[REPEAT_ENABLE]] : i1 to i64
-// CHECK: [[REPEAT_TRUTH:%.*]] = obelisk_sim.logic.is_true
+// CHECK: [[REPEAT_TRUTH:%.*]] = simulation.logic.is_true
 // CHECK: arith.select [[REPEAT_TRUTH]], {{.*}}, [[REPEAT_START]] : i64
 
 // Both bounded branching engines gate their shared source attempt, rather
 // than freezing any per-alternative state word.
-// CHECK-LABEL: obelisk_sim.func private @unit_6(
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: obelisk_sim.ref.store
-// CHECK: [[BRANCH_ENABLE:%.*]] = obelisk_sim.assert.enabled
-// CHECK: arith.andi {{.*}}, [[BRANCH_ENABLE]] {obelisk_sim.concurrent_attempt_start} : i1
-// CHECK-LABEL: obelisk_sim.func private @unit_7(
-// CHECK-SAME: obelisk_sim.branching_consequent_monitor
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: obelisk_sim.ref.store
-// CHECK: [[CONSEQUENT_ENABLE:%.*]] = obelisk_sim.assert.enabled
-// CHECK: arith.andi {{.*}}, [[CONSEQUENT_ENABLE]] {obelisk_sim.concurrent_attempt_start} : i1
-// CHECK-LABEL: obelisk_sim.func private @unit_8(
-// CHECK-SAME: obelisk_sim.branching_antecedent_monitor
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: obelisk_sim.ref.store
-// CHECK: [[ANTECEDENT_ENABLE:%.*]] = obelisk_sim.assert.enabled
-// CHECK: [[ONE_AGE_TRUTH:%.*]] = obelisk_sim.logic.is_true
-// CHECK: [[ONE_AGE_START:%.*]] = arith.andi [[ONE_AGE_TRUTH]], [[ANTECEDENT_ENABLE]] {obelisk_sim.concurrent_attempt_start} : i1
+// CHECK-LABEL: simulation.func private @unit_6(
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: simulation.ref.store
+// CHECK: [[BRANCH_ENABLE:%.*]] = simulation.assert.enabled
+// CHECK: arith.andi {{.*}}, [[BRANCH_ENABLE]] {simulation.concurrent_attempt_start} : i1
+// CHECK-LABEL: simulation.func private @unit_7(
+// CHECK-SAME: simulation.branching_consequent_monitor
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: simulation.ref.store
+// CHECK: [[CONSEQUENT_ENABLE:%.*]] = simulation.assert.enabled
+// CHECK: arith.andi {{.*}}, [[CONSEQUENT_ENABLE]] {simulation.concurrent_attempt_start} : i1
+// CHECK-LABEL: simulation.func private @unit_8(
+// CHECK-SAME: simulation.branching_antecedent_monitor
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: simulation.ref.store
+// CHECK: [[ANTECEDENT_ENABLE:%.*]] = simulation.assert.enabled
+// CHECK: [[ONE_AGE_TRUTH:%.*]] = simulation.logic.is_true
+// CHECK: [[ONE_AGE_START:%.*]] = arith.andi [[ONE_AGE_TRUTH]], [[ANTECEDENT_ENABLE]] {simulation.concurrent_attempt_start} : i1
 // The one-age alternative's terminal match must be the gated start, not its
 // raw truth; otherwise it could still launch a consequent while Off.
 // CHECK: arith.andi [[ONE_AGE_START]], {{.*}} : i1
@@ -532,13 +532,13 @@ module {
 // Abort remains higher priority for existing attempts. Its per-age report
 // tests do not use the control query, while the additional attempt on the
 // abort clock is dispatched only when enabled.
-// CHECK-LABEL: obelisk_sim.func private @unit_9(
-// CHECK-SAME: obelisk_sim.asynchronous_property_abort
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: [[ABORT_BODY:\^bb[0-9]+]]([[ABORT_STORAGE:%[0-9]+]]: !obelisk_sim.ref<i64>):
-// CHECK: [[ABORT_STATE:%.*]] = obelisk_sim.ref.load [[ABORT_STORAGE]]
-// CHECK: [[ABORT_ENABLE:%.*]] = obelisk_sim.assert.enabled
-// CHECK: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_9(
+// CHECK-SAME: simulation.asynchronous_property_abort
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: [[ABORT_BODY:\^bb[0-9]+]]([[ABORT_STORAGE:%[0-9]+]]: !simulation.ref<i64>):
+// CHECK: [[ABORT_STATE:%.*]] = simulation.ref.load [[ABORT_STORAGE]]
+// CHECK: [[ABORT_ENABLE:%.*]] = simulation.assert.enabled
+// CHECK: simulation.assert.sampled_read
 // CHECK: cf.cond_br {{.*}}, [[ABORTED:\^bb[0-9]+]],
 // CHECK: [[ABORTED]]:
 // CHECK: arith.andi [[ABORT_STATE]],
@@ -547,41 +547,41 @@ module {
 // A report guarded by both disable iff and Kill receives each reference
 // immediately followed by its scheduled epoch value. This ordering is part of
 // the outlined callback ABI and must also be preserved by every spawn.
-// CHECK-LABEL: obelisk_sim.func private @unit_10.fork.{{[0-9.]+}}(
-// CHECK-SAME: %arg5: !obelisk_sim.ref<i64>
+// CHECK-LABEL: simulation.func private @unit_10.fork.{{[0-9.]+}}(
+// CHECK-SAME: %arg5: !simulation.ref<i64>
 // CHECK-SAME: %arg6: i64
-// CHECK-SAME: %arg7: !obelisk_sim.ref<i64>
+// CHECK-SAME: %arg7: !simulation.ref<i64>
 // CHECK-SAME: %arg8: i64
-// CHECK: [[REPORT_KILL:%.*]] = obelisk_sim.assert.kill_epoch
+// CHECK: [[REPORT_KILL:%.*]] = simulation.assert.kill_epoch
 // CHECK: arith.cmpi eq, [[REPORT_KILL]], %arg8 : i64
-// CHECK: [[REPORT_DISABLE:%.*]] = obelisk_sim.ref.load %arg5
+// CHECK: [[REPORT_DISABLE:%.*]] = simulation.ref.load %arg5
 // CHECK: arith.cmpi eq, [[REPORT_DISABLE]], %arg6 : i64
 
 // Disable is tested first and still clears live state/advances its epoch. The
 // assertion-control query occurs only on the non-disabled edge.
-// CHECK-LABEL: obelisk_sim.func private @unit_10(
-// CHECK: obelisk_sim.suspend.edge {{.*}} to [[DISABLE_SAMPLE:\^bb[0-9]+]]
-// CHECK: [[DISABLE_SAMPLE]]([[KILL_REF:%[0-9]+]]: !obelisk_sim.ref<i64>, [[LIVE_REF:%[0-9]+]]: !obelisk_sim.ref<i64>, [[DISABLE_REF:%[0-9]+]]: !obelisk_sim.ref<i64>):
-// CHECK: obelisk_sim.logic.is_true
+// CHECK-LABEL: simulation.func private @unit_10(
+// CHECK: simulation.suspend.edge {{.*}} to [[DISABLE_SAMPLE:\^bb[0-9]+]]
+// CHECK: [[DISABLE_SAMPLE]]([[KILL_REF:%[0-9]+]]: !simulation.ref<i64>, [[LIVE_REF:%[0-9]+]]: !simulation.ref<i64>, [[DISABLE_REF:%[0-9]+]]: !simulation.ref<i64>):
+// CHECK: simulation.logic.is_true
 // CHECK: cf.cond_br {{.*}}, [[DISABLED:\^bb[0-9]+]]{{.*}}, [[CONTROLLED:\^bb[0-9]+]]
 // CHECK: [[DISABLED]]{{.*}}:
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.store
 // CHECK: cf.br
 // CHECK: [[CONTROLLED]]{{.*}}:
-// CHECK: obelisk_sim.assert.kill_epoch {{.*}} {obelisk_sim.concurrent_kill_epoch_check}
-// CHECK: [[DISABLE_ENABLE:%.*]] = obelisk_sim.assert.enabled
-// CHECK: arith.andi {{.*}}, [[DISABLE_ENABLE]] {obelisk_sim.concurrent_attempt_start} : i1
-// CHECK: [[DISABLE_EXPECTED:%.*]] = obelisk_sim.ref.load [[DISABLE_REF]]
-// CHECK: [[KILL_EXPECTED:%.*]] = obelisk_sim.ref.load [[KILL_REF]]
-// CHECK: obelisk_sim.spawn @unit_10.fork.{{[0-9.]+}}({{.*}}, [[DISABLE_REF]], [[DISABLE_EXPECTED]], [[KILL_REF]], [[KILL_EXPECTED]])
+// CHECK: simulation.assert.kill_epoch {{.*}} {simulation.concurrent_kill_epoch_check}
+// CHECK: [[DISABLE_ENABLE:%.*]] = simulation.assert.enabled
+// CHECK: arith.andi {{.*}}, [[DISABLE_ENABLE]] {simulation.concurrent_attempt_start} : i1
+// CHECK: [[DISABLE_EXPECTED:%.*]] = simulation.ref.load [[DISABLE_REF]]
+// CHECK: [[KILL_EXPECTED:%.*]] = simulation.ref.load [[KILL_REF]]
+// CHECK: simulation.spawn @unit_10.fork.{{[0-9.]+}}({{.*}}, [[DISABLE_REF]], [[DISABLE_EXPECTED]], [[KILL_REF]], [[KILL_EXPECTED]])
 
 // A multi-clock coordinator admits source tokens only while enabled. Once
 // admitted, its bounded ##1 count remains live if Off is applied before the
 // destination occurrence; only the final report remains detached.
-// CHECK-LABEL: obelisk_sim.func private @unit_11(
-// CHECK-SAME: obelisk_sim.multiclock_sequence_coordinator
-// CHECK: obelisk_sim.suspend.clock_set
-// CHECK: obelisk_sim.assert.clock_occurrence.consume
-// CHECK: [[MULTI_ENABLE:%.*]] = obelisk_sim.assert.enabled
+// CHECK-LABEL: simulation.func private @unit_11(
+// CHECK-SAME: simulation.multiclock_sequence_coordinator
+// CHECK: simulation.suspend.clock_set
+// CHECK: simulation.assert.clock_occurrence.consume
+// CHECK: [[MULTI_ENABLE:%.*]] = simulation.assert.enabled
 // CHECK: arith.select [[MULTI_ENABLE]]
-// CHECK: obelisk_sim.spawn @unit_11.fork.
+// CHECK: simulation.spawn @unit_11.fork.

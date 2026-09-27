@@ -95,4 +95,4 @@ endmodule
 // POL-POS-COUNT-3: polarity = 1 : i32
 // POL-NEG-COUNT-3: polarity = 2 : i32
 // Four distinct static delays are shared across the six conditional rules.
-// DRIVE-COUNT-4: obelisk_sim.driver.drive_inertial_path
+// DRIVE-COUNT-4: simulation.driver.drive_inertial_path

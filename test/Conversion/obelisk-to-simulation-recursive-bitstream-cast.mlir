@@ -51,11 +51,11 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[SOURCE:.*]] = obelisk_sim.ref.load
-// CHECK: %[[RESULT:.*]], %[[MATCHED:.*]], %[[WATCH:.*]] = obelisk_sim.recursive.export_bitstream %[[SOURCE]]
-// CHECK-SAME: (!obelisk_sim.dynamic_array<!obelisk_sim.dynamic_array<
-// CHECK-SAME: -> (!obelisk_sim.logic<32>, i1, !obelisk_sim.managed_watch)
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[SOURCE:.*]] = simulation.ref.load
+// CHECK: %[[RESULT:.*]], %[[MATCHED:.*]], %[[WATCH:.*]] = simulation.recursive.export_bitstream %[[SOURCE]]
+// CHECK-SAME: (!simulation.dynamic_array<!simulation.dynamic_array<
+// CHECK-SAME: -> (!simulation.logic<32>, i1, !simulation.managed_watch)
 // CHECK: cf.cond_br %[[MATCHED]], ^[[ACCEPTED:.*]], ^[[REJECTED:.*]]
 // CHECK: ^[[REJECTED]]:
 // CHECK: bit-stream cast source and destination widths differ

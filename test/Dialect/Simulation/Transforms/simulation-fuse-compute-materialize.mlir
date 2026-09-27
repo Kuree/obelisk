@@ -4,12 +4,12 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-materialize.test.
 
-// MATERIALIZED: obelisk_sim.spawn @__obelisk_fused_0
-// MATERIALIZED-COUNT-1: obelisk_sim.func private @__obelisk_fused_0
-// MATERIALIZED-COUNT-1: obelisk_sim.suspend.edge posedge
-// MATERIALIZED-COUNT-2: obelisk_sim.nba.enqueue
-// MATERIALIZED-NOT: obelisk_sim.func private @unit_0
-// MATERIALIZED-NOT: obelisk_sim.func private @unit_1
+// MATERIALIZED: simulation.spawn @__obelisk_fused_0
+// MATERIALIZED-COUNT-1: simulation.func private @__obelisk_fused_0
+// MATERIALIZED-COUNT-1: simulation.suspend.edge posedge
+// MATERIALIZED-COUNT-2: simulation.nba.enqueue
+// MATERIALIZED-NOT: simulation.func private @unit_0
+// MATERIALIZED-NOT: simulation.func private @unit_1
 
 //--- materialize.sv
 module materialize_fusion;

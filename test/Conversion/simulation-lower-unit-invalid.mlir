@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(obelisk_sim.design(obelisk_sim.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
+// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
 
 // Exercise unit-lowering rejection directly on prepared semantic IR. This is
 // pass coverage and intentionally does not involve the SystemVerilog driver.
@@ -7,19 +7,19 @@
 !logic8 = !obelisk.integral<8, false, true, 7 : 0, logic>
 
 module {
-  obelisk_sim.design @invalid_units {
-    obelisk_sim.code_unit.decl 9000001 in 0 always_comb
+  simulation.design @invalid_units {
+    simulation.code_unit.decl 9000001 in 0 always_comb
         hierarchy "test.invalid_units.type_reference.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.storage.decl 0 in 0 : i8 design hierarchy "top.result"
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : i8 design hierarchy "top.result"
 
-    obelisk_sim.func @type_reference(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %result: !obelisk_sim.ref<i8> {obelisk_sim.capture_kind = 3 : i32, obelisk_sim.descriptor_id = 0 : i64})
+    simulation.func @type_reference(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %result: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {
           entry_kind = 4 : i32,
-          obelisk_sim.bindings = [
-            #obelisk_sim.argument_binding<path = "top.result", argument = 1,
+          simulation.bindings = [
+            #simulation.argument_binding<path = "top.result", argument = 1,
                                           kind = direct, copyOut = false>
           ],
           code_unit_id = 9000001 : i64
@@ -40,7 +40,7 @@ module {
           }
         }
       }
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

@@ -2,28 +2,28 @@
 
 // Four-state container indices retain their knownness. X/Z-containing values
 // become the negative invalid-index sentinel instead of aliasing index zero.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[DELETE_KNOWN:.*]] = obelisk_sim.logic.compare case_eq
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[DELETE_KNOWN:.*]] = simulation.logic.compare case_eq
 // CHECK: %[[DELETE_INDEX:.*]] = arith.select %[[DELETE_KNOWN]], {{.*}}, %{{.*}} : i64
-// CHECK: obelisk_sim.queue.delete {{.*}}[%[[DELETE_INDEX]]]
-// CHECK: %[[INSERT_KNOWN:.*]] = obelisk_sim.logic.compare case_eq
+// CHECK: simulation.queue.delete {{.*}}[%[[DELETE_INDEX]]]
+// CHECK: %[[INSERT_KNOWN:.*]] = simulation.logic.compare case_eq
 // CHECK: %[[INSERT_INDEX:.*]] = arith.select %[[INSERT_KNOWN]], {{.*}}, %{{.*}} : i64
 // A full bounded queue trims its last element only for a valid insertion index.
-// CHECK: %[[INSERT_SIZE:.*]] = obelisk_sim.container.size
+// CHECK: %[[INSERT_SIZE:.*]] = simulation.container.size
 // CHECK: arith.cmpi uge, %[[INSERT_SIZE]],
 // CHECK: arith.cmpi sge, %[[INSERT_INDEX]],
 // CHECK: arith.cmpi ule, %[[INSERT_INDEX]],
-// CHECK: obelisk_sim.bytes.constant {{.*}}bounded queue insert discarded its last element
-// CHECK: obelisk_sim.display
-// CHECK: obelisk_sim.queue.delete
-// CHECK: obelisk_sim.queue.insert {{.*}}[%[[INSERT_INDEX]]]
+// CHECK: simulation.bytes.constant {{.*}}bounded queue insert discarded its last element
+// CHECK: simulation.display
+// CHECK: simulation.queue.delete
+// CHECK: simulation.queue.insert {{.*}}[%[[INSERT_INDEX]]]
 // Queue assignment delegates append and invalid-index handling to the one
 // container-write intrinsic rather than duplicating bounds checks per caller.
-// CHECK: obelisk_sim.container.write
+// CHECK: simulation.container.write
 // A queue read uses the same knownness-preserving index conversion.
-// CHECK: %[[READ_KNOWN:.*]] = obelisk_sim.logic.compare case_eq
+// CHECK: %[[READ_KNOWN:.*]] = simulation.logic.compare case_eq
 // CHECK: %[[READ_INDEX:.*]] = arith.select %[[READ_KNOWN]], {{.*}}, %{{.*}} : i64
-// CHECK: obelisk_sim.container.read {{.*}}, %[[READ_INDEX]]
+// CHECK: simulation.container.read {{.*}}, %[[READ_INDEX]]
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "queue_index_regression", name = "queue_index_regression", node_id = 0 : i64, sym_name = "s0.queue_index_regression"} {

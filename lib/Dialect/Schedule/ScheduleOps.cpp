@@ -441,7 +441,7 @@ NativeControlBoundaryOp::getSuccessorOperands(unsigned index) {
 LogicalResult NativeControlBoundaryOp::verify() {
   auto function = getOperation()->getParentOfType<sim::SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (function.getEntryKind() == sim::EntryKind::Function ||
       function.getEntryKind() == sim::EntryKind::Observer)
     return emitOpError("requires a suspendable process entry");

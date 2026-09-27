@@ -70,30 +70,30 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK: arith.trunci {{%.*}} : i32 to i8
 // CHECK: arith.shrui
 // CHECK: arith.shli
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.store
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK: arith.trunci {{%.*}} : i6 to i4
 // CHECK: arith.trunci {{%.*}} : i6 to i2
 // CHECK: arith.shli
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.store
 
-// CHECK-LABEL: obelisk_sim.func private @unit_2
+// CHECK-LABEL: simulation.func private @unit_2
 // CHECK: arith.shli {{%.*}}, {{%.*}} : i10
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.store
 
-// CHECK-LABEL: obelisk_sim.func private @unit_3
-// CHECK: obelisk_sim.logic.extract {{%.*}} from 0 : !obelisk_sim.logic<4> -> !obelisk_sim.logic<2>
-// CHECK: obelisk_sim.logic.extract {{%.*}} from 2 : !obelisk_sim.logic<4> -> !obelisk_sim.logic<2>
-// CHECK: obelisk_sim.logic.concat
-// CHECK: obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func private @unit_3
+// CHECK: simulation.logic.extract {{%.*}} from 0 : !simulation.logic<4> -> !simulation.logic<2>
+// CHECK: simulation.logic.extract {{%.*}} from 2 : !simulation.logic<4> -> !simulation.logic<2>
+// CHECK: simulation.logic.concat
+// CHECK: simulation.ref.store
 
-// CHECK-LABEL: obelisk_sim.func private @unit_4
-// CHECK: obelisk_sim.ref.subelement {{%.*}}{{\[\[0\]\]}}
-// CHECK: obelisk_sim.ref.subelement {{%.*}}{{\[\[1\]\]}}
+// CHECK-LABEL: simulation.func private @unit_4
+// CHECK: simulation.ref.subelement {{%.*}}{{\[\[0\]\]}}
+// CHECK: simulation.ref.subelement {{%.*}}{{\[\[1\]\]}}
 // CHECK: arith.shli
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.store

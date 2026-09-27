@@ -5,48 +5,48 @@
 // The object stream chooses the first assignment for a bounded generated
 // sampler. Exhaustion invokes the compiler-serialized runtime program, and the
 // rand property is stored only on a successful commit edge.
-// CHECK: obelisk_sim.class.decl @[[CLASS:[A-Za-z0-9_.$]+]]
+// CHECK: simulation.class.decl @[[CLASS:[A-Za-z0-9_.$]+]]
 // CHECK-SAME: random_constraint_template = @[[TEMPLATE:[A-Za-z0-9_.$]+]]
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "value"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_state"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rng_increment"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_rand_mode"
-// CHECK: obelisk_sim.class.field {{.*}}debug_name = "__obelisk_constraint_mode"
-// CHECK: obelisk_sim.random.constraint_template @[[TEMPLATE]] of @[[CLASS]]
-// CHECK-SAME: constraint_blocks = [#obelisk_sim.random_constraint_block_reference<kind = object_block, index = 0 : i32>]
-// CHECK-SAME: references = [#obelisk_sim.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>, #obelisk_sim.random_value_reference<kind = storage, storage = 0 : i64, low = 0, width = 32>]
-// CHECK: %[[TEMPLATE_VALUE:.*]] = obelisk_sim.random.constraint_value 0 : i32
-// CHECK: %[[TEMPLATE_LIMIT:.*]] = obelisk_sim.random.constraint_value 1 : i32
+// CHECK: simulation.class.field {{.*}}debug_name = "value"
+// CHECK: simulation.class.field {{.*}}debug_name = "__obelisk_rng_state"
+// CHECK: simulation.class.field {{.*}}debug_name = "__obelisk_rng_increment"
+// CHECK: simulation.class.field {{.*}}debug_name = "__obelisk_rand_mode"
+// CHECK: simulation.class.field {{.*}}debug_name = "__obelisk_constraint_mode"
+// CHECK: simulation.random.constraint_template @[[TEMPLATE]] of @[[CLASS]]
+// CHECK-SAME: constraint_blocks = [#simulation.random_constraint_block_reference<kind = object_block, index = 0 : i32>]
+// CHECK-SAME: references = [#simulation.random_value_reference<kind = object_field, target = @{{[^,]+}}, low = 0, width = 32>, #simulation.random_value_reference<kind = storage, storage = 0 : i64, low = 0, width = 32>]
+// CHECK: %[[TEMPLATE_VALUE:.*]] = simulation.random.constraint_value 0 : i32
+// CHECK: %[[TEMPLATE_LIMIT:.*]] = simulation.random.constraint_value 1 : i32
 // CHECK: %[[TEMPLATE_GT:.*]] = arith.cmpi sgt, %[[TEMPLATE_VALUE]], %[[TEMPLATE_LIMIT]] : i32
-// CHECK: obelisk_sim.random.soft_constraint %[[TEMPLATE_GT]] block 0 priority 0
-// CHECK: obelisk_sim.random.soft_constraint %{{.*}} block 0 priority 1
-// CHECK: obelisk_sim.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !obelisk_sim.ref<i32>
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
-// CHECK: %[[OLD_MODE:.*]] = obelisk_sim.managed.load
+// CHECK: simulation.random.soft_constraint %[[TEMPLATE_GT]] block 0 priority 0
+// CHECK: simulation.random.soft_constraint %{{.*}} block 0 priority 1
+// CHECK: simulation.func private @unit_1({{.*}}%[[LIMIT_ARG:arg[0-9]+]]: !simulation.ref<i32>
+// CHECK: simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
+// CHECK: %[[OLD_MODE:.*]] = simulation.managed.load
 // CHECK: %[[DISABLED_MODE:.*]] = arith.ori %[[OLD_MODE]], %{{c1_i64.*}} : i64
-// CHECK: obelisk_sim.managed.store %[[DISABLED_MODE]]
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
-// CHECK: %[[MODE:.*]] = obelisk_sim.managed.load
+// CHECK: simulation.managed.store %[[DISABLED_MODE]]
+// CHECK: simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
+// CHECK: %[[MODE:.*]] = simulation.managed.load
 // CHECK: %[[PROPERTY_MODE:.*]] = arith.andi %[[MODE]], %{{c1_i64.*}} : i64
 // CHECK: %[[MODE_ENABLED:.*]] = arith.cmpi eq, %[[PROPERTY_MODE]], %{{c0_i64.*}} : i64
 // CHECK: arith.extui %[[MODE_ENABLED]] : i1 to i32
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[LIMIT_ARG]]
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
-// CHECK: obelisk_sim.managed.store %{{c0_i64.*}}
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
-// CHECK: obelisk_sim.managed.store %{{c-1_i64.*}}
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
-// CHECK: %[[BLOCK_MODES:.*]] = obelisk_sim.managed.load
+// CHECK: simulation.ref.store {{.*}} to %[[LIMIT_ARG]]
+// CHECK: simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_rand_mode]
+// CHECK: simulation.managed.store %{{c0_i64.*}}
+// CHECK: simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: simulation.managed.store %{{c-1_i64.*}}
+// CHECK: simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: %[[BLOCK_MODES:.*]] = simulation.managed.load
 // CHECK: %[[BLOCK_MODE:.*]] = arith.andi %[[BLOCK_MODES]], %{{c1_i64.*}} : i64
 // CHECK: %[[BLOCK_ENABLED:.*]] = arith.cmpi eq, %[[BLOCK_MODE]], %{{c0_i64.*}} : i64
 // CHECK: arith.extui %[[BLOCK_ENABLED]] : i1 to i32
-// CHECK: obelisk_sim.ref.store {{.*}} to %[[LIMIT_ARG]]
-// CHECK: obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
-// CHECK: %[[OLD_BLOCK_MODES:.*]] = obelisk_sim.managed.load
+// CHECK: simulation.ref.store {{.*}} to %[[LIMIT_ARG]]
+// CHECK: simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: %[[OLD_BLOCK_MODES:.*]] = simulation.managed.load
 // CHECK: %[[ENABLED_BLOCK_MODES:.*]] = arith.andi %[[OLD_BLOCK_MODES]], %{{c-2_i64.*}} : i64
-// CHECK: obelisk_sim.managed.store %[[ENABLED_BLOCK_MODES]]
-// CHECK: %[[LIVE_BLOCK_MODE_REF:.*]] = obelisk_sim.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
-// CHECK: %[[LIVE_BLOCK_MODES:.*]] = obelisk_sim.managed.load %[[LIVE_BLOCK_MODE_REF]]
+// CHECK: simulation.managed.store %[[ENABLED_BLOCK_MODES]]
+// CHECK: %[[LIVE_BLOCK_MODE_REF:.*]] = simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
+// CHECK: %[[LIVE_BLOCK_MODES:.*]] = simulation.managed.load %[[LIVE_BLOCK_MODE_REF]]
 // CHECK: %[[RELEVANT_MODE:.*]] = arith.andi
 // CHECK: %[[ALL_PROPERTIES_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c0_i64.*}} : i64
 // CHECK: %[[ALL_DISABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c1_i64.*}} : i64
@@ -57,7 +57,7 @@
 // CHECK: arith.muli
 // CHECK: %[[USE_PLAN:.*]] = arith.andi %[[ALL_BLOCKS_ENABLED]], %[[ALL_PROPERTIES_ENABLED]] : i1
 // CHECK: cf.cond_br %[[USE_PLAN]]
-// CHECK: obelisk_sim.managed.store
+// CHECK: simulation.managed.store
 // CHECK: arith.cmpi slt
 // CHECK: arith.ori
 // CHECK: arith.cmpi sgt
@@ -66,14 +66,14 @@
 // CHECK: arith.cmpi eq
 // CHECK: arith.cmpi sge
 // CHECK: arith.cmpi sle
-// CHECK: obelisk_sim.ref.load %[[LIMIT_ARG]]
+// CHECK: simulation.ref.load %[[LIMIT_ARG]]
 // CHECK: cf.cond_br
 // CHECK: arith.cmpi uge
-// CHECK: obelisk_sim.random.solve {{.*}} mutable {{.*}} constraints %[[RELEVANT_BLOCK_MODES]]
+// CHECK: simulation.random.solve {{.*}} mutable {{.*}} constraints %[[RELEVANT_BLOCK_MODES]]
 // CHECK: cf.cond_br
 // CHECK: arith.trunci
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.managed.store
+// CHECK: simulation.managed.store
 // CHECK-NOT: obelisk.sv.
 
 module attributes {

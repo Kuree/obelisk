@@ -127,22 +127,22 @@ module attributes {
 // std::randomize reads state-only variables through the ordinary capture
 // inventory, writes only the listed variables, and owns the caller process's
 // stream. The native and bytecode RUN lines validate both executable paths.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: [[STATE:%[^, ]+]], [[INCREMENT:%[^ ]+]] = obelisk_sim.random.state [[CONTEXT:%[^ ]+]]
-// CHECK: [[CAPTURE:%[^ ]+]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<i32> -> i32
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: [[STATE:%[^, ]+]], [[INCREMENT:%[^ ]+]] = simulation.random.state [[CONTEXT:%[^ ]+]]
+// CHECK: [[CAPTURE:%[^ ]+]] = simulation.ref.load %{{.*}} : !simulation.ref<i32> -> i32
 // CHECK: [[CAPTURE_BITS:%[^ ]+]] = arith.extui [[CAPTURE]] : i32 to i64
-// CHECK: obelisk_sim.random.set_state [[CONTEXT]], %{{.*}}, [[INCREMENT]]
+// CHECK: simulation.random.set_state [[CONTEXT]], %{{.*}}, [[INCREMENT]]
 // CHECK: [[SAMPLE_LOW:%[^ ]+]] = arith.andi %{{.*}}, %{{.*}} : i64
 // CHECK: [[CAPTURE_LOW:%[^ ]+]] = arith.andi [[CAPTURE_BITS]], %{{.*}} : i64
 // CHECK: [[ZERO_HIGH:%[^ ]+]] = arith.andi [[SAMPLE_LOW]], %{{.*}} : i64
 // CHECK: [[CONSTRAINED:%[^ ]+]] = arith.ori [[ZERO_HIGH]], [[CAPTURE_LOW]] : i64
-// CHECK: obelisk_sim.ref.store %{{.*}} to %{{.*}} : i32, !obelisk_sim.ref<i32>
-// CHECK-NOT: obelisk_sim.random.state
-// CHECK-NOT: obelisk_sim.random.set_state
-// CHECK: obelisk_sim.display
-// CHECK: %[[CHECKER_LEFT:.*]] = obelisk_sim.ref.load
-// CHECK: %[[CHECKER_RIGHT:.*]] = obelisk_sim.ref.load
+// CHECK: simulation.ref.store %{{.*}} to %{{.*}} : i32, !simulation.ref<i32>
+// CHECK-NOT: simulation.random.state
+// CHECK-NOT: simulation.random.set_state
+// CHECK: simulation.display
+// CHECK: %[[CHECKER_LEFT:.*]] = simulation.ref.load
+// CHECK: %[[CHECKER_RIGHT:.*]] = simulation.ref.load
 // CHECK: arith.cmpi eq, %[[CHECKER_LEFT]], %[[CHECKER_RIGHT]] : i32
-// CHECK: obelisk_sim.ref.store
-// CHECK-NOT: obelisk_sim.managed.load
-// CHECK-NOT: obelisk_sim.managed.store
+// CHECK: simulation.ref.store
+// CHECK-NOT: simulation.managed.load
+// CHECK-NOT: simulation.managed.store

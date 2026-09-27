@@ -37,8 +37,8 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[FD:.*]] = obelisk_sim.file.open
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[FD:.*]] = simulation.file.open
 // A zero descriptor means the open failed, so the read is branched around.
 // CHECK: %[[OPENED:.*]] = arith.cmpi ne, %[[FD]], %{{.*}}
 // CHECK: cf.cond_br %[[OPENED]], ^[[READ:.*]], ^[[FAILED:.*]]
@@ -46,8 +46,8 @@ module {
 // The report names the file, records an unsuccessful run, and joins the same
 // exit the completed read uses -- without closing a descriptor it never got.
 // CHECK: ^[[FAILED]]:
-// CHECK: obelisk_sim.bytes.constant "ERROR: $readmemh: cannot open the memory file missing.mem"
-// CHECK: obelisk_sim.display
-// CHECK: obelisk_sim.error
-// CHECK-NOT: obelisk_sim.file.close
+// CHECK: simulation.bytes.constant "ERROR: $readmemh: cannot open the memory file missing.mem"
+// CHECK: simulation.display
+// CHECK: simulation.error
+// CHECK-NOT: simulation.file.close
 // CHECK: cf.br ^[[DONE:.*]]

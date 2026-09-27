@@ -83,11 +83,11 @@ module {
 }
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.observer.bind
-// CHECK: obelisk_sim.suspend.observe
-// CHECK-NOT: obelisk_sim.suspend.level
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.observer.bind
+// CHECK: simulation.suspend.observe
+// CHECK-NOT: simulation.suspend.level
 
 // A packed condition keeps the direct suspend on its storage.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: obelisk_sim.suspend.level %arg1
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.suspend.level %arg1

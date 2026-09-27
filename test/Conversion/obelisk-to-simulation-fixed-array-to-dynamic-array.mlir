@@ -85,16 +85,16 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
 // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i64
 // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i64
 // CHECK-DAG: %[[C3:.*]] = arith.constant 3 : i64
-// CHECK: %[[E0:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<i32> -> i32
-// CHECK: %[[E1:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<i32> -> i32
-// CHECK: %[[E2:.*]] = obelisk_sim.ref.load %{{.*}} : !obelisk_sim.ref<i32> -> i32
-// CHECK: %[[ARRAY:.*]] = obelisk_sim.container.create %[[C3]]
-// CHECK-SAME: -> !obelisk_sim.dynamic_array<i32>
-// CHECK: obelisk_sim.container.write %[[ARRAY]], %[[C0]], %[[E0]]
-// CHECK: obelisk_sim.container.write %[[ARRAY]], %[[C1]], %[[E1]]
-// CHECK: obelisk_sim.container.write %[[ARRAY]], %[[C2]], %[[E2]]
+// CHECK: %[[E0:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<i32> -> i32
+// CHECK: %[[E1:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<i32> -> i32
+// CHECK: %[[E2:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<i32> -> i32
+// CHECK: %[[ARRAY:.*]] = simulation.container.create %[[C3]]
+// CHECK-SAME: -> !simulation.dynamic_array<i32>
+// CHECK: simulation.container.write %[[ARRAY]], %[[C0]], %[[E0]]
+// CHECK: simulation.container.write %[[ARRAY]], %[[C1]], %[[E1]]
+// CHECK: simulation.container.write %[[ARRAY]], %[[C2]], %[[E2]]

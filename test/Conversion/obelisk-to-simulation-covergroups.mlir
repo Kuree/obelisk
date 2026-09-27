@@ -253,16 +253,16 @@ module {
 // IEEE 1800-2017 19.5: the compiler evaluates each sampled expression once.
 // The sample operation preserves typed values and schema identities; it does
 // not encode bin decisions or table ordinals.
-// CHECK: obelisk_sim.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] schema {{[1-9][0-9]*}}
-// CHECK: obelisk_sim.storage.decl {{[0-9]+}} in {{[0-9]+}} : !obelisk_sim.covergroup_handle<@[[DECL]]>
-// CHECK: %[[HANDLE:.*]] = obelisk_sim.covergroup.create {{.*}} from @[[DECL]]
-// CHECK: obelisk_sim.covergroup.set_name {{.*}} name %{{.*}}
-// CHECK: obelisk_sim.covergroup.sample_enabled {{.*}}, %{{.*}}
-// CHECK: obelisk_sim.covergroup.sample {{.*}} values[%{{.*}}, %{{.*}}, %{{.*}}] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
-// CHECK: obelisk_sim.covergroup.stop
-// CHECK: obelisk_sim.covergroup.start
-// CHECK: obelisk_sim.covergroup.instance_query
-// CHECK: obelisk_sim.covergroup.type_query {{.*}} from @[[DECL]]
-// CHECK: obelisk_sim.ref.store %covered
-// CHECK: obelisk_sim.ref.store %total
+// CHECK: simulation.covergroup.decl @[[DECL:__obelisk_covergroup_.*]] schema {{[1-9][0-9]*}}
+// CHECK: simulation.storage.decl {{[0-9]+}} in {{[0-9]+}} : !simulation.covergroup_handle<@[[DECL]]>
+// CHECK: %[[HANDLE:.*]] = simulation.covergroup.create {{.*}} from @[[DECL]]
+// CHECK: simulation.covergroup.set_name {{.*}} name %{{.*}}
+// CHECK: simulation.covergroup.sample_enabled {{.*}}, %{{.*}}
+// CHECK: simulation.covergroup.sample {{.*}} values[%{{.*}}, %{{.*}}, %{{.*}}] ids [{{[1-9][0-9]*}}, {{[1-9][0-9]*}}, {{[1-9][0-9]*}}]
+// CHECK: simulation.covergroup.stop
+// CHECK: simulation.covergroup.start
+// CHECK: simulation.covergroup.instance_query
+// CHECK: simulation.covergroup.type_query {{.*}} from @[[DECL]]
+// CHECK: simulation.ref.store %covered
+// CHECK: simulation.ref.store %total
 // CHECK-NOT: obelisk.sv.

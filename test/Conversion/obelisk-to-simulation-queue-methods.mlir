@@ -207,19 +207,19 @@ module {
 
 // push_front lowers to insertion at index zero.
 // CHECK: arith.constant {{.*}}0 : i64
-// CHECK: obelisk_sim.queue.insert
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.queue.insert
+// CHECK: simulation.ref.store
 
 // pop_front reads and removes the element at index zero.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK: %[[POP_ZERO:.*]] = arith.constant {{.*}}0 : i64
-// CHECK: obelisk_sim.container.read {{.*}}, %[[POP_ZERO]]
+// CHECK: simulation.container.read {{.*}}, %[[POP_ZERO]]
 // CHECK: %[[DELETE_ZERO:.*]] = arith.constant {{.*}}0 : i64
-// CHECK: obelisk_sim.queue.delete {{.*}}[%[[DELETE_ZERO]]]
+// CHECK: simulation.queue.delete {{.*}}[%[[DELETE_ZERO]]]
 
 // pop_back reads and removes the element at size - 1.
-// CHECK-LABEL: obelisk_sim.func private @unit_2
-// CHECK: %[[SIZE:.*]] = obelisk_sim.container.size
+// CHECK-LABEL: simulation.func private @unit_2
+// CHECK: %[[SIZE:.*]] = simulation.container.size
 // CHECK: %[[LAST:.*]] = arith.subi %[[SIZE]],
-// CHECK: obelisk_sim.container.read {{.*}}, %[[LAST]]
-// CHECK: obelisk_sim.queue.delete {{.*}}[%[[LAST]]]
+// CHECK: simulation.container.read {{.*}}, %[[LAST]]
+// CHECK: simulation.queue.delete {{.*}}[%[[LAST]]]

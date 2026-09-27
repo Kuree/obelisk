@@ -11,7 +11,7 @@ module scan_numeric_wide_lowering;
   initial status = $sscanf(source, "%h", destination);
 endmodule
 
-// CHECK-COUNT-1: obelisk_sim.string.scan_field
-// CHECK-COUNT-1: obelisk_sim.string.parse_logic
-// CHECK-SAME: radix = 16 : <4096>
-// CHECK-NOT: obelisk_sim.string.parse_logic
+// CHECK-COUNT-1: simulation.string.scan_field
+// CHECK-COUNT-1: simulation.string.parse_logic
+// CHECK-SAME: radix = <hex> : <4096>
+// CHECK-NOT: simulation.string.parse_logic

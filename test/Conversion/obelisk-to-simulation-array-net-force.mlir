@@ -78,13 +78,13 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.func private @unit_0(
-// CHECK-SAME: %[[NET:[^:]*]]: !obelisk_sim.net<!obelisk_sim.unpacked_array<2 : 1 x !obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>>
-// CHECK: %[[ONE:.*]] = obelisk_sim.net.extract %[[NET]] from 2
-// CHECK-SAME: -> !obelisk_sim.net<!obelisk_sim.packed_array<1 : 0 x !obelisk_sim.logic<1>>>
-// CHECK: obelisk_sim.override %[[ONE]] = {{.*}} assign false
-// CHECK: obelisk_sim.release_override %[[ONE]] assign false
-// CHECK: %[[TWO:.*]] = obelisk_sim.net.extract %[[NET]] from 0
-// CHECK: obelisk_sim.spawn @{{.*override.*}}
-// CHECK: obelisk_sim.dynamic_override %[[TWO]] = {{.*}} owner {{.*}} assign false claim true
-// CHECK: obelisk_sim.release_override %[[TWO]] assign false
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.unpacked_array<2 : 1 x !simulation.packed_array<1 : 0 x !simulation.logic<1>>>>
+// CHECK: %[[ONE:.*]] = simulation.net.extract %[[NET]] from 2
+// CHECK-SAME: -> !simulation.net<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>
+// CHECK: simulation.override %[[ONE]] = {{.*}} assign false
+// CHECK: simulation.release_override %[[ONE]] assign false
+// CHECK: %[[TWO:.*]] = simulation.net.extract %[[NET]] from 0
+// CHECK: simulation.spawn @{{.*override.*}}
+// CHECK: simulation.dynamic_override %[[TWO]] = {{.*}} owner {{.*}} assign false claim true
+// CHECK: simulation.release_override %[[TWO]] assign false

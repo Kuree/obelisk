@@ -87,35 +87,35 @@ module {
 
 // IEEE 1800-2017 9.2.2.2.2 requires always @* to wait for a change before its
 // first evaluation, unlike always_comb.  The body then returns to that wait.
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}obelisk_sim.hierarchical_name = "always_wildcard_startup"
+// CHECK-LABEL: simulation.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}simulation.hierarchical_name = "always_wildcard_startup"
 // CHECK: cf.br ^[[WAIT:bb[0-9]+]]
 // CHECK: ^[[WAIT]]:
-// CHECK: obelisk_sim.suspend.change {{.*}} to ^[[BODY:bb[0-9]+]]
+// CHECK: simulation.suspend.change {{.*}} to ^[[BODY:bb[0-9]+]]
 // CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: ^[[BODY]]:
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
 // CHECK: cf.br ^[[WAIT]]
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}obelisk_sim.hierarchical_name = "always_wildcard_startup"
+// CHECK-LABEL: simulation.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}simulation.hierarchical_name = "always_wildcard_startup"
 // CHECK: cf.br ^[[MULTI_WAIT:bb[0-9]+]]
 // CHECK: ^[[MULTI_WAIT]]:
-// CHECK: obelisk_sim.suspend.any {{.*}} to ^[[MULTI_BODY:bb[0-9]+]]
+// CHECK: simulation.suspend.any {{.*}} to ^[[MULTI_BODY:bb[0-9]+]]
 // CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: ^[[MULTI_BODY]]:
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
 // CHECK: cf.br ^[[MULTI_WAIT]]
 // An activation-local variable does not exist at the pre-entry wait. Keep the
 // design-lifetime source in the implicit event set without capturing the local.
-// CHECK-LABEL: obelisk_sim.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}obelisk_sim.hierarchical_name = "always_wildcard_startup"
+// CHECK-LABEL: simulation.func private @{{.*}}({{.*}}) attributes {{.*}}entry_kind = 3 : i32{{.*}}simulation.hierarchical_name = "always_wildcard_startup"
 // CHECK: cf.br ^[[LOCAL_WAIT:bb[0-9]+]]
 // CHECK: ^[[LOCAL_WAIT]]:
-// CHECK-NOT: obelisk_sim.suspend.any
-// CHECK: obelisk_sim.suspend.change {{.*}} to ^[[LOCAL_BODY:bb[0-9]+]]
+// CHECK-NOT: simulation.suspend.any
+// CHECK: simulation.suspend.change {{.*}} to ^[[LOCAL_BODY:bb[0-9]+]]
 // CHECK-SAME: schedule.top_level_wildcard_wait
 // CHECK: ^[[LOCAL_BODY]]:
-// CHECK: obelisk_sim.ref.load
-// CHECK: obelisk_sim.ref.store
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.store
 // CHECK: cf.br ^[[LOCAL_WAIT]]
 // CHECK-NOT: obelisk.sv.

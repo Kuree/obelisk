@@ -10,17 +10,17 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @string_parse_logic_wide {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 function hierarchy "top.parse"
-    obelisk_sim.func private @parse(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
-        -> !obelisk_sim.logic<4096>
+  simulation.design @string_parse_logic_wide {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.parse"
+    simulation.func private @parse(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        -> !simulation.logic<4096>
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
-      %text = obelisk_sim.string.literal "1234"
-      %logic = obelisk_sim.string.parse_logic %text radix = 16 :
-          !obelisk_sim.logic<4096>
-      obelisk_sim.return %logic : !obelisk_sim.logic<4096>
+      %text = simulation.string.literal "1234"
+      %logic = simulation.string.parse_logic %text radix = <hex> :
+          !simulation.logic<4096>
+      simulation.return %logic : !simulation.logic<4096>
     }
   }
 }

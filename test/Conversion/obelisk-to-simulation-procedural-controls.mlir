@@ -122,26 +122,26 @@ module {
 }
 
 // #1step is one design-precision tick.
-// CHECK: obelisk_sim.time.constant 1
-// CHECK: obelisk_sim.suspend.delay
+// CHECK: simulation.time.constant 1
+// CHECK: simulation.suspend.delay
 
 // `wait` first tests its condition and uses a level-sensitive suspension when
 // the initial test is false.
-// CHECK: obelisk_sim.logic.is_true
+// CHECK: simulation.logic.is_true
 // CHECK: cf.cond_br
-// CHECK: obelisk_sim.suspend.level
+// CHECK: simulation.suspend.level
 
 // A dynamic repeated event carries its encounter-time count across resumes.
 // CHECK: arith.cmpi sgt
-// CHECK: obelisk_sim.suspend.edge posedge
+// CHECK: simulation.suspend.edge posedge
 // CHECK: arith.subi
 // A repeat-loop continue verifies with the current count passed to the
 // decrement block.
 // CHECK: cf.br ^{{.*}}(%{{.*}} : i64)
 
 // `iff` is sampled atomically with the primary event occurrence.
-// CHECK: obelisk_sim.suspend.edge_iff posedge
+// CHECK: simulation.suspend.edge_iff posedge
 
 // @* derives sensitivity from reads in its controlled statement.
-// CHECK: obelisk_sim.suspend.change
+// CHECK: simulation.suspend.change
 // CHECK-NOT: obelisk.sv.

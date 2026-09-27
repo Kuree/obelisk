@@ -21,6 +21,6 @@ module {
 
 // IEEE 1800-2017 6.3.2.2 makes this declaration initializer a continuous
 // assignment with the declaration's drive strengths.
-// CHECK: obelisk_sim.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !obelisk_sim.logic<1> design
+// CHECK: simulation.driver.decl {{[0-9]+}} in {{[0-9]+}} drives {{[0-9]+}} : !simulation.logic<1> design
 // CHECK-SAME: strength0 = 5 : i32
 // CHECK-SAME: strength1 = 3 : i32

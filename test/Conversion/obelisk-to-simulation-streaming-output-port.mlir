@@ -39,6 +39,6 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output
-// CHECK: obelisk_sim.container.export_bitstream %{{.*}} -> !obelisk_sim.logic<8>
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} port_output
+// CHECK: simulation.container.export_bitstream %{{.*}} -> !simulation.logic<8>
 // CHECK-NOT: obelisk.sv.

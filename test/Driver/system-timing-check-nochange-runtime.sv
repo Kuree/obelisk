@@ -249,11 +249,11 @@ module system_timing_check_nochange_runtime;
   end
 endmodule
 
-// SIM: obelisk_sim.suspend.clock_set
+// SIM: simulation.suspend.clock_set
 // SIM-SAME: edges [1, 0, 2]
 // SIM-SAME: slot_final
-// SIM: obelisk_sim.assert.clock_occurrence.consume
-// SIM: obelisk_sim.assert.nochange.update
+// SIM: simulation.assert.clock_occurrence.consume
+// SIM: simulation.assert.nochange.update
 // SIM-NOT: timing_check_table
 // CHECK-DAG: nochange-zero 1
 // CHECK-DAG: nochange-positive 1

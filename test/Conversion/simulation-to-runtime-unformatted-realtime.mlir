@@ -2,9 +2,9 @@
 
 // Keep the direct-$realtime classification through the typed runtime ABI.
 module {
-  func.func @display_realtime(%ctx: !obelisk_sim.context, %value: f64) {
+  func.func @display_realtime(%ctx: !simulation.context, %value: f64) {
     %stdout = arith.constant 1 : i32
-    obelisk_sim.display %ctx to %stdout(%value) newline = true radix = 10
+    simulation.display %ctx to %stdout(%value) newline = true radix = <decimal>
         flags = [8196]
         {time_multiplier = 1000 : i64, time_precision = -12 : i32} : f64
     return

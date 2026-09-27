@@ -2,8 +2,8 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
 
-!bundle = !obelisk_sim.unpacked_struct<[
-  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Base>,
+!bundle = !simulation.unpacked_struct<[
+  #simulation.field<name = "object", type = !simulation.class_handle<@Base>,
                      ordinal = 0, packedOffset = 0>
 ]>
 
@@ -11,78 +11,78 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @virtual_tasks {
-    obelisk_sim.scope.decl 0 hierarchy "top"
-    obelisk_sim.code_unit.decl 1 in 0 initial hierarchy "top.caller"
-    obelisk_sim.code_unit.decl 2 in 0 task hierarchy "Base.run"
-    obelisk_sim.code_unit.decl 3 in 0 initial hierarchy "top.class_caller"
+  simulation.design @virtual_tasks {
+    simulation.scope.decl 0 hierarchy "top"
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.caller"
+    simulation.code_unit.decl 2 in 0 task hierarchy "Base.run"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "top.class_caller"
 
-    obelisk_sim.class.decl @Runner id 1 {
+    simulation.class.decl @Runner id 1 {
       is_abstract = true, is_final = false, is_interface = true
     }
-    obelisk_sim.class.decl @Base id 2 implements [@Runner] {
+    simulation.class.decl @Base id 2 implements [@Runner] {
       is_abstract = false, is_final = true, is_interface = false
     }
-    obelisk_sim.class.method @Runner_run of @Runner slot 4294967295
+    simulation.class.method @Runner_run of @Runner slot 4294967295
       signature_id 17 interface_ordinal 0 :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Runner>, i32,
+      (!simulation.context, !simulation.class_handle<@Runner>, i32,
        !bundle) -> () {
         is_final = false, is_pure = true, is_static = false,
         is_task = true, is_virtual = true
       }
-    obelisk_sim.class.method @Base_run of @Base slot 0 signature_id 17
+    simulation.class.method @Base_run of @Base slot 0 signature_id 17
       implemented_by @base_run :
-      (!obelisk_sim.context, !obelisk_sim.class_handle<@Base>, i32,
+      (!simulation.context, !simulation.class_handle<@Base>, i32,
        !bundle) -> () {
         is_final = false, is_pure = false, is_static = false,
         is_task = true, is_virtual = true
       }
 
-    obelisk_sim.func @base_run(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %this: !obelisk_sim.class_handle<@Base>
-          {obelisk_sim.capture_kind = 1 : i32},
-        %value: i32 {obelisk_sim.capture_kind = 2 : i32},
-        %bundle: !bundle {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @base_run(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %this: !simulation.class_handle<@Base>
+          {simulation.capture_kind = 1 : i32},
+        %value: i32 {simulation.capture_kind = 2 : i32},
+        %bundle: !bundle {simulation.capture_kind = 2 : i32})
         attributes {code_unit_id = 2 : i64, entry_kind = 12 : i32} {
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      %receiver = obelisk_sim.class.alloc %ctx :
-        !obelisk_sim.context -> !obelisk_sim.class_handle<@Base>
-      %interface = obelisk_sim.class.cast %receiver :
-        !obelisk_sim.class_handle<@Base> to
-        !obelisk_sim.class_handle<@Runner>
+      %receiver = simulation.class.alloc %ctx :
+        !simulation.context -> !simulation.class_handle<@Base>
+      %interface = simulation.class.cast %receiver :
+        !simulation.class_handle<@Base> to
+        !simulation.class_handle<@Runner>
       %value = arith.constant 42 : i32
-      %empty = obelisk_sim.aggregate.default : !bundle
-      %bundle = obelisk_sim.aggregate.insert %receiver into %empty[0] :
-        (!bundle, !obelisk_sim.class_handle<@Base>) -> !bundle
-      obelisk_sim.class.virtual_task_call
+      %empty = simulation.aggregate.default : !bundle
+      %bundle = simulation.aggregate.insert %receiver into %empty[0] :
+        (!bundle, !simulation.class_handle<@Base>) -> !bundle
+      simulation.class.virtual_task_call
         %interface[@Runner_run] slot 4294967295 signature_id 17
         (%value, %bundle, %bundle) arguments 2 to ^done :
-        (!obelisk_sim.class_handle<@Runner>, i32, !bundle, !bundle) -> ()
+        (!simulation.class_handle<@Runner>, i32, !bundle, !bundle) -> ()
     ^done(%continued: !bundle):
-      obelisk_sim.return
+      simulation.return
     }
 
-    obelisk_sim.func @class_caller(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32})
+    simulation.func @class_caller(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 3 : i64, entry_kind = 1 : i32} {
-      %receiver = obelisk_sim.class.alloc %ctx :
-        !obelisk_sim.context -> !obelisk_sim.class_handle<@Base>
+      %receiver = simulation.class.alloc %ctx :
+        !simulation.context -> !simulation.class_handle<@Base>
       %value = arith.constant 9 : i32
-      %empty = obelisk_sim.aggregate.default : !bundle
-      %bundle = obelisk_sim.aggregate.insert %receiver into %empty[0] :
-        (!bundle, !obelisk_sim.class_handle<@Base>) -> !bundle
-      obelisk_sim.class.virtual_task_call
+      %empty = simulation.aggregate.default : !bundle
+      %bundle = simulation.aggregate.insert %receiver into %empty[0] :
+        (!bundle, !simulation.class_handle<@Base>) -> !bundle
+      simulation.class.virtual_task_call
         %receiver[@Base_run] slot 0 signature_id 17
         (%value, %bundle) arguments 2 to ^done :
-        (!obelisk_sim.class_handle<@Base>, i32, !bundle) -> ()
+        (!simulation.class_handle<@Base>, i32, !bundle) -> ()
     ^done:
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

@@ -96,4 +96,4 @@ endmodule
 // later optimization is allowed to fold them.
 // SIM: arith.constant -3 : i32
 // SIM: arith.constant 1.250000e+00 : f64
-// SIM: obelisk_sim.logic.constant -27 : i6, 12 : i6
+// SIM: simulation.logic.constant -27 : i6, 12 : i6

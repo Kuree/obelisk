@@ -3,24 +3,24 @@
 // The indexed range is evaluated after the preceding length field is stored.
 // The dynamic array is resized, its unaffected prefix is copied, and stream
 // elements are written at the selected indices.
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: obelisk_sim.ref.store
-// CHECK: %[[LENGTH:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.ref.store
+// CHECK: %[[LENGTH:.*]] = simulation.ref.load
 // CHECK: %[[LENGTH64:.*]] = arith.extui %[[LENGTH]]
 // CHECK: arith.cmpi sgt
 // CHECK: %[[RESIZED:.*]] = arith.addi %[[LENGTH64]],
 // CHECK: arith.muli %[[LENGTH64]],
 // CHECK: arith.cmpi ule
-// CHECK: %[[OLD:.*]] = obelisk_sim.ref.load {{.*}} : !obelisk_sim.ref<!obelisk_sim.dynamic_array<i8>> -> !obelisk_sim.dynamic_array<i8>
-// CHECK: %[[OLD_SIZE:.*]] = obelisk_sim.container.size %[[OLD]]
+// CHECK: %[[OLD:.*]] = simulation.ref.load {{.*}} : !simulation.ref<!simulation.dynamic_array<i8>> -> !simulation.dynamic_array<i8>
+// CHECK: %[[OLD_SIZE:.*]] = simulation.container.size %[[OLD]]
 // CHECK: %[[GROW:.*]] = arith.cmpi ult, %[[OLD_SIZE]], %[[RESIZED]]
 // CHECK: %[[NEW_SIZE:.*]] = arith.select %[[GROW]], %[[RESIZED]], %[[OLD_SIZE]]
-// CHECK: %[[RESULT:.*]] = obelisk_sim.container.create %[[NEW_SIZE]]
-// CHECK: obelisk_sim.container.read %[[OLD]]
-// CHECK: obelisk_sim.container.write %[[RESULT]],
-// CHECK: obelisk_sim.container.read
-// CHECK: obelisk_sim.container.write %[[RESULT]],
-// CHECK: obelisk_sim.ref.store
+// CHECK: %[[RESULT:.*]] = simulation.container.create %[[NEW_SIZE]]
+// CHECK: simulation.container.read %[[OLD]]
+// CHECK: simulation.container.write %[[RESULT]],
+// CHECK: simulation.container.read
+// CHECK: simulation.container.write %[[RESULT]],
+// CHECK: simulation.ref.store
 // CHECK-NOT: obelisk.sv.
 
 module {

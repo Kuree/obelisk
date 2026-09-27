@@ -4,11 +4,11 @@
 
 // A constant-false property never matches, so every clock tick reports a
 // failure: the monitor is one posedge loop that spawns the report each pass.
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork
-// CHECK: obelisk_sim.bytes.constant "ERROR:{{.*}}concurrent assertion failed."
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK: obelisk_sim.spawn @unit_0.fork
+// CHECK-LABEL: simulation.func private @unit_0.fork
+// CHECK: simulation.bytes.constant "ERROR:{{.*}}concurrent assertion failed."
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.spawn @unit_0.fork
 
 // IEEE 1800-2017 16.7: a single Boolean expression matches at a clock tick
 // provided the expression evaluates to true at that tick. A constant-false

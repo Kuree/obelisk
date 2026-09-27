@@ -62,7 +62,7 @@ endmodule
 // 0x11b is the marker plus Clause 31.5 classes 01, 0x, 1x, and x0.
 // The first transition also guards full-width native and bytecode serialization.
 // SIM: trigger = change
-// SIM: obelisk_sim.suspend.clock_set
+// SIM: simulation.suspend.clock_set
 // SIM-SAME: edges [1, 283]
 // SIM-NOT: timing_check_table
 // CHECK: custom-01 1

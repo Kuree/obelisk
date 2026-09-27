@@ -56,11 +56,11 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Both normalized traces remain distinct. The zero-count trace has a
 // three-sample horizon and the one-count trace has a four-sample horizon, so
 // their state updates contain endpoint masks 4 and 8 respectively.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: obelisk_sim.branching_sequence_monitor
-// CHECK: obelisk_sim.suspend.edge posedge
-// CHECK-COUNT-3: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK: simulation.suspend.edge posedge
+// CHECK-COUNT-3: simulation.assert.sampled_read
 // CHECK: arith.constant{{.*}} 4 : i64
 // CHECK: arith.constant{{.*}} 8 : i64
 // CHECK: arith.select

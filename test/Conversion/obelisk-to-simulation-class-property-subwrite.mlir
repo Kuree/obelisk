@@ -113,14 +113,14 @@ module {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // `c.p.fst = 5` rebuilds the struct property around its first member.
-// CHECK:      %[[FIELD:.*]] = obelisk_sim.class.field_ref {{.*}}@{{.*}}p
-// CHECK:      %[[STRUCT:.*]] = obelisk_sim.managed.load %[[FIELD]]
-// CHECK:      %[[UPDATED:.*]] = obelisk_sim.aggregate.insert {{.*}} into %[[STRUCT]][0]
-// CHECK:      obelisk_sim.managed.store %[[UPDATED]] to %[[FIELD]]
+// CHECK:      %[[FIELD:.*]] = simulation.class.field_ref {{.*}}@{{.*}}p
+// CHECK:      %[[STRUCT:.*]] = simulation.managed.load %[[FIELD]]
+// CHECK:      %[[UPDATED:.*]] = simulation.aggregate.insert {{.*}} into %[[STRUCT]][0]
+// CHECK:      simulation.managed.store %[[UPDATED]] to %[[FIELD]]
 // `c.arr[1] = 7` rebuilds the array property around its second element.
-// CHECK:      %[[ELEMENT:.*]] = obelisk_sim.class.field_ref {{.*}}@{{.*}}arr
-// CHECK:      %[[ARRAY:.*]] = obelisk_sim.managed.load %[[ELEMENT]]
-// CHECK:      %[[WRITTEN:.*]] = obelisk_sim.aggregate.insert {{.*}} into %[[ARRAY]][1]
-// CHECK:      obelisk_sim.managed.store %[[WRITTEN]] to %[[ELEMENT]]
+// CHECK:      %[[ELEMENT:.*]] = simulation.class.field_ref {{.*}}@{{.*}}arr
+// CHECK:      %[[ARRAY:.*]] = simulation.managed.load %[[ELEMENT]]
+// CHECK:      %[[WRITTEN:.*]] = simulation.aggregate.insert {{.*}} into %[[ARRAY]][1]
+// CHECK:      simulation.managed.store %[[WRITTEN]] to %[[ELEMENT]]

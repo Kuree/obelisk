@@ -142,26 +142,26 @@ module {
 }
 
 // The task ABI uses a uniform persistent argument reference for a ref formal.
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: !obelisk_sim.argument_ref<i32>
-// CHECK: obelisk_sim.argument_ref.store
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: !simulation.argument_ref<i32>
+// CHECK: simulation.argument_ref.store
 
 // An indexed queue actual first materializes null-as-empty storage. Publishing
 // the owned container before forming the path lets output/ref copyback append
 // to an initially empty queue.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: %[[LOADED:.*]] = obelisk_sim.ref.load
-// CHECK: %[[NULL:.*]] = obelisk_sim.managed.is_null %[[LOADED]]
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK: %[[LOADED:.*]] = simulation.ref.load
+// CHECK: %[[NULL:.*]] = simulation.managed.is_null %[[LOADED]]
 // CHECK: cf.cond_br %[[NULL]]
-// CHECK: %[[EMPTY:.*]] = obelisk_sim.container.create
+// CHECK: %[[EMPTY:.*]] = simulation.container.create
 // CHECK: cf.br {{.*}}(%[[EMPTY]]
-// CHECK: %[[MATERIALIZED:.*]]: !obelisk_sim.queue<i32, 0>
-// CHECK: %[[OWNED:.*]] = obelisk_sim.container.clone %[[MATERIALIZED]]
-// CHECK: obelisk_sim.ref.store %[[OWNED]]
-// CHECK: obelisk_sim.ref.load
-// CHECK: ^{{bb[0-9]+}}(%[[READY:.*]]: !obelisk_sim.queue<i32, 0>):
-// CHECK: %[[OWNER_REF:.*]] = obelisk_sim.argument_ref.from_ref
-// CHECK: %[[PATH:.*]] = obelisk_sim.reference_path.index {{.*}}, %[[READY]]{{.*}} watching %[[OWNER_REF]]
-// CHECK: %[[REF:.*]] = obelisk_sim.argument_ref.from_path %[[PATH]]
-// CHECK: obelisk_sim.task.call @unit_0({{.*}}, %[[REF]])
-// CHECK-SAME: !obelisk_sim.argument_ref<i32>
+// CHECK: %[[MATERIALIZED:.*]]: !simulation.queue<i32, 0>
+// CHECK: %[[OWNED:.*]] = simulation.container.clone %[[MATERIALIZED]]
+// CHECK: simulation.ref.store %[[OWNED]]
+// CHECK: simulation.ref.load
+// CHECK: ^{{bb[0-9]+}}(%[[READY:.*]]: !simulation.queue<i32, 0>):
+// CHECK: %[[OWNER_REF:.*]] = simulation.argument_ref.from_ref
+// CHECK: %[[PATH:.*]] = simulation.reference_path.index {{.*}}, %[[READY]]{{.*}} watching %[[OWNER_REF]]
+// CHECK: %[[REF:.*]] = simulation.argument_ref.from_path %[[PATH]]
+// CHECK: simulation.task.call @unit_0({{.*}}, %[[REF]])
+// CHECK-SAME: !simulation.argument_ref<i32>

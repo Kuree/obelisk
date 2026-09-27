@@ -229,30 +229,30 @@ module {
   }
 }
 
-// CHECK-DAG: obelisk_sim.scope.decl [[A:[0-9]+]] parent 1 hierarchy "top.a"
-// CHECK-DAG: obelisk_sim.scope.decl [[B:[0-9]+]] parent 1 hierarchy "top.b"
+// CHECK-DAG: simulation.scope.decl [[A:[0-9]+]] parent 1 hierarchy "top.a"
+// CHECK-DAG: simulation.scope.decl [[B:[0-9]+]] parent 1 hierarchy "top.b"
 // Per IEEE 1800-2017 13.5, the outlined task copies its hidden output
 // temporary back through the caller-provided output reference. Its unused
 // copy-in value is not part of the lowered boundary.
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK: [[OUT_STORAGE:%.*]] = obelisk_sim.context.storage %arg0[4]
-// CHECK: [[OUT:%.*]] = obelisk_sim.ref.load [[OUT_STORAGE]]
-// CHECK: obelisk_sim.ref.store [[OUT]] to %arg1
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK: obelisk_sim.virtual_interface.scope
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK: [[OUT_STORAGE:%.*]] = simulation.context.storage %arg0[4]
+// CHECK: [[OUT:%.*]] = simulation.ref.load [[OUT_STORAGE]]
+// CHECK: simulation.ref.store [[OUT]] to %arg1
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK: simulation.virtual_interface.scope
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.call @unit_0
+// CHECK: simulation.call @unit_0
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.call @unit_2
+// CHECK: simulation.call @unit_2
 // CHECK: virtual interface call used a null or invalid handle.
-// CHECK: obelisk_sim.virtual_interface.scope
+// CHECK: simulation.virtual_interface.scope
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.task.call @unit_1(%arg0, %arg2) {{.*}} to [[CONT:\^bb[0-9]+]]
+// CHECK: simulation.task.call @unit_1(%arg0, %arg2) {{.*}} to [[CONT:\^bb[0-9]+]]
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.task.call @unit_3(%arg0, %arg2) {{.*}} to [[CONT]]
+// CHECK: simulation.task.call @unit_3(%arg0, %arg2) {{.*}} to [[CONT]]
 // CHECK: virtual interface task call used a null or invalid handle.
 // CHECK-NOT: obelisk.sv.
 // Every possible instance capture read by a dynamically selected function is
 // conservatively included in always_comb sensitivity.
-// SENS: obelisk_sim.suspend.any {{.*}} edges [0, 0, 0, 0]
+// SENS: simulation.suspend.any {{.*}} edges [0, 0, 0, 0]
 // MODPORT: virtual-interface method is not imported by the selected modport

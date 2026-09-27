@@ -119,11 +119,11 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: %[[ELEMENT:.*]] = obelisk_sim.ref.subelement %{{.*}}{{\[\[1\]\]}}
-// CHECK-SAME: -> !obelisk_sim.ref<!obelisk_sim.packed_array<3 : 0 x i1>>
-// CHECK-NOT: obelisk_sim.ref.load %[[ELEMENT]]
-// CHECK: %[[SLICE:.*]] = obelisk_sim.ref.dyn_extract %[[ELEMENT]] from
-// CHECK-SAME: -> !obelisk_sim.ref<!obelisk_sim.packed_array<5 : 0 x i1>>
-// CHECK: obelisk_sim.nba.enqueue {{.*}} to %[[SLICE]]
-// CHECK-NOT: obelisk_sim.ref.store
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[ELEMENT:.*]] = simulation.ref.subelement %{{.*}}{{\[\[1\]\]}}
+// CHECK-SAME: -> !simulation.ref<!simulation.packed_array<3 : 0 x i1>>
+// CHECK-NOT: simulation.ref.load %[[ELEMENT]]
+// CHECK: %[[SLICE:.*]] = simulation.ref.dyn_extract %[[ELEMENT]] from
+// CHECK-SAME: -> !simulation.ref<!simulation.packed_array<5 : 0 x i1>>
+// CHECK: simulation.nba.enqueue {{.*}} to %[[SLICE]]
+// CHECK-NOT: simulation.ref.store

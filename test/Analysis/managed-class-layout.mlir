@@ -1,15 +1,15 @@
 // RUN: obelisk-opt %s --test-obelisk-managed-class-layout-analysis 2>&1 | FileCheck %s
 
-!tagged = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Referent>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = i32, ordinal = 1, packedOffset = 0>,
-  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 2, packedOffset = 0>
+!tagged = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "object", type = !simulation.class_handle<@Referent>, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "bits", type = i32, ordinal = 1, packedOffset = 0>,
+  #simulation.field<name = "text", type = !simulation.string, ordinal = 2, packedOffset = 0>
 ], isTagged = true>
 
-!untagged = !obelisk_sim.unpacked_union<fields = [
-  #obelisk_sim.field<name = "object", type = !obelisk_sim.class_handle<@Referent>, ordinal = 0, packedOffset = 0>,
-  #obelisk_sim.field<name = "text", type = !obelisk_sim.string, ordinal = 1, packedOffset = 0>,
-  #obelisk_sim.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
+!untagged = !simulation.unpacked_union<fields = [
+  #simulation.field<name = "object", type = !simulation.class_handle<@Referent>, ordinal = 0, packedOffset = 0>,
+  #simulation.field<name = "text", type = !simulation.string, ordinal = 1, packedOffset = 0>,
+  #simulation.field<name = "bits", type = i64, ordinal = 2, packedOffset = 0>
 ], isTagged = false>
 
 module attributes {
@@ -17,60 +17,60 @@ module attributes {
   test.class_bitstream_source = @Base,
   test.class_bitstream_allow_hidden
 } {
-  obelisk_sim.design @classes {
-    obelisk_sim.scope.decl 0
+  simulation.design @classes {
+    simulation.scope.decl 0
 
-    obelisk_sim.class.decl @Referent id 1 {
+    simulation.class.decl @Referent id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.decl @Base id 2 {
+    simulation.class.decl @Base id 2 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.decl @Weak id 3 extends @Base {
+    simulation.class.decl @Weak id 3 extends @Base {
       is_abstract = false, is_final = false, is_interface = false,
       weak_referent = @Referent
     }
-    obelisk_sim.class.decl @Derived id 4 extends @Weak {
+    simulation.class.decl @Derived id 4 extends @Weak {
       is_abstract = false, is_final = true, is_interface = false
     }
-    obelisk_sim.class.decl @TaggedHolder id 5 {
+    simulation.class.decl @TaggedHolder id 5 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    obelisk_sim.class.decl @UntaggedHolder id 6 {
+    simulation.class.decl @UntaggedHolder id 6 {
       is_abstract = false, is_final = false, is_interface = false
     }
 
-    obelisk_sim.class.field @Base_value of @Base at 0 :
-        !obelisk_sim.logic<8> {
+    simulation.class.field @Base_value of @Base at 0 :
+        !simulation.logic<8> {
       is_static = false, is_weak = false,
-      obelisk_sim.class_bitstream_member,
-      obelisk_sim.class_bitstream_visibility = 0 : i32
+      simulation.class_bitstream_member,
+      simulation.class_bitstream_visibility = #simulation.member_visibility<public>
     }
-    obelisk_sim.class.field @Base_static of @Base at 1 : i64 {
+    simulation.class.field @Base_static of @Base at 1 : i64 {
       is_static = true, is_weak = false
     }
-    obelisk_sim.class.field @Weak_count of @Weak at 0 : i32 {
+    simulation.class.field @Weak_count of @Weak at 0 : i32 {
       is_static = false, is_weak = false,
-      obelisk_sim.class_bitstream_member,
-      obelisk_sim.class_bitstream_visibility = 1 : i32
+      simulation.class_bitstream_member,
+      simulation.class_bitstream_visibility = #simulation.member_visibility<protected>
     }
-    obelisk_sim.class.field @Derived_owner of @Derived at 0 :
-        !obelisk_sim.class_handle<@Referent> {
+    simulation.class.field @Derived_owner of @Derived at 0 :
+        !simulation.class_handle<@Referent> {
       is_static = false, is_weak = false,
-      obelisk_sim.class_bitstream_member,
-      obelisk_sim.class_bitstream_visibility = 2 : i32
+      simulation.class_bitstream_member,
+      simulation.class_bitstream_visibility = #simulation.member_visibility<local>
     }
-    obelisk_sim.class.field @Derived_backup_owner of @Derived at 1 :
-        !obelisk_sim.class_handle<@Referent> {
+    simulation.class.field @Derived_backup_owner of @Derived at 1 :
+        !simulation.class_handle<@Referent> {
       is_static = false, is_weak = false,
-      obelisk_sim.class_bitstream_member,
-      obelisk_sim.class_bitstream_visibility = 0 : i32
+      simulation.class_bitstream_member,
+      simulation.class_bitstream_visibility = #simulation.member_visibility<public>
     }
-    obelisk_sim.class.field @TaggedHolder_value of @TaggedHolder at 0 :
+    simulation.class.field @TaggedHolder_value of @TaggedHolder at 0 :
         !tagged {
       is_static = false, is_weak = false
     }
-    obelisk_sim.class.field @UntaggedHolder_value of @UntaggedHolder at 0 :
+    simulation.class.field @UntaggedHolder_value of @UntaggedHolder at 0 :
         !untagged {
       is_static = false, is_weak = false
     }

@@ -68,15 +68,15 @@ module attributes {
 // DIAG: warning: always procedure has no timing control
 
 // The zero-delay loop keeps its plain back edge; nothing is scheduled for it.
-// CHECK: obelisk_sim.func private @unit_0(
+// CHECK: simulation.func private @unit_0(
 // CHECK: cf.br ^[[SPUN:.*]]
 // CHECK: ^[[SPUN]]:
-// CHECK-NOT: obelisk_sim.suspend
+// CHECK-NOT: simulation.suspend
 // CHECK: cf.br ^[[SPUN]]
 
 // A loop that already suspends is a working process and is left untouched.
-// CHECK: obelisk_sim.func private @unit_1(
+// CHECK: simulation.func private @unit_1(
 // CHECK: cf.br ^[[CLOCKED:.*]]
 // CHECK: ^[[CLOCKED]]:
-// CHECK-NEXT: obelisk_sim.suspend.edge posedge
+// CHECK-NEXT: simulation.suspend.edge posedge
 // CHECK: cf.br ^[[CLOCKED]]

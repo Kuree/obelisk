@@ -134,7 +134,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           descriptor->alignment, descriptor->bitWidth,
           builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
           builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-          OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 0);
+          sim::ContainerKind::DynamicArray, 0);
       sim::SimContainerWriteOp::create(builder, location, array, zero,
                                        cloneSequentialValue(value, location));
       return sim::SimBoxPackOp::create(builder, location,
@@ -508,12 +508,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             sim::SimProcessRandomStateOp::create(builder, location, *receiver);
         Value stateText = sim::SimStringFormatIntegerOp::create(
             builder, location, stringType, state.getState(),
-            builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
+            sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex),
+            builder.getBoolAttr(false));
         Value separator = sim::SimStringLiteralOp::create(
             builder, location, stringType, builder.getStringAttr(":"));
         Value incrementText = sim::SimStringFormatIntegerOp::create(
             builder, location, stringType, state.getIncrement(),
-            builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
+            sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex),
+            builder.getBoolAttr(false));
         return sim::SimStringConcatOp::create(
                    builder, location, stringType,
                    ValueRange{stateText, separator, incrementText})
@@ -562,10 +564,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           static_cast<uint32_t>('x'), 0);
       Value parsedState = sim::SimStringParseIntegerOp::create(
           builder, location, i64, stateField.getField(),
-          builder.getI32IntegerAttr(16));
+          sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex));
       Value parsedIncrement = sim::SimStringParseIntegerOp::create(
           builder, location, i64, incrementField.getField(),
-          builder.getI32IntegerAttr(16));
+          sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex));
       Value zero = arith::ConstantOp::create(builder, location, i32,
                                              builder.getI32IntegerAttr(0));
       Value stateMatched =
@@ -780,7 +782,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, objectType.getClassName());
     while (declaration &&
-           !declaration->hasAttr("obelisk_sim.random_mode_field")) {
+           !declaration->hasAttr("simulation.random_mode_field")) {
       if (!declaration.getBaseAttr())
         break;
       declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -788,7 +790,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
     auto modeField = declaration
                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                               "obelisk_sim.random_mode_field")
+                               "simulation.random_mode_field")
                          : FlatSymbolRefAttr{};
     if (!declaration || !modeField) {
       emitError(location) << "rand_mode receiver has no mode state";
@@ -1004,7 +1006,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, objectType.getClassName());
     while (declaration &&
-           !declaration->hasAttr("obelisk_sim.constraint_mode_field")) {
+           !declaration->hasAttr("simulation.constraint_mode_field")) {
       if (!declaration.getBaseAttr())
         break;
       declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1012,7 +1014,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
     auto modeField = declaration
                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                               "obelisk_sim.constraint_mode_field")
+                               "simulation.constraint_mode_field")
                          : FlatSymbolRefAttr{};
     if (!declaration || !modeField) {
       emitError(location) << "constraint_mode receiver has no mode state";
@@ -1147,7 +1149,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, objectType.getClassName());
       while (declaration &&
-             !declaration->hasAttr("obelisk_sim.random_state_field")) {
+             !declaration->hasAttr("simulation.random_state_field")) {
         if (!declaration.getBaseAttr())
           break;
         declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1155,11 +1157,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       }
       auto stateField = declaration
                             ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                  "obelisk_sim.random_state_field")
+                                  "simulation.random_state_field")
                             : FlatSymbolRefAttr{};
       auto incrementField = declaration
                                 ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                      "obelisk_sim.random_increment_field")
+                                      "simulation.random_increment_field")
                                 : FlatSymbolRefAttr{};
       if (!declaration || !stateField || !incrementField) {
         emitError(location)
@@ -1183,7 +1185,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                                         incrementReference);
         Type stringType = sim::StringType::get(function.getContext());
         Value stateText = sim::SimStringFormatIntegerOp::create(
-            builder, location, stringType, state, builder.getI32IntegerAttr(16),
+            builder, location, stringType, state,
+            sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex),
             builder.getBoolAttr(false));
         Value separator = sim::SimStringLiteralOp::create(
             builder, location, stringType, builder.getStringAttr(":"));
@@ -1191,7 +1194,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             builder, location, stringType, ValueRange{stateText, separator});
         Value incrementText = sim::SimStringFormatIntegerOp::create(
             builder, location, stringType, increment,
-            builder.getI32IntegerAttr(16), builder.getBoolAttr(false));
+            sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex),
+            builder.getBoolAttr(false));
         return sim::SimStringConcatOp::create(builder, location, stringType,
                                               ValueRange{prefix, incrementText})
             .getResult();
@@ -1210,10 +1214,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             static_cast<uint32_t>('x'), 0);
         Value parsedState = sim::SimStringParseIntegerOp::create(
             builder, location, i64, stateField.getField(),
-            builder.getI32IntegerAttr(16));
+            sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex));
         Value parsedIncrement = sim::SimStringParseIntegerOp::create(
             builder, location, i64, incrementField.getField(),
-            builder.getI32IntegerAttr(16));
+            sim::RadixAttr::get(builder.getContext(), sim::Radix::Hex));
         Value zero = arith::ConstantOp::create(builder, location, i32,
                                                builder.getI32IntegerAttr(0));
         Value stateMatched =
@@ -1437,7 +1441,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                             : 10;
         return result(sim::SimStringParseIntegerOp::create(
             builder, location, builder.getI64Type(), *input,
-            builder.getI32IntegerAttr(radix)));
+            sim::RadixAttr::get(builder.getContext(),
+                                static_cast<sim::Radix>(radix))));
       }
       if (name == "atoreal" && children.size() == 1) {
         FailureOr<Value> input = receiver();
@@ -1464,7 +1469,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         // unsigned reading of its two's-complement pattern.
         Value updated = sim::SimStringFormatIntegerOp::create(
             builder, location, sim::StringType::get(function.getContext()),
-            *input, builder.getI32IntegerAttr(radix),
+            *input,
+            sim::RadixAttr::get(builder.getContext(),
+                                static_cast<sim::Radix>(radix)),
             builder.getBoolAttr(isSignedNode(children[1])));
         if (failed(storeReference(*destination, updated, location)))
           return failure();
@@ -1527,10 +1534,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     unsupported(op) << " (indirect or system call)";
     return failure();
   }
-  if (op->hasAttr("obelisk_sim.class_instance")) {
+  if (op->hasAttr("simulation.class_instance")) {
     auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
     std::optional<ArrayRef<int64_t>> defaulted = op.getDefaultedArguments();
-    bool superCall = op->hasAttr("obelisk_sim.class_super");
+    bool superCall = op->hasAttr("simulation.class_super");
     bool implicitThis = !superCall && formals && thisObject &&
                         children.size() == formals.size();
     if (!formals) {
@@ -1557,7 +1564,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (failed(receiver) || !isa<sim::ClassHandleType>((*receiver).getType()))
       return failure();
     auto method =
-        op->getAttrOfType<FlatSymbolRefAttr>("obelisk_sim.class_method");
+        op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_method");
     auto declaration =
         method
             ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
@@ -1589,7 +1596,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     SmallVector<Value> arguments;
     SmallVector<ClassCopyOut> copyOuts;
     SmallVector<TaskIndirectCopyOut> taskIndirectCopyOuts;
-    bool classTask = op->hasAttr("obelisk_sim.is_task");
+    bool classTask = op->hasAttr("simulation.is_task");
     size_t formalIndex = 0;
     for (auto [actual, formalAttr] :
          llvm::zip_equal(ArrayRef<Operation *>(children).drop_front(
@@ -1776,14 +1783,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                    schedule::ContinuationSiteAttr{},
                                    continuation);
       };
-      if (!op->hasAttr("obelisk_sim.class_virtual")) {
+      if (!op->hasAttr("simulation.class_virtual")) {
         emitTaskCall(callee, *receiver);
         return finishTask();
       }
 
-      auto slot = op->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
+      auto slot = op->getAttrOfType<IntegerAttr>("simulation.class_slot");
       auto signature =
-          op->getAttrOfType<IntegerAttr>("obelisk_sim.class_signature");
+          op->getAttrOfType<IntegerAttr>("simulation.class_signature");
       if (!method || !slot || !signature || signature.getValue().isZero())
         return emitError(location)
                    << "virtual class task has no frozen slot and signature",
@@ -1795,10 +1802,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return finishTask();
     }
     ValueRange results;
-    if (op->hasAttr("obelisk_sim.class_virtual")) {
-      auto slot = op->getAttrOfType<IntegerAttr>("obelisk_sim.class_slot");
+    if (op->hasAttr("simulation.class_virtual")) {
+      auto slot = op->getAttrOfType<IntegerAttr>("simulation.class_slot");
       auto signature =
-          op->getAttrOfType<IntegerAttr>("obelisk_sim.class_signature");
+          op->getAttrOfType<IntegerAttr>("simulation.class_signature");
       if (!method || !slot || !signature || signature.getValue().isZero()) {
         emitError(location)
             << "virtual call has no frozen method slot and signature";
@@ -1834,11 +1841,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                      builder.getBoolAttr(false))
         .getResult();
   }
-  bool directTask = op->hasAttr("obelisk_sim.is_task");
+  bool directTask = op->hasAttr("simulation.is_task");
   SmallVector<Value> operands{function.getBody().front().getArgument(0)};
   auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
   auto virtualCallees =
-      op->getAttrOfType<ArrayAttr>("obelisk_sim.virtual_interface_callees");
+      op->getAttrOfType<ArrayAttr>("simulation.virtual_interface_callees");
   bool staticClassReceiver = op->hasAttr(staticClassReceiverAttrName);
   unsigned receiverCount = staticClassReceiver || virtualCallees ? 1 : 0;
   if (!formals || formals.size() + receiverCount != children.size()) {
@@ -2444,7 +2451,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   sim::SimFuncOp directCallee =
       SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(op, callee);
   bool voidFunction =
-      directCallee && directCallee->hasAttr("obelisk_sim.void_function");
+      directCallee && directCallee->hasAttr("simulation.void_function");
   bool hasFunctionResult = !dpiTask && !directTask && !voidFunction;
   SmallVector<Type> callResultTypes;
   if (hasFunctionResult) {
@@ -3085,18 +3092,18 @@ LogicalResult UnitLowering::initializeObjectRandomStream(Value object,
       SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, objectType.getClassName());
   while (declaration &&
-         !declaration->hasAttr("obelisk_sim.random_state_field")) {
+         !declaration->hasAttr("simulation.random_state_field")) {
     if (!declaration.getBaseAttr())
       break;
     declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
         function, declaration.getBaseAttr());
   }
   auto stateField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                      "obelisk_sim.random_state_field")
+                                      "simulation.random_state_field")
                                 : FlatSymbolRefAttr{};
   auto incrementField = declaration
                             ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                  "obelisk_sim.random_increment_field")
+                                  "simulation.random_increment_field")
                             : FlatSymbolRefAttr{};
   if (!declaration || !stateField || !incrementField) {
     emitError(location) << "class hierarchy has no inline random stream";

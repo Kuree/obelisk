@@ -54,26 +54,26 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // to clear the eligible count, so a later true terminal cannot report the
 // same source attempt again.
 // CHECK-NOT: @unit_0.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.first_match_monitor
-// CHECK-SAME: obelisk_sim.persistent_delay_aggregate_tokens
-// CHECK-SAME: obelisk_sim.persistent_delay_minimum = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_delay_prefix_horizon = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_first_match_equivalence
-// CHECK-NOT: obelisk_sim.persistent_delay_all_matches
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK: obelisk_sim.logic.is_true
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[TERMINAL:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
-// CHECK-NOT: obelisk_sim.assert.sampled_read
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.persistent_delay_aggregate_tokens
+// CHECK-SAME: simulation.persistent_delay_minimum = 1 : i64
+// CHECK-SAME: simulation.persistent_delay_prefix_horizon = 1 : i64
+// CHECK-SAME: simulation.persistent_first_match_equivalence
+// CHECK-NOT: simulation.persistent_delay_all_matches
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK: simulation.logic.is_true
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[TERMINAL:[[:alnum:]_]+]] = simulation.logic.is_true
+// CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NEXT: %[[SUCCESS_ZERO:[[:alnum:]_]+]] = arith.constant {{.*}}0 : i64
 // CHECK-NEXT: %[[SUCCESS:[[:alnum:]_]+]] = arith.select %[[TERMINAL]], %[[ELIGIBLE:[[:alnum:]_]+]], %[[SUCCESS_ZERO]] : i64
 // CHECK-NEXT: %[[NEXT_ZERO:[[:alnum:]_]+]] = arith.constant {{.*}}0 : i64
 // CHECK-NEXT: %[[NEXT:[[:alnum:]_]+]] = arith.select %[[TERMINAL]], %[[NEXT_ZERO]], %[[ELIGIBLE]] : i64
 // CHECK: cf.br ^{{.*}}(%[[SUCCESS]] : i64)
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}}(%{{.*}}, %[[NEXT]] : i64, i64)
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.9.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.9.0.0
-// CHECK-NOT: obelisk_sim.first_match_priority
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.9.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.9.0.0
+// CHECK-NOT: simulation.first_match_priority
 // CHECK-NOT: obelisk.sv.assertion

@@ -28,9 +28,9 @@
 // IEEE 1800-2017 19.8 makes get_coverage available through both an instance
 // and the static item scope. get_inst_coverage remains instance-only. All
 // forms carry the same stable FunctionalItem identity into the v1 query op.
-// CHECK: obelisk_sim.covergroup.instance_query {{.*}} item [[ITEM:-?[0-9]+]]
-// CHECK: obelisk_sim.covergroup.type_query {{.*}} item [[ITEM]]
-// CHECK: obelisk_sim.covergroup.type_query {{.*}} item [[ITEM]]
+// CHECK: simulation.covergroup.instance_query {{.*}} item [[ITEM:-?[0-9]+]]
+// CHECK: simulation.covergroup.type_query {{.*}} item [[ITEM]]
+// CHECK: simulation.covergroup.type_query {{.*}} item [[ITEM]]
 // BAD-ITEM: error: has a nonexistent or wrong-owner functional item ID
 
 //--- input.sv

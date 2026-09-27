@@ -8,114 +8,114 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk_sim.design @static_inventory {
-    obelisk_sim.scope.decl 0 hierarchy "$root"
-    obelisk_sim.scope.decl 1 parent 0 hierarchy "top" {
+  simulation.design @static_inventory {
+    simulation.scope.decl 0 hierarchy "$root"
+    simulation.scope.decl 1 parent 0 hierarchy "top" {
       vpi_kind = 32 : i32,
       definition_loc = loc("top_definition.sv":11:2)
     }
 
-    obelisk_sim.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0
+    simulation.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0
         hierarchy "top" debug "top" {
-      backing = #obelisk_sim.vpi_backing<kind = scope, id = 1 : i64>,
+      backing = #simulation.vpi_backing<kind = scope, id = 1 : i64>,
       is_protected,
-      vpi_properties = #obelisk_sim.vpi_properties<[
-        #obelisk_sim.vpi_property<selector = 7 : i32, value = true>,
-        #obelisk_sim.vpi_property<selector = 8 : i32, value = false>,
-        #obelisk_sim.vpi_property<selector = 9 : i32, value = "top_def">,
-        #obelisk_sim.vpi_property<selector = 50 : i32, value = true>,
-        #obelisk_sim.vpi_property<selector = 600 : i32, value = true>,
-        #obelisk_sim.vpi_property<selector = 602 : i32, value = false>
+      vpi_properties = #simulation.vpi_properties<[
+        #simulation.vpi_property<selector = 7 : i32, value = true>,
+        #simulation.vpi_property<selector = 8 : i32, value = false>,
+        #simulation.vpi_property<selector = 9 : i32, value = "top_def">,
+        #simulation.vpi_property<selector = 50 : i32, value = true>,
+        #simulation.vpi_property<selector = 600 : i32, value = true>,
+        #simulation.vpi_property<selector = 602 : i32, value = false>
       ]>
     } loc("top_use.sv":4:7)
-    obelisk_sim.vpi_object.anchor @pkg id 1 type 600 in 0 ordinal 1
+    simulation.vpi_object.anchor @pkg id 1 type 600 in 0 ordinal 1
         hierarchy "pkg" debug "pkg"
-    obelisk_sim.vpi_object.anchor @class id 2 type 652 in 0 parent @pkg
+    simulation.vpi_object.anchor @class id 2 type 652 in 0 parent @pkg
         ordinal 0 hierarchy "pkg::C" debug "C"
-    obelisk_sim.code_unit.decl 2 in 0 function
+    simulation.code_unit.decl 2 in 0 function
         hierarchy "pkg::C::method" debug "method"
-    obelisk_sim.vpi_object.anchor @method id 3 type 20 in 0 parent @class
+    simulation.vpi_object.anchor @method id 3 type 20 in 0 parent @class
         ordinal 0 hierarchy "pkg::C::method" debug "method" {
-      backing = #obelisk_sim.vpi_backing<kind = code_unit, id = 2 : i64>
+      backing = #simulation.vpi_backing<kind = code_unit, id = 2 : i64>
     }
 
-    obelisk_sim.vpi_typespec.decl @base_t id 0 in 1 owner @top
+    simulation.vpi_typespec.decl @base_t id 0 in 1 owner @top
         hierarchy "top.base_t" debug "base_t" {
-      target_type = #obelisk_sim.vpi_type<kind = packed_array,
+      target_type = #simulation.vpi_type<kind = packed_array,
           isSigned = false, isFourState = false, range = [7, 0], children = [
-            #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+            #simulation.vpi_type<kind = bit, isSigned = false,
                 isFourState = false, range = [0, 0], children = [],
                 childNames = []>
           ], childNames = [], typedefAliases = [@base_t]>
     }
-    obelisk_sim.vpi_typespec.decl @alias_t id 1 in 1 owner @top
+    simulation.vpi_typespec.decl @alias_t id 1 in 1 owner @top
         hierarchy "top.alias_t" debug "alias_t" {
-      target_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+      target_type = #simulation.vpi_type<kind = bit, isSigned = false,
           isFourState = false, range = [0, 0], children = [], childNames = [],
           typedefAliases = [@alias_t, @base_t]>
     }
-    obelisk_sim.vpi_typespec.decl @state_t id 2 in 1 owner @top
+    simulation.vpi_typespec.decl @state_t id 2 in 1 owner @top
         hierarchy "top.state_t" debug "state_t" {
       origin = 2 : i32,
       source_type_identity = 7 : i64,
-      target_type = #obelisk_sim.vpi_type<kind = enum, isSigned = false,
+      target_type = #simulation.vpi_type<kind = enum, isSigned = false,
           isFourState = true, name = "state_t", range = [], children = [
-            #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+            #simulation.vpi_type<kind = logic, isSigned = false,
                 isFourState = true, range = [1, 0], children = [],
                 childNames = []>
           ], childNames = []>
     }
-    obelisk_sim.vpi_typespec.decl @enum_array_t id 3 in 1 owner @top
+    simulation.vpi_typespec.decl @enum_array_t id 3 in 1 owner @top
         hierarchy "top.enum_array_t" debug "enum_array_t" {
-      target_type = #obelisk_sim.vpi_type<kind = packed_array,
+      target_type = #simulation.vpi_type<kind = packed_array,
           isSigned = false, isFourState = true, range = [3, 0], children = [
-            #obelisk_sim.vpi_type<kind = enum, isSigned = false,
+            #simulation.vpi_type<kind = enum, isSigned = false,
                 isFourState = true, name = "state_t", range = [], children = [
-                  #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+                  #simulation.vpi_type<kind = logic, isSigned = false,
                       isFourState = true, range = [1, 0], children = [],
                       childNames = []>
                 ], childNames = []>
           ], childNames = [], typedefAliases = [@enum_array_t]>
     }
-    obelisk_sim.vpi_typespec.decl @iface_t id 4 in 1 owner @top
+    simulation.vpi_typespec.decl @iface_t id 4 in 1 owner @top
         hierarchy "@iface" debug "iface" {
       origin = 1 : i32,
-      target_type = #obelisk_sim.vpi_type<kind = virtual_interface,
+      target_type = #simulation.vpi_type<kind = virtual_interface,
           isSigned = false, isFourState = false, name = "@iface",
           symbol = @iface_t, modport = "", range = [], children = [],
           childNames = []>
     }
-    obelisk_sim.vpi_typespec.decl @iface_mp_t id 5 in 1 owner @top
+    simulation.vpi_typespec.decl @iface_mp_t id 5 in 1 owner @top
         hierarchy "@iface" debug "iface.mp" {
       origin = 1 : i32,
-      target_type = #obelisk_sim.vpi_type<kind = virtual_interface,
+      target_type = #simulation.vpi_type<kind = virtual_interface,
           isSigned = false, isFourState = false, name = "@iface",
           symbol = @iface_mp_t, modport = "mp", range = [], children = [],
           childNames = []>
     }
-    obelisk_sim.vpi_typespec.decl @anonymous_t id 6 in 1 owner @top
+    simulation.vpi_typespec.decl @anonymous_t id 6 in 1 owner @top
         hierarchy "top" debug "anonymous" {
       origin = 2 : i32,
       source_type_identity = 8 : i64,
-      target_type = #obelisk_sim.vpi_type<kind = enum, isSigned = false,
+      target_type = #simulation.vpi_type<kind = enum, isSigned = false,
           isFourState = false, name = "anonymous", range = [], children = [
-            #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+            #simulation.vpi_type<kind = bit, isSigned = false,
                 isFourState = false, range = [0, 0], children = [],
                 childNames = []>
           ], childNames = []>
     }
-    obelisk_sim.vpi_typespec.decl @record_t id 7 in 1 owner @top
+    simulation.vpi_typespec.decl @record_t id 7 in 1 owner @top
         hierarchy "top.record_t" debug "record_t" {
-      target_type = #obelisk_sim.vpi_type<kind = packed_struct,
+      target_type = #simulation.vpi_type<kind = packed_struct,
           isSigned = false, isFourState = true, name = "record_t", range = [],
           children = [
-            #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+            #simulation.vpi_type<kind = logic, isSigned = false,
                 isFourState = true, range = [0, 0], children = [],
                 childNames = []>,
-            #obelisk_sim.vpi_type<kind = enum, isSigned = false,
+            #simulation.vpi_type<kind = enum, isSigned = false,
                 isFourState = false, name = "nested_state", range = [],
                 children = [
-                  #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+                  #simulation.vpi_type<kind = bit, isSigned = false,
                       isFourState = false, range = [0, 0], children = [],
                       childNames = []>
                 ], childNames = []>
@@ -125,72 +125,72 @@ module attributes {
           childOrdinals = [0, 1], childPackedOffsets = [1, 0],
           childRandTypes = [2, 3]>
     }
-    obelisk_sim.vpi_enum_const.decl 0 enum @state_t ordinal 0
+    simulation.vpi_enum_const.decl 0 enum @state_t ordinal 0
         name "IDLE" value "2'b00"
-    obelisk_sim.vpi_enum_const.decl 1 enum @state_t ordinal 1
+    simulation.vpi_enum_const.decl 1 enum @state_t ordinal 1
         name "RUN" value "2'b01"
 
-    obelisk_sim.storage.decl 0 in 1 : i1 design hierarchy "top.value" {
-      vpi_type = #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+    simulation.storage.decl 0 in 1 : i1 design hierarchy "top.value" {
+      vpi_type = #simulation.vpi_type<kind = bit, isSigned = false,
           isFourState = false, range = [0, 0], children = [], childNames = [],
           typedefAliases = [@alias_t]>
     }
-    obelisk_sim.storage.decl 1 in 1 : i1 design hierarchy "top.anon_value" {
-      obelisk_sim.vpi_source_type_identity = 8 : i64,
-      vpi_type = #obelisk_sim.vpi_type<kind = enum, isSigned = false,
+    simulation.storage.decl 1 in 1 : i1 design hierarchy "top.anon_value" {
+      simulation.vpi_source_type_identity = 8 : i64,
+      vpi_type = #simulation.vpi_type<kind = enum, isSigned = false,
           isFourState = false, name = "anonymous", range = [], children = [
-            #obelisk_sim.vpi_type<kind = bit, isSigned = false,
+            #simulation.vpi_type<kind = bit, isSigned = false,
                 isFourState = false, range = [0, 0], children = [],
                 childNames = []>
           ], childNames = []>
     }
-    obelisk_sim.storage.decl 2 in 1 :
-        !obelisk_sim.unpacked_array<0 : 1 x
-          !obelisk_sim.packed_array<7 : 4 x !obelisk_sim.logic<1>>>
+    simulation.storage.decl 2 in 1 :
+        !simulation.unpacked_array<0 : 1 x
+          !simulation.packed_array<7 : 4 x !simulation.logic<1>>>
         design hierarchy "top.indexed_value" {
-      vpi_type = #obelisk_sim.vpi_type<kind = unpacked_array,
+      vpi_type = #simulation.vpi_type<kind = unpacked_array,
           isSigned = false, isFourState = true, range = [0, 1], children = [
-            #obelisk_sim.vpi_type<kind = packed_array,
+            #simulation.vpi_type<kind = packed_array,
                 isSigned = false, isFourState = true, range = [7, 4],
                 children = [
-                  #obelisk_sim.vpi_type<kind = logic, isSigned = false,
+                  #simulation.vpi_type<kind = logic, isSigned = false,
                       isFourState = true, range = [0, 0], children = [],
                       childNames = []>
                 ], childNames = []>
           ], childNames = []>
     }
-    obelisk_sim.net.decl 0 in 1 : !obelisk_sim.logic<4> design
+    simulation.net.decl 0 in 1 : !simulation.logic<4> design
         hierarchy "top.net" {
-      vpi_properties = #obelisk_sim.vpi_properties<[
-        #obelisk_sim.vpi_property<selector = 22 : i32, value = 7 : i32>,
-        #obelisk_sim.vpi_property<selector = 23 : i32, value = false>,
-        #obelisk_sim.vpi_property<selector = 24 : i32, value = true>,
-        #obelisk_sim.vpi_property<selector = 25 : i32, value = false>,
-        #obelisk_sim.vpi_property<selector = 26 : i32, value = true>,
-        #obelisk_sim.vpi_property<selector = 27 : i32, value = 16 : i32>,
-        #obelisk_sim.vpi_property<selector = 43 : i32, value = true>
+      vpi_properties = #simulation.vpi_properties<[
+        #simulation.vpi_property<selector = 22 : i32, value = 7 : i32>,
+        #simulation.vpi_property<selector = 23 : i32, value = false>,
+        #simulation.vpi_property<selector = 24 : i32, value = true>,
+        #simulation.vpi_property<selector = 25 : i32, value = false>,
+        #simulation.vpi_property<selector = 26 : i32, value = true>,
+        #simulation.vpi_property<selector = 27 : i32, value = 16 : i32>,
+        #simulation.vpi_property<selector = 43 : i32, value = true>
       ]>
     }
-    obelisk_sim.net.decl 1 in 1 : !obelisk_sim.logic<1> design
+    simulation.net.decl 1 in 1 : !simulation.logic<1> design
         hierarchy "top.net_zero" {
-      vpi_properties = #obelisk_sim.vpi_properties<[
-        #obelisk_sim.vpi_property<selector = 22 : i32, value = 1 : i32>,
-        #obelisk_sim.vpi_property<selector = 23 : i32, value = false>,
-        #obelisk_sim.vpi_property<selector = 27 : i32, value = 0 : i32>
+      vpi_properties = #simulation.vpi_properties<[
+        #simulation.vpi_property<selector = 22 : i32, value = 1 : i32>,
+        #simulation.vpi_property<selector = 23 : i32, value = false>,
+        #simulation.vpi_property<selector = 27 : i32, value = 0 : i32>
       ]>
     }
-    obelisk_sim.code_unit.decl 3 in 1 always hierarchy "top.always"
-    obelisk_sim.code_unit.decl 4 in 1 always_comb hierarchy "top.always_comb"
-    obelisk_sim.code_unit.decl 5 in 1 always_ff hierarchy "top.always_ff"
-    obelisk_sim.code_unit.decl 6 in 1 always_latch hierarchy "top.always_latch"
-    obelisk_sim.code_unit.decl 7 in 1 always hierarchy "top.internal_always" {
+    simulation.code_unit.decl 3 in 1 always hierarchy "top.always"
+    simulation.code_unit.decl 4 in 1 always_comb hierarchy "top.always_comb"
+    simulation.code_unit.decl 5 in 1 always_ff hierarchy "top.always_ff"
+    simulation.code_unit.decl 6 in 1 always_latch hierarchy "top.always_latch"
+    simulation.code_unit.decl 7 in 1 always hierarchy "top.internal_always" {
       internal
     }
-    obelisk_sim.code_unit.decl 1 in 1 initial hierarchy "top.initial"
-    obelisk_sim.func @initial(%ctx: !obelisk_sim.context
-        {obelisk_sim.capture_kind = 0 : i32})
+    simulation.code_unit.decl 1 in 1 initial hierarchy "top.initial"
+    simulation.func @initial(%ctx: !simulation.context
+        {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      obelisk_sim.return
+      simulation.return
     }
   }
 }

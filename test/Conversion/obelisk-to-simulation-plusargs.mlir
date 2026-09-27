@@ -5,12 +5,12 @@
 // picked here. A miss leaves the destination alone, so the store selects
 // between the parsed value and the one already there.
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.plusarg.test
-// CHECK: %[[PREFIX:.*]] = obelisk_sim.string.literal "SEED="
-// CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = obelisk_sim.plusarg.value {{.*}}, %[[PREFIX]]
-// CHECK: %[[PARSED:.*]] = obelisk_sim.plusarg.parse_logic %[[TAIL]] {radix = 10 : i32} : (!obelisk_sim.string) -> !obelisk_sim.logic<32>
-// CHECK: %[[CURRENT:.*]] = obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.plusarg.test
+// CHECK: %[[PREFIX:.*]] = simulation.string.literal "SEED="
+// CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = simulation.plusarg.value {{.*}}, %[[PREFIX]]
+// CHECK: %[[PARSED:.*]] = simulation.plusarg.parse_logic %[[TAIL]] {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
+// CHECK: %[[CURRENT:.*]] = simulation.ref.load
 // CHECK: %[[MATCHED:.*]] = arith.cmpi ne, %[[FOUND]]
 // CHECK: arith.select %[[MATCHED]], {{.*}}, %[[CURRENT]]
 

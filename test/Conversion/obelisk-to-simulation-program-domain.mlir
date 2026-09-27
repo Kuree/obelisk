@@ -23,7 +23,7 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.func private @unit_{{.*}} attributes {
+// CHECK: simulation.func private @unit_{{.*}} attributes {
 // CHECK-SAME: domain = 1 : i32
 // CHECK-SAME: home_region = 10 : i32
 // CHECK-NOT: obelisk.sv.

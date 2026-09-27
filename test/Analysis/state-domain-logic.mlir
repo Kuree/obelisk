@@ -4,74 +4,74 @@
 // RUN: FileCheck %s < %t.threaded
 
 module {
-  obelisk_sim.design @logic_rules {
-    obelisk_sim.code_unit.decl 9000001 in 0 initial hierarchy "test.logic_rules.rules.9000001"
-    obelisk_sim.scope.decl 0
-    obelisk_sim.net.decl 0 in 0 : !obelisk_sim.logic<8> design
+  simulation.design @logic_rules {
+    simulation.code_unit.decl 9000001 in 0 initial hierarchy "test.logic_rules.rules.9000001"
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<8> design
 
-    obelisk_sim.func @rules(
-        %ctx: !obelisk_sim.context {obelisk_sim.capture_kind = 0 : i32},
-        %net: !obelisk_sim.net<!obelisk_sim.logic<8>> {obelisk_sim.capture_kind = 4 : i32, obelisk_sim.descriptor_id = 0 : i64},
-        %dynamic_bits: i8 {obelisk_sim.capture_kind = 2 : i32})
+    simulation.func @rules(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %net: !simulation.net<!simulation.logic<8>> {simulation.capture_kind = 4 : i32, simulation.descriptor_id = 0 : i64},
+        %dynamic_bits: i8 {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %bits = arith.constant 3 : i8
       %index = arith.constant 2 : i8
       %outside = arith.constant 7 : i8
-      %logic_index = obelisk_sim.logic.constant 2 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %known = obelisk_sim.logic.from_bits %bits : i8 -> !obelisk_sim.logic<8>
-      %runtime_divisor = obelisk_sim.logic.from_bits %dynamic_bits : i8 -> !obelisk_sim.logic<8>
-      %zero = obelisk_sim.logic.constant 0 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %one = obelisk_sim.logic.constant 1 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %ones = obelisk_sim.logic.constant -1 : i8, 0 : i8 : !obelisk_sim.logic<8>
-      %xz = obelisk_sim.logic.constant 0 : i8, -1 : i8 : !obelisk_sim.logic<8>
-      %resized = obelisk_sim.logic.resize %known signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<16>
-      %resized_xz = obelisk_sim.logic.resize %xz signed = false : !obelisk_sim.logic<8> -> !obelisk_sim.logic<16>
-      %unary = obelisk_sim.logic.unary bit_not %known : (!obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      %unary_xz = obelisk_sim.logic.unary bit_not %xz : (!obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      %reduced = obelisk_sim.logic.reduction xor %known : !obelisk_sim.logic<8> -> !obelisk_sim.logic<1>
-      %reduced_xz = obelisk_sim.logic.reduction xor %xz : !obelisk_sim.logic<8> -> !obelisk_sim.logic<1>
-      %added = obelisk_sim.logic.binary add %known, %one : !obelisk_sim.logic<8>
-      %added_xz = obelisk_sim.logic.binary add %known, %xz : !obelisk_sim.logic<8>
-      %div = obelisk_sim.logic.binary udiv %known, %one : !obelisk_sim.logic<8>
-      %signed_div = obelisk_sim.logic.binary sdiv %known, %one : !obelisk_sim.logic<8>
-      %mod = obelisk_sim.logic.binary umod %known, %one : !obelisk_sim.logic<8>
-      %signed_mod = obelisk_sim.logic.binary smod %known, %one : !obelisk_sim.logic<8>
-      %bad_div = obelisk_sim.logic.binary udiv %known, %zero : !obelisk_sim.logic<8>
-      %runtime_div = obelisk_sim.logic.binary udiv %known, %runtime_divisor : !obelisk_sim.logic<8>
-      %unknown_div = obelisk_sim.logic.binary udiv %known, %xz : !obelisk_sim.logic<8>
-      %absorbed_and = obelisk_sim.logic.binary and %xz, %zero : !obelisk_sim.logic<8>
-      %absorbed_or = obelisk_sim.logic.binary or %xz, %ones : !obelisk_sim.logic<8>
-      %logical = obelisk_sim.logic.logical and %known, %one : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      %logical_xz = obelisk_sim.logic.logical and %known, %xz : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      %absorbed_logical = obelisk_sim.logic.logical and %xz, %zero : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      %absorbed_logical_or = obelisk_sim.logic.logical or %xz, %ones : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      %shifted = obelisk_sim.logic.shift left %known by %index : (!obelisk_sim.logic<8>, i8) -> !obelisk_sim.logic<8>
-      %shifted_xz = obelisk_sim.logic.shift left %known by %xz : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      %compare = obelisk_sim.logic.compare eq %known, %one : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      %compare_xz = obelisk_sim.logic.compare eq %known, %xz : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<1>
-      %case_compare = obelisk_sim.logic.compare case_eq %xz, %known : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> i1
-      %case_compare_ne = obelisk_sim.logic.compare case_ne %xz, %known : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> i1
-      %concat = obelisk_sim.logic.concat %known, %one : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<16>
-      %concat_xz = obelisk_sim.logic.concat %known, %xz : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<16>
-      %replicated = obelisk_sim.logic.replicate %known times 2 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<16>
-      %replicated_xz = obelisk_sim.logic.replicate %xz times 2 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<16>
-      %extract = obelisk_sim.logic.extract %known from 2 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<4>
-      %extract_xz = obelisk_sim.logic.extract %xz from 2 : !obelisk_sim.logic<8> -> !obelisk_sim.logic<4>
-      %dynamic = obelisk_sim.logic.dyn_extract %known from %index : (!obelisk_sim.logic<8>, i8) -> !obelisk_sim.logic<4>
-      %logic_dynamic = obelisk_sim.logic.dyn_extract %known from %logic_index : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<4>
-      %bad_dynamic = obelisk_sim.logic.dyn_extract %known from %outside : (!obelisk_sim.logic<8>, i8) -> !obelisk_sim.logic<4>
-      %unknown_dynamic = obelisk_sim.logic.dyn_extract %known from %xz : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<4>
-      %runtime_dynamic = obelisk_sim.logic.dyn_extract %known from %runtime_divisor : (!obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<4>
-      %dynamic_xz = obelisk_sim.logic.dyn_extract %xz from %index : (!obelisk_sim.logic<8>, i8) -> !obelisk_sim.logic<4>
-      %inserted = obelisk_sim.logic.insert %extract into %known at 2 : (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
-      %inserted_xz = obelisk_sim.logic.insert %extract into %xz at 2 : (!obelisk_sim.logic<8>, !obelisk_sim.logic<4>) -> !obelisk_sim.logic<8>
-      %unsupported = builtin.unrealized_conversion_cast %known : !obelisk_sim.logic<8> to !obelisk_sim.logic<8>
-      %local = obelisk_sim.ref.alloc %known : !obelisk_sim.logic<8> -> !obelisk_sim.ref<!obelisk_sim.logic<8>>
-      %loaded = obelisk_sim.ref.load %local : !obelisk_sim.ref<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
-      %net_value = obelisk_sim.net.read %net : !obelisk_sim.net<!obelisk_sim.logic<8>> -> !obelisk_sim.logic<8>
-      %mux_known = obelisk_sim.logic.mux %reduced ? %known : %one : (!obelisk_sim.logic<1>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      %mux_xz = obelisk_sim.logic.mux %reduced_xz ? %known : %one : (!obelisk_sim.logic<1>, !obelisk_sim.logic<8>, !obelisk_sim.logic<8>) -> !obelisk_sim.logic<8>
-      obelisk_sim.return
+      %logic_index = simulation.logic.constant 2 : i8, 0 : i8 : !simulation.logic<8>
+      %known = simulation.logic.from_bits %bits : i8 -> !simulation.logic<8>
+      %runtime_divisor = simulation.logic.from_bits %dynamic_bits : i8 -> !simulation.logic<8>
+      %zero = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
+      %one = simulation.logic.constant 1 : i8, 0 : i8 : !simulation.logic<8>
+      %ones = simulation.logic.constant -1 : i8, 0 : i8 : !simulation.logic<8>
+      %xz = simulation.logic.constant 0 : i8, -1 : i8 : !simulation.logic<8>
+      %resized = simulation.logic.resize %known signed = false : !simulation.logic<8> -> !simulation.logic<16>
+      %resized_xz = simulation.logic.resize %xz signed = false : !simulation.logic<8> -> !simulation.logic<16>
+      %unary = simulation.logic.unary bit_not %known : (!simulation.logic<8>) -> !simulation.logic<8>
+      %unary_xz = simulation.logic.unary bit_not %xz : (!simulation.logic<8>) -> !simulation.logic<8>
+      %reduced = simulation.logic.reduction xor %known : !simulation.logic<8> -> !simulation.logic<1>
+      %reduced_xz = simulation.logic.reduction xor %xz : !simulation.logic<8> -> !simulation.logic<1>
+      %added = simulation.logic.binary add %known, %one : !simulation.logic<8>
+      %added_xz = simulation.logic.binary add %known, %xz : !simulation.logic<8>
+      %div = simulation.logic.binary udiv %known, %one : !simulation.logic<8>
+      %signed_div = simulation.logic.binary sdiv %known, %one : !simulation.logic<8>
+      %mod = simulation.logic.binary umod %known, %one : !simulation.logic<8>
+      %signed_mod = simulation.logic.binary smod %known, %one : !simulation.logic<8>
+      %bad_div = simulation.logic.binary udiv %known, %zero : !simulation.logic<8>
+      %runtime_div = simulation.logic.binary udiv %known, %runtime_divisor : !simulation.logic<8>
+      %unknown_div = simulation.logic.binary udiv %known, %xz : !simulation.logic<8>
+      %absorbed_and = simulation.logic.binary and %xz, %zero : !simulation.logic<8>
+      %absorbed_or = simulation.logic.binary or %xz, %ones : !simulation.logic<8>
+      %logical = simulation.logic.logical and %known, %one : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      %logical_xz = simulation.logic.logical and %known, %xz : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      %absorbed_logical = simulation.logic.logical and %xz, %zero : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      %absorbed_logical_or = simulation.logic.logical or %xz, %ones : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      %shifted = simulation.logic.shift left %known by %index : (!simulation.logic<8>, i8) -> !simulation.logic<8>
+      %shifted_xz = simulation.logic.shift left %known by %xz : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<8>
+      %compare = simulation.logic.compare eq %known, %one : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      %compare_xz = simulation.logic.compare eq %known, %xz : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<1>
+      %case_compare = simulation.logic.compare case_eq %xz, %known : (!simulation.logic<8>, !simulation.logic<8>) -> i1
+      %case_compare_ne = simulation.logic.compare case_ne %xz, %known : (!simulation.logic<8>, !simulation.logic<8>) -> i1
+      %concat = simulation.logic.concat %known, %one : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<16>
+      %concat_xz = simulation.logic.concat %known, %xz : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<16>
+      %replicated = simulation.logic.replicate %known times 2 : !simulation.logic<8> -> !simulation.logic<16>
+      %replicated_xz = simulation.logic.replicate %xz times 2 : !simulation.logic<8> -> !simulation.logic<16>
+      %extract = simulation.logic.extract %known from 2 : !simulation.logic<8> -> !simulation.logic<4>
+      %extract_xz = simulation.logic.extract %xz from 2 : !simulation.logic<8> -> !simulation.logic<4>
+      %dynamic = simulation.logic.dyn_extract %known from %index : (!simulation.logic<8>, i8) -> !simulation.logic<4>
+      %logic_dynamic = simulation.logic.dyn_extract %known from %logic_index : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<4>
+      %bad_dynamic = simulation.logic.dyn_extract %known from %outside : (!simulation.logic<8>, i8) -> !simulation.logic<4>
+      %unknown_dynamic = simulation.logic.dyn_extract %known from %xz : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<4>
+      %runtime_dynamic = simulation.logic.dyn_extract %known from %runtime_divisor : (!simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<4>
+      %dynamic_xz = simulation.logic.dyn_extract %xz from %index : (!simulation.logic<8>, i8) -> !simulation.logic<4>
+      %inserted = simulation.logic.insert %extract into %known at 2 : (!simulation.logic<8>, !simulation.logic<4>) -> !simulation.logic<8>
+      %inserted_xz = simulation.logic.insert %extract into %xz at 2 : (!simulation.logic<8>, !simulation.logic<4>) -> !simulation.logic<8>
+      %unsupported = builtin.unrealized_conversion_cast %known : !simulation.logic<8> to !simulation.logic<8>
+      %local = simulation.ref.alloc %known : !simulation.logic<8> -> !simulation.ref<!simulation.logic<8>>
+      %loaded = simulation.ref.load %local : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>
+      %net_value = simulation.net.read %net : !simulation.net<!simulation.logic<8>> -> !simulation.logic<8>
+      %mux_known = simulation.logic.mux %reduced ? %known : %one : (!simulation.logic<1>, !simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<8>
+      %mux_xz = simulation.logic.mux %reduced_xz ? %known : %one : (!simulation.logic<1>, !simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<8>
+      simulation.return
     }
   }
 }

@@ -22,7 +22,7 @@
 // TIER: error: scheduled-root owner or tier disagrees with writers
 // OVERLAP: error: scheduled-root ranges overlap
 module {
-  obelisk_sim.design @adjacent attributes {
+  simulation.design @adjacent attributes {
     compute_graph = #schedule.graph<version = 1, vpi = off, workers = 1,
       nodes = [
         #schedule.fragment<id = 0, function = @low, block = 0,
@@ -51,6 +51,6 @@ module {
         #schedule.region<kind = reactive, groups = []>,
         #schedule.region<kind = postponed, groups = []>]>
   } {
-    obelisk_sim.scope.decl 0
+    simulation.scope.decl 0
   }
 }

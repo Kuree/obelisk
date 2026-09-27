@@ -6,28 +6,28 @@
 // then replace handles in those static cells. Per 13.5, an output argument is
 // copied back on return, so an unused copy-in value need not cross the boundary.
 
-// CHECK: obelisk_sim.storage.decl 2 in 1 : !obelisk_sim.event static hierarchy "event_formal.copy_event.incoming"
-// CHECK: obelisk_sim.storage.decl 3 in 1 : !obelisk_sim.event static hierarchy "event_formal.copy_event.outgoing"
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: %[[INCOMING:.*]] = obelisk_sim.context.storage %{{.*}}[2]
-// CHECK: %[[INCOMING_FRESH:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.ref.store %[[INCOMING_FRESH]] to %[[INCOMING]]
-// CHECK: %[[OUTGOING:.*]] = obelisk_sim.context.storage %{{.*}}[3]
-// CHECK: %[[OUTGOING_FRESH:.*]] = obelisk_sim.event.create
-// CHECK: obelisk_sim.ref.store %[[OUTGOING_FRESH]] to %[[OUTGOING]]
+// CHECK: simulation.storage.decl 2 in 1 : !simulation.event static hierarchy "event_formal.copy_event.incoming"
+// CHECK: simulation.storage.decl 3 in 1 : !simulation.event static hierarchy "event_formal.copy_event.outgoing"
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: %[[INCOMING:.*]] = simulation.context.storage %{{.*}}[2]
+// CHECK: %[[INCOMING_FRESH:.*]] = simulation.event.create
+// CHECK: simulation.ref.store %[[INCOMING_FRESH]] to %[[INCOMING]]
+// CHECK: %[[OUTGOING:.*]] = simulation.context.storage %{{.*}}[3]
+// CHECK: %[[OUTGOING_FRESH:.*]] = simulation.event.create
+// CHECK: simulation.ref.store %[[OUTGOING_FRESH]] to %[[OUTGOING]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK: %[[STATIC_IN:.*]] = obelisk_sim.context.storage %arg0[2]
-// CHECK: obelisk_sim.ref.store %arg1 to %[[STATIC_IN]]
-// CHECK: %[[STATIC_OUT:.*]] = obelisk_sim.context.storage %arg0[3]
-// CHECK: %[[COPIED:.*]] = obelisk_sim.ref.load %[[STATIC_IN]]
-// CHECK: obelisk_sim.ref.store %[[COPIED]] to %[[STATIC_OUT]]
-// CHECK: %[[RESULT:.*]] = obelisk_sim.ref.load %[[STATIC_OUT]]
-// CHECK: obelisk_sim.ref.store %[[RESULT]] to %arg2
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[STATIC_IN:.*]] = simulation.context.storage %arg0[2]
+// CHECK: simulation.ref.store %arg1 to %[[STATIC_IN]]
+// CHECK: %[[STATIC_OUT:.*]] = simulation.context.storage %arg0[3]
+// CHECK: %[[COPIED:.*]] = simulation.ref.load %[[STATIC_IN]]
+// CHECK: simulation.ref.store %[[COPIED]] to %[[STATIC_OUT]]
+// CHECK: %[[RESULT:.*]] = simulation.ref.load %[[STATIC_OUT]]
+// CHECK: simulation.ref.store %[[RESULT]] to %arg2
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
-// CHECK: %[[ACTUAL:.*]] = obelisk_sim.ref.load %arg1
-// CHECK: obelisk_sim.task.call @unit_0(%arg0, %[[ACTUAL]], %arg2)
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: %[[ACTUAL:.*]] = simulation.ref.load %arg1
+// CHECK: simulation.task.call @unit_0(%arg0, %[[ACTUAL]], %arg2)
 // CHECK-NOT: obelisk.sv.
 
 module {

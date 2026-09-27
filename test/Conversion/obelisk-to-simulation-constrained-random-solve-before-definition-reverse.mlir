@@ -5,11 +5,11 @@
 // A structural plan that would compute an earlier solve layer from a later one
 // cannot preserve the requested distribution. It bypasses generic tier-0
 // rejection and uses the solve-order metadata in the residual runtime plan.
-// SOLVE-BEFORE-DEFINITION-REVERSE-LABEL: obelisk_sim.func private @unit_1
-// SOLVE-BEFORE-DEFINITION-REVERSE: obelisk_sim.managed.store %[[SOLVE_STATE:.*]] to
-// SOLVE-BEFORE-DEFINITION-REVERSE: %[[FALLBACK_STATE:.*]] = obelisk_sim.managed.load
-// SOLVE-BEFORE-DEFINITION-REVERSE: %{{.*}}, %{{.*}}, %[[SOLVED_STATE:.*]] = obelisk_sim.random.solve {{.*}} state %[[FALLBACK_STATE]] increment
-// SOLVE-BEFORE-DEFINITION-REVERSE-NEXT: obelisk_sim.managed.store %[[SOLVED_STATE]]
+// SOLVE-BEFORE-DEFINITION-REVERSE-LABEL: simulation.func private @unit_1
+// SOLVE-BEFORE-DEFINITION-REVERSE: simulation.managed.store %[[SOLVE_STATE:.*]] to
+// SOLVE-BEFORE-DEFINITION-REVERSE: %[[FALLBACK_STATE:.*]] = simulation.managed.load
+// SOLVE-BEFORE-DEFINITION-REVERSE: %{{.*}}, %{{.*}}, %[[SOLVED_STATE:.*]] = simulation.random.solve {{.*}} state %[[FALLBACK_STATE]] increment
+// SOLVE-BEFORE-DEFINITION-REVERSE-NEXT: simulation.managed.store %[[SOLVED_STATE]]
 
 // Native lowering passes both state words to the stateful ABI and reloads all
 // three outputs. The bytecode RUN above independently verifies that the same

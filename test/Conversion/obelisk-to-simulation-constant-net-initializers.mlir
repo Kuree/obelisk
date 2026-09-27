@@ -121,34 +121,34 @@ module {
 
 // The literal net keeps its continuous process so procedural listeners still
 // observe its time-zero transition.
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} continuous hierarchy "constant_net_initializer.constant_net.$net_initializer"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "constant_net_initializer.observed.$static_initializer"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} continuous hierarchy "constant_net_initializer.constant_net.$net_initializer"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "constant_net_initializer.observed.$static_initializer"
 // A signal-dependent declaration assignment remains a continuous process.
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} continuous hierarchy "constant_net_initializer.dynamic_net.$net_initializer"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} continuous hierarchy "constant_net_initializer.multiple_net.$net_initializer"
-// CHECK: obelisk_sim.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "constant_net_initializer.multiple_observed.$static_initializer"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} continuous hierarchy "constant_net_initializer.dynamic_net.$net_initializer"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} continuous hierarchy "constant_net_initializer.multiple_net.$net_initializer"
+// CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "constant_net_initializer.multiple_observed.$static_initializer"
 
-// CHECK-LABEL: obelisk_sim.func @__obelisk_root
-// CHECK: %[[NET:.*]] = obelisk_sim.context.net
-// CHECK-NEXT: obelisk_sim.call @unit_1
-// CHECK: obelisk_sim.spawn @unit_0
-// CHECK: %[[STORAGE:.*]] = obelisk_sim.context.storage
-// CHECK: obelisk_sim.spawn @unit_2
-// CHECK: obelisk_sim.return
+// CHECK-LABEL: simulation.func @__obelisk_root
+// CHECK: %[[NET:.*]] = simulation.context.net
+// CHECK-NEXT: simulation.call @unit_1
+// CHECK: simulation.spawn @unit_0
+// CHECK: %[[STORAGE:.*]] = simulation.context.storage
+// CHECK: simulation.spawn @unit_2
+// CHECK: simulation.return
 
 // The static initializer folds its read of the single literal driver instead
 // of sampling the net's default Z value before processes start.
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK-SAME: entry_kind = 8 : i32
-// CHECK-NOT: obelisk_sim.net.read
-// CHECK: obelisk_sim.logic.constant true, false
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.return
+// CHECK-NOT: simulation.net.read
+// CHECK: simulation.logic.constant true, false
+// CHECK: simulation.ref.store
+// CHECK: simulation.return
 
 // A literal declaration assignment is not folded when another driver targets
 // the same net; the initializer must sample the resolved net value instead.
-// CHECK-LABEL: obelisk_sim.func private @unit_4
+// CHECK-LABEL: simulation.func private @unit_4
 // CHECK-SAME: entry_kind = 8 : i32
-// CHECK: obelisk_sim.net.read
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.return
+// CHECK: simulation.net.read
+// CHECK: simulation.ref.store
+// CHECK: simulation.return

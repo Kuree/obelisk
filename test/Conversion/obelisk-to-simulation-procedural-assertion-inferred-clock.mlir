@@ -35,13 +35,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0.fork.11.0.48
-// CHECK: obelisk_sim.ref.load
+// CHECK-LABEL: simulation.func private @unit_0.fork.11.0.48
+// CHECK: simulation.ref.load
 // CHECK: arith.cmpi eq
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NOT: obelisk_sim.suspend.edge
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.48.fork.11.0.2
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.ref.store
-// CHECK: obelisk_sim.spawn @unit_0.fork.11.0.48
+// CHECK: simulation.assert.sampled_read
+// CHECK-NOT: simulation.suspend.edge
+// CHECK: simulation.spawn @unit_0.fork.11.0.48.fork.11.0.2
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.ref.alloc
+// CHECK: simulation.ref.store
+// CHECK: simulation.spawn @unit_0.fork.11.0.48

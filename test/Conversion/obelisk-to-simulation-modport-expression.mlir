@@ -101,9 +101,9 @@ module {
   }
 }
 
-// CHECK: obelisk_sim.storage.decl 0 {{.*}}logic<16>{{.*}}hierarchy "top.signal"
-// CHECK: obelisk_sim.storage.decl 1 {{.*}}logic<8>{{.*}}hierarchy "top.sink"
-// CHECK: obelisk_sim.func private @{{.*}}(
+// CHECK: simulation.storage.decl 0 {{.*}}logic<16>{{.*}}hierarchy "top.signal"
+// CHECK: simulation.storage.decl 1 {{.*}}logic<8>{{.*}}hierarchy "top.sink"
+// CHECK: simulation.func private @{{.*}}(
 // CHECK-SAME: descriptor_id = 0 : i64
 // CHECK-SAME: descriptor_low = 8 : i64
 // CHECK-SAME: descriptor_packed_low = 8 : i64

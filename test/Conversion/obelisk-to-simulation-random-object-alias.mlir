@@ -191,29 +191,29 @@ module {
 // runtime identity to call lifecycle hooks once, constrain corresponding
 // packed leaves to one value, and randomize each dynamic container field once.
 // Non-aliased objects remain independent.
-// CHECK-LABEL: obelisk_sim.func private @{{unit_[0-9]+}}{{.*}}obelisk_sim.hierarchical_name = "top"
-// CHECK: %[[LEFT_HOOK_ID:.*]] = obelisk_sim.class.id %[[LEFT_HOOK_OBJECT:[0-9A-Za-z_]+]]
-// CHECK: obelisk_sim.class.direct_call {{.*}} %[[LEFT_HOOK_OBJECT]]()
-// CHECK: %[[RIGHT_HOOK_ID:.*]] = obelisk_sim.class.id %[[RIGHT_HOOK_OBJECT:[0-9A-Za-z_]+]]
+// CHECK-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
+// CHECK: %[[LEFT_HOOK_ID:.*]] = simulation.class.id %[[LEFT_HOOK_OBJECT:[0-9A-Za-z_]+]]
+// CHECK: simulation.class.direct_call {{.*}} %[[LEFT_HOOK_OBJECT]]()
+// CHECK: %[[RIGHT_HOOK_ID:.*]] = simulation.class.id %[[RIGHT_HOOK_OBJECT:[0-9A-Za-z_]+]]
 // CHECK: %[[HOOK_ALIAS:.*]] = arith.cmpi eq, %[[RIGHT_HOOK_ID]], %[[LEFT_HOOK_ID]] : i64
 // CHECK: %[[SEEN_HOOK:.*]] = arith.andi {{.*}}, %[[HOOK_ALIAS]] : i1
 // CHECK: %[[NEW_HOOK:.*]] = arith.xori %[[SEEN_HOOK]], {{.*}} : i1
 // CHECK: %[[CALL_HOOK:.*]] = arith.andi {{.*}}, %[[NEW_HOOK]] : i1
 // CHECK: cf.cond_br %[[CALL_HOOK]], ^[[RIGHT_PRE:bb[0-9]+]], ^{{bb[0-9]+}}
 // CHECK: ^[[RIGHT_PRE]]:
-// CHECK: obelisk_sim.class.direct_call {{.*}} %[[RIGHT_HOOK_OBJECT]]()
-// CHECK: ^{{bb[0-9]+}}({{.*}}: !obelisk_sim.packed_array<3 : 0 x i1>, {{.*}}: i1, %[[LEFT_OWNER_ID:.*]]: i64):
-// CHECK: %[[LEFT_VALUE_ID:.*]] = obelisk_sim.class.id
-// CHECK: ^{{bb[0-9]+}}({{.*}}: !obelisk_sim.packed_array<3 : 0 x i1>, {{.*}}: i1, %[[RIGHT_OWNER_ID:.*]]: i64):
+// CHECK: simulation.class.direct_call {{.*}} %[[RIGHT_HOOK_OBJECT]]()
+// CHECK: ^{{bb[0-9]+}}({{.*}}: !simulation.packed_array<3 : 0 x i1>, {{.*}}: i1, %[[LEFT_OWNER_ID:.*]]: i64):
+// CHECK: %[[LEFT_VALUE_ID:.*]] = simulation.class.id
+// CHECK: ^{{bb[0-9]+}}({{.*}}: !simulation.packed_array<3 : 0 x i1>, {{.*}}: i1, %[[RIGHT_OWNER_ID:.*]]: i64):
 // CHECK: %[[VALUE_ALIAS:.*]] = arith.cmpi eq, %[[LEFT_OWNER_ID]], %[[RIGHT_OWNER_ID]] : i64
 // CHECK: %[[ACTIVE_ALIAS:.*]] = arith.andi {{.*}}, %[[VALUE_ALIAS]] : i1
 // CHECK: %[[ALIAS_CAPTURE:.*]] = arith.extui %[[ACTIVE_ALIAS]] : i1 to i64
-// CHECK: %[[RIGHT_VALUE_ID:.*]] = obelisk_sim.class.id
-// CHECK: obelisk_sim.random.solve {{.*}} captures(%[[ALIAS_CAPTURE]])
-// CHECK: %[[LEFT_CONTAINER_ID:.*]] = obelisk_sim.class.id
-// CHECK: ^{{bb[0-9]+}}(%{{.*}}: !obelisk_sim.dynamic_array<i8>, %[[LEFT_CONTAINER_OWNER:.*]]: i64, {{.*}}: i1):
-// CHECK: %[[RIGHT_CONTAINER_ID:.*]] = obelisk_sim.class.id
-// CHECK: ^{{bb[0-9]+}}(%{{.*}}: !obelisk_sim.dynamic_array<i8>, %[[RIGHT_CONTAINER_OWNER:.*]]: i64, {{.*}}: i1):
+// CHECK: %[[RIGHT_VALUE_ID:.*]] = simulation.class.id
+// CHECK: simulation.random.solve {{.*}} captures(%[[ALIAS_CAPTURE]])
+// CHECK: %[[LEFT_CONTAINER_ID:.*]] = simulation.class.id
+// CHECK: ^{{bb[0-9]+}}(%{{.*}}: !simulation.dynamic_array<i8>, %[[LEFT_CONTAINER_OWNER:.*]]: i64, {{.*}}: i1):
+// CHECK: %[[RIGHT_CONTAINER_ID:.*]] = simulation.class.id
+// CHECK: ^{{bb[0-9]+}}(%{{.*}}: !simulation.dynamic_array<i8>, %[[RIGHT_CONTAINER_OWNER:.*]]: i64, {{.*}}: i1):
 // CHECK: %[[CONTAINER_ALIAS:.*]] = arith.cmpi eq, %[[RIGHT_CONTAINER_OWNER]], %[[LEFT_CONTAINER_OWNER]] : i64
 // CHECK: %[[SEEN_CONTAINER:.*]] = arith.andi {{.*}}, %[[CONTAINER_ALIAS]] : i1
 // CHECK: %[[NEW_CONTAINER:.*]] = arith.xori %[[SEEN_CONTAINER]], {{.*}} : i1

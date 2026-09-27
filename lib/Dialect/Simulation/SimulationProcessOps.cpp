@@ -306,7 +306,7 @@ LogicalResult SimFuncOp::verify() {
       failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
     return failure();
   if (type.getNumInputs() == 0 || !isa<ContextType>(type.getInput(0)))
-    return emitOpError("first argument must be !obelisk_sim.context");
+    return emitOpError("first argument must be !simulation.context");
   for (Type input : type.getInputs()) {
     if (!isa<ContextType, RefType, ArgumentRefType, NetType, DriverType,
              EventType, ProcessType, ManagedRefType, IntegerType, LogicType,
@@ -390,7 +390,7 @@ LogicalResult SimFuncOp::verify() {
     std::optional<CaptureKind> kind = getCaptureKind(dictionary);
     if (!kind)
       return emitOpError() << "argument #" << index
-                           << " requires obelisk_sim.capture_kind metadata";
+                           << " requires simulation.capture_kind metadata";
     if (index == 0 && *kind != CaptureKind::Context)
       return emitOpError("argument #0 must have context capture metadata");
     if (index != 0 && *kind == CaptureKind::Context)
@@ -402,7 +402,7 @@ LogicalResult SimFuncOp::verify() {
     auto descriptor = dictionary.getAs<IntegerAttr>(metadata::descriptorId);
     if (needsDescriptor && !descriptor)
       return emitOpError() << "argument #" << index
-                           << " requires obelisk_sim.descriptor_id metadata";
+                           << " requires simulation.descriptor_id metadata";
     if (!needsDescriptor && descriptor)
       return emitOpError() << "argument #" << index
                            << " must not have descriptor metadata";
@@ -419,7 +419,7 @@ LogicalResult SimFuncOp::verify() {
 LogicalResult SimReturnOp::verify() {
   auto function = (*this)->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (getOperandTypes() != function.getFunctionType().getResults())
     return emitOpError(
         "operand types must match the enclosing function results");
@@ -431,7 +431,7 @@ LogicalResult SimCallOp::verify() {
   if (!getOperation()->getParentOfType<SimFuncOp>() &&
       (!parent || (parent->getName().getStringRef() != "func.func" &&
                    parent->getName().getStringRef() != "llvm.func")))
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   return success();
 }
 
@@ -560,7 +560,7 @@ MutableOperandRange SimTaskCallOp::getContinuationOperandsMutable() {
 LogicalResult SimTaskCallOp::verify() {
   auto function = getOperation()->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (function.getEntryKind() == EntryKind::Function)
     return emitOpError("is not permitted in a zero-time function entry");
   if (getArgumentCountAttr().getValue().isNegative() ||
@@ -608,7 +608,7 @@ SimClassVirtualTaskCallOp::getContinuationOperandsMutable() {
 LogicalResult SimClassVirtualTaskCallOp::verify() {
   auto function = getOperation()->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (function.getEntryKind() == EntryKind::Function ||
       function.getEntryKind() == EntryKind::Observer)
     return emitOpError(function.getEntryKind() == EntryKind::Function
@@ -653,7 +653,7 @@ void SimDPICallOp::getEffects(
 
 LogicalResult SimDPICallOp::verify() {
   if (!getOperation()->getParentOfType<SimFuncOp>())
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (getImportId() == 0)
     return emitOpError("import ID must be nonzero");
   if (getCIdentifier().empty())
@@ -875,7 +875,7 @@ LogicalResult SimDPICallOp::verify() {
 
 LogicalResult SimSpawnOp::verify() {
   if (!getOperation()->getParentOfType<SimFuncOp>())
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   return success();
 }
 
@@ -895,7 +895,7 @@ LogicalResult SimSpawnOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 static LogicalResult verifyProcessContext(Operation *operation) {
   if (!operation->getParentOfType<SimFuncOp>())
-    return operation->emitOpError("must be nested in obelisk_sim.func");
+    return operation->emitOpError("must be nested in simulation.func");
   return success();
 }
 
@@ -929,7 +929,7 @@ SuccessorOperands SimControlBoundaryOp::getSuccessorOperands(unsigned index) {
 LogicalResult SimControlBoundaryOp::verify() {
   auto function = getOperation()->getParentOfType<SimFuncOp>();
   if (!function)
-    return emitOpError("must be nested in obelisk_sim.func");
+    return emitOpError("must be nested in simulation.func");
   if (function.getEntryKind() == EntryKind::Function ||
       function.getEntryKind() == EntryKind::Observer)
     return emitOpError("requires a suspendable process entry");
@@ -1015,20 +1015,17 @@ LogicalResult SimClockedSampleReadOp::verify() {
 }
 
 LogicalResult SimStochasticQueueOp::verify() {
-  if (getAction() > 4)
-    return emitOpError(
-        "action must select initialize, add, remove, full, or exam");
   if (getUnitScale() == 0)
     return emitOpError("unit_scale must be positive");
   if (cast<LogicType>(getId().getType()).getWidth() != 32)
-    return emitOpError("id must be !obelisk_sim.logic<32>");
+    return emitOpError("id must be !simulation.logic<32>");
   if (cast<LogicType>(getFirst().getType()).getWidth() != 32)
-    return emitOpError("first must be !obelisk_sim.logic<32>");
+    return emitOpError("first must be !simulation.logic<32>");
   if (cast<LogicType>(getSecond().getType()).getWidth() != 32)
-    return emitOpError("second must be !obelisk_sim.logic<32>");
+    return emitOpError("second must be !simulation.logic<32>");
   if (cast<LogicType>(getPrimary().getType()).getWidth() != 64 ||
       cast<LogicType>(getSecondary().getType()).getWidth() != 64)
-    return emitOpError("primary and secondary must be !obelisk_sim.logic<64>");
+    return emitOpError("primary and secondary must be !simulation.logic<64>");
   return success();
 }
 
@@ -1036,7 +1033,7 @@ LogicalResult SimDeferredEnqueueOp::verify() {
   if (failed(verifyPositive(*this, getIdAttr(), "deferred assertion site ID")))
     return failure();
   if (auto assertionID = getOperation()->getAttrOfType<IntegerAttr>(
-          "obelisk_sim.assertion_control_target_id"))
+          "simulation.assertion_control_target_id"))
     return verifyPositive(*this, assertionID,
                           "deferred assertion control target ID");
   return success();
@@ -1049,8 +1046,6 @@ LogicalResult SimDeferredMatureOp::verify() {
 }
 
 LogicalResult SimAssertionControlOp::verify() {
-  if (getAction() < 1 || getAction() > 11)
-    return emitOpError("action must be in the range 1 through 11");
   return verifyPositive(*this, getAssertionIdAttr(),
                         "assertion control target ID");
 }

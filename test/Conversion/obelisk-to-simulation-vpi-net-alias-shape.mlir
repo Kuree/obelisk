@@ -52,13 +52,13 @@ module attributes {
   }
 }
 
-// CHECK: obelisk_sim.vpi_typespec.decl @[[UP_T:[^ ]+]]
+// CHECK: simulation.vpi_typespec.decl @[[UP_T:[^ ]+]]
 // CHECK-SAME: hierarchy "top.up_t"
-// CHECK: obelisk_sim.net.decl [[A:[0-9]+]] {{.*}} : !obelisk_sim.packed_array<3 : 0 x !obelisk_sim.logic<1>>
+// CHECK: simulation.net.decl [[A:[0-9]+]] {{.*}} : !simulation.packed_array<3 : 0 x !simulation.logic<1>>
 // CHECK-SAME: hierarchy "top.a"
-// CHECK: obelisk_sim.vpi_net_identity.decl [[B:[0-9]+]] backed_by [[A]] {{.*}} : !obelisk_sim.packed_array<0 : 3 x !obelisk_sim.logic<1>>
+// CHECK: simulation.vpi_net_identity.decl [[B:[0-9]+]] backed_by [[A]] {{.*}} : !simulation.packed_array<0 : 3 x !simulation.logic<1>>
 // CHECK-SAME: hierarchy "top.b"
-// CHECK-SAME: vpi_type = #obelisk_sim.vpi_type<kind = packed_array
+// CHECK-SAME: vpi_type = #simulation.vpi_type<kind = packed_array
 // CHECK-SAME: range = [0, 3]
 // CHECK-SAME: typedefAliases = [@[[UP_T]]]
-// CHECK: obelisk_sim.vpi_relation.decl <kind = net_identity, id = [[B]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>
+// CHECK: simulation.vpi_relation.decl <kind = net_identity, id = [[B]] : i64> selector 126 handle ordinal 0 to <kind = net, id = [[A]] : i64>

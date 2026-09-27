@@ -25,9 +25,9 @@ module attributes {obelisk.coverage.metrics = ["line"]} {
   }
 }
 
-// CHECK: obelisk_sim.scope.decl 0
-// CHECK-DAG: obelisk_sim.scope.decl {{[0-9]+}} parent 0 hierarchy "top.first" debug "first_body" source_definition "DUT"
-// CHECK-DAG: obelisk_sim.scope.decl {{[0-9]+}} parent 0 hierarchy "top.second" debug "second_body" source_definition "DUT"
-// CHECK-DAG: obelisk_sim.scope.decl {{[0-9]+}} parent 0 hierarchy "top.nested" debug "colliding_leaf" source_definition "outer.DUT"
-// CHECK-DAG: obelisk_sim.scope.decl {{[0-9]+}} parent 0 hierarchy "top.intf" debug "bus_if" coverage_id {{[0-9]+}}
-// CHECK-DAG: obelisk_sim.scope.decl {{[0-9]+}} parent 0 hierarchy "top.program" debug "test_program" coverage_id {{[0-9]+}}
+// CHECK: simulation.scope.decl 0
+// CHECK-DAG: simulation.scope.decl {{[0-9]+}} parent 0 hierarchy "top.first" debug "first_body" source_definition "DUT"
+// CHECK-DAG: simulation.scope.decl {{[0-9]+}} parent 0 hierarchy "top.second" debug "second_body" source_definition "DUT"
+// CHECK-DAG: simulation.scope.decl {{[0-9]+}} parent 0 hierarchy "top.nested" debug "colliding_leaf" source_definition "outer.DUT"
+// CHECK-DAG: simulation.scope.decl {{[0-9]+}} parent 0 hierarchy "top.intf" debug "bus_if" coverage_id {{[0-9]+}}
+// CHECK-DAG: simulation.scope.decl {{[0-9]+}} parent 0 hierarchy "top.program" debug "test_program" coverage_id {{[0-9]+}}

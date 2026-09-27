@@ -135,24 +135,24 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The older eligible count is both the success count and part of next state;
 // a newly started attempt joins it independently.
 // CHECK-NOT: @unit_0.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_0(
-// CHECK-SAME: obelisk_sim.persistent_repetition_all_matches
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "consecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.first_match_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U0_REPEAT:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.persistent_repetition_all_matches
+// CHECK-SAME: simulation.persistent_repetition_kind = "consecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.first_match_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U0_REPEAT:[[:alnum:]_]+]] = simulation.logic.is_true
 // CHECK-NEXT: %[[U0_NEW:[[:alnum:]_]+]] = arith.extui %[[U0_REPEAT]] : i1 to i64
 // CHECK-NEXT: %[[U0_ZERO:[[:alnum:]_]+]] = arith.constant {{.*}}0 : i64
 // CHECK-NEXT: %[[U0_SUCCESS:[[:alnum:]_]+]] = arith.select %[[U0_REPEAT]], %[[U0_OLDER:[[:alnum:]_]+]], %[[U0_ZERO]] : i64
 // CHECK-NEXT: %[[U0_NEXT:[[:alnum:]_]+]] = arith.addi %[[U0_NEW]], %[[U0_SUCCESS]] : i64
 // CHECK-NEXT: cf.br ^{{.*}}(%[[U0_SUCCESS]] : i64)
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}}(%[[U0_NEXT]] : i64)
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_0.fork.12.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_0.fork.12.0.0
+// CHECK-COUNT-1: simulation.spawn @unit_0.fork.12.0.0
+// CHECK-NOT: simulation.spawn @unit_0.fork.12.0.0
 // CHECK-NOT: obelisk.sv.assertion
 
 // Unbounded goto retains a successful pending thread according to the current
@@ -160,70 +160,70 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // returns to the saturated wait state. Neither route is gated by terminal
 // failure, so a terminal hit can report and continue on the same clock.
 // CHECK-NOT: @unit_1.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_1(
-// CHECK-SAME: obelisk_sim.persistent_repetition_all_matches
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 4 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.first_match_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U1_REPEAT:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
-// CHECK: %[[U1_FALSE:[[:alnum:]_]+]] = obelisk_sim.logic.compare case_eq
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U1_TERMINAL:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.persistent_repetition_all_matches
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_min = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 4 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.first_match_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U1_REPEAT:[[:alnum:]_]+]] = simulation.logic.is_true
+// CHECK: %[[U1_FALSE:[[:alnum:]_]+]] = simulation.logic.compare case_eq
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U1_TERMINAL:[[:alnum:]_]+]] = simulation.logic.is_true
 // CHECK: %[[U1_SUCCESS:[[:alnum:]_]+]] = arith.select %[[U1_TERMINAL]], %[[U1_PENDING:[[:alnum:]_]+]], %{{[[:alnum:]_]+}} : i64
 // CHECK: %[[U1_KEEP_TRUE:[[:alnum:]_]+]] = arith.select %[[U1_REPEAT]], %[[U1_PENDING]], %{{[[:alnum:]_]+}} : i64
 // CHECK: arith.addi %{{[[:alnum:]_]+}}, %[[U1_KEEP_TRUE]] : i64
 // CHECK: %[[U1_KEEP_FALSE:[[:alnum:]_]+]] = arith.select %[[U1_FALSE]], %[[U1_PENDING]], %{{[[:alnum:]_]+}} : i64
 // CHECK: arith.addi %{{[[:alnum:]_]+}}, %[[U1_KEEP_FALSE]] : i64
 // CHECK: cf.br ^{{.*}}(%[[U1_SUCCESS]] : i64)
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_1.fork.21.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_1.fork.21.0.0
+// CHECK-COUNT-1: simulation.spawn @unit_1.fork.21.0.0
+// CHECK-NOT: simulation.spawn @unit_1.fork.21.0.0
 // CHECK-NOT: obelisk.sv.assertion
 
 // Unbounded nonconsecutive repetition may report terminal on every eligible
 // known-value clock. The same eligible amount remains in next state whether
 // the repeated term is true or strictly false.
 // CHECK-NOT: @unit_2.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_2(
-// CHECK-SAME: obelisk_sim.persistent_repetition_all_matches
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_unbounded
-// CHECK-NOT: obelisk_sim.first_match_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U2_REPEAT:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
-// CHECK: %[[U2_FALSE:[[:alnum:]_]+]] = obelisk_sim.logic.compare case_eq
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U2_TERMINAL:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.persistent_repetition_all_matches
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_min = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_unbounded
+// CHECK-NOT: simulation.first_match_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U2_REPEAT:[[:alnum:]_]+]] = simulation.logic.is_true
+// CHECK: %[[U2_FALSE:[[:alnum:]_]+]] = simulation.logic.compare case_eq
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U2_TERMINAL:[[:alnum:]_]+]] = simulation.logic.is_true
 // CHECK: %[[U2_SUCCESS:[[:alnum:]_]+]] = arith.select %[[U2_TERMINAL]], %[[U2_ELIGIBLE:[[:alnum:]_]+]], %{{[[:alnum:]_]+}} : i64
 // CHECK-NEXT: %[[U2_KNOWN:[[:alnum:]_]+]] = arith.ori %[[U2_REPEAT]], %[[U2_FALSE]] : i1
 // CHECK: %[[U2_RETAIN:[[:alnum:]_]+]] = arith.select %[[U2_KNOWN]], %[[U2_ELIGIBLE]], %{{[[:alnum:]_]+}} : i64
 // CHECK: arith.addi %{{[[:alnum:]_]+}}, %[[U2_RETAIN]] : i64
 // CHECK: cf.br ^{{.*}}(%[[U2_SUCCESS]] : i64)
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_2.fork.33.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_2.fork.33.0.0
+// CHECK-COUNT-1: simulation.spawn @unit_2.fork.33.0.0
+// CHECK-NOT: simulation.spawn @unit_2.fork.33.0.0
 // CHECK-NOT: obelisk.sv.assertion
 
 // No-terminal finite goto reports the first and second occurrences, but only
 // the first remains live. The second endpoint is absent from the next-state
 // sum, so a third occurrence cannot be reported for that source attempt.
 // CHECK-NOT: @unit_3.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_3(
-// CHECK-SAME: obelisk_sim.persistent_repetition_all_matches
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "goto"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 2 : i64
-// CHECK-NOT: obelisk_sim.first_match_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U3_REPEAT:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
-// CHECK: %[[U3_FALSE:[[:alnum:]_]+]] = obelisk_sim.logic.compare case_eq
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.persistent_repetition_all_matches
+// CHECK-SAME: simulation.persistent_repetition_kind = "goto"
+// CHECK-SAME: simulation.persistent_repetition_max = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 2 : i64
+// CHECK-NOT: simulation.first_match_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U3_REPEAT:[[:alnum:]_]+]] = simulation.logic.is_true
+// CHECK: %[[U3_FALSE:[[:alnum:]_]+]] = simulation.logic.compare case_eq
 // CHECK: %[[U3_FIRST:[[:alnum:]_]+]] = arith.select %[[U3_REPEAT]], %[[U3_STARTS:[[:alnum:]_]+]], %{{[[:alnum:]_]+}} : i64
 // CHECK: %[[U3_SECOND:[[:alnum:]_]+]] = arith.select %[[U3_REPEAT]], %[[U3_COUNT_ONE:[[:alnum:]_]+]], %{{[[:alnum:]_]+}} : i64
 // CHECK-NEXT: %[[U3_SUCCESS:[[:alnum:]_]+]] = arith.addi %[[U3_FIRST]], %[[U3_SECOND]] : i64
@@ -231,26 +231,26 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NEXT: %[[U3_NEXT:[[:alnum:]_]+]] = arith.addi %[[U3_FIRST]], %[[U3_WAIT]] : i64
 // CHECK-NEXT: cf.br ^{{.*}}(%[[U3_SUCCESS]] : i64)
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}}(%{{[[:alnum:]_]+}}, %[[U3_NEXT]] : i64, i64)
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_3.fork.45.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_3.fork.45.0.0
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_3.fork.45.0.0
+// CHECK-NOT: simulation.spawn @unit_3.fork.45.0.0
 // CHECK-NOT: obelisk.sv.assertion
 
 // No-terminal finite nonconsecutive repetition reports every true endpoint in
 // range and every strictly-false trailing extension. At the maximum, only a
 // strict false reports and retains the source; a further true terminates it.
 // CHECK-NOT: @unit_4.$concurrent_eos
-// CHECK-LABEL: obelisk_sim.func private @unit_4(
-// CHECK-SAME: obelisk_sim.persistent_repetition_all_matches
-// CHECK-SAME: obelisk_sim.persistent_repetition_kind = "nonconsecutive"
-// CHECK-SAME: obelisk_sim.persistent_repetition_max = 2 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_min = 1 : i64
-// CHECK-SAME: obelisk_sim.persistent_repetition_states = 3 : i64
-// CHECK-NOT: obelisk_sim.first_match_monitor
-// CHECK-NOT: obelisk_sim.ref.alloc
-// CHECK: obelisk_sim.assert.sampled_read
-// CHECK-NEXT: %[[U4_REPEAT:[[:alnum:]_]+]] = obelisk_sim.logic.is_true
-// CHECK: %[[U4_FALSE:[[:alnum:]_]+]] = obelisk_sim.logic.compare case_eq
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.persistent_repetition_all_matches
+// CHECK-SAME: simulation.persistent_repetition_kind = "nonconsecutive"
+// CHECK-SAME: simulation.persistent_repetition_max = 2 : i64
+// CHECK-SAME: simulation.persistent_repetition_min = 1 : i64
+// CHECK-SAME: simulation.persistent_repetition_states = 3 : i64
+// CHECK-NOT: simulation.first_match_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK: simulation.assert.sampled_read
+// CHECK-NEXT: %[[U4_REPEAT:[[:alnum:]_]+]] = simulation.logic.is_true
+// CHECK: %[[U4_FALSE:[[:alnum:]_]+]] = simulation.logic.compare case_eq
 // CHECK: %[[U4_NEW:[[:alnum:]_]+]] = arith.select %[[U4_REPEAT]], %[[U4_STARTS:[[:alnum:]_]+]], %{{[[:alnum:]_]+}} : i64
 // CHECK: %[[U4_TRUE_ONE:[[:alnum:]_]+]] = arith.select %[[U4_REPEAT]], %[[U4_COUNT_ONE:[[:alnum:]_]+]], %{{[[:alnum:]_]+}} : i64
 // CHECK-NEXT: %[[U4_TRUE_ENDPOINTS:[[:alnum:]_]+]] = arith.addi %[[U4_NEW]], %[[U4_TRUE_ONE]] : i64
@@ -263,7 +263,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NEXT: %[[U4_NEXT_MAX:[[:alnum:]_]+]] = arith.addi %[[U4_TRUE_ONE]], %[[U4_FALSE_MAX]] : i64
 // CHECK-NEXT: cf.br ^{{.*}}(%[[U4_ALL_ENDPOINTS]] : i64)
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}}(%{{[[:alnum:]_]+}}, %[[U4_NEXT_ONE]], %[[U4_NEXT_MAX]] : i64, i64, i64)
-// CHECK-NOT: obelisk_sim.assert.sampled_read
-// CHECK-COUNT-1: obelisk_sim.spawn @unit_4.fork.57.0.0
-// CHECK-NOT: obelisk_sim.spawn @unit_4.fork.57.0.0
+// CHECK-NOT: simulation.assert.sampled_read
+// CHECK-COUNT-1: simulation.spawn @unit_4.fork.57.0.0
+// CHECK-NOT: simulation.spawn @unit_4.fork.57.0.0
 // CHECK-NOT: obelisk.sv.assertion

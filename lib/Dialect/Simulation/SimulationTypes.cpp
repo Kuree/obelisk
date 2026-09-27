@@ -421,7 +421,7 @@ verifyRecordType(llvm::function_ref<InFlightDiagnostic()> emitError,
   for (auto [ordinal, attribute] : llvm::enumerate(fields)) {
     auto field = dyn_cast<FieldAttr>(attribute);
     if (!field)
-      return emitError() << "aggregate fields must use #obelisk_sim.field";
+      return emitError() << "aggregate fields must use #simulation.field";
     if (field.getOrdinal() != ordinal)
       return emitError()
              << "aggregate field ordinals must be dense and ordered";

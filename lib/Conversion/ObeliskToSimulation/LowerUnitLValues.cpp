@@ -43,7 +43,7 @@ static bool isUserNetDriver(Value value) {
           dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
       return function &&
              static_cast<bool>(function.getArgAttr(
-                 argument.getArgNumber(), "obelisk_sim.user_net_driver"));
+                 argument.getArgNumber(), "simulation.user_net_driver"));
     }
     Operation *definition = value.getDefiningOp();
     if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition))
@@ -65,7 +65,7 @@ static bool isUserNetDriver(Value value) {
 namespace {
 
 constexpr StringLiteral continuousStoreAttrName =
-    "obelisk_sim.continuous_store";
+    "simulation.continuous_store";
 
 Operation *getSingleRegionRoot(Region &region) {
   if (region.empty() || region.front().empty())
@@ -97,7 +97,7 @@ bool drivesDelayedNet(sim::SimFuncOp function, Value driver) {
     }
     auto argument = dyn_cast<BlockArgument>(driver);
     return argument && static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
-                           argument.getArgNumber(), "obelisk_sim.delayed_net"));
+                           argument.getArgNumber(), "simulation.delayed_net"));
   }
   return false;
 }
@@ -135,10 +135,10 @@ bool isClassPropertySubvalue(Operation *expression) {
   // which the frontend spells as a plain reference to the property rather
   // than as a member access. The storage it names is the same.
   if (isa<semantic::SVNamedValueExpressionOp>(expression))
-    return expression->hasAttr("obelisk_sim.class_field");
+    return expression->hasAttr("simulation.class_field");
   if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
       children.size() == 1) {
-    if (expression->hasAttr("obelisk_sim.class_field"))
+    if (expression->hasAttr("simulation.class_field"))
       return true;
     return isClassPropertySubvalue(children.front());
   }
@@ -177,7 +177,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   if (failed(destinationType))
     return failure();
   if (auto storage = destination->getAttrOfType<TypeAttr>(
-          "obelisk_sim.covergroup_field_storage_type"))
+          "simulation.covergroup_field_storage_type"))
     destinationType = storage.getValue();
   captured.type = *destinationType;
 
@@ -422,7 +422,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     }
   }
   if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
-      !destination->hasAttr("obelisk_sim.class_field") &&
+      !destination->hasAttr("simulation.class_field") &&
       !destination->hasAttr(staticClassPropertyAttrName) &&
       !virtualInterfaceMember) {
     ArrayRef<Operation *> members = memberChildren;
@@ -639,7 +639,7 @@ UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
         descriptor->alignment, descriptor->bitWidth,
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
-        OBELISK_RT_CONTAINER_QUEUE, bound);
+        sim::ContainerKind::Queue, bound);
     Block *header = addBlock();
     header->addArgument(builder.getI64Type(), location);
     Block *body = addBlock();
@@ -1205,7 +1205,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       }
       bool userRaw = isUserNetDriver(destination.reference);
       auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-          "obelisk_sim.propagation_delays");
+          "simulation.propagation_delays");
       TimingPathMaskedPlan *maskedPlan = nullptr;
       Operation *driverNode = destination.semanticNode;
       while (
@@ -1346,7 +1346,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 builder.getBoolAttr(group.pulseControlled &&
                                     group.pulseShowCancelled));
             if (userRaw)
-              drive->setAttr("obelisk_sim.user_net_raw_drive",
+              drive->setAttr("simulation.user_net_raw_drive",
                              builder.getUnitAttr());
           }
           return success();
@@ -1438,7 +1438,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               builder.getBoolAttr(group.pulseControlled &&
                                   group.pulseShowCancelled));
           if (userRaw)
-            drive->setAttr("obelisk_sim.user_net_raw_drive",
+            drive->setAttr("simulation.user_net_raw_drive",
                            builder.getUnitAttr());
         }
         return success();
@@ -1494,7 +1494,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             builder.getBoolAttr(vectorDelay),
             builder.getBoolAttr(deferDriverResolution || userRaw));
         if (userRaw)
-          drive->setAttr("obelisk_sim.user_net_raw_drive",
+          drive->setAttr("simulation.user_net_raw_drive",
                          builder.getUnitAttr());
         return success();
       }
@@ -1503,7 +1503,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             builder, location, destination.reference, published,
             builder.getBoolAttr(deferDriverResolution || userRaw));
         if (userRaw)
-          drive->setAttr("obelisk_sim.user_net_raw_drive",
+          drive->setAttr("simulation.user_net_raw_drive",
                          builder.getUnitAttr());
       } else {
         auto drive = sim::SimDriverDriveOp::create(
@@ -1513,7 +1513,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               ::obelisk::schedule::Field::DeferNetResolution>(
               drive, builder.getUnitAttr());
         if (userRaw)
-          drive->setAttr("obelisk_sim.user_net_raw_drive",
+          drive->setAttr("simulation.user_net_raw_drive",
                          builder.getUnitAttr());
       }
     } else {
@@ -3802,9 +3802,9 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
         describeContainerElement(info.elementType, location);
     if (failed(descriptor))
       return failure();
-    uint32_t kind = isa<sim::DynamicArrayType>(info.type)
-                        ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                        : OBELISK_RT_CONTAINER_QUEUE;
+    sim::ContainerKind kind = isa<sim::DynamicArrayType>(info.type)
+                                  ? sim::ContainerKind::DynamicArray
+                                  : sim::ContainerKind::Queue;
     uint64_t bound = 0;
     if (auto queue = dyn_cast<sim::QueueType>(info.type))
       bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
@@ -3817,7 +3817,7 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
                                               resizeSize, previousSize);
     }
     Value allocationSize =
-        kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ? containerSize : zero;
+        kind == sim::ContainerKind::DynamicArray ? containerSize : zero;
     Value container = sim::SimContainerCreateOp::create(
         builder, location, info.type, allocationSize, descriptor->typeID,
         descriptor->kind, descriptor->flags, descriptor->valueSize,
@@ -3825,7 +3825,7 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
         builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
         builder.getDenseI32ArrayAttr(descriptor->traceKinds), kind, bound);
 
-    if (info.withRange && kind == OBELISK_RT_CONTAINER_QUEUE) {
+    if (info.withRange && kind == sim::ContainerKind::Queue) {
       Value defaultElement =
           createDefaultValue(builder, location, info.elementType);
       if (!defaultElement)
@@ -3983,9 +3983,9 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
       metadata = captureMetadata(builder, kind);
     if (retainReference && !isStaticallyAllocatedOverrideTarget(capture)) {
       SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
-      if (!metadata.contains("obelisk_sim.automatic_reference_capture"))
+      if (!metadata.contains("simulation.automatic_reference_capture"))
         entries.push_back(builder.getNamedAttr(
-            "obelisk_sim.automatic_reference_capture", builder.getUnitAttr()));
+            "simulation.automatic_reference_capture", builder.getUnitAttr()));
       metadata = builder.getDictionaryAttr(entries);
     }
     argumentAttrs.push_back(metadata);
@@ -4026,7 +4026,7 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
     StringRef path;
     if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
       path = named.getReferencedPath();
-      eventUsesThis |= named->hasAttr("obelisk_sim.class_field");
+      eventUsesThis |= named->hasAttr("simulation.class_field");
     } else if (auto hierarchical =
                    dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
@@ -4034,14 +4034,14 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
                  dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
       if (member->hasAttr(staticClassPropertyAttrName))
         path = member.getReferencedPath();
-      eventUsesThis |= member->hasAttr("obelisk_sim.class_field");
+      eventUsesThis |= member->hasAttr("simulation.class_field");
     }
     if (!path.empty())
       referencedPaths.insert(path);
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
-        call && call->hasAttr("obelisk_sim.class_instance")) {
+        call && call->hasAttr("simulation.class_instance")) {
       auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
-      bool superCall = call->hasAttr("obelisk_sim.class_super");
+      bool superCall = call->hasAttr("simulation.class_super");
       eventUsesThis |=
           superCall || (formals && getChildren(call).size() == formals.size());
     }
@@ -4107,9 +4107,9 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
     addPathCapture(path);
 
   auto codeUnitIDAttr = assignment->getAttrOfType<IntegerAttr>(
-      "obelisk_sim.nba_event_code_unit_id");
+      "simulation.nba_event_code_unit_id");
   auto hierarchyAttr =
-      assignment->getAttrOfType<StringAttr>("obelisk_sim.nba_event_hierarchy");
+      assignment->getAttrOfType<StringAttr>("simulation.nba_event_hierarchy");
   if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive() ||
       !hierarchyAttr)
     return emitError(location)
@@ -4507,7 +4507,7 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
           builder, location, destination, *converted,
           builder.getBoolAttr(userRaw));
       if (userRaw)
-        drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
+        drive->setAttr("simulation.user_net_raw_drive", builder.getUnitAttr());
     } else {
       auto drive = sim::SimDriverDriveOp::create(builder, location, destination,
                                                  *converted);
@@ -4515,7 +4515,7 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::DeferNetResolution>(
             drive, builder.getUnitAttr());
-        drive->setAttr("obelisk_sim.user_net_raw_drive", builder.getUnitAttr());
+        drive->setAttr("simulation.user_net_raw_drive", builder.getUnitAttr());
       }
     }
     return success();

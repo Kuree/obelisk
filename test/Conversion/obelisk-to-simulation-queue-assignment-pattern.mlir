@@ -69,21 +69,21 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
+// CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[INDEX_ONE:.*]] = arith.constant 1 : i64
 // CHECK-DAG: %[[TWENTY_TWO:.*]] = arith.constant 22 : i32
 // CHECK-DAG: %[[ELEVEN:.*]] = arith.constant 11 : i32
 // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i64
-// CHECK: %[[VALUES:.*]] = obelisk_sim.container.create %[[ZERO]]
+// CHECK: %[[VALUES:.*]] = simulation.container.create %[[ZERO]]
 // CHECK-SAME: bound = -1
-// CHECK-SAME: container_kind = 2
-// CHECK: obelisk_sim.container.write %[[VALUES]], %[[ZERO]], %[[ELEVEN]]
-// CHECK: obelisk_sim.container.write %[[VALUES]], %[[INDEX_ONE]], %[[TWENTY_TWO]]
-// CHECK: obelisk_sim.ref.store %[[VALUES]]
+// CHECK-SAME: container_kind = #simulation.container_kind<queue>
+// CHECK: simulation.container.write %[[VALUES]], %[[ZERO]], %[[ELEVEN]]
+// CHECK: simulation.container.write %[[VALUES]], %[[INDEX_ONE]], %[[TWENTY_TWO]]
+// CHECK: simulation.ref.store %[[VALUES]]
 
-// CHECK-LABEL: obelisk_sim.func private @unit_1
+// CHECK-LABEL: simulation.func private @unit_1
 // CHECK: %[[EMPTY_ZERO:.*]] = arith.constant 0 : i64
-// CHECK: %[[EMPTY:.*]] = obelisk_sim.container.create %[[EMPTY_ZERO]]
-// CHECK-SAME: container_kind = 2
-// CHECK-NOT: obelisk_sim.container.write
-// CHECK: obelisk_sim.ref.store %[[EMPTY]]
+// CHECK: %[[EMPTY:.*]] = simulation.container.create %[[EMPTY_ZERO]]
+// CHECK-SAME: container_kind = #simulation.container_kind<queue>
+// CHECK-NOT: simulation.container.write
+// CHECK: simulation.ref.store %[[EMPTY]]

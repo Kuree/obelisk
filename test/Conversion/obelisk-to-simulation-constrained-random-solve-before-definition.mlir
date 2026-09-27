@@ -4,12 +4,12 @@
 // Its exact structural plan samples x and then computes y = x + 1, which
 // follows `solve x before y` and therefore needs neither a table nor checking
 // on the all-enabled path. Dynamic modes retain the generic fallback.
-// SOLVE-BEFORE-DEFINITION-LABEL: obelisk_sim.func private @unit_1
+// SOLVE-BEFORE-DEFINITION-LABEL: simulation.func private @unit_1
 // SOLVE-BEFORE-DEFINITION: arith.addi
 // SOLVE-BEFORE-DEFINITION: arith.shli
-// SOLVE-BEFORE-DEFINITION: obelisk_sim.random.solve {{.*}} mutable
+// SOLVE-BEFORE-DEFINITION: simulation.random.solve {{.*}} mutable
 // SOLVE-BEFORE-DEFINITION-COUNT-2: arith.trunci {{.*}} : i64 to i8
-// SOLVE-BEFORE-DEFINITION: obelisk_sim.managed.store
+// SOLVE-BEFORE-DEFINITION: simulation.managed.store
 
 module {
   obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {

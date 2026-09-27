@@ -256,11 +256,11 @@ module {
 
 
 
-// CHECK-LABEL: obelisk_sim.func private @unit_0
-// CHECK-SAME: %[[THIS:[a-z0-9]+]]: !obelisk_sim.class_handle<@[[CLASS:[A-Za-z0-9_.$]+]]>
-// CHECK-SAME: obelisk_sim.hierarchical_name = "C::setit"
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK-SAME: %[[THIS:[a-z0-9]+]]: !simulation.class_handle<@[[CLASS:[A-Za-z0-9_.$]+]]>
+// CHECK-SAME: simulation.hierarchical_name = "C::setit"
 // CHECK: %[[SEVEN:.*]] = arith.constant 7 : i32
-// CHECK: %[[FIELD:.*]] = obelisk_sim.class.field_ref %[[THIS]][@[[PROP:[A-Za-z0-9_.$]+]]]
-// CHECK: %[[OLD:.*]] = obelisk_sim.managed.load %[[FIELD]]
-// CHECK: %[[NEW:.*]] = obelisk_sim.aggregate.insert %[[SEVEN]] into %[[OLD]][1]
-// CHECK: obelisk_sim.managed.store %[[NEW]] to %[[FIELD]]
+// CHECK: %[[FIELD:.*]] = simulation.class.field_ref %[[THIS]][@[[PROP:[A-Za-z0-9_.$]+]]]
+// CHECK: %[[OLD:.*]] = simulation.managed.load %[[FIELD]]
+// CHECK: %[[NEW:.*]] = simulation.aggregate.insert %[[SEVEN]] into %[[OLD]][1]
+// CHECK: simulation.managed.store %[[NEW]] to %[[FIELD]]
