@@ -15,6 +15,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 
 #include <tuple>
 
@@ -38,6 +39,15 @@ struct NativePromotionRange {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
 };
+
+inline constexpr llvm::StringLiteral kernelPromotionReadyName =
+    "__obelisk_eval_kernel_promotion_ready_v1";
+
+mlir::LogicalResult materializeNativeKernelPromotionReadiness(
+    mlir::ModuleOp module, uint64_t stateBits,
+    mlir::ArrayRef<llvm::SmallVector<NativePromotionRange>> ranges,
+    mlir::ArrayRef<std::string> twoStateExecutors,
+    mlir::ArrayRef<obelisk_rt_native_merged_fragment> fragments);
 
 /// A private AOT-only implementation of one stable actor continuation.  The
 /// wrapper executes the activation body without resuming the coroutine; the
@@ -151,7 +161,6 @@ struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<obelisk_rt_native_merged_fragment> fragments;
   mlir::ArrayRef<std::string> fourStateExecutors;
   mlir::ArrayRef<std::string> twoStateExecutors;
-  mlir::ArrayRef<std::string> promotionReadyFunctions;
   mlir::ArrayRef<llvm::APInt> ownerSubsumptionMasks;
   mlir::ArrayRef<NativeRankedEvalNode> rankedNodes;
   mlir::ArrayRef<llvm::SmallVector<uint64_t>> nbaTaintMasks;

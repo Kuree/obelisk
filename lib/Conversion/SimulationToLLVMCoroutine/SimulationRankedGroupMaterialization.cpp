@@ -217,8 +217,8 @@ materializeNativeRankedGroups(ModuleOp module,
       // sources are excluded by the activation certificate.
       updateEvalReadyWord(builder, loc, ready, readyLayout, owner / 64, bit,
                           /*clear=*/true);
-      bool twoState = !node->twoStateBody.empty() &&
-                      !plan.promotionReadyFunctions[owner].empty();
+      bool twoState =
+          !node->twoStateBody.empty() && !plan.twoStateExecutors[owner].empty();
       Block *four = execute;
       if (twoState) {
         four = new Block;
@@ -235,13 +235,12 @@ materializeNativeRankedGroups(ModuleOp module,
         cf::CondBranchOp::create(builder, loc, needsProof, check, ValueRange{},
                                  two, ValueRange{});
         builder.setInsertionPointToStart(check);
-        Value known =
-            LLVM::CallOp::create(
-                builder, loc, TypeRange{builder.getI1Type()},
-                SymbolRefAttr::get(module.getContext(),
-                                   plan.promotionReadyFunctions[owner]),
-                ValueRange{})
-                .getResult();
+        Value known = LLVM::CallOp::create(
+                          builder, loc, TypeRange{builder.getI1Type()},
+                          SymbolRefAttr::get(module.getContext(),
+                                             kernelPromotionReadyName),
+                          ValueRange{llvmConstant(builder, loc, i64, owner)})
+                          .getResult();
         cf::CondBranchOp::create(builder, loc, known, two, ValueRange{}, four,
                                  ValueRange{});
         builder.setInsertionPointToStart(two);
@@ -275,7 +274,7 @@ materializeNativeRankedGroups(ModuleOp module,
     // speculative effects. Until then the ordinary ranked helper owns entry.
     if (llvm::all_of(members, [&](const auto *node) {
           return !node->twoStateBody.empty() &&
-                 !plan.promotionReadyFunctions[node->owner].empty();
+                 !plan.twoStateExecutors[node->owner].empty();
         })) {
       builder.setInsertionPointToEnd(module.getBody());
       auto candidate = LLVM::LLVMFuncOp::create(

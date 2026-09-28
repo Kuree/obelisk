@@ -50,8 +50,6 @@ materializeNativeEvalDispatch(ModuleOp module,
   ArrayRef<NativeEvalClockKernel> clockKernels = plan.clockKernels;
   ArrayRef<obelisk_rt_native_merged_fragment> mergedFragments = plan.fragments;
   ArrayRef<std::string> mergedTwoStateExecutors = plan.twoStateExecutors;
-  ArrayRef<std::string> promotionKernelReadyNames =
-      plan.promotionReadyFunctions;
   ArrayRef<APInt> ownerSubsumptionMasks = plan.ownerSubsumptionMasks;
   uint32_t nbaTaintWordCount = plan.nbaTaintWordCount;
   bool prioritySignalHandoff = plan.prioritySignalHandoff;
@@ -368,8 +366,7 @@ materializeNativeEvalDispatch(ModuleOp module,
     if (convergenceOwner)
       clearIngressMask(consumed);
     Value executeStatus;
-    if (!mergedTwoStateExecutors[recordIndex].empty() &&
-        !promotionKernelReadyNames[recordIndex].empty()) {
+    if (!mergedTwoStateExecutors[recordIndex].empty()) {
       Block *checkPromotion = new Block;
       Block *executeFourState = new Block;
       Block *executeTwoState = new Block;
@@ -386,9 +383,8 @@ materializeNativeEvalDispatch(ModuleOp module,
       Value kernelReady =
           LLVM::CallOp::create(
               builder, location, TypeRange{builder.getI1Type()},
-              SymbolRefAttr::get(context,
-                                 promotionKernelReadyNames[recordIndex]),
-              ValueRange{})
+              SymbolRefAttr::get(context, kernelPromotionReadyName),
+              ValueRange{llvmConstant(builder, location, i64, recordIndex)})
               .getResult();
       cf::CondBranchOp::create(builder, location, kernelReady, executeTwoState,
                                ValueRange{}, executeFourState, ValueRange{});

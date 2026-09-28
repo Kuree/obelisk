@@ -17,8 +17,7 @@ int __obelisk_eval_four_state_nba_handoff_v1(void *, void *, void *);
 void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 void executeFourStateWork(void *) asm("work.__obelisk_eval_body_0");
 void __obelisk_eval_promotion_invalidate_mask_v1(uint64_t, uint64_t);
-bool __obelisk_eval_kernel_promotion_ready_v1_0();
-bool __obelisk_eval_kernel_promotion_ready_v1_1();
+bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
 void __obelisk_eval_route_promotion_scan_v1();
 void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
 }
@@ -44,8 +43,8 @@ int main() {
     __obelisk_eval_route_promotion_scan_v1();
     assert(__obelisk_eval_function_route_v1_0 == known);
     assert(__obelisk_eval_function_route_v1_1 == otherKnown);
-    assert(__obelisk_eval_kernel_promotion_ready_v1_0());
-    assert(__obelisk_eval_kernel_promotion_ready_v1_1());
+    assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+    assert(__obelisk_eval_kernel_promotion_ready_v1(1));
     assert(__obelisk_eval_promotion_pending_mask_v1[0] == 0);
     __obelisk_eval_promotion_invalidate_range_v1(bit, 1);
     assert(__obelisk_eval_route_promotion_pending_v1[0] ==
@@ -69,6 +68,16 @@ int main() {
         expectedKnown = false;
     __obelisk_eval_route_promotion_scan_v1();
     assert((__obelisk_eval_function_route_v1_0 == known) == expectedKnown);
+    bool otherExpectedKnown = true;
+    for (unsigned bit = 376; bit != bits; ++bit)
+      if (__obelisk_state_unknown[bit / 8] & (1u << (bit % 8)))
+        otherExpectedKnown = false;
+    assert(__obelisk_eval_kernel_promotion_ready_v1(0) == otherExpectedKnown);
+    assert(__obelisk_eval_kernel_promotion_ready_v1(1) == expectedKnown);
+    assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherExpectedKnown);
+    assert(__obelisk_eval_kernel_promotion_latched_v1[1] == expectedKnown);
+    assert(__obelisk_eval_promotion_pending_mask_v1[0] ==
+           (unsigned(!otherExpectedKnown) | (unsigned(!expectedKnown) << 1)));
   };
   // Every bit individually: boundaries, overlapping views, full words, and
   // holes must agree with the scalar union-of-bit-ranges reference.
@@ -105,8 +114,8 @@ int main() {
   __obelisk_eval_promotion_recheck_range_v1(0, bytes * 8);
   auto promote = [&] {
     __obelisk_eval_route_promotion_scan_v1();
-    assert(__obelisk_eval_kernel_promotion_ready_v1_0());
-    assert(__obelisk_eval_kernel_promotion_ready_v1_1());
+    assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+    assert(__obelisk_eval_kernel_promotion_ready_v1(1));
   };
   promote();
   executeFourStateWork(nullptr);

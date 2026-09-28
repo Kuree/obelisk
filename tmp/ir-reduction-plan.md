@@ -2,7 +2,9 @@
 
 Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
-attribute storage work, W5, W6b, and W8–W11 remain outstanding. W4's shared
+attribute storage work, the remaining W5 dispatch work, W6b, and W8–W11
+remain outstanding. W5's shared readiness scanner and W7's native bytecode
+pruning are implemented. W4's shared
 spawning, constant-capture batching, and ABI-preserving wrapper reduction are
 implemented. W3 coroutine-free table processes are implemented, validated,
 and measured. W6a strict copy admission, coroutine-free activation, and
@@ -642,15 +644,54 @@ before/after trials:
   pending bitmap.
 
 **Changes:**
-- **Readiness checks.** Replace the per-kernel `__obelisk_eval_kernel_promotion_ready_v1_N`
-  functions (`SimulationAOTMaterialization.cpp:1184`) and their inlined copies
-  with a table of (kernel → canonical unknown-plane ranges) plus one generic
-  scanner. It runs only at quiescent boundaries, so the hot path is untouched.
-- **Fallback.** `__obelisk_eval_four_state_fallback_v1_N`
+- **Readiness checks: implemented.** `SimulationPromotionReadiness.cpp`
+  replaces the per-kernel readiness functions and unrolled byte scans with
+  constant owner/range tables and one `noinline`, `cold` scanner. Normalize
+  overlapping/adjacent bit ranges without filling gaps, then scan bounded
+  byte spans with exact first/last masks. A successful proof sets its owner
+  latch and clears its fragment's pending bit; failure preserves pending work.
+  The small shared readiness gate remains `alwaysinline`: an already valid
+  latch returns immediately without calling the scanner.
+  - **Corrected boundary assumption:** existing readiness checks also occur
+    during selected-owner dispatch, not only at globally quiescent boundaries.
+    Preserve those call sites and their invalidation ordering. Moving scans
+    to a different boundary would require a separate scheduling proof.
+  - **LRM review:** §§6.3.1/6.11.2 require preserving X/Z evidence for four-state
+    objects; readiness reads the unchanged canonical unknown plane and never
+    changes model state. §§4.5/4.6 require preserving event and NBA ordering;
+    no evaluation, publication, invalidation, or handoff moves. Existing
+    value-domain certificates still determine two-state eligibility.
+  - **Validation:** scalar union checks cover overlapping ranges, gaps,
+    partial boundary bytes, X/Z injection/recovery, and pending/latch updates
+    at `-O0`/`-O3`. The 65-owner oracle checks both pending words and every
+    packed bit, including neighboring padding. LLVM checks require the
+    shared scanner and reject old per-kernel readiness symbols.
+  - **Measured builds** (`tmp/ir-reduction-w5a`, baseline `b41d939a`,
+    `-O3 -fno-lto --compile-threads=8`, one matched compile per variant):
+    RSD compile 138.09 → 137.89 s (effectively flat), peak RSS 4,694,928 →
+    4,611,740 KiB (−1.77%), `.text` 15,184,863 → 14,726,207 bytes (−3.02%),
+    executable 130,840,456 → 130,407,040 bytes (−0.33%). Standalone kernel
+    readiness functions fall from 4,767 (416,138 code bytes, excluding their
+    inlined copies) to two (243 code bytes). Ibex compile 25.25 → 24.45 s,
+    `.text` 6,057,695 → 5,940,847 bytes; PicoRV compile 2.69 → 2.62 s,
+    `.text` 3,988,687 → 3,981,471 bytes. All bytecode sections are byte-identical.
+    These single compile samples do not establish a repeatable timing gain.
+    PicoRV's run succeeds with matching output. Ibex retains its baseline
+    status-14 lifecycle failure and matching output; it is not a functional pass.
+    Full suite plus corrected-check reruns: 2,936 pass, 17 expected failures.
+  - **RSD runtime:** three alternating matched pairs of HelloWorld (4,275
+    simulated cycles, 4,506 retired instructions), all six exit successfully
+    and match the saved register/serial hashes. Median 29.6582 → 29.1567 s
+    (−1.69% observed); ranges 29.3614–29.8573 vs 28.4598–29.8600 s overlap.
+    Mean host cycles fall 1.46%, instructions rise 0.0071%, branch misses fall
+    0.43%, and cache misses rise 4.47%. This small sample suggests a modest
+    runtime improvement but does not establish a repeatable speedup; the
+    demonstrated benefit is reduced readiness code duplication.
+- **Fallback: pending.** `__obelisk_eval_four_state_fallback_v1_N`
   (`SimulationToLLVMCoroutine.cpp:3241`) should call the 4-state body instead of
   inlining it. Check whether its extra bookkeeping (the fallback flag and
   NBA-root reset) can live in the dispatcher.
-- **Variant selection.** Replace indirect calls through
+- **Variant selection: pending.** Replace indirect calls through
   `__obelisk_eval_function_route_v1_N` with a selected-variant bit plus direct
   calls to both bodies. The branch is predictable, and LLVM can inline tiny
   2-state kernels. PicoRV's dispatcher currently makes 42 indirect calls.

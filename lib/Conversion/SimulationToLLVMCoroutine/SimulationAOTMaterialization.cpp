@@ -1053,7 +1053,6 @@ FailureOr<bool> makeNativeEvalPlan(
   constexpr StringLiteral promotionQueryName =
       "__obelisk_eval_promotion_query_v1";
   constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
-  SmallVector<std::string> promotionKernelReadyNames(mergedFragments.size());
   unsigned ownerCount = std::max<size_t>(64, mergedFragments.size());
   APInt allOwners = APInt::getAllOnes(ownerCount);
   const runtime::ReadySetLayout readyLayout(ownerCount);
@@ -1169,112 +1168,10 @@ FailureOr<bool> makeNativeEvalPlan(
       ::obelisk::schedule::Field::EvalKernelProofDependencies>(
       promotionKernelLatched, builder.getArrayAttr(promotionDependencies));
 
-  // Scan an outlined owner's exact canonical closure independently. A
-  // dormant X-valued instance therefore cannot keep unrelated clock owners
-  // on their four-state route.
-  for (auto [index, twoStateExecutor] :
-       llvm::enumerate(mergedTwoStateExecutors)) {
-    if (twoStateExecutor.empty())
-      continue;
-    std::string readyName =
-        (Twine("__obelisk_eval_kernel_promotion_ready_v1_") + Twine(index))
-            .str();
-    promotionKernelReadyNames[index] = readyName;
-    builder.setInsertionPointToEnd(module.getBody());
-    auto ready = LLVM::LLVMFuncOp::create(
-        builder, location, readyName,
-        LLVM::LLVMFunctionType::get(builder.getI1Type(), {}, false));
-    ready->setAttr("passthrough", builder.getArrayAttr(
-                                      {builder.getStringAttr("alwaysinline")}));
-    Block *readyEntry = ready.addEntryBlock(builder);
-    Block *readyScan = new Block;
-    Block *readyLatched = new Block;
-    ready.getBody().push_back(readyScan);
-    ready.getBody().push_back(readyLatched);
-    builder.setInsertionPointToStart(readyEntry);
-    Value latches = LLVM::AddressOfOp::create(
-        builder, location, pointer, promotionKernelLatched.getSymName());
-    Value latchAddress = byteGEP(builder, location, latches, index);
-    Value latch = LLVM::LoadOp::create(builder, location, builder.getI8Type(),
-                                       latchAddress, 1);
-    Value isLatched = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, latch,
-        llvmConstant(builder, location, builder.getI8Type(), 0));
-    cf::CondBranchOp::create(builder, location, isLatched, readyLatched,
-                             ValueRange{}, readyScan, ValueRange{});
-    builder.setInsertionPointToStart(readyLatched);
-    LLVM::ReturnOp::create(
-        builder, location,
-        llvmConstant(builder, location, builder.getI1Type(), 1));
-
-    builder.setInsertionPointToStart(readyScan);
-    Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              "__obelisk_state_unknown");
-    llvm::SmallDenseMap<uint64_t, uint8_t, 16> scanByteMasks;
-    for (const NativePromotionRange &range : mergedPromotionRanges[index]) {
-      if (range.bitWidth == 0 || range.bitOffset > stateLayout.bitCount ||
-          range.bitWidth > stateLayout.bitCount - range.bitOffset)
-        return module.emitError("kernel promotion range exceeds native state");
-      uint64_t firstByte = range.bitOffset / 8;
-      uint64_t lastBit = range.bitOffset + range.bitWidth;
-      uint64_t lastByte = (lastBit + 7) / 8;
-      for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
-        uint8_t mask = UINT8_MAX;
-        if (byte == firstByte && range.bitOffset % 8 != 0)
-          mask &= static_cast<uint8_t>(UINT8_MAX << (range.bitOffset % 8));
-        if (byte + 1 == lastByte && lastBit % 8 != 0)
-          mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
-        scanByteMasks[byte] |= mask;
-      }
-    }
-    SmallVector<std::pair<uint64_t, uint8_t>> orderedScanBytes(
-        scanByteMasks.begin(), scanByteMasks.end());
-    llvm::sort(orderedScanBytes, [](const auto &lhs, const auto &rhs) {
-      return lhs.first < rhs.first;
-    });
-    Block *readyUnknown = new Block;
-    ready.getBody().push_back(readyUnknown);
-    for (auto [byte, mask] : orderedScanBytes) {
-      Value bits =
-          LLVM::LoadOp::create(builder, location, builder.getI8Type(),
-                               byteGEP(builder, location, unknown, byte), 1);
-      if (mask != UINT8_MAX)
-        bits = arith::AndIOp::create(
-            builder, location, bits,
-            llvmConstant(builder, location, builder.getI8Type(), mask));
-      Value byteUnknown = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, bits,
-          llvmConstant(builder, location, builder.getI8Type(), 0));
-      Block *nextByte = new Block;
-      ready.getBody().push_back(nextByte);
-      cf::CondBranchOp::create(builder, location, byteUnknown, readyUnknown,
-                               ValueRange{}, nextByte, ValueRange{});
-      builder.setInsertionPointToStart(nextByte);
-    }
-    LLVM::StoreOp::create(
-        builder, location,
-        llvmConstant(builder, location, builder.getI8Type(), 1), latchAddress,
-        1);
-    Value pendingAddress = ownerWordAddress(
-        builder, location,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  promotionPendingMask.getSymName()),
-        mergedFragments[index].bit / 64);
-    Value pending =
-        LLVM::LoadOp::create(builder, location, i64, pendingAddress, 8);
-    Value clearedPending = arith::AndIOp::create(
-        builder, location, pending,
-        llvmConstant(builder, location, i64,
-                     ~(uint64_t{1} << (mergedFragments[index].bit % 64))));
-    LLVM::StoreOp::create(builder, location, clearedPending, pendingAddress, 8);
-    LLVM::ReturnOp::create(
-        builder, location,
-        llvmConstant(builder, location, builder.getI1Type(), 1));
-    builder.setInsertionPointToStart(readyUnknown);
-    LLVM::ReturnOp::create(
-        builder, location,
-        llvmConstant(builder, location, builder.getI1Type(), 0));
-  }
+  if (failed(materializeNativeKernelPromotionReadiness(
+          module, stateLayout.bitCount, mergedPromotionRanges,
+          mergedTwoStateExecutors, mergedFragments)))
+    return failure();
 
   // Path-dependent entry bodies keep activation-local probes. They do not
   // participate in a model-wide controller promotion certificate.
@@ -4016,7 +3913,7 @@ FailureOr<bool> makeNativeEvalPlan(
         builder.setInsertionPointToEnd(hybridCursor);
         Block *nextSelectedOwner = selectDirectOwner(recordIndex);
         handoffPrioritySignal();
-        if (promotionKernelReadyNames[recordIndex].empty()) {
+        if (mergedTwoStateExecutors[recordIndex].empty()) {
           LLVM::StoreOp::create(
               builder, location,
               llvmConstant(builder, location, builder.getI8Type(), 1),
@@ -4058,9 +3955,8 @@ FailureOr<bool> makeNativeEvalPlan(
         Value kernelReady =
             LLVM::CallOp::create(
                 builder, location, TypeRange{builder.getI1Type()},
-                SymbolRefAttr::get(context,
-                                   promotionKernelReadyNames[recordIndex]),
-                ValueRange{})
+                SymbolRefAttr::get(context, kernelPromotionReadyName),
+                ValueRange{llvmConstant(builder, location, i64, recordIndex)})
                 .getResult();
         cf::CondBranchOp::create(builder, location, kernelReady,
                                  executeTwoState, ValueRange{},
@@ -4173,9 +4069,8 @@ FailureOr<bool> makeNativeEvalPlan(
           Value kernelReady =
               LLVM::CallOp::create(
                   builder, location, TypeRange{builder.getI1Type()},
-                  SymbolRefAttr::get(context,
-                                     promotionKernelReadyNames[recordIndex]),
-                  ValueRange{})
+                  SymbolRefAttr::get(context, kernelPromotionReadyName),
+                  ValueRange{llvmConstant(builder, location, i64, recordIndex)})
                   .getResult();
           cf::CondBranchOp::create(builder, location, kernelReady,
                                    executeTwoState, ValueRange{},
@@ -4590,19 +4485,13 @@ FailureOr<bool> makeNativeEvalPlan(
   for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
     if (!entry.queued)
       dynamicNBAValidNames.push_back(entry.validName);
-  NativeEvalCoordinatorPlan coordinatorPlan{clockKernels,
-                                            mergedFragments,
-                                            mergedExecutors,
-                                            mergedTwoStateExecutors,
-                                            promotionKernelReadyNames,
-                                            ownerSubsumptionMasks,
-                                            resolved->rankedNodes,
-                                            recordNBATaintMasks,
-                                            nbaTaintedRecords,
-                                            nbaTaintWordCount,
-                                            prioritySignalHandoff,
-                                            dynamicNBAValidNames,
-                                            hasOrderedNBA};
+  NativeEvalCoordinatorPlan coordinatorPlan{
+      clockKernels,          mergedFragments,
+      mergedExecutors,       mergedTwoStateExecutors,
+      ownerSubsumptionMasks, resolved->rankedNodes,
+      recordNBATaintMasks,   nbaTaintedRecords,
+      nbaTaintWordCount,     prioritySignalHandoff,
+      dynamicNBAValidNames,  hasOrderedNBA};
   auto rankedGroups = materializeNativeRankedGroups(module, coordinatorPlan);
   if (failed(rankedGroups))
     return failure();

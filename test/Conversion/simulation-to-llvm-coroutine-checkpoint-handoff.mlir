@@ -117,16 +117,18 @@ module attributes {
 
 // The whole-closure certificate scans the exact canonical unknown-plane
 // range before clearing this owner's pending bit.
-// CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_ready_v1_0
-// CHECK: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
-// Independent one-bit roots are byte-aligned, so the certificate checks each
-// exact byte rather than reading a packed neighbor through one shared mask.
-// CHECK: %[[UNKNOWN_BYTE0:.*]] = llvm.load
-// CHECK: %[[RANGE_MASK0:.*]] = llvm.mlir.constant(1 : i8)
-// CHECK: llvm.and %[[UNKNOWN_BYTE0]], %[[RANGE_MASK0]]
-// CHECK: %[[UNKNOWN_BYTE1:.*]] = llvm.load
-// CHECK: %[[RANGE_MASK1:.*]] = llvm.mlir.constant(1 : i8)
-// CHECK: llvm.and %[[UNKNOWN_BYTE1]], %[[RANGE_MASK1]]
+// CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_scan_v1(
+// CHECK-SAME: passthrough = ["noinline", "cold"]
+// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_owners_v1
+// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_ranges_v1
+// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.load {{.*}} : !llvm.ptr -> i8
+// CHECK: llvm.and {{.*}} : i8
+// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_ready_v1(
+// CHECK-SAME: passthrough = ["alwaysinline"]
+// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_latched_v1
+// CHECK: llvm.call @__obelisk_eval_kernel_promotion_scan_v1
 
 // Path probes and checkpoint continuation remain local to their executor.
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1

@@ -171,7 +171,7 @@ module attributes {
 // CHECK-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute.two_state.__obelisk_trusted
 // CHECK-NOT: llvm.call @__obelisk_eval_kernel_promotion_ready
 // CHECK: llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted
-// CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1_0
+// CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1(
 
 // The mixed variant replaces one domain's sample with X. That owner cannot
 // use the shared proof; check the remaining consumer after its predecessor.
@@ -185,6 +185,7 @@ module attributes {
 // MIXED: %[[KNOWN:.*]] = llvm.icmp "eq" %[[LOCAL]], {{.*}} : i64
 // MIXED-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]], ^[[SCAN:bb[0-9]+]]
 // MIXED: ^[[SCAN]]:
-// MIXED-NEXT: {{.*}}llvm.call @__obelisk_eval_kernel_promotion_ready_v1_1()
+// MIXED: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
+// MIXED-NEXT: {{.*}}llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
 // MIXED: ^[[FAST]]:
 // MIXED-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted

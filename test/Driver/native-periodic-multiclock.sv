@@ -100,12 +100,15 @@ endmodule
 // Each outlined owner has an independent promotion latch.  The generated
 // scanner is a local masked-plane check and has no runtime edge.
 // LLVM-DAG: @__obelisk_eval_kernel_promotion_latched_v1 = internal {{.*}}global [7 x i8] zeroinitializer
-// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global i64 127
-// LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_ready_v1_0
+// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global [1 x i64] [i64 127]
+// LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_scan_v1(
 // LLVM-NOT: call {{.*}}@obelisk_rt_
-// LLVM: load i8, ptr @__obelisk_eval_kernel_promotion_latched_v1
-// LLVM: ret i1 true
-// LLVM: store i8 1, ptr @__obelisk_eval_kernel_promotion_latched_v1
+// LLVM: store i8 1, ptr
+// LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_ready_v1(
+// LLVM-NOT: call {{.*}}@obelisk_rt_
+// LLVM: getelementptr {{.*}}@__obelisk_eval_kernel_promotion_latched_v1
+// LLVM: load i8, ptr
+// LLVM: call {{.*}}@__obelisk_eval_kernel_promotion_scan_v1
 
 // Promotion invalidation is a cold generated store. It contains no runtime
 // edge; the subsequent quiescent coordinator scan selects four- or two-state.
