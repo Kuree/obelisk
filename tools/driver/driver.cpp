@@ -1108,6 +1108,13 @@ static int executeCompilation(
                     "'; expected native or bytecode");
     valid = false;
   }
+  StringRef bytecodeScope =
+      args.getLastArgValue(OPT_bytecode_scope_EQ, "required");
+  if (bytecodeScope != "required" && bytecodeScope != "all") {
+    emitDriverError(Twine("unsupported bytecode scope '") + bytecodeScope +
+                    "'; expected required or all");
+    valid = false;
+  }
   StringRef nativeScheduler =
       args.getLastArgValue(OPT_native_scheduler_EQ, "auto");
   if (!obelisk::schedule::symbolizeNativeSchedulerMode(nativeScheduler)) {
@@ -1444,6 +1451,7 @@ static int executeCompilation(
         std::move(classifiedInputs.sharedLibraries);
     nativeOptions.dpi = hasDPI || !nativeOptions.sharedLibraryInputs.empty();
     nativeOptions.vpi = vpiMode.str();
+    nativeOptions.bytecodeScope = bytecodeScope.str();
     nativeOptions.nativeScheduler = nativeScheduler.str();
     nativeOptions.thinLTOCacheDir =
         args.getLastArgValue(OPT_thinlto_cache_dir_EQ).str();

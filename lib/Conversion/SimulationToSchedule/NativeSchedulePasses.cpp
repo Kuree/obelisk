@@ -145,6 +145,21 @@ LogicalResult NativePipelineAnalysis::planActors() {
     if (analysis::isNegativeTimingDelayCommit(function))
       function->setAttr(runtimePublicationCertificate, UnitAttr::get(context));
   }
+  if (module->hasAttr("obelisk.bytecode.image")) {
+    auto missingBytecode = [](Operation *function) {
+      return !function->hasAttr("obelisk.bytecode.function");
+    };
+    for (const auto &[function, blocks] : aotEligibility.getBytecodeFragments())
+      if (!blocks.empty() &&
+          aotEligibility.getActorSlots().contains(function) &&
+          missingBytecode(function))
+        return function->emitError(
+            "native fallback requires retained bytecode");
+    for (Operation *function : aotEligibility.getRuntimeObservedWriterActors())
+      if (missingBytecode(function))
+        return function->emitError(
+            "runtime checkpoint requires retained bytecode");
+  }
   for (Operation *operation : aotEligibility.getRuntimeObservedWriterActors()) {
     auto function = dyn_cast_if_present<sim::SimFuncOp>(operation);
     IntegerAttr codeUnit =

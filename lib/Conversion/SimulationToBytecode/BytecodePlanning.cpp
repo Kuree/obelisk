@@ -3,6 +3,9 @@
 #include "BytecodeEncoder.h"
 #include "BytecodeRegisterPlanning.h"
 #include "BytecodeSerialization.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
+#include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -47,6 +50,101 @@ FailureOr<Layout> Encoder::getValueLayout(Value value) const {
   return layout;
 }
 
+namespace {
+
+// IEEE 1800-2023, Clauses 4.5 and 4.6: changing an execution tier must
+// preserve the process continuation and its scheduled effects.
+void pruneNativeFunctions(sim::SimDesignOp design,
+                          SmallVectorImpl<sim::SimFuncOp> &functions) {
+  auto module = design->getParentOfType<ModuleOp>();
+  if (!module)
+    return;
+  auto native = analysis::NativeAOTAnalysis::compute(module);
+  if (!native.isEligible())
+    return;
+
+  llvm::StringMap<sim::SimFuncOp> symbols;
+  llvm::DenseMap<Operation *, SmallVector<Operation *>> dependencies, callers;
+  llvm::DenseSet<Operation *> fallback, retained;
+  SmallVector<Operation *> pendingFallback, worklist;
+  auto retain = [&](Operation *function) {
+    if (retained.insert(function).second)
+      worklist.push_back(function);
+  };
+  llvm::DenseSet<Operation *> nativeBootstraps;
+  for (auto function : functions) {
+    auto slot = native.getActorSlots().find(function);
+    if (function.getEntryKind() != sim::EntryKind::RootInitializer ||
+        (slot != native.getActorSlots().end() &&
+         native.getBytecodeFragments().contains(function)))
+      continue;
+    bool suspends = false;
+    function.walk([&](Operation *op) { suspends |= sim::isSuspensionOp(op); });
+    if (!suspends)
+      nativeBootstraps.insert(function);
+  }
+  auto requireFallback = [&](Operation *function) {
+    // IEEE 1800-2023 6.8: declaration initialization precedes process startup.
+    // An unsuspended root uses the ordinary native executor, including when
+    // managed captures exclude it from AOT scheduling. Only admitted bytecode
+    // continuations can select the interpreter during native startup.
+    if (nativeBootstraps.contains(function))
+      return;
+    if (fallback.insert(function).second)
+      pendingFallback.push_back(function);
+  };
+  for (auto function : functions)
+    symbols[function.getSymName()] = function;
+  for (auto function : functions) {
+    auto uses = SymbolTable::getSymbolUses(function);
+    if (!uses)
+      return;
+    for (const auto &use : *uses)
+      if (auto target = symbols.lookup(use.getSymbolRef().getRootReference())) {
+        dependencies[function].push_back(target);
+        if (isa<sim::SimCallOp, sim::SimTaskCallOp>(use.getUser()))
+          callers[target].push_back(function);
+      }
+
+    // Keep callback and helper entry points conservatively. Their native
+    // callers need bytecode only when a call can reach an interpreter boundary.
+    if (!native.getActorSlots().contains(function) &&
+        !nativeBootstraps.contains(function))
+      retain(function);
+    bool needsFallback =
+        native.getBytecodeFragments().contains(function) ||
+        native.getRuntimeObservedWriterActors().contains(function);
+    function.walk([&](Operation *op) {
+      needsFallback |=
+          isa<sim::SimTaskCallOp, sim::SimDisplayOp, sim::SimFinishOp,
+              sim::SimStopOp, sim::SimProgramExitOp, sim::SimFatalOp,
+              sim::SimErrorOp, sim::SimStatusCheckOp, sim::SimSampledReadOp,
+              sim::SimSampledHistoryOp>(op);
+      if (auto call = dyn_cast<sim::SimCallOp>(op))
+        needsFallback |= !symbols.contains(call.getCallee());
+    });
+    if (needsFallback)
+      requireFallback(function);
+  }
+  while (!pendingFallback.empty()) {
+    Operation *function = pendingFallback.pop_back_val();
+    retain(function);
+    for (Operation *caller : callers[function])
+      requireFallback(caller);
+  }
+  while (!worklist.empty())
+    for (Operation *callee : dependencies[worklist.pop_back_val()])
+      retain(callee);
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk bytecode retention: " << retained.size() << "/"
+                 << functions.size() << " functions\n";
+  llvm::erase_if(functions, [&](sim::SimFuncOp function) {
+    return !retained.contains(function);
+  });
+}
+
+} // namespace
+
 LogicalResult Encoder::planFunctions() {
   SmallVector<sim::SimFuncOp> functions;
   for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>()) {
@@ -55,6 +153,8 @@ LogicalResult Encoder::planFunctions() {
     else
       functions.push_back(function);
   }
+  if (options.pruneNative && !options.requireBytecode)
+    pruneNativeFunctions(design, functions);
   auto getStableID = [](sim::SimFuncOp function) {
     return function.getCodeUnitId().value_or(
         stableHash(function.getSymName()) &
@@ -64,7 +164,7 @@ LogicalResult Encoder::planFunctions() {
     return std::make_tuple(getStableID(left), left.getSymName()) <
            std::make_tuple(getStableID(right), right.getSymName());
   });
-  if (functions.empty())
+  if (functions.empty() && (!options.pruneNative || options.requireBytecode))
     return design.emitOpError("contains no executable functions");
   plans.reserve(functions.size());
   llvm::DenseMap<uint64_t, sim::SimFuncOp> stableIDs;

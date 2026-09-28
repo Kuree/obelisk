@@ -206,7 +206,7 @@ def EncodeObeliskSimToBytecodePass
   let description = [{
     Builds one deterministic, pointer-free design bytecode image while leaving
     source simulation.func operations intact for native lowering. Every
-    defined function must use the encoder's closed normalized legality set:
+    retained function must use the encoder's closed normalized legality set:
     integer arith constants, arithmetic, bitwise, shifts, comparisons, select,
     extensions/truncation/index casts; cf branches and switches; and the
     explicitly implemented simulation value, aggregate, reference, state,
@@ -224,7 +224,9 @@ def EncodeObeliskSimToBytecodePass
     Option<"vpi", "vpi", "std::string", "\"auto\"",
            "Reflection profile: auto, off, read, or full">,
     Option<"requireBytecode", "require-bytecode", "bool", "false",
-           "Require scheduler execution through the embedded bytecode tier">
+           "Require scheduler execution through the embedded bytecode tier">,
+    Option<"pruneNative", "prune-native", "bool", "false",
+           "Omit native actors without interpreter fallbacks">
   ];
 }
 

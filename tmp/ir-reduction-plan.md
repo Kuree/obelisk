@@ -2,9 +2,9 @@
 
 Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
-attribute storage work and W5–W11 remain outstanding, except for W4's shared
-spawning, constant-capture batching, and ABI-preserving wrapper reduction,
-now implemented. W3 coroutine-free table processes are implemented, validated,
+attribute storage work, W5, W6b, and W8–W11 remain outstanding. W4's shared
+spawning, constant-capture batching, and ABI-preserving wrapper reduction are
+implemented. W3 coroutine-free table processes are implemented, validated,
 and measured. W6a strict copy admission, coroutine-free activation, and
 shared native copy kernels are implemented. Existing eval variants remain for
 the W5 dispatch work. Paths use the current Schedule dialect layout; historical line numbers below are navigation hints,
@@ -21,13 +21,11 @@ Every change below must preserve these:
 - **Runtime 2-state/4-state switching.** Promotion when X/Z clears, and
   invalidation when X/Z appears, stay dynamic. Static 2-state proofs are not a
   substitute.
-- **Runtime tier switching.**
-  - A VPI write or other external change that lands on a compute-fragment
-    boundary goes directly to Tier-2.
-  - A write to a fragment-internal signal (a value that lives only as SSA inside
-    a fragment) needs Tier-3.
-  - The stabilizing route is Tier-3 → Tier-2 → Tier-1. All external writes go
-    through this intervention path.
+- **Runtime tier switching.** Preserve the actual dispatcher contract: external
+  writes invalidate scheduling/value shortcuts while guarded native executors
+  remain usable. Classified bytecode continuations and cold checkpoints retain
+  their interpreter body. Future fusion that makes writable state exist only
+  inside SSA needs an explicit internal-range intervention contract first.
 - **vpiStmt.** Per-statement callbacks must eventually be supported. When they
   are enabled, statement granularity inside Tier-1 code needs a Tier-3 route.
 - **Conformance.** 1800-2023 §4.3 allows any algorithm "provided the user-visible
@@ -743,31 +741,100 @@ and exercise X injection and recovery in the middle of a run.
 
 ### W7. Bytecode scope
 
-- **Today:** `TargetBackend.cpp:591` sets `needsHybridBytecode` for every
-  scheduler except Generic. `BytecodePlanning.cpp::planFunctions` selects
-  every non-external function present when encoding runs. `TargetBackend.cpp`
-  freezes bytecode BEFORE native-region optimization and native lowering, so
-  the old claim that later eval-body clones are encoded is not established.
-  Inventory the actual image's actors/helpers before changing retention.
-- **Needed instead:**
-  - Actors that cannot run natively, as today.
-  - When a writer capability exists (writable VPI, DPI-export writers,
-    force/release or the debugger): the source actors of fragments that contain
-    internal signals. Fusion materialization already knows which ranges it
-    forwarded into SSA. Record them in the schedule as internal ranges and take
-    the actor closure.
-  - When vpiStmt or statement stepping is enabled: every actor. Make this its
-    own compile-time capability, separate from `--vpi=full`.
-  - Native-only eval, fused and 2-state bodies must not be newly included.
-    Retain the transitive task/helper callees and canonical continuations
-    needed by selected source actors; actor selection alone is insufficient.
-- **Follow-on:**
-  - Only actors with bytecode need the ramp's any-continuation dispatch and the
-    per-continuation shims.
-  - Add a per-signal VPI write-access set, similar to Verilator's
-    `public_flat_rw`. It shrinks the Tier-3 set to internal *and* writable
-    signals, and enables W6b under full VPI.
-  - `SimulationVPIAnalysis` is currently only off/read/full per design.
+**Implemented and validated.**
+
+The current runtime does not select Tier 3 merely because VPI or DPI writes
+state. `ProcessAOT.cpp::executeAOTNode` invalidates native scheduling/value
+shortcuts but keeps the compiled executor, whose range guards and publication
+paths remain active. Bytecode execution is selected for classified bytecode
+continuations, cold checkpoints, and an explicit bytecode execution policy.
+Therefore the earlier proposed fusion-internal-range inventory is not a
+prerequisite for pruning the current interpreter image. If future fusion removes
+externally observable state, it must first supply that additional proof and
+retention contract.
+
+- The driver defaults to `--bytecode-scope=required` for native hybrid builds.
+  Encoding still precedes native-region rewriting and eval cloning.
+- `NativeAOTAnalysis` supplies the admitted native actors, bytecode fragments,
+  and runtime-observed writers. Functions outside that native inventory,
+  checkpoint operations, and transitive callers of actual fallback paths are
+  retained. A native initializer call alone does not retain the bootstrap and
+  its entire spawn closure. Callback,
+  task, and helper entry points are retained conservatively too.
+- A root initializer without suspension uses the ordinary native executor,
+  even when managed captures exclude it from AOT scheduling. It does not need
+  a bytecode body unless an admitted continuation explicitly selects bytecode
+  or a retained callable body references it. Excluding that bootstrap avoids
+  pulling its complete spawn inventory into the image. Resumable roots retain
+  the normal fallback/call-closure rules (6.8, 4.5/4.6).
+- Retained functions take the transitive symbol-reference closure, including
+  spawned actors, calls, and observers. Retaining a child does not require
+  retaining its native bootstrap parent. Later native planning diagnoses any
+  classified interpreter boundary missing its encoded body.
+- `--bytecode-scope=all` keeps every source body independently of `--vpi=full`
+  and also requests an image under generic scheduling. Explicit bytecode
+  execution always keeps every body. Standalone encoder calls retain their
+  existing all-functions default unless `prune-native=true` is supplied.
+  This is a retention capability; statement stepping itself is not added.
+- State descriptors, connectivity, sampled ranges, reflection, canonical
+  frames, and continuations survive independently of body selection. Images
+  with zero executable functions remain valid for state/net queries and managed
+  root enumeration; executable-entry validation still rejects every index.
+- Re-encoding clears stale per-function bytecode indices and scratch metadata.
+
+**LRM review:** IEEE 1800-2023 4.5/4.6 require preservation of scheduling and
+statement/NBA order, not a specific executor. This changes availability metadata
+and serialization, not process bodies or scheduled effects. State/net metadata
+and native publication remain available for 38.34 writes and force/release;
+full VPI does not imply statement stepping. Cold paths retain their original
+pre-native-rewrite body and transitive callees.
+
+**Validation:** full suite 2936 passed, 17 expected failures. Additional focused
+checks cover retained bootstrap spawn closure and both VPI tier-write runtime
+fixtures with pruning explicitly enabled (including force/release and X-state
+transitions). The metadata-only runtime test verifies successful context
+initialization, rejection of executable entry 0, and rejection of an empty
+required-bytecode design. Encoder tests cover full-VPI metadata, explicit
+bytecode execution, and clearing stale attributes on a second encoding.
+
+**Matched measurements:** `tmp/ir-reduction-w7/`, native `-O3 -fno-lto`,
+8 compile threads. The saved pre-change compiler and final compiler used the
+same staged runtime. Compile rows are single runs, not a statistical speed claim.
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| RSD bytecode functions | 13,361 | 7,091 |
+| RSD bytecode bytes | 40,892,880 | 22,210,336 (-45.69%) |
+| RSD bytecode instructions | 557,740 | 297,871 |
+| RSD executable bytes | 150,518,264 | 130,840,456 (-13.07%) |
+| RSD `.text` bytes | 15,178,447 | 15,184,863 (+0.04%) |
+| RSD compile elapsed | 137.97 s | 144.25 s (+4.55%) |
+| RSD compile peak RSS | 4,954,040 KiB | 4,726,880 KiB (-4.59%) |
+| ibex bytecode functions | 3,217 | 1,546 |
+| ibex bytecode bytes | 6,639,744 | 3,785,624 (-42.99%) |
+| ibex compile elapsed | 24.37 s | 24.33 s |
+| PicoRV bytecode functions | 108 | 51 |
+| PicoRV bytecode bytes | 1,216,816 | 475,448 (-60.93%) |
+| PicoRV compile elapsed | 2.87 s | 2.69 s |
+
+The RSD image/working-set reduction is established; a compile-time improvement
+is not. PicoRV exits successfully with identical output. Ibex still exits with
+its pre-existing lifecycle status 14 and identical output; it is not a passing
+functional/runtime benchmark.
+
+Three alternating RSD HelloWorld pairs all exit successfully and match the
+4275-cycle/4506-retired architectural oracle, including exact register and
+serial output hashes. Median elapsed increases from 29.11446 to 29.60963 s
+(+1.70%); mean cycles increase 1.97%, instructions decrease 0.10%, branch misses
+decrease 2.02%, and cache misses decrease 6.54%. This is not a runtime speedup.
+The trace and counters are in `rsd-runtime-comparison.json` and the paired
+`.perf` files under the measurement directory.
+
+**Follow-on:** tighten conservative helper/caller retention only after proving
+external callback roots; use the absent bytecode capability to simplify native
+continuation wrappers. Per-signal VPI write-access analysis remains useful for
+future state-removing fusion and net collapsing, but is separate from current
+bytecode scope.
 
 ### W8. NBA commit layout
 
@@ -830,8 +897,8 @@ and exercise X injection and recovery in the middle of a run.
 3. W4 spawning, constant startup tables, and ABI-preserving wrapper reduction
    are implemented. W6a copy admission, coroutine-free activation, and shared
    native copy tables are implemented; eval dispatch remains under W5.
-4. W3 is implemented with the descriptor extension. Next is W7, which uses its
-   continuation-entry model and adds the internal-range record from fusion.
+4. W3 is implemented with the descriptor extension. W7 selective bytecode
+   retention is implemented using the actual native fallback contract.
 5. W5, W8 and W9.
 6. W6b net collapsing within the LRM's explicit permissions, with W7's access
    analysis where needed. Variable collapsing remains deferred pending proof.
@@ -844,9 +911,8 @@ use its compile/IR measurements and report the functional limitation explicitly.
 ## Open questions
 
 - W5: can the fallback's bookkeeping move entirely into the dispatcher?
-- W7: what exactly counts as internal? Is it only SSA-forwarded ranges from
-  fusion and group dataflow, or also predicated-group publications that are
-  deferred to return?
+- Future state-removing fusion: distinguish truly internal SSA ranges from
+  deferred publications before relying on bytecode for external intervention.
 - W6b: which variable-port cases, if any, have a complete observability proof?
   Decide default/opt-in policy only after correctness is established.
 - Baseline: isolate ibex's process lifecycle status 14 separately from changes

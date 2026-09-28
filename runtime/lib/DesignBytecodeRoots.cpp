@@ -89,7 +89,8 @@ void obelisk_rt_enumerate_design_managed_roots(
     Image image;
     if (hasBytecode) {
       obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
-      hasBytecode = loadValidatedImage(entry, context, image);
+      hasBytecode =
+          loadValidatedImage(entry, context, image, /*inventoryOnly=*/true);
     }
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     for (auto &[id, state] : context->nativeAutomaticStates) {

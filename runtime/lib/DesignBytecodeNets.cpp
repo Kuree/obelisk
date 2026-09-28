@@ -1330,7 +1330,7 @@ obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
   OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1377,7 +1377,7 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
   OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1649,7 +1649,8 @@ obelisk_rt_v1_pass_switch_control(obelisk_rt_context *context,
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     obelisk::designbytecode::Image image;
-    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image))
+    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image,
+                                                     /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool changed = false;
@@ -1677,7 +1678,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     obelisk::designbytecode::Image image;
-    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image))
+    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image,
+                                                     /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     NetAliasCache *cache =
@@ -1772,7 +1774,7 @@ obelisk_rt_v1_mos_drive_delayed(obelisk_rt_context *context,
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     NetAliasCache *cache = getNetAliasCache(image, context);
@@ -1822,7 +1824,7 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
   OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     if (context->stateValue.size() !=
             static_cast<size_t>((image.stateBitCount + 63) / 64) ||
@@ -1882,7 +1884,7 @@ obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool changed = false;
@@ -1913,7 +1915,7 @@ obelisk_rt_v1_scheduler_resolve_initial_drivers(obelisk_rt_context *context) {
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool changed = false;
@@ -1956,7 +1958,7 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!synchronizeNativeNetOverrideStateUnlocked(context))
@@ -2046,7 +2048,7 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
     ContextTransaction transaction(context);
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!synchronizeNativeNetOverrideStateUnlocked(context))
@@ -2101,7 +2103,7 @@ obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
   OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
-    if (!loadValidatedImage(entry, context, image))
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
       return OBELISK_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     NetAliasCache *cache = getNetAliasCache(image, context);

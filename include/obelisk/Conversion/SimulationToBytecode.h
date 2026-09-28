@@ -23,6 +23,8 @@ struct SimulationBytecodeOptions {
   std::string vpi = "auto";
   /// Require the runtime scheduler to execute all process entries as bytecode.
   bool requireBytecode = false;
+  /// Omit native actors that have no interpreter entry or checkpoint.
+  bool pruneNative = false;
 };
 
 struct SimulationBytecodeFunction {

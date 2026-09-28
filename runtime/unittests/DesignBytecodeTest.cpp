@@ -3704,6 +3704,37 @@ struct Fixture {
   }
 };
 
+TEST(DesignBytecode, MetadataOnlyImageHasNoExecutableEntry) {
+  std::vector<uint8_t> bytes(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, bytes.size());
+  put64(bytes, 24, bytes.size());
+  for (size_t offset = 40; offset < 200; offset += 16)
+    put64(bytes, offset, bytes.size());
+  put64(bytes, 32, imageChecksum(bytes));
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  execution.bytecode = bytes.data();
+  execution.bytecode_size = bytes.size();
+  execution.checksum = imageChecksum(bytes);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  uint64_t scratchSize = 0, scratchAlignment = 0;
+  EXPECT_EQ(obelisk_rt_validate_design_bytecode(entry, context, &scratchSize,
+                                                &scratchAlignment),
+            OBELISK_RT_INVALID_BYTECODE);
+  obelisk_rt_v1_context_destroy(context);
+  execution.flags |= OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+  context = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(context, nullptr);
+}
+
 TEST(DesignBytecode, ContextBoundProcessCreationReusesValidatedDesign) {
   Fixture fixture;
   obelisk_rt_context *context = nullptr;

@@ -186,7 +186,8 @@ inline uint8_t decodeDriverResolution(uint32_t argument) {
 uint32_t functionHomeRegion(const Function &function);
 uint32_t read32(const uint8_t *data);
 uint64_t read64(const uint8_t *data);
-bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image);
+bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
+                bool inventoryOnly = false);
 bool validateImage(const Image &image);
 Function functionAt(const Image &image, uint32_t index);
 Continuation continuationAt(const Image &image, uint64_t index);
@@ -205,7 +206,8 @@ bool validMap(const Image &image, const Function &source,
 bool validIntrinsic(const Image &image, const Function &function,
                     uint32_t siteIndex);
 bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                        obelisk_rt_context *context, Image &image);
+                        obelisk_rt_context *context, Image &image,
+                        bool inventoryOnly = false);
 
 } // namespace obelisk::designbytecode
 

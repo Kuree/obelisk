@@ -69,6 +69,7 @@ struct NativeOutputOptions {
   std::vector<NativeLinkInput> nativeLinkInputs;
   std::vector<SharedLibraryInput> sharedLibraryInputs;
   std::string vpi = "off";
+  std::string bytecodeScope = "required";
   std::string nativeScheduler = "auto";
   std::string thinLTOCacheDir;
   bool bytecode = false;

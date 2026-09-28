@@ -879,6 +879,7 @@ public:
     SimulationBytecodeOptions options;
     options.vpi = vpi;
     options.requireBytecode = requireBytecode;
+    options.pruneNative = pruneNative;
     FailureOr<EncodedSimulationDesign> encoded =
         encodeSimulationDesign(designs.front(), options);
     if (failed(encoded))
@@ -934,6 +935,10 @@ public:
     llvm::StringMap<sim::SimFuncOp> functions;
     designs.front().walk([&](sim::SimFuncOp function) {
       functions[function.getSymName()] = function;
+      function->removeAttr("obelisk.bytecode.function");
+      function->removeAttr("obelisk.bytecode.scratch_size");
+      function->removeAttr("obelisk.bytecode.scratch_alignment");
+      function->removeAttr("obelisk.bytecode.two_state_logic_registers");
     });
     for (const SimulationBytecodeFunction &function : encoded->functions) {
       sim::SimFuncOp source = functions.lookup(function.symbol);

@@ -84,6 +84,10 @@ def execution_tier_EQ : Joined<["--"], "execution-tier=">,
   Group<Compilation_Group>, MetaVarName<"<native|bytecode>">,
   Values<"native,bytecode">,
   HelpText<"Select generated simulator execution tier (default: native)">;
+def bytecode_scope_EQ : Joined<["--"], "bytecode-scope=">,
+  Group<Compilation_Group>, MetaVarName<"<required|all>">,
+  Values<"required,all">,
+  HelpText<"Select retained bytecode bodies (default: required)">;
 def native_scheduler_EQ : Joined<["--"], "native-scheduler=">,
   Group<Compilation_Group>, MetaVarName<"<auto|generic|aot|eval>">,
   Values<"auto,generic,aot,eval">,

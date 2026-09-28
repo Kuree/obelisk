@@ -517,7 +517,7 @@ static bool formattedOutputMayReadNetStrength(ValueRange items,
 
 LogicalResult
 lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
-            bool bytecode, StringRef vpi,
+            bool bytecode, StringRef vpi, StringRef bytecodeScope,
             obelisk::schedule::NativeSchedulerMode nativeScheduler,
             uint32_t optLevel, bool planSemanticPartitions, bool timing,
             bool &requiresStateSync, bool &resolveInitialDrivers) {
@@ -617,7 +617,8 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   // generated native planes even when no force/VPI feature otherwise needs
   // canonical state synchronization.
   requiresStateSync |= needsNetDriverTopology;
-  bool needsDesignEncoding = bytecode || needsHybridBytecode || vpi != "off" ||
+  bool needsDesignEncoding = bytecode || bytecodeScope == "all" ||
+                             needsHybridBytecode || vpi != "off" ||
                              hasLanguageOverride || needsWaveformMetadata ||
                              hasDriverNBA || hasDelayedNet ||
                              hasInertialDriver || needsNetDriverTopology;
@@ -634,6 +635,7 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
     EncodeObeliskSimToBytecodePassOptions options;
     options.vpi = vpi.str();
     options.requireBytecode = bytecode;
+    options.pruneNative = bytecodeScope == "required" && needsHybridBytecode;
     manager.addPass(createEncodeObeliskSimToBytecodePass(options));
   } else if (needsStandaloneStatePlan) {
     SmallVector<obelisk::sim::SimDesignOp> designs;
@@ -1099,11 +1101,12 @@ LogicalResult emitTargetOutput(ModuleOp module,
     // fanout, and direct-fragment coverage can be proved together. A false
     // positive must remain eligible for the generic/AOT fallback.
   }
-  if (failed(lowerToLLVM(
-          module, *targetMachine, backend->getTriple(), useBytecode,
-          options.vpi, *nativeScheduler, options.optLevel,
-          backend->supportsSemanticPartitions() && !useBytecode, options.timing,
-          requiresStateSync, resolveInitialDrivers)))
+  if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
+                         useBytecode, options.vpi, options.bytecodeScope,
+                         *nativeScheduler, options.optLevel,
+                         backend->supportsSemanticPartitions() && !useBytecode,
+                         options.timing, requiresStateSync,
+                         resolveInitialDrivers)))
     return failure();
   auto lastBackendTiming = std::chrono::steady_clock::now();
   auto markBackendTiming = [&](StringRef name) {

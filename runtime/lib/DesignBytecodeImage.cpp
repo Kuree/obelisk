@@ -116,7 +116,7 @@ bool validProcessFunctionFlags(const Function &function) {
 }
 
 bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                       Image &image) {
+                       Image &image, bool inventoryOnly) {
   const auto *execution = entry.execution;
   if (!execution || entry.reserved != 0 ||
       execution->version != OBELISK_RT_VERSION ||
@@ -148,14 +148,17 @@ bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
            read64(data + offsetof(BytecodeHeader, connectivity_offset)),
            read64(data + offsetof(BytecodeHeader, connectivity_count)),
            execution->state_bit_count};
-  if (image.functionCount > UINT32_MAX || entry.function >= image.functionCount)
+  if (image.functionCount > UINT32_MAX ||
+      (!inventoryOnly && entry.function >= image.functionCount) ||
+      (image.functionCount == 0 &&
+       (execution->flags & OBELISK_RT_EXECUTION_REQUIRE_BYTECODE)))
     return rejectImage(__LINE__, "bytecode function index is out of range");
   return true;
 }
 
-bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                Image &image) {
-  if (!decodeImageHeader(entry, image))
+bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
+                bool inventoryOnly) {
+  if (!decodeImageHeader(entry, image, inventoryOnly))
     return false;
   const auto *execution = entry.execution;
   const uint8_t *data = execution->bytecode;
@@ -3312,7 +3315,8 @@ bool validateImage(const Image &image) {
 }
 
 bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                        obelisk_rt_context *context, Image &image) {
+                        obelisk_rt_context *context, Image &image,
+                        bool inventoryOnly) {
   if (entry.reserved != 0)
     return rejectImage(__LINE__, "bytecode entry reserved field is nonzero");
   // Context creation validates the complete inventory and immutable bytecode
@@ -3324,13 +3328,13 @@ bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
     if (cached.data != entry.execution->bytecode ||
         cached.size != entry.execution->bytecode_size ||
         cached.stateBitCount != entry.execution->state_bit_count ||
-        entry.function >= cached.functionCount)
+        (!inventoryOnly && entry.function >= cached.functionCount))
       return rejectImage(__LINE__,
                          "cached bytecode image does not match entry");
     image = cached;
     return true;
   }
-  return parseImage(entry, image) && validateImage(image);
+  return parseImage(entry, image, inventoryOnly) && validateImage(image);
 }
 
 } // namespace obelisk::designbytecode
@@ -3426,7 +3430,8 @@ obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
   OBELISK_RT_TRY {
     obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
     Image image;
-    if (!parseImage(entry, image) || !validateImage(image) ||
+    if (!parseImage(entry, image, /*inventoryOnly=*/true) ||
+        !validateImage(image) ||
         !matchesActivationBytecodeInventory(execution, image))
       return OBELISK_RT_INVALID_DESIGN;
     outImage = image;
