@@ -16,6 +16,7 @@
 // RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
 // RUN: FileCheck %s --check-prefix=JSON < %t.native.json
 // RUN: FileCheck %s --check-prefix=HTML < %t.native.html
+// RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.native.html 'functional <group> type & comment' 'functional "group" \ path </script> & <tag>' 'functional >point< & comment' 'type: functional point type </script> comment' %}
 
 module top;
   bit sampled;
@@ -50,8 +51,6 @@ endmodule
 // JSON: "name":"$auto$1","configuration":{{.*}},"comment":"functional \"group\" \\ path\n</script> & <tag>"
 // JSON: "name":"cp","comment":"functional >point< & comment"
 // JSON: "type_comment":"functional point type </script> comment"
-// HTML: <h2 id="functional-section">Functional types</h2>
-// HTML: <th>Comment</th>
 // HTML: "comment":"functional \u003cgroup> type & comment"
 // HTML: "comment":"functional \"group\" \\ path\n\u003c/script> & \u003ctag>"
 // HTML: "comment":"functional >point\u003c & comment"

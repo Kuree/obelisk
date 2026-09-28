@@ -195,6 +195,37 @@ workers[2].fail('late error');
 workers[1].emit({ type: 'exited', code: 0 });
 assert.equal(received.length, 1);
 
+// A run whose coverage report is still being built keeps its worker after
+// `exited` and ends on `coverage`; stopping it in between ends on `stopped`.
+{
+  let spawned = [];
+  const pending = new CompilerSession({
+    createWorker: (url) => {
+      const worker = new FakeWorker(url);
+      spawned.push(worker);
+      return worker;
+    },
+  });
+  for (const ending of ['coverage', 'stop']) {
+    const got = [];
+    const job = pending.run(binary, (message) => got.push(message));
+    const worker = spawned.at(-1);
+    worker.emit({ type: 'ready' });
+    await settle();
+    worker.emit({ type: 'compiled', ok: true, kind: 'binary', byteLength: 4 });
+    worker.emit({ type: 'exited', code: 0, files: [], coveragePending: true });
+    assert.deepEqual(got.map((message) => message.type), ['compiled', 'exited']);
+    assert.equal(worker.terminated, false);
+    assert.equal(pending.busy, true);
+    if (ending === 'coverage') worker.emit({ type: 'coverage', coverage: '<html>' });
+    else job.stop();
+    assert.deepEqual(got.map((message) => message.type),
+      ['compiled', 'exited', ending === 'coverage' ? 'coverage' : 'stopped']);
+    assert.equal(worker.terminated, true);
+    assert.equal(pending.busy, false);
+  }
+}
+
 // The default worker URL is compiler-worker.js next to the session module.
 let defaultUrl = null;
 new CompilerSession({

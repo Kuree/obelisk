@@ -15,6 +15,7 @@ await import(new URL('toolchain.js', site));
 
 const require = createRequire(import.meta.url);
 const createObeliskModule = require(`${directory}obelisk.js`);
+const createObeliskCovModule = require(`${directory}obelisk-cov.js`);
 const logs = [];
 let phase = 'loading the compiler';
 
@@ -138,7 +139,8 @@ endmodule
     phase = `compiling the design at ${optimization}`;
     const status = mod.callMain([
       '--compile-threads=1', '--sysroot=/sysroot', '--target=wasm32',
-      '--coverage', ...configuration.arguments,
+      // as compiler-worker.js compiles, so reports name design.sv
+      '--coverage', '--coverage-prefix-map=work/=', ...configuration.arguments,
       '-o', '/work/design.wasm', '/work/design.sv',
     ]) ?? 0;
     if (status !== 0) {
@@ -175,6 +177,37 @@ endmodule
       throw new Error(`temporary file leaked at ${optimization}`);
     const snapshot = files.find((file) => file.name === 'coverage.obcov');
     verifyCoverageImage(snapshot, optimization);
+
+    // The Coverage view shows the page obelisk-cov writes, run the way
+    // compiler-worker.js runs it.
+    phase = `reporting the ${optimization} coverage`;
+    const covLogs = [];
+    const cov = await createObeliskCovModule({
+      noInitialRun: true,
+      thisProgram: '/bin/obelisk-cov',
+      locateFile: (name) => `${directory}${name}`,
+      print: (line) => covLogs.push(line),
+      printErr: (line) => covLogs.push(line),
+    });
+    cov.FS.mkdir('/work');
+    cov.FS.writeFile('/work/design.sv', source);
+    cov.FS.writeFile('/work/coverage.obcov', snapshot.data);
+    const reportStatus = cov.callMain([
+      'report', '--format=html', '--std=1800-2023', '--source-root=/work',
+      '-o', '/work/coverage.html', '/work/coverage.obcov',
+    ]) ?? 0;
+    if (reportStatus !== 0)
+      throw new Error(`obelisk-cov exited with ${reportStatus} at ${optimization}: ${covLogs.join('\n')}`);
+    const page = cov.FS.readFile('/work/coverage.html', { encoding: 'utf8' });
+    const payload = JSON.parse(
+      page.match(/<script\b[^>]*\bid="coverage-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
+    const [design] = payload.sources;
+    if (payload.sources.length !== 1 || design.path !== 'design.sv' ||
+        design.status !== 'ok' || design.text !== source ||
+        !design.tokens.includes(' ModuleKeyword\n'))
+      throw new Error(`coverage report lacks its source at ${optimization}`);
+    if (!payload.metrics.line.available || !payload.metrics.functional.available)
+      throw new Error(`coverage report lacks metrics at ${optimization}`);
 
     phase = `loading the ${optimization} coverage snapshot`;
     const loadedFiles = [];

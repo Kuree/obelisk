@@ -33,7 +33,22 @@ add_llvm_executable(obelisk-cov obelisk-cov.cpp
   "${coverage_report_css}"
   "${coverage_report_js}")
 target_include_directories(obelisk-cov PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(obelisk-cov PRIVATE ObeliskCoverage LLVMSupport)
+target_link_libraries(obelisk-cov PRIVATE
+  ObeliskCoverage
+  ObeliskSourceTokens
+  LLVMSupport)
 target_compile_features(obelisk-cov PRIVATE cxx_std_17)
 set_target_properties(obelisk-cov PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+if(EMSCRIPTEN)
+  # The web playground's compiler worker turns a run's .obcov into an HTML
+  # report with this module, the same way it drives the compiler.
+  target_link_options(obelisk-cov PRIVATE
+    "-sMODULARIZE=1"
+    "-sEXPORT_NAME=createObeliskCovModule"
+    "-sEXPORTED_RUNTIME_METHODS=FS,callMain"
+    "-sINVOKE_RUN=0"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sENVIRONMENT=web,worker,node")
+endif()

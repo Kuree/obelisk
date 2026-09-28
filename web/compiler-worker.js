@@ -6,6 +6,13 @@
 // path, which this worker then runs itself. Keeping the simulation here leaves
 // the page responsive, and lets it stop a design that never calls $finish by
 // terminating the worker.
+//
+// A run request with `coverageReport` whose flags include --coverage runs with
+// a coverage database, which the wasm build of obelisk-cov
+// (self.createObeliskCovModule, same contract) turns into the self-contained
+// HTML report the Coverage view shows. The run's result is posted first, as
+// `exited` with `coveragePending`, so stopping while the report is built
+// loses only the report; a final `coverage` message carries the report.
 
 let modulePromise = null;
 
@@ -77,7 +84,44 @@ function createOutputBatcher() {
   return { write, flush };
 }
 
-async function execute(binary, stage) {
+// Names shared by the simulation's argv, its in-memory files, and the report.
+const COVERAGE_FILE = 'design.obcov';
+const COVERAGE_TEST = 'design';
+
+/** Run obelisk-cov over a run's coverage database; resolves to the page. */
+async function coverageReport(database, source, std) {
+  self.importScripts('./obelisk-cov.js');
+  if (typeof self.createObeliskCovModule !== 'function') {
+    throw new Error('obelisk-cov.js did not expose createObeliskCovModule');
+  }
+  const errors = [];
+  const mod = await self.createObeliskCovModule({
+    noInitialRun: true,
+    thisProgram: '/bin/obelisk-cov',
+    print: () => {},
+    printErr: (line) => errors.push(stripAnsi(line)),
+    locateFile: (path) => new URL(path, self.location.href).href,
+  });
+  mod.FS.mkdir('/work');
+  // The compile mapped work/ away, so the report names design.sv and finds
+  // it, byte for byte what was compiled, under --source-root.
+  mod.FS.writeFile('/work/design.sv', source);
+  mod.FS.writeFile(`/work/${COVERAGE_FILE}`, database);
+  let status = 0;
+  try {
+    status = mod.callMain([
+      'report', '--format=html', `--std=${std}`, '--source-root=/work',
+      '-o', '/work/coverage.html', `/work/${COVERAGE_FILE}`,
+    ]) ?? 0;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'status' in error) status = error.status;
+    else throw error;
+  }
+  if (status !== 0) throw new Error(errors.join(' ') || `obelisk-cov exited with ${status}`);
+  return mod.FS.readFile('/work/coverage.html', { encoding: 'utf8' });
+}
+
+async function execute(binary, stage, coverage) {
   const { runSimulation } = await import(new URL('./wasi.js', self.location.href).href);
   const output = createOutputBatcher();
   const files = [];
@@ -87,6 +131,9 @@ async function execute(binary, stage) {
   const started = performance.now();
   try {
     code = await runSimulation(binary, output.write, {
+      args: coverage
+        ? ['sim', `--coverage-output=${COVERAGE_FILE}`, `--coverage-test=${COVERAGE_TEST}`]
+        : ['sim'],
       onFile: (file) => files.push(file),
       onSimulatedTime: (time) => { simulatedTime = time; },
     });
@@ -94,19 +141,40 @@ async function execute(binary, stage) {
     error = caught?.message ?? String(caught);
   }
   output.flush();
-  const buffers = [...new Set(files.map((file) => file.data.buffer))];
+  const runMs = performance.now() - started;
+  // The simulation writes its coverage database as it ends. An aborted run's
+  // coverage is not reported.
+  const database = coverage && files.find((file) => file.name.endsWith(COVERAGE_FILE));
+  let report = {};
+  if (coverage && error !== undefined) {
+    report = { coverageError: 'the simulation aborted' };
+  } else if (coverage && !database) {
+    report = { coverageError: 'the simulation wrote no coverage database' };
+  } else if (database) {
+    report = { coveragePending: true };
+  }
+  const shown = files.filter((file) => file !== database);
+  const buffers = [...new Set(shown.map((file) => file.data.buffer))];
   self.postMessage({
     type: 'exited',
     stage,
     code,
     ...(error !== undefined && { error }),
-    runMs: performance.now() - started,
+    ...report,
+    runMs,
     simulatedTime,
-    files,
+    files: shown,
   }, buffers);
+  if (!report.coveragePending) return;
+  try {
+    const html = await coverageReport(database.data, coverage.source, coverage.std);
+    post('coverage', { stage, coverage: html });
+  } catch (caught) {
+    post('coverage', { stage, coverageError: caught?.message ?? String(caught) });
+  }
 }
 
-async function compile({ source, args, stage, kind }) {
+async function compile({ source, args, stage, kind, coverageReport: wantsReport = false }) {
   let mod = await loadDriver();
   const input = '/work/design.sv';
   // Text stages print IR; the Run stage produces a linked wasm module.
@@ -124,8 +192,20 @@ async function compile({ source, args, stage, kind }) {
     // no previous artifact
   }
 
+  // --coverage anywhere on the command line, from the option or typed flags.
+  const coverage = kind === 'binary' && wantsReport &&
+    args.some((arg) => arg === '--coverage' || arg.startsWith('--coverage='))
+    ? {
+      source,
+      std: args.findLast((arg) => arg.startsWith('--std='))?.slice(6) ?? '1800-2023',
+    }
+    : null;
   const argv = kind === 'binary'
-    ? ['--compile-threads=1', '--sysroot=/sysroot', ...args, '-o', output, input]
+    ? ['--compile-threads=1', '--sysroot=/sysroot',
+       // slang names the input work/design.sv (relative to /); the report
+       // calls it design.sv, as the command line shown on the page does.
+       ...(coverage ? ['--coverage-prefix-map=work/='] : []),
+       ...args, '-o', output, input]
     : ['--compile-threads=1', ...args, '-o', output, input];
   const started = performance.now();
   let status = 0;
@@ -180,7 +260,7 @@ async function compile({ source, args, stage, kind }) {
   // simulation allocates its own.
   mod = null;
   modulePromise = null;
-  await execute(binary, stage);
+  await execute(binary, stage, coverage);
 }
 
 self.onmessage = async (event) => {

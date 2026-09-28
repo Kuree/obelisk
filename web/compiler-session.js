@@ -9,12 +9,14 @@
 //
 // A request streams its worker messages to the caller and ends with exactly
 // one final message: `compiled` for a text stage or a failed compile, `exited`
-// once a simulation returns, `failed` when the worker itself breaks, or
+// once a simulation returns, `coverage` after an `exited` whose coverage
+// report was still pending, `failed` when the worker itself breaks, or
 // `stopped` when the caller stops it.
 
 function isFinal(message) {
   if (message.type === 'compiled') return !message.ok || message.kind !== 'binary';
-  return message.type === 'exited' || message.type === 'failed';
+  if (message.type === 'exited') return !message.coveragePending;
+  return message.type === 'coverage' || message.type === 'failed';
 }
 
 export class CompilerSession {

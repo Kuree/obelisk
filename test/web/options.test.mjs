@@ -53,11 +53,17 @@ assert.equal(DEFAULT_STAGE, 'run');
 assert.equal(findStage('missing').id, DEFAULT_STAGE);
 assert.deepEqual(STAGES.map((stage) => stage.id), [
   'preprocess', 'slang', 'obelisk', 'sim', 'schedule', 'llvm', 'run', 'waveform',
+  'coverage',
 ]);
 assert.equal(findStage('schedule').language, 'mlir');
 assert.equal(findStage('preprocess').language, 'systemverilog');
 assert.equal(findStage('llvm').language, 'llvm');
 assert.equal(findStage('waveform').kind, 'waveform');
+assert.equal(findStage('coverage').kind, 'coverage');
+// Coverage instruments every stage, so the IR shown is what the run executes.
+assert.deepEqual(buildArgs({ ...DEFAULTS, coverage: 'on' }), ['--std=1800-2023', '-O3', '--coverage']);
+assert.deepEqual(buildArgs({ ...DEFAULTS, stage: 'sim', coverage: 'on' }),
+  ['-emit-sim', '--std=1800-2023', '-O3', '--coverage']);
 
 const storage = new Map();
 globalThis.localStorage = {

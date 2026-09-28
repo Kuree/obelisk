@@ -176,6 +176,9 @@ let simulation = simulationModule();
 let factoryCalls = 0;
 let installCalls = 0;
 let factoryOptions = null;
+const covCalls = [];
+const covModules = [];
+let covBehavior = 'success';
 
 // The output batcher decides by elapsed time. Each read of the clock advances
 // it by `clockStep`, so a test chooses whether writes land in one window.
@@ -225,6 +228,41 @@ globalThis.self = {
       self.installObeliskToolchain = async (mod) => {
         assert.equal(mod, module);
         installCalls++;
+      };
+    } else if (path === './obelisk-cov.js') {
+      if (covBehavior === 'no-factory') {
+        delete self.createObeliskCovModule;
+        return;
+      }
+      self.createObeliskCovModule = async (options) => {
+        assert.equal(options.noInitialRun, true);
+        assert.equal(options.thisProgram, '/bin/obelisk-cov');
+        assert.equal(options.locateFile('obelisk-cov.wasm'),
+          new URL('../../web/obelisk-cov.wasm', import.meta.url).href);
+        const covFiles = new Map();
+        covModules.push(covFiles);
+        return {
+          FS: {
+            mkdir() {},
+            writeFile(path, data) { covFiles.set(path, data); },
+            readFile(path) { return covFiles.get(path); },
+          },
+          callMain(argv) {
+            covCalls.push(argv);
+            // Emscripten reports a non-zero exit by throwing its status.
+            if (covBehavior === 'exit') {
+              options.printErr('obelisk-cov: stopped early');
+              throw { status: 3 };
+            }
+            if (covBehavior === 'crash') throw new Error('obelisk-cov crashed');
+            if (covBehavior === 'fail') {
+              options.printErr('obelisk-cov: bad database');
+              return 1;
+            }
+            covFiles.set(argv[argv.indexOf('-o') + 1], '<!doctype html>report');
+            return 0;
+          },
+        };
       };
     } else if (path === './obelisk.js') {
       self.createObeliskModule = async (options) => {
@@ -472,5 +510,80 @@ assert.match(result.messages[0].message, /produced no output module/);
 behavior = 'throw';
 result = await request({ stage: 'run', kind: 'binary' });
 assert.deepEqual(result.messages, [{ type: 'failed', message: 'driver crashed' }]);
+
+/* ---------------------------------------------------------------- coverage */
+
+// A run request that asks for its coverage report, compiled with --coverage,
+// names its sources without work/ and writes a coverage database. The run's
+// result comes first, marked as having a report pending, without the
+// database; obelisk-cov's HTML report follows as the final message.
+const coverageRun = (args) => request({ args, stage: 'run', kind: 'binary', coverageReport: true });
+behavior = 'success';
+simulation = simulationModule({
+  steps: [{ file: 'design.obcov', text: 'OBCOV' }, { file: 'dump.vcd', text: 'wave' }],
+});
+result = await coverageRun(['--std=1800-2017', '-O3', '--coverage']);
+assert.deepEqual(calls.at(-1), [
+  '--compile-threads=1', '--sysroot=/sysroot', '--coverage-prefix-map=work/=',
+  '--std=1800-2017', '-O3', '--coverage', '-o', '/work/design.wasm', '/work/design.sv',
+]);
+assert.deepEqual(covCalls.at(-1), [
+  'report', '--format=html', '--std=1800-2017', '--source-root=/work',
+  '-o', '/work/coverage.html', '/work/design.obcov',
+]);
+assert.equal(covModules.at(-1).get('/work/design.sv'), 'module m; endmodule');
+assert.equal(Buffer.from(covModules.at(-1).get('/work/design.obcov')).toString(), 'OBCOV');
+exited = result.messages.at(-2);
+assert.equal(exited.type, 'exited');
+assert.equal(exited.coveragePending, true);
+assert.equal('coverage' in exited, false);
+assert.deepEqual(exited.files.map((file) => file.name), ['dump.vcd']);
+assert.deepEqual(result.messages.at(-1), { type: 'coverage', stage: 'run', coverage: '<!doctype html>report' });
+
+// Metric selections such as --coverage=line count too. A run that writes no
+// database, or aborts, ends on `exited` saying why and builds no report.
+const reportsBefore = covCalls.length;
+simulation = simulationModule({ steps: [{ write: 'no coverage\n' }] });
+result = await coverageRun(['--coverage=line']);
+assert.equal(result.messages.at(-1).type, 'exited');
+assert.equal(result.messages.at(-1).coverageError, 'the simulation wrote no coverage database');
+simulation = simulationModule({ steps: [{ file: 'design.obcov', text: 'OBCOV' }, { trap: true }] });
+result = await coverageRun(['--coverage']);
+exited = result.messages.at(-1);
+assert.equal(exited.type, 'exited');
+assert.equal(typeof exited.error, 'string');
+assert.equal(exited.coverageError, 'the simulation aborted');
+assert.equal(covCalls.length, reportsBefore);
+
+// A report that fails, exits by throwing, crashes, or whose script lacks the
+// module says why in the final message.
+for (const [behavior, message] of [
+  ['fail', 'obelisk-cov: bad database'],
+  ['exit', 'obelisk-cov: stopped early'],
+  ['crash', 'obelisk-cov crashed'],
+  ['no-factory', 'obelisk-cov.js did not expose createObeliskCovModule'],
+]) {
+  covBehavior = behavior;
+  simulation = simulationModule({ steps: [{ file: 'design.obcov', text: 'bad' }] });
+  result = await coverageRun(['--coverage']);
+  assert.equal(result.messages.at(-2).coveragePending, true, behavior);
+  assert.deepEqual(result.messages.at(-1), { type: 'coverage', stage: 'run', coverageError: message }, behavior);
+}
+covBehavior = 'success';
+
+// Without --coverage, or without asking for the report (as the embed service
+// does not), nothing is added to the command or reported, and a database the
+// design writes itself is returned like any other file.
+for (const [args, coverageReport] of [[['-O3'], true], [['--coverage'], false]]) {
+  const before = covCalls.length;
+  simulation = simulationModule({ steps: [{ file: 'design.obcov', text: 'OBCOV' }] });
+  result = await request({ args, stage: 'run', kind: 'binary', coverageReport });
+  exited = result.messages.at(-1);
+  assert.equal(calls.at(-1).includes('--coverage-prefix-map=work/='), false);
+  assert.equal(covCalls.length, before);
+  assert.equal(exited.type, 'exited');
+  assert.equal('coveragePending' in exited || 'coverageError' in exited, false);
+  assert.deepEqual(exited.files.map((file) => file.name), ['design.obcov']);
+}
 
 console.log('web compiler worker message and argv contract OK');

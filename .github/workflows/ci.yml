@@ -198,7 +198,7 @@ jobs:
                 -DOBELISK_GENERATED_DIR=/obelisk-generated \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-              cmake --build build-wasm --target obelisk
+              cmake --build build-wasm --target obelisk obelisk-cov
             '
 
       - name: Compiler cache stats
@@ -222,6 +222,8 @@ jobs:
             cp -r web/* site/
             cp build-wasm/tools/driver/obelisk.wasm site/
             cp build-wasm/tools/driver/obelisk.js site/
+            cp build-wasm/tools/obelisk-cov/obelisk-cov.wasm site/
+            cp build-wasm/tools/obelisk-cov/obelisk-cov.js site/
             cp build-wasm/target-runtime/libobelisk_rt.a site/toolchain/
             # Populate Emscripten cache entries for the no-exception ABI, then
             # publish exactly those libc++ variants for simulation links.
@@ -249,7 +251,7 @@ jobs:
             PATTERN="^[[:space:]]+[0-9a-f]+: .*\\b(try|try_table|catch|catch_all|delegate|rethrow|throw|throw_ref)\\b"
             DUMP=$(mktemp)
             trap "rm -f \"$DUMP\"" EXIT
-            for input in site/obelisk.wasm site/toolchain/*.a; do
+            for input in site/obelisk.wasm site/obelisk-cov.wasm site/toolchain/*.a; do
               if ! "$OBJDUMP" -d "$input" >"$DUMP" 2>&1; then
                 echo "failed to disassemble $input" >&2
                 cat "$DUMP" >&2

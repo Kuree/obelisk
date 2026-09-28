@@ -1,18 +1,17 @@
 //===- obelisk-cov.cpp - Obelisk coverage reporting tool ----------------===//
 
 #include "obelisk/Coverage/CoverageDatabase.h"
+#include "obelisk/Frontend/SourceTokens.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Base64.h"
-#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
-#include "llvm/Support/LineIterator.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SHA256.h"
@@ -45,6 +44,9 @@ struct Options {
   std::string format = "text";
   std::string test = "**";
   std::string sourceRoot;
+  // Keyword set for coloring source in HTML reports.
+  obelisk::frontend::LanguageVersion languageVersion =
+      obelisk::frontend::LanguageVersion::IEEE1800_2023;
   bool discard = false;
   std::map<MetricKind, double> thresholds;
   std::vector<std::string> inputs;
@@ -211,8 +213,8 @@ void usage(llvm::raw_ostream &out) {
   out << "usage:\n"
          "  obelisk-cov merge -o OUT.obcov [--discard-test-detail] INPUT...\n"
          "  obelisk-cov report --format=text|html|json|lcov [-o OUT]\n"
-         "      [--source-root DIR] [--test GLOB] [--fail-under METRIC=N] "
-         "INPUT...\n"
+         "      [--source-root DIR] [--std=1800-2017|1800-2023] [--test GLOB]\n"
+         "      [--fail-under METRIC=N] INPUT...\n"
          "  obelisk-cov inspect INPUT\n";
 }
 
@@ -278,6 +280,15 @@ bool parseOptions(int argc, char **argv, Options &options) {
       options.test = value;
     } else if (takeValue(i, argc, argv, arg, "--source-root", value)) {
       options.sourceRoot = value;
+    } else if (takeValue(i, argc, argv, arg, "--std", value)) {
+      if (value == "1800-2017")
+        options.languageVersion =
+            obelisk::frontend::LanguageVersion::IEEE1800_2017;
+      else if (value == "1800-2023")
+        options.languageVersion =
+            obelisk::frontend::LanguageVersion::IEEE1800_2023;
+      else
+        return false;
     } else if (takeValue(i, argc, argv, arg, "--fail-under", value)) {
       size_t equal = value.find('=');
       MetricKind metric;
@@ -1679,7 +1690,10 @@ std::string json(const std::string &input) {
   return out.str();
 }
 
-std::string stringifyJsonIntegers(llvm::StringRef input) {
+/// The JSON report as the HTML page embeds it: integers become strings, since
+/// JavaScript numbers lose precision past 2^53, and '<', which JSON only has
+/// inside strings, is escaped so the payload cannot close its <script>.
+std::string htmlPayloadFromJson(llvm::StringRef input) {
   std::string result;
   result.reserve(input.size());
   bool inString = false;
@@ -1687,7 +1701,10 @@ std::string stringifyJsonIntegers(llvm::StringRef input) {
   for (size_t index = 0; index != input.size();) {
     const char character = input[index];
     if (inString) {
-      result += character;
+      if (character == '<')
+        result += "\\u003c";
+      else
+        result += character;
       ++index;
       if (escaped)
         escaped = false;
@@ -1734,67 +1751,6 @@ std::string stringifyJsonIntegers(llvm::StringRef input) {
     index = end;
   }
   return result;
-}
-
-std::string htmlEscape(llvm::StringRef input) {
-  std::string out;
-  const auto *cursor = reinterpret_cast<const llvm::UTF8 *>(input.data());
-  const auto *end = cursor + input.size();
-  auto appendReplacement = [&] { out.append("\xef\xbf\xbd"); };
-  while (cursor != end) {
-    const llvm::UTF8 *sequence = cursor;
-    llvm::UTF32 codepoint = 0;
-    if (llvm::convertUTF8Sequence(&cursor, end, &codepoint,
-                                  llvm::strictConversion) !=
-        llvm::conversionOK) {
-      // Database validation normally makes this unreachable. Preserve the
-      // HTML writer's totality if it is called on an independently constructed
-      // report string.
-      cursor = sequence + 1;
-      appendReplacement();
-      continue;
-    }
-
-    // Keep control and Unicode noncharacters out of generated HTML text.
-    // Replace them deterministically so malformed metadata cannot make an
-    // otherwise useful report unparseable.
-    const bool validCharacter = codepoint == 0x9 || codepoint == 0xa ||
-                                codepoint == 0xd ||
-                                (codepoint >= 0x20 && codepoint <= 0xd7ff) ||
-                                (codepoint >= 0xe000 && codepoint <= 0xfffd) ||
-                                (codepoint >= 0x10000 && codepoint <= 0x10ffff);
-    const bool noncharacter = (codepoint >= 0xfdd0 && codepoint <= 0xfdef) ||
-                              (codepoint & 0xffff) == 0xfffe ||
-                              (codepoint & 0xffff) == 0xffff;
-    if (!validCharacter || noncharacter) {
-      appendReplacement();
-      continue;
-    }
-    if (codepoint > 0x7f) {
-      out.append(reinterpret_cast<const char *>(sequence), cursor - sequence);
-      continue;
-    }
-    switch (static_cast<char>(codepoint)) {
-    case '&':
-      out += "&amp;";
-      break;
-    case '<':
-      out += "&lt;";
-      break;
-    case '>':
-      out += "&gt;";
-      break;
-    case '\"':
-      out += "&quot;";
-      break;
-    case '\'':
-      out += "&apos;";
-      break;
-    default:
-      out += static_cast<char>(codepoint);
-    }
-  }
-  return out;
 }
 
 std::string cspHash(llvm::StringRef input) {
@@ -2241,9 +2197,12 @@ void jsonSummary(llvm::json::OStream &out, MetricKind metric,
   });
 }
 
-void jsonReport(llvm::raw_ostream &stream, const Database &database,
-                const ReportData &report,
-                const std::map<MetricKind, double> &thresholds) {
+/// `extra` adds attributes to the top-level object after the standard ones;
+/// the HTML report uses it to carry source text.
+void jsonReport(
+    llvm::raw_ostream &stream, const Database &database,
+    const ReportData &report, const std::map<MetricKind, double> &thresholds,
+    llvm::function_ref<void(llvm::json::OStream &)> extra = nullptr) {
   std::map<std::pair<MetricKind, uint64_t>, std::string> exclusionReasons;
   for (const Exclusion &exclusion : database.exclusions)
     exclusionReasons.emplace(std::make_pair(exclusion.metric, exclusion.entity),
@@ -3219,6 +3178,8 @@ void jsonReport(llvm::raw_ostream &stream, const Database &database,
           out.attribute("reason", value.reason);
         });
     });
+    if (extra)
+      extra(out);
   });
   stream << '\n';
 }
@@ -3281,20 +3242,78 @@ void lcovReport(llvm::raw_ostream &out, const Database &database,
     }
 }
 
+/// Emit the report page: the JSON report plus each source file's text and
+/// slang token listing, embedded in the self-contained report app.
 void htmlReport(llvm::raw_ostream &out, const Database &database,
                 const ReportData &report, const std::string &sourceRoot,
+                obelisk::frontend::LanguageVersion languageVersion,
                 const std::map<MetricKind, double> &thresholds) {
-  llvm::SmallString<0> payload;
-  llvm::raw_svector_ostream payloadStream(payload);
-  jsonReport(payloadStream, database, report, thresholds);
-  std::string rawPayload = stringifyJsonIntegers(payload);
+  // A file's text is used only when it is exactly the text that was compiled.
+  auto writeSources = [&](llvm::json::OStream &json) {
+    json.attributeArray("sources", [&] {
+      for (const SourceFile &file : database.sourceFiles) {
+        std::vector<std::string> candidates;
+        if (!sourceRoot.empty()) {
+          llvm::SmallString<256> rootedPath(sourceRoot);
+          llvm::sys::path::append(rootedPath, file.path);
+          candidates.push_back(rootedPath.str().str());
+        }
+        candidates.push_back(file.path);
+        std::unique_ptr<llvm::MemoryBuffer> contents;
+        std::string mismatched;
+        for (const std::string &candidate : candidates) {
+          auto buffer = llvm::MemoryBuffer::getFile(candidate, false, false);
+          if (!buffer)
+            continue;
+          llvm::StringRef text = (*buffer)->getBuffer();
+          Digest actual = sha256(
+              reinterpret_cast<const uint8_t *>(text.data()), text.size());
+          if (actual == file.digest) {
+            contents = std::move(*buffer);
+            break;
+          }
+          if (mismatched.empty())
+            mismatched = candidate;
+        }
+        json.object([&] {
+          json.attribute("file", file.id);
+          json.attribute("path", file.path);
+          if (!contents) {
+            if (mismatched.empty())
+              llvm::errs() << "obelisk-cov: warning: source unavailable: "
+                           << file.path << '\n';
+            else
+              llvm::errs() << "obelisk-cov: warning: source digest mismatch: "
+                           << mismatched << '\n';
+            json.attribute("status",
+                           mismatched.empty() ? "unavailable" : "mismatch");
+            return;
+          }
+          llvm::StringRef text = contents->getBuffer();
+          json.attribute("status", "ok");
+          // JSON strings must be UTF-8; other encodings are shown uncolored
+          // with their invalid bytes replaced.
+          if (!llvm::json::isUTF8(text)) {
+            json.attribute("text", llvm::json::fixUTF8(text));
+            return;
+          }
+          std::string listing;
+          llvm::raw_string_ostream listingStream(listing);
+          obelisk::frontend::writeSystemVerilogTokenListing(
+              text, languageVersion, listingStream);
+          json.attribute("text", text);
+          json.attribute("tokens", listing);
+        });
+      }
+    });
+  };
+
   std::string escaped;
-  escaped.reserve(rawPayload.size());
-  for (char character : rawPayload) {
-    if (character == '<')
-      escaped += "\\u003c";
-    else
-      escaped += character;
+  {
+    llvm::SmallString<0> payload;
+    llvm::raw_svector_ostream payloadStream(payload);
+    jsonReport(payloadStream, database, report, thresholds, writeSources);
+    escaped = htmlPayloadFromJson(payload);
   }
   llvm::StringRef html = CoverageReportHtml;
   auto emitUntil = [&](llvm::StringRef marker) {
@@ -3316,112 +3335,6 @@ void htmlReport(llvm::raw_ostream &out, const Database &database,
   out << escaped;
   emitUntil("@OBELISK_COVERAGE_JAVASCRIPT@");
   out << CoverageReportJavaScript;
-  emitUntil("@OBELISK_COVERAGE_SOURCES@");
-
-  std::map<uint64_t, llvm::StringRef> lineExclusions;
-  for (const Exclusion &value : database.exclusions)
-    if (value.metric == MetricKind::Line)
-      lineExclusions.try_emplace(value.entity, value.reason);
-  std::map<std::pair<uint64_t, uint32_t>, std::vector<const LinePoint *>>
-      pointsByLine;
-  for (const LinePoint &point : database.linePoints)
-    pointsByLine[{point.file, point.line}].push_back(&point);
-  out << "<h2 id=\"sources-section\">Sources</h2>";
-  for (const SourceFile &file : database.sourceFiles) {
-    std::vector<std::string> candidates;
-    if (!sourceRoot.empty()) {
-      llvm::SmallString<256> rootedPath(sourceRoot);
-      llvm::sys::path::append(rootedPath, file.path);
-      candidates.push_back(rootedPath.str().str());
-    }
-    candidates.push_back(file.path);
-    std::unique_ptr<llvm::MemoryBuffer> contents;
-    std::string selected, mismatched;
-    for (const std::string &candidate : candidates) {
-      auto buffer = llvm::MemoryBuffer::getFile(candidate, false, false);
-      if (!buffer)
-        continue;
-      llvm::StringRef candidateContents = (*buffer)->getBuffer();
-      Digest actual =
-          sha256(reinterpret_cast<const uint8_t *>(candidateContents.data()),
-                 candidateContents.size());
-      if (actual == file.digest) {
-        contents = std::move(*buffer);
-        selected = candidate;
-        break;
-      }
-      if (mismatched.empty())
-        mismatched = candidate;
-    }
-    if (selected.empty()) {
-      if (mismatched.empty()) {
-        llvm::errs() << "obelisk-cov: warning: source unavailable: "
-                     << file.path << '\n';
-        out << "<section id=\"source-" << file.id << "\" class=\"section\"><h3>"
-            << htmlEscape(file.path)
-            << "</h3><p class=\"muted\">Source unavailable</p></section>";
-      } else {
-        llvm::errs() << "obelisk-cov: warning: source digest mismatch: "
-                     << mismatched << '\n';
-        out << "<section id=\"source-" << file.id << "\" class=\"section\"><h3>"
-            << htmlEscape(file.path)
-            << "</h3><p class=\"muted\">Source digest mismatch</p></section>";
-      }
-      continue;
-    }
-    out << "<section id=\"source-" << file.id << "\" class=\"section\"><h3>"
-        << htmlEscape(file.path) << "</h3><pre>";
-    uint32_t lineNumber = 1;
-    for (llvm::line_iterator lines(*contents, false), end; lines != end;
-         ++lines) {
-      auto found = pointsByLine.find({file.id, lineNumber});
-      llvm::ArrayRef<const LinePoint *> points =
-          found == pointsByLine.end()
-              ? llvm::ArrayRef<const LinePoint *>{}
-              : llvm::ArrayRef<const LinePoint *>(found->second);
-      uint64_t hit = 0;
-      uint64_t included = 0;
-      std::vector<AggregatedCounter> counts;
-      for (const LinePoint *point : points) {
-        AggregatedCounter count =
-            aggregateCounter(report, MetricKind::Line, point->id, 0);
-        counts.push_back(count);
-        if (!lineExclusions.count(point->id)) {
-          ++included;
-          hit += count.value != 0;
-        }
-      }
-      const char *style = points.empty() ? ""
-                          : !included    ? "excluded-line"
-                          : hit == included ? "full"
-                          : hit             ? "partial"
-                                            : "uncovered";
-      out << "<span class=\"" << style << "\"><span class=\"ln\">" << lineNumber
-          << "</span>" << htmlEscape(*lines);
-      if (!points.empty()) {
-        out << " <span class=\"points\">[";
-        for (size_t index = 0; index != points.size(); ++index) {
-          if (index)
-            out << ", ";
-          out << "point " << points[index]->id << " @col "
-              << points[index]->column << ": " << counts[index].value;
-          if (counts[index].overflow)
-            out << " (saturated)";
-          if (auto exclusion = lineExclusions.find(points[index]->id);
-              exclusion != lineExclusions.end()) {
-            out << " <span class=\"excluded-point\">[excluded";
-            if (!exclusion->second.empty())
-              out << ": " << htmlEscape(exclusion->second);
-            out << "]</span>";
-          }
-        }
-        out << "]</span>";
-      }
-      out << "</span>\n";
-      ++lineNumber;
-    }
-    out << "</pre></section>";
-  }
   out << html;
 }
 
@@ -3521,7 +3434,8 @@ int main(int argc, char **argv) {
   else if (options.format == "lcov")
     lcovReport(*out, database, report);
   else
-    htmlReport(*out, database, report, options.sourceRoot, options.thresholds);
+    htmlReport(*out, database, report, options.sourceRoot,
+               options.languageVersion, options.thresholds);
   out->flush();
   if (file ? file->has_error() : llvm::outs().has_error()) {
     llvm::errs() << "obelisk-cov: output write failed\n";

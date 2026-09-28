@@ -15,6 +15,7 @@ export const DEFAULTS = {
   tier: 'native',
   scheduler: 'auto',
   specialization: 'auto',
+  coverage: 'off',
   top: '',
   timescale: '',
   defines: '',
@@ -74,6 +75,8 @@ export function buildArgs(options) {
   if (stage.id === 'schedule') args.push('--mlir-print-debuginfo');
   args.push(`--std=${options.std}`);
   args.push(options.opt);
+  // Instrumented designs run with a coverage database the Coverage view reads.
+  if (options.coverage === 'on') args.push('--coverage');
 
   // The driver rejects these unless it is producing a native executable, so
   // only emit them for the Run stage rather than letting it fail.

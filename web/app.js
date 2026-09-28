@@ -4,6 +4,7 @@ import { registerLlvm } from './llvm-language.js';
 import { parseSchedules, renderSchedules } from './schedule-view.js';
 import { CompilerSession } from './compiler-session.js';
 import { loadWaveform, saveWaveform } from './waveform-storage.js';
+import { CoverageView } from './coverage-view.js';
 import { EXAMPLES } from './examples.js';
 import { STAGES, DEFAULT_STAGE, findStage } from './stages.js';
 import {
@@ -27,13 +28,15 @@ const ui = {
   scheduleToggle: el('scheduleToggle'),
   waveformView: el('waveformView'), waveformEmpty: el('waveformEmpty'),
   surfer: el('surfer'), downloadWaveform: el('downloadWaveform'),
+  coverageView: el('coverageView'), coverageEmpty: el('coverageEmpty'),
+  coverageFrame: el('coverageFrame'), downloadCoverage: el('downloadCoverage'),
   embed: el('embed'), embedDialog: el('embedDialog'), embedHtml: el('embedHtml'),
   embedMarkdown: el('embedMarkdown'), embedCode: el('embedCode'),
   embedNote: el('embedNote'), copyEmbed: el('copyEmbed'), embedColors: el('embedColors'),
 };
 
 const OPTION_FIELDS = [
-  'std', 'opt', 'tier', 'scheduler', 'specialization',
+  'std', 'opt', 'tier', 'scheduler', 'specialization', 'coverage',
   'top', 'timescale', 'defines', 'extra',
 ];
 
@@ -53,6 +56,12 @@ let busy = false;
 let latestWaveform = null;
 let surferReady = null;
 let waveformRequest = 0;
+// While a finished run's coverage report is being built: the run's status,
+// shown again once the report arrives.
+let coveragePending = null;
+const coverage = new CoverageView({
+  frame: ui.coverageFrame, empty: ui.coverageEmpty, download: ui.downloadCoverage,
+});
 let scheduleText = '';
 let scheduleRaw = false;
 const storedWaveform = loadWaveform()
@@ -158,6 +167,10 @@ function selectStage(id) {
     showWaveform();
     return;
   }
+  if (stage.kind === 'coverage') {
+    showCoverage();
+    return;
+  }
 
   showConsole();
 
@@ -237,6 +250,8 @@ function compileStage(stageId) {
     args: buildArgs({ ...options, stage: stageId }),
     stage: stageId,
     kind: stage.kind,
+    // With --coverage, a run also brings back its HTML coverage report.
+    coverageReport: stage.kind === 'binary',
   }, onMessage);
 }
 
@@ -328,11 +343,35 @@ async function onMessage(message) {
 
     case 'exited':
       await finishSimulation(message);
+      // The run is recorded; its coverage report follows.
+      if (message.coveragePending) {
+        coveragePending = {
+          status: ui.status.textContent,
+          kind: ui.status.className.replace(/^status\s*/, ''),
+        };
+        setStatus('building coverage report', 'busy');
+        break;
+      }
+      finishRun();
+      break;
+
+    case 'coverage':
+      noteCoverage(message);
+      setStatus(coveragePending.status, coveragePending.kind);
+      coveragePending = null;
       finishRun();
       break;
 
     case 'failed':
       diagnosticText = '';
+      if (coveragePending) {
+        // The worker broke while building the report; the run is kept.
+        noteCoverage({ coverageError: message.message });
+        setStatus('coverage report failed', 'err');
+        coveragePending = null;
+        finishRun();
+        break;
+      }
       record(`\n${message.message}\n`, 'stderr');
       finishRecording('failed', 'err');
       finishRun();
@@ -341,6 +380,14 @@ async function onMessage(message) {
     case 'stopped':
       diagnosticText = '';
       recording = null;
+      if (coveragePending) {
+        // The run itself finished and is kept; only its report is lost.
+        noteCoverage({ coverageError: 'stopped before the report was ready' });
+        setStatus('coverage report stopped', 'err');
+        coveragePending = null;
+        finishRun();
+        break;
+      }
       write('\nstopped\n', 'stderr');
       setStatus('stopped', 'err');
       finishRun();
@@ -348,10 +395,33 @@ async function onMessage(message) {
   }
 }
 
+/**
+ * A run's coverage report, or why it has none. The report can arrive after
+ * the run was recorded, so the note is added to the run's cached log too.
+ */
+function noteCoverage(result) {
+  let note;
+  if (result.coverage) {
+    coverage.update(result.coverage);
+    note = ['coverage report ready in the Coverage tab\n', 'note'];
+  } else if (result.coverageError) {
+    coverage.fail(result.coverageError);
+    note = [`coverage report failed: ${result.coverageError}\n`, 'stderr'];
+  } else {
+    return;
+  }
+  if (recording) record(...note);
+  else {
+    write(...note);
+    results.get('run')?.chunks.push({ text: note[0], className: note[1] });
+  }
+}
+
 async function finishSimulation(result) {
   const { code, error, simulatedTime, files } = result;
   if (error !== undefined) {
     record(`\nsimulation aborted: ${error}\n`, 'stderr');
+    noteCoverage(result);
     finishRecording('aborted', 'err');
     return;
   }
@@ -371,6 +441,7 @@ async function finishSimulation(result) {
       'note',
     );
   }
+  noteCoverage(result);
   record(`\nexited with code ${code}\n`, code === 0 ? 'good' : 'stderr');
   const note = warningNote(diagnosticCounts);
   const runMs = Math.round(result.runMs);
@@ -399,6 +470,8 @@ function showConsole() {
   ui.irEditor.hidden = true;
   ui.scheduleView.hidden = true;
   ui.waveformView.hidden = true;
+  ui.coverageView.hidden = true;
+  ui.downloadCoverage.hidden = true;
   ui.scheduleToggle.hidden = true;
   ui.copyOutput.hidden = false;
   ui.downloadWaveform.hidden = true;
@@ -410,6 +483,8 @@ function showIr(text, language = MLIR_LANGUAGE_ID) {
   ui.irEditor.hidden = false;
   ui.scheduleView.hidden = true;
   ui.waveformView.hidden = true;
+  ui.coverageView.hidden = true;
+  ui.downloadCoverage.hidden = true;
   ui.scheduleToggle.hidden = true;
   ui.copyOutput.hidden = false;
   ui.downloadWaveform.hidden = true;
@@ -444,6 +519,8 @@ function showSchedule(text) {
   ui.irEditor.hidden = true;
   ui.scheduleView.hidden = false;
   ui.waveformView.hidden = true;
+  ui.coverageView.hidden = true;
+  ui.downloadCoverage.hidden = true;
   ui.scheduleToggle.hidden = false;
   ui.scheduleToggle.textContent = 'View IR';
   ui.copyOutput.hidden = false;
@@ -499,6 +576,20 @@ function ensureSurfer() {
   return surferReady;
 }
 
+function showCoverage() {
+  scheduleSourceHighlight?.clear();
+  ui.output.hidden = true;
+  ui.irEditor.hidden = true;
+  ui.scheduleView.hidden = true;
+  ui.waveformView.hidden = true;
+  ui.scheduleToggle.hidden = true;
+  ui.copyOutput.hidden = true;
+  ui.downloadWaveform.hidden = true;
+  ui.coverageView.hidden = false;
+  const status = coverage.show(options.coverage === 'on');
+  setStatus(status.text, status.kind);
+}
+
 async function showWaveform() {
   const request = ++waveformRequest;
   scheduleSourceHighlight?.clear();
@@ -506,6 +597,8 @@ async function showWaveform() {
   ui.irEditor.hidden = true;
   ui.scheduleView.hidden = true;
   ui.waveformView.hidden = false;
+  ui.coverageView.hidden = true;
+  ui.downloadCoverage.hidden = true;
   ui.scheduleToggle.hidden = true;
   ui.copyOutput.hidden = true;
   ui.downloadWaveform.hidden = !latestWaveform;
@@ -647,7 +740,8 @@ async function initEditor(initialSource) {
     );
     ui.examples.value = exampleIndex < 0 ? '' : String(exampleIndex);
     invalidate();
-    if (activeStage === 'waveform') {
+    // Waveforms and coverage describe the last run, not the edited source.
+    if (activeStage === 'waveform' || activeStage === 'coverage') {
       waveformRequest++;
       activeStage = 'run';
       paintStageSelection();
@@ -725,6 +819,7 @@ function initChrome(initialSource) {
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url));
   });
+  ui.downloadCoverage.addEventListener('click', () => coverage.save(document));
   ui.share.addEventListener('click', () => {
     const link = toPermalink(editor.getValue(), { ...options, stage: activeStage });
     history.replaceState(null, '', link);
@@ -1067,6 +1162,7 @@ async function main() {
   if (busy) return;
   setBusyLabel(false);
   if (findStage(activeStage).kind === 'waveform') showWaveform();
+  else if (findStage(activeStage).kind === 'coverage') showCoverage();
   else setStatus('ready');
 }
 

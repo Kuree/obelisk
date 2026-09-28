@@ -23,6 +23,7 @@ assert.match(html, /<title>Obelisk: SystemVerilog simulator in the browser<\/tit
 assert.doesNotMatch(html, /<title>[^<]*—[^<]*<\/title>/);
 assert.match(html, /<option\s+value="">Custom design<\/option>/);
 assert.match(html, /<iframe[^>]+id="surfer"[^>]+sandbox="allow-scripts"/s);
+assert.match(html, /<iframe[^>]+id="coverageFrame"[^>]+sandbox="allow-scripts"/s);
 assert.doesNotMatch(html, /sandbox="[^"]*allow-same-origin/);
 
 assert.match(style, /\.panelTools\s*>\s*\[hidden\]\s*{\s*display:\s*none;/);
@@ -68,7 +69,19 @@ assert.match(app, /saveWaveform\(latestWaveform\)/);
 assert.match(app, /showSchedule\(text\)/);
 assert.match(app, /const\s+request\s*=\s*\+\+waveformRequest/);
 assert.match(app, /request\s*!==\s*waveformRequest\s*\|\|\s*activeStage\s*!==\s*'waveform'/);
-assert.match(app, /onDidChangeModelContent\(\(\)\s*=>\s*{[\s\S]*if\s*\(activeStage\s*===\s*'waveform'\)[\s\S]*activeStage\s*=\s*'run';[\s\S]*showConsole\(\);/s);
+assert.match(app, /onDidChangeModelContent\(\(\)\s*=>\s*{[\s\S]*if\s*\(activeStage\s*===\s*'waveform'\s*\|\|\s*activeStage\s*===\s*'coverage'\)[\s\S]*activeStage\s*=\s*'run';[\s\S]*showConsole\(\);/s);
+// coverage-view.js shows obelisk-cov's page; the app hands it each run's report.
+assert.match(app, /coverage\.update\(result\.coverage\)/);
+assert.match(app, /coverage\.show\(options\.coverage === 'on'\)/);
+assert.match(app, /ui\.downloadCoverage\.addEventListener\('click',\s*\(\)\s*=>\s*coverage\.save\(document\)\)/);
+// Runs ask for their report; a pending one keeps the run busy until it
+// arrives, and stopping then keeps the finished run and loses only the report.
+assert.match(app, /coverageReport:\s*stage\.kind === 'binary'/);
+assert.match(app, /if \(message\.coveragePending\) \{[\s\S]*?setStatus\('building coverage report', 'busy'\);\s*break;/);
+assert.match(app, /case 'coverage':\s*noteCoverage\(message\);[\s\S]*?finishRun\(\);/);
+assert.match(app, /if \(coveragePending\) \{[\s\S]*?noteCoverage\(\{ coverageError: 'stopped before the report was ready' \}\)/);
+assert.match(app, /coverage\.fail\(result\.coverageError\)/);
+assert.match(app, /case 'failed':\s*diagnosticText = '';\s*if \(coveragePending\) \{[\s\S]*?noteCoverage\(\{ coverageError: message\.message \}\)[\s\S]*?coveragePending = null;/);
 assert.match(app, /setModelLanguage\(irModel,\s*language\)/);
 assert.match(html, /id="irEditor"[^>]+aria-label="Read-only compiler output"/);
 assert.match(app, /onSourceLocation:\s*revealScheduleSource/);

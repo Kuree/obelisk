@@ -26,7 +26,6 @@
 # RUN: obelisk-cov report --format=json -o %t.aggregate-overflow.json %t.aggregate-max.obcov %t.aggregate-one.obcov
 # RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); p=d['line_points'][0]; b=d['toggles'][0]['bits'][0]; f=d['functional_instance_groups'][0]['items'][0]['bins'][0]; assert p['count'] == 18446744073709551615 and p['overflow']; assert b['zero_to_one']['count'] == 18446744073709551615 and b['zero_to_one']['overflow']; assert b['one_to_zero']['count'] == 18446744073709551615 and b['one_to_zero']['overflow']; assert f['count'] == 18446744073709551615 and f['overflow']" %t.aggregate-overflow.json
 # RUN: obelisk-cov report --format=html -o %t.aggregate-overflow.html %t.aggregate-max.obcov %t.aggregate-one.obcov
-# RUN: FileCheck %s --check-prefix=HTML-OVERFLOW < %t.aggregate-overflow.html
 # RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); assert d['line_points'][0]['count'] == '18446744073709551615'; assert d['functional_instance_groups'][0]['items'][0]['bins'][0]['count'] == '18446744073709551615'" %t.aggregate-overflow.html
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.aggregate-overflow.html '18446744073709551615 (saturated)' %}
 # RUN: %coverage-fixture %t.transition.obcov 26 transition-report 1 transition
@@ -55,7 +54,10 @@
 # RUN: FileCheck %s --check-prefix=HTML < %t.html
 # RUN: %python -c "import base64,hashlib,re,sys; h=open(sys.argv[1]).read(); policy=re.search(r'<meta[^>]*Content-Security-Policy[^>]*content=\"([^\"]*)\"',h).group(1); hashes=re.findall(r\"'sha256-([^']+)'\",policy); style=re.search(r'<style>(.*?)</style>',h,re.S).group(1); scripts=[m.group(1) for m in re.finditer(r'<script[^>]*>(.*?)</script>',h,re.S)]; bodies=[style,*scripts]; assert style==open(sys.argv[2]).read(); assert len(hashes)==len(bodies)==3 and hashes==[base64.b64encode(hashlib.sha256(v.encode()).digest()).decode() for v in bodies]" %t.html %S/../../tools/obelisk-cov/CoverageReport.css
 # RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); m=d['metrics']['line']; assert m['threshold'] == 90.0 and m['threshold_pass'] is True" %t.html
-# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %S/../../tools/obelisk-cov/CoverageReport.js 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' %}
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %S/../../tools/obelisk-cov/CoverageReport.js 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' 'row:1|alpha|1|2|1|4 unique' 'row:dut.sv:1:3|line|1|covered|alpha' 'row:dut.sv:1:9|line|0|excluded: generated|' 'row:dut.sv:2|excluded|0|excluded: entire generated line|' %}
+# The report carries each source file's text and slang token listing, which
+# the page uses to show and color the source.
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); s=d['sources']; assert [(v['file'],v['path'],v['status'],v['text']) for v in s] == [('10','dut.sv','ok','line\nexcluded\n')]; assert s[0]['tokens'] == '0 4 Identifier\n5 8 Identifier\n'" %t.html
 # RUN: %if node %{ \
 # RUN:   %python -c "import re,sys; h=open(sys.argv[1]).read(); s=re.findall(r'<script(?![^>]*coverage-data)[^>]*>(.*?)</script>',h,re.S); assert len(s)==1; open(sys.argv[2],'w').write(s[0])" %t.html %t.js && \
 # RUN:   %node --check %t.js \
@@ -80,14 +82,14 @@
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.same-name.html 'same-name (00000000-0000-0000-0000-000000000022)' 'same-name (00000000-0000-0000-0000-000000000023)' 'same-name (00000000-0000-0000-0000-000000000022), same-name (00000000-0000-0000-0000-000000000023)' %}
 # RUN: %python -c "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.mkdir(exist_ok=True); (p/'dut.sv').write_text('wrong source\n')" %t.bad-source-root
 # RUN: cd %S/Inputs && obelisk-cov report --format=html --source-root=%t.bad-source-root -o %t.fallback.html %t.a.obcov
-# RUN: FileCheck %s --check-prefix=HTML-SOURCE-FALLBACK < %t.fallback.html
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); assert [(v['status'],v['text']) for v in d['sources']] == [('ok','line\nexcluded\n')]" %t.fallback.html
 # RUN: %python -c "import pathlib,sys; pathlib.Path(sys.argv[1]).mkdir(exist_ok=True)" %t.empty-source-root
 # RUN: cd %t.empty-source-root && obelisk-cov report --format=html --source-root=%t.bad-source-root -o %t.mismatch.html %t.a.obcov
-# RUN: FileCheck %s --check-prefix=HTML-SOURCE-MISMATCH < %t.mismatch.html
-# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.mismatch.html 'dut.sv' %}
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); assert d['sources'] == [{'file':'10','path':'dut.sv','status':'mismatch'}]" %t.mismatch.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.mismatch.html 'dut.sv' 'Source digest mismatch' %}
 # RUN: cd %t.empty-source-root && obelisk-cov report --format=html -o %t.missing.html %t.a.obcov
-# RUN: FileCheck %s --check-prefix=HTML-SOURCE-MISSING < %t.missing.html
-# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.missing.html 'dut.sv' %}
+# RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); assert d['sources'] == [{'file':'10','path':'dut.sv','status':'unavailable'}]" %t.missing.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.missing.html 'dut.sv' 'Source unavailable' %}
 # RUN: %coverage-fixture %t.html-escape.obcov 20 '</ScRiPt><script id=pwned>' 1
 # RUN: obelisk-cov report --format=html --source-root=%S/Inputs -o %t.escape.html %t.html-escape.obcov
 # RUN: %python -c "import json,sys; s=open(sys.argv[1]).read(); p=s.split('type=\"application/json\">',1)[1].split('</script>',1)[0]; d=json.loads(p); assert all(c != '<' for c in p); assert d['runs'][0]['name'] == '</ScRiPt><script id=pwned>'" %t.escape.html
@@ -198,34 +200,12 @@
 # HTML: script-src 'sha256-
 # HTML-NOT: unsafe-inline
 # HTML-NOT: nonce=
-# HTML: Obelisk coverage
-# HTML: id="test-filter"
-# HTML: id="file-nav"
-# HTML: id="hierarchy-nav"
-# HTML: <h2 id="line-section">Line points</h2>
-# HTML: <h2 id="toggle-section">Toggle bits</h2>
-# HTML: <h2>Functional items</h2>
-# HTML: <h2>Functional bins and sparse tuples</h2>
-# HTML: <h2>Illegal-bin diagnostics</h2>
-# HTML: <h2 id="unique-section">Unique contributions</h2>
-# HTML: <h2>Exclusions</h2>
-# HTML: <section id="source-10" class="section"><h3>dut.sv</h3>
-# HTML: <span class="full"><span class="ln">1</span>line
-# HTML: point 30 @col 3: 1
-# HTML: point 31 @col 9: 0 <span class="excluded-point">[excluded: generated]</span>
-# HTML: <span class="excluded-line"><span class="ln">2</span>excluded
-# HTML: point 32 @col 1: 0 <span class="excluded-point">[excluded: entire generated line]</span>
+# HTML: <title>Obelisk coverage</title>
+# HTML: <select id="test">
+# HTML: <nav id="side"
+# HTML: <main id="main"></main>
+# HTML: <script id="coverage-data" type="application/json">
 
-# HTML-OVERFLOW: const counterText =
-# HTML-OVERFLOW: c.overflow ? ' (saturated)' : ''
-# HTML-OVERFLOW: counterText(b.zero_to_one),
-# HTML-OVERFLOW: counterText(b.one_to_zero),
-
-# HTML-SOURCE-FALLBACK: <section id="source-10" class="section"><h3>dut.sv</h3>
-# HTML-SOURCE-FALLBACK: point 30 @col 3: 1
-
-# HTML-SOURCE-MISMATCH: <section id="source-10" class="section"><h3>dut.sv</h3><p class="muted">Source digest mismatch</p></section>
-# HTML-SOURCE-MISSING: <section id="source-10" class="section"><h3>dut.sv</h3><p class="muted">Source unavailable</p></section>
 
 
 # BAD-THRESHOLD: line: 0.00% (0/1), partial 0 [FAIL >= 1.00%]

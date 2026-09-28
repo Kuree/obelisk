@@ -81,4 +81,22 @@ for (const selector of [
   assert.ok(runnerSource.includes(`'${selector}'`), `runner.js default selector: ${selector}`);
 }
 
+// The coverage report page colors source like the site does, from its own
+// copy of tokensFromListing() and TYPES; keep the copies identical.
+{
+  const report = await readFile(
+    new URL('../../tools/obelisk-cov/CoverageReport.js', import.meta.url), 'utf8');
+  const embed = await readFile(new URL('embed-snippet.js', web), 'utf8');
+  const copied = report.split('// BEGIN tokensFromListing (copy of web/embed-snippet.js)\n')[1]
+    ?.split('// END tokensFromListing')[0];
+  const original = embed.slice(embed.indexOf('// slang TokenKind and TriviaKind names'),
+                               embed.indexOf('export const COLOR_CHOICES'))
+    .replace('export function tokensFromListing', 'function tokensFromListing');
+  assert.ok(copied, 'CoverageReport.js marks its copy of tokensFromListing');
+  assert.equal(copied.trim(), original.trim());
+  const types = report.match(/^const TYPES = (\[[\s\S]*?\]);$/m);
+  assert.ok(types, 'CoverageReport.js has a TYPES list');
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext(types[1]))), TYPES);
+}
+
 console.log('web SystemVerilog highlighting OK');

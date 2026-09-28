@@ -82,6 +82,14 @@
     </label>
 
     <label class="field">
+      <span>Coverage</span>
+      <select id="coverage">
+        <option value="off" selected>off</option>
+        <option value="on">line, toggle, functional</option>
+      </select>
+    </label>
+
+    <label class="field">
       <span>Top module</span>
       <input id="top" type="text" placeholder="inferred" spellcheck="false">
     </label>
@@ -139,6 +147,7 @@
         <span id="status" class="status"></span>
         <button id="scheduleToggle" class="ghost tiny" hidden>View IR</button>
         <button id="downloadWaveform" class="ghost tiny" hidden>Download VCD</button>
+        <button id="downloadCoverage" class="ghost tiny" hidden>Download report</button>
         <button id="copyOutput" class="ghost tiny">Copy</button>
       </div>
     </div>
@@ -148,6 +157,13 @@
     <div id="waveformView" class="waveform" hidden>
       <div id="waveformEmpty" class="waveformEmpty"></div>
       <iframe id="surfer" title="Surfer waveform viewer"
+              sandbox="allow-scripts" referrerpolicy="no-referrer" hidden></iframe>
+    </div>
+    <!-- The page obelisk-cov writes for the latest run, in an opaque-origin
+         sandbox: it runs its own scripts but cannot reach this page. -->
+    <div id="coverageView" class="waveform" hidden>
+      <div id="coverageEmpty" class="waveformEmpty"></div>
+      <iframe id="coverageFrame" title="Coverage report"
               sandbox="allow-scripts" referrerpolicy="no-referrer" hidden></iframe>
     </div>
   </section>

@@ -3,8 +3,8 @@
 // Order follows DESIGN.md: source → slang → obelisk → sim → schedule → LLVM →
 // run. Running is the terminus, so it is both the last tab and the default
 // one -- the page's job is to run your design; the IR stages are there when
-// you want to look inside. A waveform view belongs after Run because it is a
-// product of running, not another way of compiling.
+// you want to look inside. The waveform and coverage views belong after Run
+// because they are products of running, not other ways of compiling.
 
 export const STAGES = [
   {
@@ -68,6 +68,13 @@ export const STAGES = [
     flag: null,
     kind: 'waveform',
     blurb: 'Latest VCD captured locally from a run, displayed with Surfer.',
+  },
+  {
+    id: 'coverage',
+    label: 'Coverage',
+    flag: null,
+    kind: 'coverage',
+    blurb: 'Line, toggle, and functional coverage from the latest run.',
   },
 ];
 
