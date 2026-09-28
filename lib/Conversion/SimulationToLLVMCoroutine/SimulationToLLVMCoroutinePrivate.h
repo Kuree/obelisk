@@ -303,6 +303,7 @@ void copyNativePartition(mlir::Operation *source, mlir::Operation *target);
 mlir::LogicalResult finalizeNativePartitionManifest(mlir::ModuleOp module);
 
 mlir::LogicalResult lowerNativeDPICalls(mlir::Operation *root);
+void materializeNativeSpawnBatches(mlir::Operation *root);
 mlir::LogicalResult
 lowerNativeFunctionBody(mlir::Operation *root,
                         NativeReturnLowering returnLowering,
@@ -435,13 +436,11 @@ mlir::LogicalResult serializeRuntimeWait(
     mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
 uint64_t stableProcessID(llvm::StringRef name);
 bool isUnmanagedNativeProcess(sim::SimFuncOp function);
-mlir::LogicalResult
-makeProcessDescriptor(mlir::ModuleOp module,
-                      const mlir::SymbolTable &embeddedSymbols,
-                      mlir::Location location,
-                      llvm::StringRef baseName, uint64_t stableID,
-                      const SimulationProcessFrameAnalysis &analysis,
-                      bool unmanagedNative = false);
+mlir::LogicalResult makeProcessDescriptor(
+    mlir::ModuleOp module, const mlir::SymbolTable &embeddedSymbols,
+    mlir::Location location, llvm::StringRef baseName, uint64_t stableID,
+    const SimulationProcessFrameAnalysis &analysis,
+    bool unmanagedNative = false, bool usesCoroutine = true);
 mlir::LogicalResult prepareManagedLowering(mlir::ModuleOp module,
                                            const llvm::DataLayout &dataLayout);
 mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,

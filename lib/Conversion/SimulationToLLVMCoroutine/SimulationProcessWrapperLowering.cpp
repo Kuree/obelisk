@@ -82,119 +82,186 @@ void publishAction(OpBuilder &builder, Location location, Value instance,
           llvmConstant(builder, location, i64, auxiliary), 8);
 }
 
+LogicalResult materializeSharedNativeWrappers(ModuleOp module,
+                                              bool needsCoroutine) {
+  OpBuilder builder(module.getContext());
+  Location location = module.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(module.getContext());
+  Type i32 = builder.getI32Type();
+  Type i64 = builder.getI64Type();
+  Type voidType = LLVM::LLVMVoidType::get(module.getContext());
+  auto make = [&](StringRef name, LLVM::LLVMFunctionType type,
+                  auto emit) -> LogicalResult {
+    if (Operation *existing = module.lookupSymbol(name)) {
+      auto function = dyn_cast<LLVM::LLVMFuncOp>(existing);
+      if (!function || function.getFunctionType() != type ||
+          !function->hasAttr("obelisk.native.shared_callback"))
+        return existing->emitError("incompatible shared native callback");
+      return success();
+    }
+    builder.setInsertionPointToStart(module.getBody());
+    auto function = LLVM::LLVMFuncOp::create(builder, location, name, type,
+                                             LLVM::Linkage::Internal);
+    function->setAttr("obelisk.native.shared_callback", builder.getUnitAttr());
+    Block *entry = function.addEntryBlock(builder);
+    builder.setInsertionPointToStart(entry);
+    emit(function, entry);
+    return success();
+  };
+  if (failed(make(
+          nativeZeroRequirementsName,
+          LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false),
+          [&](LLVM::LLVMFuncOp, Block *entry) {
+            LLVM::StoreOp::create(builder, location,
+                                  llvmConstant(builder, location, i64, 0),
+                                  entry->getArgument(0), 8);
+            LLVM::StoreOp::create(builder, location,
+                                  llvmConstant(builder, location, i64, 1),
+                                  entry->getArgument(1), 8);
+            LLVM::ReturnOp::create(builder, location,
+                                   llvmConstant(builder, location, i32, 0));
+          })) ||
+      failed(make(nativeNoopDestroyName,
+                  LLVM::LLVMFunctionType::get(voidType, {pointer}, false),
+                  [&](LLVM::LLVMFuncOp, Block *) {
+                    LLVM::ReturnOp::create(builder, location, ValueRange{});
+                  })))
+    return failure();
+  if (!needsCoroutine)
+    return success();
+  if (failed(make(
+          nativeCoroutineDestroyName,
+          LLVM::LLVMFunctionType::get(voidType, {pointer}, false),
+          [&](LLVM::LLVMFuncOp function, Block *entry) {
+            Block *destroy = new Block;
+            Block *done = new Block;
+            function.getBody().push_back(destroy);
+            function.getBody().push_back(done);
+            Value instance = entry->getArgument(0);
+            Value handle = loadAt(builder, location, instance,
+                                  kInstanceNativeHandleField, pointer, 0);
+            Value null = LLVM::ZeroOp::create(builder, location, pointer);
+            Value isNull = LLVM::ICmpOp::create(
+                builder, location, LLVM::ICmpPredicate::eq, handle, null);
+            LLVM::CondBrOp::create(builder, location, isNull, done, destroy);
+            builder.setInsertionPointToStart(destroy);
+            // Let LLVM lower its coroutine ABI; never inspect a private
+            // frame header in the portable C++ runtime.
+            LLVM::CallIntrinsicOp::create(
+                builder, location, builder.getStringAttr("llvm.coro.destroy"),
+                handle);
+            storeAt(builder, location, instance, kInstanceNativeHandleField,
+                    null, 0);
+            LLVM::BrOp::create(builder, location, done);
+            builder.setInsertionPointToStart(done);
+            LLVM::ReturnOp::create(builder, location, ValueRange{});
+          })))
+    return failure();
+  return make(
+      nativeCoroutineExecuteName,
+      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false),
+      [&](LLVM::LLVMFuncOp function, Block *entry) {
+        // Keep one copy even when the forwarding wrapper and this
+        // function are optimized together in the primary partition.
+        function->setAttr(
+            "passthrough",
+            builder.getArrayAttr({builder.getStringAttr("noinline")}));
+        Block *start = new Block;
+        Block *resume = new Block;
+        resume->addArgument(pointer, location);
+        function.getBody().push_back(start);
+        function.getBody().push_back(resume);
+        Value instance = entry->getArgument(0);
+        Value runtimeContext = loadAt(builder, location, instance,
+                                      kInstanceContextField, pointer, 0);
+        Value currentContext = LLVM::AddressOfOp::create(
+            builder, location, pointer, "__obelisk_current_context");
+        LLVM::StoreOp::create(builder, location, runtimeContext, currentContext,
+                              8);
+        Value handle = loadAt(builder, location, instance,
+                              kInstanceNativeHandleField, pointer, 0);
+        Value null = LLVM::ZeroOp::create(builder, location, pointer);
+        Value isNull = LLVM::ICmpOp::create(
+            builder, location, LLVM::ICmpPredicate::eq, handle, null);
+        cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
+                                 resume, ValueRange{handle});
+        builder.setInsertionPointToStart(start);
+        auto rampType = LLVM::LLVMFunctionType::get(
+            voidType, {pointer, i32, pointer, pointer}, false);
+        LLVM::CallOp::create(builder, location, rampType,
+                             ValueRange{entry->getArgument(1), instance,
+                                        llvmConstant(builder, location, i32, 1),
+                                        null, null});
+        Value startedHandle = loadAt(builder, location, instance,
+                                     kInstanceNativeHandleField, pointer, 0);
+        cf::BranchOp::create(builder, location, resume,
+                             ValueRange{startedHandle});
+        builder.setInsertionPointToStart(resume);
+        LLVM::CoroResumeOp::create(builder, location, resume->getArgument(0));
+        LLVM::ReturnOp::create(
+            builder, location,
+            loadAt(builder, location, instance, kInstanceStatusField, i32, 4));
+      });
+}
+
 LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
                                  StringRef baseName, bool directActivation) {
   OpBuilder builder(ramp);
   builder.setInsertionPointAfter(ramp);
   Location location = ramp.getLoc();
-  MLIRContext *context = module.getContext();
-  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type pointer = LLVM::LLVMPointerType::get(module.getContext());
   Type i32 = builder.getI32Type();
-  Type voidType = LLVM::LLVMVoidType::get(context);
-  auto makeName = [&](StringRef suffix) { return (baseName + suffix).str(); };
-
-  auto requirements = LLVM::LLVMFuncOp::create(
-      builder, location, makeName(".__obelisk_native_requirements"),
-      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
-  copyNativePartition(ramp, requirements);
-  Block *requirementsEntry = requirements.addEntryBlock(builder);
-  builder.setInsertionPointToStart(requirementsEntry);
-  Value null = LLVM::ZeroOp::create(builder, location, pointer);
-  Value mode = llvmConstant(builder, location, i32, 0);
-  auto requirementsCall = LLVM::CallOp::create(
-      builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
-      ValueRange{null, mode, requirementsEntry->getArgument(0),
-                 requirementsEntry->getArgument(1)});
-  (void)requirementsCall;
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32, 0));
-
-  builder.setInsertionPointAfter(requirements);
+  if (!directActivation) {
+    // This ABI has no descriptor argument, so a coroutine still needs a small
+    // per-process requirements callback. LLVM folds the ramp's size query.
+    auto requirements = LLVM::LLVMFuncOp::create(
+        builder, location, (baseName + ".__obelisk_native_requirements").str(),
+        LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
+    copyNativePartition(ramp, requirements);
+    Block *entry = requirements.addEntryBlock(builder);
+    builder.setInsertionPointToStart(entry);
+    Value null = LLVM::ZeroOp::create(builder, location, pointer);
+    LLVM::CallOp::create(
+        builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
+        ValueRange{null, llvmConstant(builder, location, i32, 0),
+                   entry->getArgument(0), entry->getArgument(1)});
+    LLVM::ReturnOp::create(builder, location,
+                           llvmConstant(builder, location, i32, 0));
+    builder.setInsertionPointAfter(requirements);
+  }
   auto execute = LLVM::LLVMFuncOp::create(
-      builder, location, makeName(".__obelisk_native_execute"),
+      builder, location, (baseName + ".__obelisk_native_execute").str(),
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
   copyNativePartition(ramp, execute);
-  Block *executeEntry = execute.addEntryBlock(builder);
-  Block *start = new Block;
-  Block *resume = new Block;
-  Block *done = new Block;
-  execute.getBody().push_back(start);
-  execute.getBody().push_back(resume);
-  execute.getBody().push_back(done);
-  builder.setInsertionPointToStart(executeEntry);
-  Value instance = executeEntry->getArgument(0);
+  Block *entry = execute.addEntryBlock(builder);
+  builder.setInsertionPointToStart(entry);
+  Value instance = entry->getArgument(0);
+  if (!directActivation) {
+    Value rampAddress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  ramp.getSymName());
+    auto call = LLVM::CallOp::create(
+        builder, location, TypeRange{i32},
+        SymbolRefAttr::get(module.getContext(), nativeCoroutineExecuteName),
+        ValueRange{instance, rampAddress});
+    call.setTailCallKind(LLVM::TailCallKind::Tail);
+    LLVM::ReturnOp::create(builder, location, call.getResult());
+    return success();
+  }
+  // Direct activation keeps its direct call, so tiny hot bodies can still be
+  // inlined without adding a second indirect dispatch.
   Value runtimeContext =
       loadAt(builder, location, instance, kInstanceContextField, pointer, 0);
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
                                                    "__obelisk_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
-  if (directActivation) {
-    cf::BranchOp::create(builder, location, start);
-  } else {
-    Value handle = loadAt(builder, location, instance,
-                          kInstanceNativeHandleField, pointer, 0);
-    Value bits = LLVM::PtrToIntOp::create(builder, location,
-                                          builder.getI64Type(), handle);
-    Value isNull = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, bits,
-        llvmConstant(builder, location, builder.getI64Type(), 0));
-    cf::CondBranchOp::create(builder, location, isNull, start, ValueRange{},
-                             resume, ValueRange{});
-    builder.setInsertionPointToStart(resume);
-    // The start path joins here after publishing its newly created handle.
-    Value resumeHandle = loadAt(builder, location, instance,
-                                kInstanceNativeHandleField, pointer, 0);
-    LLVM::CoroResumeOp::create(builder, location, resumeHandle);
-    cf::BranchOp::create(builder, location, done);
-  }
-  if (directActivation)
-    resume->erase();
-  builder.setInsertionPointToStart(start);
-  Value modeExecute = llvmConstant(builder, location, i32, 1);
-  Value nullOut = LLVM::ZeroOp::create(builder, location, pointer);
+  Value null = LLVM::ZeroOp::create(builder, location, pointer);
   LLVM::CallOp::create(builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
-                       ValueRange{instance, modeExecute, nullOut, nullOut});
-  cf::BranchOp::create(builder, location, directActivation ? done : resume);
-  builder.setInsertionPointToStart(done);
-  Value status =
-      loadAt(builder, location, instance, kInstanceStatusField, i32, 4);
-  LLVM::ReturnOp::create(builder, location, status);
-
-  builder.setInsertionPointAfter(execute);
-  auto destroy = LLVM::LLVMFuncOp::create(
-      builder, location, makeName(".__obelisk_native_destroy"),
-      LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
-  copyNativePartition(ramp, destroy);
-  Block *destroyEntry = destroy.addEntryBlock(builder);
-  if (directActivation) {
-    builder.setInsertionPointToStart(destroyEntry);
-    LLVM::ReturnOp::create(builder, location, ValueRange{});
-    return success();
-  }
-  Block *destroyCall = new Block;
-  Block *destroyDone = new Block;
-  destroy.getBody().push_back(destroyCall);
-  destroy.getBody().push_back(destroyDone);
-  builder.setInsertionPointToStart(destroyEntry);
-  Value destroyInstance = destroyEntry->getArgument(0);
-  Value destroyHandle = loadAt(builder, location, destroyInstance,
-                               kInstanceNativeHandleField, pointer, 0);
-  Value destroyBits = LLVM::PtrToIntOp::create(
-      builder, location, builder.getI64Type(), destroyHandle);
-  Value destroyIsNull = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, destroyBits,
-      llvmConstant(builder, location, builder.getI64Type(), 0));
-  cf::CondBranchOp::create(builder, location, destroyIsNull, destroyDone,
-                           ValueRange{}, destroyCall, ValueRange{});
-  builder.setInsertionPointToStart(destroyCall);
-  LLVM::CallIntrinsicOp::create(builder, location,
-                                builder.getStringAttr("llvm.coro.destroy"),
-                                destroyHandle);
-  storeAt(builder, location, destroyInstance, kInstanceNativeHandleField,
-          LLVM::ZeroOp::create(builder, location, pointer), 0);
-  cf::BranchOp::create(builder, location, destroyDone);
-  builder.setInsertionPointToStart(destroyDone);
-  LLVM::ReturnOp::create(builder, location, ValueRange{});
+                       ValueRange{instance,
+                                  llvmConstant(builder, location, i32, 1), null,
+                                  null});
+  LLVM::ReturnOp::create(
+      builder, location,
+      loadAt(builder, location, instance, kInstanceStatusField, i32, 4));
   return success();
 }
 
@@ -208,24 +275,6 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  Type voidType = LLVM::LLVMVoidType::get(context);
-
-  auto requirements = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_requirements").str(),
-      LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
-  copyNativePartition(body, requirements);
-  Block *requirementsEntry = requirements.addEntryBlock(builder);
-  builder.setInsertionPointToStart(requirementsEntry);
-  LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i64, 0),
-                        requirementsEntry->getArgument(0), 8);
-  LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i64, 1),
-                        requirementsEntry->getArgument(1), 8);
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32, 0));
-
-  builder.setInsertionPointAfter(requirements);
   auto execute = LLVM::LLVMFuncOp::create(
       builder, location, (baseName + ".__obelisk_native_execute").str(),
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
@@ -272,14 +321,6 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
                 llvmConstant(builder, location, i64, 0), 0);
   LLVM::ReturnOp::create(builder, location, call.getResult(0));
 
-  builder.setInsertionPointAfter(execute);
-  auto destroy = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_destroy").str(),
-      LLVM::LLVMFunctionType::get(voidType, {pointer}, false));
-  copyNativePartition(body, destroy);
-  Block *destroyEntry = destroy.addEntryBlock(builder);
-  builder.setInsertionPointToStart(destroyEntry);
-  LLVM::ReturnOp::create(builder, location, ValueRange{});
   return success();
 }
 

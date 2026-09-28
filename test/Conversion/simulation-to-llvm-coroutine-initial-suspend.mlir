@@ -23,13 +23,23 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @initial_suspend.__obelisk_native_execute
-// CHECK: llvm.call @initial_suspend.__obelisk_coro_ramp
-// CHECK-NEXT: llvm.br ^[[RESUME:bb[0-9]+]]
-// CHECK: ^[[RESUME]]:
-// CHECK: %[[HANDLE:[0-9]+]] = llvm.load
+// CHECK-LABEL: llvm.func internal @__obelisk_native_coro_execute_v1(
+// CHECK-SAME: %[[INSTANCE:.*]]: !llvm.ptr, %[[RAMP:.*]]: !llvm.ptr
+// CHECK-SAME: passthrough = ["noinline"]
+// CHECK: llvm.call %[[RAMP]](%[[INSTANCE]],
+// CHECK: %[[STARTED:[0-9]+]] = llvm.load
+// CHECK-NEXT: llvm.br ^[[RESUME:bb[0-9]+]](%[[STARTED]] : !llvm.ptr)
+// CHECK: ^[[RESUME]](%[[HANDLE:[0-9]+]]: !llvm.ptr):
 // CHECK-NEXT: llvm.intr.coro.resume %[[HANDLE]]
-// CHECK-LABEL: llvm.func @initial_suspend.__obelisk_native_destroy
+// CHECK-LABEL: llvm.func internal @__obelisk_native_coro_destroy_v1
+// CHECK: %[[NULL:[0-9]+]] = llvm.mlir.zero : !llvm.ptr
+// CHECK: llvm.cond_br
+// CHECK: llvm.call_intrinsic "llvm.coro.destroy"
+// CHECK: llvm.store %[[NULL]]
+// CHECK-LABEL: llvm.func @initial_suspend.__obelisk_native_execute
+// CHECK: %[[RAMP_ADDR:[0-9]+]] = llvm.mlir.addressof @initial_suspend.__obelisk_coro_ramp
+// CHECK-NEXT: %[[STATUS:[0-9]+]] = llvm.call tail @__obelisk_native_coro_execute_v1(%arg0, %[[RAMP_ADDR]])
+// CHECK-NEXT: llvm.return %[[STATUS]]
 
 // SPLIT-LABEL: define void @initial_suspend.__obelisk_coro_ramp(
 // SPLIT-NOT: call i32 @obelisk_rt_v1_dump_flush

@@ -9,6 +9,18 @@
 
 namespace obelisk::detail {
 
+inline constexpr llvm::StringLiteral nativeCoroutineExecuteName =
+    "__obelisk_native_coro_execute_v1";
+inline constexpr llvm::StringLiteral nativeCoroutineDestroyName =
+    "__obelisk_native_coro_destroy_v1";
+inline constexpr llvm::StringLiteral nativeNoopDestroyName =
+    "__obelisk_native_noop_destroy_v1";
+inline constexpr llvm::StringLiteral nativeZeroRequirementsName =
+    "__obelisk_native_zero_requirements_v1";
+
+mlir::LogicalResult materializeSharedNativeWrappers(mlir::ModuleOp module,
+                                                    bool needsCoroutine);
+
 void publishAction(mlir::OpBuilder &builder, mlir::Location location,
                    mlir::Value instance, uint32_t actionKind,
                    uint32_t suspendKind, uint32_t continuation, uint32_t flags,

@@ -1113,7 +1113,8 @@ finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
     return failure();
   return makeProcessDescriptor(
       process.module, embeddedSymbols, process.location, process.baseName,
-      process.stableID, *process.analysis, process.unmanagedNative);
+      process.stableID, *process.analysis, process.unmanagedNative,
+      !process.directActivation);
 }
 
 LogicalResult
@@ -1121,7 +1122,12 @@ lowerSuspendableProcess(sim::SimFuncOp function,
                         const SimulationProcessFrameAnalysis &analysis) {
   FailureOr<PreparedSuspendableProcess> prepared =
       prepareSuspendableProcess(function, analysis);
-  if (failed(prepared) || failed(lowerPreparedSuspendableProcess(*prepared)))
+  if (failed(prepared))
+    return failure();
+  materializeNativeSpawnBatches(prepared->ramp);
+  if (failed(materializeSharedNativeWrappers(prepared->module,
+                                             !prepared->directActivation)) ||
+      failed(lowerPreparedSuspendableProcess(*prepared)))
     return failure();
   SymbolTable embeddedSymbols(prepared->module);
   return finishPreparedSuspendableProcess(*prepared, embeddedSymbols);

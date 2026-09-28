@@ -275,7 +275,7 @@ module attributes {
 // TWO-STATE-STAGE: %[[DIRTY_WORD:.*]] = llvm.getelementptr %[[DIRTY]][0]
 // TWO-STATE-STAGE: llvm.store {{.*}}, %[[DIRTY_WORD]]
 // TWO-STATE-STAGE-NOT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1
-// TWO-STATE-STAGE-LABEL: llvm.func @process.__obelisk_native_requirements
+// TWO-STATE-STAGE-LABEL: llvm.func @process.__obelisk_native_execute
 
 // A selected two-state body may use fixed value/mask/region metadata, but a
 // coincident four-state owner can have staged X in the shared accumulator.
@@ -298,4 +298,4 @@ module attributes {
 // SELECTED-STAGE: %[[SELECTED_DIRTY_WORD:.*]] = llvm.getelementptr %[[SELECTED_DIRTY]][0]
 // SELECTED-STAGE: llvm.store {{.*}}, %[[SELECTED_DIRTY_WORD]]
 // SELECTED-STAGE-NOT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1
-// SELECTED-STAGE-LABEL: llvm.func @process.__obelisk_native_requirements
+// SELECTED-STAGE-LABEL: llvm.func @process.__obelisk_native_execute

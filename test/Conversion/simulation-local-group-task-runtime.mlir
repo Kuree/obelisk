@@ -44,17 +44,16 @@
 // GROUP: simulation.nba.enqueue
 // GROUP-NOT: simulation.suspend.edge
 // NATIVE: @__obelisk_fused_{{[0-9_]+}}.__obelisk_process_descriptor = constant
+// NATIVE-SAME: ptr @__obelisk_native_zero_requirements_v1
 // NATIVE-SAME: ptr @__obelisk_fused_{{[0-9_]+}}.__obelisk_native_execute
+// NATIVE-SAME: ptr @__obelisk_native_noop_destroy_v1
 // NATIVE: define void @__obelisk_fused_{{[0-9_]+}}.__obelisk_group_body(
-// NATIVE-NOT: llvm.coro
-// NATIVE: define i32 @__obelisk_fused_{{[0-9_]+}}.__obelisk_native_requirements(
 // NATIVE-NOT: llvm.coro
 // NATIVE: define i32 @__obelisk_fused_{{[0-9_]+}}.__obelisk_native_execute(
 // NATIVE-NOT: llvm.coro
 // NATIVE: call void @__obelisk_fused_{{[0-9_]+}}.__obelisk_group_body(
 // NATIVE-NOT: llvm.coro
-// NATIVE: define void @__obelisk_fused_{{[0-9_]+}}.__obelisk_native_destroy(
-// NATIVE-NEXT: ret void
+// NATIVE: ret i32
 // CHANGING-NOT: __obelisk_fused_
 // CHANGING: simulation.func private @a(
 // CHANGING: arith.addi

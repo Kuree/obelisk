@@ -130,6 +130,25 @@ struct DualTierDescriptor {
   }
 };
 
+TEST(GeneratedProcess, SharedNativeCallbacksPreserveScratchRequirements) {
+  EXPECT_EQ(generatedDescriptor.native_destroy,
+            failingDescriptor.native_destroy);
+  EXPECT_EQ(groupDescriptor.native_destroy, automaticDescriptor.native_destroy);
+  EXPECT_EQ(groupDescriptor.native_requirements,
+            automaticDescriptor.native_requirements);
+  EXPECT_NE(generatedDescriptor.native_destroy, groupDescriptor.native_destroy);
+  uint64_t size = UINT64_MAX;
+  uint64_t alignment = UINT64_MAX;
+  ASSERT_EQ(groupDescriptor.native_requirements(&size, &alignment),
+            OBELISK_RT_OK);
+  EXPECT_EQ(size, 0u);
+  EXPECT_EQ(alignment, 1u);
+  ASSERT_EQ(generatedDescriptor.native_requirements(&size, &alignment),
+            OBELISK_RT_OK);
+  EXPECT_GT(size, 0u);
+  EXPECT_GT(alignment, 0u);
+}
+
 TEST(GeneratedProcess, UnstartedNativeFrameDoesNotPublishAndCanBeDestroyed) {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(

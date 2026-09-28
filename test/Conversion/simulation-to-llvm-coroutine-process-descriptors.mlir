@@ -44,8 +44,8 @@ module attributes {
 
 // PARTITION: module attributes {
 // PARTITION-SAME: obelisk.native.physical_partition_manifest = [
-// PARTITION-SAME: {dependencies = ["unit:42", "unit:43"], exports = [@__obelisk_current_context, @process.__obelisk_process_descriptor, @task.__obelisk_process_descriptor], id = "primary", imports = [@process.__obelisk_native_destroy, @process.__obelisk_native_execute, @process.__obelisk_native_requirements, @task.__obelisk_native_destroy, @task.__obelisk_native_execute, @task.__obelisk_native_requirements]
-// PARTITION-SAME: {dependencies = ["primary"], exports = [@process.__obelisk_native_destroy, @process.__obelisk_native_execute, @process.__obelisk_native_requirements], id = "unit:42", imports = [@__obelisk_current_context, @process.__obelisk_process_descriptor], members = [@process.__obelisk_coro_ramp, @process.__obelisk_native_destroy, @process.__obelisk_native_execute, @process.__obelisk_native_requirements, @process.__obelisk_schedule_continuations, @process.__obelisk_schedule_ranks, @process.__obelisk_spawn, @process.__obelisk_spawn_plan]}
+// PARTITION-SAME: {dependencies = ["unit:42", "unit:43"], exports = [@__obelisk_current_context, @__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor, @task.__obelisk_process_descriptor], id = "primary", imports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements, @task.__obelisk_native_execute]
+// PARTITION-SAME: {dependencies = ["primary"], exports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements], id = "unit:42", imports = [@__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor], members = [@process.__obelisk_coro_ramp, @process.__obelisk_native_execute, @process.__obelisk_native_requirements, @process.__obelisk_schedule_continuations, @process.__obelisk_schedule_ranks, @process.__obelisk_spawn, @process.__obelisk_spawn_plan]}
 // PARTITION: llvm.mlir.global internal constant @process.__obelisk_schedule_ranks
 // PARTITION-SAME: obelisk.native.partition = "unit:42"
 // PARTITION: llvm.mlir.global internal constant @process.__obelisk_schedule_continuations
@@ -56,8 +56,6 @@ module attributes {
 // PARTITION-SAME: obelisk.native.partition = "unit:42"
 // PARTITION: llvm.func @process.__obelisk_native_execute
 // PARTITION-SAME: obelisk.native.partition = "unit:42"
-// PARTITION: llvm.func @process.__obelisk_native_destroy
-// PARTITION-SAME: obelisk.native.partition = "unit:42"
 // PARTITION: llvm.func @process.__obelisk_spawn
 // PARTITION-SAME: obelisk.native.partition = "unit:42"
 // PARTITION: llvm.func @task
@@ -66,7 +64,7 @@ module attributes {
 // PARTITION-SAME: obelisk.native.partition = "unit:43"
 // PARTITION: llvm.func @task.__obelisk_activate
 // PARTITION-SAME: obelisk.native.partition = "unit:43"
-// CHECK: llvm.mlir.addressof @process.__obelisk_native_destroy
+// CHECK: llvm.mlir.addressof @__obelisk_native_coro_destroy_v1
 // CHECK: llvm.mlir.global internal constant @process.__obelisk_frame_layout
 // CHECK-SAME: alignment = 8 : i64
 // CHECK: llvm.mlir.constant(1 : i32)

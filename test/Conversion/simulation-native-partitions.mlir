@@ -124,11 +124,7 @@ module attributes {
 // LOWERED-SAME: obelisk.native.partition = "unit:5"
 // LOWERED: llvm.func @root
 // LOWERED-SAME: obelisk.native.partition = "primary"
-// LOWERED: llvm.func @root.__obelisk_native_requirements
-// LOWERED-SAME: obelisk.native.partition = "primary"
 // LOWERED: llvm.func @root.__obelisk_native_execute
-// LOWERED-SAME: obelisk.native.partition = "primary"
-// LOWERED: llvm.func @root.__obelisk_native_destroy
 // LOWERED-SAME: obelisk.native.partition = "primary"
 // LOWERED: llvm.func @root.__obelisk_spawn
 // LOWERED-SAME: obelisk.native.partition = "primary"

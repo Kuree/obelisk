@@ -311,9 +311,7 @@ module attributes {
 // CHECK-DAG: llvm.intr.coro.end
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_native_requirements
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_native_execute
-// CHECK: llvm.intr.coro.resume
-// CHECK-LABEL: llvm.func @delay_process.__obelisk_native_destroy
-// CHECK: llvm.call_intrinsic "llvm.coro.destroy"
+// CHECK: llvm.call tail @__obelisk_native_coro_execute_v1
 // CHECK-LABEL: llvm.func @all_waits.__obelisk_coro_ramp
 // CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6>
 // CHECK-SAME: obelisk.frame.size = 96 : i64
@@ -339,9 +337,7 @@ module attributes {
 // CHECK-SAME: obelisk.native_scratch_size = 0 : i64
 // CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
 // CHECK-NOT: llvm.intr.coro.
-// CHECK-LABEL: llvm.func @plain_process.__obelisk_native_requirements
 // CHECK-LABEL: llvm.func @plain_process.__obelisk_native_execute
-// CHECK-LABEL: llvm.func @plain_process.__obelisk_native_destroy
 // CHECK-LABEL: llvm.func @consume_ref
 // CHECK: llvm.call @obelisk_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @capture_ref(
@@ -384,6 +380,9 @@ module attributes {
 
 // SPLIT-NOT: @llvm.coro.
 // SPLIT: @delay_process.__obelisk_coro_ramp.resumers = private constant
+// SPLIT-LABEL: define internal i32 @__obelisk_native_zero_requirements_v1
+// SPLIT: store i64 0, ptr
+// SPLIT: store i64 1, ptr
 // SPLIT-LABEL: define void @delay_process.__obelisk_coro_ramp
 // SPLIT-NOT: call ptr @malloc
 // SPLIT-NOT: call void @free
@@ -391,9 +390,6 @@ module attributes {
 // SPLIT-NEXT: store i64 8, ptr %3
 // SPLIT-NOT: call ptr @malloc
 // SPLIT-NOT: call void @free
-// SPLIT-LABEL: define i32 @plain_process.__obelisk_native_requirements
-// SPLIT: store i64 0, ptr
-// SPLIT: store i64 1, ptr
 // SPLIT-LABEL: define internal fastcc void @delay_process.__obelisk_coro_ramp.resume
 // SPLIT: store i32 2, ptr
 // SPLIT: ret void

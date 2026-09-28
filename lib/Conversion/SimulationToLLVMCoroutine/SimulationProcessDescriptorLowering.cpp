@@ -1,5 +1,6 @@
 //===- SimulationProcessDescriptorLowering.cpp - Process ABI globals -----===//
 
+#include "SimulationProcessWrapperLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -60,10 +61,11 @@ bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
               .wasInterrupted();
 }
 
-LogicalResult makeProcessDescriptor(
-    ModuleOp module, const SymbolTable &embeddedSymbols, Location location,
-    StringRef baseName, uint64_t stableID,
-    const SimulationProcessFrameAnalysis &analysis, bool unmanagedNative) {
+LogicalResult
+makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
+                      Location location, StringRef baseName, uint64_t stableID,
+                      const SimulationProcessFrameAnalysis &analysis,
+                      bool unmanagedNative, bool usesCoroutine) {
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
@@ -222,7 +224,9 @@ LogicalResult makeProcessDescriptor(
               builder, location, descriptor,
               LLVM::AddressOfOp::create(
                   builder, location, pointer,
-                  (baseName + ".__obelisk_native_requirements").str()),
+                  usesCoroutine
+                      ? (baseName + ".__obelisk_native_requirements").str()
+                      : nativeZeroRequirementsName.str()),
               6);
           descriptor =
               insertValue(builder, location, descriptor,
@@ -234,7 +238,8 @@ LogicalResult makeProcessDescriptor(
               insertValue(builder, location, descriptor,
                           LLVM::AddressOfOp::create(
                               builder, location, pointer,
-                              (baseName + ".__obelisk_native_destroy").str()),
+                              usesCoroutine ? nativeCoroutineDestroyName
+                                            : nativeNoopDestroyName),
                           8);
         }
         if (hasExecution)

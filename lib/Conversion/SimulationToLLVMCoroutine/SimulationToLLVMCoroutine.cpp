@@ -1617,6 +1617,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
     ordinaryFunctions.push_back(std::move(*prepared));
   }
   markTiming("ordinary function preparation");
+  for (PreparedOrdinaryNativeFunction &function : ordinaryFunctions)
+    detail::materializeNativeSpawnBatches(function.body);
   if (failed(failableParallelForEach(
           context, ordinaryFunctions,
           [&](PreparedOrdinaryNativeFunction &function) {
@@ -1698,6 +1700,20 @@ LogicalResult NativePipelineAnalysis::materialize() {
     suspendableProcesses.push_back(std::move(*prepared));
   }
   markTiming("process body preparation");
+  // Batches introduce module-level capture globals. Create them before the
+  // parallel workers, which may only mutate their own process bodies.
+  for (PreparedPlainNativeProcess &process : plainProcesses)
+    detail::materializeNativeSpawnBatches(process.body);
+  for (PreparedSuspendableProcess &process : suspendableProcesses)
+    detail::materializeNativeSpawnBatches(process.ramp);
+  bool needsCoroutine =
+      llvm::any_of(suspendableProcesses, [](const auto &process) {
+        return !process.directActivation;
+      });
+  if ((!plainProcesses.empty() || !suspendableProcesses.empty()) &&
+      failed(detail::materializeSharedNativeWrappers(module, needsCoroutine)))
+    return failure();
+  markTiming("shared process support materialization");
   if (failed(failableParallelForEach(
           context, plainProcesses, [&](PreparedPlainNativeProcess &process) {
             return lowerPreparedPlainNativeProcess(process);

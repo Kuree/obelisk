@@ -40,10 +40,10 @@
 // NATIVE-NOT: llvm.coro
 // NATIVE: call i64 @stimulus.__obelisk_activate
 // NATIVE-NOT: llvm.coro
-// NATIVE: define i32 @driver.__obelisk_native_requirements
+// NATIVE: define i32 @driver.__obelisk_native_execute
 // NATIVE: define void @__obelisk_region_kernel_{{[0-9_]+}}.__obelisk_group_body(
 // NATIVE-NOT: llvm.coro
-// NATIVE: define i32 @__obelisk_region_kernel_{{[0-9_]+}}.__obelisk_native_requirements
+// NATIVE: define i32 @__obelisk_region_kernel_{{[0-9_]+}}.__obelisk_native_execute
 
 !word = !simulation.logic<8>
 !ref = !simulation.ref<!word>

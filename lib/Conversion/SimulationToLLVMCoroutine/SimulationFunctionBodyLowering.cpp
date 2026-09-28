@@ -16,11 +16,10 @@
 using namespace mlir;
 
 namespace obelisk::detail {
-namespace {
 
 // Batch only unused, constant word captures. Automatic handles still have
 // retain/failure calls between spawns, which are boundaries for this scan.
-static void batchConstantSpawns(Operation *root) {
+void materializeNativeSpawnBatches(Operation *root) {
   ModuleOp module = root->getParentOfType<ModuleOp>();
   MLIRContext *context = root->getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -151,6 +150,8 @@ static void batchConstantSpawns(Operation *root) {
   }
 }
 
+namespace {
+
 class NativeCallPattern final : public OpRewritePattern<sim::SimCallOp> {
 public:
   NativeCallPattern(MLIRContext *context, NativeCallResultLowering lowering)
@@ -223,7 +224,6 @@ private:
 LogicalResult
 lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
                         NativeCallResultLowering callResultLowering) {
-  batchConstantSpawns(root);
   RewritePatternSet patterns(root->getContext());
   patterns.add<NativeCallPattern>(root->getContext(), callResultLowering);
   patterns.add<NativeSpawnPattern>(root->getContext());
