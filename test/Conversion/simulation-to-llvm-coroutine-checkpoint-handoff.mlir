@@ -1,6 +1,9 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s
+// RUN:   -o %t.mlir
+// RUN: FileCheck %s < %t.mlir
+// RUN: FileCheck %s --check-prefix=OUTLINE < %t.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S | FileCheck %s --check-prefix=LLVM
 
 // A checkpoint-capable owner stays in the generated Tier-1/Tier-2 closure on
 // its known path.  The unsupported display leaf is fractured into a cold
@@ -145,6 +148,7 @@ module attributes {
 // CHECK: %[[ROOT_ZERO:.*]] = llvm.mlir.zero : !llvm.array<1 x i64>
 // CHECK: llvm.store %[[ROOT_ZERO]], %[[ROOTS]]
 // CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_0
+// CHECK-SAME: no_inline
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint
 // CHECK-LABEL: llvm.func @__obelisk_eval_path_dispatch_v1_0(
 // CHECK: llvm.cond_br {{.*}}, ^[[PROMOTED:bb[0-9]+]], ^[[TRANSIENT:bb[0-9]+]]
@@ -157,3 +161,18 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_eval_four_state_fallback_v1_0
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.return
+
+// The local unknown branch shares its original four-state body; the selected
+// two-state branch keeps its normal inlining policy.
+// OUTLINE-LABEL: llvm.func @__obelisk_eval_path_dispatch_v1_0(
+// OUTLINE: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_two_state_0(
+// OUTLINE-NOT: no_inline
+// OUTLINE: llvm.return
+// OUTLINE: llvm.call @guarded.__obelisk_eval_body_0(
+// OUTLINE-SAME: no_inline
+
+// LLVM-LABEL: define {{.*}}@__obelisk_eval_four_state_fallback_v1_0(
+// LLVM: call i32 @__obelisk_eval_checkpoint_body_v1_0({{.*}}) #[[NOINLINE:[0-9]+]]
+// LLVM-LABEL: define {{.*}}@__obelisk_eval_path_dispatch_v1_0(
+// LLVM: call i32 @guarded.__obelisk_eval_body_0({{.*}}) #[[NOINLINE]]
+// LLVM: attributes #[[NOINLINE]] = { {{.*}}noinline{{.*}} }

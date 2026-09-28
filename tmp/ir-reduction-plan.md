@@ -3,7 +3,7 @@
 Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
 attribute storage work, the remaining W5 dispatch work, W6b, and W8–W11
-remain outstanding. W5's shared readiness scanner and W7's native bytecode
+remain outstanding. W5's shared readiness scanner and fallback outlining, plus W7's native bytecode
 pruning are implemented. W4's shared
 spawning, constant-capture batching, and ABI-preserving wrapper reduction are
 implemented. W3 coroutine-free table processes are implemented, validated,
@@ -687,10 +687,53 @@ before/after trials:
     0.43%, and cache misses rise 4.47%. This small sample suggests a modest
     runtime improvement but does not establish a repeatable speedup; the
     demonstrated benefit is reduced readiness code duplication.
-- **Fallback: pending.** `__obelisk_eval_four_state_fallback_v1_N`
-  (`SimulationToLLVMCoroutine.cpp:3241`) should call the 4-state body instead of
-  inlining it. Check whether its extra bookkeeping (the fallback flag and
-  NBA-root reset) can live in the dispatcher.
+- **Fallback: implemented.** `materializeEvalFunctionRoutes` in
+  `SimulationToLLVMCoroutine.cpp` already emitted calls; duplication occurred
+  when LLVM subsequently inlined them. Set call-site `no_inline` on ordinary
+  fallback-to-four-state edges, checkpoint-callback-to-checkpoint-body edges,
+  and the four-state branch of path-sensitive dispatch. The existing bodies
+  remain shared, and other callers (including selected two-state branches)
+  retain their prior inlining policy. Arguments, return status, partition
+  ownership, and execution boundaries are unchanged.
+  - **Bookkeeping stays at entry.** Ordinary fallback routes only set the
+    four-state provenance flag; they no longer reset NBA-root proofs. Actual
+    canonical stores invalidate destination proofs. Checkpoint callbacks
+    additionally clear fast-root proofs before their original body, then
+    resume/synchronize or propagate termination/status as before. Nested
+    routes and runtime callbacks are not all dominated by dispatcher entry,
+    so moving these stores into the dispatcher is not justified.
+  - **LRM review:** §§4.5/4.6 and §10.4.2 require retaining event order, source
+    evaluation, NBA staging, and NBA commit order. §6.3.1 requires retaining
+    X/Z evidence. Keeping provenance before each body's effects and leaving
+    publication, checkpoint, termination, and barrier boundaries unchanged
+    preserves these requirements; call-site outlining introduces no event.
+  - **Validation:** MLIR and optimized `-O3` LLVM checks cover all three call
+    edges and retain normal two-state inlining. Existing scalar/65-owner
+    X/Z, proof-recovery, NBA handoff, checkpoint, and ordered-four-state
+    regressions cover behavior, including ordinary fallback entry that must
+    preserve unrelated NBA-root certificates. Full suite: 2,936 passed and
+    17 expected failures.
+  - **Measured builds** (`tmp/ir-reduction-w5b`, baseline `2f263ca2`,
+    `-O3 -fno-lto --compile-threads=8`, one matched compile per variant):
+    RSD compile 143.13 → 133.77 s (−6.54% observed), peak RSS 4,593,604 →
+    4,604,088 KiB (+0.23%), `.text` 14,726,207 → 14,666,735 bytes (−0.40%),
+    executable 130,407,040 → 130,340,912 bytes. Its 4,787 fallback wrappers
+    shrink from 115,511 to 57,444 machine-code bytes (−50.27%). Ibex's 1,485
+    wrappers shrink 29,498 → 17,987 bytes and `.text` 5,940,847 → 5,929,183;
+    compile 23.31 → 23.46 s. PicoRV's 45 wrappers shrink 1,282 → 718 bytes
+    and `.text` 3,981,471 → 3,980,895; compile 2.77 → 2.79 s. Bytecode is
+    byte-identical for all three models. Single compile pairs do not establish
+    repeatable timing gains. PicoRV succeeds with matching output; Ibex
+    retains its baseline status-14 lifecycle failure and matching output,
+    so it is not counted as a functional pass.
+  - **RSD runtime tradeoff:** three alternating matched HelloWorld pairs
+    (4,275 simulated cycles, 4,506 retired instructions); all six runs exit
+    successfully and match saved register/serial hashes. Median 28.4205 →
+    29.2202 s (**2.81% slower**), with before range 28.1239–28.6102 s and
+    after range 28.9209–29.3223 s. Every after run is slower than its paired
+    baseline. Mean host cycles rise 2.07%, instructions rise 0.0020%, branch
+    misses fall 0.32%, and cache misses fall 3.73%. Retain this as a code-size
+    reduction with an observed runtime cost, not a runtime optimization.
 - **Variant selection: pending.** Replace indirect calls through
   `__obelisk_eval_function_route_v1_N` with a selected-variant bit plus direct
   calls to both bodies. The branch is predictable, and LLVM can inline tiny

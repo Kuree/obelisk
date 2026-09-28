@@ -2218,10 +2218,13 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                       pointer, fastRoots.getSymName()),
             8);
       SmallVector<Value> callbackArguments(callbackEntry->getArguments());
-      Value bodyStatus =
+      auto bodyCall =
           LLVM::CallOp::create(builder, route.fourState.getLoc(),
-                               route.checkpointBody, callbackArguments)
-              .getResult();
+                               route.checkpointBody, callbackArguments);
+      // IEEE 1800-2023 4.5/4.6, 10.4.2: execute the shared body once after
+      // recording four-state NBA provenance and before resuming the slot.
+      bodyCall.setNoInline(true);
+      Value bodyStatus = bodyCall.getResult();
       Value bodyOK = LLVM::ICmpOp::create(
           builder, route.fourState.getLoc(), LLVM::ICmpPredicate::eq,
           bodyStatus,
@@ -2515,6 +2518,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         }
         LLVM::CallOp call = LLVM::CallOp::create(
             builder, route.twoState.getLoc(), callee, arguments);
+        if (fourStateFallback)
+          call.setNoInline(true);
         LLVM::ReturnOp::create(builder, route.twoState.getLoc(),
                                call.getResults());
       };
@@ -2547,6 +2552,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       SmallVector<Value> arguments(entry->getArguments());
       LLVM::CallOp call = LLVM::CallOp::create(
           builder, route.fourState.getLoc(), route.fourState, arguments);
+      // IEEE 1800-2023 4.5/4.6, 10.4.2: keep provenance before this body's
+      // publications and NBA staging on every entry through the route.
+      call.setNoInline(true);
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
                              call.getResults());
     }

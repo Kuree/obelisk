@@ -6,9 +6,16 @@
 // RUN: %llvm_dist/bin/clang++ -O0 %t.proof.ll %S/Inputs/check-promotion-word-scan.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
 // RUN: mlir-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.proof.ll
+// RUN: FileCheck %s --check-prefix=OUTLINE < %t.proof.ll
 // RUN: %llvm_dist/bin/clang++ -O3 %t.proof.ll %S/Inputs/check-promotion-word-scan.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
 
 
 // PROOF: promotion word scans passed
 // PROOF-NOT: {{.}}
+
+// OUTLINE-LABEL: define {{.*}}@__obelisk_eval_four_state_fallback_v1_0(
+// OUTLINE: store i8 1, ptr @__obelisk_eval_step_four_state_fallback_v1
+// OUTLINE: {{(tail )?}}call void @work.__obelisk_eval_body_0({{.*}}) #[[NOINLINE:[0-9]+]]
+// OUTLINE-NEXT: ret void
+// OUTLINE: attributes #[[NOINLINE]] = { {{.*}}noinline{{.*}} }
