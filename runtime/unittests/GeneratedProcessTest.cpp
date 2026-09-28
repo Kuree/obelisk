@@ -34,6 +34,8 @@ extern "C" const obelisk_rt_process_descriptor_v1
     groupDescriptor asm("group_process.__obelisk_process_descriptor");
 extern "C" const obelisk_rt_process_descriptor_v1
     copyDescriptor asm("copy_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 secondCopyDescriptor asm(
+    "copy_process_second.__obelisk_process_descriptor");
 
 namespace {
 
@@ -344,79 +346,83 @@ TEST(GeneratedProcess, CopyActivationPreservesFourStateTierHandoff) {
             OBELISK_RT_OK);
   ASSERT_EQ(size, 0u);
   ASSERT_EQ(alignment, 1u);
-  for (bool nativeFirst : {false, true}) {
-    std::array<obelisk_rt_context *, 2> contexts{};
-    std::array<obelisk_rt_process_instance_v1 *, 2> instances{};
-    for (unsigned lane = 0; lane != 2; ++lane) {
-      ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
-                    copyDescriptor.execution, &contexts[lane]),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_native_state_register_static(contexts[lane], 3,
-                                                           128, 65),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_native_state_register_static(contexts[lane], 4,
-                                                           193, 65),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_process_instance_create(&copyDescriptor,
-                                                      &instances[lane]),
-                OBELISK_RT_OK);
-      unsigned capture = 0;
-      const auto &layout = *copyDescriptor.frame_layout;
-      for (uint32_t index = 0; index != layout.field_count; ++index) {
-        const auto &field = layout.fields[index];
-        if (field.kind != OBELISK_RT_FRAME_CAPTURE)
-          continue;
-        ASSERT_LT(capture, 2u);
-        uint64_t handle =
-            obelisk_rt_v1_native_state_static_handle(3 + capture++);
-        ASSERT_EQ(field.size, sizeof(handle));
-        std::memcpy(static_cast<uint8_t *>(instances[lane]->frame) +
-                        field.offset,
-                    &handle, sizeof(handle));
-      }
-      ASSERT_EQ(capture, 2u);
-    }
-    for (unsigned step = 0; step != 8; ++step) {
-      std::array<obelisk_rt_fragment_action_v1, 2> actions{};
+  for (const auto *descriptor : {&copyDescriptor, &secondCopyDescriptor}) {
+    for (bool nativeFirst : {false, true}) {
+      std::array<obelisk_rt_context *, 2> contexts{};
+      std::array<obelisk_rt_process_instance_v1 *, 2> instances{};
       for (unsigned lane = 0; lane != 2; ++lane) {
-        auto *context = contexts[lane];
-        ASSERT_GE(context->stateValue.size(), 5u);
-        for (unsigned bit = 0; bit != 65; ++bit) {
-          uint64_t mask = uint64_t{1} << ((128 + bit) % 64);
-          bool value = (bit + step) % 3 == 0;
-          bool unknown = step % 4 != 0 && (bit + step) % 5 == 0;
-          auto &v = context->stateValue[(128 + bit) / 64];
-          auto &x = context->stateUnknown[(128 + bit) / 64];
-          v = (v & ~mask) | (value ? mask : 0);
-          x = (x & ~mask) | (unknown ? mask : 0);
-        }
-        bool native = lane == 0 && ((step % 2 == 0) == nativeFirst);
+        ASSERT_EQ(obelisk_rt_v1_context_create_for_design(descriptor->execution,
+                                                          &contexts[lane]),
+                  OBELISK_RT_OK);
+        ASSERT_EQ(obelisk_rt_v1_native_state_register_static(contexts[lane], 3,
+                                                             128, 65),
+                  OBELISK_RT_OK);
+        ASSERT_EQ(obelisk_rt_v1_native_state_register_static(contexts[lane], 4,
+                                                             193, 65),
+                  OBELISK_RT_OK);
         ASSERT_EQ(
-            obelisk_rt_v1_process_instance_execute(
-                instances[lane], context,
-                native ? OBELISK_RT_TIER_NATIVE : OBELISK_RT_TIER_BYTECODE,
-                &actions[lane]),
+            obelisk_rt_v1_process_instance_create(descriptor, &instances[lane]),
             OBELISK_RT_OK);
-        EXPECT_EQ(instances[lane]->native_handle, nullptr);
-        EXPECT_EQ(actions[lane].kind, OBELISK_RT_FRAGMENT_SUSPEND);
-        EXPECT_EQ(actions[lane].suspend_kind, OBELISK_RT_SUSPEND_CHANGE);
-        for (unsigned bit = 0; bit != 65; ++bit) {
-          unsigned target = 193 + bit;
-          EXPECT_EQ((context->stateValue[target / 64] >> (target % 64)) & 1,
-                    (bit + step) % 3 == 0);
-          EXPECT_EQ((context->stateUnknown[target / 64] >> (target % 64)) & 1,
-                    step % 4 != 0 && (bit + step) % 5 == 0);
+        unsigned capture = 0;
+        const auto &layout = *descriptor->frame_layout;
+        for (uint32_t index = 0; index != layout.field_count; ++index) {
+          const auto &field = layout.fields[index];
+          if (field.kind != OBELISK_RT_FRAME_CAPTURE)
+            continue;
+          ASSERT_LT(capture, 2u);
+          uint64_t handle =
+              obelisk_rt_v1_native_state_static_handle(3 + capture++);
+          ASSERT_EQ(field.size, sizeof(handle));
+          std::memcpy(static_cast<uint8_t *>(instances[lane]->frame) +
+                          field.offset,
+                      &handle, sizeof(handle));
         }
+        ASSERT_EQ(capture, 2u);
       }
-      EXPECT_EQ(actions[0].continuation, actions[1].continuation);
-      EXPECT_EQ(actions[0].flags, actions[1].flags);
-      EXPECT_EQ(actions[0].payload, actions[1].payload);
-      EXPECT_EQ(actions[0].auxiliary, actions[1].auxiliary);
-    }
-    for (unsigned lane = 0; lane != 2; ++lane) {
-      EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instances[lane]),
-                OBELISK_RT_OK);
-      obelisk_rt_v1_context_destroy(contexts[lane]);
+      for (unsigned step = 0; step != 8; ++step) {
+        std::array<obelisk_rt_fragment_action_v1, 2> actions{};
+        for (unsigned lane = 0; lane != 2; ++lane) {
+          auto *context = contexts[lane];
+          ASSERT_GE(context->stateValue.size(), 5u);
+          for (unsigned bit = 0; bit != 65; ++bit) {
+            uint64_t mask = uint64_t{1} << ((128 + bit) % 64);
+            bool value = (bit + step) % 3 == 0;
+            bool unknown = step % 4 != 0 && (bit + step) % 5 == 0;
+            auto &v = context->stateValue[(128 + bit) / 64];
+            auto &x = context->stateUnknown[(128 + bit) / 64];
+            v = (v & ~mask) | (value ? mask : 0);
+            x = (x & ~mask) | (unknown ? mask : 0);
+          }
+          bool native = lane == 0 && ((step % 2 == 0) == nativeFirst);
+          ASSERT_EQ(
+              obelisk_rt_v1_process_instance_execute(
+                  instances[lane], context,
+                  native ? OBELISK_RT_TIER_NATIVE : OBELISK_RT_TIER_BYTECODE,
+                  &actions[lane]),
+              OBELISK_RT_OK);
+          EXPECT_EQ(instances[lane]->native_handle, nullptr);
+          EXPECT_EQ(actions[lane].kind, OBELISK_RT_FRAGMENT_SUSPEND);
+          EXPECT_EQ(actions[lane].suspend_kind, OBELISK_RT_SUSPEND_CHANGE);
+          EXPECT_EQ(actions[lane].continuation,
+                    descriptor == &copyDescriptor ? 1u : 7u);
+          for (unsigned bit = 0; bit != 65; ++bit) {
+            unsigned target = 193 + bit;
+            EXPECT_EQ((context->stateValue[target / 64] >> (target % 64)) & 1,
+                      (bit + step) % 3 == 0);
+            EXPECT_EQ((context->stateUnknown[target / 64] >> (target % 64)) & 1,
+                      step % 4 != 0 && (bit + step) % 5 == 0);
+          }
+        }
+        EXPECT_EQ(actions[0].continuation, actions[1].continuation);
+        EXPECT_EQ(actions[0].flags, actions[1].flags);
+        EXPECT_EQ(actions[0].payload, actions[1].payload);
+        EXPECT_EQ(actions[0].auxiliary, actions[1].auxiliary);
+      }
+      for (unsigned lane = 0; lane != 2; ++lane) {
+        EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instances[lane]),
+                  OBELISK_RT_OK);
+        obelisk_rt_v1_context_destroy(contexts[lane]);
+      }
     }
   }
 }

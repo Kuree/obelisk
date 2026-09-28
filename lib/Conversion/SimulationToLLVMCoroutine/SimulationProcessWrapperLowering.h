@@ -9,6 +9,13 @@
 
 namespace obelisk::detail {
 
+struct CopyKernelBinding {
+  mlir::LLVM::LLVMFuncOp kernel;
+  mlir::LLVM::GlobalOp table;
+  unsigned row = 0;
+  unsigned columns = 0;
+};
+
 inline constexpr llvm::StringLiteral nativeCoroutineExecuteName =
     "__obelisk_native_coro_execute_v1";
 inline constexpr llvm::StringLiteral nativeCoroutineDestroyName =
@@ -28,7 +35,8 @@ void publishAction(mlir::OpBuilder &builder, mlir::Location location,
 mlir::LogicalResult makeNativeWrappers(mlir::ModuleOp module,
                                        mlir::LLVM::LLVMFuncOp ramp,
                                        llvm::StringRef baseName,
-                                       bool directActivation = false);
+                                       bool directActivation = false,
+                                       CopyKernelBinding copyKernel = {});
 mlir::LogicalResult
 makePlainNativeWrappers(mlir::ModuleOp module, mlir::func::FuncOp body,
                         llvm::StringRef baseName,

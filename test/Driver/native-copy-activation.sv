@@ -13,6 +13,9 @@ endmodule
 module top;
   logic [64:0] source;
   wire [64:0] sink;
+  logic [64:0] other_source;
+  wire [64:0] other_sink;
+  copy_child other_child(other_source, other_sink);
   int changes = 0;
   int saved_changes;
   copy_child child(source, sink);
@@ -20,8 +23,10 @@ module top;
 
   initial begin
     source = 65'h10000000000000001;
+    other_source = 65'h123456789abcdef01;
     #1;
     if (sink !== source) $fatal(1, "initial copy");
+    if (other_sink !== other_source) $fatal(1, "second initial copy");
     saved_changes = changes;
     source = source;
     #1;
@@ -32,6 +37,10 @@ module top;
     source = 'z;
     #1;
     if (sink !== source) $fatal(1, "Z copy");
+    other_source = 'x;
+    #1;
+    if (other_sink !== other_source || sink !== source)
+      $fatal(1, "independent copy rows");
     source = 65'h10000000000000003;
     #1;
     if (sink !== source) $fatal(1, "known recovery");
@@ -44,6 +53,7 @@ module top;
     release child.source;
     #1;
     if (sink !== source) $fatal(1, "release must restore port driver");
+    if (other_sink !== other_source) $fatal(1, "force/release row isolation");
     $display("copy activation passed");
     $finish;
   end

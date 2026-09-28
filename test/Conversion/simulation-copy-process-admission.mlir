@@ -4,7 +4,8 @@
 // RUN: diff -u %t.serial %t.threaded
 
 // Admission retains the exact source store and wait. Actor and continuation
-// descriptors survive; only the native coroutine implementation disappears.
+// descriptors survive. Matching native bodies share a kernel, with distinct
+// continuation IDs selected through constant table rows.
 !word = !simulation.logic<65>
 !ref = !simulation.ref<!word>
 module attributes {
@@ -43,7 +44,7 @@ module attributes {
     ^loop:
       %value = simulation.ref.load %source : !ref -> !word
       simulation.ref.store %value to %sink : !word, !ref
-      simulation.suspend.change %source to ^loop : !ref
+      simulation.suspend.change %source to ^loop {site = #schedule.continuation<id = 7>} : !ref
     }
     simulation.func @continuous_copy(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
@@ -117,12 +118,13 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @input_copy.__obelisk_group_body
-// CHECK-NOT: llvm.intr.coro
+// CHECK-NOT: llvm.func @input_copy.__obelisk_group_body
 // CHECK-LABEL: llvm.func @input_copy.__obelisk_native_execute
-// CHECK-LABEL: llvm.func @output_copy.__obelisk_group_body
+// CHECK: llvm.call @__obelisk_copy_kernel_0
+// CHECK-NOT: llvm.func @output_copy.__obelisk_group_body
 // CHECK-NOT: llvm.intr.coro
 // CHECK-LABEL: llvm.func @output_copy.__obelisk_native_execute
+// CHECK: llvm.call @__obelisk_copy_kernel_0
 // CHECK-LABEL: llvm.func @continuous_copy.__obelisk_group_body
 // CHECK-NOT: llvm.intr.coro
 // CHECK-LABEL: llvm.func @continuous_copy.__obelisk_native_execute
@@ -136,3 +138,13 @@ module attributes {
 // CHECK: llvm.intr.coro.begin
 // CHECK-LABEL: llvm.func @carried.__obelisk_coro_ramp
 // CHECK: llvm.intr.coro.begin
+
+// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_copy_kernel_0.rows
+// CHECK-SAME: !llvm.array<2 x i64>
+// CHECK: llvm.mlir.constant(1 : i64)
+// CHECK: llvm.mlir.constant(7 : i64)
+// CHECK-LABEL: llvm.func @__obelisk_copy_kernel_0
+// CHECK-SAME: passthrough = ["noinline"]
+// CHECK: llvm.load {{.*}} : !llvm.ptr -> i64
+// CHECK: llvm.trunc {{.*}} : i64 to i32
+// CHECK-NOT: llvm.intr.coro

@@ -693,8 +693,9 @@ prepareSuspendableProcess(sim::SimFuncOp function,
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
   return PreparedSuspendableProcess{
-      module,   ramp,      location,        std::move(baseName),
-      stableID, &analysis, unmanagedNative, directActivation};
+      module,         ramp,      location,        std::move(baseName),
+      stableID,       &analysis, unmanagedNative, directActivation,
+      copyActivation, {}};
 }
 
 LogicalResult
@@ -1113,8 +1114,10 @@ LogicalResult
 finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
                                  const SymbolTable &embeddedSymbols) {
   if (failed(makeNativeWrappers(process.module, process.ramp, process.baseName,
-                                process.directActivation)))
+                                process.directActivation, process.copyKernel)))
     return failure();
+  if (process.copyKernel.kernel)
+    process.ramp.erase();
   return makeProcessDescriptor(
       process.module, embeddedSymbols, process.location, process.baseName,
       process.stableID, *process.analysis, process.unmanagedNative,

@@ -1733,6 +1733,19 @@ LogicalResult NativePipelineAnalysis::materialize() {
                                      })))
     return failure();
   markTiming("suspendable process body lowering");
+  detail::materializeCopyKernels(module, suspendableProcesses);
+  if (detailedTiming) {
+    llvm::DenseSet<Operation *> kernels;
+    unsigned copies = 0;
+    for (auto &process : suspendableProcesses)
+      if (process.copyKernel.kernel) {
+        kernels.insert(process.copyKernel.kernel);
+        ++copies;
+      }
+    llvm::errs() << "obelisk shared copy kernels: " << kernels.size() << " for "
+                 << copies << " activations\n";
+  }
+  markTiming("copy kernel materialization");
   // Only embedded execution/bytecode entries are queried during finalization.
   // Their identities are already frozen; later wrappers and frame descriptors
   // introduce different symbols, so all processes can share this snapshot.

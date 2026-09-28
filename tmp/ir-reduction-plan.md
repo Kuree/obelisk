@@ -4,9 +4,9 @@ Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
 attribute storage work and W3–W11 remain outstanding, except for W4's shared
 spawning, constant-capture batching, and ABI-preserving wrapper reduction,
-now implemented. W6a strict copy admission and coroutine-free activation are
-implemented; its shared group table kernels remain outstanding. Paths use the current
-Schedule dialect layout; historical line numbers below are navigation hints,
+now implemented. W6a strict copy admission, coroutine-free activation, and
+shared native copy kernels are implemented. Existing eval variants remain for
+the W5 dispatch work. Paths use the current Schedule dialect layout; historical line numbers below are navigation hints,
 not stable references. This existing plan is updated in place.
 
 Normative reference: `build/lrm-2023.txt` (IEEE 1800-2023). Historical dumps below
@@ -224,8 +224,8 @@ serial spawn-batch IR is identical. C++ changes were formatted directly with
 
 ## Current W6a admission results
 
-The first W6a slice removes coroutine machinery from strictly admitted copies;
-it does not yet replace their native/eval bodies with shared group tables.
+The first W6a slice removed coroutine machinery from strictly admitted copies.
+The measurements in this subsection precede the shared native kernel work below.
 The admission count is 940 for RSD, 581 for ibex, and zero for PicoRV. These
 counts are narrower than the historical inventory of all port processes.
 Same-typed packed aggregates and derived reference shapes remain excluded.
@@ -266,6 +266,54 @@ requires no native scratch or coroutine handle. An end-to-end port chain
 checks initial propagation, unchanged-value notifications, X/Z recovery, and
 force/release in generic native, automatic native, and bytecode modes. C++
 changes were formatted directly with `clang-format -i`.
+
+## Current W6a shared-kernel results
+
+Shared native activation kernels now cover all 940 admitted RSD copies with
+four bodies and 579 of 581 ibex copies with 12 bodies. The two unmatched ibex
+copies retain ordinary direct activation. PicoRV has no admitted copies.
+Each callback selects one immutable row and its original instance; scheduling
+is unchanged. Existing eval variants remain under W5.
+
+Matched single compile runs use `-O3 -fno-lto --compile-threads=8`; final
+commands, measurements, section hashes, and runtime samples are in
+`tmp/ir-reduction-w6-tables/`. `measurements.json` and `measure-final.log` are
+the final sequential runs, after builds and tests finished; exploratory timings
+that overlapped builds/tests are not used here.
+
+| Metric | W6a admission baseline | Shared kernels |
+| --- | ---: | ---: |
+| RSD native compile time | 142.78 s | 142.68 s |
+| RSD native compile peak RSS | 4,847,480 KiB | 4,985,960 KiB |
+| RSD native `.text` | 15,999,071 bytes | 15,598,479 bytes |
+| ibex native compile time | 25.21 s | 25.08 s |
+| ibex native compile peak RSS | 1,262,500 KiB | 1,199,128 KiB |
+| ibex native `.text` | 6,481,055 bytes | 6,265,791 bytes |
+| PicoRV native compile time | 2.72 s | 2.73 s |
+| PicoRV native `.text` | 3,990,223 bytes | 3,990,223 bytes |
+
+RSD compile time is effectively unchanged; this step does not establish a
+compilation speedup. RSD native code shrinks 2.50%, ibex 3.32%; PicoRV native
+code is byte-identical. RSD peak compiler RSS rises 2.86% in this pair, while
+ibex falls 5.02%. All three frozen bytecode sections are byte-identical.
+
+Three interleaved RSD HelloWorld pairs all match the architectural oracle
+(4275 cycles, 4506 retired operations). Median wall time is
+28.72296/29.27106 s before/after: **1.91% slower in this sample**, not a runtime
+speedup. Ranges overlap (28.47053–30.68391/29.06982–29.96640 s). Mean hardware
+cycles rise 1.16% (139.784G/141.402G); instructions are nearly unchanged
+(437.522G/437.539G, +0.004%). The result includes startup and is limited to this
+workload. This step is retained for native code-size reduction; it does not
+claim improved runtime or compile throughput. PicoRV completes with matching
+output. Ibex retains the baseline lifecycle status 14 in both builds and is
+not a passing functional benchmark.
+
+Validation: 2,923 tests pass with 17 expected failures. The copy fixture now
+covers two table rows with different stable continuation IDs while alternating
+native and bytecode execution. The port-chain regression also checks an
+independent second source/sink pair through X/Z and force/release. Conversion
+output remains identical with threading enabled or disabled. Changed C++ was
+formatted directly with `clang-format -i`.
 
 ## LRM correctness review
 
@@ -583,17 +631,30 @@ and exercise X injection and recovery in the middle of a run.
     value/XZ copies across native/bytecode transitions, first activation, and
     force/release/change notifications with generic native, automatic native,
     and bytecode execution.
-- **W6a remaining: shared per-group copy kernels.**
-  - Replace admitted native copy bodies with a table of source/sink ranges and
-    widths plus one group executor. The current direct-activation slice still
-    emits a native body/execute entry and retains existing eval variants.
-  - Derive entries from the certified source shape and current group ownership;
-    keep actor identity and fallback metadata for runtime control, VPI, tracing,
-    and Tier-3. Removing scheduler actors is not implied by removing coroutines.
-  - Preserve continuous-assignment activation, time-zero evaluation, publication,
-    and observer behavior (§4.9.1/4.9.6). “One delta” is not a separate LRM event
-    region or a sufficient specification. Preserve repeated/fallback activation
-    boundaries when batching; do not infer storage merging from group membership.
+- **W6a shared native copy kernels: implemented.**
+  - Group only certified copies whose lowered CFG, SSA wiring, operation types,
+    attributes, and symbols match exactly, apart from 32/64-bit integer literal
+    values. Unsupported nested regions and unmatched bodies retain the direct
+    activation path. Hash lookup is followed by exact signature comparison.
+  - Emit one noinline kernel per compatible shape, with a constant table for
+    varying literals (including continuation IDs and specialized ranges).
+    Uniform values remain immediate; repeated varying columns share one load.
+    Kernels with identical literals need no table. Physical ownership is the
+    primary native partition, with imports derived by the existing manifest.
+  - Preserve each actor's descriptor, frame, wait, rank, storage, bytecode, and
+    tiny native execute callback. The callback selects exactly one row and
+    passes its existing instance. No actor sweep or scheduler batching occurs.
+    This permits sharing across scheduling groups without moving their work.
+  - Reuse the complete lowered store, override masking, visible-value reload,
+    notification, status propagation, and wait publication. The shared kernel
+    only accepts execution entries; requirements remain zero scratch.
+  - LRM review: §§4.9.1/4.9.6 and §23.3.3.2 require the existing time-zero and
+    source-sensitive continuous assignment behavior. §23.3.3.3's conversion
+    warning still applies; admission continues to reject conversions. Sharing
+    machine code does not merge events, storage, actors, or continuation IDs.
+  - Existing eval variants are retained. Their separate dispatch and promotion
+    contract belongs to W5; replacing them with the actor-entry ABI is not
+    justified by this copy certificate.
 - **W6b, collapsing, after W6a.**
   - Alias sink storage to source storage.
   - Nets are explicitly permitted by 1800-2023 §23.3.3.7, which says it is
@@ -708,8 +769,8 @@ and exercise X injection and recovery in the middle of a run.
 1. W1 startup-product reduction: implemented. Optional attribute storage work is deferred.
 2. W2 initial suspend: implemented and validated.
 3. W4 spawning, constant startup tables, and ABI-preserving wrapper reduction
-   are implemented. W6a copy admission and coroutine-free activation are
-   implemented; shared group copy tables are next.
+   are implemented. W6a copy admission, coroutine-free activation, and shared
+   native copy tables are implemented; eval dispatch remains under W5.
 4. W3, which needs the ABI addition, then W7, which uses W3's continuation-entry
    model and adds the internal-range record from fusion.
 5. W5, W8 and W9.
