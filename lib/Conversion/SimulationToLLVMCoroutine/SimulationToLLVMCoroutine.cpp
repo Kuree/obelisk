@@ -1300,6 +1300,10 @@ LogicalResult NativePipelineAnalysis::prepareFrames() {
         SimulationProcessFrameAnalysis::create(function, dataLayout);
     if (failed(analysis))
       return WalkResult::interrupt();
+    // IEEE 1800-2023 4.9.1/4.9.6: retain port-copy activation and publication.
+    if (!copyActivations.contains(function))
+      if (auto plan = detail::analyzeTableProcess(function, **analysis))
+        tableProcesses.try_emplace(function, std::move(*plan));
     for (const ProcessSuspension &suspension : (*analysis)->getSuspensions()) {
       ::obelisk::schedule::set<::obelisk::schedule::Field::NativeContinuation>(
           suspension.operation, IntegerAttr::get(IntegerType::get(context, 32),
@@ -1320,6 +1324,9 @@ LogicalResult NativePipelineAnalysis::prepareFrames() {
   if (detailedTiming)
     llvm::errs() << "obelisk native copy activations: "
                  << copyActivations.size() << '\n';
+  if (detailedTiming)
+    llvm::errs() << "obelisk native table candidates: " << tableProcesses.size()
+                 << '\n';
 
   return success();
 }
@@ -1700,12 +1707,23 @@ LogicalResult NativePipelineAnalysis::materialize() {
       continue;
     }
     FailureOr<PreparedSuspendableProcess> prepared = prepareSuspendableProcess(
-        function, *analysis, copyActivations.contains(function));
+        function, *analysis, copyActivations.contains(function),
+        tableProcesses.contains(function)
+            ? std::optional<detail::NativeTableProcess>(
+                  tableProcesses.lookup(function))
+            : std::nullopt);
     if (failed(prepared))
       return failure();
     suspendableProcesses.push_back(std::move(*prepared));
   }
   markTiming("process body preparation");
+  if (detailedTiming)
+    llvm::errs() << "obelisk native table processes: "
+                 << llvm::count_if(suspendableProcesses,
+                                   [](const auto &process) {
+                                     return process.tableProcess.has_value();
+                                   })
+                 << '\n';
   // Batches introduce module-level capture globals. Create them before the
   // parallel workers, which may only mutate their own process bodies.
   for (PreparedPlainNativeProcess &process : plainProcesses)

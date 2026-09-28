@@ -99,6 +99,7 @@ struct RampBlocks {
   Block *cleanup;
   DenseMap<Block *, Block *> shims;
   bool directActivation = false;
+  bool tableActivation = false;
 };
 
 Block *makeCoroutineReturnBlock(Region &region, Location location,
@@ -130,6 +131,16 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   IRRewriter builder(operation->getContext());
   builder.setInsertionPoint(operation);
   Location location = operation->getLoc();
+  if (blocks.tableActivation) {
+    auto index = operation->getAttrOfType<IntegerAttr>(tableWaitIndexAttr);
+    if (!index)
+      return operation->emitError("table activation has an uncertified wait");
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI32Type(), index.getInt()));
+    builder.eraseOp(operation);
+    return success();
+  }
   auto branch = cast<BranchOpInterface>(operation);
   auto continuationAttr =
       ::obelisk::schedule::get<::obelisk::schedule::Field::NativeContinuation>(
@@ -618,10 +629,9 @@ LogicalResult lowerFinalReturn(sim::SimReturnOp operation,
 
 } // namespace
 
-FailureOr<PreparedSuspendableProcess>
-prepareSuspendableProcess(sim::SimFuncOp function,
-                          const SimulationProcessFrameAnalysis &analysis,
-                          bool copyActivation) {
+FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
+    sim::SimFuncOp function, const SimulationProcessFrameAnalysis &analysis,
+    bool copyActivation, std::optional<NativeTableProcess> tableProcess) {
   if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   ModuleOp module = function->getParentOfType<ModuleOp>();
@@ -635,6 +645,48 @@ prepareSuspendableProcess(sim::SimFuncOp function,
       stableProcessID(baseName) &
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
   bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
+  if (tableProcess) {
+    bool valid = unmanagedNative;
+    SmallVector<bool> seen(tableProcess->waits.size(), false);
+    function.walk([&](Operation *op) {
+      if (!sim::isSuspensionOp(op))
+        return;
+      auto index = op->getAttrOfType<IntegerAttr>(tableWaitIndexAttr);
+      auto continuation =
+          schedule::get<schedule::Field::NativeContinuation>(op);
+      if (!isa<schedule::NativeSuspendChangeOp, schedule::NativeSuspendEdgeOp,
+               schedule::NativeSuspendAnyOp>(op) ||
+          !index || !continuation || index.getInt() < 0 ||
+          uint64_t(index.getInt()) >= tableProcess->waits.size()) {
+        valid = false;
+        return;
+      }
+      unsigned row = index.getInt();
+      auto &wait = tableProcess->waits[row];
+      auto widths = schedule::get<schedule::Field::NativeWaitWidths>(op);
+      if (seen[row] || wait.continuation != continuation.getInt() || !widths ||
+          static_cast<size_t>(widths.size()) != wait.watches.size()) {
+        valid = false;
+        return;
+      }
+      for (auto [width, watch] :
+           llvm::zip_equal(widths.asArrayRef(), wait.watches))
+        if (uint32_t(width) != watch.width)
+          valid = false;
+      seen[row] = true;
+      wait.actionFlags = getRuntimeResumeActionFlags(op);
+      if (wait.actionFlags == UINT32_MAX)
+        valid = false;
+      wait.flags = 0;
+      if ((schedule::has<schedule::metadata::topLevelWildcardWait>(op) ||
+           schedule::has<schedule::metadata::proceduralEventWait>(op)) &&
+          !schedule::has<schedule::metadata::repeatingAlwaysWait>(op))
+        wait.flags = OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+    });
+    if (!valid || !llvm::all_of(seen, [](bool value) { return value; }))
+      tableProcess.reset();
+  }
+
   bool taskCaller = false;
   function.walk([&](schedule::NativeTaskCallOp) { taskCaller = true; });
   // Closed evaluators already have a direct group executor. Preserve their
@@ -644,7 +696,7 @@ prepareSuspendableProcess(sim::SimFuncOp function,
   // can use the same canonical continuation even when an eval body exists.
   bool directActivation =
       unmanagedNative &&
-      (copyActivation ||
+      (tableProcess.has_value() || copyActivation ||
        (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
             function) &&
         (taskCaller ||
@@ -674,12 +726,20 @@ prepareSuspendableProcess(sim::SimFuncOp function,
           }))
         directActivation = false;
     });
-  std::string rampName = baseName + (directActivation ? ".__obelisk_group_body"
-                                                      : ".__obelisk_coro_ramp");
+  if (!directActivation)
+    tableProcess.reset();
+  std::string rampName =
+      baseName + (tableProcess       ? ".__obelisk_table_body"
+                  : directActivation ? ".__obelisk_group_body"
+                                     : ".__obelisk_coro_ramp");
+  SmallVector<Type> parameters =
+      tableProcess ? SmallVector<Type>{pointer, i32}
+                   : SmallVector<Type>{pointer, i32, pointer, pointer};
   auto ramp = LLVM::LLVMFuncOp::create(
       builder, location, rampName,
-      LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context),
-                                  {pointer, i32, pointer, pointer}, false));
+      LLVM::LLVMFunctionType::get(
+          tableProcess ? i32 : Type(LLVM::LLVMVoidType::get(context)),
+          parameters, false));
   if (!directActivation)
     ramp->setAttr(
         "passthrough",
@@ -692,10 +752,17 @@ prepareSuspendableProcess(sim::SimFuncOp function,
   for (Block &block : ramp.getBody())
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
-  return PreparedSuspendableProcess{
-      module,         ramp,      location,        std::move(baseName),
-      stableID,       &analysis, unmanagedNative, directActivation,
-      copyActivation, {}};
+  return PreparedSuspendableProcess{module,
+                                    ramp,
+                                    location,
+                                    std::move(baseName),
+                                    stableID,
+                                    &analysis,
+                                    unmanagedNative,
+                                    directActivation,
+                                    copyActivation,
+                                    {},
+                                    std::move(tableProcess)};
 }
 
 LogicalResult
@@ -717,12 +784,13 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 
   Block *oldEntry = &ramp.getBody().front();
   Block *entry = new Block;
-  for (Type type : {pointer, i32, pointer, pointer})
+  for (Type type : ramp.getFunctionType().getParams())
     entry->addArgument(type, location);
   ramp.getBody().getBlocks().insert(ramp.getBody().begin(), entry);
   Block *requirements = new Block;
   Block *execute = new Block;
-  ramp.getBody().push_back(requirements);
+  if (!process.tableProcess)
+    ramp.getBody().push_back(requirements);
   ramp.getBody().push_back(execute);
   builder.setInsertionPointToStart(entry);
   Value zero32 = llvmConstant(builder, location, i32, 0);
@@ -732,27 +800,41 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     id = LLVM::CoroIdOp::create(builder, location,
                                 LLVM::LLVMTokenType::get(context), zero32, null,
                                 null, null);
-  Value requirementsMode =
-      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                            entry->getArgument(1), zero32);
-  cf::CondBranchOp::create(builder, location, requirementsMode, requirements,
-                           ValueRange{}, execute, ValueRange{});
+  if (process.tableProcess) {
+    delete requirements;
+    cf::BranchOp::create(builder, location, execute);
+  } else {
+    Value requirementsMode =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              entry->getArgument(1), zero32);
+    cf::CondBranchOp::create(builder, location, requirementsMode, requirements,
+                             ValueRange{}, execute, ValueRange{});
 
-  builder.setInsertionPointToStart(requirements);
-  Value size =
-      process.directActivation
-          ? llvmConstant(builder, location, i64, 0)
-          : LLVM::CoroSizeOp::create(builder, location, i64).getResult();
-  Value alignment =
-      process.directActivation
-          ? llvmConstant(builder, location, i64, 1)
-          : LLVM::CoroAlignOp::create(builder, location, i64).getResult();
-  LLVM::StoreOp::create(builder, location, size, entry->getArgument(2), 8);
-  LLVM::StoreOp::create(builder, location, alignment, entry->getArgument(3), 8);
-  LLVM::ReturnOp::create(builder, location, ValueRange{});
+    builder.setInsertionPointToStart(requirements);
+    Value size =
+        process.directActivation
+            ? llvmConstant(builder, location, i64, 0)
+            : LLVM::CoroSizeOp::create(builder, location, i64).getResult();
+    Value alignment =
+        process.directActivation
+            ? llvmConstant(builder, location, i64, 1)
+            : LLVM::CoroAlignOp::create(builder, location, i64).getResult();
+    LLVM::StoreOp::create(builder, location, size, entry->getArgument(2), 8);
+    LLVM::StoreOp::create(builder, location, alignment, entry->getArgument(3),
+                          8);
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+  }
 
   builder.setInsertionPointToStart(execute);
   Value instance = entry->getArgument(0);
+  if (process.tableProcess) {
+    Value currentContext = LLVM::AddressOfOp::create(
+        builder, location, pointer, "__obelisk_current_context");
+    LLVM::StoreOp::create(
+        builder, location,
+        loadAt(builder, location, instance, kInstanceContextField, pointer, 0),
+        currentContext, 8);
+  }
   Value handle;
   if (!process.directActivation) {
     Value allocation = loadAt(builder, location, instance,
@@ -794,11 +876,17 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 
   RampBlocks blocks;
   blocks.directActivation = process.directActivation;
+  blocks.tableActivation = process.tableProcess.has_value();
   if (process.directActivation) {
     blocks.suspendReturn = new Block;
     ramp.getBody().push_back(blocks.suspendReturn);
     builder.setInsertionPointToStart(blocks.suspendReturn);
-    LLVM::ReturnOp::create(builder, location, ValueRange{});
+    LLVM::ReturnOp::create(
+        builder, location,
+        process.tableProcess
+            ? ValueRange{llvmConstant(builder, location, i32,
+                                      OBELISK_RT_TABLE_TERMINATE)}
+            : ValueRange{});
   } else {
     blocks.suspendReturn =
         makeCoroutineReturnBlock(ramp.getBody(), location, handle);
@@ -999,8 +1087,10 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   ramp.getBody().push_back(dispatch);
   cf::BranchOp::create(builder, location, dispatch);
   builder.setInsertionPointToStart(dispatch);
-  Value continuationID =
-      loadAt(builder, location, instance, kInstanceContinuationField, i32, 4);
+  Value continuationID = process.tableProcess
+                             ? entry->getArgument(1)
+                             : loadAt(builder, location, instance,
+                                      kInstanceContinuationField, i32, 4);
   SmallVector<std::pair<uint32_t, Block *>> targets;
   targets.emplace_back(0, oldEntry);
   for (uint32_t idValue : analysis.getContinuations()) {
@@ -1017,31 +1107,54 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
           llvmConstant(builder, location, i32, OBELISK_RT_INVALID_CONTINUATION),
           4);
   cf::BranchOp::create(builder, location, blocks.cleanup);
-  Block *test = dispatch;
-  for (auto [index, target] : llvm::enumerate(targets)) {
-    builder.setInsertionPointToEnd(test);
-    Value expected = llvmConstant(builder, location, i32, target.first);
-    Value equal = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, continuationID, expected);
-    Block *next = index + 1 == targets.size() ? invalid : new Block;
-    if (next != invalid)
-      ramp.getBody().push_back(next);
-    ValueRange arguments =
-        target.first == 0 ? ValueRange(entryArguments) : ValueRange{};
-    cf::CondBranchOp::create(builder, location, equal, target.second, arguments,
-                             next, ValueRange{});
-    test = next;
+  if (process.tableProcess) {
+    builder.setInsertionPointToEnd(dispatch);
+    SmallVector<APInt> cases;
+    SmallVector<Block *> destinations;
+    SmallVector<ValueRange> operands;
+    for (auto [index, target] : llvm::enumerate(targets)) {
+      cases.emplace_back(32, index);
+      destinations.push_back(target.second);
+      operands.push_back(target.first == 0 ? ValueRange(entryArguments)
+                                           : ValueRange{});
+    }
+    LLVM::SwitchOp::create(builder, location, continuationID, invalid,
+                           ValueRange{}, cases, destinations, operands,
+                           ArrayRef<int32_t>{});
+  } else {
+    Block *test = dispatch;
+    for (auto [index, target] : llvm::enumerate(targets)) {
+      builder.setInsertionPointToEnd(test);
+      Value expected = llvmConstant(builder, location, i32, target.first);
+      Value equal =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                continuationID, expected);
+      Block *next = index + 1 == targets.size() ? invalid : new Block;
+      if (next != invalid)
+        ramp.getBody().push_back(next);
+      ValueRange arguments =
+          target.first == 0 ? ValueRange(entryArguments) : ValueRange{};
+      cf::CondBranchOp::create(builder, location, equal, target.second,
+                               arguments, next, ValueRange{});
+      test = next;
+    }
   }
 
   if (blocks.terminate) {
     // LLVM permits exactly one final suspend per switched-resume coroutine.
     // Funnel every semantic process return through this shared block.
     builder.setInsertionPointToStart(blocks.terminate);
-    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
-                  OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
-                  llvmConstant(builder, location, i64, 0), 0);
+    if (!process.tableProcess)
+      publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
+                    OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+                    llvmConstant(builder, location, i64, 0), 0);
     if (process.directActivation) {
-      LLVM::ReturnOp::create(builder, location, ValueRange{});
+      LLVM::ReturnOp::create(
+          builder, location,
+          process.tableProcess
+              ? ValueRange{llvmConstant(builder, location, i32,
+                                        OBELISK_RT_TABLE_TERMINATE)}
+              : ValueRange{});
     } else {
       Value final = llvmConstant(builder, location, builder.getI1Type(), 1);
       Value save = LLVM::CoroSaveOp::create(
@@ -1113,15 +1226,18 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 LogicalResult
 finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
                                  const SymbolTable &embeddedSymbols) {
-  if (failed(makeNativeWrappers(process.module, process.ramp, process.baseName,
-                                process.directActivation, process.copyKernel)))
+  if (process.tableProcess)
+    materializeTableProcess(process);
+  else if (failed(makeNativeWrappers(process.module, process.ramp,
+                                     process.baseName, process.directActivation,
+                                     process.copyKernel)))
     return failure();
   if (process.copyKernel.kernel)
     process.ramp.erase();
   return makeProcessDescriptor(
       process.module, embeddedSymbols, process.location, process.baseName,
       process.stableID, *process.analysis, process.unmanagedNative,
-      !process.directActivation);
+      !process.directActivation, process.tableProcess.has_value());
 }
 
 LogicalResult

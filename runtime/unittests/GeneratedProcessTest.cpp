@@ -2,6 +2,7 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 
 #include "gtest/gtest.h"
@@ -36,6 +37,9 @@ extern "C" const obelisk_rt_process_descriptor_v1
     copyDescriptor asm("copy_process.__obelisk_process_descriptor");
 extern "C" const obelisk_rt_process_descriptor_v1 secondCopyDescriptor asm(
     "copy_process_second.__obelisk_process_descriptor");
+
+extern "C" const obelisk_rt_table_process_descriptor_v1
+    tableDescriptor asm("table_process.__obelisk_process_descriptor");
 
 namespace {
 
@@ -423,6 +427,93 @@ TEST(GeneratedProcess, CopyActivationPreservesFourStateTierHandoff) {
                   OBELISK_RT_OK);
         obelisk_rt_v1_context_destroy(contexts[lane]);
       }
+    }
+  }
+}
+
+TEST(GeneratedProcess, TableEntriesChooseWaitsAcrossTierHandoffs) {
+  const auto &descriptor = tableDescriptor.base;
+  ASSERT_EQ(descriptor.native_execute, obelisk_rt_v1_table_process_execute);
+  ASSERT_EQ(descriptor.flags & OBELISK_RT_PROCESS_TABLE_NATIVE,
+            OBELISK_RT_PROCESS_TABLE_NATIVE);
+  ASSERT_NE(tableDescriptor.plan, nullptr);
+  ASSERT_EQ(tableDescriptor.plan->wait_count, 3u);
+  uint64_t size = UINT64_MAX, alignment = 0;
+  ASSERT_EQ(descriptor.native_requirements(&size, &alignment), OBELISK_RT_OK);
+  ASSERT_EQ(size, 0u);
+  ASSERT_EQ(alignment, 1u);
+  for (bool nativeFirst : {false, true}) {
+    std::array<obelisk_rt_context *, 2> contexts{};
+    std::array<obelisk_rt_process_instance_v1 *, 2> instances{};
+    for (unsigned lane = 0; lane != 2; ++lane) {
+      ASSERT_EQ(obelisk_rt_v1_context_create_for_design(descriptor.execution,
+                                                        &contexts[lane]),
+                OBELISK_RT_OK);
+      for (unsigned capture = 0; capture != 2; ++capture)
+        ASSERT_EQ(obelisk_rt_v1_native_state_register_static(
+                      contexts[lane], capture + 1, capture * 64, 64),
+                  OBELISK_RT_OK);
+      ASSERT_EQ(
+          obelisk_rt_v1_process_instance_create(&descriptor, &instances[lane]),
+          OBELISK_RT_OK);
+      unsigned capture = 0;
+      const auto &layout = *descriptor.frame_layout;
+      for (uint32_t i = 0; i != layout.field_count; ++i) {
+        const auto &field = layout.fields[i];
+        if (field.kind != OBELISK_RT_FRAME_CAPTURE)
+          continue;
+        uint64_t handle = obelisk_rt_v1_native_state_static_handle(++capture);
+        std::memcpy(static_cast<uint8_t *>(instances[lane]->frame) +
+                        field.offset,
+                    &handle, sizeof(handle));
+      }
+      ASSERT_EQ(capture, 2u);
+    }
+    for (unsigned step = 0; step != 4; ++step) {
+      std::array<obelisk_rt_fragment_action_v1, 2> actions{};
+      for (unsigned lane = 0; lane != 2; ++lane) {
+        SCOPED_TRACE(::testing::Message()
+                     << "native first " << nativeFirst << " step " << step
+                     << " lane " << lane);
+        contexts[lane]->stateValue[0] = step >= 2;
+        contexts[lane]->stateUnknown[0] = 0;
+        ASSERT_TRUE(storeNativeScheduleStateUnlocked(contexts[lane], 0, 64,
+                                                     step >= 2, 0));
+        bool native = lane == 0 && ((step % 2 == 0) == nativeFirst);
+        ASSERT_EQ(
+            obelisk_rt_v1_process_instance_execute(
+                instances[lane], contexts[lane],
+                native ? OBELISK_RT_TIER_NATIVE : OBELISK_RT_TIER_BYTECODE,
+                &actions[lane]),
+            OBELISK_RT_OK);
+        EXPECT_EQ(instances[lane]->native_handle, nullptr);
+        EXPECT_EQ(actions[lane].continuation,
+                  (std::array<uint32_t, 4>{3, 7, 13, 0})[step]);
+        EXPECT_EQ(actions[lane].kind, step == 3 ? OBELISK_RT_FRAGMENT_TERMINATE
+                                                : OBELISK_RT_FRAGMENT_SUSPEND);
+        if (step == 1 || step == 2) {
+          EXPECT_EQ(contexts[lane]->stateValue[1], step == 1 ? 11u : 22u);
+        }
+      }
+      EXPECT_EQ(actions[0].suspend_kind, actions[1].suspend_kind);
+      EXPECT_EQ(actions[0].flags, actions[1].flags);
+      EXPECT_EQ(actions[0].payload, actions[1].payload);
+      EXPECT_EQ(actions[0].auxiliary, actions[1].auxiliary);
+      if (step != 3) {
+        EXPECT_EQ(std::memcmp(static_cast<uint8_t *>(instances[0]->frame) +
+                                  actions[0].payload,
+                              static_cast<uint8_t *>(instances[1]->frame) +
+                                  actions[1].payload,
+                              sizeof(obelisk_rt_wait_record_v1) +
+                                  (step == 2 ? 2 : 1) *
+                                      sizeof(obelisk_rt_wait_entry_v1)),
+                  0);
+      }
+    }
+    for (unsigned lane = 0; lane != 2; ++lane) {
+      EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instances[lane]),
+                OBELISK_RT_OK);
+      obelisk_rt_v1_context_destroy(contexts[lane]);
     }
   }
 }

@@ -72,7 +72,8 @@ obelisk_rt_status
 validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
   if (descriptor.handle.kind != OBELISK_RT_DESCRIPTOR_PROCESS ||
       descriptor.version != OBELISK_RT_VERSION ||
-      (descriptor.flags & ~OBELISK_RT_PROCESS_UNMANAGED_NATIVE) != 0 ||
+      (descriptor.flags & ~(OBELISK_RT_PROCESS_UNMANAGED_NATIVE |
+                            OBELISK_RT_PROCESS_TABLE_NATIVE)) != 0 ||
       descriptor.reserved != 0 || !descriptor.frame_layout)
     return OBELISK_RT_LAYOUT_MISMATCH;
   const obelisk_rt_frame_layout_v1 &layout = *descriptor.frame_layout;
@@ -174,6 +175,11 @@ validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
 
   nativeSize = 0;
   nativeAlignment = 1;
+  if (descriptor.flags & OBELISK_RT_PROCESS_TABLE_NATIVE) {
+    status = validateTableProcess(descriptor);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
   if (descriptor.available_tiers & OBELISK_RT_TIER_MASK_NATIVE) {
     if (!descriptor.native_requirements || !descriptor.native_execute ||
         !descriptor.native_destroy)
@@ -181,6 +187,9 @@ validateDescriptor(const obelisk_rt_process_descriptor_v1 &descriptor,
     status = descriptor.native_requirements(&nativeSize, &nativeAlignment);
     if (status != OBELISK_RT_OK)
       return status;
+    if ((descriptor.flags & OBELISK_RT_PROCESS_TABLE_NATIVE) &&
+        (nativeSize != 0 || nativeAlignment != 1))
+      return OBELISK_RT_INVALID_FRAME;
     if (!isPowerOfTwo(nativeAlignment) || nativeAlignment > UINT64_C(4096))
       return OBELISK_RT_INVALID_FRAME;
   } else if (descriptor.native_requirements || descriptor.native_execute ||
@@ -273,12 +282,12 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
       findWaitField(layout, action.payload);
   if (!field)
     return OBELISK_RT_INVALID_FRAME;
-  if (allowLegacyBytecode && action.flags == 0) {
-    action.flags = OBELISK_RT_ACTION_FRAME_WAIT_RECORD;
-    action.auxiliary = field->size;
-  }
   constexpr uint32_t resumeFlags = OBELISK_RT_ACTION_RESUME_REGION_VALID |
                                    OBELISK_RT_ACTION_RESUME_REGION_MASK;
+  if (allowLegacyBytecode && (action.flags & ~resumeFlags) == 0) {
+    action.flags |= OBELISK_RT_ACTION_FRAME_WAIT_RECORD;
+    action.auxiliary = field->size;
+  }
   uint32_t resumeRegion =
       (action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
       OBELISK_RT_ACTION_RESUME_REGION_SHIFT;

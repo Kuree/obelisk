@@ -165,7 +165,7 @@ set(_obelisk_target_runtime_common_sources
     DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
     Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
     ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
-    ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
+    ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream

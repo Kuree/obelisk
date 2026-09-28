@@ -115,6 +115,22 @@ _Static_assert(offsetof(obelisk_rt_wait_entry_v1, edge) == 8,
                "process wait entry edge offset changed");
 _Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == SMOKE_PTR(88, 64),
                "process descriptor size changed");
+_Static_assert(sizeof(obelisk_rt_table_watch_v1) == 16,
+               "table watch size changed");
+_Static_assert(offsetof(obelisk_rt_table_wait_v1, record) == 24,
+               "table wait header offset changed");
+_Static_assert(offsetof(obelisk_rt_table_wait_v1, watches) == 56,
+               "table wait watches offset changed");
+_Static_assert(sizeof(obelisk_rt_table_wait_v1) == 64,
+               "table wait size changed");
+_Static_assert(offsetof(obelisk_rt_table_process_plan_v1, entry) == 8,
+               "table entry offset changed");
+_Static_assert(offsetof(obelisk_rt_table_process_plan_v1, waits) ==
+                   SMOKE_PTR(16, 12),
+               "table waits offset changed");
+_Static_assert(offsetof(obelisk_rt_table_process_descriptor_v1, plan) ==
+                   sizeof(obelisk_rt_process_descriptor_v1),
+               "table descriptor extension offset changed");
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, frame_layout) == 32,
                "process frame layout pointer offset changed");
 _Static_assert(offsetof(obelisk_rt_process_descriptor_v1, bytecode) ==

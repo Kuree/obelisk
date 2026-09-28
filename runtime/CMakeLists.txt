@@ -21,6 +21,7 @@ set(_obelisk_runtime_common_sources
   lib/CoverageBlockEvents.cpp
   lib/CoverageDatabase.cpp
   lib/Process.cpp
+  lib/ProcessTable.cpp
   lib/ProcessAllocation.cpp
   lib/ProcessAOT.cpp
   lib/ProcessNBA.cpp

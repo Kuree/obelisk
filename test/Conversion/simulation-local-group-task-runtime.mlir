@@ -45,13 +45,9 @@
 // GROUP-NOT: simulation.suspend.edge
 // NATIVE: @__obelisk_fused_{{[0-9_]+}}.__obelisk_process_descriptor = constant
 // NATIVE-SAME: ptr @__obelisk_native_zero_requirements_v1
-// NATIVE-SAME: ptr @__obelisk_fused_{{[0-9_]+}}.__obelisk_native_execute
+// NATIVE-SAME: ptr @obelisk_rt_v1_table_process_execute
 // NATIVE-SAME: ptr @__obelisk_native_noop_destroy_v1
-// NATIVE: define void @__obelisk_fused_{{[0-9_]+}}.__obelisk_group_body(
-// NATIVE-NOT: llvm.coro
-// NATIVE: define i32 @__obelisk_fused_{{[0-9_]+}}.__obelisk_native_execute(
-// NATIVE-NOT: llvm.coro
-// NATIVE: call void @__obelisk_fused_{{[0-9_]+}}.__obelisk_group_body(
+// NATIVE: define i32 @__obelisk_fused_{{[0-9_]+}}.__obelisk_table_body(
 // NATIVE-NOT: llvm.coro
 // NATIVE: ret i32
 // CHANGING-NOT: __obelisk_fused_

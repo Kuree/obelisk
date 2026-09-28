@@ -2,6 +2,7 @@
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOSCHEDULE_NATIVEPIPELINE_H
 #include "../SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../SimulationToLLVMCoroutine/SimulationProcessActivationLowering.h"
+#include "../SimulationToLLVMCoroutine/SimulationTableProcess.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
@@ -85,6 +86,7 @@ struct NativePipelineAnalysis {
   // Source-shape certificates captured before state threading/packed lowering.
   // Actor identity and the canonical frame remain owned by analyses above.
   llvm::DenseSet<mlir::Operation *> copyActivations;
+  llvm::DenseMap<mlir::Operation *, NativeTableProcess> tableProcesses;
   llvm::DenseMap<uint64_t, uint32_t> aotActorSlotsByCodeUnit;
   bool cleanSuperstep = false, staticEvalIsland = false,
        closedStaticIsland = false;

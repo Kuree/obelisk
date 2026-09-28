@@ -11,11 +11,15 @@ struct ScheduledProcess;
 
 namespace obelisk::process {
 
+obelisk_rt_status
+validateTableProcess(const obelisk_rt_process_descriptor_v1 &descriptor);
+
 constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
 constexpr uint64_t kWaitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
 
 bool addOverflow(uint64_t lhs, uint64_t rhs, uint64_t &result);
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
+uint64_t layoutChecksum(const obelisk_rt_frame_layout_v1 &layout);
 bool validContinuation(const obelisk_rt_frame_layout_v1 &layout,
                        uint32_t continuation);
 const obelisk_rt_frame_field_v1 *

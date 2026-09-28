@@ -128,14 +128,14 @@ module attributes {
 // CHECK-LABEL: llvm.func @continuous_copy.__obelisk_group_body
 // CHECK-NOT: llvm.intr.coro
 // CHECK-LABEL: llvm.func @continuous_copy.__obelisk_native_execute
-// CHECK-LABEL: llvm.func @wrong_watch.__obelisk_coro_ramp
-// CHECK: llvm.intr.coro.begin
-// CHECK-LABEL: llvm.func @side_effect.__obelisk_coro_ramp
-// CHECK: llvm.intr.coro.begin
-// CHECK-LABEL: llvm.func @conversion.__obelisk_coro_ramp
-// CHECK: llvm.intr.coro.begin
-// CHECK-LABEL: llvm.func @initial_copy.__obelisk_coro_ramp
-// CHECK: llvm.intr.coro.begin
+// CHECK-LABEL: llvm.func @wrong_watch.__obelisk_table_body
+// CHECK-NOT: llvm.intr.coro
+// CHECK-LABEL: llvm.func @side_effect.__obelisk_table_body
+// CHECK-NOT: llvm.intr.coro
+// CHECK-LABEL: llvm.func @conversion.__obelisk_table_body
+// CHECK-NOT: llvm.intr.coro
+// CHECK-LABEL: llvm.func @initial_copy.__obelisk_table_body
+// CHECK-NOT: llvm.intr.coro
 // CHECK-LABEL: llvm.func @carried.__obelisk_coro_ramp
 // CHECK: llvm.intr.coro.begin
 

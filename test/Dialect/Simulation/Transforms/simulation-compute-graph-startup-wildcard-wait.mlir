@@ -19,12 +19,10 @@ module attributes {
   // CHECK-SAME: #schedule.edge<source = [[PRODUCER]], target = [[WAIT]], kind = sensitivity
   // CHECK-NOT: #schedule.edge<source = [[SELF]], target = [[WAIT]], kind = sensitivity
   // CHECK-SAME: regions =
-  // The native wait record stores SUPPRESS_ACTIVE_SELF (bit 2) in its flags
-  // word at byte offset 8.
-  // NATIVE-LABEL: llvm.func @wildcard.__obelisk_coro_ramp
+  // The native wait template retains SUPPRESS_ACTIVE_SELF in the header flags.
+  // NATIVE-LABEL: llvm.mlir.global internal constant @wildcard.__obelisk_table.waits
   // NATIVE: %[[FLAGS:.*]] = llvm.mlir.constant(4 : i32) : i32
-  // NATIVE-NEXT: %[[FLAG_ADDRESS:.*]] = llvm.getelementptr %{{.*}}[8]
-  // NATIVE-NEXT: llvm.store %[[FLAGS]], %[[FLAG_ADDRESS]]
+  // NATIVE-NEXT: llvm.insertvalue %[[FLAGS]], %{{.*}}[2]
   // The bytecode image preserves the same wait header: version, CHANGE kind,
   // flags, and watcher count.
   // BYTECODE: obelisk.bytecode.image = array<i8: {{.*}}1, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0

@@ -151,6 +151,7 @@ native_members = [
     "ProcessObservers.o",
     "ProcessSignals.o",
     "ProcessState.o",
+    "ProcessTable.o",
     "ProcessTransitions.o",
     "ProcessValidation.o",
     "Random.o",

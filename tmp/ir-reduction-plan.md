@@ -2,9 +2,10 @@
 
 Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
-attribute storage work and W3–W11 remain outstanding, except for W4's shared
+attribute storage work and W5–W11 remain outstanding, except for W4's shared
 spawning, constant-capture batching, and ABI-preserving wrapper reduction,
-now implemented. W6a strict copy admission, coroutine-free activation, and
+now implemented. W3 coroutine-free table processes are implemented, validated,
+and measured. W6a strict copy admission, coroutine-free activation, and
 shared native copy kernels are implemented. Existing eval variants remain for
 the W5 dispatch work. Paths use the current Schedule dialect layout; historical line numbers below are navigation hints,
 not stable references. This existing plan is updated in place.
@@ -449,48 +450,63 @@ Record these before and after each workstream:
 
 ### W3. Coroutine-free processes
 
-This does not require a coroutine for these processes, as long as Tier-2 and
-Tier-3 have enough information.
+**Implemented design (revised against the current implementation):**
+1. One native function takes the process instance and a dense continuation
+   selector, and dispatches into the existing CFG. The shared runtime maps the
+   canonical bytecode continuation ID through `frame_layout->continuations`.
+   Separate full functions per continuation would duplicate common CFG blocks.
+2. Each exit returns a wait-row index or termination. An entry may branch to
+   different waits, so a fixed entry-to-wait mapping is insufficient. Multiple
+   canonical continuation IDs may resume the same block.
+3. Constant wait rows contain the canonical continuation, resume region, frame
+   offset/size, wait header, and captured-handle offsets/widths/edge kinds.
+   The shared executor installs the ordinary canonical wait record, preserving
+   scheduler publication and native/bytecode frame compatibility.
+4. Runtime status remains independent of the returned row; failures cannot
+   publish a wait or turn into successful termination.
 
-**Information each coroutine-free process needs:**
-1. **One entry function per continuation ID**, taking the context and canonical
-   frame. The IDs are the same ones bytecode uses. For `always_comb` and port
-   copies, continuation 0 is the same body as the resume.
-2. **The wait to re-arm after each entry, stored as data:** wait kind
-   (change, edge or any), watched handles or ranges, edge polarity, and site ID.
-   Today this record is built by code in the coroutine.
-3. **Captures:** fixed static handles baked into the body, and anything else at
-   fixed canonical-frame offsets (the existing capture layout).
-4. **Status and termination result**, as today.
+**Admission:**
+- Every continuation layout is empty; frame fields contain only captures and
+  waits, with no managed/candidate roots or carried values.
+- Storage-reference captures and unmanaged scalar captures only. All watched
+  handles must come directly from storage captures, with packed scalar or
+  aggregate element types. Change, edge, and any waits are supported; delay,
+  level/iff/computed waits and derived/dynamic watch references retain their
+  existing lowering.
+- No calls, automatic allocation, fork, process identity operations, raw
+  pointer values, or named control records. External process control still
+  operates on the original scheduler actor.
+- Admission is proved before packed lowering and specialization, then wait-row
+  identity, canonical continuation, width, flags, and resume region are checked
+  or refreshed at final preparation. Private annotations alone are not proof.
+- Previously certified copy processes retain their shared copy kernels.
 
-**Which processes qualify:**
-- Every continuation has an empty `getContinuationLayout(id)`, so no values live
-  across a wait.
-- No raw pointers cross a wait. The existing `directActivation` check already
-  enforces this.
-- No task calls, fork, or disable-targeted named blocks that need control
-  records.
-- Multiple waits are allowed.
+**Runtime and ABI:**
+- A new descriptor flag selects a trailing table-plan pointer. The original v1
+  descriptor size/layout is unchanged; runtimes without the extension reject
+  its unknown flag rather than interpreting the new representation.
+- `obelisk_rt_v1_table_process_execute` maps the continuation, calls the single
+  body, and publishes its selected wait or termination. Per-process execute
+  wrappers and coroutine ramp/resume/destroy functions disappear.
+- Existing shared requirements/destroy callbacks report zero native scratch
+  (alignment one) and perform no native destruction. Canonical frame, bytecode
+  scratch, process identity, scheduler ownership, and lifecycle remain intact.
+- Table validation checks frame bounds, capture offsets, continuation IDs,
+  event kinds, edge metadata, resume regions, and zero native scratch before
+  instance allocation. C ABI assertions cover native and wasm layouts.
+- The new tier-handoff regression exposed an existing bytecode validation bug:
+  legacy waits with a resume-region flag were not normalized into canonical
+  frame-wait actions. Normalization now preserves those flags, including
+  Reactive; invalid regions still fail validation.
 
-These entry kinds are candidates, not sufficient admission proofs: a body can
-contain control or lifetimes that disqualify it. The current directActivation
-path uses unmanaged/native-region metadata and also admits task callers; it is
-not the general empty-continuation-layout rule above. Audit capture ownership,
-managed roots, process handles, disable records, and wait operands first.
-
-**Runtime and ABI changes:**
-- `obelisk_rt_process_instance_v1` already separates the canonical frame from
-  native scratch and `native_handle`.
-- A coroutine-free process reports zero scratch through `native_requirements`.
-- One shared runtime `native_execute` indexes the entry table by
-  `instance->continuation`, calls that entry, and then re-arms the wait from the
-  table.
-- `native_destroy` becomes a no-op.
-
-**Compiler changes:**
-- Widen the admission of the existing `directActivation`/`.__obelisk_group_body`
-  path in `SimulationProcessCoroutineLowering.cpp`, around lines 630–690.
-- Emit the wait table from the frame analysis instead of inline field stores.
+**LRM review:**
+- IEEE 1800-2023 §9.4.2: change waits retain full expression width, edge waits
+  use the least significant bit; X/Z transition interpretation stays in the
+  existing scheduler. Any-event rows preserve watch ordering and polarity.
+- §§4.6, 4.9.1, 4.9.6: statement order, NBA publication, and initial port-copy
+  activation remain in their existing bodies/scheduler paths.
+- §§9.6.2, 9.7: control-bearing bodies are excluded, and the actor/parent
+  relationships are retained for enclosing disable and external process control.
 
 **Not included in this step:**
 - Merging the Tier-2 entry with the Tier-1 4-state eval body.
@@ -499,18 +515,61 @@ managed roots, process handles, disable records, and wait operands first.
 - Unifying the two publication paths, for example by having the runtime drain
   the ingress mask, is a later option.
 
-**Validation:**
-- Handoff in every direction:
-  - Tier-3 → Tier-2 → Tier-1.
-  - Tier-1 → Tier-3 on a write to an internal signal.
-  - A VPI deposit on a boundary signal going to Tier-2.
-- Process control: kill, suspend and resume.
-- `disable` of an enclosing scope.
+**Validation completed:**
+- Generated code alternates native/bytecode execution in both directions,
+  comparing canonical waits and state against bytecode-only execution. Covers
+  sparse continuation IDs, two IDs sharing a block, branch-selected waits,
+  Reactive resume flags, and termination with no native handle.
+- End-to-end SystemVerilog at O0/O3 and bytecode checks 65-bit change events,
+  edge-LSB behavior, 0-to-X posedge, event OR, and disabling an enclosing scope.
+  IR checks require both the multi-wait body and fork child to use table entries.
+- Runtime tests exercise external suspend/resume/kill and preserved logical
+  identity, malformed tables, runtime failures, and invalid exit rows.
+- Existing Tier-1 checkpoint, internal-write, VPI, promotion, NBA-ordering and
+  process-control regressions pass. Tier-1 publication was not merged or changed.
+- Full regression run: 2,929 passed, 17 expected failures, three failures
+  corrected and individually rerun successfully (updated wait-template check,
+  archive-member inventory, and missing source-token helper). This accounts for
+  2,932 passing tests. All four focused rechecks pass.
+- Native C ABI smoke and freestanding wasm32 table-layout assertions pass;
+  threaded/serial LLVM output is identical and passes LLVM verification.
 
-**Expected:**
-- For qualifying processes, the ramp, resume, destroy and per-process wrappers
-  disappear.
-- Each is left with one Tier-2 function plus the two Tier-1 bodies.
+**Result:** qualifying processes retain one Tier-2 table body plus their existing
+Tier-1 bodies where present. They have no coroutine ramp/resume/destroy or
+per-process execute wrappers. Control-bearing and unsupported wait shapes retain
+existing lowering.
+
+**Matched measurements** (`tmp/ir-reduction-w3/`, O3, no LTO, eight compile
+threads; both compiler versions link the same updated runtime):
+
+| Design | Additional table processes | Compile before → after | Peak RSS KiB before → after | `.text` before → after |
+|---|---:|---:|---:|---:|
+| RSD | 1,680 | 139.69 → 138.60 s | 5,007,280 → 4,964,944 | 15,599,871 → 15,178,255 B (−2.70%) |
+| Ibex | 835 | 24.89 → 24.54 s | 1,231,808 → 1,194,520 | 6,267,183 → 6,058,623 B (−3.33%) |
+| PicoRV | 6 | 2.77 → 2.76 s | 308,244 → 308,964 | 3,991,615 → 3,988,303 B (−0.083%) |
+
+One matched compile pair does not establish a meaningful compilation speedup.
+RSD retains its four shared kernels for 940 certified copy actors. All three
+embedded bytecode sections have identical SHA-256 hashes before/after. PicoRV
+executes successfully with identical output. Ibex retains its baseline status-14
+lifecycle failure and identical output; it is not counted as a functional pass.
+
+RSD coroutine ramp/resume/destroy counts each fall from 5,366 to 3,686, and
+per-process execute wrappers from 6,966 to 5,286, replaced by 1,680 table bodies.
+Ibex coroutine counts each fall from 908 to 73. Symbol inventories are recorded
+in `function-counts.json`.
+
+RSD HelloWorld (4,275 cycles / 4,506 retired instructions), three interleaved
+before/after trials:
+- Median wall time: 29.512 → 28.564 s (−3.21%). Before range 29.462–30.021 s;
+  after range 28.058–28.613 s.
+- Mean cycles −3.67%, instructions +0.16%, branch misses −3.57%, cache misses
+  −8.83%. This is a modest measured runtime improvement, not a reduction in
+  executed instruction count or a demonstrated general compilation speedup.
+- All six runs return zero and match the saved register and serial SHA-256
+  oracles. Every paired stdout is identical, including cycle/retirement counts.
+- Commands, resource logs, section hashes, runtime counters and validations are
+  in `tmp/ir-reduction-w3/`; the baseline driver is `obelisk-w3-before`.
 
 ### W4. Table-driven per-process wrappers and spawning
 
@@ -556,8 +615,8 @@ managed roots, process handles, disable records, and wait operands first.
   - Keep per-coroutine requirements callbacks: the existing ABI has no
     descriptor argument with which to select a ramp's size/alignment query.
     Keep plain capture-marshalling and direct-activation execute entry points;
-    their direct calls preserve inlining of small hot bodies. W3 can later
-    replace the remaining coroutine-dependent entries.
+    their direct calls preserve inlining of small hot bodies. W3 now replaces
+    qualifying coroutine entries with a shared table executor.
   - Materialize spawn batches and shared helpers before parallel body
     lowering. The previous spawn slice could mutate module-global lists from
     workers; serialized preparation removes that race. Threaded and serial
@@ -771,8 +830,8 @@ and exercise X injection and recovery in the middle of a run.
 3. W4 spawning, constant startup tables, and ABI-preserving wrapper reduction
    are implemented. W6a copy admission, coroutine-free activation, and shared
    native copy tables are implemented; eval dispatch remains under W5.
-4. W3, which needs the ABI addition, then W7, which uses W3's continuation-entry
-   model and adds the internal-range record from fusion.
+4. W3 is implemented with the descriptor extension. Next is W7, which uses its
+   continuation-entry model and adds the internal-range record from fusion.
 5. W5, W8 and W9.
 6. W6b net collapsing within the LRM's explicit permissions, with W7's access
    analysis where needed. Variable collapsing remains deferred pending proof.
@@ -784,8 +843,6 @@ use its compile/IR measurements and report the functional limitation explicitly.
 
 ## Open questions
 
-- W3: do disable targets, process handles or VPI process iteration need
-  anything beyond the entry and wait tables?
 - W5: can the fallback's bookkeeping move entirely into the dispatcher?
 - W7: what exactly counts as internal? Is it only SSA-forwarded ranges from
   fusion and group dataflow, or also predicated-group publications that are

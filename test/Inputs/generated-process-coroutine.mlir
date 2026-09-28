@@ -51,6 +51,36 @@ module attributes {
       simulation.suspend.change %source to ^body {site = #schedule.continuation<id = 7>} : !simulation.ref<!simulation.logic<65>>
     }
 
+    simulation.code_unit.decl 9000015 in 0 always hierarchy "test.generated_execution.table_process"
+    simulation.func @table_process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %source: !simulation.ref<i64>
+            {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
+        %sink: !simulation.ref<i64>
+            {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64})
+        attributes {entry_kind = 3 : i32, code_unit_id = 9000015 : i64} {
+      simulation.suspend.change %source to ^choose
+          {site = #schedule.continuation<id = 3>, schedule.procedural_event_wait} : !simulation.ref<i64>
+    ^choose:
+      %value = simulation.ref.load %source : !simulation.ref<i64> -> i64
+      %zero = arith.constant 0 : i64
+      %first = arith.cmpi eq, %value, %zero : i64
+      cf.cond_br %first, ^rise, ^any
+    ^rise:
+      %eleven = arith.constant 11 : i64
+      simulation.ref.store %eleven to %sink : i64, !simulation.ref<i64>
+      simulation.suspend.edge posedge %source to ^choose
+          {site = #schedule.continuation<id = 7>} : !simulation.ref<i64>
+    ^any:
+      %twenty_two = arith.constant 22 : i64
+      simulation.ref.store %twenty_two to %sink : i64, !simulation.ref<i64>
+      simulation.suspend.any %source, %sink edges [0, 2] to ^done
+          {site = #schedule.continuation<id = 13>, resume_region = 16 : i32} :
+          !simulation.ref<i64>, !simulation.ref<i64>
+    ^done:
+      simulation.return
+    }
+
     // Post-materialization group fixture. Its changing continuation lane
     // models the snapshots/dirty state carried by a union-wait group. The
     // direct executor must retain this canonical frame state across Tier-3

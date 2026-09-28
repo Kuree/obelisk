@@ -2214,6 +2214,9 @@ enum {
 // Compiler certificate: this native entry and its callees do not access the
 // managed heap. Unmarked entries retain the ordinary managed execution scope.
 #define OBELISK_RT_PROCESS_UNMANAGED_NATIVE UINT32_C(1)
+// The descriptor has an obelisk_rt_table_process_descriptor_v1 trailing plan.
+// Unflagged v1 descriptors retain their original size and layout.
+#define OBELISK_RT_PROCESS_TABLE_NATIVE UINT32_C(2)
 
 typedef struct obelisk_rt_process_descriptor_v1 {
   obelisk_rt_handle_v1 handle;
@@ -2229,6 +2232,39 @@ typedef struct obelisk_rt_process_descriptor_v1 {
   const obelisk_rt_execution_descriptor_v1 *execution;
   const obelisk_rt_design_bytecode_entry_v1 *design_bytecode;
 } obelisk_rt_process_descriptor_v1;
+
+// A dense entry index selects the corresponding canonical continuation in
+// frame_layout->continuations. Return a wait-table index, or TERMINATE. The
+// instance status carries runtime failures independently of that result.
+#define OBELISK_RT_TABLE_TERMINATE UINT32_MAX
+typedef uint32_t (*obelisk_rt_table_process_entry_v1)(
+    obelisk_rt_process_instance_v1 *instance, uint32_t entry);
+typedef struct obelisk_rt_table_watch_v1 {
+  uint64_t capture_offset;
+  uint32_t edge;
+  uint32_t width;
+} obelisk_rt_table_watch_v1;
+typedef struct obelisk_rt_table_wait_v1 {
+  uint32_t continuation;
+  uint32_t action_flags;
+  uint64_t frame_offset;
+  uint64_t frame_size;
+  obelisk_rt_wait_record_v1 record;
+  const obelisk_rt_table_watch_v1 *watches;
+} obelisk_rt_table_wait_v1;
+typedef struct obelisk_rt_table_process_plan_v1 {
+  uint32_t version;
+  uint32_t wait_count;
+  obelisk_rt_table_process_entry_v1 entry;
+  const obelisk_rt_table_wait_v1 *waits;
+} obelisk_rt_table_process_plan_v1;
+typedef struct obelisk_rt_table_process_descriptor_v1 {
+  obelisk_rt_process_descriptor_v1 base;
+  const obelisk_rt_table_process_plan_v1 *plan;
+} obelisk_rt_table_process_descriptor_v1;
+
+obelisk_rt_status
+obelisk_rt_v1_table_process_execute(obelisk_rt_process_instance_v1 *instance);
 
 // Compiler-emitted spawn data. Captures occupy the initial frame prefix;
 // continuation storage and wait records are initialized by the runtime.

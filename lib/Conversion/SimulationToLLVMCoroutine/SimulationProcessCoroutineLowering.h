@@ -4,6 +4,7 @@
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H
 
 #include "SimulationProcessWrapperLowering.h"
+#include "SimulationTableProcess.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 namespace obelisk::detail {
@@ -19,6 +20,7 @@ struct PreparedSuspendableProcess {
   bool directActivation;
   bool copyActivation;
   CopyKernelBinding copyKernel;
+  std::optional<NativeTableProcess> tableProcess;
 };
 
 void materializeCopyKernels(
@@ -28,7 +30,8 @@ void materializeCopyKernels(
 mlir::FailureOr<PreparedSuspendableProcess>
 prepareSuspendableProcess(sim::SimFuncOp function,
                           const SimulationProcessFrameAnalysis &analysis,
-                          bool copyActivation = false);
+                          bool copyActivation = false,
+                          std::optional<NativeTableProcess> tableProcess = {});
 mlir::LogicalResult
 lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process);
 mlir::LogicalResult

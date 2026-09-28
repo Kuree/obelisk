@@ -116,7 +116,7 @@ module attributes {
 // the display leaf still stages into the accumulator and marks its dirty
 // root, and the display stays inline rather than moving to a cold Tier-3
 // callback.
-// CHECK-LABEL: llvm.func @guarded.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @guarded.__obelisk_table_body
 // CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
 // CHECK: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
 // CHECK: llvm.call @obelisk_rt_v1_display

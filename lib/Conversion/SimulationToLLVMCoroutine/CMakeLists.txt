@@ -8,6 +8,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationPromotionRangeIndex.cpp
   SimulationControlLowering.cpp
   SimulationCopyKernelMaterialization.cpp
+  SimulationTableProcess.cpp
   SimulationDPILowering.cpp
   SimulationDPIThunkLowering.cpp
   SimulationDPIExportBridge.cpp

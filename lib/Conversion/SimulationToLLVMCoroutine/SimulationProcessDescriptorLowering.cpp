@@ -65,7 +65,8 @@ LogicalResult
 makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
                       Location location, StringRef baseName, uint64_t stableID,
                       const SimulationProcessFrameAnalysis &analysis,
-                      bool unmanagedNative, bool usesCoroutine) {
+                      bool unmanagedNative, bool usesCoroutine,
+                      bool tableProcess) {
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
@@ -80,6 +81,10 @@ makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
       context, {i32, i32, i64, i64, pointer, i32, i32, pointer, i64});
   auto handleType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64});
   Type descriptorType = getNativeProcessDescriptorType(context);
+  Type globalType =
+      tableProcess
+          ? LLVM::LLVMStructType::getLiteral(context, {descriptorType, pointer})
+          : descriptorType;
 
   std::string fieldsName = (baseName + ".__obelisk_frame_fields").str();
   std::string continuationsName = (baseName + ".__obelisk_continuations").str();
@@ -187,8 +192,8 @@ makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
     declaration.erase();
   }
   makeConstantGlobal(
-      module, location, descriptorType, descriptorName, LLVM::Linkage::External,
-      8, [&](OpBuilder &builder) {
+      module, location, globalType, descriptorName, LLVM::Linkage::External, 8,
+      [&](OpBuilder &builder) {
         Value handle = LLVM::ZeroOp::create(builder, location, handleType);
         handle = insertValue(builder, location, handle,
                              llvmConstant(builder, location, i32, 6), 0);
@@ -201,11 +206,13 @@ makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
             builder, location, descriptor,
             llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 1);
         if (unmanagedNative && !bytecodeOnly)
-          descriptor =
-              insertValue(builder, location, descriptor,
-                          llvmConstant(builder, location, i32,
-                                       OBELISK_RT_PROCESS_UNMANAGED_NATIVE),
-                          2);
+          descriptor = insertValue(
+              builder, location, descriptor,
+              llvmConstant(
+                  builder, location, i32,
+                  OBELISK_RT_PROCESS_UNMANAGED_NATIVE |
+                      (tableProcess ? OBELISK_RT_PROCESS_TABLE_NATIVE : 0)),
+              2);
         uint32_t availableTiers =
             bytecodeOnly
                 ? OBELISK_RT_TIER_MASK_BYTECODE
@@ -228,12 +235,14 @@ makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
                       ? (baseName + ".__obelisk_native_requirements").str()
                       : nativeZeroRequirementsName.str()),
               6);
-          descriptor =
-              insertValue(builder, location, descriptor,
-                          LLVM::AddressOfOp::create(
-                              builder, location, pointer,
-                              (baseName + ".__obelisk_native_execute").str()),
-                          7);
+          descriptor = insertValue(
+              builder, location, descriptor,
+              LLVM::AddressOfOp::create(
+                  builder, location, pointer,
+                  tableProcess
+                      ? "obelisk_rt_v1_table_process_execute"
+                      : (baseName + ".__obelisk_native_execute").str()),
+              7);
           descriptor =
               insertValue(builder, location, descriptor,
                           LLVM::AddressOfOp::create(
@@ -254,7 +263,15 @@ makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
                           LLVM::AddressOfOp::create(builder, location, pointer,
                                                     designBytecodeName),
                           11);
-        return descriptor;
+        if (!tableProcess)
+          return descriptor;
+        Value extended = LLVM::ZeroOp::create(builder, location, globalType);
+        extended = insertValue(builder, location, extended, descriptor, 0);
+        return insertValue(builder, location, extended,
+                           LLVM::AddressOfOp::create(
+                               builder, location, pointer,
+                               (baseName + ".__obelisk_table.plan").str()),
+                           1);
       });
   return success();
 }

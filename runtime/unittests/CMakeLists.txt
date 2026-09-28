@@ -83,6 +83,7 @@ set_target_properties(ObeliskRuntimeTests PROPERTIES
 
 add_executable(ObeliskProcessRuntimeTests
   ProcessTest.cpp
+  TableProcessTest.cpp
 )
 target_link_libraries(ObeliskProcessRuntimeTests PRIVATE
   obelisk_rt
