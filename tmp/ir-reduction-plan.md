@@ -164,6 +164,16 @@ no runtime speedup is claimed. Five-run perf averages were
 1,445,169,664/1,444,361,444 cycles and 3,522,148,388/3,514,268,115 instructions,
 with elapsed time 0.30541/0.30504 s; runtime remains essentially unchanged.
 
+A subsequent matched RSD HelloWorld runtime comparison used three runs per
+binary in alternating order, including startup (4275 cycles, 4506 retired
+operations). Median wall time was 29.12035/28.51994 s before/after W4 spawning,
+a 2.1% reduction. Mean cycles were 139,940,011,512/138,566,625,093 (1.0% lower),
+while instructions were essentially unchanged at 437,496,375,171/437,475,207,814.
+All six runs passed register and serial-output oracle checks. This is a small
+measured improvement for this workload, not a general steady-state speedup.
+Commands and per-run counters are in `rsd-runtime-comparison.json` and
+`measure-rsd-runtime.py` under the W4 artifact directory.
+
 ## LRM correctness review
 
 - Sections 4.3 and 4.7 permit different algorithms and interleavings only when
