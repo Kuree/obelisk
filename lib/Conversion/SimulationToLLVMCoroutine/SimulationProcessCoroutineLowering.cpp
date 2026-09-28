@@ -620,7 +620,8 @@ LogicalResult lowerFinalReturn(sim::SimReturnOp operation,
 
 FailureOr<PreparedSuspendableProcess>
 prepareSuspendableProcess(sim::SimFuncOp function,
-                          const SimulationProcessFrameAnalysis &analysis) {
+                          const SimulationProcessFrameAnalysis &analysis,
+                          bool copyActivation) {
   if (failed(lowerSimulationTimeOperations(function)))
     return failure();
   ModuleOp module = function->getParentOfType<ModuleOp>();
@@ -639,16 +640,19 @@ prepareSuspendableProcess(sim::SimFuncOp function,
   // Closed evaluators already have a direct group executor. Preserve their
   // fragment fallback; ordinary activation entries are needed by groups that
   // execute under descriptor scheduling without that evaluator.
+  // A certified copy has no native state between activations. Its fallback
+  // can use the same canonical continuation even when an eval body exists.
   bool directActivation =
       unmanagedNative &&
-      !::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
-          function) &&
-      (taskCaller ||
-       (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
+      (copyActivation ||
+       (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
             function) &&
-        ::obelisk::schedule::has<
-            schedule::metadata::evalReconstructsContinuationArgs>(function) &&
-        analysis.getSuspensions().size() == 1));
+        (taskCaller ||
+         (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
+              function) &&
+          ::obelisk::schedule::has<
+              schedule::metadata::evalReconstructsContinuationArgs>(function) &&
+          analysis.getSuspensions().size() == 1))));
   if (directActivation)
     function.walk([&](Operation *operation) {
       if (!sim::isSuspensionOp(operation))

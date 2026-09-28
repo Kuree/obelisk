@@ -4,7 +4,8 @@ Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
 attribute storage work and W3–W11 remain outstanding, except for W4's shared
 spawning, constant-capture batching, and ABI-preserving wrapper reduction,
-now implemented. W6a admission is next. Paths use the current
+now implemented. W6a strict copy admission and coroutine-free activation are
+implemented; its shared group table kernels remain outstanding. Paths use the current
 Schedule dialect layout; historical line numbers below are navigation hints,
 not stable references. This existing plan is updated in place.
 
@@ -220,6 +221,51 @@ existing generated-process tests exercise immediate activation, destruction,
 failure reconstruction, and native/bytecode/native switching. Threaded and
 serial spawn-batch IR is identical. C++ changes were formatted directly with
 `clang-format -i`.
+
+## Current W6a admission results
+
+The first W6a slice removes coroutine machinery from strictly admitted copies;
+it does not yet replace their native/eval bodies with shared group tables.
+The admission count is 940 for RSD, 581 for ibex, and zero for PicoRV. These
+counts are narrower than the historical inventory of all port processes.
+Same-typed packed aggregates and derived reference shapes remain excluded.
+
+Matched single compile runs use `-O3 -fno-lto --compile-threads=8`; artifacts
+and commands are in `tmp/ir-reduction-w6a/`.
+
+| Metric | W4 wrapper baseline | W6a admission |
+| --- | ---: | ---: |
+| RSD native compile time | 139.14 s | 139.18 s |
+| RSD native compile peak RSS | 4,876,944 KiB | 4,830,852 KiB |
+| RSD native `.text` | 16,057,807 bytes | 15,999,071 bytes |
+| ibex native compile time | 25.57 s | 24.85 s |
+| ibex native `.text` | 6,522,255 bytes | 6,481,055 bytes |
+| PicoRV native compile time | 2.77 s | 2.84 s |
+| PicoRV optimized LLVM IR | 78,118 lines | 78,118 lines |
+
+RSD compile time is effectively unchanged. Its native code shrinks 0.37%;
+ibex's shrinks 0.63%. PicoRV's native code is identical. All three frozen
+bytecode sections are byte-for-byte identical before/after. The compile
+observations are single matched runs, not replicated speedup claims.
+
+Three interleaved RSD HelloWorld pairs all match the architectural oracle
+(4275 cycles, 4506 retired operations). Median wall time is
+29.42674/28.07284 s before/after, 4.60% lower in this sample. Ranges are
+28.37530–29.48056/27.96629–28.37689 s; mean hardware cycles fall 2.16%
+(138.995G/135.999G), with nearly unchanged instructions
+(437.508G/437.506G). This is a measured result for this workload, including
+startup, not a general steady-state runtime claim. The samples and counters
+are in `rsd-runtime-comparison.json`. PicoRV completes with matching output;
+ibex retains its baseline lifecycle status 14 in both builds and is not a
+passing functional benchmark.
+
+Validation: the full suite passes 2,923 tests with 17 expected failures. The
+new 65-bit runtime fixture alternates native and bytecode entry, checks value
+and X/Z planes across a word boundary, retains matching wait actions, and
+requires no native scratch or coroutine handle. An end-to-end port chain
+checks initial propagation, unchanged-value notifications, X/Z recovery, and
+force/release in generic native, automatic native, and bytecode modes. C++
+changes were formatted directly with `clang-format -i`.
 
 ## LRM correctness review
 
@@ -512,17 +558,42 @@ and exercise X injection and recovery in the middle of a run.
 
 ### W6. Port connections
 
-- **W6a, exact semantics, do first.**
-  - Recognize port and continuous processes that are only a copy.
-  - Emit no process for them. Instead, a per-group copy kernel reads a table of
-    (source range, sink range, width) and copies when the source changes.
-  - Preserve both storage locations and continuous-assignment activation,
-    time-zero evaluation, publication, and observer behavior (§4.9.1/4.9.6).
-    “One delta” is not a separate LRM event region or a sufficient specification.
-  - Do not remove actor identity or fallback metadata needed by process control,
-    VPI, tracing, or Tier-3. Prove admission for the table-backed subset first.
-  - This removes the full set of generated functions per port process (up to
-    ~13 in the ibex dump) for about 72% of RSD's processes.
+- **W6a admission and coroutine-free activation: implemented.**
+  - `SimulationCopyProcessAnalysis` recognizes Active input/output-port and
+    continuous processes with a branch-only entry and one argument-free loop:
+    a packed load/store (or `ref.copy`) followed by a change wait on exactly
+    that source. Both same-typed integer/logic references must be storage
+    captures. Conversions, dynamic selectors, driver resolution, extra effects,
+    different watches, carried values, and other process kinds are excluded.
+  - Capture the proof before state threading and packed lowering in the native
+    pipeline's preserved analysis. Admitted actors use the existing direct
+    activation lowering, including when they have an eval body. Their complete
+    continuation state is canonical; they need no native coroutine frame.
+  - Preserve the original store/publication, wait record, continuation, actor,
+    scheduling rank, source and sink storage, and frozen bytecode. Native and
+    bytecode entry can alternate without restarting the actor. Requirements
+    use W4's shared zero-scratch callback; destruction uses its no-op callback.
+  - LRM review: §§4.9.1/4.9.6 require initial evaluation and source-sensitive
+    activation for implicit continuous port assignments. §23.3.3.2 defines
+    variable-port continuous assignments; §23.3.3.3 warns that conversions may
+    cause initial value-change events. Keeping the exact store/wait operations
+    and both storage objects preserves these events. No storage aliasing or
+    process-identity removal is justified by this admission proof.
+  - Tests cover admission/rejection boundaries, threaded/serial output, 65-bit
+    value/XZ copies across native/bytecode transitions, first activation, and
+    force/release/change notifications with generic native, automatic native,
+    and bytecode execution.
+- **W6a remaining: shared per-group copy kernels.**
+  - Replace admitted native copy bodies with a table of source/sink ranges and
+    widths plus one group executor. The current direct-activation slice still
+    emits a native body/execute entry and retains existing eval variants.
+  - Derive entries from the certified source shape and current group ownership;
+    keep actor identity and fallback metadata for runtime control, VPI, tracing,
+    and Tier-3. Removing scheduler actors is not implied by removing coroutines.
+  - Preserve continuous-assignment activation, time-zero evaluation, publication,
+    and observer behavior (§4.9.1/4.9.6). “One delta” is not a separate LRM event
+    region or a sufficient specification. Preserve repeated/fallback activation
+    boundaries when batching; do not infer storage merging from group membership.
 - **W6b, collapsing, after W6a.**
   - Alias sink storage to source storage.
   - Nets are explicitly permitted by 1800-2023 §23.3.3.7, which says it is
@@ -637,7 +708,8 @@ and exercise X injection and recovery in the middle of a run.
 1. W1 startup-product reduction: implemented. Optional attribute storage work is deferred.
 2. W2 initial suspend: implemented and validated.
 3. W4 spawning, constant startup tables, and ABI-preserving wrapper reduction
-   are implemented. W6a port-copy admission is next.
+   are implemented. W6a copy admission and coroutine-free activation are
+   implemented; shared group copy tables are next.
 4. W3, which needs the ABI addition, then W7, which uses W3's continuation-entry
    model and adds the internal-range record from fusion.
 5. W5, W8 and W9.

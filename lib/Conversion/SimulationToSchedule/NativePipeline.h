@@ -82,6 +82,9 @@ struct NativePipelineAnalysis {
   llvm::MapVector<mlir::Operation *,
                   std::unique_ptr<SimulationProcessFrameAnalysis>>
       analyses;
+  // Source-shape certificates captured before state threading/packed lowering.
+  // Actor identity and the canonical frame remain owned by analyses above.
+  llvm::DenseSet<mlir::Operation *> copyActivations;
   llvm::DenseMap<uint64_t, uint32_t> aotActorSlotsByCodeUnit;
   bool cleanSuperstep = false, staticEvalIsland = false,
        closedStaticIsland = false;

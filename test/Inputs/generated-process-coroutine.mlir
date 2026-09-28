@@ -19,6 +19,23 @@ module attributes {
     simulation.storage.decl 1 in 0 : i64 design
     simulation.code_unit.decl 9000012 in 0 continuous hierarchy "test.generated_execution.group_process"
 
+    simulation.storage.decl 2 in 0 : !simulation.logic<65> design
+    simulation.storage.decl 3 in 0 : !simulation.logic<65> design
+    simulation.code_unit.decl 9000013 in 0 port_input hierarchy "test.generated_execution.copy_process"
+    simulation.func @copy_process(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %source: !simulation.ref<!simulation.logic<65>>
+            {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64},
+        %sink: !simulation.ref<!simulation.logic<65>>
+            {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64})
+        attributes {entry_kind = 9 : i32, code_unit_id = 9000013 : i64} {
+      cf.br ^body
+    ^body:
+      %value = simulation.ref.load %source : !simulation.ref<!simulation.logic<65>> -> !simulation.logic<65>
+      simulation.ref.store %value to %sink : !simulation.logic<65>, !simulation.ref<!simulation.logic<65>>
+      simulation.suspend.change %source to ^body : !simulation.ref<!simulation.logic<65>>
+    }
+
     // Post-materialization group fixture. Its changing continuation lane
     // models the snapshots/dirty state carried by a union-wait group. The
     // direct executor must retain this canonical frame state across Tier-3

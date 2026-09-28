@@ -20,7 +20,8 @@ struct PreparedSuspendableProcess {
 
 mlir::FailureOr<PreparedSuspendableProcess>
 prepareSuspendableProcess(sim::SimFuncOp function,
-                          const SimulationProcessFrameAnalysis &analysis);
+                          const SimulationProcessFrameAnalysis &analysis,
+                          bool copyActivation = false);
 mlir::LogicalResult
 lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process);
 mlir::LogicalResult

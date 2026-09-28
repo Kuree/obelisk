@@ -20,6 +20,7 @@
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -1276,6 +1277,8 @@ LogicalResult NativePipelineAnalysis::prepareFrames() {
   declareNativeRuntimeABI(module);
   declareProcessSpawnRuntimeABI(module);
   WalkResult analyzed = module.walk([&](sim::SimFuncOp function) {
+    if (analysis::isCaptureCopyProcess(function))
+      copyActivations.insert(function);
     bool suspendable = false;
     function.walk([&](Operation *operation) {
       suspendable |= sim::isSuspensionOp(operation);
@@ -1314,6 +1317,9 @@ LogicalResult NativePipelineAnalysis::prepareFrames() {
   if (analyzed.wasInterrupted())
     return failure();
   markTiming("frame analysis and state threading");
+  if (detailedTiming)
+    llvm::errs() << "obelisk native copy activations: "
+                 << copyActivations.size() << '\n';
 
   return success();
 }
@@ -1693,8 +1699,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
       plainProcesses.push_back(std::move(*prepared));
       continue;
     }
-    FailureOr<PreparedSuspendableProcess> prepared =
-        prepareSuspendableProcess(function, *analysis);
+    FailureOr<PreparedSuspendableProcess> prepared = prepareSuspendableProcess(
+        function, *analysis, copyActivations.contains(function));
     if (failed(prepared))
       return failure();
     suspendableProcesses.push_back(std::move(*prepared));
