@@ -2230,6 +2230,40 @@ typedef struct obelisk_rt_process_descriptor_v1 {
   const obelisk_rt_design_bytecode_entry_v1 *design_bytecode;
 } obelisk_rt_process_descriptor_v1;
 
+// Compiler-emitted spawn data. Captures occupy the initial frame prefix;
+// continuation storage and wait records are initialized by the runtime.
+#define OBELISK_RT_SPAWN_PRIME UINT32_C(1)
+#define OBELISK_RT_SPAWN_PROGRAM_OWNER UINT32_C(2)
+typedef struct obelisk_rt_process_spawn_plan_v1 {
+  const obelisk_rt_process_descriptor_v1 *descriptor;
+  uint64_t capture_size;
+  const uint32_t *continuations;
+  const uint32_t *ranks;
+  const uint32_t *bytecode_continuations;
+  uint64_t program_owner;
+  uint32_t schedule_flags;
+  uint32_t actor_slot; // UINT32_MAX selects the generic scheduler.
+  uint32_t initial_rank;
+  uint32_t continuation_count;
+  uint32_t bytecode_continuation_count;
+  uint32_t options;
+} obelisk_rt_process_spawn_plan_v1;
+
+typedef struct obelisk_rt_process_spawn_entry_v1 {
+  const obelisk_rt_process_spawn_plan_v1 *plan;
+  const void *captures;
+} obelisk_rt_process_spawn_entry_v1;
+
+// Captures have already been retained by the caller, just as for an ordinary
+// generated spawn. Insertion transfers instance ownership to the scheduler.
+uint64_t
+obelisk_rt_v1_process_spawn(obelisk_rt_context *context,
+                            const obelisk_rt_process_spawn_plan_v1 *plan,
+                            const void *captures);
+void obelisk_rt_v1_process_spawn_batch(
+    obelisk_rt_context *context,
+    const obelisk_rt_process_spawn_entry_v1 *entries, uint32_t count);
+
 // The runtime owns this record and its allocation. Generated native hooks may
 // read the fixed fields in order to refresh transient pointers before every
 // resume; other clients must treat the contents as read-only.

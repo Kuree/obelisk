@@ -46,12 +46,12 @@ endmodule
 // AOT: @__obelisk_aot_schedule_plan_v1
 // AOT: @__obelisk_aot_schedule_nodes_v1
 // AOT-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
-// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_add_aot
+// AOT-DAG: call i64 @obelisk_rt_v1_process_spawn
 // AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot_nodes
 // AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot
 // GENERIC-NOT: @__obelisk_aot_schedule_plan_v1
 // GENERIC-NOT: call i32 @obelisk_rt_v1_scheduler_install_aot
-// GENERIC: call i32 @obelisk_rt_v1_scheduler_add_planned
+// GENERIC: call i64 @obelisk_rt_v1_process_spawn
 // GENERIC: call i32 @obelisk_rt_v1_scheduler_run
 // SPECIALIZATION-OFF-NOT: @__obelisk_aot_nba_roots_v1
 // SPECIALIZATION-OFF: call i32 @obelisk_rt_v1_scheduler_nba

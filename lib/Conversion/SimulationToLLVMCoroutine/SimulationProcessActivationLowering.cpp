@@ -250,93 +250,19 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
     copyNativePartition(function, global);
     indexModuleSymbol(module, symbols, global);
   }
-  builder.setInsertionPointAfter(function);
-  auto helper = LLVM::LLVMFuncOp::create(
-      builder, location, helperName,
-      LLVM::LLVMFunctionType::get(i64, arguments, false));
-  copyNativePartition(function, helper);
-  indexModuleSymbol(module, symbols, helper);
-  Block *entry = helper.addEntryBlock(builder);
-  Block *created = new Block;
-  Block *createFailed = new Block;
-  Block *added = new Block;
-  Block *addFailed = new Block;
-  bool primeOnSpawn =
-      ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
-          function);
-  Block *primed = primeOnSpawn ? new Block : nullptr;
-  Block *primeFailed = primeOnSpawn ? new Block : nullptr;
-  helper.getBody().push_back(created);
-  helper.getBody().push_back(createFailed);
-  helper.getBody().push_back(added);
-  helper.getBody().push_back(addFailed);
-  if (primed) {
-    helper.getBody().push_back(primed);
-    helper.getBody().push_back(primeFailed);
-  }
-  builder.setInsertionPointToStart(entry);
-  Value one = llvmConstant(builder, location, i64, 1);
-  Value outInstance =
-      LLVM::AllocaOp::create(builder, location, pointer, pointer, one, 8);
-  LLVM::StoreOp::create(builder, location,
-                        LLVM::ZeroOp::create(builder, location, pointer),
-                        outInstance, 8);
-  Value descriptor = LLVM::AddressOfOp::create(
-      builder, location, pointer,
-      (function.getSymName() + ".__obelisk_process_descriptor").str());
-  auto create = LLVM::CallOp::create(
-      builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context,
-                         "obelisk_rt_v1_process_instance_create_for_context"),
-      ValueRange{entry->getArgument(0), descriptor, outInstance});
-  Value createSucceeded = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, create.getResult(),
-      llvmConstant(builder, location, i32, 0));
-  LLVM::CondBrOp::create(builder, location, createSucceeded, created,
-                         createFailed);
-
-  builder.setInsertionPointToStart(createFailed);
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-      ValueRange{entry->getArgument(0), create.getResult()});
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i64, 0));
-
-  builder.setInsertionPointToStart(created);
-  Value instance =
-      LLVM::LoadOp::create(builder, location, pointer, outInstance, 8);
-  Value frame =
-      loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);
-  size_t physicalArgument = 0;
-  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
-    if (!slot.hasValueStorage()) {
-      ++physicalArgument;
-      continue;
-    }
-    if (physicalArgument >= entry->getNumArguments())
-      return helper.emitError("spawn capture layout has too few arguments");
-    storeAt(builder, location, frame, slot.valueOffset,
-            entry->getArgument(physicalArgument++), slot.alignment);
-    if (slot.hasSecondaryStorage()) {
-      if (physicalArgument >= entry->getNumArguments())
-        return helper.emitError("spawn capture is missing its secondary value");
-      storeAt(builder, location, frame, slot.getSecondaryOffset(),
-              entry->getArgument(physicalArgument++), slot.alignment);
-    }
-  }
-  if (physicalArgument != entry->getNumArguments())
-    return helper.emitError("spawn capture layout has excess arguments");
   uint32_t homeRegion = getRuntimeEventRegion(function.getHomeRegion());
   if (homeRegion == UINT32_MAX)
     return function.emitOpError("has no executable runtime home region");
   sim::EntryKind entryKind = function.getEntryKind();
+  bool primeOnSpawn =
+      ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+          function);
   if (primeOnSpawn &&
       (!function->hasAttr("internal") ||
        !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
            function) ||
        entryKind != sim::EntryKind::Fork))
-    return helper.emitError(
+    return function.emitError(
         "prime-on-spawn is reserved for internal detached waiters");
   bool startup = sim::isStartupEntryKind(entryKind) ||
                  (entryKind == sim::EntryKind::Initial &&
@@ -354,7 +280,7 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
            function) ||
        entryKind != sim::EntryKind::Fork ||
        function.getHomeRegion() != sim::EventRegion::Reactive))
-    return helper.emitError(
+    return function.emitError(
         "priority signal resume is reserved for internal concurrent "
         "cancellation or abort observers");
   uint32_t scheduleFlags =
@@ -369,108 +295,119 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
       (prioritySignalResume ? OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL : 0) |
       (entryKind == sim::EntryKind::RootInitializer ? OBELISK_RT_SCHEDULE_ROOT
                                                     : 0);
-  Value null = LLVM::ZeroOp::create(builder, location, pointer);
-  Value continuationAddress = null;
-  Value rankAddress = null;
-  if (!schedule.continuations.empty()) {
-    continuationAddress =
-        LLVM::AddressOfOp::create(builder, location, pointer, continuationName);
-    rankAddress =
-        LLVM::AddressOfOp::create(builder, location, pointer, rankName);
+  // Entry captures form a prefix of the canonical frame. Marshal only that
+  // prefix; never copy continuation lanes, waits, or native scratch.
+  uint64_t captureSize = 0;
+  SmallVector<int64_t> offsets;
+  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
+    if (!slot.hasValueStorage())
+      continue;
+    offsets.push_back(slot.valueOffset);
+    captureSize = std::max(captureSize, slot.valueOffset + slot.storageSize);
+    if (slot.hasSecondaryStorage()) {
+      offsets.push_back(slot.getSecondaryOffset());
+      captureSize =
+          std::max(captureSize, slot.getSecondaryOffset() + slot.storageSize);
+    }
   }
-  SmallVector<Value> addArguments{
-      entry->getArgument(0), instance,
-      llvmConstant(builder, location, i32, scheduleFlags)};
-  StringRef addName = "obelisk_rt_v1_scheduler_add_planned";
-  if (schedule.actorSlot) {
-    addName = "obelisk_rt_v1_scheduler_add_aot";
-    addArguments.push_back(
-        llvmConstant(builder, location, i32, *schedule.actorSlot));
-  }
-  llvm::append_range(
-      addArguments,
-      ValueRange{
-          llvmConstant(builder, location, i32, schedule.initialRank),
-          continuationAddress, rankAddress,
-          llvmConstant(builder, location, i32, schedule.continuations.size())});
-  if (schedule.actorSlot) {
-    Value bytecodeContinuations = null;
-    if (!schedule.bytecodeContinuations.empty())
-      bytecodeContinuations = LLVM::AddressOfOp::create(
-          builder, location, pointer, bytecodeContinuationName);
-    addArguments.push_back(bytecodeContinuations);
-    addArguments.push_back(llvmConstant(builder, location, i32,
-                                        schedule.bytecodeContinuations.size()));
-  }
-  auto add =
-      LLVM::CallOp::create(builder, location, TypeRange{i32},
-                           SymbolRefAttr::get(context, addName), addArguments);
-  Value addSucceeded = arith::CmpIOp::create(
-      builder, location, arith::CmpIPredicate::eq, add.getResult(),
-      llvmConstant(builder, location, i32, 0));
-  LLVM::CondBrOp::create(builder, location, addSucceeded, added, addFailed);
+  auto owner =
+      ::obelisk::schedule::get<::obelisk::schedule::Field::ProgramOwnerId>(
+          function);
+  uint32_t options = (primeOnSpawn ? OBELISK_RT_SPAWN_PRIME : 0) |
+                     (owner ? OBELISK_RT_SPAWN_PROGRAM_OWNER : 0);
+  auto planType = LLVM::LLVMStructType::getLiteral(
+      context, {pointer, i64, pointer, pointer, pointer, i64, i32, i32, i32,
+                i32, i32, i32});
+  std::string planName =
+      (function.getSymName() + ".__obelisk_spawn_plan").str();
+  auto plan = makeConstantGlobal(
+      module, location, planType, planName, LLVM::Linkage::Internal, 8,
+      [&](OpBuilder &initializer) {
+        Value value = LLVM::ZeroOp::create(initializer, location, planType);
+        auto address = [&](unsigned field, StringRef name) {
+          value = insertValue(
+              initializer, location, value,
+              LLVM::AddressOfOp::create(initializer, location, pointer, name),
+              field);
+        };
+        auto integer = [&](unsigned field, Type type, uint64_t number) {
+          value = insertValue(initializer, location, value,
+                              llvmConstant(initializer, location, type, number),
+                              field);
+        };
+        address(
+            0, (function.getSymName() + ".__obelisk_process_descriptor").str());
+        integer(1, i64, captureSize);
+        if (!schedule.continuations.empty()) {
+          address(2, continuationName);
+          address(3, rankName);
+        }
+        if (!schedule.bytecodeContinuations.empty())
+          address(4, bytecodeContinuationName);
+        integer(5, i64, owner ? owner.getValue().getZExtValue() : 0);
+        integer(6, i32, scheduleFlags);
+        integer(7, i32, schedule.actorSlot.value_or(UINT32_MAX));
+        integer(8, i32, schedule.initialRank);
+        integer(9, i32, schedule.continuations.size());
+        integer(10, i32, schedule.bytecodeContinuations.size());
+        integer(11, i32, options);
+        return value;
+      });
+  copyNativePartition(function, plan);
+  indexModuleSymbol(module, symbols, plan);
 
-  builder.setInsertionPointToStart(addFailed);
-  LLVM::CallOp::create(
-      builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_process_instance_destroy"),
-      instance);
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-      ValueRange{entry->getArgument(0), add.getResult()});
-  LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i64, 0));
-
-  builder.setInsertionPointToStart(added);
-  if (primeOnSpawn) {
-    auto prime = LLVM::CallOp::create(
-        builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_prime"),
-        ValueRange{entry->getArgument(0), instance});
-    Value primeSucceeded = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, prime.getResult(),
-        llvmConstant(builder, location, i32, 0));
-    LLVM::CondBrOp::create(builder, location, primeSucceeded, primed,
-                           primeFailed);
-
-    builder.setInsertionPointToStart(primeFailed);
-    LLVM::CallOp::create(
-        builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-        ValueRange{entry->getArgument(0), prime.getResult()});
-    LLVM::ReturnOp::create(builder, location,
-                           llvmConstant(builder, location, i64, 0));
-    builder.setInsertionPointToStart(primed);
+  builder.setInsertionPointAfter(function);
+  auto helper = LLVM::LLVMFuncOp::create(
+      builder, location, helperName,
+      LLVM::LLVMFunctionType::get(i64, arguments, false));
+  copyNativePartition(function, helper);
+  // Retain the layout for root-spawn table materialization. Dynamic callers
+  // use the typed marshalling body below.
+  helper->setAttr("obelisk.spawn_capture_offsets",
+                  builder.getDenseI64ArrayAttr(offsets));
+  helper->setAttr("obelisk.spawn_capture_size",
+                  builder.getI64IntegerAttr(captureSize));
+  indexModuleSymbol(module, symbols, helper);
+  Block *entry = helper.addEntryBlock(builder);
+  builder.setInsertionPointToStart(entry);
+  Value captures = LLVM::ZeroOp::create(builder, location, pointer);
+  if (captureSize) {
+    Type i8 = builder.getI8Type();
+    captures = LLVM::AllocaOp::create(
+        builder, location, pointer, i8,
+        llvmConstant(builder, location, i64, captureSize),
+        analysis.getFrameAlignment());
+    LLVM::MemsetOp::create(
+        builder, location, captures, llvmConstant(builder, location, i8, 0),
+        llvmConstant(builder, location, i64, captureSize), false);
   }
-  Value token =
-      LLVM::CallOp::create(
-          builder, location, TypeRange{i64},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_process_token"),
-          ValueRange{entry->getArgument(0), instance})
-          .getResult();
-  Value logicalToken =
-      arith::OrIOp::create(builder, location, token,
-                           llvmConstant(builder, location, i64,
-                                        OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG));
-  if (auto owner =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::ProgramOwnerId>(
-              function)) {
-    Value registerStatus =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_scheduler_program_register"),
-            ValueRange{entry->getArgument(0), logicalToken,
-                       llvmConstant(builder, location, i64,
-                                    owner.getValue().getZExtValue())})
-            .getResult();
-    LLVM::CallOp::create(
-        builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
-        ValueRange{entry->getArgument(0), registerStatus});
+  size_t physicalArgument = 0;
+  for (const ProcessFrameValue &slot : analysis.getEntryCaptureLayout()) {
+    if (!slot.hasValueStorage()) {
+      ++physicalArgument;
+      continue;
+    }
+    if (physicalArgument >= entry->getNumArguments())
+      return helper.emitError("spawn capture layout has too few arguments");
+    storeAt(builder, location, captures, slot.valueOffset,
+            entry->getArgument(physicalArgument++), slot.alignment);
+    if (slot.hasSecondaryStorage()) {
+      if (physicalArgument >= entry->getNumArguments())
+        return helper.emitError("spawn capture is missing its secondary value");
+      storeAt(builder, location, captures, slot.getSecondaryOffset(),
+              entry->getArgument(physicalArgument++), slot.alignment);
+    }
   }
-  LLVM::ReturnOp::create(builder, location, logicalToken);
+  if (physicalArgument != entry->getNumArguments())
+    return helper.emitError("spawn capture layout has excess arguments");
+  Value planAddress =
+      LLVM::AddressOfOp::create(builder, location, pointer, planName);
+  Value token = LLVM::CallOp::create(
+                    builder, location, TypeRange{i64},
+                    SymbolRefAttr::get(context, "obelisk_rt_v1_process_spawn"),
+                    ValueRange{entry->getArgument(0), planAddress, captures})
+                    .getResult();
+  LLVM::ReturnOp::create(builder, location, token);
   return success();
 }
 
@@ -481,6 +418,11 @@ void declareProcessSpawnRuntimeABI(ModuleOp module) {
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
 
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn", i64,
+                           {pointer, pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn_batch",
+                           LLVM::LLVMVoidType::get(context),
+                           {pointer, pointer, i32});
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_process_instance_create_for_context",
                            i32, {pointer, pointer, pointer});

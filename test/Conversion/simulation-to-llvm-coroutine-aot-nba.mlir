@@ -211,10 +211,10 @@ module attributes {
 // Generated spawns are context-bound, so process construction reuses the
 // immutable design image validated by context creation instead of reparsing
 // it once per process.
-// TWO-STATE-DAG: llvm.func @obelisk_rt_v1_process_instance_create_for_context(!llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+// TWO-STATE-DAG: llvm.func @obelisk_rt_v1_process_spawn(!llvm.ptr, !llvm.ptr, !llvm.ptr) -> i64
 // TWO-STATE-LABEL: llvm.func @root.__obelisk_spawn(
 // TWO-STATE-SAME: %[[SPAWN_CTX:.*]]: !llvm.ptr)
-// TWO-STATE: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[SPAWN_CTX]], {{.*}}, {{.*}})
+// TWO-STATE: llvm.call @obelisk_rt_v1_process_spawn(%[[SPAWN_CTX]], {{.*}}, {{.*}})
 // TWO-STATE-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // TWO-STATE-SAME: alignment = 64 : i64
 // TWO-STATE: %[[DIRTY_ROOTS:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1

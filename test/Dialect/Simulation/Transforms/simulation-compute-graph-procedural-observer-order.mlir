@@ -19,10 +19,9 @@ module attributes {
   // CHECK-SAME: #schedule.group<fragments = {{\[}}[[WAIT]]{{\]}}
   // CHECK-SAME: #schedule.group<fragments = {{\[}}[[BODY]]{{\]}}
   // Startup infrastructure carries bit 5 in the native scheduler flags.
-  // NATIVE-LABEL: llvm.func @z_producer.__obelisk_spawn
+  // NATIVE-LABEL: llvm.mlir.global internal constant @z_producer.__obelisk_spawn_plan
   // NATIVE: %[[STARTUP:.*]] = llvm.mlir.constant(32 : i32)
-  // NATIVE: llvm.call @obelisk_rt_v1_scheduler_add_planned
-  // NATIVE-SAME: %[[STARTUP]]
+  // NATIVE-NEXT: llvm.insertvalue %[[STARTUP]], {{.*}}[6]
   // The bytecode SPAWN signature stores the same classification in bit 31 of
   // its flags word. The target is function index 2 and has two captures.
   // BYTECODE: obelisk.bytecode.image = array<i8: {{.*}}0, 2, 1, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, -128

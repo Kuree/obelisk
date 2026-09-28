@@ -3,7 +3,7 @@
 // RUN: FileCheck %s --check-prefix=HYBRID < %t/hybrid.ll
 
 // HYBRID-NOT: @__obelisk_aot_schedule_plan_v1
-// HYBRID: call i32 @obelisk_rt_v1_scheduler_add_planned
+// HYBRID: call i64 @obelisk_rt_v1_process_spawn
 // HYBRID-NOT: call i32 @obelisk_rt_v1_scheduler_install_aot
 // HYBRID: call i32 @obelisk_rt_v1_scheduler_run
 

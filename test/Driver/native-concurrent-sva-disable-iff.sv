@@ -203,5 +203,5 @@ endmodule
 // SIM-DAG: schedule.concurrent_report
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: home_region = 10 : i32
-// AOT: call i32 @obelisk_rt_v1_scheduler_add_aot
+// AOT: call i64 @obelisk_rt_v1_process_spawn
 // AOT: call i32 @obelisk_rt_v1_scheduler_run(

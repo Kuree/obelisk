@@ -61,9 +61,7 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_process_status
 // NATIVE: llvm.call @obelisk_rt_v1_scheduler_fail
 // NATIVE-LABEL: llvm.func @child.__obelisk_spawn
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_process_token
-// NATIVE: llvm.mlir.constant(-9223372036854775808 : i64)
-// NATIVE: llvm.or
+// NATIVE: llvm.call @obelisk_rt_v1_process_spawn
 
 // The process value is one two-state 64-bit logical token in bytecode, rather
 // than the historical 32-byte generic descriptor handle. The serialized

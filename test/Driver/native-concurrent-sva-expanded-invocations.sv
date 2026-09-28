@@ -71,5 +71,5 @@ module native_concurrent_sva_expanded_invocations;
 endmodule
 
 // CHECK: expanded typed=1 default=1 sequence=1
-// AOT: call i32 @obelisk_rt_v1_scheduler_add_aot
+// AOT: call i64 @obelisk_rt_v1_process_spawn
 // AOT: call i32 @obelisk_rt_v1_scheduler_run(

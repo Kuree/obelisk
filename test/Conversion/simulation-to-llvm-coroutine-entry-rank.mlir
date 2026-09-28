@@ -1,5 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=CHECK
 // RUN: obelisk-opt %s --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=SPAWN
 
 // Actor slots follow root spawn order: root=0, z_always=1, a_initial=2.
 // This legal schedule orders the independent children a_initial, z_always.
@@ -22,14 +23,17 @@
 // CHECK: llvm.insertvalue {{.*}}[2] : !llvm.array<3 x struct<(i32, i32, i32)>>
 // CHECK: llvm.return
 
-// CHECK-LABEL: llvm.func @a_initial.__obelisk_spawn
-// CHECK: %[[INITIAL_SLOT:.*]] = llvm.mlir.constant(2 : i32)
-// CHECK-NEXT: %[[INITIAL_RANK:.*]] = llvm.mlir.constant(1 : i32)
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_add_aot({{.*}}, %[[INITIAL_SLOT]], %[[INITIAL_RANK]],
-// CHECK-LABEL: llvm.func @z_always.__obelisk_spawn
-// CHECK: %[[ALWAYS_SLOT:.*]] = llvm.mlir.constant(1 : i32)
-// CHECK-NEXT: %[[ALWAYS_RANK:.*]] = llvm.mlir.constant(2 : i32)
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_add_aot({{.*}}, %[[ALWAYS_SLOT]], %[[ALWAYS_RANK]],
+// Spawn metadata must contain the same actor/rank pairs as the node table.
+// SPAWN-LABEL: llvm.mlir.global internal constant @z_always.__obelisk_spawn_plan
+// SPAWN: %[[ALWAYS_SLOT:.*]] = llvm.mlir.constant(1 : i32)
+// SPAWN-NEXT: llvm.insertvalue %[[ALWAYS_SLOT]], {{.*}}[7]
+// SPAWN: %[[ALWAYS_RANK:.*]] = llvm.mlir.constant(2 : i32)
+// SPAWN-NEXT: llvm.insertvalue %[[ALWAYS_RANK]], {{.*}}[8]
+// SPAWN-LABEL: llvm.mlir.global internal constant @a_initial.__obelisk_spawn_plan
+// SPAWN: %[[INITIAL_SLOT:.*]] = llvm.mlir.constant(2 : i32)
+// SPAWN-NEXT: llvm.insertvalue %[[INITIAL_SLOT]], {{.*}}[7]
+// SPAWN: %[[INITIAL_RANK:.*]] = llvm.mlir.constant(1 : i32)
+// SPAWN-NEXT: llvm.insertvalue %[[INITIAL_RANK]], {{.*}}[8]
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

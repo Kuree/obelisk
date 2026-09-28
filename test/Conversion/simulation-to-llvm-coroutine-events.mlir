@@ -39,7 +39,7 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_event_replace_after
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_event_replace_after
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_event_triggered
-// CHECK: llvm.icmp "eq"
+// CHECK: llvm.return
 // CHECK-NOT: simulation.event
 // Ordinary blocking/nonblocking event triggers retain IDs and flags exactly;
 // the cold timer service has its own intrinsic and adds no ordinary hot-case

@@ -1135,6 +1135,72 @@ obelisk_rt_v1_scheduler_add_ranked(obelisk_rt_context *context,
                                              scheduleRank, nullptr, nullptr, 0);
 }
 
+extern "C" uint64_t
+obelisk_rt_v1_process_spawn(obelisk_rt_context *context,
+                            const obelisk_rt_process_spawn_plan_v1 *plan,
+                            const void *captures) {
+  auto fail = [&](obelisk_rt_status status) -> uint64_t {
+    obelisk_rt_v1_scheduler_fail(context, status);
+    return 0;
+  };
+  if (!context || !plan || !plan->descriptor ||
+      !plan->descriptor->frame_layout ||
+      plan->capture_size > plan->descriptor->frame_layout->frame_size ||
+      (plan->capture_size && !captures) ||
+      (plan->options &
+       ~(OBELISK_RT_SPAWN_PRIME | OBELISK_RT_SPAWN_PROGRAM_OWNER)))
+    return fail(OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  obelisk_rt_status status = obelisk_rt_v1_process_instance_create_for_context(
+      context, plan->descriptor, &instance);
+  if (status != OBELISK_RT_OK)
+    return fail(status);
+  if (plan->capture_size)
+    std::memcpy(instance->frame, captures, plan->capture_size);
+  if (plan->actor_slot == UINT32_MAX)
+    status = obelisk_rt_v1_scheduler_add_planned(
+        context, instance, plan->schedule_flags, plan->initial_rank,
+        plan->continuations, plan->ranks, plan->continuation_count);
+  else
+    status = obelisk_rt_v1_scheduler_add_aot(
+        context, instance, plan->schedule_flags, plan->actor_slot,
+        plan->initial_rank, plan->continuations, plan->ranks,
+        plan->continuation_count, plan->bytecode_continuations,
+        plan->bytecode_continuation_count);
+  if (status != OBELISK_RT_OK) {
+    obelisk_rt_v1_process_instance_destroy(instance);
+    return fail(status);
+  }
+  // Once inserted, the scheduler owns the instance even if priming fails.
+  if (plan->options & OBELISK_RT_SPAWN_PRIME) {
+    status = obelisk_rt_v1_scheduler_prime(context, instance);
+    if (status != OBELISK_RT_OK)
+      return fail(status);
+  }
+  uint64_t token = obelisk_rt_v1_scheduler_process_token(context, instance) |
+                   OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  if (plan->options & OBELISK_RT_SPAWN_PROGRAM_OWNER)
+    obelisk_rt_v1_scheduler_fail(
+        context, obelisk_rt_v1_scheduler_program_register(context, token,
+                                                          plan->program_owner));
+  return token;
+}
+
+extern "C" void obelisk_rt_v1_process_spawn_batch(
+    obelisk_rt_context *context,
+    const obelisk_rt_process_spawn_entry_v1 *entries, uint32_t count) {
+  if (!context || (count && !entries)) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    return;
+  }
+  // Match the original sequence of calls, including after a failed spawn.
+  // scheduler_fail retains the first error; later calls retain their ownership
+  // and process-token effects until normal scheduler cleanup.
+  for (uint32_t index = 0; index != count; ++index)
+    obelisk_rt_v1_process_spawn(context, entries[index].plan,
+                                entries[index].captures);
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t initialRank, const uint32_t *continuations,

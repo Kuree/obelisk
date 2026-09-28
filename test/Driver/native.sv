@@ -75,7 +75,7 @@ endmodule
 // LLVM: target triple = "{{.*}}-unknown-linux-gnu"
 // LLVM-DAG: @unit_0.__obelisk_schedule_ranks = internal constant [1 x i32] [i32 2]
 // LLVM-DAG: @__obelisk_aot_schedule_plan_v1
-// LLVM-DAG: call i32 @obelisk_rt_v1_scheduler_add_aot
+// LLVM-DAG: call i64 @obelisk_rt_v1_process_spawn
 // LLVM: define i32 @main(i32
 // LLVM-SAME: ptr
 // LLVM: call i32 @obelisk_rt_v1_scheduler_install_aot

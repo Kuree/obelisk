@@ -2,7 +2,9 @@
 
 Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W1's optional
-attribute storage work and W3–W11 remain outstanding. W6a and W4 are next. Paths use the current
+attribute storage work and W3–W11 remain outstanding, except for W4's shared
+spawn path and constant-capture batching, now implemented. W4's execution
+wrappers and W6a remain next. Paths use the current
 Schedule dialect layout; historical line numbers below are navigation hints,
 not stable references. This existing plan is updated in place.
 
@@ -117,6 +119,50 @@ checks already passed. They were corrected without weakening their call or
 noinline requirements, and all four affected tests on rerun passed. The new
 regressions verify split-ramp side-effect absence and safe destruction before
 first activation, alongside existing native/bytecode reconstruction tests.
+
+## Current W4 spawning results
+
+The shared spawn path and constant-capture tables are implemented; execution
+wrapper deduplication is still outstanding. Commands, measurements, and logs
+are in `tmp/ir-reduction-w4/`. Matched runs use the saved W2 compiler and the
+current compiler with `-O3 -fno-lto --compile-threads=8` and the same runtime.
+
+| Metric | W2 baseline | W4 spawning |
+| --- | ---: | ---: |
+| RSD native compile | 141.25 s | 142.37 s |
+| RSD compile peak RSS | 4,991,380 KiB | 4,970,704 KiB |
+| RSD LLVM optimization/codegen wall time | 19.50 s | 18.08 s |
+| RSD .text bytes | 18,424,623 | 16,720,287 |
+| RSD executable bytes | 153,452,632 | 153,490,432 |
+| ibex native compile | 25.92 s | 27.46 s |
+| ibex .text bytes | 7,086,095 | 6,681,327 |
+| PicoRV native compile | 2.89 s | 2.72 s |
+| PicoRV O3 LLVM lines | 81,986 | 80,394 |
+| PicoRV spawn-helper LLVM lines | 2,966 | 1,318 |
+
+RSD has two startup batches of 769 and 6194 rows; ibex has one of 1704;
+PicoRV has one of 58. Existing process identities, scheduler rows, and frozen
+bytecode remain: all three embedded bytecode images are byte-for-byte equal
+to their baselines. RSD .text falls 9.3%, but tables, captures, and relocation
+metadata offset that reduction in total executable size. There is no
+established total compile-time speedup. The initial uncached implementation
+took 146.50 s for RSD and 25.84 s for ibex; cached symbol lookup reduced RSD's
+plain-body scan from 5.65 s to 0.07 s. The final executables are byte-identical
+to that initial implementation. Keep both timing samples in the artifacts;
+the ibex variation in particular is not evidence of a repeatable regression.
+
+The full suite passed 2907 tests with 17 expected failures and seven obsolete
+IR checks for scheduler calls moved into the shared runtime. Those checks were
+updated; all eight affected tests on rerun passed. After the final lookup
+change, 92 focused tests passed, including the new spawn tests and coroutine
+handoff tests. All 222 process-runtime tests pass. The new dynamic-capture
+regression passes at O0 generic native, O3 automatic native, and bytecode.
+RSD's architectural HelloWorld oracle and PicoRV's baseline-output comparison
+pass. Ibex retains the baseline lifecycle status 14 and matching output.
+PicoRV's seven interleaved runtime samples had medians 0.29784/0.30221 s;
+no runtime speedup is claimed. Five-run perf averages were
+1,445,169,664/1,444,361,444 cycles and 3,522,148,388/3,514,268,115 instructions,
+with elapsed time 0.30541/0.30504 s; runtime remains essentially unchanged.
 
 ## LRM correctness review
 
@@ -317,29 +363,53 @@ managed roots, process handles, disable records, and wait operands first.
 
 ### W4. Table-driven per-process wrappers and spawning
 
-- **Today:**
-  - `.__obelisk_native_execute`, `.__obelisk_native_destroy` and
-    `.__obelisk_native_requirements` are generated per process in
-    `SimulationProcessWrapperLowering.cpp` and
-    `SimulationProcessDescriptorLowering.cpp`.
-  - `.__obelisk_spawn` is generated per process in
-    `SimulationFunctionBodyLowering.cpp:52`.
-  - These wrappers differ only in constants.
-  - `__obelisk_root` unrolls every spawn call plus the
-    `native_state_retain`/`scheduler_fail` pairs: 1,702 spawns and 4,358 pairs
-    in ibex.
-- **Change:**
-  - One runtime spawn function that takes a descriptor, capture words and
-    scheduling data (the continuation and rank tables, which are already data).
-  - `__obelisk_root` loops over a static spawn table.
-  - Keep generated wrappers only for processes that still use coroutines. Even
-    there, execute and destroy can be generic, because the resume and destroy
-    pointers live in the coroutine frame header. Use LLVM's supported coroutine
-    intrinsics/generated ABI glue; do not hard-code a private LLVM frame-header
-    layout into the portable runtime without an explicit ABI contract.
-- **Ordering:** keep root spawn order identical, since it fixes time-zero
-  startup order. Preserve capture retain/release, partial-spawn failure, status
-  propagation, and destruction ownership when replacing code with table rows.
+- **Implemented: shared spawn path and startup tables.**
+  - `SimulationProcessActivationLowering.cpp` emits a constant spawn plan with
+    the descriptor, capture-prefix size, scheduling flags, actor slot, entry
+    rank, continuation/rank arrays, bytecode continuations, priming option,
+    and program owner. A typed helper marshals dynamic captures into a zeroed
+    buffer with the canonical frame's offsets/alignment.
+  - `obelisk_rt_v1_process_spawn` performs context-bound allocation, capture
+    copying, scheduler insertion, optional internal-waiter priming, token
+    tagging, and program registration once in the runtime. The existing
+    process descriptor ABI and canonical frame layout remain unchanged.
+  - `SimulationFunctionBodyLowering.cpp` batches consecutive unused spawns
+    with constant i64 captures into a table. The runtime consumes rows in
+    original order. Constant definitions may intervene; other operations,
+    dynamic captures, used process tokens, and changed contexts end a batch.
+    Narrow/wide captures still use typed helpers. Symbol lookup is cached
+    during the scan to avoid a symbol-table walk for each root spawn.
+  - Keep the root spawn shim: native VPI lifecycle materialization locates
+    that call in `main` to place startup callbacks correctly. Batching applies
+    within process bodies. Open-world LLVM/object emission retains exported
+    spawn helpers; executable symbol pruning removes unreferenced helpers.
+  - Keep automatic-state retain/release at its existing position. Retains and
+    status calls form batching boundaries. No eager execution or scheduler
+    event is added. Continue later rows after failure just as the old unrolled
+    calls did, retaining the first scheduler error.
+  - Allocation/insertion failures leave no scheduler-owned instance. After
+    insertion, priming failure leaves cleanup with the scheduler. Program
+    registration and logical-token behavior are preserved.
+- **Remaining: execution wrappers.**
+  - `.__obelisk_native_execute`, `.__obelisk_native_destroy`, and
+    `.__obelisk_native_requirements` are still generated per process in
+    `SimulationProcessWrapperLowering.cpp` and referenced by process
+    descriptors. Their deduplication is not part of the completed spawn slice.
+  - Use LLVM's supported coroutine intrinsics/generated ABI glue for generic
+    resume/destroy. Do not hard-code a private LLVM frame-header layout into
+    the portable runtime without an explicit ABI contract.
+  - W3's coroutine-free entries can later share execution/requirements hooks.
+- **LRM review:** §§4.3/4.6/4.7 require equivalent observable scheduling and
+  procedural order; §9.3.2 delays fork-child execution until the parent blocks
+  or terminates. Batching preserves the ordered sequence of the same scheduler
+  insertions, actor identities, continuation ranks, random-stream allocation,
+  and startup/home-region flags. Internal detached-waiter priming retains its
+  existing admission checks and occurs at the same point in that sequence.
+- **Validation:** MLIR tests cover constant row order and batching boundaries,
+  actor/rank/flag fields, and partitioned LLVM verification. Runtime tests
+  cover capture copying, failure cleanup, priming ownership, and token identity.
+  A dynamic fork regression checks padded 65-bit value/XZ captures after a
+  delay with generic native, automatic native, and bytecode execution.
 
 ### W5. Promotion machinery (keeps runtime switching)
 
@@ -494,7 +564,8 @@ and exercise X injection and recovery in the middle of a run.
 
 1. W1 startup-product reduction: implemented. Optional attribute storage work is deferred.
 2. W2 initial suspend: implemented and validated.
-3. W6a and W4, which remove process count and wrappers with no semantic change.
+3. W4 shared spawning and constant startup tables are implemented; finish
+   execution-wrapper deduplication and W6a port-copy admission next.
 4. W3, which needs the ABI addition, then W7, which uses W3's continuation-entry
    model and adds the internal-range record from fusion.
 5. W5, W8 and W9.

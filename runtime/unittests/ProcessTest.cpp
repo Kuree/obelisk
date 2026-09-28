@@ -10782,6 +10782,143 @@ void initializeWait(void *frame) {
   *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 17, 0};
 }
 
+TEST(ProcessSpawn, BatchPreservesCapturesOrderRanksAndFailureOwnership) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  uint32_t continuation = 1, rank = 17;
+  obelisk_rt_process_spawn_plan_v1 plan{&fixture.descriptor,
+                                        8,
+                                        &continuation,
+                                        &rank,
+                                        nullptr,
+                                        0,
+                                        OBELISK_RT_SCHEDULE_STARTUP,
+                                        UINT32_MAX,
+                                        9,
+                                        1,
+                                        0,
+                                        0};
+  uint64_t first = 0x123456789abcdef0, second = 0xfedcba9876543210;
+  auto invalid = plan;
+  invalid.schedule_flags = UINT32_MAX;
+  const obelisk_rt_process_spawn_entry_v1 entries[] = {
+      {&plan, &first}, {&invalid, &first}, {&plan, &second}};
+  obelisk_rt_v1_process_spawn_batch(context, entries, 3);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(context->scheduledProcesses.size(), 2u);
+  for (unsigned index = 0; index != 2; ++index) {
+    const auto &process = context->scheduledProcesses[index];
+    EXPECT_EQ(process.token, index + 1);
+    EXPECT_EQ(process.insertionSequence, index + 1);
+    EXPECT_EQ(process.scheduleRank, 9u);
+    EXPECT_TRUE(process.startupProcess);
+    ASSERT_EQ(process.continuationRanks.size(), 1u);
+    EXPECT_EQ(process.continuationRanks[0], std::make_pair(1u, 17u));
+    uint64_t capture = 0;
+    std::memcpy(&capture, process.instance->frame, sizeof(capture));
+    EXPECT_EQ(capture, index == 0 ? first : second);
+    const auto *frame = static_cast<const uint8_t *>(process.instance->frame);
+    EXPECT_TRUE(std::all_of(frame + 8, frame + 40,
+                            [](uint8_t byte) { return byte == 0; }));
+    EXPECT_EQ(process.instance->native_handle, nullptr);
+    EXPECT_EQ(process.instance->continuation, 0u);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(ProcessSpawn, RejectsInvalidCaptureAndDescriptorBeforeInsertion) {
+  Fixture fixture;
+  for (unsigned failure = 0; failure != 4; ++failure) {
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    obelisk_rt_process_spawn_plan_v1 plan{
+        &fixture.descriptor, 8, nullptr, nullptr, nullptr, 0, 0,
+        UINT32_MAX,          0, 0,       0,       0};
+    uint64_t capture = 42;
+    if (failure == 0)
+      plan.capture_size = fixture.layout.frame_size + 1;
+    if (failure == 1)
+      plan.descriptor = nullptr;
+    if (failure == 2)
+      plan.options = UINT32_MAX;
+    EXPECT_EQ(obelisk_rt_v1_process_spawn(context, &plan,
+                                          failure == 3 ? nullptr : &capture),
+              0u);
+    EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_TRUE(context->scheduledProcesses.empty());
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(ProcessSpawn, CreationAndAOTInsertionFailuresDoNotTransferOwnership) {
+  for (bool invalidDescriptor : {true, false}) {
+    Fixture fixture;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    if (invalidDescriptor)
+      fixture.layout.checksum ^= 1;
+    obelisk_rt_process_spawn_plan_v1 plan{&fixture.descriptor,
+                                          0,
+                                          nullptr,
+                                          nullptr,
+                                          nullptr,
+                                          0,
+                                          0,
+                                          invalidDescriptor ? UINT32_MAX : 0,
+                                          0,
+                                          0,
+                                          0,
+                                          0};
+    EXPECT_EQ(obelisk_rt_v1_process_spawn(context, &plan, nullptr), 0u);
+    EXPECT_NE(context->schedulerStatus, OBELISK_RT_OK);
+    EXPECT_TRUE(context->scheduledProcesses.empty());
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(ProcessSpawn, PrimingFailureLeavesInstanceOwnedByScheduler) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  nativeExecuteStatus = OBELISK_RT_OUT_OF_RESOURCES;
+  obelisk_rt_process_spawn_plan_v1 plan{&fixture.descriptor,
+                                        0,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        0,
+                                        OBELISK_RT_SCHEDULE_DETACHED_CONTROLS,
+                                        UINT32_MAX,
+                                        0,
+                                        0,
+                                        0,
+                                        OBELISK_RT_SPAWN_PRIME};
+  EXPECT_EQ(obelisk_rt_v1_process_spawn(context, &plan, nullptr), 0u);
+  EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OUT_OF_RESOURCES);
+  ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+  ASSERT_NE(context->scheduledProcesses.front().instance, nullptr);
+  EXPECT_EQ(context->scheduledProcesses.front().instance->lifecycle,
+            OBELISK_RT_PROCESS_SUSPENDED);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(ProcessSpawn, ReturnsTaggedLogicalProcessIdentity) {
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_process_spawn_plan_v1 plan{
+      &fixture.descriptor, 0, nullptr, nullptr, nullptr, 0, 0,
+      UINT32_MAX,          0, 0,       0,       0};
+  uint64_t token = obelisk_rt_v1_process_spawn(context, &plan, nullptr);
+  EXPECT_EQ(token, OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | 1);
+  uint32_t state = UINT32_MAX;
+  EXPECT_EQ(obelisk_rt_v1_process_status(context, token, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(state, OBELISK_RT_PROCESS_RUNNING);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(ProcessInstance, InitializesOutputRecordsOnFailure) {
   void *frame = reinterpret_cast<void *>(uintptr_t{1});
   uint64_t frameSize = 7;
