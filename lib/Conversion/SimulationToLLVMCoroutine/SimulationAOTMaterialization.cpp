@@ -5232,6 +5232,14 @@ FailureOr<bool> makeNativeEvalPlan(
       builder.setInsertionPointToStart(nextDynamic);
   }
 
+  size_t scalarCount = 0;
+  for (const auto &roots : scalarRootsByWord)
+    scalarCount += roots.size();
+  Block *scalarEntry = builder.getInsertionBlock();
+  llvm::SmallPtrSet<Block *, 32> beforeScalar;
+  for (Block &block : nbaCommit.getBody())
+    beforeScalar.insert(&block);
+
   SmallVector<Block *> wordBlocks(nbaDirtyWordCount);
   for (uint32_t word = 0; word != nbaDirtyWordCount; ++word)
     if (!scalarRootsByWord[word].empty()) {
@@ -5726,6 +5734,11 @@ FailureOr<bool> makeNativeEvalPlan(
     }
   }
 
+  SmallVector<Block *> scalarBlocks;
+  for (Block &block : nbaCommit.getBody())
+    if (!beforeScalar.contains(&block))
+      scalarBlocks.push_back(&block);
+
   builder.setInsertionPointToStart(genericNBACommit);
   if (directActivationWordCount != 0 && !clockKernels.empty()) {
     Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
@@ -5755,6 +5768,26 @@ FailureOr<bool> makeNativeEvalPlan(
   builder.setInsertionPointToStart(directDone);
   LLVM::ReturnOp::create(builder, location,
                          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+
+  if (scalarCount >= 32) {
+    // IEEE 1800-2023 6.3.1, 10.4.2: retain separate canonicalizing and
+    // value-only commits. The latter already has a destination proof.
+    builder.setInsertionPointAfter(nbaCommit);
+    auto fast =
+        cast<LLVM::LLVMFuncOp>(builder.clone(*nbaCommit.getOperation()));
+    fast.setSymName("__obelisk_aot_static_nba_commit_two_state_fast_v1");
+    fast.setLinkage(LLVM::Linkage::Internal);
+    scalarEntry->getTerminator()->erase();
+    for (Block *block : scalarBlocks)
+      block->dropAllReferences();
+    for (Block *block : scalarBlocks)
+      block->erase();
+    builder.setInsertionPointToEnd(scalarEntry);
+    emitScalarNBACommitLoop(builder, module, nbaCommit, genericNBACommit,
+                            nbaCommitEntry->getArgument(2), staticNBAPlan,
+                            scalarRootsByWord, fanoutEntries, activatedNodes,
+                            activatedDirect, directActivationWordCount);
+  }
 
   // The generated coordinator consumes eval latches and publishes model
   // ingress itself. Runtime-owned actors instead stage canonical accumulators

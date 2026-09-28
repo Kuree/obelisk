@@ -3046,13 +3046,21 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
       ArrayAttr::get(module.getContext(),
                      {StringAttr::get(module.getContext(), "noinline")}));
 
+  auto fastClone = module.lookupSymbol<LLVM::LLVMFuncOp>(fastTwoStateName);
+  if (!fastClone) {
+    builder.setInsertionPointAfter(clone);
+    fastClone = cast<LLVM::LLVMFuncOp>(builder.clone(*clone.getOperation()));
+    fastClone.setSymName(fastTwoStateName);
+  }
   SmallVector<LLVM::LoadOp> stagedUnknownLoads;
-  clone.walk([&](Operation *operation) {
-    if (auto load = dyn_cast<LLVM::LoadOp>(operation);
-        load && ::obelisk::schedule::has<
-                    ::obelisk::schedule::Field::EvalTwoStateZeroUnknown>(load))
-      stagedUnknownLoads.push_back(load);
-  });
+  for (auto variant : {clone, fastClone})
+    variant.walk([&](Operation *operation) {
+      if (auto load = dyn_cast<LLVM::LoadOp>(operation);
+          load &&
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalTwoStateZeroUnknown>(load))
+        stagedUnknownLoads.push_back(load);
+    });
   for (LLVM::LoadOp load : stagedUnknownLoads) {
     builder.setInsertionPoint(load);
     load.replaceAllUsesWith(
@@ -3060,9 +3068,6 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
             .getResult());
     load.erase();
   }
-  builder.setInsertionPointAfter(clone);
-  auto fastClone = cast<LLVM::LLVMFuncOp>(builder.clone(*clone.getOperation()));
-  fastClone.setSymName(fastTwoStateName);
   // This compact value-plane-only barrier is part of the Tier-1 slot
   // coordinator, not a handoff boundary. Leave it to normal profitability:
   // forcing a large fixed-root barrier into run_until inflates the hot loop

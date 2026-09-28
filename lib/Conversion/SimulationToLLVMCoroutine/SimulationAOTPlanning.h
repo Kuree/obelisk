@@ -19,6 +19,10 @@
 
 #include <tuple>
 
+namespace mlir::LLVM {
+class LLVMFuncOp;
+}
+
 namespace llvm {
 class DataLayout;
 }
@@ -263,6 +267,15 @@ buildNativePeriodicAliasPlan(
     mlir::ArrayRef<NativePeriodicClock> periodicClocks);
 mlir::LogicalResult materializeNativePeriodicClockPlan(
     mlir::ModuleOp module, mlir::ArrayRef<NativePeriodicClock> periodicClocks);
+void emitScalarNBACommitLoop(
+    mlir::OpBuilder &builder, mlir::ModuleOp module,
+    mlir::LLVM::LLVMFuncOp function, mlir::Block *exit, mlir::Value region,
+    const NativeStaticNBAPlan &plan,
+    mlir::ArrayRef<llvm::SmallVector<uint32_t>> rootsByWord,
+    mlir::ArrayRef<obelisk_rt_static_fanout_entry> fanout,
+    mlir::Value activatedNodes, mlir::Value activatedDirect,
+    unsigned directWords);
+
 mlir::LogicalResult makeNativeAOTPlanLegacy(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     uint32_t actorCount,

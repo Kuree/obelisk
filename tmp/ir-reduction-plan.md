@@ -7,9 +7,10 @@ bytecode pruning are implemented. W5's shared readiness scanner, fallback
 outlining, and direct variant selection are implemented; the optional group
 sweep is covered by the existing ranked-group specialization. W6a's strict copy
 admission, coroutine-free activation, and shared native copy kernels are
-implemented. W1's optional attribute storage work, W6b, and W8–W11 remain
-outstanding. Existing four-state/two-state eval bodies
-remain, now selected by direct branches. Paths use the current Schedule dialect
+implemented. W8's scalar commit-code reduction is implemented, preserving
+unrolled promoted fast paths and the runtime accumulator ABI. W1's optional
+attribute storage work, W6b, and W9–W11 remain outstanding. Existing
+four-state/two-state eval bodies remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
 This existing plan is updated in place.
 
@@ -1009,21 +1010,73 @@ bytecode scope.
 
 ### W8. NBA commit layout
 
-- **Today:**
-  - `__obelisk_aot_static_nba_commit_v1`, `…_two_state_v1` and
-    `…_two_state_fast_v1` (`SimulationToLLVMCoroutine.cpp:4264`) are unrolled
-    per root.
-  - Each root has separate `__obelisk_eval_nba_{valid,offset,value,unknown}_N`
-    globals.
-- **Change:**
-  - Store roots as structure-of-arrays, grouped by width class.
-  - Loop over the dirty-roots bitmask only for roots whose existing merge-safe
-    proof permits that ordering. Otherwise retain the ordered queue and
-    cross-root execution order, including observer-visible transitions.
-  - Use one routine with a has-unknown-plane parameter, or two thin
-    instantiations.
-  - Keep the ordered-queue semantics (§4.6(b), §10.4.2) and the merge-safe root
-    rules.
+- **Current-implementation correction:** fixed roots already use
+  `obelisk_rt_generated_nba_accumulator_256` storage and hierarchical dirty
+  masks; the `__obelisk_eval_nba_{valid,offset,value,unknown}_N` globals are
+  per-site latches, not the general fixed-root layout. Ordered updates drain
+  through `__obelisk_eval_ordered_nba_queue_v1`. The old proposal must not turn
+  that queue into a root bitmask or replace runtime-visible accumulator storage
+  with an incompatible payload layout.
+- **Implemented:** retain direct unrolled scalar commits for barriers with fewer
+  than 32 scalar roots and for every promoted value-only fast path. Larger
+  four-state/canonicalizing barriers use shared constant columns for root
+  offsets, width classes, masks, region/clearing rules, accumulator pointers,
+  and fanout ranges. A loop visits set dirty bits in ascending root order and
+  uses five bounded memory-access classes (8/16/32/64/72 bits), preserving
+  neighboring bits and the ninth byte of an unaligned 64-bit root. Fanout is
+  table-driven, with separate change/posedge/negedge/both-edge predicates.
+- The existing three value-domain modes remain distinct: four-state commits,
+  known-payload commits that canonicalize unknown destinations, and promoted
+  value-plane-only commits. The first two share the tables and bounded generated
+  code. The fast body is preserved before replacing scalar commits in the source
+  barrier; the existing proof-aware specialization still removes its staged and
+  canonical unknown-plane work.
+  A single has-unknown-plane flag would conflate the first two unknown-plane
+  obligations. Runtime accumulator payloads retain their ABI and authoritative
+  storage; only the commit metadata becomes structure-of-arrays. Packing those
+  payloads would require a separate runtime ABI change.
+- **LRM review:** §§4.6(b), 10.4.2 require the existing ordered queue and NBA
+  evaluation/update separation. Only roots already admitted to scalar
+  accumulation are selected by the loop, in the same order as before. Fanout
+  publication remains at the barrier epilogue (§4.5); §9.4.2/Table 9-2 defines
+  the four-state edge predicates. Canonical X/Z stores still pass through the
+  existing exact-delta proof invalidation and recovery machinery (§6.3.1).
+- **Performance-driven revision:** using the table loop on the promoted fast
+  path increased PicoRV median runtime from 0.2943 to 0.5571 s in five
+  alternating pairs (+89.3%), despite reducing code size. Retain that path's
+  unrolled specialization. Initial-loop measurements are saved separately in
+  `tmp/ir-reduction-w8/initial-loop/`; they are not final implementation results.
+- **Validation:** full build and final full suite pass (2,937 passed,
+  17 expected failures). The new 65-root driver regression checks sparse/dense
+  updates across a dirty-word boundary, widths 1/7/9/17/33/63/64, X/Z injection,
+  recovery, and four-state edge counts at O0/O3 against the generic scheduler.
+  LLVM checks require tables in the four-state barrier and reject table access
+  in the promoted dispatcher. Existing ordered-NBA and promotion oracles pass.
+- **Final measurements** (`tmp/ir-reduction-w8/`, baseline `dd8c1048`,
+  `-O3 -fno-lto --compile-threads=8`, one matched compile per variant):
+  - RSD compile 145.92 → 129.69 s (−11.12%), peak RSS
+    4,584,480 → 4,578,988 KiB (−0.12%). The final executable is byte-identical
+    to the baseline: `.text` 14,636,111 bytes, executable 130,222,344 bytes.
+    Generated commit tables are pruned in this workload; the reduction acts on
+    discarded compiler IR, not retained runtime code. The single compile pair
+    does not establish a repeatable timing gain. There is **no RSD runtime
+    speedup** from this change. Baseline HelloWorld runs pass the saved register
+    and serial-output oracles, which also validate the identical final binary.
+  - Ibex compile 23.68 → 23.16 s, peak RSS 1,176,972 → 1,160,364 KiB;
+    `.text` 5,895,663 → 5,863,647 bytes (−0.54%), executable
+    17,660,968 → 17,650,576 bytes. Both variants retain the same baseline
+    status-14 lifecycle failure and matching output; this is not a functional
+    pass.
+  - PicoRV compile 2.62 → 2.73 s, peak RSS 268,576 → 261,812 KiB;
+    `.text` 3,980,559 → 3,938,159 bytes (−1.07%), executable
+    7,090,408 → 7,073,568 bytes. Five alternating runtime pairs all succeed
+    with matching output: medians 0.2943 → 0.2961 s (+0.62%), with overlapping
+    ranges. Treat this as flat, not a speedup. The measured 89% regression from
+    applying the loop to the fast path is removed.
+  - Bytecode sections are byte-identical in all three models. No runtime ABI
+    or ordered-queue layout changes are required. Cold four-state/canonicalizing
+    commits trade direct specialization for a smaller shared loop; workloads
+    dominated by these paths may still have different runtime tradeoffs.
 
 ### W9. State-plane initializers
 
@@ -1072,7 +1125,8 @@ bytecode scope.
    retention is implemented using the actual native fallback contract.
 5. W5 readiness, fallback outlining, and direct variants are implemented;
    the optional sweep is covered by existing ranked-group specialization.
-   W8 NBA commit layout is next, followed by W9 state-plane initializers.
+   W8 scalar commit-code reduction is implemented with the runtime ABI and
+   promoted fast paths preserved. W9 state-plane initializers are next.
 6. W6b net collapsing within the LRM's explicit permissions, with W7's access
    analysis where needed. Variable collapsing remains deferred pending proof.
 7. W10 and W11 as independent follow-up work.
