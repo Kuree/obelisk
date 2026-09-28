@@ -29,11 +29,11 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
 
   struct Certificate {
     LLVM::GlobalOp global;
-    FlatSymbolRefAttr fallback;
     uint64_t latch = 0;
     uint64_t pendingBit = 0;
     DenseI64ArrayAttr ranges;
     bool nba = false;
+    bool route = false;
   };
   SmallVector<Certificate> certificates;
   constexpr auto kernelAttr =
@@ -45,9 +45,6 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
       "__obelisk_eval_promotion_pending_mask_v1");
   auto routePending = module.lookupSymbol<LLVM::GlobalOp>(
       "__obelisk_eval_route_promotion_pending_v1");
-  // Certificate validation only reads existing functions. Avoid a full
-  // module scan for every fallback referenced by a route.
-  SymbolTable symbols(module);
   for (auto global : module.getOps<LLVM::GlobalOp>()) {
     if (auto kernels = ::obelisk::schedule::get<kernelAttr>(global)) {
       auto latchType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
@@ -69,7 +66,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
           return global.emitError(
               "kernel proof index has invalid certificate identity");
         certificates.push_back(
-            {global, {}, latch.getUInt(), bit.getUInt(), ranges});
+            {global, latch.getUInt(), bit.getUInt(), ranges});
       }
       ::obelisk::schedule::remove<kernelAttr>(global);
     }
@@ -86,12 +83,11 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
         if (!bit || !ranges || bit.getUInt() / 64 >= wordType.getNumElements())
           return global.emitError(
               "NBA proof index has invalid certificate identity");
-        certificates.push_back({global, {}, bit.getUInt(), 0, ranges, true});
+        certificates.push_back({global, bit.getUInt(), 0, ranges, true});
       }
       ::obelisk::schedule::remove<nbaAttr>(global);
     }
     if (auto route = ::obelisk::schedule::get<routeAttr>(global)) {
-      auto fallback = route.getFallback();
       auto ranges = route.getRanges();
       auto pendingBit = route.getPendingBit();
       auto pendingType =
@@ -99,16 +95,15 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
               ? dyn_cast<LLVM::LLVMArrayType>(routePending.getGlobalType())
               : LLVM::LLVMArrayType{};
       if (!global.getSymName().starts_with(
-              "__obelisk_eval_function_route_v1_") ||
-          !fallback || !ranges || !pendingBit || !pendingType ||
+              "__obelisk_eval_selected_variant_v1_") ||
+          !ranges || !pendingBit || !pendingType ||
           !pendingType.getElementType().isInteger(64) ||
           pendingBit.getUInt() / 64 >= pendingType.getNumElements() ||
-          !isa<LLVM::LLVMPointerType>(global.getGlobalType()) ||
-          !symbols.lookup<LLVM::LLVMFuncOp>(fallback.getValue()))
+          !global.getGlobalType().isInteger(8))
         return global.emitError(
-            "route proof index has invalid fallback storage");
+            "route proof index has invalid selector storage");
       certificates.push_back(
-          {global, fallback, 0, pendingBit.getUInt(), ranges});
+          {global, 0, pendingBit.getUInt(), ranges, false, true});
       ::obelisk::schedule::remove<routeAttr>(global);
     }
   }
@@ -218,7 +213,8 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
             record = LLVM::InsertValueOp::create(b, location, record, value,
                                                  ArrayRef<int64_t>{field});
           };
-          if (certificate.fallback) {
+          if (certificate.route) {
+            insert(address, 0);
             insert(byteGEP(b, location,
                            LLVM::AddressOfOp::create(b, location, pointer,
                                                      routePending.getSymName()),
@@ -227,10 +223,6 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
             insert(llvmConstant(b, location, i64,
                                 uint64_t{1} << (certificate.pendingBit % 64)),
                    2);
-            insert(address, 3);
-            insert(LLVM::AddressOfOp::create(b, location, pointer,
-                                             certificate.fallback.getValue()),
-                   4);
           } else if (certificate.nba) {
             insert(byteGEP(b, location, address,
                            (certificate.latch / 64) * sizeof(uint64_t)),
@@ -257,7 +249,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
       });
 
   // Aggregate entry shortcuts must be recomputed after a dependent proof is
-  // disturbed. Per-kernel latches and per-route pointers remain independent;
+  // disturbed. Per-kernel latches and per-route selectors remain independent;
   // the lookup helper changes only those in its exact overlap result.
   auto reset = getOrDeclareLLVMFunction(
       module, "__obelisk_eval_proof_aggregate_invalidate_v1", voidType, {});

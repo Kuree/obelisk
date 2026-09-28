@@ -24,6 +24,6 @@ def ScheduleNBAProofDependencyAttr : ScheduleAttr<"NBAProofDependency", "nba_pro
   let assemblyFormat = "`<` struct(params) `>`";
 }
 def ScheduleRouteProofDependencyAttr : ScheduleAttr<"RouteProofDependency", "route_proof_dependency"> {
-  let parameters = (ins "::mlir::FlatSymbolRefAttr":$fallback, "::mlir::DenseI64ArrayAttr":$ranges, "::mlir::IntegerAttr":$pendingBit);
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$ranges, "::mlir::IntegerAttr":$pendingBit);
   let assemblyFormat = "`<` struct(params) `>`";
 }

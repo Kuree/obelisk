@@ -45,6 +45,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -58,6 +59,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/InliningUtils.h"
 #include "mlir/Transforms/Mem2Reg.h"
 #include "mlir/Transforms/RegionUtils.h"
 
@@ -1910,11 +1912,12 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     LLVM::LLVMFuncOp fourStateFallback;
     LLVM::LLVMFuncOp checkpointFallback;
     LLVM::LLVMFuncOp checkpointBody;
+    LLVM::LLVMFuncOp variantDispatcher;
     DenseI64ArrayAttr ranges;
     bool independentEntry = false;
     std::optional<uint32_t> checkpointActor;
     std::optional<uint32_t> checkpointContinuation;
-    std::string globalName;
+    std::string selectorName;
     std::string dispatcherName;
     std::string fourStateFallbackName;
     std::string checkpointBodyName;
@@ -1976,12 +1979,14 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
          {},
          {},
          {},
+         {},
          ranges,
          ::obelisk::schedule::has<
              ::obelisk::schedule::Field::EvalConditionallyTwoState>(function),
          checkpointActor,
          checkpointContinuation,
-         (Twine("__obelisk_eval_function_route_v1_") + Twine(routeIndex)).str(),
+         (Twine("__obelisk_eval_selected_variant_v1_") + Twine(routeIndex))
+             .str(),
          (Twine("__obelisk_eval_path_dispatch_v1_") + Twine(routeIndex)).str(),
          (Twine("__obelisk_eval_four_state_fallback_v1_") + Twine(routeIndex))
              .str(),
@@ -2526,10 +2531,10 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       emitTailCall(twoState, route.twoState, false);
       emitTailCall(fourState, route.fourState, true);
     } else {
-      // Indirect route selection must report a four-state leaf to the shared
-      // NBA barrier. Point the cold route at a wrapper that records the
-      // fallback before entering the model body; promotion replaces the
-      // route with the two-state body directly, so the hot edge stays clean.
+      // Route selection must report a four-state leaf to the shared
+      // NBA barrier. The cold branch calls a wrapper that records the
+      // fallback before entering the model body; the promoted branch calls
+      // the two-state body directly, so the hot edge stays clean.
       auto bodyType = route.fourState.getFunctionType();
       builder.setInsertionPointToEnd(module.getBody());
       route.fourStateFallback =
@@ -2558,31 +2563,56 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
                              call.getResults());
     }
-    builder.setInsertionPointToStart(module.getBody());
-    auto global = LLVM::GlobalOp::create(
-        builder, route.twoState.getLoc(), pointer, false,
-        LLVM::Linkage::Internal, route.globalName, Attribute{}, 8);
-    Block *initializer = new Block;
-    global.getInitializerRegion().push_back(initializer);
-    builder.setInsertionPointToStart(initializer);
-    LLVM::ReturnOp::create(
-        builder, route.twoState.getLoc(),
-        LLVM::ZeroOp::create(builder, route.twoState.getLoc(), pointer));
+    if (!route.pathKnownProbe) {
+      builder.setInsertionPointToStart(module.getBody());
+      auto global = LLVM::GlobalOp::create(
+          builder, route.twoState.getLoc(), i8, false, LLVM::Linkage::Internal,
+          route.selectorName, builder.getI8IntegerAttr(0), 1);
+      // IEEE 1800-2023 6.3.1, 6.8: select two-state execution only after its
+      // exact proof succeeds; actual X/Z writes revoke that selection.
+      if (!route.ranges.empty())
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalRouteProofDependencies>(
+            global,
+            schedule::RouteProofDependencyAttr::get(
+                context, route.ranges, builder.getI64IntegerAttr(routeIndex)));
 
-    // Installation seeds routes before draining startup. Checkpoint re-entry
-    // preserves selections (IEEE 1800-2023 6.8); promotion follows successful
-    // preparation/coordinator exits and invalidation follows canonical writes.
-    StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
-                         : route.fourStateFallback
-                             ? route.fourStateFallback.getSymName()
-                             : route.fourState.getSymName();
-    if (!route.pathKnownProbe && !route.ranges.empty())
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalRouteProofDependencies>(
-          global,
-          schedule::RouteProofDependencyAttr::get(
-              builder.getContext(), FlatSymbolRefAttr::get(context, fallback),
-              route.ranges, builder.getI64IntegerAttr(routeIndex)));
+      builder.setInsertionPointToEnd(module.getBody());
+      route.variantDispatcher = LLVM::LLVMFuncOp::create(
+          builder, route.twoState.getLoc(),
+          (Twine("__obelisk_eval_variant_dispatch_v1_") + Twine(routeIndex))
+              .str(),
+          route.twoState.getFunctionType());
+      detail::copyNativePartition(route.twoState, route.variantDispatcher);
+      route.variantDispatcher.setPrivate();
+      route.variantDispatcher.setLinkage(LLVM::Linkage::Internal);
+      route.variantDispatcher.setAlwaysInline(true);
+      Block *entry = route.variantDispatcher.addEntryBlock(builder);
+      Block *twoState = new Block, *fourState = new Block;
+      route.variantDispatcher.getBody().push_back(twoState);
+      route.variantDispatcher.getBody().push_back(fourState);
+      builder.setInsertionPointToStart(entry);
+      Value selected = LLVM::LoadOp::create(
+          builder, route.twoState.getLoc(), i8,
+          LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
+                                    route.selectorName),
+          1);
+      Value known = LLVM::ICmpOp::create(
+          builder, route.twoState.getLoc(), LLVM::ICmpPredicate::ne, selected,
+          detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0));
+      LLVM::CondBrOp::create(builder, route.twoState.getLoc(), known, twoState,
+                             fourState);
+      auto emitCall = [&](Block *block, LLVM::LLVMFuncOp callee) {
+        builder.setInsertionPointToStart(block);
+        auto call = LLVM::CallOp::create(builder, route.twoState.getLoc(),
+                                         callee, entry->getArguments());
+        LLVM::ReturnOp::create(builder, route.twoState.getLoc(),
+                               call.getResults());
+      };
+      emitCall(twoState, route.twoState);
+      emitCall(fourState, route.fourStateFallback);
+    }
+
     ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
     if ((encoded.size() & 1) != 0)
       return route.twoState.emitError("malformed local promotion ranges");
@@ -2691,19 +2721,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
               : LLVM::ICmpOp::create(
                     builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
                     detail::llvmConstant(builder, location, i8, 0));
-      StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
-                           : route.fourStateFallback
-                               ? route.fourStateFallback.getSymName()
-                               : route.fourState.getSymName();
-      Value selected = LLVM::SelectOp::create(
-          builder, location, known,
-          LLVM::AddressOfOp::create(builder, location, pointer,
-                                    route.twoState.getSymName()),
-          LLVM::AddressOfOp::create(builder, location, pointer, fallback));
+      Value selected = LLVM::ZExtOp::create(builder, location, i8, known);
       LLVM::StoreOp::create(builder, location, selected,
                             LLVM::AddressOfOp::create(
-                                builder, location, pointer, route.globalName),
-                            8);
+                                builder, location, pointer, route.selectorName),
+                            1);
       LLVM::BrOp::create(builder, location, ValueRange{}, nextRoute);
       builder.setInsertionPointToStart(nextRoute);
     }
@@ -2805,17 +2827,14 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                       routePromotionDirtyName),
             1);
       for (Route &route : routes) {
-        StringRef fallback = route.dispatcher ? route.dispatcher.getSymName()
-                             : route.fourStateFallback
-                                 ? route.fourStateFallback.getSymName()
-                                 : route.fourState.getSymName();
+        if (route.pathKnownProbe)
+          continue;
         LLVM::StoreOp::create(
             builder, returnOp.getLoc(),
+            detail::llvmConstant(builder, returnOp.getLoc(), i8, 0),
             LLVM::AddressOfOp::create(builder, returnOp.getLoc(), pointer,
-                                      fallback),
-            LLVM::AddressOfOp::create(builder, returnOp.getLoc(), pointer,
-                                      route.globalName),
-            8);
+                                      route.selectorName),
+            1);
       }
     }
   }
@@ -2892,6 +2911,10 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     call.setCallee(clone.getSymName());
   }
 
+  DialectRegistry registry;
+  LLVM::registerInlinerInterface(registry);
+  context->appendDialectRegistry(registry);
+  InlinerInterface inliner(context);
   SmallVector<LLVM::CallOp> calls;
   module.walk([&](LLVM::CallOp call) {
     if (call.getCallee() && routesByFunction.contains(*call.getCallee()))
@@ -2907,7 +2930,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       continue;
     LLVM::LLVMFuncOp caller = call->getParentOfType<LLVM::LLVMFuncOp>();
     if (caller &&
-        (caller == route.dispatcher || caller == route.fourStateFallback))
+        (caller == route.dispatcher || caller == route.fourStateFallback ||
+         caller == route.variantDispatcher))
       continue;
     // A path-guarded route never changes its entry function: the dispatcher
     // itself performs the exact two-state/four-state/checkpoint decision.
@@ -2932,32 +2956,20 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       call.setCallee(route.twoState.getSymName());
       continue;
     }
-    builder.setInsertionPoint(call);
-    Value selected = LLVM::LoadOp::create(
-        builder, call.getLoc(), pointer,
-        LLVM::AddressOfOp::create(builder, call.getLoc(), pointer,
-                                  route.globalName),
-        8);
-    SmallVector<Value> operands{selected};
-    llvm::append_range(operands, call.getArgOperands());
-    auto replacement = LLVM::CallOp::create(
-        builder, call.getLoc(), route.fourState.getFunctionType(), operands);
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalAllowedCallees>(
-        replacement, builder.getArrayAttr([&] {
-          SmallVector<Attribute> allowed{
-              FlatSymbolRefAttr::get(context, route.twoState.getSymName())};
-          if (!route.pathKnownProbe)
-            allowed.push_back(
-                FlatSymbolRefAttr::get(context, route.fourState.getSymName()));
-          if (route.dispatcher)
-            allowed.push_back(
-                FlatSymbolRefAttr::get(context, route.dispatcher.getSymName()));
-          if (route.fourStateFallback)
-            allowed.push_back(FlatSymbolRefAttr::get(
-                context, route.fourStateFallback.getSymName()));
-          return allowed;
-        }()));
-    call.replaceAllUsesWith(replacement.getResults());
+    call.setCallee(route.variantDispatcher.getSymName());
+    // IEEE 1800-2023 4.5/4.6: keep selection at this execution boundary.
+    // Expand only the branch before partitioning can separate its callees.
+    auto clone = [&](OpBuilder &, Region *source, Block *inlineBlock,
+                     Block *postInsertBlock, IRMapping &mapping,
+                     bool shouldClone) {
+      assert(shouldClone && "variant selectors must remain reusable");
+      source->cloneInto(inlineBlock->getParent(),
+                        postInsertBlock->getIterator(), mapping);
+    };
+    if (failed(inlineCall(inliner, clone, cast<CallOpInterface>(*call),
+                          cast<CallableOpInterface>(*route.variantDispatcher),
+                          &route.variantDispatcher.getBody())))
+      return call.emitError("could not expand direct variant selection");
     call.erase();
   }
 

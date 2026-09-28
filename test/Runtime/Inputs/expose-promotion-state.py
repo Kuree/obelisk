@@ -9,8 +9,8 @@ source, output = arguments
 text = Path(source).read_text()
 # Export the private proof-state inspection points and keep the original model
 # main available under another name. The scanner itself remains unchanged.
-symbols = ("__obelisk_state_unknown", "__obelisk_eval_function_route_v1_0",
-               "__obelisk_eval_function_route_v1_1",
+symbols = ("__obelisk_state_unknown", "__obelisk_eval_selected_variant_v1_0",
+               "__obelisk_eval_selected_variant_v1_1",
                "__obelisk_eval_kernel_promotion_latched_v1",
                "__obelisk_eval_promotion_pending_mask_v1",
                "__obelisk_eval_route_promotion_pending_v1",
@@ -21,15 +21,20 @@ if multiword:
     symbols = ("__obelisk_state_unknown",
                "__obelisk_eval_kernel_promotion_latched_v1",
                "__obelisk_eval_promotion_pending_mask_v1",
-               "__obelisk_eval_function_route_v1_0",
-               "__obelisk_eval_function_route_v1_63",
-               "__obelisk_eval_function_route_v1_64",
+               "__obelisk_eval_selected_variant_v1_0",
+               "__obelisk_eval_selected_variant_v1_63",
+               "__obelisk_eval_selected_variant_v1_64",
                "__obelisk_eval_route_promotion_pending_v1",
                "__obelisk_eval_route_promotion_dirty_v1")
 for symbol in symbols:
     old = "llvm.mlir.global internal @" + symbol + "("
     assert text.count(old) == 1, symbol
     text = text.replace(old, "llvm.mlir.global @" + symbol + "(")
+if not multiword:
+    name = "__obelisk_eval_variant_dispatch_v1_0"
+    old = "llvm.func internal @" + name + "("
+    assert text.count(old) == 1, name
+    text = text.replace(old, "llvm.func @" + name + "(")
 assert text.count("llvm.func @main(") == 1
 text = text.replace("llvm.func @main(", "llvm.func @model_main(")
 Path(output).write_text(text)

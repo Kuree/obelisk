@@ -1,6 +1,7 @@
 // RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk -O3 -fno-lto --compile-threads=8 --native-scheduler=auto %s -o %t.auto
+// RUN: %llvm_dist/bin/llvm-nm %t.auto | FileCheck %s --check-prefix=SYMBOLS
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
@@ -57,10 +58,10 @@ module native_tier1_checkpoint_route_retention;
   end
 endmodule
 
-// The hot wrapper must not reseed route pointers or pending proofs. The
+// The hot wrapper must not reseed variant selectors or pending proofs. The
 // plan-installation invalidator remains responsible for fresh executions.
 // LLVM-LABEL: define {{.*}}i32 @__obelisk_aot_schedule_run_v1(
-// LLVM-NOT: @__obelisk_eval_function_route_v1_
+// LLVM-NOT: @__obelisk_eval_selected_variant_v1_
 // LLVM-NOT: @__obelisk_eval_route_promotion_pending_v1
 // LLVM: call i32 @obelisk_rt_v1_scheduler_run_aot_nodes
 // TRACE: eval_dispatches={{[1-9][0-9]*}}
@@ -75,3 +76,6 @@ endmodule
 // OUTPUT-NEXT: 8 1f e0 e0
 // OUTPUT-NEXT: 9 20 df df
 // OUTPUT-NEXT: 10 21 de de
+
+// SYMBOLS-NOT: __obelisk_eval_variant_dispatch_v1_
+// SYMBOLS-NOT: __obelisk_eval_function_route_v1_

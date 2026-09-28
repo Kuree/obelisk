@@ -7,6 +7,7 @@
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
 // RUN: mlir-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.proof.ll
 // RUN: FileCheck %s --check-prefix=OUTLINE < %t.proof.ll
+// RUN: FileCheck %s --check-prefix=DIRECT --implicit-check-not=__obelisk_eval_function_route_v1_ < %t.proof.ll
 // RUN: %llvm_dist/bin/clang++ -O3 %t.proof.ll %S/Inputs/check-promotion-word-scan.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
 
@@ -19,3 +20,11 @@
 // OUTLINE: {{(tail )?}}call void @work.__obelisk_eval_body_0({{.*}}) #[[NOINLINE:[0-9]+]]
 // OUTLINE-NEXT: ret void
 // OUTLINE: attributes #[[NOINLINE]] = { {{.*}}noinline{{.*}} }
+
+// DIRECT-LABEL: define {{.*}}@__obelisk_eval_variant_dispatch_v1_0(
+// DIRECT: load i8, ptr @__obelisk_eval_selected_variant_v1_0
+// DIRECT: br i1
+// DIRECT-NOT: call {{.*}}%{{[0-9]+}}(
+// DIRECT: call void @work.__obelisk_eval_body_0(
+// DIRECT-NOT: call {{.*}}%{{[0-9]+}}(
+// DIRECT: }

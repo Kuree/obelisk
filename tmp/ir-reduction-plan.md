@@ -1,16 +1,16 @@
 # Plan: cut IR generated before LLVM
 
 Status: revised 2026-09-27 after implementation and LRM review. W1's
-startup-product reduction and W2 are implemented and validated. W1's optional
-attribute storage work, the remaining W5 dispatch work, W6b, and W8–W11
-remain outstanding. W5's shared readiness scanner and fallback outlining, plus W7's native bytecode
-pruning are implemented. W4's shared
-spawning, constant-capture batching, and ABI-preserving wrapper reduction are
-implemented. W3 coroutine-free table processes are implemented, validated,
-and measured. W6a strict copy admission, coroutine-free activation, and
-shared native copy kernels are implemented. Existing eval variants remain for
-the W5 dispatch work. Paths use the current Schedule dialect layout; historical line numbers below are navigation hints,
-not stable references. This existing plan is updated in place.
+startup-product reduction and W2 are implemented and validated. W3's table
+processes, W4's spawning/batching and wrapper reductions, and W7's native
+bytecode pruning are implemented. W5's shared readiness scanner, fallback
+outlining, and direct variant selection are implemented. W6a's strict copy
+admission, coroutine-free activation, and shared native copy kernels are
+implemented. W1's optional attribute storage work, W5's optional group sweep,
+W6b, and W8–W11 remain outstanding. Existing four-state/two-state eval bodies
+remain, now selected by direct branches. Paths use the current Schedule dialect
+layout; historical line numbers are navigation hints, not stable references.
+This existing plan is updated in place.
 
 Normative reference: `build/lrm-2023.txt` (IEEE 1800-2023). Historical dumps below
 are not current performance baselines. Fresh W1 measurements and commands are
@@ -734,10 +734,63 @@ before/after trials:
     baseline. Mean host cycles rise 2.07%, instructions rise 0.0020%, branch
     misses fall 0.32%, and cache misses fall 3.73%. Retain this as a code-size
     reduction with an observed runtime cost, not a runtime optimization.
-- **Variant selection: pending.** Replace indirect calls through
-  `__obelisk_eval_function_route_v1_N` with a selected-variant bit plus direct
-  calls to both bodies. The branch is predictable, and LLVM can inline tiny
-  2-state kernels. PicoRV's dispatcher currently makes 42 indirect calls.
+- **Variant selection: implemented.** Replace mutable function-pointer
+  globals with byte-sized `__obelisk_eval_selected_variant_v1_N` selectors.
+  A compiler-private helper loads each selector and branches to direct calls
+  of its two-state body or existing four-state fallback wrapper. Expand the
+  small selection CFG at each undecided body call before physical partitioning;
+  then prune the unused helpers. An LLVM inline hint alone cannot ensure this
+  when caller and helper land in different compilation partitions. Preserve
+  call arguments and returned results. Trusted two-state closures and already selected
+  ranked-group calls retain direct body edges; path-sensitive checkpoint
+  routes retain their existing dispatcher and need no selector global.
+  - **Proof lifecycle:** selectors start false, become true only after the
+    existing successful local scan, and return to false on full or dependent
+    range invalidation. Failed scans consume their existing pending work;
+    recovery queues only failed selectors. Use the existing runtime latch /
+    pending-word certificate fields, preserving the runtime ABI and legacy
+    pointer-certificate support. Remove the obsolete fallback-symbol field
+    from compiler-private route proof metadata.
+  - **LRM review:** §§6.3.1/6.11.2 require preserving X/Z evidence and the
+    exact two-state admission proof. §6.8 requires retaining selections across
+    checkpoints without inventing state changes. §§4.5/4.6 and §10.4.2 require
+    the existing event, publication, and NBA order. The selector replaces only
+    the route representation; proof boundaries, four-state provenance,
+    canonical writes, checkpoint probes, and commit ordering remain in place.
+  - **Validation:** extend scalar and 65-route runtime oracles to inspect byte
+    selectors, retain exact pending/recovery checks, and execute the generated
+    direct selector on both branches. MLIR/optimized LLVM checks reject old
+    pointer globals and verify byte selection, branches, and direct calls.
+    A split `-fno-lto --compile-threads=8` driver regression rejects retained
+    selector helper symbols; MLIR checks reject calls to those helpers before
+    partitioning. Existing periodic, checkpoint, and ordered-four-state
+    regressions pass. Final full suite: 2,936 passed, 17 expected failures.
+  - **Measured builds** (`tmp/ir-reduction-w5c`, baseline `1b0cbf41`,
+    `-O3 -fno-lto --compile-threads=8`, one matched compile per variant):
+    RSD compile 130.23 → 130.94 s (+0.55%, essentially flat), peak RSS
+    4,615,012 → 4,584,004 KiB (−0.67%), `.text` 14,666,735 → 14,636,111
+    bytes (−0.21%), executable 130,340,912 → 130,222,344 bytes (−0.09%).
+    Its 4,787 eight-byte pointer globals become 4,787 one-byte selectors,
+    reducing their storage from 38,296 to 4,787 bytes. No selector helper
+    survives in any measured binary. Ibex compile 23.75 → 23.45 s, `.text`
+    5,929,183 → 5,895,663; PicoRV compile 2.67 → 2.77 s, `.text`
+    3,980,895 → 3,980,559. Bytecode remains byte-identical for all three.
+    These single compile samples do not establish repeatable timing gains.
+  - **Corrected call-count baseline:** physical dispatcher disassembly shows
+    Ibex indirect calls 14 → 0 and PicoRV 3 → 0; the historical PicoRV count
+    of 42 predates earlier work. RSD's dispatcher already had zero indirect
+    calls on both sides (7,734 direct call sites), so pointer removal does
+    not remove an indirect call from this dispatcher. PicoRV succeeds with identical
+    output. Ibex retains baseline status 14 and matching output, not a
+    functional pass.
+  - **RSD runtime:** three alternating matched HelloWorld pairs (4,275
+    simulated cycles, 4,506 retired instructions); all six runs exit
+    successfully and match the saved register/serial hashes. Median
+    29.0638 → 28.4159 s (**2.23% faster observed**). Before range
+    29.0149–29.2600 s; after range 28.0124–28.4639 s. Every after run is faster
+    than its paired baseline. Mean host cycles fall 2.89%, instructions fall
+    0.0245%, branch misses rise 1.29%, and cache misses fall 5.39%. This is a
+    measured gain on this workload; other designs may respond differently.
 - **Optional group sweep.** When every member of a group or clock domain is
   promoted, run one straight-line 2-state sweep. On invalidation, drop to
   per-kernel selection.
@@ -980,10 +1033,11 @@ bytecode scope.
 2. W2 initial suspend: implemented and validated.
 3. W4 spawning, constant startup tables, and ABI-preserving wrapper reduction
    are implemented. W6a copy admission, coroutine-free activation, and shared
-   native copy tables are implemented; eval dispatch remains under W5.
+   native copy tables are implemented.
 4. W3 is implemented with the descriptor extension. W7 selective bytecode
    retention is implemented using the actual native fallback contract.
-5. W5, W8 and W9.
+5. W5 readiness, fallback outlining, and direct variants are implemented;
+   assess the optional group sweep separately. W8 and W9 remain.
 6. W6b net collapsing within the LRM's explicit permissions, with W7's access
    analysis where needed. Variable collapsing remains deferred pending proof.
 7. W10 and W11 as independent follow-up work.
@@ -994,7 +1048,8 @@ use its compile/IR measurements and report the functional limitation explicitly.
 
 ## Open questions
 
-- W5: can the fallback's bookkeeping move entirely into the dispatcher?
+- W5 optional sweep: do existing ranked-group specializations already cover
+  the profitable cases, or is another group/domain certificate justified?
 - Future state-removing fusion: distinguish truly internal SSA ranges from
   deferred publications before relying on bytecode for external intervention.
 - W6b: which variable-port cases, if any, have a complete observability proof?

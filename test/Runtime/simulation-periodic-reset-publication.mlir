@@ -18,7 +18,7 @@
 // PLAN: llvm.store
 // PLAN: llvm.return
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN-NOT: @__obelisk_eval_function_route_v1_
+// PLAN-NOT: @__obelisk_eval_selected_variant_v1_
 // PLAN-NOT: @__obelisk_eval_route_promotion_pending_v1
 // PLAN: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 // PLAN-NEXT: {{.*}}llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS]])
