@@ -95,8 +95,8 @@ materializeNativeRankedGroups(ModuleOp module,
         segment, builder.getArrayAttr(helpers));
     Block *entry = segment.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
-    Value ready = LLVM::AddressOfOp::create(
-        builder, loc, pointer, plan.clockKernels.front().ingressName);
+    Value ready =
+        LLVM::AddressOfOp::create(builder, loc, pointer, evalModelIngressName);
     for (const Chunk &chunk : chunks) {
       Value dirty;
       for (auto [word, mask] : chunk.words) {
@@ -164,14 +164,14 @@ materializeNativeRankedGroups(ModuleOp module,
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalReadyWordCount>(
         group, builder.getI64IntegerAttr(readyLayout.counts[0]));
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
-        group, FlatSymbolRefAttr::get(module.getContext(),
-                                      plan.clockKernels.front().ingressName));
+        group,
+        FlatSymbolRefAttr::get(module.getContext(), evalModelIngressName));
     ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
         group, builder.getUnitAttr());
     Block *entry = group.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
-    Value ready = LLVM::AddressOfOp::create(
-        builder, loc, pointer, plan.clockKernels.front().ingressName);
+    Value ready =
+        LLVM::AddressOfOp::create(builder, loc, pointer, evalModelIngressName);
     Value promotion = LLVM::AddressOfOp::create(
         builder, loc, pointer, "__obelisk_eval_promotion_pending_mask_v1");
     auto rawCall = [&](StringRef body, uint32_t owner) {
@@ -298,7 +298,7 @@ materializeNativeRankedGroups(ModuleOp module,
       entry = candidate.addEntryBlock(builder);
       builder.setInsertionPointToStart(entry);
       ready = LLVM::AddressOfOp::create(builder, loc, pointer,
-                                        plan.clockKernels.front().ingressName);
+                                        evalModelIngressName);
       for (const auto *node : members) {
         uint32_t owner = node->owner;
         Value bit =

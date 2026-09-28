@@ -137,7 +137,7 @@ materializeNativeEvalDispatch(ModuleOp module,
       fourStateFallback, 1);
   auto ingressAddress = [&] {
     return LLVM::AddressOfOp::create(builder, location, pointer,
-                                     clockKernels.front().ingressName)
+                                     evalModelIngressName)
         .getResult();
   };
   auto combinedIngress = [&] {

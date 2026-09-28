@@ -1495,21 +1495,20 @@ FailureOr<bool> makeNativeEvalPlan(
     return static_cast<uint32_t>((bits + 63) / 64);
   };
   builder.setInsertionPointToStart(module.getBody());
-  llvm::SmallDenseSet<StringRef, 4> emittedIngress;
+  if (!clockKernels.empty()) {
+    Type ingressType = LLVM::LLVMArrayType::get(i64, readyLayout.storageWords);
+    auto ingress = LLVM::GlobalOp::create(builder, location, ingressType, false,
+                                          LLVM::Linkage::Internal,
+                                          evalModelIngressName, Attribute{}, 8);
+    Block *initializer = new Block;
+    ingress.getInitializerRegion().push_back(initializer);
+    OpBuilder initializerBuilder = OpBuilder::atBlockBegin(initializer);
+    LLVM::ReturnOp::create(
+        initializerBuilder, location,
+        LLVM::ZeroOp::create(initializerBuilder, location, ingressType));
+  }
   for (const NativeEvalClockKernel &kernel : clockKernels) {
     uint32_t words = ingressWordCount(kernel);
-    Type ingressType = LLVM::LLVMArrayType::get(i64, readyLayout.storageWords);
-    if (emittedIngress.insert(kernel.ingressName).second) {
-      auto ingress = LLVM::GlobalOp::create(builder, location, ingressType,
-                                            false, LLVM::Linkage::Internal,
-                                            kernel.ingressName, Attribute{}, 8);
-      Block *initializer = new Block;
-      ingress.getInitializerRegion().push_back(initializer);
-      OpBuilder initializerBuilder = OpBuilder::atBlockBegin(initializer);
-      LLVM::ReturnOp::create(
-          initializerBuilder, location,
-          LLVM::ZeroOp::create(initializerBuilder, location, ingressType));
-    }
     Type activeType = LLVM::LLVMArrayType::get(i64, words);
     auto active = LLVM::GlobalOp::create(builder, location, activeType, false,
                                          LLVM::Linkage::Internal,
@@ -1792,9 +1791,8 @@ FailureOr<bool> makeNativeEvalPlan(
         Value triggered = arith::CmpIOp::create(
             transitionBuilder, call.getLoc(), arith::CmpIPredicate::ne,
             observed, llvmConstant(transitionBuilder, call.getLoc(), i64, 0));
-        Value ingress =
-            LLVM::AddressOfOp::create(transitionBuilder, call.getLoc(), pointer,
-                                      clockKernels.front().ingressName);
+        Value ingress = LLVM::AddressOfOp::create(
+            transitionBuilder, call.getLoc(), pointer, evalModelIngressName);
         Value selected = arith::SelectOp::create(
             transitionBuilder, call.getLoc(), triggered,
             llvmConstant(transitionBuilder, call.getLoc(), i64,
@@ -2805,7 +2803,7 @@ FailureOr<bool> makeNativeEvalPlan(
             value = insertValue(initializerBuilder, location, value,
                                 LLVM::AddressOfOp::create(initializerBuilder,
                                                           location, pointer,
-                                                          kernel.ingressName),
+                                                          evalModelIngressName),
                                 4);
             value = insertValue(initializerBuilder, location, value,
                                 llvmConstant(initializerBuilder, location, i32,
@@ -3095,15 +3093,13 @@ FailureOr<bool> makeNativeEvalPlan(
     // One model-wide ready bit owns each direct fragment. Physical trigger
     // groups remain distinct and merely OR into that shared model mask, so a
     // fragment reached by coincident clocks executes once before the common
-    // NBA barrier.
-    SmallVector<SmallVector<std::pair<APInt, APInt>>> clockMasks(
-        periodicClocks.size(),
-        SmallVector<std::pair<APInt, APInt>>(
-            clockKernels.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)}));
-    SmallVector<SmallVector<std::pair<APInt, APInt>>> clockDirectMasks(
-        periodicClocks.size(),
-        SmallVector<std::pair<APInt, APInt>>(
-            clockKernels.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)}));
+    // NBA barrier. Every kernel publishes into the same ingress under the
+    // same clock condition, so each clock keeps one (rising, falling) owner
+    // pair; per-kernel masks would only replicate the same ingress updates.
+    SmallVector<std::pair<APInt, APInt>> clockMasks(
+        periodicClocks.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)});
+    SmallVector<std::pair<APInt, APInt>> clockDirectMasks(
+        periodicClocks.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)});
     auto canDispatchClockOwnerDirectly = [&](uint32_t bit) {
       auto record = llvm::find_if(mergedFragments, [&](const auto &candidate) {
         return candidate.bit == bit;
@@ -3179,8 +3175,8 @@ FailureOr<bool> makeNativeEvalPlan(
                              : periodicOwnerBits[fanoutIndex];
         APInt bit = APInt::getOneBitSet(ownerCount, owner);
         auto &masks = canDispatchClockOwnerDirectly(owner)
-                          ? clockDirectMasks[clockIndex][fanout.kernel]
-                          : clockMasks[clockIndex][fanout.kernel];
+                          ? clockDirectMasks[clockIndex]
+                          : clockMasks[clockIndex];
         auto &[rising, falling] = masks;
         if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
@@ -3223,8 +3219,8 @@ FailureOr<bool> makeNativeEvalPlan(
                              : periodicOwnerBits[fanoutIndex];
         APInt bit = APInt::getOneBitSet(ownerCount, owner);
         auto &masks = canDispatchClockOwnerDirectly(owner)
-                          ? clockDirectMasks[clockIndex][fanout.kernel]
-                          : clockMasks[clockIndex][fanout.kernel];
+                          ? clockDirectMasks[clockIndex]
+                          : clockMasks[clockIndex];
         auto &[rising, falling] = masks;
         if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
@@ -3299,9 +3295,8 @@ FailureOr<bool> makeNativeEvalPlan(
     run.getBody().push_back(dispatchStep);
     run.getBody().push_back(executeStep);
     APInt directOwnerMask(ownerCount, 0);
-    for (const auto &clock : clockDirectMasks)
-      for (const auto &[rising, falling] : clock)
-        directOwnerMask |= rising | falling;
+    for (const auto &[rising, falling] : clockDirectMasks)
+      directOwnerMask |= rising | falling;
     SmallVector<unsigned> directOwnerRecords;
     for (auto [index, record] : llvm::enumerate(mergedFragments))
       if (directOwnerMask[record.bit])
@@ -3334,12 +3329,8 @@ FailureOr<bool> makeNativeEvalPlan(
               alias.getTargetStaticState());
         });
     bool canCompressSilentFall =
-        periodicClocks.size() == 1 &&
-        llvm::all_of(clockMasks.front(),
-                     [](const auto &masks) { return masks.second == 0; }) &&
-        llvm::all_of(clockDirectMasks.front(),
-                     [](const auto &masks) { return masks.second == 0; }) &&
-        canSkipSilentSlot;
+        periodicClocks.size() == 1 && clockMasks.front().second == 0 &&
+        clockDirectMasks.front().second == 0 && canSkipSilentSlot;
     if (canCompressSilentFall) {
       silentFall = new Block;
       advanceSilentFall = new Block;
@@ -3421,8 +3412,8 @@ FailureOr<bool> makeNativeEvalPlan(
         initialMask.setBit(mergedFragments[index].bit);
     }
     if (initialMask != 0) {
-      Value ingress = LLVM::AddressOfOp::create(
-          builder, location, pointer, clockKernels.front().ingressName);
+      Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                evalModelIngressName);
       updateOwnerMask(builder, location, ingress, initialMask,
                       /*clear=*/false, {}, &readyLayout);
       // Re-establish combinational quiescence before the first generated
@@ -3634,64 +3625,59 @@ FailureOr<bool> makeNativeEvalPlan(
         }
       }
 
-      for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
-        const auto &[riseOwners, fallOwners] =
-            clockMasks[clockIndex][kernelIndex];
-        for (unsigned word = 0; word != allOwners.getNumWords(); ++word) {
-          uint64_t riseMask = ownerMaskWord(riseOwners, word);
-          uint64_t fallMask = ownerMaskWord(fallOwners, word);
-          if (riseMask == 0 && fallMask == 0)
-            continue;
-          Value edgeMask = arith::SelectOp::create(
-              builder, location, oldSet,
-              llvmConstant(builder, location, i64, fallMask),
-              llvmConstant(builder, location, i64, riseMask));
-          Value selected =
-              arith::SelectOp::create(builder, location, due, edgeMask,
-                                      llvmConstant(builder, location, i64, 0));
-          hasIngress = arith::OrIOp::create(
-              builder, location, hasIngress,
-              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                    selected,
-                                    llvmConstant(builder, location, i64, 0)));
-          Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    kernel.ingressName);
-          updateEvalReadyWord(builder, location, ingress, readyLayout, word,
-                              selected);
-        }
+      const auto &[riseOwners, fallOwners] = clockMasks[clockIndex];
+      for (unsigned word = 0; word != allOwners.getNumWords(); ++word) {
+        uint64_t riseMask = ownerMaskWord(riseOwners, word);
+        uint64_t fallMask = ownerMaskWord(fallOwners, word);
+        if (riseMask == 0 && fallMask == 0)
+          continue;
+        Value edgeMask = arith::SelectOp::create(
+            builder, location, oldSet,
+            llvmConstant(builder, location, i64, fallMask),
+            llvmConstant(builder, location, i64, riseMask));
+        Value selected =
+            arith::SelectOp::create(builder, location, due, edgeMask,
+                                    llvmConstant(builder, location, i64, 0));
+        hasIngress = arith::OrIOp::create(
+            builder, location, hasIngress,
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  selected,
+                                  llvmConstant(builder, location, i64, 0)));
+        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  evalModelIngressName);
+        updateEvalReadyWord(builder, location, ingress, readyLayout, word,
+                            selected);
       }
-      for (auto [kernelIndex, kernel] : llvm::enumerate(clockKernels)) {
-        const auto &[riseOwners, fallOwners] =
-            clockDirectMasks[clockIndex][kernelIndex];
-        for (unsigned word = 0; word != allOwners.getNumWords(); ++word) {
-          uint64_t riseMask = ownerMaskWord(riseOwners, word);
-          uint64_t fallMask = ownerMaskWord(fallOwners, word);
-          if (riseMask == 0 && fallMask == 0)
-            continue;
-          Value edgeMask = arith::SelectOp::create(
-              builder, location, oldSet,
-              llvmConstant(builder, location, i64, fallMask),
-              llvmConstant(builder, location, i64, riseMask));
-          Value selected =
-              arith::SelectOp::create(builder, location, due, edgeMask,
-                                      llvmConstant(builder, location, i64, 0));
-          directReady[word] = arith::OrIOp::create(builder, location,
-                                                   directReady[word], selected);
-          // The straight-line prefix can stop at a cold checkpoint before its
-          // last owner. Keep unconsumed direct owners in the same-slot ready
-          // set so the callback's coordinator can finish that edge. Each owner
-          // clears only its own bit after execution below; an SSA-only mask
-          // silently drops the suffix when control leaves run_until.
-          Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    kernel.ingressName);
-          updateEvalReadyWord(builder, location, ingress, readyLayout, word,
-                              selected);
-          hasIngress = arith::OrIOp::create(
-              builder, location, hasIngress,
-              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                    selected,
-                                    llvmConstant(builder, location, i64, 0)));
-        }
+      const auto &[directRiseOwners, directFallOwners] =
+          clockDirectMasks[clockIndex];
+      for (unsigned word = 0; word != allOwners.getNumWords(); ++word) {
+        uint64_t riseMask = ownerMaskWord(directRiseOwners, word);
+        uint64_t fallMask = ownerMaskWord(directFallOwners, word);
+        if (riseMask == 0 && fallMask == 0)
+          continue;
+        Value edgeMask = arith::SelectOp::create(
+            builder, location, oldSet,
+            llvmConstant(builder, location, i64, fallMask),
+            llvmConstant(builder, location, i64, riseMask));
+        Value selected =
+            arith::SelectOp::create(builder, location, due, edgeMask,
+                                    llvmConstant(builder, location, i64, 0));
+        directReady[word] = arith::OrIOp::create(builder, location,
+                                                 directReady[word], selected);
+        // The straight-line prefix can stop at a cold checkpoint before its
+        // last owner. Keep unconsumed direct owners in the same-slot ready
+        // set so the callback's coordinator can finish that edge. Each owner
+        // clears only its own bit after execution below; an SSA-only mask
+        // silently drops the suffix when control leaves run_until.
+        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  evalModelIngressName);
+        updateEvalReadyWord(builder, location, ingress, readyLayout, word,
+                            selected);
+        hasIngress = arith::OrIOp::create(
+            builder, location, hasIngress,
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  selected,
+                                  llvmConstant(builder, location, i64, 0)));
       }
       if (afterClock) {
         SmallVector<Value> updated{hasIngress};
@@ -3776,13 +3762,11 @@ FailureOr<bool> makeNativeEvalPlan(
       // where the bitset coordinator would consume it. Consume it on a
       // checkpoint return as well: the queued callback owns that activation,
       // so retaining its ingress would replay it after the handoff.
-      APInt consumed = directOwnerConsumedMask(recordIndex);
-      for (const NativeEvalClockKernel &kernel : clockKernels) {
-        Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  kernel.ingressName);
-        updateOwnerMask(builder, location, ingress, consumed, /*clear=*/true,
-                        {}, &readyLayout);
-      }
+      Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                evalModelIngressName);
+      updateOwnerMask(builder, location, ingress,
+                      directOwnerConsumedMask(recordIndex), /*clear=*/true, {},
+                      &readyLayout);
     };
     // A shared proof is valid for coincident domains when every direct owner
     // has an inductive two-state body. Such a body cannot invalidate a later
@@ -5742,7 +5726,7 @@ FailureOr<bool> makeNativeEvalPlan(
   builder.setInsertionPointToStart(genericNBACommit);
   if (directActivationWordCount != 0 && !clockKernels.empty()) {
     Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              clockKernels.front().ingressName);
+                                              evalModelIngressName);
     Value any = llvmConstant(builder, location, builder.getI1Type(), 0);
     for (uint32_t word = 0; word != directActivationWordCount; ++word) {
       Value activated =

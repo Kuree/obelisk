@@ -47,6 +47,12 @@ struct NativePromotionRange {
 inline constexpr llvm::StringLiteral kernelPromotionReadyName =
     "__obelisk_eval_kernel_promotion_ready_v1";
 
+/// The one model-wide eval ready set. Every clock kernel publishes its owners
+/// into this bitset, so a fragment reached through several kernels still
+/// occupies a single ready bit and executes once per step.
+inline constexpr llvm::StringLiteral evalModelIngressName =
+    "__obelisk_aot_model_ingress_v1";
+
 mlir::LogicalResult materializeNativeKernelPromotionReadiness(
     mlir::ModuleOp module, uint64_t stateBits,
     mlir::ArrayRef<llvm::SmallVector<NativePromotionRange>> ranges,
@@ -111,7 +117,6 @@ struct NativeEvalClockKernel {
   uint32_t edge = 0;
   uint64_t lowBit = 0;
   uint64_t bitWidth = 0;
-  std::string ingressName;
   std::string activeName;
 
   auto key() const { return std::tuple{staticState, lowBit, bitWidth, edge}; }

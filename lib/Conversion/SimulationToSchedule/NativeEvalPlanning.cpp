@@ -257,11 +257,9 @@ resolveNativeEvalPlan(ModuleOp module,
                                           return lhs.key() == rhs.key();
                                         }),
                             result.clockKernels.end());
-  for (auto [index, kernel] : llvm::enumerate(result.clockKernels)) {
-    kernel.ingressName = "__obelisk_aot_model_ingress_v1";
+  for (auto [index, kernel] : llvm::enumerate(result.clockKernels))
     kernel.activeName =
         (Twine("__obelisk_aot_model_active_v1_") + Twine(index)).str();
-  }
 
   if (evalOwnership.fanoutOwners.size() != result.fanoutEntries.size() ||
       evalOwnership.periodicFanoutOwners.size() != result.fanoutEntries.size())
