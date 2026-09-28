@@ -4,10 +4,11 @@ Status: revised 2026-09-27 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W3's table
 processes, W4's spawning/batching and wrapper reductions, and W7's native
 bytecode pruning are implemented. W5's shared readiness scanner, fallback
-outlining, and direct variant selection are implemented. W6a's strict copy
+outlining, and direct variant selection are implemented; the optional group
+sweep is covered by the existing ranked-group specialization. W6a's strict copy
 admission, coroutine-free activation, and shared native copy kernels are
-implemented. W1's optional attribute storage work, W5's optional group sweep,
-W6b, and W8–W11 remain outstanding. Existing four-state/two-state eval bodies
+implemented. W1's optional attribute storage work, W6b, and W8–W11 remain
+outstanding. Existing four-state/two-state eval bodies
 remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
 This existing plan is updated in place.
@@ -791,9 +792,42 @@ before/after trials:
     than its paired baseline. Mean host cycles fall 2.89%, instructions fall
     0.0245%, branch misses rise 1.29%, and cache misses fall 5.39%. This is a
     measured gain on this workload; other designs may respond differently.
-- **Optional group sweep.** When every member of a group or clock domain is
-  promoted, run one straight-line 2-state sweep. On invalidation, drop to
-  per-kernel selection.
+- **Optional group sweep: covered by existing ranked-group specialization.**
+  Audit against the current implementation found no separate implementation
+  needed:
+  - `SimulationRankedGroupMaterialization` creates a two-state candidate only
+    when every member has a two-state body and executor. It retains each
+    member's activation predicate and consumes ready bits before execution,
+    preserving backward publications for a later sweep.
+  - `SimulationNativeGroupMaterialization` checks the group's member bits in
+    `__obelisk_eval_promotion_pending_mask_v1` once at entry. A clear mask enters
+    the straight-line predicated computation; any pending member selects the
+    ordinary ranked helper with per-member domain selection. Existing exact
+    range invalidation sets those bits, and successful readiness scans clear
+    them. There is no need for another group certificate or invalidation path.
+  - `SimulationGroupDataflow` requires finite, nontrapping computation with
+    proven canonical memory accesses. Calls, opaque effects, unproved accesses,
+    and analysis-budget failures retain the ordinary executor. Group refinement
+    can isolate admissible children; each child's domain guard is reacquired
+    after preceding children, including callbacks that invalidate later proofs.
+  - **LRM review:** §4.5 requires activation and publication semantics, not
+    execution of every member merely because its values are known. §6.8 requires
+    inactive and conditionally unassigned outputs to retain their values,
+    including after a foreign deposit. §6.3.1 requires X/Z invalidation and
+    recovery. §§4.6 and 10.4.2 retain statement/NBA order; effectful boundaries
+    cannot be bypassed using promotion alone. Thus an unconditional clock-domain
+    sweep is not justified by the existing knownness proof.
+  - **Existing RSD evidence:** the saved W5c after-build log contains 254 group
+    candidates: 224 accepted and 30 rejected (22 CFG/analysis-budget failures,
+    8 unsafe-effect/speculation failures). This optimization is already present
+    in the measured binary. These counts do not establish that every profitable
+    group is admitted; extending admission is separate work requiring its own
+    proof and measurements. No new speedup is claimed for this audit.
+  - **Validation:** all 46 focused group/dataflow/hierarchy, feedback, promotion,
+    and clock-group regressions pass. Existing runtime oracles cover inactive-value
+    retention, callback invalidation before a later child, unrelated pending
+    bits, recovery, and known → X → known execution against bytecode.
+    Results are recorded in `tmp/ir-reduction-w5-group-audit/tests.log`.
 
 **Validation:** keep the existing 2-route and 65-route promotion regressions,
 and exercise X injection and recovery in the middle of a run.
@@ -1037,7 +1071,8 @@ bytecode scope.
 4. W3 is implemented with the descriptor extension. W7 selective bytecode
    retention is implemented using the actual native fallback contract.
 5. W5 readiness, fallback outlining, and direct variants are implemented;
-   assess the optional group sweep separately. W8 and W9 remain.
+   the optional sweep is covered by existing ranked-group specialization.
+   W8 NBA commit layout is next, followed by W9 state-plane initializers.
 6. W6b net collapsing within the LRM's explicit permissions, with W7's access
    analysis where needed. Variable collapsing remains deferred pending proof.
 7. W10 and W11 as independent follow-up work.
@@ -1048,8 +1083,6 @@ use its compile/IR measurements and report the functional limitation explicitly.
 
 ## Open questions
 
-- W5 optional sweep: do existing ranked-group specializations already cover
-  the profitable cases, or is another group/domain certificate justified?
 - Future state-removing fusion: distinguish truly internal SSA ranges from
   deferred publications before relying on bytecode for external intervention.
 - W6b: which variable-port cases, if any, have a complete observability proof?
