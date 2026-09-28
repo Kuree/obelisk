@@ -7,6 +7,8 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "obelisk/Frontend/SourceTokens.h"
+
 #include "llvm/ADT/ArrayRef.h"
 
 #include <cstdint>
@@ -22,11 +24,6 @@ class MLIRContext;
 namespace obelisk::frontend {
 
 class ProtectedEnvelopeProvider;
-
-enum class LanguageVersion : uint8_t {
-  IEEE1800_2017,
-  IEEE1800_2023,
-};
 
 enum class MinTypMax : uint8_t {
   Min,

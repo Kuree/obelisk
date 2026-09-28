@@ -37,6 +37,9 @@ config.substitutions.append(
     ("%coverage-fixture", config.obelisk_coverage_fixture_executable)
 )
 config.substitutions.append(
+    ("%source-tokens-test", config.obelisk_source_tokens_test_executable)
+)
+config.substitutions.append(
     ("%resource_dir", '"{}"'.format(config.obelisk_resource_dir))
 )
 config.substitutions.append(

@@ -11,6 +11,12 @@ endmodule
 // RUN: obelisk -dump-tokens --std=1800-2017 %s -o %t.tokens
 // RUN: FileCheck %s --input-file=%t.tokens
 
+// Tools such as obelisk-cov lex through the ObeliskSourceTokens library
+// directly; it must list exactly what the driver prints.
+// RUN: obelisk -dump-tokens --std=1800-2023 %s -o %t.driver.tokens
+// RUN: %source-tokens-test --std=1800-2023 %s | diff %t.driver.tokens -
+// RUN: %source-tokens-test --std=1800-2017 %s | diff %t.tokens -
+
 // The listing is the unpreprocessed text: directives and macro uses stay as
 // written, comments are listed, and whitespace is not.
 // CHECK:      0 7 Directive

@@ -2,6 +2,8 @@
 # enabled in this boundary translation unit so cleartext RAII remains effective.
 set_source_files_properties(Frontend.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
 
+add_subdirectory(SourceTokens)
+
 add_mlir_library(ObeliskFrontend
   Frontend.cpp
   SDF.cpp
@@ -16,6 +18,7 @@ add_mlir_library(ObeliskFrontend
   LINK_LIBS PUBLIC
   ObeliskSDFIR
   ObeliskSlangIR
+  ObeliskSourceTokens
   MLIRIR
   MLIRSupport
   slang::slang
