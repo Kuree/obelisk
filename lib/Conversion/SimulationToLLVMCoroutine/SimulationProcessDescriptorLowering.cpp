@@ -62,7 +62,7 @@ bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
 }
 
 LogicalResult
-makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
+makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
                       Location location, StringRef baseName, uint64_t stableID,
                       const SimulationProcessFrameAnalysis &analysis,
                       bool unmanagedNative, bool usesCoroutine,
@@ -184,12 +184,17 @@ makeProcessDescriptor(ModuleOp module, const SymbolTable &embeddedSymbols,
             builder, location, layout,
             llvmConstant(builder, location, i64, analysis.getChecksum()), 8);
       });
-  if (auto declaration = module.lookupSymbol<LLVM::GlobalOp>(descriptorName)) {
+  // The embedded design declares every activation descriptor before process
+  // finalization, so the snapshot already holds the declaration. Erase it
+  // through the table: a linear module lookup here made finalization
+  // quadratic in the number of processes.
+  if (auto declaration =
+          embeddedSymbols.lookup<LLVM::GlobalOp>(descriptorName)) {
     if (!declaration.getInitializerRegion().empty() || declaration.getValue() ||
         declaration.getGlobalType() != descriptorType)
       return declaration.emitError(
           "incompatible native process descriptor definition");
-    declaration.erase();
+    embeddedSymbols.erase(declaration);
   }
   makeConstantGlobal(
       module, location, globalType, descriptorName, LLVM::Linkage::External, 8,

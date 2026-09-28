@@ -1225,7 +1225,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 
 LogicalResult
 finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
-                                 const SymbolTable &embeddedSymbols) {
+                                 SymbolTable &embeddedSymbols) {
   if (process.tableProcess)
     materializeTableProcess(process);
   else if (failed(makeNativeWrappers(process.module, process.ramp,

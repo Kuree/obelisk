@@ -33,7 +33,7 @@ mlir::LogicalResult
 lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process);
 mlir::LogicalResult
 finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process,
-                                 const mlir::SymbolTable &embeddedSymbols);
+                                 mlir::SymbolTable &embeddedSymbols);
 mlir::LogicalResult
 lowerPlainNativeProcess(sim::SimFuncOp function,
                         const SimulationProcessFrameAnalysis &analysis);

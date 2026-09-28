@@ -241,11 +241,12 @@ void materializeTableProcess(PreparedSuspendableProcess &process) {
                                                      prefix + ".waits"),
                            3);
       });
-  if (!module.lookupSymbol("obelisk_rt_v1_table_process_execute")) {
-    builder.setInsertionPointToStart(module.getBody());
-    LLVM::LLVMFuncOp::create(builder, location,
-                             "obelisk_rt_v1_table_process_execute",
-                             LLVM::LLVMFunctionType::get(i32, {pointer}));
-  }
+}
+
+void declareTableProcessRuntimeABI(ModuleOp module) {
+  MLIRContext *context = module.getContext();
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_table_process_execute",
+                           IntegerType::get(context, 32),
+                           {LLVM::LLVMPointerType::get(context)});
 }
 } // namespace obelisk::detail

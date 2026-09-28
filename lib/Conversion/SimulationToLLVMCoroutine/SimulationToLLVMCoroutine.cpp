@@ -142,6 +142,7 @@ public:
 using detail::buildNativeStateLayout;
 using detail::convertProcessType;
 using detail::declareNativeRuntimeABI;
+using detail::declareTableProcessRuntimeABI;
 using detail::evalRuntimeNBAFallbackAttr;
 using detail::evalRuntimeNBARequiredAttr;
 using detail::finishPreparedPlainNativeProcess;
@@ -1766,14 +1767,21 @@ LogicalResult NativePipelineAnalysis::materialize() {
                  << copies << " activations\n";
   }
   markTiming("copy kernel materialization");
-  // Only embedded execution/bytecode entries are queried during finalization.
-  // Their identities are already frozen; later wrappers and frame descriptors
-  // introduce different symbols, so all processes can share this snapshot.
+  // Finalization queries only embedded-design symbols: execution/bytecode
+  // entries and the descriptor declarations each process replaces. Their
+  // identities are already frozen; later wrappers and frame descriptors
+  // introduce different symbols, so all processes share this snapshot and
+  // erase replaced declarations through it.
   SymbolTable embeddedSymbols(module);
   for (PreparedPlainNativeProcess &process : plainProcesses)
     if (failed(finishPreparedPlainNativeProcess(process, embeddedSymbols)))
       return failure();
   markTiming("plain process finalization");
+  if (llvm::any_of(suspendableProcesses,
+                   [](const PreparedSuspendableProcess &process) {
+                     return process.tableProcess.has_value();
+                   }))
+    declareTableProcessRuntimeABI(module);
   for (PreparedSuspendableProcess &process : suspendableProcesses)
     if (failed(finishPreparedSuspendableProcess(process, embeddedSymbols)))
       return failure();

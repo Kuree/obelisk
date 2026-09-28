@@ -24,5 +24,8 @@ analyzeTableProcess(sim::SimFuncOp function,
                     const SimulationProcessFrameAnalysis &analysis);
 struct PreparedSuspendableProcess;
 void materializeTableProcess(PreparedSuspendableProcess &process);
+/// Declares the runtime entry shared by every table process. Call it once per
+/// module, not per process: the declaration check scans the whole module.
+void declareTableProcessRuntimeABI(mlir::ModuleOp module);
 } // namespace obelisk::detail
 #endif

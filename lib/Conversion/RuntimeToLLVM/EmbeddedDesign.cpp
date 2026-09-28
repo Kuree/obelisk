@@ -693,18 +693,21 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   // The immutable descriptor global is materialized before observer bodies are
   // lowered.  Give every uniform native evaluator thunk an LLVM declaration
   // now so address-of verification never depends on a later pass phase.
-  for (const ObserverInfo &observer : observers) {
-    if (bytecodeOnly)
-      continue;
-    std::string thunkName = observer.symbol + ".__obelisk_observer";
-    if (module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName))
-      continue;
+  // One table serves the whole loop: a module lookup per observer would make
+  // this quadratic in the design size.
+  if (!bytecodeOnly && !observers.empty()) {
+    SymbolTable symbols(module);
     OpBuilder builder(context);
-    builder.setInsertionPointToStart(module.getBody());
-    LLVM::LLVMFuncOp::create(
-        builder, module.getLoc(), thunkName,
-        LLVM::LLVMFunctionType::get(
-            i32, {pointer, pointer, i32, pointer, pointer, i32}, false));
+    for (const ObserverInfo &observer : observers) {
+      std::string thunkName = observer.symbol + ".__obelisk_observer";
+      if (symbols.lookup<LLVM::LLVMFuncOp>(thunkName))
+        continue;
+      builder.setInsertionPointToStart(module.getBody());
+      symbols.insert(LLVM::LLVMFuncOp::create(
+          builder, module.getLoc(), thunkName,
+          LLVM::LLVMFunctionType::get(
+              i32, {pointer, pointer, i32, pointer, pointer, i32}, false)));
+    }
   }
 
   SmallVector<ExportInfo> exports;
@@ -714,17 +717,18 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
 
   // The activation table and process bodies are materialized by separate
   // passes. Declare the exact descriptor ABI before taking its address.
-  if (!bytecodeOnly) {
+  if (!bytecodeOnly && !activations.empty()) {
+    SymbolTable symbols(module);
     OpBuilder builder(context);
     builder.setInsertionPointToStart(module.getBody());
     for (const ActivationInfo &activation : activations) {
       std::string name = activation.symbol + ".__obelisk_process_descriptor";
-      if (module.lookupSymbol(name))
+      if (symbols.lookup(name))
         return module.emitError("duplicate native process descriptor symbol: ")
                << name;
-      LLVM::GlobalOp::create(builder, module.getLoc(),
-                             getNativeProcessDescriptorType(context), true,
-                             LLVM::Linkage::External, name, Attribute{}, 8);
+      symbols.insert(LLVM::GlobalOp::create(
+          builder, module.getLoc(), getNativeProcessDescriptorType(context),
+          true, LLVM::Linkage::External, name, Attribute{}, 8));
     }
   }
 
@@ -1250,6 +1254,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
           static_cast<uint32_t>(index.getValue().getZExtValue()));
   });
   llvm::sort(entries);
+  SymbolTable symbols(module);
   for (auto indexedEntry : llvm::enumerate(entries)) {
     auto index = indexedEntry.index();
     const auto &entry = indexedEntry.value();
@@ -1257,10 +1262,10 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       return module.emitError()
              << "duplicate bytecode symbol '" << entry.first << "'";
     std::string name = entry.first + ".__obelisk_bytecode_entry";
-    if (module.lookupSymbol(name))
+    if (symbols.lookup(name))
       return module.emitError()
              << "symbol collision for bytecode entry '" << name << "'";
-    makeAggregateGlobal(
+    symbols.insert(makeAggregateGlobal(
         module, entryType, name, LLVM::Linkage::Internal, "",
         [&](OpBuilder &builder) {
           Value value =
@@ -1273,7 +1278,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
           return insertValue(
               builder, module.getLoc(), value,
               integerConstant(builder, module.getLoc(), i32, entry.second), 1);
-        });
+        }));
   }
 
   // A direct descriptor reference normally retains the database. The explicit

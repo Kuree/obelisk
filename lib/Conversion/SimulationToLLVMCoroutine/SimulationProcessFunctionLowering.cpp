@@ -223,7 +223,7 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
 
 LogicalResult
 finishPreparedPlainNativeProcess(PreparedPlainNativeProcess &process,
-                                 const SymbolTable &embeddedSymbols) {
+                                 SymbolTable &embeddedSymbols) {
   if (failed(makePlainNativeWrappers(process.module, process.body,
                                      process.baseName, *process.analysis)))
     return failure();
