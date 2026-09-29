@@ -21,7 +21,7 @@
 // OUTLINE-NEXT: ret void
 // OUTLINE: attributes #[[NOINLINE]] = { {{.*}}noinline{{.*}} }
 
-// DIRECT-LABEL: define {{.*}}@__obelisk_eval_variant_dispatch_v1_0(
+// DIRECT-LABEL: define {{.*}}@__obelisk_direct_fragment_2_12.__obelisk_execute(
 // DIRECT: load i8, ptr @__obelisk_eval_selected_variant_v1_0
 // DIRECT: br i1
 // DIRECT-NOT: call {{.*}}%{{[0-9]+}}(

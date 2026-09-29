@@ -1245,6 +1245,12 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       LLVM::LLVMStructType::getLiteral(context, {pointer, i32, i32});
   SmallVector<std::pair<std::string, uint32_t>> entries;
   module.walk([&](Operation *operation) {
+    // Only process descriptors consume these adapters. Ordinary calls and
+    // observers address their bytecode functions by index in the image.
+    if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+      if (function.getEntryKind() == sim::EntryKind::Function ||
+          function.getEntryKind() == sim::EntryKind::Observer)
+        return;
     auto index = operation->getAttrOfType<IntegerAttr>(kFunctionAttr);
     auto symbol =
         operation->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName());

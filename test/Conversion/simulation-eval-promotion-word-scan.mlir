@@ -4,7 +4,7 @@
 // RUN: FileCheck %s --implicit-check-not=__obelisk_eval_kernel_promotion_ready_v1_ < %t.mlir
 // RUN: FileCheck %s --check-prefix=RANGE < %t.mlir
 // RUN: FileCheck %s --check-prefix=KERNEL < %t.mlir
-// RUN: FileCheck %s --check-prefix=VARIANT --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not='llvm.call @__obelisk_eval_variant_dispatch_v1_' < %t.mlir
+// RUN: FileCheck %s --check-prefix=VARIANT --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not=__obelisk_eval_variant_dispatch_v1_ < %t.mlir
 // RUN: FileCheck %s --check-prefix=STORE < %t.mlir
 // RUN: FileCheck %s --check-prefix=CLOCK < %t.mlir
 
@@ -148,10 +148,10 @@ module attributes {
 }
 
 // VARIANT: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0(0 : i8)
-// VARIANT-LABEL: llvm.func internal @__obelisk_eval_variant_dispatch_v1_0(
-// VARIANT-SAME: always_inline
+// VARIANT-LABEL: llvm.func @__obelisk_direct_fragment_2_12.__obelisk_execute(
 // VARIANT: llvm.mlir.addressof @__obelisk_eval_selected_variant_v1_0
 // VARIANT: llvm.load {{.*}} : !llvm.ptr -> i8
 // VARIANT: llvm.cond_br
 // VARIANT: llvm.call @work.__obelisk_eval_body_0.__obelisk_two_state_0
 // VARIANT: llvm.call @__obelisk_eval_four_state_fallback_v1_0
+// VARIANT: llvm.return {{.*}} : i32

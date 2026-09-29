@@ -1105,6 +1105,14 @@ LogicalResult emitTargetOutput(ModuleOp module,
     // fanout, and direct-fragment coverage can be proved together. A false
     // positive must remain eligible for the generic/AOT fallback.
   }
+  bool pruneModel = options.target == TargetKind::Native &&
+                    options.kind == NativeOutputKind::Executable &&
+                    options.optLevel > 0;
+  if (pruneModel)
+    module->setAttr(obelisk::sim::metadata::nativeClosedExecutable,
+                    UnitAttr::get(module.getContext()));
+  else
+    module->removeAttr(obelisk::sim::metadata::nativeClosedExecutable);
   if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
                          useBytecode, options.vpi, options.bytecodeScope,
                          *nativeScheduler, options.optLevel,
@@ -1151,9 +1159,6 @@ LogicalResult emitTargetOutput(ModuleOp module,
     if (function->hasAttr("obelisk.dpi.export_id"))
       nativeExports.insert(function.getSymName());
   });
-  bool pruneModel = options.target == TargetKind::Native &&
-                    options.kind == NativeOutputKind::Executable &&
-                    options.optLevel > 0;
   if (pruneModel) {
     // The manifest is an ownership inventory, not a set of live entry points.
     // It has been read above; retain only surviving members in the C++ plan.
@@ -1163,9 +1168,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
     if (failed(removed))
       return failure();
     prunePartitionInventory(*removed);
-    if (options.timing)
+    if (options.timing) {
       errs() << "obelisk native pruning: MLIR symbols removed="
              << removed->size() << '\n';
+      detail::reportNativePrunedSymbols(*removed, "MLIR");
+    }
     markBackendTiming("MLIR symbol dead-code elimination");
   }
   llvm::LLVMContext llvmContext;
@@ -1203,9 +1210,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
     llvm::StringSet<> removed =
         detail::pruneNativeExecutableModel(*llvmModule, nativeExports);
     prunePartitionInventory(removed);
-    if (options.timing)
-      errs() << "obelisk native pruning: LLVM symbols removed=" << removed.size()
-             << '\n';
+    if (options.timing) {
+      errs() << "obelisk native pruning: LLVM symbols removed="
+             << removed.size() << '\n';
+      detail::reportNativePrunedSymbols(removed, "LLVM");
+    }
     markBackendTiming("generated model dead-code elimination");
   }
   bool splitModule = nativePartitionPlan &&

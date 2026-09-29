@@ -45,7 +45,6 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -59,7 +58,6 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Transforms/InliningUtils.h"
 #include "mlir/Transforms/Mem2Reg.h"
 #include "mlir/Transforms/RegionUtils.h"
 
@@ -1552,15 +1550,23 @@ LogicalResult NativePipelineAnalysis::materialize() {
     return success();
   if (!analyses.empty())
     declareProcessSpawnRuntimeABI(module);
+  bool deferSpawnBodies =
+      module->hasAttr(sim::metadata::nativeClosedExecutable);
+  SmallVector<std::pair<LLVM::LLVMFuncOp, SimulationProcessFrameAnalysis *>>
+      spawnHelpers;
   SymbolTable helperSymbols(module);
   for (auto &entry : analyses) {
     auto function = cast<sim::SimFuncOp>(entry.first);
     if (failed(makeProcessActivationHelper(module, helperSymbols, function,
-                                           *entry.second)) ||
-        failed(makeProcessSpawnHelper(module, helperSymbols, function,
-                                      *entry.second,
-                                      processSchedules[entry.first])))
+                                           *entry.second)))
       return failure();
+    auto helper = makeProcessSpawnHelper(
+        module, helperSymbols, function, *entry.second,
+        processSchedules[entry.first], !deferSpawnBodies);
+    if (failed(helper))
+      return failure();
+    if (deferSpawnBodies)
+      spawnHelpers.emplace_back(*helper, entry.second.get());
   }
   if (useAOT) {
     if (evalScheduler) {
@@ -1775,6 +1781,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
 
   SmallVector<sim::SimDesignOp> designs;
   module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
+  SymbolTable flattenedSymbols(module);
   for (sim::SimDesignOp design : designs) {
     SmallVector<Operation *> nested;
     for (Operation &operation : design.getBody().front())
@@ -1782,13 +1789,13 @@ LogicalResult NativePipelineAnalysis::materialize() {
     for (Operation *operation : nested) {
       if (auto function = dyn_cast<LLVM::LLVMFuncOp>(operation)) {
         if (function.isExternal() &&
-            module.lookupSymbol(function.getSymName())) {
+            flattenedSymbols.lookup(function.getSymName())) {
           function.erase();
           continue;
         }
       } else if (auto global = dyn_cast<LLVM::GlobalOp>(operation)) {
         if (global.getInitializerRegion().empty() && !global.getValue() &&
-            module.lookupSymbol(global.getSymName())) {
+            flattenedSymbols.lookup(global.getSymName())) {
           global.erase();
           continue;
         }
@@ -1813,9 +1820,39 @@ LogicalResult NativePipelineAnalysis::materialize() {
         continue;
       }
       operation->moveBefore(design);
+      if (auto symbol = dyn_cast<SymbolOpInterface>(operation))
+        if (!flattenedSymbols.lookup(symbol.getName()))
+          flattenedSymbols.insert(operation);
     }
+    flattenedSymbols.remove(design);
     design.erase();
   }
+  markTiming("design symbol flattening");
+
+  if (deferSpawnBodies) {
+    // IEEE 1800-2023 4.5/4.6, 9.2: retain every scheduled process and its
+    // startup order. Only scalar adapters replaced by batch rows are omitted.
+    auto uses = SymbolTable::getSymbolUses(&module.getBodyRegion());
+    llvm::DenseSet<StringAttr> referenced;
+    if (uses)
+      for (const SymbolTable::SymbolUse &use : *uses)
+        referenced.insert(use.getSymbolRef().getRootReference());
+    size_t omitted = 0;
+    for (auto [helper, analysis] : spawnHelpers) {
+      if (uses && !referenced.contains(helper.getSymNameAttr())) {
+        helper.erase();
+        ++omitted;
+        continue;
+      }
+      if (failed(detail::makeProcessSpawnBody(helper, *analysis)))
+        return failure();
+    }
+    if (detailedTiming)
+      llvm::errs() << "obelisk native spawn bodies: emitted="
+                   << spawnHelpers.size() - omitted << " omitted=" << omitted
+                   << '\n';
+  }
+  markTiming("scalar spawn body materialization");
 
   SmallVector<schedule::NativeTimeOp> times;
   module.walk([&](schedule::NativeTimeOp op) { times.push_back(op); });
@@ -1906,7 +1943,6 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     LLVM::LLVMFuncOp fourStateFallback;
     LLVM::LLVMFuncOp checkpointFallback;
     LLVM::LLVMFuncOp checkpointBody;
-    LLVM::LLVMFuncOp variantDispatcher;
     DenseI64ArrayAttr ranges;
     bool independentEntry = false;
     std::optional<uint32_t> checkpointActor;
@@ -1969,7 +2005,6 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
          function,
          pathKnownProbe,
          checkpointPathProbe,
-         {},
          {},
          {},
          {},
@@ -2570,41 +2605,6 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
             global,
             schedule::RouteProofDependencyAttr::get(
                 context, route.ranges, builder.getI64IntegerAttr(routeIndex)));
-
-      builder.setInsertionPointToEnd(module.getBody());
-      route.variantDispatcher = LLVM::LLVMFuncOp::create(
-          builder, route.twoState.getLoc(),
-          (Twine("__obelisk_eval_variant_dispatch_v1_") + Twine(routeIndex))
-              .str(),
-          route.twoState.getFunctionType());
-      detail::copyNativePartition(route.twoState, route.variantDispatcher);
-      route.variantDispatcher.setPrivate();
-      route.variantDispatcher.setLinkage(LLVM::Linkage::Internal);
-      route.variantDispatcher.setAlwaysInline(true);
-      Block *entry = route.variantDispatcher.addEntryBlock(builder);
-      Block *twoState = new Block, *fourState = new Block;
-      route.variantDispatcher.getBody().push_back(twoState);
-      route.variantDispatcher.getBody().push_back(fourState);
-      builder.setInsertionPointToStart(entry);
-      Value selected = LLVM::LoadOp::create(
-          builder, route.twoState.getLoc(), i8,
-          LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                    route.selectorName),
-          1);
-      Value known = LLVM::ICmpOp::create(
-          builder, route.twoState.getLoc(), LLVM::ICmpPredicate::ne, selected,
-          detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0));
-      LLVM::CondBrOp::create(builder, route.twoState.getLoc(), known, twoState,
-                             fourState);
-      auto emitCall = [&](Block *block, LLVM::LLVMFuncOp callee) {
-        builder.setInsertionPointToStart(block);
-        auto call = LLVM::CallOp::create(builder, route.twoState.getLoc(),
-                                         callee, entry->getArguments());
-        LLVM::ReturnOp::create(builder, route.twoState.getLoc(),
-                               call.getResults());
-      };
-      emitCall(twoState, route.twoState);
-      emitCall(fourState, route.fourStateFallback);
     }
 
     ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
@@ -2905,10 +2905,6 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     call.setCallee(clone.getSymName());
   }
 
-  DialectRegistry registry;
-  LLVM::registerInlinerInterface(registry);
-  context->appendDialectRegistry(registry);
-  InlinerInterface inliner(context);
   SmallVector<LLVM::CallOp> calls;
   module.walk([&](LLVM::CallOp call) {
     if (call.getCallee() && routesByFunction.contains(*call.getCallee()))
@@ -2924,8 +2920,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       continue;
     LLVM::LLVMFuncOp caller = call->getParentOfType<LLVM::LLVMFuncOp>();
     if (caller &&
-        (caller == route.dispatcher || caller == route.fourStateFallback ||
-         caller == route.variantDispatcher))
+        (caller == route.dispatcher || caller == route.fourStateFallback))
       continue;
     // A path-guarded route never changes its entry function: the dispatcher
     // itself performs the exact two-state/four-state/checkpoint decision.
@@ -2943,27 +2938,42 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
              ::obelisk::schedule::Field::EvalTrustedTwoStateClosure>(caller));
     if (selectedTwoStateClosure && !route.dispatcher) {
       // The selected call has already established the owner proof
-      // at its execution boundary. Preserve a direct edge so LLVM can inline across
-      // module instances, but retain a nested owner's path predicate: the
-      // outer closure certificate deliberately excludes ranges owned by that
-      // independently guarded checkpoint.
+      // at its execution boundary. Preserve a direct edge so LLVM can inline
+      // across module instances, but retain a nested owner's path predicate:
+      // the outer closure certificate deliberately excludes ranges owned by
+      // that independently guarded checkpoint.
       call.setCallee(route.twoState.getSymName());
       continue;
     }
-    call.setCallee(route.variantDispatcher.getSymName());
     // IEEE 1800-2023 4.5/4.6: keep selection at this execution boundary.
-    // Expand only the branch before partitioning can separate its callees.
-    auto clone = [&](OpBuilder &, Region *source, Block *inlineBlock,
-                     Block *postInsertBlock, IRMapping &mapping,
-                     bool shouldClone) {
-      assert(shouldClone && "variant selectors must remain reusable");
-      source->cloneInto(inlineBlock->getParent(),
-                        postInsertBlock->getIterator(), mapping);
+    Location location = call.getLoc();
+    SmallVector<Value> arguments(call.getArgOperands());
+    Block *entry = call->getBlock();
+    Block *continuation = entry->splitBlock(call);
+    for (Value result : call.getResults())
+      result.replaceAllUsesWith(
+          continuation->addArgument(result.getType(), location));
+    Block *twoState = builder.createBlock(continuation);
+    Block *fourState = builder.createBlock(continuation);
+    builder.setInsertionPointToEnd(entry);
+    Value selected = LLVM::LoadOp::create(
+        builder, location, i8,
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  route.selectorName),
+        1);
+    Value known = LLVM::ICmpOp::create(
+        builder, location, LLVM::ICmpPredicate::ne, selected,
+        detail::llvmConstant(builder, location, i8, 0));
+    LLVM::CondBrOp::create(builder, location, known, twoState, fourState);
+    auto emitCall = [&](Block *block, LLVM::LLVMFuncOp callee) {
+      builder.setInsertionPointToStart(block);
+      auto selectedCall =
+          LLVM::CallOp::create(builder, location, callee, arguments);
+      LLVM::BrOp::create(builder, location, selectedCall.getResults(),
+                         continuation);
     };
-    if (failed(inlineCall(inliner, clone, cast<CallOpInterface>(*call),
-                          cast<CallableOpInterface>(*route.variantDispatcher),
-                          &route.variantDispatcher.getBody())))
-      return call.emitError("could not expand direct variant selection");
+    emitCall(twoState, route.twoState);
+    emitCall(fourState, route.fourStateFallback);
     call.erase();
   }
 

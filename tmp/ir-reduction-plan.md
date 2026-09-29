@@ -10,8 +10,9 @@ admission, coroutine-free activation, and shared native copy kernels are
 implemented. W8's scalar commit-code reduction is implemented, preserving
 unrolled promoted fast paths and the runtime accumulator ABI. W9's compact
 state-plane fills are implemented. W6b net collapsing and inactive-VPI fast
-paths are implemented and validated. W1's optional attribute
-storage work and W10–W11 remain outstanding. Existing
+paths are implemented and validated. W10's spawn-body, bytecode-entry, and
+temporary-selector reductions are implemented. W1's optional attribute
+storage work, the remaining W10 inventory, and W11 remain outstanding. Existing
 four-state/two-state eval bodies remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
 This existing plan is updated in place.
@@ -1198,13 +1199,74 @@ sandbox. Changed C++ was formatted with `clang-format -i`.
 
 ### W10. Symbols generated and then deleted
 
-- The current RSD `vpi=off` log reports 26,681 MLIR symbols and 58 LLVM
-  symbols pruned (`tmp/ir-reduction-w6b/rsd-after.log`). The original 14,817
-  count is historical; classify the current removals before choosing which
-  materialization paths to eliminate.
-- Add a debug dump listing the pruned names by category under `-mlir-timing`.
-- Then move those keep/drop decisions ahead of materialization.
-- This is expected to overlap with W3–W5.
+The first materialization reductions are implemented. The fresh RSD baseline
+after `37467f8d` prunes 26,682 MLIR definitions and 58 LLVM definitions. The
+older 26,681 and 14,817 counts are historical. `--mlir-timing` now lists sorted
+pruned names and category totals, using LLVM `SmallMapVector` for deterministic
+category order. Artifacts and exact commands: `tmp/ir-reduction-w10/`.
+
+| RSD definitions previously generated and deleted | Avoided |
+| --- | ---: |
+| Scalar spawn bodies used only through constant batches | 6,965 |
+| Bytecode-entry globals for ordinary functions and observers | 6,395 |
+| Temporary eval variant dispatchers whose callers inline their branch | 4,787 |
+| Total | 18,147 |
+
+Spawn declarations and capture layouts remain available to existing batching.
+For optimized complete native executables, a reference scan after process
+lowering and design flattening decides which scalar bodies to materialize.
+Dynamic captures, used process identities, direct references, process
+descriptors, and batch plans retain their existing behavior. Unknown symbol
+uses conservatively retain bodies. Object/IR output keeps public scalar
+helpers. Flattening uses one incrementally maintained MLIR symbol table;
+repeated linear module lookups made deferred declarations prohibitively
+expensive in the first measurement.
+
+Ordinary bytecode calls and observer descriptors use numeric function IDs;
+their image bodies remain intact, but their unused process-entry adapters are
+not created. The eval selector is emitted directly at each existing call site,
+including returned values and four-state provenance, instead of creating a
+temporary function and then cloning its branch into every caller.
+
+LRM review against `build/lrm-2023.txt`: 4.5 and 9.2 require retaining startup
+and scheduled processes; eliminating an unused scalar adapter does not remove
+its descriptor or batch row. 4.6 and 10.4.2 require preserving statement and
+NBA execution order; batching boundaries and selector execution boundaries
+remain unchanged. Two-state selection still depends on the existing exact
+X/Z proof; invalidation and fallback preserve the four-state values and
+variable initialization rules in 6.3.1 and 6.8. Runtime promotion tests now
+exercise the selector in a real generated executor instead of exporting the
+discarded temporary function. No additional VPI optimization is included.
+
+RSD late MLIR pruning drops to 8,535 definitions (68.0% fewer definitions
+generated only to be removed); LLVM pruning remains 58. This is not a 68%
+reduction in total IR. One before/after compile sample is 116.69 / 116.80 s,
+with peak RSS 4,120,004 / 4,085,592 KiB. The 63,152,720-byte executables are
+byte-identical, including the 22,210,336-byte embedded bytecode image. Thus
+this reduces intermediate IR with effectively unchanged compile time in this
+sample and no change to RSD runtime machine code.
+
+Ibex and PicoRV also produce byte-identical executables. Their late MLIR
+removals drop from 6,235 to 1,535 and from 204 to 53, respectively. Single
+compile samples are 22.30 / 22.70 s for Ibex and 2.71 / 2.59 s for PicoRV;
+peak RSS is 1,143,724 / 1,139,328 KiB and 259,904 / 257,904 KiB. PicoRV's
+runtime output matches. Ibex retains the same pre-existing lifecycle failure
+(status 14), so it is not a passing functional benchmark.
+
+Validation: all eight focused conversion/runtime tests pass, including
+ordinary/observer bytecode retention, scalar versus batched spawn paths,
+dynamic captures, threaded/serial determinism, and X/Z promotion recovery.
+The full suite passes 2,944 tests with 17 expected failures. Both RSD
+HelloWorld runs match the register/serial oracle (4,275 cycles and 4,506
+retired operations). Changed C++ was formatted with `clang-format -i`.
+
+The remaining RSD inventory is a separate follow-up: 4,767 two-state executor
+wrappers, 2,898 runtime byte globals, and 870 other definitions. Executor
+identities and proof/status metadata are queried during schedule planning;
+some wrappers are real call targets. Separate that analysis from body
+materialization before omitting unused wrappers. Literal globals require
+reachability decisions before their runtime materialization. Keep those
+decisions independent of deferred read/write/VPI optimization.
 
 ### W11. Backend serial phases and hot runtime calls
 
@@ -1233,7 +1295,8 @@ sandbox. Changed C++ was formatted with `clang-format -i`.
    promoted fast paths preserved. W9 state-plane initializers are implemented.
 6. W6b net collapsing is implemented within the LRM's explicit permissions.
    Variable collapsing remains deferred pending proof.
-7. W10 and W11 as independent follow-up work.
+7. W10's first three materialization reductions are implemented. The remaining
+   executor/literal inventory and W11 are independent follow-up work.
 
 Measure before and after each step using the protocol above. Do not count
 ibex's fresh baseline lifecycle failure as successful execution. Until resolved,

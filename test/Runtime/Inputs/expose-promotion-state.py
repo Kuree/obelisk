@@ -30,11 +30,6 @@ for symbol in symbols:
     old = "llvm.mlir.global internal @" + symbol + "("
     assert text.count(old) == 1, symbol
     text = text.replace(old, "llvm.mlir.global @" + symbol + "(")
-if not multiword:
-    name = "__obelisk_eval_variant_dispatch_v1_0"
-    old = "llvm.func internal @" + name + "("
-    assert text.count(old) == 1, name
-    text = text.replace(old, "llvm.func @" + name + "(")
 assert text.count("llvm.func @main(") == 1
 text = text.replace("llvm.func @main(", "llvm.func @model_main(")
 Path(output).write_text(text)

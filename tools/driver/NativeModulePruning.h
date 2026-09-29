@@ -1,4 +1,4 @@
-//===- NativeModulePruning.h - Model reachability -----------------*- C++ -*-===//
+//===- NativeModulePruning.h - Model reachability ------------*- C++ -*-===//
 
 #ifndef OBELISK_TOOLS_DRIVER_NATIVEMODULEPRUNING_H
 #define OBELISK_TOOLS_DRIVER_NATIVEMODULEPRUNING_H
@@ -7,12 +7,60 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 
 namespace obelisk::driver::detail {
+
+inline llvm::StringRef nativePrunedSymbolCategory(llvm::StringRef name) {
+  if (name.ends_with(".__obelisk_bytecode_entry"))
+    return "bytecode-entry";
+  if (name.starts_with("__obelisk_eval_variant_dispatch_"))
+    return "variant-dispatch";
+  if (name.contains(".__obelisk_frame_"))
+    return "frame";
+  if (name.contains(".__obelisk_process_descriptor"))
+    return "process-descriptor";
+  if (name.contains(".__obelisk_spawn") ||
+      name.contains(".__obelisk_schedule_") ||
+      name.contains(".__obelisk_bytecode_continuations"))
+    return "spawn";
+  if (name.contains(".__obelisk_activate"))
+    return "activation";
+  if (name.contains(".__obelisk_coro_"))
+    return "coroutine";
+  if (name.contains(".__obelisk_eval_") || name.contains(".__obelisk_clean"))
+    return "eval";
+  if (name.contains(".__obelisk_native_execute") ||
+      name.contains(".__obelisk_execute"))
+    return "execute";
+  return "other";
+}
+
+inline void reportNativePrunedSymbols(const llvm::StringSet<> &removed,
+                                      llvm::StringRef stage) {
+  llvm::SmallVector<llvm::StringRef> names;
+  llvm::SmallMapVector<llvm::StringRef, size_t, 8> counts;
+  names.reserve(removed.size());
+  for (const auto &entry : removed)
+    names.push_back(entry.getKey());
+  llvm::sort(names);
+  for (llvm::StringRef name : names) {
+    llvm::StringRef category = nativePrunedSymbolCategory(name);
+    ++counts[category];
+    llvm::errs() << "obelisk native pruned symbol: stage=" << stage
+                 << " category=" << category << " name=" << name << '\n';
+  }
+  for (const auto &[category, count] : counts)
+    llvm::errs() << "obelisk native pruning category: stage=" << stage
+                 << " category=" << category << " symbols=" << count << '\n';
+}
 
 /// Give SymbolDCE the closed-world visibility of a generated executable.
 /// LLVM linkage is left intact for translation and subsequent partitioning.

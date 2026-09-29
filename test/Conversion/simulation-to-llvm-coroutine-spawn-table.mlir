@@ -1,5 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: sed 's/module attributes {/module attributes {obelisk.native.closed_executable,/' %s > %t.closed.mlir
+// RUN: obelisk-opt %t.closed.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

@@ -15,7 +15,8 @@ extern uint8_t __obelisk_eval_step_four_state_fallback_v1;
 extern uint64_t __obelisk_eval_fast_nba_roots_v1[];
 int __obelisk_eval_four_state_nba_handoff_v1(void *, void *, void *);
 void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
-void __obelisk_eval_variant_dispatch_v1_0(void *);
+int executeSelectedWork(void *) asm(
+    "__obelisk_direct_fragment_2_12.__obelisk_execute");
 void executeFourStateWork(void *) asm("work.__obelisk_eval_body_0");
 void __obelisk_eval_promotion_invalidate_mask_v1(uint64_t, uint64_t);
 bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
@@ -205,7 +206,7 @@ int main() {
   assert(fallback != known);
   __obelisk_eval_fast_nba_roots_v1[0] = 3;
   __obelisk_eval_step_four_state_fallback_v1 = 0;
-  __obelisk_eval_variant_dispatch_v1_0(nullptr);
+  assert(executeSelectedWork(nullptr) == 0);
   assert(__obelisk_eval_step_four_state_fallback_v1 == 1);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
   assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
@@ -213,7 +214,7 @@ int main() {
   // without recording four-state provenance or resetting destination proofs.
   promote();
   __obelisk_eval_step_four_state_fallback_v1 = 0;
-  __obelisk_eval_variant_dispatch_v1_0(nullptr);
+  assert(executeSelectedWork(nullptr) == 0);
   assert(__obelisk_eval_step_four_state_fallback_v1 == 0);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
   // A failed proof is consumed once. Changing its bytes without reporting a

@@ -6,6 +6,7 @@
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 
@@ -28,11 +29,14 @@ mlir::LogicalResult
 makeProcessActivationHelper(mlir::ModuleOp module, mlir::SymbolTable &symbols,
                             sim::SimFuncOp function,
                             const SimulationProcessFrameAnalysis &analysis);
+mlir::FailureOr<mlir::LLVM::LLVMFuncOp> makeProcessSpawnHelper(
+    mlir::ModuleOp module, mlir::SymbolTable &symbols, sim::SimFuncOp function,
+    const SimulationProcessFrameAnalysis &analysis,
+    const NativeSchedulePlan &schedule, bool materializeBody = true);
+
 mlir::LogicalResult
-makeProcessSpawnHelper(mlir::ModuleOp module, mlir::SymbolTable &symbols,
-                       sim::SimFuncOp function,
-                       const SimulationProcessFrameAnalysis &analysis,
-                       const NativeSchedulePlan &schedule);
+makeProcessSpawnBody(mlir::LLVM::LLVMFuncOp helper,
+                     const SimulationProcessFrameAnalysis &analysis);
 
 void declareProcessSpawnRuntimeABI(mlir::ModuleOp module);
 

@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=ENCODE --implicit-check-not=obelisk.design.database
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' | FileCheck %s --check-prefix=DATABASE
 // RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER --implicit-check-not=add.__obelisk_bytecode_entry --implicit-check-not=observe.__obelisk_bytecode_entry
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
@@ -36,6 +36,7 @@ module attributes {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add" loc("design.sv":7:3)
     simulation.code_unit.decl 71 in 0 initial hierarchy "top.process" debug "process"
+    simulation.code_unit.decl 72 in 0 observer hierarchy "top.observe"
     simulation.storage.decl 0 in 0 : !simulation.logic<65> design
         hierarchy "top.value"
     simulation.net.decl 0 in 0 : !simulation.logic<2> design
@@ -101,6 +102,14 @@ module attributes {
     ^done:
       simulation.return
     }
+    simulation.func private @observe(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i1
+        attributes {code_unit_id = 72 : i64, entry_kind = 14 : i32,
+                    schedule.observer_width = 1 : i32,
+                    schedule.observer_four_state = false} {
+      %false = arith.constant false
+      simulation.return %false : i1
+    }
   }
 }
 
@@ -114,6 +123,7 @@ module attributes {
 // ENCODE: obelisk.bytecode.function = 0 : i32
 // ENCODE: obelisk.bytecode.scratch_alignment = 8 : i64
 // ENCODE: obelisk.bytecode.function = 1 : i32
+// ENCODE: obelisk.bytecode.function = 2 : i32
 
 // Dynamic INSERT carries its low-bit register in source2; static INSERT leaves
 // source2 zero and uses only the immediate field.

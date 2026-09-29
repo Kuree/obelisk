@@ -208,6 +208,10 @@ inline constexpr llvm::StringLiteral dpiElidedInputs =
 /// object emission and incremental caches share one ownership boundary.
 inline constexpr llvm::StringLiteral nativePartition =
     "obelisk.native.partition";
+/// The driver is lowering a complete executable and may omit unreferenced
+/// implementation helpers. Object and IR emission keep their public helpers.
+inline constexpr llvm::StringLiteral nativeClosedExecutable =
+    "obelisk.native.closed_executable";
 /// Deterministic per-design inventory of native partitions, their members,
 /// imports, exports, and dependencies.
 inline constexpr llvm::StringLiteral nativePartitionManifest =

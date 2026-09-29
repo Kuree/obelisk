@@ -184,11 +184,10 @@ makeProcessActivationHelper(ModuleOp module, SymbolTable &symbols,
   return success();
 }
 
-LogicalResult
-makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
-                       sim::SimFuncOp function,
-                       const SimulationProcessFrameAnalysis &analysis,
-                       const NativeSchedulePlan &schedule) {
+FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
+    ModuleOp module, SymbolTable &symbols, sim::SimFuncOp function,
+    const SimulationProcessFrameAnalysis &analysis,
+    const NativeSchedulePlan &schedule, bool materializeBody) {
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   Location location = function.getLoc();
@@ -199,8 +198,8 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
   for (BlockArgument argument : function.getBody().front().getArguments())
     arguments.push_back(convertProcessType(argument.getType(), context));
   std::string helperName = (function.getSymName() + ".__obelisk_spawn").str();
-  if (symbols.lookup(helperName))
-    return success();
+  if (auto helper = symbols.lookup<LLVM::LLVMFuncOp>(helperName))
+    return helper;
   std::string continuationName =
       (function.getSymName() + ".__obelisk_schedule_continuations").str();
   std::string rankName =
@@ -252,7 +251,8 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
   }
   uint32_t homeRegion = getRuntimeEventRegion(function.getHomeRegion());
   if (homeRegion == UINT32_MAX)
-    return function.emitOpError("has no executable runtime home region");
+    return function.emitOpError("has no executable runtime home region"),
+           failure();
   sim::EntryKind entryKind = function.getEntryKind();
   bool primeOnSpawn =
       ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
@@ -263,7 +263,8 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
            function) ||
        entryKind != sim::EntryKind::Fork))
     return function.emitError(
-        "prime-on-spawn is reserved for internal detached waiters");
+               "prime-on-spawn is reserved for internal detached waiters"),
+           failure();
   bool startup = sim::isStartupEntryKind(entryKind) ||
                  (entryKind == sim::EntryKind::Initial &&
                   function.getHomeRegion() == sim::EventRegion::Active);
@@ -281,8 +282,9 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
        entryKind != sim::EntryKind::Fork ||
        function.getHomeRegion() != sim::EventRegion::Reactive))
     return function.emitError(
-        "priority signal resume is reserved for internal concurrent "
-        "cancellation or abort observers");
+               "priority signal resume is reserved for internal concurrent "
+               "cancellation or abort observers"),
+           failure();
   uint32_t scheduleFlags =
       OBELISK_RT_SCHEDULE_HOME(homeRegion) |
       (entryKind == sim::EntryKind::Final ? OBELISK_RT_SCHEDULE_FINAL : 0) |
@@ -368,6 +370,25 @@ makeProcessSpawnHelper(ModuleOp module, SymbolTable &symbols,
   helper->setAttr("obelisk.spawn_capture_size",
                   builder.getI64IntegerAttr(captureSize));
   indexModuleSymbol(module, symbols, helper);
+  if (materializeBody && failed(makeProcessSpawnBody(helper, analysis)))
+    return failure();
+  return helper;
+}
+
+LogicalResult
+makeProcessSpawnBody(LLVM::LLVMFuncOp helper,
+                     const SimulationProcessFrameAnalysis &analysis) {
+  if (!helper.isExternal())
+    return success();
+  MLIRContext *context = helper.getContext();
+  OpBuilder builder(context);
+  Location location = helper.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i64 = builder.getI64Type();
+  uint64_t captureSize =
+      helper->getAttrOfType<IntegerAttr>("obelisk.spawn_capture_size")
+          .getUInt();
+  std::string planName = (helper.getSymName() + "_plan").str();
   Block *entry = helper.addEntryBlock(builder);
   builder.setInsertionPointToStart(entry);
   Value captures = LLVM::ZeroOp::create(builder, location, pointer);
