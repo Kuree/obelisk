@@ -3,6 +3,7 @@
 #include "RuntimeToLLVMPatterns.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Runtime/RuntimeABI.h"
@@ -298,6 +299,12 @@ materializeGlobalBytes(Operation *anchor, StringRef bytes,
   auto name = dyn_cast<StringAttr>(names[preparedIndex]);
   if (!name || name.getValue().empty())
     return anchor->emitOpError("prepared runtime byte global name is invalid");
+  if (module->hasAttr(sim::metadata::nativeClosedExecutable)) {
+    Value address = schedule::NativeByteAddressOp::create(
+        rewriter, location, abi.pointer, name, rewriter.getStringAttr(bytes),
+        rewriter.getI64IntegerAttr(abi.alignments.i8));
+    return std::pair<Value, Value>{address, size};
+  }
   auto arrayType = LLVM::LLVMArrayType::get(abi.i8, bytes.size());
   LLVM::GlobalOp global;
   {

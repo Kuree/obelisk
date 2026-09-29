@@ -2,6 +2,10 @@
 // RUN: %t.native | FileCheck %s
 // RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
+// RUN: obelisk -O3 %s -o %t.optimized
+// RUN: %t.optimized | FileCheck %s
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.optimized-bytecode
+// RUN: %t.optimized-bytecode | FileCheck %s
 
 module native_string_format;
   string text;
@@ -12,8 +16,10 @@ module native_string_format;
     $display("t:%s", text);
     text = $psprintf("x=%x", 8'hbc);
     $display("p:%s", text);
+    $display("scope:%m");
     // CHECK: f:d=-12 h=2a s=ok %
     // CHECK: t:b=1010 o=17
     // CHECK: p:x=bc
+    // CHECK: scope:native_string_format
   end
 endmodule

@@ -254,7 +254,15 @@ def ConvertRuntimeToLLVMPass
     prepare-runtime-to-llvm. The convert-obelisk-runtime-to-llvm pipeline
     composes preparation and conversion for callers that need both stages.
   }];
-  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect",
+                          "obelisk::schedule::ScheduleDialect"];
+}
+
+def MaterializeRuntimeByteGlobalsPass
+    : Pass<"materialize-runtime-byte-globals", "mlir::ModuleOp"> {
+  let summary = "Emit immutable byte globals remaining after reachability";
+  let dependentDialects = ["mlir::LLVM::LLVMDialect",
+                          "obelisk::schedule::ScheduleDialect"];
 }
 
 def MaterializeObeliskNativeEvalGroupsPass

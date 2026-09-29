@@ -11,8 +11,8 @@ implemented. W8's scalar commit-code reduction is implemented, preserving
 unrolled promoted fast paths and the runtime accumulator ABI. W9's compact
 state-plane fills are implemented. W6b net collapsing and inactive-VPI fast
 paths are implemented and validated. W10's spawn-body, bytecode-entry,
-temporary-selector, and executor-wrapper reductions are implemented. W1's
-optional attribute storage work, W10's runtime byte globals and other remaining
+temporary-selector, executor-wrapper, and runtime byte-global reductions are
+implemented. W1's optional attribute storage work, W10's other remaining
 inventory, and W11 remain outstanding. Existing
 four-state/two-state eval bodies remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
@@ -1335,10 +1335,70 @@ verification, and actual promoted/fallback execution at O0 and O3. All
 were rebuilt; the fresh full suite passes 2,945 tests with 17 expected failures
 (`tests-fresh.log`). Changed C++ was formatted with `clang-format -i`.
 
-The subsequent RSD inventory is 2,898 runtime byte globals and 870 other
-definitions.
-Literal globals require reachability decisions before their runtime
-materialization; keep this independent of deferred read/write/VPI work.
+**Runtime byte-global follow-up.** The 2,898 remaining late-pruned RSD byte
+globals all originate in helpers that the executable later deletes (2,891
+used source values and seven unused ones). Filtering unused SSA values alone
+would therefore miss almost all of them. The source inventory and reproduction
+commands are in `tmp/ir-reduction-w10-bytes/`.
+
+Optimized complete executables now retain each immutable byte address as a
+pure Schedule operation inside its owning helper. Its prepared name, exact
+bytes, and ABI alignment survive cloning and local rewrites. The existing
+executable reachability pass deletes unused helpers after DPI, observer,
+scheduler, and activation-group materialization. Only then are the surviving
+addresses lowered to globals and LLVM address operations. Repeated copies of
+one prepared literal share one definition; inconsistent payloads or symbol
+collisions are errors. Late constants use the backend's existing primary-owner
+fallback, also used for definitions created after its physical inventory.
+Object/IR output retains immediate materialization. This avoids a second
+reachability analysis and does not alter VPI read/write behavior.
+
+LRM review against `build/lrm-2023.txt`: 5.9 requires preserving string bytes,
+including embedded NULs, and 21.2.1/21.2.1.5 require retaining formatting and
+hierarchical context for observable calls. The change preserves byte lengths,
+allocation alignment, formatting environments, and live callback/export roots.
+It changes only when compiler-owned immutable storage is emitted, with no
+change to event or NBA ordering (4.5/4.6/10.4.2).
+
+| Metric | Executor baseline | Deferred byte globals |
+| --- | ---: | ---: |
+| RSD late-pruned MLIR definitions | 3,768 | 870 |
+| Ibex late-pruned MLIR definitions | 51 | 9 |
+| PicoRV late-pruned MLIR definitions | 8 | 8 |
+| RSD compile seconds | 121.91 | 120.68 |
+| RSD peak RSS, KiB | 4,053,504 | 4,097,184 |
+| Ibex compile seconds | 23.01 | 23.34 |
+| Ibex peak RSS, KiB | 1,139,232 | 1,142,592 |
+| PicoRV compile seconds | 2.86 | 2.66 |
+| PicoRV peak RSS, KiB | 262,648 | 265,864 |
+
+These are single samples, with no substantial compilation-speed or memory
+improvement established. RSD avoids 2,898 byte-global definitions and Ibex 42;
+PicoRV has no dead globals in this category. Surviving RSD globals take 0.35 s
+to materialize. The three executable sizes are unchanged at 63,152,720,
+17,684,400, and 7,080,968 bytes. All function addresses/sizes and embedded
+bytecode images match, but literal placement changes `.rodata`, pointer
+references in `.text`, and whole-binary hashes. Do not claim byte-identical
+executables or a runtime speedup from this change. Measurements and section
+comparisons are in `measurements.json` and `comparison.json` under the artifact
+directory above. Disassembly confirms every instruction difference is only a
+RIP-relative address displacement (647 RSD, 213 Ibex, six PicoRV); instruction
+counts and all other instructions match (`instruction-comparison.json`).
+
+Both RSD runs match the register/serial oracle (4,275 cycles, 4,506 retired
+operations); the single runtime pair is 28.74 / 29.23 s and does not establish
+a speed change. Ibex passes 1,000 rounds with sum 55, reload-plus-one 56,
+59,001 cycles and 57,000 fetches, matching Verilator. PicoRV outputs match.
+Focused tests check unused-owner deletion, embedded NUL bytes, shared cloned
+literals, idempotent materialization, retained immediate lowering, `%m`, and
+optimized native/bytecode formatting, plus DPI and checkpoint routes. All
+`check-obelisk` dependencies were rebuilt, and the fresh full suite passes
+2,946 tests with 17 expected failures (`tests.log`). Changed C++ was formatted
+with `clang-format -i`.
+
+The remaining RSD inventory is the other 870 definitions; classify it before
+choosing the next reduction. Keep this independent of deferred read/write/VPI
+work.
 
 ### W11. Backend serial phases and hot runtime calls
 
@@ -1367,9 +1427,9 @@ materialization; keep this independent of deferred read/write/VPI work.
    promoted fast paths preserved. W9 state-plane initializers are implemented.
 6. W6b net collapsing is implemented within the LRM's explicit permissions.
    Variable collapsing remains deferred pending proof.
-7. W10's spawn-body, bytecode-entry, temporary-selector, and executor-wrapper
-   reductions are implemented. The remaining literal/other inventory and W11
-   are independent follow-up work.
+7. W10's spawn-body, bytecode-entry, temporary-selector, executor-wrapper, and
+   runtime byte-global reductions are implemented. The remaining inventory
+   and W11 are independent follow-up work.
 
 Measure before and after each step using the protocol above. Historical Ibex
 status-14 binaries remain compile/IR-only measurements. Rebuild with the

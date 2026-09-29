@@ -54,6 +54,9 @@ validateRuntimeToLLVMPreconditions(mlir::ModuleOp module,
 /// materializers in one linear module walk before conversion.
 mlir::LogicalResult prepareRuntimeToLLVMByteGlobals(mlir::ModuleOp module);
 
+mlir::LogicalResult
+materializeDeferredRuntimeByteGlobals(mlir::ModuleOp module);
+
 /// Add the one-to-one runtime ABI type mappings to a composing LLVM
 /// conversion.
 void addRuntimeToLLVMTypeConversions(mlir::LLVMTypeConverter &converter);

@@ -3380,6 +3380,7 @@ public:
       return signalPassFailure();
     ConversionTarget target(getContext());
     target.addLegalDialect<LLVM::LLVMDialect>();
+    target.addLegalOp<schedule::NativeByteAddressOp>();
     SmallVector<schedule::NativeObserverOp> deadObservers;
     module.walk([&](schedule::NativeObserverOp observer) {
       if (observer->use_empty())
@@ -3456,6 +3457,7 @@ public:
               FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
               ConversionTarget workerTarget(getContext());
               workerTarget.addLegalDialect<LLVM::LLVMDialect>();
+              workerTarget.addLegalOp<schedule::NativeByteAddressOp>();
               workerTarget.addLegalOp<UnrealizedConversionCastOp>();
               workerTarget.markUnknownOpDynamicallyLegal(
                   [](Operation *operation) {

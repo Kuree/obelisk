@@ -22,6 +22,7 @@
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Conversion/SimulationToBytecode.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
@@ -1175,6 +1176,9 @@ LogicalResult emitTargetOutput(ModuleOp module,
     }
     markBackendTiming("MLIR symbol dead-code elimination");
   }
+  if (failed(materializeDeferredRuntimeByteGlobals(module)))
+    return failure();
+  markBackendTiming("runtime byte-global materialization");
   llvm::LLVMContext llvmContext;
   std::unique_ptr<llvm::Module> llvmModule =
       translateModuleToLLVMIR(module, llvmContext, "obelisk");

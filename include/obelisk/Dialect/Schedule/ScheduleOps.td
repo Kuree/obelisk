@@ -521,4 +521,9 @@ def NativeScratchOp : ScheduleNativeOp<"scratch", [MemoryEffects<[MemAlloc]>]> {
   let results = (outs RTMutableByteSpanType:$result);
   let hasVerifier = 1;
 }
+def NativeByteAddressOp : ScheduleNativeOp<"bytes.address", [Pure]> {
+  let summary = "immutable bytes awaiting executable reachability";
+  let arguments = (ins StrAttr:$name, StrAttr:$value, I64Attr:$alignment);
+  let results = (outs LLVM_AnyPointer:$result);
+}
 #endif
