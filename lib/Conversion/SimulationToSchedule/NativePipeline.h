@@ -2,6 +2,7 @@
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOSCHEDULE_NATIVEPIPELINE_H
 #include "../SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../SimulationToLLVMCoroutine/SimulationProcessActivationLowering.h"
+#include "../SimulationToLLVMCoroutine/SimulationProcessWrapperLowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationTableProcess.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
@@ -108,6 +109,7 @@ struct NativePipelineAnalysis {
   llvm::DenseSet<uint64_t> preLowerGeneratedRegionCodeUnits;
   mlir::FailureOr<llvm::SmallVector<NativeDirectFragment>> directFragments =
       mlir::failure();
+  llvm::SmallVector<DeferredDirectFragmentWrapper> deferredDirectWrappers;
   llvm::DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> aotFusionGroups;
   NativeEvalOwnershipPlan evalOwnership;
   llvm::SmallVector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>>

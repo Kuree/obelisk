@@ -17,6 +17,8 @@ int __obelisk_eval_four_state_nba_handoff_v1(void *, void *, void *);
 void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 int executeSelectedWork(void *) asm(
     "__obelisk_direct_fragment_2_12.__obelisk_execute");
+int executeTrustedWork(void *) asm("__obelisk_direct_fragment_2_12.__obelisk_"
+                                   "execute.two_state.__obelisk_trusted");
 void executeFourStateWork(void *) asm("work.__obelisk_eval_body_0");
 void __obelisk_eval_promotion_invalidate_mask_v1(uint64_t, uint64_t);
 bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
@@ -215,6 +217,11 @@ int main() {
   promote();
   __obelisk_eval_step_four_state_fallback_v1 = 0;
   assert(executeSelectedWork(nullptr) == 0);
+  assert(__obelisk_eval_step_four_state_fallback_v1 == 0);
+  assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
+  // IEEE 1800-2023 6.3.1: the trusted entry consumes the established proof.
+  promote();
+  assert(executeTrustedWork(nullptr) == 0);
   assert(__obelisk_eval_step_four_state_fallback_v1 == 0);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
   // A failed proof is consumed once. Changing its bytes without reporting a

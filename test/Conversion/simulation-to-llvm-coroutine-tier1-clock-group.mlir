@@ -1,5 +1,12 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --implicit-check-not=schedule.eval.tier2_convergence
+// RUN: sed 's/module attributes {/module attributes {obelisk.native.closed_executable,/' %s > %t.closed.mlir
+// RUN: obelisk-opt %t.closed.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.lowered.mlir
+// RUN: FileCheck %s --check-prefix=REUSE --implicit-check-not='llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state(' < %t.lowered.mlir
+// RUN: FileCheck %s --check-prefix=RETAIN < %t.lowered.mlir
+// RUN: obelisk-opt %t.closed.mlir --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial.mlir
+// RUN: diff %t.lowered.mlir %t.serial.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.lowered.mlir | opt -passes=verify -disable-output
 
 // This fixture is already at the coroutine-conversion boundary: its compute
 // graph, static state plan, superstep, and three-tier schedule are explicit.
@@ -50,7 +57,38 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       cf.br ^bb1
     }
   }
+  // IEEE 1800-2023 6.3.1: a proven caller cannot strengthen other entries.
+  llvm.func @mixed_wrapper(%ctx: !llvm.ptr) -> i32 attributes {schedule.eval.two_state_wrapper} {
+    %ok = llvm.mlir.constant(0 : i32) : i32
+    llvm.return %ok : i32
+  }
+  llvm.func @address_wrapper(%ctx: !llvm.ptr) -> i32 attributes {schedule.eval.two_state_wrapper} {
+    %ok = llvm.mlir.constant(0 : i32) : i32
+    llvm.return %ok : i32
+  }
+  llvm.func @wrapper_users(%ctx: !llvm.ptr) -> !llvm.ptr {
+    %a = llvm.call @mixed_wrapper(%ctx) {schedule.eval.proven_two_state_call} : (!llvm.ptr) -> i32
+    %b = llvm.call @mixed_wrapper(%ctx) : (!llvm.ptr) -> i32
+    %c = llvm.call @address_wrapper(%ctx) {schedule.eval.proven_two_state_call} : (!llvm.ptr) -> i32
+    %address = llvm.mlir.addressof @address_wrapper : !llvm.ptr
+    llvm.return %address : !llvm.ptr
+  }
 }
+
+// RETAIN-LABEL: llvm.func @mixed_wrapper(
+// RETAIN-SAME: attributes {schedule.eval.two_state_wrapper}
+// RETAIN-LABEL: llvm.func @address_wrapper(
+// RETAIN-SAME: attributes {schedule.eval.two_state_wrapper}
+// RETAIN-LABEL: llvm.func @wrapper_users(
+// RETAIN: llvm.call @mixed_wrapper.__obelisk_trusted(
+// RETAIN: llvm.call @mixed_wrapper(
+// RETAIN: llvm.call @address_wrapper.__obelisk_trusted(
+// RETAIN: llvm.mlir.addressof @address_wrapper
+// REUSE-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted(
+// REUSE-SAME: schedule.eval.trusted_two_state_closure
+// REUSE-NOT: llvm.load
+// REUSE: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0
+// REUSE: llvm.return
 
 // One clock-sensitive activation owns the group. The shared dispatcher
 // selects either value-domain executor without entering the runtime.

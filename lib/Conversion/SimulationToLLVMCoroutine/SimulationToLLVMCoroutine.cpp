@@ -319,6 +319,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     const DenseSet<uint64_t> &generatedRegionCodeUnits,
     const DenseSet<std::pair<uint64_t, uint32_t>>
         &runtimeCheckpointContinuations,
+    SmallVectorImpl<detail::DeferredDirectFragmentWrapper> &deferredWrappers,
     bool enabled) {
   SmallVector<NativeDirectFragment> result;
   struct PendingEvalWrapper {
@@ -891,11 +892,19 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
                   module, pending.body, pending.actor, pending.wrapper,
                   pending.actorSlot, pending.continuation, *pending.analysis)))
       return failure();
-    if (pending.twoStateBody && failed(makeDirectFragmentWrapper(
-                                    module, pending.twoStateBody, pending.actor,
-                                    pending.twoStateWrapper, pending.actorSlot,
-                                    pending.continuation, *pending.analysis)))
-      return failure();
+    if (pending.twoStateBody) {
+      bool deferBody = module->hasAttr(sim::metadata::nativeClosedExecutable);
+      auto wrapper = makeDirectFragmentWrapper(
+          module, pending.twoStateBody, pending.actor, pending.twoStateWrapper,
+          pending.actorSlot, pending.continuation, *pending.analysis,
+          !deferBody);
+      if (failed(wrapper))
+        return failure();
+      if (deferBody)
+        deferredWrappers.push_back({*wrapper, pending.twoStateBody,
+                                    pending.actor, pending.actorSlot,
+                                    pending.continuation, pending.analysis});
+    }
     if (::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             pending.body)) {
@@ -1535,7 +1544,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments() {
   directFragments = materializeDirectFragments(
       module, metadataDesign, aotActorSlotsByCodeUnit, analyses,
       aotBytecodeContinuations, preLowerGeneratedRegionCodeUnits,
-      runtimeCheckpointContinuations,
+      runtimeCheckpointContinuations, deferredDirectWrappers,
       useAOT && cleanSuperstep && staticFanoutPlan.exact &&
           (cleanWritableEval || !guardedAOTSpecialization));
   if (failed(directFragments))
@@ -1608,6 +1617,44 @@ LogicalResult NativePipelineAnalysis::materialize() {
                                hasLanguageObserver)))
     return failure();
   markTiming("process helpers and scheduler main");
+
+  if (!deferredDirectWrappers.empty()) {
+    // IEEE 1800-2023 4.5/4.6, 6.3.1: preserve scheduling and value-domain
+    // selection. Only adapters with no references after planning are omitted.
+    llvm::DenseSet<StringAttr> referenced;
+    bool knownUses = true;
+    module.walk([&](Operation *operation) {
+      if (!operation->hasTrait<OpTrait::SymbolTable>())
+        return;
+      for (Region &region : operation->getRegions()) {
+        auto uses = SymbolTable::getSymbolUses(&region);
+        if (!uses) {
+          knownUses = false;
+          continue;
+        }
+        for (const SymbolTable::SymbolUse &use : *uses)
+          referenced.insert(use.getSymbolRef().getRootReference());
+      }
+    });
+    size_t omitted = 0;
+    for (DeferredDirectFragmentWrapper &pending : deferredDirectWrappers) {
+      if (knownUses && !referenced.contains(pending.wrapper.getSymNameAttr())) {
+        pending.wrapper.erase();
+        ++omitted;
+        continue;
+      }
+      if (failed(makeDirectFragmentBody(
+              pending.wrapper, pending.body, pending.actor, pending.actorSlot,
+              pending.continuation, *pending.analysis)))
+        return failure();
+    }
+    if (detailedTiming)
+      llvm::errs() << "obelisk two-state executor bodies: emitted="
+                   << deferredDirectWrappers.size() - omitted
+                   << " omitted=" << omitted << '\n';
+    deferredDirectWrappers.clear();
+  }
+  markTiming("two-state executor body materialization");
 
   SmallVector<sim::SimFuncOp> ordinary;
   module.walk([&](sim::SimFuncOp function) {
@@ -2857,11 +2904,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // Consume the selected owner's proof at its call boundary. Sharing a
   // mutable wrapper with four-state entries must not reintroduce a route
   // lookup after this exact call has already selected the two-state body.
-  // Only the small wrapper is cloned; computation and scheduling stay shared.
-  // Include the helpers emitted above and register each clone in this same
-  // table. Rebuilding a module symbol table per clone is quadratic.
+  // IEEE 1800-2023 6.3.1: unproven entries must retain X/Z-aware selection.
+  // A closed executable can reuse a wrapper when every reference is a proven
+  // call. Address uses, unproven calls, and unknown uses require a clone.
   SymbolTable wrapperSymbols(module);
-  SmallVector<LLVM::CallOp> trustedWrapperCalls;
+  llvm::MapVector<Operation *, SmallVector<LLVM::CallOp>> trustedWrapperCalls;
   module.walk([&](LLVM::CallOp call) {
     if (!::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalProvenTwoStateCall>(call) ||
@@ -2870,40 +2917,70 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     auto callee = wrapperSymbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
     if (callee &&
         ::obelisk::schedule::has<schedule::Field::EvalTwoStateWrapper>(callee))
-      trustedWrapperCalls.push_back(call);
+      trustedWrapperCalls[callee.getOperation()].push_back(call);
   });
-  llvm::DenseMap<Operation *, LLVM::LLVMFuncOp> trustedWrapperClones;
-  for (LLVM::CallOp call : trustedWrapperCalls) {
-    LLVM::LLVMFuncOp wrapper =
-        wrapperSymbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
-    LLVM::LLVMFuncOp &clone = trustedWrapperClones[wrapper.getOperation()];
-    if (!clone) {
-      bool recursive = false;
-      wrapper.walk([&](LLVM::CallOp nested) {
-        recursive |=
-            nested.getCallee() && *nested.getCallee() == wrapper.getSymName();
-      });
-      if (recursive)
-        return wrapper.emitError(
-            "cannot specialize a recursive trusted eval wrapper");
-      SmallString<128> base(wrapper.getSymName());
-      base.append(".__obelisk_trusted");
-      unsigned suffix = 0;
-      SmallString<128> name(base);
-      while (wrapperSymbols.lookup<LLVM::LLVMFuncOp>(name)) {
-        name = base;
-        (Twine("_") + Twine(++suffix)).toVector(name);
+  llvm::DenseMap<StringAttr, size_t> referenceCounts;
+  llvm::DenseSet<StringAttr> referencesFromWrappers;
+  bool canReuse = module->hasAttr(sim::metadata::nativeClosedExecutable);
+  if (canReuse) {
+    // Symbol-use enumeration stops at nested symbol tables. The executable
+    // pipeline has flattened designs; retain cloning for any other layout.
+    module.walk([&](Operation *operation) {
+      if (operation != module && operation->hasTrait<OpTrait::SymbolTable>())
+        canReuse = false;
+    });
+    auto uses = SymbolTable::getSymbolUses(&module.getBodyRegion());
+    canReuse &= uses.has_value();
+    if (canReuse)
+      for (const SymbolTable::SymbolUse &use : *uses) {
+        ++referenceCounts[use.getSymbolRef().getRootReference()];
+        // Cloning a caller would create references absent from this snapshot.
+        if (auto caller = use.getUser()->getParentOfType<LLVM::LLVMFuncOp>();
+            caller && trustedWrapperCalls.contains(caller.getOperation()))
+          referencesFromWrappers.insert(use.getSymbolRef().getRootReference());
       }
-      Operation *detached = wrapper->clone();
-      clone = cast<LLVM::LLVMFuncOp>(detached);
-      clone.setSymName(name);
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalTrustedTwoStateClosure>(
-          clone, builder.getUnitAttr());
-      wrapperSymbols.insert(detached);
-    }
-    call.setCallee(clone.getSymName());
   }
+  size_t reused = 0;
+  for (auto &[operation, calls] : trustedWrapperCalls) {
+    auto wrapper = cast<LLVM::LLVMFuncOp>(operation);
+    bool recursive = false;
+    wrapper.walk([&](LLVM::CallOp nested) {
+      recursive |=
+          nested.getCallee() && *nested.getCallee() == wrapper.getSymName();
+    });
+    if (recursive)
+      return wrapper.emitError(
+          "cannot specialize a recursive trusted eval wrapper");
+    SmallString<128> base(wrapper.getSymName());
+    base.append(".__obelisk_trusted");
+    unsigned suffix = 0;
+    SmallString<128> name(base);
+    while (wrapperSymbols.lookup<LLVM::LLVMFuncOp>(name)) {
+      name = base;
+      (Twine("_") + Twine(++suffix)).toVector(name);
+    }
+    LLVM::LLVMFuncOp clone;
+    if (canReuse &&
+        !referencesFromWrappers.contains(wrapper.getSymNameAttr()) &&
+        referenceCounts.lookup(wrapper.getSymNameAttr()) == calls.size()) {
+      wrapperSymbols.remove(wrapper);
+      wrapper->moveBefore(module.getBody(), module.getBody()->end());
+      clone = wrapper;
+      ++reused;
+    } else {
+      clone = cast<LLVM::LLVMFuncOp>(wrapper->clone());
+    }
+    clone.setSymName(name);
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalTrustedTwoStateClosure>(
+        clone, builder.getUnitAttr());
+    wrapperSymbols.insert(clone);
+    for (LLVM::CallOp call : calls)
+      call.setCallee(clone.getSymName());
+  }
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk trusted executor wrappers: reused=" << reused
+                 << " cloned=" << trustedWrapperCalls.size() - reused << '\n';
 
   SmallVector<LLVM::CallOp> calls;
   module.walk([&](LLVM::CallOp call) {

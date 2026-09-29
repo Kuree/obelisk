@@ -41,11 +41,26 @@ mlir::LogicalResult
 makePlainNativeWrappers(mlir::ModuleOp module, mlir::func::FuncOp body,
                         llvm::StringRef baseName,
                         const SimulationProcessFrameAnalysis &analysis);
-mlir::LogicalResult
+struct DeferredDirectFragmentWrapper {
+  mlir::LLVM::LLVMFuncOp wrapper;
+  sim::SimFuncOp body;
+  sim::SimFuncOp actor;
+  uint32_t actorSlot;
+  uint32_t continuation;
+  const SimulationProcessFrameAnalysis *analysis;
+};
+
+mlir::FailureOr<mlir::LLVM::LLVMFuncOp>
 makeDirectFragmentWrapper(mlir::ModuleOp module, sim::SimFuncOp body,
                           sim::SimFuncOp actor, llvm::StringRef wrapperName,
                           uint32_t actorSlot, uint32_t continuation,
-                          const SimulationProcessFrameAnalysis &analysis);
+                          const SimulationProcessFrameAnalysis &analysis,
+                          bool materializeBody = true);
+mlir::LogicalResult
+makeDirectFragmentBody(mlir::LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
+                       sim::SimFuncOp actor, uint32_t actorSlot,
+                       uint32_t continuation,
+                       const SimulationProcessFrameAnalysis &analysis);
 mlir::LogicalResult makeRuntimeCheckpointWrapper(mlir::ModuleOp module,
                                                  sim::SimFuncOp actor,
                                                  llvm::StringRef wrapperName,

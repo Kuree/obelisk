@@ -10,9 +10,10 @@ admission, coroutine-free activation, and shared native copy kernels are
 implemented. W8's scalar commit-code reduction is implemented, preserving
 unrolled promoted fast paths and the runtime accumulator ABI. W9's compact
 state-plane fills are implemented. W6b net collapsing and inactive-VPI fast
-paths are implemented and validated. W10's spawn-body, bytecode-entry, and
-temporary-selector reductions are implemented. W1's optional attribute
-storage work, the remaining W10 inventory, and W11 remain outstanding. Existing
+paths are implemented and validated. W10's spawn-body, bytecode-entry,
+temporary-selector, and executor-wrapper reductions are implemented. W1's
+optional attribute storage work, W10's runtime byte globals and other remaining
+inventory, and W11 remain outstanding. Existing
 four-state/two-state eval bodies remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
 This existing plan is updated in place.
@@ -1281,13 +1282,63 @@ debugger traces, compiler command, and outputs are in
 `tmp/ibex-lifecycle-fix/`. The full suite passes 2,945 tests with 17 expected
 failures after the fix.
 
-The remaining RSD inventory is a separate follow-up: 4,767 two-state executor
-wrappers, 2,898 runtime byte globals, and 870 other definitions. Executor
-identities and proof/status metadata are queried during schedule planning;
-some wrappers are real call targets. Separate that analysis from body
-materialization before omitting unused wrappers. Literal globals require
-reachability decisions before their runtime materialization. Keep those
-decisions independent of deferred read/write/VPI optimization.
+**Executor wrapper follow-up.** The remaining 4,767 RSD two-state wrappers
+have two causes: 2,750 have no references after scheduler planning, and 2,017
+are originals left behind when route materialization clones them for proven
+calls. Declarations retain all proof/status metadata for planning. After the
+scheduler is materialized, a symbol-use inventory across every symbol-table
+scope decides which bodies to create, before their source functions are
+lowered. Unknown uses conservatively retain all bodies.
+
+At trusted-route specialization, a wrapper is reused when every reference is
+a proven two-state call. This avoids duplicating its body and then adding
+mutable route branches to an original that would be discarded. Mixed callers,
+address references, unknown uses, and references from potentially cloned
+wrappers retain the original entry and use the existing clone path. Both
+reductions apply only to optimized complete executables; object/IR output
+retains public helpers. LLVM MapVector preserves first-call order, and shared
+symbol-use inventories avoid per-wrapper scans.
+
+LRM review: 6.3.1 requires unproven entries to preserve X/Z-aware selection;
+the existing per-call proof is required before reusing a wrapper. The schedule,
+status/checkpoint metadata, guard evaluation, source statement ordering, and
+NBA ordering (4.5, 4.6, 10.4.2) are unchanged. Dynamic promotion, invalidation,
+and four-state fallback remain available. No additional VPI optimization is
+included. Matched measurements and runtime results are in
+`tmp/ir-reduction-w10-wrappers/`; its `reuse-only/` subdirectory contains the
+intermediate, incomplete change and is not the final comparison.
+
+| Metric | Pushed baseline | Executor reduction |
+| --- | ---: | ---: |
+| RSD late-pruned MLIR definitions | 8,535 | 3,768 |
+| Ibex late-pruned MLIR definitions | 1,535 | 51 |
+| PicoRV late-pruned MLIR definitions | 53 | 8 |
+| RSD compile seconds | 116.88 | 120.62 |
+| RSD peak RSS, KiB | 4,113,952 | 4,061,580 |
+| Ibex compile seconds | 22.66 | 23.59 |
+| Ibex peak RSS, KiB | 1,134,020 | 1,146,236 |
+| PicoRV compile seconds | 2.69 | 2.80 |
+| PicoRV peak RSS, KiB | 265,620 | 260,060 |
+
+These are single compile samples. The reference inventories add compile cost:
+RSD's deferred-body phase costs 1.93 s, and route materialization increases
+from 1.54 to 4.16 s. This step reduces intermediate IR, not compilation time.
+The executables for all three designs remain byte-identical (RSD 63,152,720
+bytes, Ibex 17,684,400, PicoRV 7,080,968), so there is no runtime machine-code
+speedup. Both RSD runs match the register/serial oracle (4,275 cycles, 4,506
+retired operations); their 29.26 / 29.70 s wall times are measurement noise.
+Ibex passes 1,000 rounds with 59,001 cycles and 57,000 fetches, matching
+Verilator; PicoRV's outputs match. The focused tests cover preserved public
+entries, mixed callers, address references, threaded/serial equality, LLVM
+verification, and actual promoted/fallback execution at O0 and O3. All
+`check-obelisk` build dependencies, including generated unit-test binaries,
+were rebuilt; the fresh full suite passes 2,945 tests with 17 expected failures
+(`tests-fresh.log`). Changed C++ was formatted with `clang-format -i`.
+
+The subsequent RSD inventory is 2,898 runtime byte globals and 870 other
+definitions.
+Literal globals require reachability decisions before their runtime
+materialization; keep this independent of deferred read/write/VPI work.
 
 ### W11. Backend serial phases and hot runtime calls
 
@@ -1316,8 +1367,9 @@ decisions independent of deferred read/write/VPI optimization.
    promoted fast paths preserved. W9 state-plane initializers are implemented.
 6. W6b net collapsing is implemented within the LRM's explicit permissions.
    Variable collapsing remains deferred pending proof.
-7. W10's first three materialization reductions are implemented. The remaining
-   executor/literal inventory and W11 are independent follow-up work.
+7. W10's spawn-body, bytecode-entry, temporary-selector, and executor-wrapper
+   reductions are implemented. The remaining literal/other inventory and W11
+   are independent follow-up work.
 
 Measure before and after each step using the protocol above. Historical Ibex
 status-14 binaries remain compile/IR-only measurements. Rebuild with the

@@ -341,11 +341,10 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   return success();
 }
 
-LogicalResult
-makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
-                          sim::SimFuncOp actor, StringRef wrapperName,
-                          uint32_t actorSlot, uint32_t continuation,
-                          const SimulationProcessFrameAnalysis &analysis) {
+FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
+    ModuleOp module, sim::SimFuncOp body, sim::SimFuncOp actor,
+    StringRef wrapperName, uint32_t actorSlot, uint32_t continuation,
+    const SimulationProcessFrameAnalysis &analysis, bool materializeBody) {
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToEnd(module.getBody());
   Location location = body.getLoc();
@@ -423,7 +422,6 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
       ::obelisk::schedule::set<schedule::metadata::evalCheckpointSafe>(
           wrapper, builder.getUnitAttr());
   }
-  Block *entry = wrapper.addEntryBlock(builder);
   if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
           body)) {
     if (!mayTerminate)
@@ -432,6 +430,26 @@ makeDirectFragmentWrapper(ModuleOp module, sim::SimFuncOp body,
     wrapper->setAttr(
         "passthrough",
         builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+  }
+  if (materializeBody &&
+      failed(makeDirectFragmentBody(wrapper, body, actor, actorSlot,
+                                    continuation, analysis)))
+    return failure();
+  return wrapper;
+}
+
+LogicalResult
+makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
+                       sim::SimFuncOp actor, uint32_t actorSlot,
+                       uint32_t continuation,
+                       const SimulationProcessFrameAnalysis &analysis) {
+  OpBuilder builder(wrapper.getContext());
+  Location location = wrapper.getLoc();
+  MLIRContext *context = wrapper.getContext();
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = builder.getI32Type();
+  Block *entry = wrapper.addEntryBlock(builder);
+  if (::obelisk::schedule::has<schedule::Field::EvalRawCaptures>(body)) {
     builder.setInsertionPointToStart(entry);
     SmallVector<Value> arguments;
     for (Type input : body.getFunctionType().getInputs()) {
