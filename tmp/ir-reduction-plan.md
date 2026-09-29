@@ -1250,8 +1250,9 @@ Ibex and PicoRV also produce byte-identical executables. Their late MLIR
 removals drop from 6,235 to 1,535 and from 204 to 53, respectively. Single
 compile samples are 22.30 / 22.70 s for Ibex and 2.71 / 2.59 s for PicoRV;
 peak RSS is 1,143,724 / 1,139,328 KiB and 259,904 / 257,904 KiB. PicoRV's
-runtime output matches. Ibex retains the same pre-existing lifecycle failure
-(status 14), so it is not a passing functional benchmark.
+runtime output matches. At this checkpoint Ibex retained the same pre-existing
+lifecycle failure (status 14), so those binaries are not passing functional
+benchmarks. The subsequent correctness fix is recorded below.
 
 Validation: all eight focused conversion/runtime tests pass, including
 ordinary/observer bytecode retention, scalar versus batched spawn paths,
@@ -1259,6 +1260,26 @@ dynamic captures, threaded/serial determinism, and X/Z promotion recovery.
 The full suite passes 2,944 tests with 17 expected failures. Both RSD
 HelloWorld runs match the register/serial oracle (4,275 cycles and 4,506
 retired operations). Changed C++ was formatted with `clang-format -i`.
+
+**Ibex correctness follow-up.** The status-14 failure occurred before process
+startup in `obelisk_rt_v1_native_state_bind_shared`. Ibex's DPI exports set
+`OBELISK_RT_EXECUTION_DPI_EXPORTS` in the emitted execution descriptor, but the
+module's execution flags still contained only the earlier bytecode flags.
+Scheduler generation therefore selected shared state even though the runtime
+correctly rejected that binding for an export-capable design. Embedded-design
+materialization now publishes its finalized flags back to the module before
+native planning and startup generation. Runtime guards remain intact.
+
+LRM 35.7 requires an export declaration to preserve SystemVerilog behavior;
+merely declaring Ibex's unused exports must not prevent startup. A reduced
+clocked/exported-function test reproduces the old failure and now passes in
+eval, auto, generic, and bytecode modes, with native IR retaining state sync
+and omitting shared binding. Ibex passes `+ROUNDS=1` and `+ROUNDS=1000`;
+the latter produces sum 55, reload-plus-one 56, 59,001 cycles, and 57,000
+fetches, exactly matching the existing Verilator build. Reproduction,
+debugger traces, compiler command, and outputs are in
+`tmp/ibex-lifecycle-fix/`. The full suite passes 2,945 tests with 17 expected
+failures after the fix.
 
 The remaining RSD inventory is a separate follow-up: 4,767 two-state executor
 wrappers, 2,898 runtime byte globals, and 870 other definitions. Executor
@@ -1298,9 +1319,9 @@ decisions independent of deferred read/write/VPI optimization.
 7. W10's first three materialization reductions are implemented. The remaining
    executor/literal inventory and W11 are independent follow-up work.
 
-Measure before and after each step using the protocol above. Do not count
-ibex's fresh baseline lifecycle failure as successful execution. Until resolved,
-use its compile/IR measurements and report the functional limitation explicitly.
+Measure before and after each step using the protocol above. Historical Ibex
+status-14 binaries remain compile/IR-only measurements. Rebuild with the
+correctness fix above for functional or runtime performance comparisons.
 
 ## Open questions
 
@@ -1308,5 +1329,3 @@ use its compile/IR measurements and report the functional limitation explicitly.
   deferred publications before relying on bytecode for external intervention.
 - W6b: which variable-port cases, if any, have a complete observability proof?
   Decide default/opt-in policy only after correctness is established.
-- Baseline: isolate ibex's process lifecycle status 14 separately from changes
-  that preserve its executable byte-for-byte.

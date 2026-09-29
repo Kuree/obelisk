@@ -991,6 +991,10 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     flags |= OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
   if (coverageSchema)
     flags |= OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+  // IEEE 1800-2023 35.7: exporting a function preserves its SV semantics.
+  // Native scheduling must see the same capabilities as the runtime descriptor
+  // before choosing a state-publication strategy.
+  module->setAttr(kFlagsAttr, IntegerAttr::get(i32, flags));
   if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
     stateBits = attr.getValue().getZExtValue();
   struct SampledRangeInfo {

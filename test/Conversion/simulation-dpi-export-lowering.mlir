@@ -5,6 +5,10 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-dpi-export-lowering.test.
 
+// NATIVE: obelisk.execution.flags = 128 : i32
+// BYTECODE: obelisk.execution.flags = 145 : i32
+// AUTO: obelisk.execution.flags = 129 : i32
+
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
