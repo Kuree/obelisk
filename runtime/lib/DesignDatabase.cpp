@@ -6609,7 +6609,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     const uint8_t *canonicalValuePlane = nullptr;
     const uint8_t *canonicalUnknownPlane = nullptr;
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-    if (!write && plan &&
+    if (!write && plan && !context->vpiObservationDemand &&
         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
         !context->nativeScheduleDeoptimized &&
         plan->state_bit_count == context->execution->state_bit_count &&
@@ -6871,7 +6871,8 @@ obelisk_rt_read_design_slice(obelisk_rt_context *context,
   const uint8_t *canonicalValuePlane = nullptr;
   const uint8_t *canonicalUnknownPlane = nullptr;
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-  if (plan && (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+  if (plan && !context->vpiObservationDemand &&
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
       !context->nativeScheduleDeoptimized &&
       plan->state_bit_count == context->execution->state_bit_count &&
       plan->state_value && plan->state_unknown) {

@@ -9,8 +9,9 @@ sweep is covered by the existing ranked-group specialization. W6a's strict copy
 admission, coroutine-free activation, and shared native copy kernels are
 implemented. W8's scalar commit-code reduction is implemented, preserving
 unrolled promoted fast paths and the runtime accumulator ABI. W9's compact
-state-plane fills are implemented. W1's optional attribute storage work, W6b,
-and W10–W11 remain outstanding. Existing
+state-plane fills are implemented. W6b net collapsing and inactive-VPI fast
+paths are implemented and validated. W1's optional attribute
+storage work and W10–W11 remain outstanding. Existing
 four-state/two-state eval bodies remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
 This existing plan is updated in place.
@@ -885,32 +886,78 @@ and exercise X injection and recovery in the middle of a run.
   - Existing eval variants are retained. Their separate dispatch and promotion
     contract belongs to W5; replacing them with the actor-entry ABI is not
     justified by this copy certificate.
-- **W6b, collapsing, after W6a.**
-  - Alias sink storage to source storage.
-  - Nets are explicitly permitted by 1800-2023 §23.3.3.7, which says it is
-    permissible to merge the dominating and dominated nets. `vpiSimNet`
-    acknowledges collapsing. Merging is mandatory for matching user-defined
-    nettypes (§23.3.3).
-  - Variable ports use an implied continuous assignment (§23.3.3.2).
-    Their collapse is deferred until a separate proof preserves all observable
-    events. The immediate result allowed in §4.8's example does not establish
-    that arbitrary initialization transitions or callbacks can be eliminated.
-  - Required conditions:
-    - Identical types, with no §6.22.3 conversion. §23.3.3.3 warns that type
-      differences cause a time-zero value-change event.
-    - A truly one-way port, with no §23.3.3.1 coercion to inout.
-    - No declared or SDF/interconnect delays, and the same net type and
-      resolution for nets.
-    - No force/release on either side.
-    - Not writable through VPI or the debugger.
-  - The VPI database keeps separate objects, loads and drivers; only the storage
-    is shared.
-  - Initialization is a proof obligation, not an accepted behavior difference:
-    test time-zero X→value transitions, event controls, time-zero port
-    evaluation, and VPI callbacks. If aliasing would remove an observable
-    transition without specific net-collapse permission, reject the candidate.
-  - Needs a per-signal write-access set so collapsing still works under full
-    VPI for non-writable signals (see W7).
+- **W6b, net collapsing: implemented and validated.**
+  - Whole input/output port connections between identically typed, identical
+    `wire`, `tri`, or `uwire` nets share one simulated net. Existing ordinary
+    net ports used connectivity records, not variable-copy actors: this removes
+    duplicate net storage and connectivity, rather than copy processes.
+  - IEEE 1800-2023 §23.3.3.7 permits this merge; §37.16 defines `vpiSimNet`.
+    Variable ports retain the implied continuous assignments of §23.3.3.2.
+    Selected views, type conversions, mixed net kinds, and delayed nets remain
+    separate. Designs with SDF annotation or switch primitives conservatively
+    retain their existing topology. User-defined nettypes are outside this step.
+  - Separate declared-net identities preserve names, scopes, types, port
+    metadata, drivers/loads, and §37.14 `vpiHighConn`/`vpiLowConn` relations.
+    Every collapsed spelling refers to the same canonical net for force/release.
+    The earlier blanket exclusion of writable nets is unnecessary for these
+    explicitly permitted net merges; it remains inappropriate to infer the
+    same permission for variables.
+  - §38.34 requires release to return the resolved value through `value_p`;
+    the implementation now does so. Existing unsupported driven-net deposits,
+    indexed/delayed writes, and value-change subscriptions remain explicitly
+    rejected. Tests cover those rejections rather than claiming support.
+  - VPI performance requirement: `off` retains the fastest available route;
+    `read` and writable (`--vpi=full`) should match without subscribers.
+    Capability flags alone no longer prohibit shared state planes, runtime
+    calendar eval, or automatic admission of a partial native island. Actual
+    writes and active observation still revoke the runtime fast lease.
+    Cold checkpoint publications use the exact fanout table under the calendar
+    proof; branch checkpoints during a writable handoff use the same checked
+    callback trampoline as generated execution. Clean continuous stores retain
+    their last driven contribution for subsequent force/release (§10.6.2).
+  - Direct state access and static NBA accumulation use separate clean flags.
+    Pending ordered NBAs revoke only the accumulator flag (§4.6); an actual
+    VPI mutation or observation request revokes both. Runtime checkpoints may
+    retain direct addressing when generated and canonical state are shared.
+  - Active observation detaches a canonical publication snapshot (§§4.5–4.6,
+    38.36). Sharing resumes at a clean scheduler boundary after demand ends.
+    Coverage, language observers, and DPI exports retain their exclusions.
+  - Regression coverage includes nested and cyclic aliases, four-state reads,
+    force/release through different aliases, timed callback reads/removal,
+    permission checks,
+    admission exclusions, partial-island VPI admission, and runtime snapshot
+    detach/rejoin. The complete suite passes 2,944 tests with 17 expected
+    failures. Public value-change callbacks are not implemented; their
+    demand transition is exercised directly in runtime tests.
+
+
+Initial net-collapse compile pairs, before the final state/NBA guard split,
+use `-O3 -fno-lto --compile-threads=8`:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| RSD compile wall time | 116.83 s | 117.99 s |
+| RSD compile peak RSS | 4,135,652 KiB | 4,107,828 KiB |
+| RSD executable bytes | 63,148,664 | 63,151,736 |
+| Ibex compile wall time | 22.35 s | 23.30 s |
+| PicoRV compile wall time | 2.73 s | 2.70 s |
+
+These pairs show no clear compile-time improvement. All three executables
+increase by 3,072 bytes from the runtime changes. The collapsing regression
+removes four of six physical nets in a nested input/output connection while
+retaining all declared identities; these core benchmarks predominantly use
+variable connections. RSD's read build took 116.27 s; the final full build
+took 182.04 s, with peak RSS of 4,173,020 and 6,457,836 KiB respectively. Writable clean/guarded
+variants therefore have a compile-time cost; the no-subscriber parity
+requirement concerns execution. Further VPI/read/write optimization is deferred
+after the state/NBA guard split; subsequent work prioritizes IR reduction.
+RSD HelloWorld end-to-end runtime (4,275 cycles / 4,506 retired operations):
+latest verified `off` 29.02 s versus baseline 29.14 s; `read` reference 34.61 s;
+final `full` 36.86 s after the guard split versus 37.94 s immediately before it.
+These are single-run comparisons, with matching register and serial-output
+oracles. The read/full parity requirement is not yet met; the remaining gap
+is deferred as requested. Off/read were measured before the final guard split.
+Artifacts: `tmp/ir-reduction-w6b/`.
 
 ### W7. Bytecode scope
 
@@ -1151,7 +1198,10 @@ sandbox. Changed C++ was formatted with `clang-format -i`.
 
 ### W10. Symbols generated and then deleted
 
-- In RSD, 14,817 symbols are lowered and then pruned.
+- The current RSD `vpi=off` log reports 26,681 MLIR symbols and 58 LLVM
+  symbols pruned (`tmp/ir-reduction-w6b/rsd-after.log`). The original 14,817
+  count is historical; classify the current removals before choosing which
+  materialization paths to eliminate.
 - Add a debug dump listing the pruned names by category under `-mlir-timing`.
 - Then move those keep/drop decisions ahead of materialization.
 - This is expected to overlap with W3–W5.
@@ -1181,8 +1231,8 @@ sandbox. Changed C++ was formatted with `clang-format -i`.
    the optional sweep is covered by existing ranked-group specialization.
    W8 scalar commit-code reduction is implemented with the runtime ABI and
    promoted fast paths preserved. W9 state-plane initializers are implemented.
-6. W6b net collapsing within the LRM's explicit permissions, with W7's access
-   analysis where needed. Variable collapsing remains deferred pending proof.
+6. W6b net collapsing is implemented within the LRM's explicit permissions.
+   Variable collapsing remains deferred pending proof.
 7. W10 and W11 as independent follow-up work.
 
 Measure before and after each step using the protocol above. Do not count

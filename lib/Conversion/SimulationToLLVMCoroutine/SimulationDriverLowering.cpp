@@ -475,7 +475,7 @@ public:
           Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
           Value address = LLVM::AddressOfOp::create(
               rewriter, op.getLoc(), pointer,
-              "__obelisk_static_specialization_fast_v1");
+              "__obelisk_state_specialization_fast_v1");
           Value flag = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                             rewriter.getI32Type(), address, 4);
           Value allowed = arith::CmpIOp::create(

@@ -1444,8 +1444,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       result.eligible && result.nativeGraphCost > result.totalGraphCost / 2 &&
       (result.fullyEligible ||
        ((result.periodicClockCandidate || largeClocklessIsland) &&
-        result.runtimeOwnedFanoutActors.empty() && !hasRuntimePathPublication &&
-        graph.getVpi() != schedule::ComputeVPIMode::Full));
+        result.runtimeOwnedFanoutActors.empty() && !hasRuntimePathPublication));
   return result;
 }
 

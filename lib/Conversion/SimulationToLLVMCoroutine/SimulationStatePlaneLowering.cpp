@@ -545,7 +545,8 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
   IntegerType inputType = cast<IntegerType>(input.getType());
   std::optional<DirectStaticStateRange> range =
       resolveDirectStaticStateRange(handle, inputType.getWidth(), directLayout);
-  if (range && continuous && assumeClean && directLayout->directContinuous) {
+  if (range && continuous && (assumeClean || !range->guarded) &&
+      directLayout->directContinuous) {
     // Keep the actual contribution even when no writer is attached. These
     // pointers bind the runtime's own retained planes, so a later force,
     // deposit, or release needs neither reconstruction nor a shadow import.

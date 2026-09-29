@@ -36,8 +36,8 @@ LogicalResult NativePipelineAnalysis::markCleanNBA() {
 LogicalResult NativePipelineAnalysis::specializeEval() {
   if (bytecodeOnly)
     return success();
-  // Continuous stores retain canonical publication until clean lowering
-  // records the corresponding state planes.
+  // IEEE 1800-2023 10.6.2: a later force/release must retain the current
+  // continuous contribution even when the evaluator is presently clean.
   bool hasContinuousStore = false;
   module.walk([&](sim::SimRefStoreOp store) {
     auto kind = store->getParentOfType<sim::SimFuncOp>().getEntryKind();
@@ -46,10 +46,10 @@ LogicalResult NativePipelineAnalysis::specializeEval() {
                           kind == sim::EntryKind::PortInput ||
                           kind == sim::EntryKind::PortOutput;
   });
-  cleanWritableEval = evalScheduler && vpi.allowsWrite() &&
-                      !hasLanguageOverride && !hasContinuousStore;
+  cleanWritableEval =
+      evalScheduler && vpi.allowsWrite() && !hasLanguageOverride;
   stateLayout->directContinuous =
-      directStaticState && !useAOT && vpi.allowsWrite() && hasContinuousStore;
+      directStaticState && vpi.allowsWrite() && hasContinuousStore;
   if (cleanWritableEval)
     materializeCleanEvalBodies(metadataDesign);
   auto evalStateLayout = cleanWritableEval

@@ -447,7 +447,10 @@ static obelisk_rt_status schedulerNBA(
           return fail(status);
         context->staticNBASlowRoots[root] = 1;
         context->staticNBASlowRootsPresent = true;
-        invalidateNativeStaticSpecializationFastUnlocked(context);
+        // IEEE 1800-2023 4.6: staging an ordered NBA changes the commit
+        // protocol without changing the current state-addressing proof.
+        if (context->nativeSchedulePlan->specialization_fast)
+          *context->nativeSchedulePlan->specialization_fast = 0;
         return OBELISK_RT_OK;
       };
       uint32_t root = staticID < context->nativeScheduleNBARootIndex.size()

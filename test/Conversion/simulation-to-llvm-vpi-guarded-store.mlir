@@ -48,7 +48,7 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @write_q(
-// CHECK: llvm.mlir.addressof @__obelisk_static_specialization_fast_v1
+// CHECK: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
 // CHECK: llvm.cond_br
 // CHECK-NOT: llvm.call @obelisk_rt_v1_static_specialization_guard
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_{{.*}}_plane
@@ -60,7 +60,7 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // OFF-LABEL: llvm.func @write_q(
-// OFF-NOT: llvm.mlir.addressof @__obelisk_static_specialization_fast_v1
+// OFF-NOT: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
 // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_{{.*}}_plane
 // OFF: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // OFF: llvm.return

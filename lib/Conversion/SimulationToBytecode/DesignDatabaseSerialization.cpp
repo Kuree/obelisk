@@ -386,9 +386,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t sourceID;
     bool sourceIsNet;
   };
-  llvm::DenseMap<uint64_t, PortSource> storageSources, netSources;
+  llvm::DenseMap<uint64_t, PortSource> storageSources, netSources,
+      netIdentitySources;
   llvm::DenseMap<uint64_t, sim::SimPortDeclOp> directStoragePorts,
-      directNetPorts;
+      directNetPorts, directNetIdentityPorts;
+  llvm::DenseMap<uint64_t, uint64_t> declaredPortNets;
+  llvm::DenseMap<uint64_t, uint64_t> netIdentityBacking;
   llvm::DenseMap<uint64_t, PortConnection> wholePortConnections;
   llvm::DenseSet<uint64_t> wholeStoragePortSources, wholeNetPortSources;
   for (Operation &operation : design.getBody().front()) {
@@ -460,6 +463,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
                    dyn_cast<sim::SimVPIEnumConstDeclOp>(operation)) {
       if (includeStatements)
         enumConstants.push_back(enumConstant);
+    } else if (auto identity =
+                   dyn_cast<sim::SimVPINetIdentityDeclOp>(operation)) {
+      netIdentitySources[identity.getId()] = {identity.getHierarchicalName(),
+                                              identity.getScopeId(),
+                                              identity.getType()};
+      netIdentityBacking[identity.getId()] = identity.getBackingNetId();
+    } else if (auto relation = dyn_cast<sim::SimVPIRelationDeclOp>(operation)) {
+      if (relation.getSource().getKind() == sim::VPIObjectRefKind::Port &&
+          relation.getTarget().getKind() ==
+              sim::VPIObjectRefKind::NetIdentity &&
+          relation.getSelector() ==
+              static_cast<uint32_t>(VPIRelationKind::LowConnRel) &&
+          relation.getMode() == sim::VPIRelationMode::Handle)
+        declaredPortNets[relation.getSource().getId().getInt()] =
+            relation.getTarget().getId().getInt();
     } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (auto name = storage.getHierarchicalName())
         storageSources[storage.getId()] =
@@ -478,6 +496,24 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   for (sim::SimPortDeclOp port :
        design.getBody().front().getOps<sim::SimPortDeclOp>()) {
+    auto declared = declaredPortNets.find(port.getId());
+    if (declared != declaredPortNets.end()) {
+      auto source = netIdentitySources.find(declared->second);
+      if (!port.getSourceIsNet() || port.getSourceLow() != 0 ||
+          source == netIdentitySources.end() ||
+          netIdentityBacking.lookup(declared->second) != port.getSourceId() ||
+          source->second.scope != port.getScopeId() ||
+          source->second.type != port.getType()) {
+        port.emitOpError("declared low connection disagrees with net backing");
+        return {};
+      }
+      if (includeStatements)
+        wholePortConnections.try_emplace(
+            port.getId(), PortConnection{port.getSourceId(), true});
+      if (source->second.name == port.getHierarchicalName())
+        directNetIdentityPorts.try_emplace(declared->second, port);
+      continue;
+    }
     const auto &sources = port.getSourceIsNet() ? netSources : storageSources;
     auto source = sources.find(port.getSourceId());
     if (port.getSourceLow() != 0 || source == sources.end() ||
@@ -535,6 +571,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       uint64_t stableID = netSources.size() + identity.getId();
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
+      if (auto port = directNetIdentityPorts.lookup(identity.getId()))
+        caps = addPortMetadata(port, caps);
       objects.push_back(
           {OBELISK_RT_DESIGN_RECORD_NET,
            sim::vpiKindForNet(identity.getVpiTypeAttr()), caps, stableID,
@@ -734,6 +772,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       sim::SimPortDeclOp direct =
           (port.getSourceIsNet() ? directNetPorts : directStoragePorts)
               .lookup(port.getSourceId());
+      if (auto declared = declaredPortNets.find(port.getId());
+          declared != declaredPortNets.end())
+        direct = directNetIdentityPorts.lookup(declared->second);
       if (direct == port && !includeStatements)
         continue;
       uint32_t caps = OBELISK_RT_DESIGN_CAP_READ;
@@ -1627,6 +1668,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       auto connection = wholePortConnections.find(object.id);
       if (connection == wholePortConnections.end())
+        continue;
+      if (declaredPortNets.contains(object.id))
         continue;
       const auto &targets = connection->second.sourceIsNet
                                 ? canonicalNetTargetIndices

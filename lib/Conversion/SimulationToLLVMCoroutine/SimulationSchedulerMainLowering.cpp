@@ -116,12 +116,10 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   // source-order publication image even after generated stores run ahead.
   // Keep that image for observation-capable designs. A closed eval design
   // without those readers can let all tiers address the generated storage.
-  bool sharedNativeState =
-      hasExecution && useAOT && directEval && stateLayout.bitCount &&
-      !hasObserver && !hasCoverage &&
-      !(executionFlags & (OBELISK_RT_EXECUTION_VPI_READ |
-                          OBELISK_RT_EXECUTION_VPI_WRITE |
-                          OBELISK_RT_EXECUTION_DPI_EXPORTS));
+  bool sharedNativeState = hasExecution && useAOT && directEval &&
+                           stateLayout.bitCount && !hasObserver &&
+                           !hasCoverage &&
+                           !(executionFlags & OBELISK_RT_EXECUTION_DPI_EXPORTS);
   uint64_t linePointCount = 0;
   uint64_t toggleBitCount = 0;
   if (hasCoverage) {
@@ -135,8 +133,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   bool requiresNativeStateSync =
       stateLayout.bitCount && (hasDesignBytecode || toggleBitCount != 0 ||
                                stateLayout.directContinuous);
-  bool bindGenericSpecialization =
-      requiresNativeStateSync && !useAOT && !stateLayout.guardedHandles.empty();
+  bool bindStateSpecialization =
+      (requiresNativeStateSync || sharedNativeState) &&
+      !stateLayout.guardedHandles.empty();
   if (hasExecution) {
     Value execution =
         LLVM::AddressOfOp::create(builder, location, pointer, executionName);
@@ -487,9 +486,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                          "obelisk_rt_v1_scheduler_fail",
                          ValueRange{runtimeContext, status});
   }
-  if (bindGenericSpecialization) {
+  if (bindStateSpecialization) {
     Value fast = LLVM::AddressOfOp::create(
-        builder, location, pointer, "__obelisk_static_specialization_fast_v1");
+        builder, location, pointer, "__obelisk_state_specialization_fast_v1");
     Value status =
         LLVM::CallOp::create(builder, location, TypeRange{i32},
                              "obelisk_rt_v1_native_state_bind_specialization",
@@ -742,7 +741,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (sharedNativeState)
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_bind_shared",
                              i32, {pointer, pointer, pointer, i64});
-  if (bindGenericSpecialization)
+  if (bindStateSpecialization)
     getOrDeclareLLVMFunction(module,
                              "obelisk_rt_v1_native_state_bind_specialization",
                              i32, {pointer, pointer});

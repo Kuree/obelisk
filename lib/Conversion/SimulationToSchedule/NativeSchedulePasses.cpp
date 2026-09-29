@@ -278,10 +278,10 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
   if (useAOT && closedStaticIsland) {
     staticControl = vpi.hasComputeGraph();
     staticFanoutMetadata = vpi.hasComputeGraph();
-    // Read-only VPI observes the same canonical planes but cannot mutate
-    // roots or invalidate the closed-world waiter inventory. It therefore
-    // uses the fully static fanout schedule just like VPI-off.
-    staticFanout = vpi.preservesStaticDependencies();
+    // IEEE 1800-2023 9.4.2, 38.34, 38.36: writes change values, not the
+    // elaborated sensitivity graph. Live observation revokes the runtime
+    // lease; force/release and deposits retain their publication barriers.
+    staticFanout = vpi.hasComputeGraph();
     staticNBA = staticSpecialization && !stateLayout->nbaHandles.empty();
   }
   if (staticControl) {
@@ -474,10 +474,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     // retain the original runtime path for those designs (LRM 4.4-4.5).
     if (staticEvalIsland && staticFanoutPlan.exact && !hasObserver &&
         !hasInactiveDelay &&
-        !(flags &
-          (OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
-           OBELISK_RT_EXECUTION_DPI_EXPORTS |
-           OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)))
+        !(flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
+                   OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)))
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module, UnitAttr::get(module.getContext()));
   }

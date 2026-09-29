@@ -342,7 +342,7 @@ public:
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       Value address =
           LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                    "__obelisk_static_specialization_fast_v1");
+                                    "__obelisk_state_specialization_fast_v1");
       Value flag = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                         rewriter.getI32Type(), address, 4);
       Value allowed = arith::CmpIOp::create(
@@ -452,8 +452,11 @@ public:
     // have no override mask and keep the select-only fast path above.
     bool needsVisibleReload =
         sim::getPackedWidth(valueType).has_value() &&
-        ((continuous && !(directContinuous && assumeClean)) || !directLayout ||
-         !directRange || (directRange->guarded && !assumeClean));
+        ((continuous &&
+          !(directContinuous &&
+            (assumeClean || (directRange && !directRange->guarded)))) ||
+         !directLayout || !directRange ||
+         (directRange->guarded && !assumeClean));
     if (needsVisibleReload) {
       notificationValue =
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),

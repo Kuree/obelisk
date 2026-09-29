@@ -1431,10 +1431,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
       (staticEvalIsland && context->execution &&
        context->execution->observer_count == 0 &&
-       !(context->execution->flags &
-         (OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
-          OBELISK_RT_EXECUTION_DPI_EXPORTS |
-          OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)));
+       !(context->execution->flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
+                                      OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)));
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -1832,7 +1830,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       plan->promotion_invalidate();
     if (context->nativeStateSpecializationFast) {
       *context->nativeStateSpecializationFast = 0;
-      context->nativeStateSpecializationFast = nullptr;
     }
     context->nativeSchedulePlan = plan;
     if (plan->specialization_fast)
@@ -2335,10 +2332,9 @@ obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
   ContextTransaction transaction(context);
   ContextMutexLock lock(context);
   if (!context->execution || context->execution->observer_count ||
-      (context->execution->flags &
-       (OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE |
-        OBELISK_RT_EXECUTION_DPI_EXPORTS |
-        OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)) ||
+      context->vpiObservationDemand ||
+      (context->execution->flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
+                                    OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)) ||
       context->nativeStateValue || context->nativeSchedulePlan ||
       !context->nativeStaticStates.empty() ||
       !context->scheduledProcesses.empty())
@@ -2349,6 +2345,7 @@ obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
     defined(_WIN32)
   context->stateValue.bind(value, (bitCount + 63) / 64);
   context->stateUnknown.bind(unknown, (bitCount + 63) / 64);
+  context->nativeStateSharingAllowed = true;
   if (bitCount % 64) {
     uint64_t mask = (uint64_t{1} << (bitCount % 64)) - 1;
     context->stateValue.back() &= mask;

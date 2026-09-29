@@ -3726,8 +3726,17 @@ LogicalResult SimDesignOp::verifyRegions() {
         static_cast<uint32_t>(relation.getMode()));
     const auto *edge =
         reflection::findVPITraversal(*sourceKind, relation.getSelector(), mode);
+    bool declaredNetConnection =
+        relation.getSource().getKind() == VPIObjectRefKind::Port &&
+        relation.getTarget().getKind() == VPIObjectRefKind::NetIdentity &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::LowConnRel) &&
+        mode == reflection::VPITraversalMode::Handle;
     if (!edge || edge->statementContainment ||
-        edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+        (edge->automaticRelation != reflection::VPIAutomaticRelation::None &&
+         !(declaredNetConnection &&
+           edge->automaticRelation ==
+               reflection::VPIAutomaticRelation::DirectPortConnection)) ||
         !reflection::vpiObjectSetContains(edge->targets, *targetKind))
       return relation.emitOpError(
           "is not a legal non-containment traversal in the generated VPI "

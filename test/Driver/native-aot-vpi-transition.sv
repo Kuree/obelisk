@@ -109,7 +109,7 @@ endmodule
 
 // LOCAL-READ: local=14 published=14
 
-// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 1015, ptr @__obelisk_state_value
+// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 895, ptr @__obelisk_state_value
 // GUARD-DAG: br i1
 // GUARD-DAG: load {{.*}} @__obelisk_state_value
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_load_plane

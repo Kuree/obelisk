@@ -257,6 +257,8 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     std::optional<StaticStorageView> actual;
   };
   SmallVector<EventInputCandidate> eventInputs;
+  llvm::StringMap<semantic::SVNetSymbolOp> nets;
+  bool hasAnnotatedTimingOrSwitches = false;
   auto collectEventCellReferences = [&](Operation *root) {
     root->walk<WalkOrder::PreOrder>([&](Operation *nested) {
       auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
@@ -322,6 +324,18 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
 
   // Fold alias, port, and event-cell collection into one semantic-tree walk.
   semanticRoot->walk([&](Operation *op) {
+    if (auto net = dyn_cast<semantic::SVNetSymbolOp>(op)) {
+      if (!isCompileTimeOnlyInstanceMember(net))
+        nets[getHierarchyName(net)] = net;
+    }
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op))
+      hasAnnotatedTimingOrSwitches |= call.getCalleeName() == "$sdf_annotate";
+    if (auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(op))
+      if (auto name = primitive->getAttrOfType<StringAttr>("primitive_name"))
+        hasAnnotatedTimingOrSwitches |= name.getValue() == "tran" ||
+                                        name.getValue() == "rtran" ||
+                                        name.getValue().starts_with("tranif") ||
+                                        name.getValue().starts_with("rtranif");
     if (isStaticFormal(op)) {
       auto type = op->getAttrOfType<TypeAttr>("semantic_type");
       if (type && isa<semantic::EventType>(type.getValue()))
@@ -559,6 +573,47 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     return view.identity && view.offset == 0 && view.packedOffset == 0 &&
            view.indices.empty() && view.rootType == view.viewType;
   };
+
+  // IEEE 1800-2023 23.3.3.3, 23.3.3.6, 23.3.3.7: whole, identically typed
+  // wire/tri/uwire port nets can use one simulated net. Variable ports and
+  // conversions retain their continuous assignments under 23.3.3.2.
+  if (!hasAnnotatedTimingOrSwitches)
+    for (semantic::SVPortConnectionOp connection : result.connections) {
+      if (connection.getDirection() != semantic::SVArgumentDirection::In &&
+          connection.getDirection() != semantic::SVArgumentDirection::Out)
+        continue;
+      StringRef internal = connection.getInternalPath().value_or(StringRef{});
+      auto formal = nets.find(internal);
+      Operation *actual = getPortActualLValue(connection);
+      if (formal == nets.end() || !actual)
+        continue;
+      FailureOr<StaticStorageView> view = getStaticStorageView(actual);
+      if (failed(view) || !isWholeRefView(*view))
+        continue;
+      auto external = nets.find(view->path);
+      if (external == nets.end())
+        continue;
+      auto eligible = [](semantic::SVNetSymbolOp net) {
+        auto kind = net.getNetKind();
+        return (kind == semantic::SVNetKind::Wire ||
+                kind == semantic::SVNetKind::Tri ||
+                kind == semantic::SVNetKind::UWire) &&
+               !net.getDelayFs() && !net.getUnsupportedDelay();
+      };
+      semantic::SVNetSymbolOp lhs = formal->second, rhs = external->second;
+      if (!eligible(lhs) || !eligible(rhs) ||
+          lhs.getNetKind() != rhs.getNetKind() ||
+          lhs->getAttr("semantic_type") != rhs->getAttr("semantic_type") ||
+          connection.getFormalType() != view->semanticType)
+        continue;
+      if (Operation *expression =
+              getSingleRegionRoot(connection.getInternal())) {
+        FailureOr<StaticStorageView> low = getStaticStorageView(expression);
+        if (failed(low) || !isWholeRefView(*low) || low->path != internal)
+          continue;
+      }
+      uniteNetAliases(view->path, internal);
+    }
 
   // A whole ref port may itself participate in a net-alias class in prepared
   // MLIR.  Pull every transitive whole-view target into that class.  Selected
@@ -3348,6 +3403,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   };
 
   uint64_t nextPortId = 0;
+  SmallVector<std::pair<sim::SimPortDeclOp, semantic::SVPortConnectionOp>>
+      declaredNetPorts;
   llvm::StringSet<> emittedPorts;
   auto hasInterconnectLeaves = [&](StringRef root) {
     std::string prefix = (root + Twine("[")).str();
@@ -3448,6 +3505,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{},
         *formalVPIType);
+    if (source->second.kind == DescriptorInfo::Kind::Net)
+      declaredNetPorts.emplace_back(declaration, connection);
     declaration->setAttr(sim::metadata::coverageSourceAuthored,
                          builder.getUnitAttr());
     if (retainCoverageSourceTypes)
@@ -3604,6 +3663,37 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, getSemanticLocation(operation), source->second.reference,
         static_cast<uint32_t>(reflection::VPIRelationKind::SimNetRel),
         sim::VPIRelationMode::Handle, 0, target);
+  }
+
+  // IEEE 1800-2023 37.14: port connections name the declared objects on
+  // each side of the hierarchy, even when 37.16's simulated net is shared.
+  for (auto [port, connection] : declaredNetPorts) {
+    auto low =
+        declaredNets.find(connection.getInternalPath().value_or(StringRef{}));
+    if (low == declaredNets.end())
+      continue;
+    bool declaredLow =
+        low->second.reference.getKind() == sim::VPIObjectRefKind::NetIdentity;
+    auto source = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Port, port.getIdAttr());
+    if (declaredLow)
+      sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(connection), source,
+          static_cast<uint32_t>(reflection::VPIRelationKind::LowConnRel),
+          sim::VPIRelationMode::Handle, 0, low->second.reference);
+    Operation *actual = getPortActualLValue(connection);
+    FailureOr<StaticStorageView> view =
+        actual ? getStaticStorageView(actual)
+               : FailureOr<StaticStorageView>(failure());
+    if (failed(view) || !view->identity)
+      continue;
+    auto high = declaredNets.find(view->path);
+    if (high != declaredNets.end() &&
+        (declaredLow || low->second.backingNetId == high->second.backingNetId))
+      sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(connection), source,
+          static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
+          sim::VPIRelationMode::Handle, 0, high->second.reference);
   }
 
   // Preserve direct whole-object operands of scope-owned statements as cold

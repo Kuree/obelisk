@@ -93,8 +93,15 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
       context ? context->nativeSchedulePlan : nullptr;
   if (!plan ||
       ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT) == 0 &&
-       !context->nativeScheduleGuardedFanoutActive) ||
+       !context->nativeScheduleGuardedFanoutActive &&
+       !((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) &&
+         ((plan->specialization_fast && *plan->specialization_fast) ||
+          canUseRuntimeCalendarEval(context)))) ||
       context->nativeScheduleDeoptimized || !context->execution)
+    return false;
+  if ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) &&
+      (!plan->specialization_fast || !*plan->specialization_fast) &&
+      !nativeAOTTransientBoundaryClean(context))
     return false;
   // IEEE 1800-2017 Clause 31.7 requires a timing condition to be sampled only
   // after its primary publication. Before periodic preparation proves that no
@@ -112,7 +119,8 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
   // handover. Reuse it instead of rescanning empty runtime inventories at
   // every NBA root commit.
   return (plan->specialization_fast && *plan->specialization_fast != 0) ||
-         nativeStaticSpecializationEnvironmentClean(context);
+         (!context->vpiObservationDemand &&
+          nativeStaticSpecializationEnvironmentClean(context));
 }
 
 bool nativeClockOccurrencePrimaryReadsGeneratedState(
@@ -346,6 +354,21 @@ void obelisk_rt_aot_observation_demand_changed_unlocked(
   context->vpiObservationDemand = active;
   if (!active)
     return;
+  // IEEE 1800-2023 4.6, 38.36: a live subscriber needs the publication
+  // image, while an unused VPI capability can share the generated planes.
+  if (context->stateValue.shared()) {
+    OBELISK_RT_TRY {
+      CanonicalPlane value(context->stateValue), unknown(context->stateUnknown);
+      context->stateValue.swap(value);
+      context->stateUnknown.swap(unknown);
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH_ALL {
+      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+    }
+  }
   // IEEE 1800-2023 38.34/38.36: read-only observation changes visibility
   // boundaries, not the value domain. Writes from a callback go through the
   // mutation hooks; attaching a reader alone must preserve knownness proofs.
@@ -376,17 +399,59 @@ void refreshNativeStaticSpecializationFastUnlocked(
   }
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
-  if (!plan || !plan->specialization_fast || *plan->specialization_fast != 0)
+  if (plan && context->nativeStateSpecializationFast) {
+    // IEEE 1800-2023 4.6: ordered NBAs constrain commit order, not direct
+    // addressing of the current publication image. Keep this proof separate
+    // from the NBA accumulator lease; VPI intervention invalidates both.
+    *context->nativeStateSpecializationFast =
+        context->nativeStateSharingAllowed && context->stateValue.shared() &&
+        !context->nativeScheduleDeoptimized &&
+        !context->observerForcesCanonicalPlane && !context->observerDepth &&
+        nativeAOTTransientBoundaryClean(context) &&
+        nativeStaticSpecializationEnvironmentClean(context) &&
+        (context->nativeScheduleRunning || canUseRuntimeCalendarEval(context));
+  }
+  if (!plan || !plan->specialization_fast ||
+      (*plan->specialization_fast != 0 &&
+       (!context->nativeStateSharingAllowed || context->stateValue.shared())))
     return;
   bool slowNBA = context->staticNBASlowRootsPresent;
+  // IEEE 1800-2023 4.5-4.6, 38.34: a reconciled runtime checkpoint can
+  // use the same addressing proof when both tiers share the publication
+  // image. Intervention still invalidates the flag before changing state.
+  bool sharedCalendar = context->nativeStateSharingAllowed &&
+                        context->stateValue.shared() &&
+                        canUseRuntimeCalendarEval(context);
   *plan->specialization_fast =
-      context->nativeScheduleRunning && !context->nativeScheduleDeoptimized &&
+      (context->nativeScheduleRunning || sharedCalendar) &&
+              !context->nativeScheduleDeoptimized &&
               !context->vpiObservationDemand &&
               !context->nativeScheduleExternalWritePending &&
               !context->nativeScheduleDirtyRootsPresent && !slowNBA &&
+              (!context->nativeStateSharingAllowed ||
+               context->stateValue.shared() ||
+               (!context->activeNativeProcess && !context->observerDepth &&
+                !context->observerForcesCanonicalPlane)) &&
               nativeStaticSpecializationEnvironmentClean(context)
           ? 1
           : 0;
+  if (*plan->specialization_fast && context->nativeStateSharingAllowed &&
+      !context->stateValue.shared() && !context->activeNativeProcess &&
+      !context->observerDepth && !context->observerForcesCanonicalPlane) {
+    // IEEE 1800-2023 4.5-4.6: rejoin only at a clean scheduler boundary,
+    // after intervention has been reconciled and the last reader has left.
+    if (!exportNativeStatePlanesUnlocked(context, context->nativeStateValue,
+                                         context->nativeStateUnknown,
+                                         context->nativeStateBitCount)) {
+      context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+      *plan->specialization_fast = 0;
+      return;
+    }
+    context->stateValue.bind(context->nativeStateValue,
+                             context->stateValue.size());
+    context->stateUnknown.bind(context->nativeStateUnknown,
+                               context->stateUnknown.size());
+  }
 }
 
 uint32_t findNativeAOTNodeUnlocked(const obelisk_rt_context *context,
@@ -2329,6 +2394,10 @@ retryNativeSchedule:;
   if (needsTransientHandoff()) {
     bool reachedBoundary = false;
     status = runTransientHandoff(reachedBoundary);
+    // IEEE 1800-2023 4.5, 38.34: intervention can reach another cold
+    // branch before convergence. Resume its exact checkpoint continuation.
+    if (status == OBELISK_RT_AOT_GENERATED_CHECKPOINT)
+      goto nativeCheckpoint;
     if (status != OBELISK_RT_OK || !reachedBoundary)
       return status;
     {
@@ -2348,6 +2417,12 @@ retryNativeSchedule:;
     }
   }
   {
+    if (context->nativeStateSharingAllowed && !context->stateValue.shared()) {
+      ContextMutexLock lock(context);
+      refreshNativeStaticSpecializationFastUnlocked(context);
+      if (context->schedulerStatus != OBELISK_RT_OK)
+        return context->schedulerStatus;
+    }
     NativeAOTContextScope aotScope(context);
     auto invoke = [&] {
       OBELISK_RT_TRY { return plan->run(plan->mutable_state, context); }
@@ -2384,7 +2459,9 @@ retryNativeSchedule:;
     }
     context->nativeScheduleRunning = false;
   }
+nativeCheckpoint:
   if (status == OBELISK_RT_AOT_CHECKPOINT ||
+      status == OBELISK_RT_AOT_GENERATED_CHECKPOINT ||
       status == OBELISK_RT_AOT_TIMED_CHECKPOINT) {
     bool timedCheckpoint = status == OBELISK_RT_AOT_TIMED_CHECKPOINT;
     bool generatedBranchCheckpoint = false;
@@ -2448,6 +2525,7 @@ retryNativeSchedule:;
       }
       checkpointProgressBefore = context->schedulerSlotProgress;
       checkpointTimeBefore = context->schedulerTime;
+      refreshNativeStaticSpecializationFastUnlocked(context);
     }
     // run_until stops on the last periodic edge preceding the runtime
     // deadline. Advance directly to that proven checkpoint and execute only
@@ -2554,6 +2632,8 @@ retryNativeSchedule:;
       // by run_until.
       status = drainNativeAOTCurrentSlotUnlocked(
           context, /*returnGeneratedIngress=*/true);
+      if (status == OBELISK_RT_AOT_GENERATED_CHECKPOINT)
+        goto nativeCheckpoint;
       if (status != OBELISK_RT_OK)
         return status;
       {
@@ -2578,6 +2658,8 @@ retryNativeSchedule:;
       }
     }
   checkpointDone:
+    if (status == OBELISK_RT_AOT_GENERATED_CHECKPOINT)
+      goto nativeCheckpoint;
     if (status != OBELISK_RT_OK && status != OBELISK_RT_TIER_UNAVAILABLE)
       return status;
     if (finishing && status == OBELISK_RT_OK)
@@ -2598,10 +2680,12 @@ retryNativeSchedule:;
       }
       guardedFanout =
           (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT) != 0 &&
+          !context->vpiObservationDemand &&
           !context->nativeScheduleExternalWritePending &&
           !context->nativeScheduleDirtyRootsPresent &&
           nativeStaticSpecializationEnvironmentClean(context);
       specializationFast = plan->specialization_fast &&
+                           !context->vpiObservationDemand &&
                            !context->nativeScheduleExternalWritePending &&
                            !context->nativeScheduleDirtyRootsPresent &&
                            nativeStaticSpecializationEnvironmentClean(context);
@@ -2768,6 +2852,7 @@ retryNativeSchedule:;
       }
     }
     context->nativeScheduleDeoptimized = true;
+    invalidateNativeStaticSpecializationFastUnlocked(context);
     rebuildNativeSchedulerIndexUnlocked(context);
     ++context->signalDiagnostics.aotFallbacks;
   }
@@ -2781,8 +2866,7 @@ void obelisk_rt_release_native_schedule_plan(
   if (!context || !context->nativeSchedulePlan)
     return;
   OBELISK_RT_TRY {
-    if (context->nativeSchedulePlan->specialization_fast)
-      *context->nativeSchedulePlan->specialization_fast = 0;
+    invalidateNativeStaticSpecializationFastUnlocked(context);
     if (context->nativeSchedulePlan->promotion_invalidate)
       context->nativeSchedulePlan->promotion_invalidate();
     for (uint32_t root = 0; root != context->nativeScheduleNBARootCount; ++root)

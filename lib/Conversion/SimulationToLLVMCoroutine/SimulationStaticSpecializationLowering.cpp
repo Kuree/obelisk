@@ -18,11 +18,13 @@ constexpr int32_t likelyBranchWeight = (1 << 20) - 1;
 constexpr int32_t unlikelyBranchWeight = 1;
 
 Value loadStaticSpecializationFast(ConversionPatternRewriter &rewriter,
-                                   Location location) {
+                                   Location location, bool nba = false) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   IntegerType i32 = rewriter.getI32Type();
-  Value fastAddress = LLVM::AddressOfOp::create(
-      rewriter, location, pointer, "__obelisk_static_specialization_fast_v1");
+  Value fastAddress =
+      LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                nba ? "__obelisk_static_specialization_fast_v1"
+                                    : "__obelisk_state_specialization_fast_v1");
   Value fast = LLVM::LoadOp::create(rewriter, location, i32, fastAddress, 4);
   return arith::CmpIOp::create(
       rewriter, location, arith::CmpIPredicate::ne, fast,
@@ -113,7 +115,8 @@ Value staticNBASpecializationGuard(ConversionPatternRewriter &rewriter,
   recordStaticSpecializationCFGBlocks(rewriter, head, 2);
 
   rewriter.setInsertionPointToEnd(head);
-  Value useFast = loadStaticSpecializationFast(rewriter, location);
+  Value useFast =
+      loadStaticSpecializationFast(rewriter, location, /*nba=*/true);
   Value fastAllowed =
       llvmConstant(rewriter, location, rewriter.getI1Type(), uint32_t{1});
   markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useFast,

@@ -18,6 +18,10 @@
 // RUN: obelisk -O3 --vpi=full --execution-tier=bytecode \
 // RUN:   %t/design.sv %t/plugin.so -o %t/bytecode
 // RUN: %t/bytecode | FileCheck %s
+// RUN: obelisk -O3 --vpi=full -DPARTIAL --mlir-timing %t/design.sv %t/plugin.so -o %t/partial 2> %t/partial.log
+// RUN: FileCheck %s --check-prefix=PARTIAL < %t/partial.log
+// RUN: %t/partial | FileCheck %s
+// PARTIAL: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 
 // A foreign call may first consume VPI after clean native execution. Force
 // must stop subsequent writes, release must recover current continuous/driver
@@ -30,6 +34,7 @@
 // CHECK: procedural 9a
 // CHECK: unknown xxxx0101 xxxx0101 xxxx0101
 // CHECK: retained xxxx0101 xxxx0101
+// CHECK: recovered 12 12
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_bind_continuous
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_bind_specialization
 // WASM-DAG: target triple = "wasm32-unknown-emscripten"
@@ -38,6 +43,14 @@
 
 //--- design.sv
 module generic_vpi_guard;
+`ifdef PARTIAL
+  bit clock;
+  int ticks[128];
+  always #1 clock = ~clock;
+  for (genvar i = 0; i < 128; ++i) begin
+    always @(posedge clock) ticks[i] <= ticks[i] + 1;
+  end
+`endif
   logic [7:0] source = 8'h12;
   wire [7:0] resolved = source;
   logic [7:0] continuous;
@@ -68,6 +81,14 @@ module generic_vpi_guard;
     if (disturb(1) != 0) $fatal(1, "second force failed");
     if (disturb(2) != 0) $fatal(1, "second release failed");
     #1 $display("retained %b %b", resolved, continuous);
+    source = 8'h12;
+    #1;
+    if (disturb(4) != 0 || disturb(1) != 0 || disturb(2) != 0)
+      $fatal(1, "known contribution recovery failed");
+    #1 $display("recovered %h %h", resolved, continuous);
+`ifdef PARTIAL
+    if (ticks[127] == 0) $fatal(1, "partial island did not run");
+`endif
     $finish;
   end
 endmodule

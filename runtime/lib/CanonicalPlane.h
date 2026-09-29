@@ -31,6 +31,12 @@ public:
     shared_ = true;
   }
   bool shared() const { return shared_; }
+  void swap(CanonicalPlane &other) noexcept {
+    owned.swap(other.owned);
+    std::swap(words, other.words);
+    std::swap(count_, other.count_);
+    std::swap(shared_, other.shared_);
+  }
   size_t size() const { return count_; }
   bool empty() const { return !count_; }
   CanonicalLimb *data() { return words; }

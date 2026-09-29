@@ -3218,7 +3218,8 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // exact generated fanout and control execute between runtime handoff points.
 #define OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND UINT32_C(2048)
 // The compiler retained every runtime-observed writer at a checkpoint and
-// excluded Inactive delays and observer/VPI/DPI/coverage callbacks. Exact
+// excluded Inactive delays, language observers, DPI exports, and coverage.
+// Live VPI observation or intervention revokes the runtime proof. Exact
 // generated fanout may run while the shared scheduler owns the calendar,
 // including periodic bootstrap. Its compiler-owned node table is immutable
 // and remains alive until plan release.
@@ -4062,15 +4063,16 @@ obelisk_rt_status obelisk_rt_v1_native_state_initialize(
 // Share generated storage before any static roots/processes are registered.
 // Both planes must be 8-byte aligned, contain ceil(bit_count/64) limbs, and
 // outlive the context. The compiler must exclude source-order observation
-// snapshots (IEEE 1800-2023 4.6(a), 9.4.2); VPI and observer designs retain
-// independent canonical storage. Compiler initializers remain authoritative.
+// snapshots (IEEE 1800-2023 4.6(a), 9.4.2). Active VPI observation detaches a
+// canonical snapshot; unused capabilities may share. Compiler initializers
+// remain authoritative.
 obelisk_rt_status
 obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
                                        uint8_t *value, uint8_t *unknown,
                                        uint64_t bit_count);
-// Bind the generated direct-access guard after state synchronization. Generic
-// scheduling retains ordinary publications and ordered updates; a native
-// schedule plan owns its own guard instead. The flag outlives the context.
+// Bind the generated direct-access guard after state synchronization. Both
+// schedulers retain ordinary publications and ordered updates; a native
+// plan separately guards NBA accumulation. The flag outlives the context.
 obelisk_rt_status
 obelisk_rt_v1_native_state_bind_specialization(obelisk_rt_context *context,
                                                uint32_t *fast);

@@ -1969,10 +1969,11 @@ struct obelisk_rt_context {
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
   std::vector<obelisk::runtime::EvalNBAQueue *> nativeEvalNBAQueues;
   bool nativeStateInitialized = false;
+  bool nativeStateSharingAllowed = false;
   uint8_t *nativeStateValue = nullptr;
   uint8_t *nativeStateUnknown = nullptr;
   uint64_t nativeStateBitCount = 0;
-  // Addressing permission for native fragments using the generic scheduler.
+  // Addressing permission for native fragments in either scheduler.
   // This does not authorize static fanout, NBA elision, or two-state execution.
   uint32_t *nativeStateSpecializationFast = nullptr;
   const obelisk_rt_static_nba_root *nativeScheduleNBARoots = nullptr;

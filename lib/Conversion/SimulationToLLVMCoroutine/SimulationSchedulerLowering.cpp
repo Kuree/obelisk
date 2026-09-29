@@ -62,9 +62,12 @@ void materializeNativeSchedulerGlobals(ModuleOp module) {
     builder.setInsertionPointToStart(module.getBody());
   }
 
-  constexpr llvm::StringLiteral specializationFastName =
-      "__obelisk_static_specialization_fast_v1";
-  if (!module.lookupSymbol(specializationFastName)) {
+  for (StringRef specializationFastName :
+       {"__obelisk_static_specialization_fast_v1",
+        "__obelisk_state_specialization_fast_v1"}) {
+    if (module.lookupSymbol(specializationFastName))
+      continue;
+    builder.setInsertionPointToStart(module.getBody());
     Type i32 = builder.getI32Type();
     auto global = LLVM::GlobalOp::create(
         builder, location, i32, false, LLVM::Linkage::Internal,

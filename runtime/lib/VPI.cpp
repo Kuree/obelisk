@@ -3519,7 +3519,8 @@ bool readNetStrength(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
   const obelisk_rt_context *context = handle->owner->context;
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   const bool useDirectState =
-      plan && (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+      plan && !context->vpiObservationDemand &&
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
       !context->nativeScheduleDeoptimized && context->execution &&
       plan->state_bit_count == context->execution->state_bit_count &&
       plan->state_value && plan->state_unknown;
@@ -6163,6 +6164,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   if (flags == vpiReleaseFlag) {
     if (obelisk_rt_v1_design_release(context, handle->cursor) != OBELISK_RT_OK)
       setError(handle->owner, "VPI release failed");
+    else if (source)
+      // IEEE 1800-2023 38.34: release returns the object's resolved value.
+      vpi_get_value(opaque, source);
     return nullptr;
   }
   if (flags != vpiNoDelay && flags != vpiForceFlag) {

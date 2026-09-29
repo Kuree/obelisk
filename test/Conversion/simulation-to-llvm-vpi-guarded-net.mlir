@@ -52,14 +52,14 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @read_net(
-// CHECK: llvm.mlir.addressof @__obelisk_static_specialization_fast_v1
+// CHECK: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
 // CHECK: llvm.cond_br
 // CHECK: llvm.call @obelisk_rt_v1_static_specialization_guard
 // CHECK: llvm.mlir.addressof @__obelisk_state_value
 // CHECK: llvm.load
 // CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
 // CHECK-LABEL: llvm.func @drive_net(
-// CHECK: llvm.mlir.addressof @__obelisk_static_specialization_fast_v1
+// CHECK: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
 // CHECK: llvm.cond_br
 // CHECK-NOT: llvm.call @obelisk_rt_v1_static_specialization_guard
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
@@ -74,5 +74,5 @@ module attributes {
 // OFF: llvm.return
 // OFF-LABEL: llvm.func @drive_net(
 // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
-// OFF-NOT: llvm.mlir.addressof @__obelisk_static_specialization_fast_v1
+// OFF-NOT: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
 // OFF: llvm.call @obelisk_rt_v1_scheduler_static_transition

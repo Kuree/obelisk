@@ -4488,12 +4488,17 @@ TEST(Scheduler, AOTStaticEvalIslandIsDistinctFromFullyStatic) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
             OBELISK_RT_OK);
-  execution.flags = OBELISK_RT_EXECUTION_VPI_READ;
+  execution.flags = OBELISK_RT_EXECUTION_DPI_EXPORTS;
   EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
             OBELISK_RT_INVALID_ARGUMENT);
-  execution.flags = 0;
+  execution.flags =
+      OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE;
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
   EXPECT_FALSE(context->nativeStaticEvalIslandCertified);
+  EXPECT_TRUE(canUseStaticAOTFanout(context));
+  obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+  EXPECT_FALSE(canUseStaticAOTFanout(context));
+  obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
   EXPECT_TRUE(canUseStaticAOTFanout(context));
   context->activeComputedObserverWaiterCount = 1;
   EXPECT_FALSE(canUseStaticAOTFanout(context));
@@ -5279,9 +5284,7 @@ TEST(Scheduler, SharedPlanesKeepInitializersTailAndKnownnessNotifications) {
   std::array<uint64_t, 2> unknown{0, UINT64_MAX};
   auto *v = reinterpret_cast<uint8_t *>(value.data());
   auto *u = reinterpret_cast<uint8_t *>(unknown.data());
-  for (uint32_t flags : {OBELISK_RT_EXECUTION_VPI_READ,
-                         OBELISK_RT_EXECUTION_VPI_WRITE,
-                         OBELISK_RT_EXECUTION_DPI_EXPORTS,
+  for (uint32_t flags : {OBELISK_RT_EXECUTION_DPI_EXPORTS,
                          OBELISK_RT_EXECUTION_COVERAGE_SCHEMA}) {
     execution.flags = flags;
     EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
@@ -5373,6 +5376,97 @@ TEST(Scheduler, AOTSpecializationFastFlagIsScopedAndInvalidated) {
   }
   EXPECT_EQ(specializationFast, 0u);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, InactiveVPIUsesSharedPlanesAndReadersDetachAtBoundaries) {
+  // IEEE 1800-2023 4.6, 38.36: readers retain a publication snapshot;
+  // declaring VPI capabilities alone does not require a second state image.
+  for (uint32_t flags :
+       {OBELISK_RT_EXECUTION_VPI_READ,
+        OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE}) {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    execution.version = OBELISK_RT_VERSION;
+    execution.state_bit_count = 16;
+    execution.flags = flags;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    std::array<uint64_t, 2> value{0x1234, 0}, unknown{0x8000, 0};
+    auto *v = reinterpret_cast<uint8_t *>(value.data());
+    auto *u = reinterpret_cast<uint8_t *>(unknown.data());
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+    EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 16),
+              OBELISK_RT_INVALID_LIFECYCLE);
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+    ASSERT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 16),
+              OBELISK_RT_OK);
+    uint32_t fast = 1;
+    obelisk_rt_native_schedule_plan plan{};
+    plan.state_value = v;
+    plan.state_unknown = u;
+    plan.state_bit_count = 16;
+    plan.specialization_fast = &fast;
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT;
+    context->nativeSchedulePlan = &plan;
+    context->nativeScheduleRunning = true;
+    uint32_t stateFast = 0;
+    context->nativeStateSpecializationFast = &stateFast;
+    context->staticNBASlowRootsPresent = true;
+    fast = 0;
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(stateFast, 1u);
+    EXPECT_EQ(fast, 0u);
+    context->staticNBASlowRootsPresent = false;
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 1u);
+    EXPECT_TRUE(canUseStaticAOTFanout(context));
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, true);
+    EXPECT_FALSE(context->stateValue.shared());
+    EXPECT_FALSE(context->stateUnknown.shared());
+    EXPECT_EQ(fast, 0u);
+    EXPECT_EQ(stateFast, 0u);
+    EXPECT_FALSE(canUseStaticAOTFanout(context));
+    value[0] = 0xfeed;
+    unknown[0] = 0;
+    EXPECT_EQ(context->stateValue[0], 0x1234u);
+    EXPECT_EQ(context->stateUnknown[0], 0x8000u);
+    context->stateValue[0] = 0xbeef;
+    context->stateUnknown[0] = 0x4000;
+    context->observerDepth = 1;
+    obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 0u);
+    EXPECT_FALSE(context->stateValue.shared());
+    context->observerDepth = 0;
+    // Resuming a generated plan may have already enabled its clean flag.
+    fast = 1;
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 1u);
+    EXPECT_TRUE(canUseStaticAOTFanout(context));
+    EXPECT_TRUE(context->stateValue.shared());
+    EXPECT_TRUE(context->stateUnknown.shared());
+    EXPECT_EQ(value[0], 0xbeefu);
+    EXPECT_EQ(unknown[0], 0x4000u);
+    EXPECT_EQ(context->schedulerStatus, OBELISK_RT_OK);
+    context->nativeScheduleRunning = false;
+    fast = 0;
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 0u);
+    plan.flags |= OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 1u);
+    fast = 0;
+    context->nativeScheduleExternalWritePending = true;
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 0u);
+    context->nativeScheduleExternalWritePending = false;
+    context->forceMask.assign(1, 1);
+    refreshNativeStaticSpecializationFastUnlocked(context);
+    EXPECT_EQ(fast, 0u);
+    EXPECT_EQ(stateFast, 0u);
+    context->nativeSchedulePlan = nullptr;
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(Scheduler, VPIObservationDemandIsAColdReversibleAOTHandoff) {
@@ -8572,9 +8666,14 @@ TEST(Scheduler, AOTStaticNBASitesPreserveMixedGenericExecutionOrder) {
   uint8_t older = 0x55;
   uint8_t newer = 0xaa;
   uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  uint32_t stateFast = 1, nbaFast = 1;
+  context->nativeStateSpecializationFast = &stateFast;
+  plan.specialization_fast = &nbaFast;
   ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, &plane, nullptr, 8, root, 8, 0,
                                         &older, nullptr),
             OBELISK_RT_OK);
+  EXPECT_EQ(stateFast, 1u);
+  EXPECT_EQ(nbaFast, 0u);
   ASSERT_EQ(obelisk_rt_v1_scheduler_static_nba(context, 7, &plane, nullptr, 8,
                                                root, 8, &newer, nullptr),
             OBELISK_RT_OK);
