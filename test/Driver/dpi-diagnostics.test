@@ -1,17 +1,17 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: not obelisk --dpi-link=%t.o %S/dpi.sv -o %t.removed 2>&1 | FileCheck %s --check-prefix=REMOVED
 // RUN: not obelisk %t.o -o %t.native-only 2>&1 | FileCheck %s --check-prefix=NATIVE-ONLY
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -flto=full -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.incompatible.bc
+// RUN: %target_clang -fPIC -flto=full -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.incompatible.bc
 // RUN: not obelisk -flto %S/dpi.sv %t.incompatible.bc -o %t.incompatible 2>&1 | FileCheck %s --check-prefix=INCOMPATIBLE
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib -shared %t.o -o %t.so
+// RUN: %target_clang -nostdlib -shared %t.o -o %t.so
 // RUN: not obelisk --target=wasm32 %S/dpi.sv %t.so -o %t.wasm 2>&1 | FileCheck %s --check-prefix=WASM-NATIVE
 // RUN: mkdir -p %t.collision/first %t.collision/second
 // RUN: cp %t.so %t.collision/first/plugin.so
 // RUN: cp %t.so %t.collision/second/plugin.so
 // RUN: not obelisk %S/dpi.sv %t.collision/first/plugin.so %t.collision/second/plugin.so -o %t.collision.exe 2>&1 | FileCheck %s --check-prefix=COLLISION
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared -nostdlib %S/Inputs/native_probe_failure.c -o %t.probe-failure.so
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/native_probe_failure.c -o %t.probe-failure.so
 // RUN: not obelisk %S/dpi.sv %t.probe-failure.so -o %t.probe-failure 2>&1 | FileCheck %s --check-prefix=PROBE-FAILURE
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib -shared %t.o -Wl,-soname,bad/name.so -o %t.bad-soname.so
+// RUN: %target_clang -nostdlib -shared %t.o -Wl,-soname,bad/name.so -o %t.bad-soname.so
 // RUN: not obelisk %S/dpi.sv %t.bad-soname.so -o %t.bad-soname 2>&1 | FileCheck %s --check-prefix=BAD-SONAME
 // RUN: not obelisk %S/dpi.sv -o %t.missing 2>&1 | FileCheck %s --check-prefix=MISSING
 

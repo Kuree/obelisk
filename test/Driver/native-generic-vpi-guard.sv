@@ -1,5 +1,5 @@
 // RUN: %split-file %s %t
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared -nostdlib \
+// RUN: %target_clang -fPIC -shared -nostdlib \
 // RUN:   %t/plugin.c -I%resource_dir/include -o %t/plugin.so
 // RUN: obelisk -O0 --vpi=full --native-scheduler=generic \
 // RUN:   %t/design.sv %t/plugin.so -o %t/o0

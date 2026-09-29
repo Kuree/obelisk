@@ -1,9 +1,9 @@
 // RUN: rm -rf %t.dir
 // RUN: mkdir -p %t.dir/root
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared \
+// RUN: %target_clang -fPIC -shared \
 // RUN:   %S/Inputs/dpi_annex_j_bootstrap.c -Wl,-soname,bootstrap.so \
 // RUN:   -o %t.dir/root/bootstrap.so
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared \
+// RUN: %target_clang -fPIC -shared \
 // RUN:   %S/Inputs/dpi_annex_j_direct.c -Wl,-soname,direct.so \
 // RUN:   -o %t.dir/root/direct.so
 // RUN: cp %S/Inputs/dpi_annex_j.libs %t.dir/root/libraries.list

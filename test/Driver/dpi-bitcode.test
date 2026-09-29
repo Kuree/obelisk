@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -flto=full -funified-lto -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.bc
+// RUN: %target_clang -fPIC -flto=full -funified-lto -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.bc
 // RUN: obelisk -flto %S/dpi.sv %t.bc -o %t.bitcode
 // RUN: %t.bitcode | FileCheck %s --check-prefix=OUTPUT
 

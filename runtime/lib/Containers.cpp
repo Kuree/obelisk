@@ -2111,7 +2111,7 @@ obelisk_rt_v1_string_scan_dynamic(
   uint64_t index = cursor;
 
   auto matchPrefix = [&](std::string_view prefix,
-                         uint64_t &position) OBELISK_RT_FEATURE_HELPER {
+                         uint64_t &position) {
     uint64_t candidate = position;
     for (char expected : prefix) {
       if (scanSpace(expected)) {
@@ -2126,17 +2126,17 @@ obelisk_rt_v1_string_scan_dynamic(
     position = candidate;
     return true;
   };
-  auto letter = [](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+  auto letter = [](uint32_t specifier) {
     return static_cast<char>(
         std::tolower(static_cast<unsigned char>(static_cast<char>(specifier))));
   };
-  auto allowed = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+  auto allowed = [&](uint32_t specifier) {
     char normalized = letter(specifier);
     return normalized >= 'a' && normalized <= 'z' &&
            (allowedSpecifiers &
             (UINT64_C(1) << static_cast<unsigned>(normalized - 'a'))) != 0;
   };
-  auto conversionKind = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+  auto conversionKind = [&](uint32_t specifier) {
     switch (letter(specifier)) {
     case 's':
     case 'c':

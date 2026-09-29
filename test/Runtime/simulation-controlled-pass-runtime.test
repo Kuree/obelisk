@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-controlled-pass-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-controlled-pass-runtime.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: obelisk-opt %S/../Conversion/simulation-controlled-pass-runtime.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 // RUN: %t.exe --execution-tier=native | FileCheck %s

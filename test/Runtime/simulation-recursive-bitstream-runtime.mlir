@@ -3,7 +3,7 @@
 // RUN:   | mlir-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt \
 // RUN:     -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe

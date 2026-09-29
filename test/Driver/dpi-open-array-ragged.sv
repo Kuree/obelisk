@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
+// RUN: %target_clang -fPIC -c \
 // RUN:   %S/Inputs/dpi_open_array_ragged_impl.c -I%resource_dir/include -o %t.o
 // RUN: %obelisk --target=native -o %t.native %s %t.o
 // RUN: not %t.native 2>&1 | FileCheck %s

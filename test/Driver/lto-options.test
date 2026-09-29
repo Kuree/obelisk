@@ -2,10 +2,10 @@
 # This distinguishes LTO from ordinary linking even when both produce the same
 # simulator output. Relocate the compiler so the real support tree is untouched.
 # RUN: rm -rf %t
-# RUN: mkdir -p %t/bin %t/lib/obelisk/targets/x86_64-unknown-linux-gnu
+# RUN: mkdir -p %t/bin %t/lib/obelisk/targets/%target_triple
 # RUN: cp %obelisk %t/bin/obelisk
-# RUN: touch %t/lib/obelisk/targets/x86_64-unknown-linux-gnu/.complete
-# RUN: touch %t/lib/obelisk/targets/x86_64-unknown-linux-gnu/clang_rt.crtbegin.o
+# RUN: touch %t/lib/obelisk/targets/%target_triple/.complete
+# RUN: touch %t/lib/obelisk/targets/%target_triple/clang_rt.crtbegin.o
 
 # The default is non-LTO at every optimization level, including implicit -O3.
 # RUN: not %t/bin/obelisk %S/no-lto.sv -o %t/default 2>&1 | FileCheck %s --check-prefix=OBJECT

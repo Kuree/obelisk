@@ -98,12 +98,12 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
           return OBELISK_RT_OUT_OF_MEMORY;
         context->dynamicScanState->destroy =
             [](DynamicScanState *state)
-                OBELISK_RT_FEATURE_HELPER { delete state; };
+                { delete state; };
       }
       state = context->dynamicScanState;
     }
     std::lock_guard<std::mutex> lock(state->mutex);
-    auto use = [&](size_t index) OBELISK_RT_FEATURE_HELPER {
+    auto use = [&](size_t index) {
       plan = state->plans[index].plan;
       if (index != 0) {
         DynamicScanCacheEntry hit = std::move(state->plans[index]);

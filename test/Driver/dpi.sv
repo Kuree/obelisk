@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: obelisk %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
 // RUN: llvm-readelf --dyn-syms %t.native | FileCheck %s --check-prefix=EXPORTS --implicit-check-not=obelisk_rt_v1_

@@ -6,11 +6,13 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <cstdint>
 #include <limits>
@@ -147,21 +149,45 @@ public:
                                 PatternRewriter &rewriter) const override {
     Location location = op.getLoc();
     Value input = op.getInput();
-    if (op.getResult().getType().isF32()) {
+    auto inputType = cast<IntegerType>(input.getType());
+    Type resultType = op.getResult().getType();
+
+    bool useAArch64WideLowering = false;
+    if (inputType.getWidth() > 64)
+      if (auto module = op->getParentOfType<ModuleOp>())
+        if (auto triple =
+                module->getAttrOfType<StringAttr>("llvm.target_triple"))
+          useAArch64WideLowering =
+              llvm::Triple(triple.getValue()).isAArch64();
+
+    // LLVM IR permits integer-to-float conversions from integers of any
+    // width. Preserve that direct path on targets which support it. AArch64
+    // aborts while selecting conversions such as i1088 to double, so only
+    // that target expands wide conversions into legal operations below.
+    if (!useAArch64WideLowering) {
       Value converted =
           op.getIsSigned()
               ? Value(arith::SIToFPOp::create(rewriter, location,
-                                              rewriter.getF32Type(), input))
+                                              resultType, input))
               : Value(arith::UIToFPOp::create(rewriter, location,
-                                              rewriter.getF32Type(), input));
+                                              resultType, input));
       rewriter.replaceOp(op, converted);
       return success();
     }
 
-    auto inputType = cast<IntegerType>(input.getType());
+    bool isF32 = resultType.isF32();
+    unsigned fractionBits = isF32 ? 23 : IEEE754Double::fractionBits;
+    unsigned exponentBits = isF32 ? 8 : IEEE754Double::exponentBits;
+    unsigned exponentBias = (1u << (exponentBits - 1)) - 1;
+    unsigned overflowThresholdWidth = exponentBias + 1;
+    unsigned overflowThresholdLowBit =
+        overflowThresholdWidth - fractionBits - 2;
     Value zero = arith::ConstantOp::create(
         rewriter, location, inputType,
         rewriter.getIntegerAttr(inputType, APInt(inputType.getWidth(), 0)));
+    Value one = arith::ConstantOp::create(
+        rewriter, location, inputType,
+        rewriter.getIntegerAttr(inputType, APInt(inputType.getWidth(), 1)));
     Value magnitude = input;
     Value negative;
     if (op.getIsSigned()) {
@@ -172,15 +198,14 @@ public:
           arith::SelectOp::create(rewriter, location, negative, negated, input);
     }
 
-    bool canOverflow =
-        inputType.getWidth() > IEEE754Double::overflowThresholdWidth ||
-        (!op.getIsSigned() &&
-         inputType.getWidth() == IEEE754Double::overflowThresholdWidth);
+    bool canOverflow = inputType.getWidth() > overflowThresholdWidth ||
+                       (!op.getIsSigned() && inputType.getWidth() ==
+                                                    overflowThresholdWidth);
     Value overflow;
     if (canOverflow) {
       APInt threshold = APInt::getBitsSet(
-          inputType.getWidth(), IEEE754Double::overflowThresholdLowBit,
-          IEEE754Double::overflowThresholdWidth);
+          inputType.getWidth(), overflowThresholdLowBit,
+          overflowThresholdWidth);
       Value thresholdValue = arith::ConstantOp::create(
           rewriter, location, inputType,
           rewriter.getIntegerAttr(inputType, threshold));
@@ -191,8 +216,95 @@ public:
                                           magnitude);
     }
 
-    Value converted = arith::UIToFPOp::create(rewriter, location,
-                                              rewriter.getF64Type(), magnitude);
+    // Round the magnitude to the destination significand while it is still an
+    // integer. This avoids double rounding: converting independent chunks to
+    // floating point and adding them would not reproduce uitofp exactly near
+    // halfway cases.
+    auto integerConstant = [&](uint64_t value) -> Value {
+      return arith::ConstantOp::create(
+          rewriter, location, inputType,
+          rewriter.getIntegerAttr(inputType,
+                                  APInt(inputType.getWidth(), value)));
+    };
+    Value isZero = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::eq, magnitude, zero);
+    Value leading = math::CountLeadingZerosOp::create(
+                        rewriter, location, inputType, magnitude)
+                        .getResult();
+    Value highest = arith::SubIOp::create(
+        rewriter, location, integerConstant(inputType.getWidth() - 1),
+        leading);
+    highest = arith::SelectOp::create(rewriter, location, isZero, zero,
+                                      highest);
+    Value fractionWidth = integerConstant(fractionBits);
+    Value needsRounding = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::ugt, highest,
+        fractionWidth);
+    Value shift = arith::SubIOp::create(rewriter, location, highest,
+                                        fractionWidth);
+    shift = arith::SelectOp::create(rewriter, location, needsRounding, shift,
+                                    zero);
+    Value shifted =
+        arith::ShRUIOp::create(rewriter, location, magnitude, shift);
+    Type i64 = rewriter.getI64Type();
+    Value significand =
+        arith::TruncIOp::create(rewriter, location, i64, shifted);
+
+    Value roundShift = arith::SubIOp::create(rewriter, location, shift, one);
+    roundShift = arith::SelectOp::create(rewriter, location, needsRounding,
+                                         roundShift, zero);
+    Value halfway =
+        arith::ShLIOp::create(rewriter, location, one, roundShift);
+    Value belowHalfwayMask =
+        arith::SubIOp::create(rewriter, location, halfway, one);
+    Value roundBit = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::ne,
+        arith::AndIOp::create(rewriter, location, magnitude, halfway), zero);
+    Value sticky = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::ne,
+        arith::AndIOp::create(rewriter, location, magnitude,
+                              belowHalfwayMask),
+        zero);
+    Value odd = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::ne,
+        arith::AndIOp::create(
+            rewriter, location, significand,
+            arith::ConstantOp::create(rewriter, location, i64,
+                                      rewriter.getI64IntegerAttr(1))),
+        arith::ConstantOp::create(rewriter, location, i64,
+                                  rewriter.getI64IntegerAttr(0)));
+    Value roundUp = arith::AndIOp::create(
+        rewriter, location, needsRounding,
+        arith::AndIOp::create(
+            rewriter, location, roundBit,
+            arith::OrIOp::create(rewriter, location, sticky, odd)));
+    Value increment =
+        arith::ExtUIOp::create(rewriter, location, i64, roundUp);
+    significand =
+        arith::AddIOp::create(rewriter, location, significand, increment);
+
+    // The rounded significand has at most 53 bits (24 for f32), so this
+    // conversion is exact. Multiplication by a normal power of two is exact as
+    // well; construct that power directly from its IEEE exponent field.
+    Value converted = arith::UIToFPOp::create(rewriter, location, resultType,
+                                              significand);
+    Type scaleBitsType = isF32 ? Type(rewriter.getI32Type()) : i64;
+    Value scaleShift = arith::TruncIOp::create(rewriter, location,
+                                               scaleBitsType, shift);
+    auto scaleInteger = [&](uint64_t value) -> Value {
+      auto type = cast<IntegerType>(scaleBitsType);
+      return arith::ConstantOp::create(
+          rewriter, location, type,
+          rewriter.getIntegerAttr(type, APInt(type.getWidth(), value)));
+    };
+    Value scaleExponent = arith::AddIOp::create(
+        rewriter, location, scaleShift, scaleInteger(exponentBias));
+    Value scaleBits = arith::ShLIOp::create(
+        rewriter, location, scaleExponent, scaleInteger(fractionBits));
+    Value scale = arith::BitcastOp::create(rewriter, location, resultType,
+                                           scaleBits);
+    converted =
+        arith::MulFOp::create(rewriter, location, converted, scale);
     if (op.getIsSigned()) {
       Value negated = arith::NegFOp::create(rewriter, location, converted);
       converted = arith::SelectOp::create(rewriter, location, negative, negated,
@@ -200,8 +312,11 @@ public:
     }
     if (canOverflow) {
       Value infinity = arith::ConstantOp::create(
-          rewriter, location, rewriter.getF64Type(),
-          rewriter.getF64FloatAttr(std::numeric_limits<double>::infinity()));
+          rewriter, location, resultType,
+          isF32 ? rewriter.getF32FloatAttr(
+                      std::numeric_limits<float>::infinity())
+                : rewriter.getF64FloatAttr(
+                      std::numeric_limits<double>::infinity()));
       if (op.getIsSigned()) {
         Value negativeInfinity =
             arith::NegFOp::create(rewriter, location, infinity);

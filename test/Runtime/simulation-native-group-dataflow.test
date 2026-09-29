@@ -1,9 +1,9 @@
 // Runtime semantics for ../Conversion/simulation-native-group-dataflow.mlir.
 
 // RUN: obelisk-opt %S/../Conversion/simulation-native-group-dataflow.mlir --obelisk-materialize-native-eval-groups -o %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o -o %t.exe
 // RUN: %t.exe
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o3
 // RUN: %llvm_dist/bin/clang %t.o3 -o %t.o3.exe
 // RUN: %t.o3.exe

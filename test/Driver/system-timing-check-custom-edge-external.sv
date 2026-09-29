@@ -1,6 +1,6 @@
 // RUN: %split-file %s %t
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libcustom_edge_external.so -o %t.dir/lib/libcustom_edge_external.so
+// RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libcustom_edge_external.so -o %t.dir/lib/libcustom_edge_external.so
 // RUN: cd %t.dir && obelisk -O0 --vpi=full --native-scheduler=generic %t/design.sv lib/libcustom_edge_external.so -o bin/native
 // RUN: cd %t.dir && obelisk -O3 --vpi=full --native-scheduler=auto --mlir-timing %t/design.sv lib/libcustom_edge_external.so -o bin/aot 2> %t.auto.timing
 // RUN: FileCheck %s --check-prefix=ELIGIBILITY < %t.auto.timing

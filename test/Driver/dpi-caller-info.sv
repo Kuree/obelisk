@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
+// RUN: %target_clang -fPIC -c \
 // RUN:   %S/Inputs/dpi_caller_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
 // RUN: obelisk %t.o %S/Inputs/dpi-caller-a.sv \

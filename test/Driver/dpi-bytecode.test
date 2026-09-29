@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: obelisk --execution-tier=bytecode %S/dpi.sv %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 

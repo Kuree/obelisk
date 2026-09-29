@@ -13,6 +13,7 @@
 
 # Editor / tooling
 /compile_commands.json
+/env/
 .cache/
 .vscode/
 .idea/

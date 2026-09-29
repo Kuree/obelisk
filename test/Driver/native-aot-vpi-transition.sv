@@ -1,16 +1,16 @@
 // RUN: %split-file %s %t
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN: %target_clang -fPIC \
 // RUN:   -shared -nostdlib %t/plugin.c \
 // RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libnative_aot_vpi_transition.so \
 // RUN:   -o %t.dir/lib/libnative_aot_vpi_transition.so
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN: %target_clang -fPIC \
 // RUN:   -shared -nostdlib %t/readonly.c \
 // RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libnative_aot_vpi_readonly.so \
 // RUN:   -o %t.dir/lib/libnative_aot_vpi_readonly.so
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN: %target_clang -fPIC \
 // RUN:   -shared -nostdlib %t/local_read.c \
 // RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libnative_aot_vpi_local_read.so \

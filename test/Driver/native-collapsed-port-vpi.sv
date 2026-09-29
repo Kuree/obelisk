@@ -1,7 +1,7 @@
 // RUN: mkdir -p %t.dir
 // RUN: obelisk -O0 --vpi=full -emit-sim %s -o %t.dir/sim.mlir
 // RUN: FileCheck %s --check-prefix=COLLAPSE < %t.dir/sim.mlir
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -shared -nostdlib %S/Inputs/vpi_collapsed_ports.c -I%resource_dir/include -o %t.dir/probe.so
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_collapsed_ports.c -I%resource_dir/include -o %t.dir/probe.so
 // RUN: obelisk -O0 --vpi=full %s %t.dir/probe.so -o %t.dir/o0
 // RUN: %t.dir/o0 +WRITE | FileCheck %s
 // RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.dir/probe.so -o %t.dir/o3 2> %t.dir/timing

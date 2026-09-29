@@ -1,5 +1,5 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -nostdlib -shared %t.o -o %t.so
+// RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang -nostdlib -shared %t.o -o %t.so
 // RUN: obelisk %S/dpi.sv %t.so -o %t.shared
 // RUN: %t.shared | FileCheck %s --check-prefix=OUTPUT
 // RUN: ln -f %t.so %t.hardlink.so

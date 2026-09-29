@@ -141,11 +141,11 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_time
 // CHECK: llvm.call @obelisk_rt_v1_display
 // CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
-// CHECK: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
-// CHECK: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
+// CHECK-DAG: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
+// CHECK-DAG: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
 // CHECK: llvm.store %[[ONE]], %[[FALLBACK]]
-// CHECK: %[[ROOTS:.*]] = llvm.mlir.addressof @__obelisk_eval_fast_nba_roots_v1
-// CHECK: %[[ROOT_ZERO:.*]] = llvm.mlir.zero : !llvm.array<1 x i64>
+// CHECK-DAG: %[[ROOTS:.*]] = llvm.mlir.addressof @__obelisk_eval_fast_nba_roots_v1
+// CHECK-DAG: %[[ROOT_ZERO:.*]] = llvm.mlir.zero : !llvm.array<1 x i64>
 // CHECK: llvm.store %[[ROOT_ZERO]], %[[ROOTS]]
 // CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_0
 // CHECK-SAME: no_inline
@@ -157,8 +157,8 @@ module attributes {
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_time
 // CHECK: ^[[PROMOTED]]:
 // CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_checkpoint_path_0
-// CHECK: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
-// CHECK: llvm.mlir.addressof @__obelisk_eval_four_state_fallback_v1_0
+// CHECK-DAG: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
+// CHECK-DAG: llvm.mlir.addressof @__obelisk_eval_four_state_fallback_v1_0
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.return
 

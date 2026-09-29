@@ -1015,107 +1015,10 @@ public:
     });
   }
 
-  OBELISK_RT_FEATURE_HELPER obelisk_rt_status allocateManagedWithoutSafepoint(
+  OBELISK_RT_FEATURE_TEXT obelisk_rt_status allocateManagedWithoutSafepoint(
       obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
       uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
-      obelisk_rt_object_v1 **outObject) noexcept {
-    return obelisk_rt_feature_guarded(context, [&]() OBELISK_RT_FEATURE_HELPER {
-      if (kind <= OBELISK_RT_MANAGED_CLASS ||
-          kind > OBELISK_RT_MANAGED_REFERENCE_PATH || !runtimeDescriptor ||
-          extent < sizeof(void *) || !validPowerOfTwo(alignment) ||
-          alignment > UINT32_MAX)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      if (!outObject)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      *outObject = nullptr;
-      if (!activeOwner(lane))
-        return OBELISK_RT_INVALID_ARGUMENT;
-      uint64_t objectOffset = roundUp(sizeof(SlotPrefix), alignment);
-      uint64_t allocationAlignment = std::max<uint64_t>(16, alignment);
-      if (extent > std::numeric_limits<uint64_t>::max() - objectOffset ||
-          objectOffset + extent >
-              std::numeric_limits<uint64_t>::max() - allocationAlignment + 1)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-
-      uint64_t allocationSize =
-          roundUp(objectOffset + extent, allocationAlignment);
-      std::optional<uint64_t> objectIdentity = acquireObjectIdentity();
-      if (!objectIdentity)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      uint64_t currentEpoch = allocatorEpoch.load(std::memory_order_acquire);
-      ThreadAllocationCache &cache = allocationCache(this, id, currentEpoch);
-      ObjectMetadata *metadata = nullptr;
-      uint8_t *slotMemory = nullptr;
-      if (allocationSize <= kMaximumSmallSlot &&
-          allocationAlignment <= kChunkAlignment) {
-        uint32_t classSize = 0;
-        unsigned classIndex = sizeClassFor(allocationSize, classSize);
-        Span *span = cache.spans[classIndex];
-        if (!span || !span->hasSpace()) {
-          span = acquireSpan(classIndex, classSize);
-          cache.spans[classIndex] = span;
-        }
-
-        uint32_t slot = 0;
-        if (span->freeHead != UINT32_MAX) {
-          slot = span->freeHead;
-          uint8_t *freeMemory = span->memory + uint64_t(slot) * span->slotSize;
-          std::memcpy(&span->freeHead, freeMemory, sizeof(span->freeHead));
-        } else {
-          slot = span->bump++;
-        }
-        slotMemory = span->memory + uint64_t(slot) * span->slotSize;
-        metadata = &span->metadata[slot];
-        metadata->heap = this;
-        ++span->live;
-      } else {
-        auto large = std::make_unique<LargeAllocation>(allocationSize,
-                                                       allocationAlignment);
-        slotMemory = large->storage;
-        metadata = &large->metadata;
-        metadata->heap = this;
-        {
-          std::lock_guard<std::mutex> lock(allocatorMutex);
-          largeAllocations.push_back(std::move(large));
-        }
-        largeAllocationCount.fetch_add(1, std::memory_order_relaxed);
-      }
-
-      std::memset(slotMemory, 0, allocationSize);
-      auto *object =
-          reinterpret_cast<obelisk_rt_object_v1 *>(slotMemory + objectOffset);
-      auto *prefix = reinterpret_cast<SlotPrefix *>(
-          reinterpret_cast<uint8_t *>(object) - sizeof(SlotPrefix));
-      prefix->metadata = metadata;
-      prefix->magic = kObjectMagic;
-      metadata->object = object;
-      metadata->descriptor =
-          kind == OBELISK_RT_MANAGED_CLASS
-              ? static_cast<const obelisk_rt_class_descriptor_v1 *>(
-                    runtimeDescriptor)
-              : nullptr;
-      metadata->identity = *objectIdentity;
-      metadata->extent = extent;
-      metadata->allocationSize = allocationSize;
-      metadata->kind = kind;
-      metadata->alignment = static_cast<uint32_t>(alignment);
-      metadata->pins.store(0, std::memory_order_relaxed);
-      metadata->nextTicket.store(0, std::memory_order_relaxed);
-      metadata->servingTicket.store(0, std::memory_order_relaxed);
-      metadata->marked = false;
-      std::memcpy(object, &runtimeDescriptor, sizeof(runtimeDescriptor));
-      metadata->allocated.store(true, std::memory_order_release);
-      registerMetadata(metadata);
-
-      allocatedObjects.fetch_add(1, std::memory_order_relaxed);
-      allocatedSinceCollection.fetch_add(allocationSize,
-                                         std::memory_order_relaxed);
-      liveObjects.fetch_add(1, std::memory_order_relaxed);
-      liveBytes.fetch_add(allocationSize, std::memory_order_relaxed);
-      *outObject = object;
-      return OBELISK_RT_OK;
-    });
-  }
+      obelisk_rt_object_v1 **outObject) noexcept;
 
 private:
   obelisk_rt_status allocateImpl(obelisk_rt_gc_lane_v1 *lane,
@@ -1752,6 +1655,121 @@ private:
   std::atomic<uint64_t> largeAllocationCount{0};
   std::atomic<uint64_t> cachedEmptyChunks{0};
 };
+
+OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+ManagedHeap::allocateManagedWithoutSafepoint(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
+    uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
+    obelisk_rt_object_v1 **outObject) noexcept {
+  // Keep this implementation in the named feature section without a closure.
+  // GCC emits inline members and closure call operators as COMDAT functions
+  // and cannot mix them with ordinary functions in one explicitly named ELF
+  // section.
+  OBELISK_RT_TRY {
+    if (kind <= OBELISK_RT_MANAGED_CLASS ||
+        kind > OBELISK_RT_MANAGED_REFERENCE_PATH || !runtimeDescriptor ||
+        extent < sizeof(void *) || !validPowerOfTwo(alignment) ||
+        alignment > UINT32_MAX)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (!outObject)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    *outObject = nullptr;
+    if (!activeOwner(lane))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t objectOffset = roundUp(sizeof(SlotPrefix), alignment);
+    uint64_t allocationAlignment = std::max<uint64_t>(16, alignment);
+    if (extent > std::numeric_limits<uint64_t>::max() - objectOffset ||
+        objectOffset + extent >
+            std::numeric_limits<uint64_t>::max() - allocationAlignment + 1)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+
+    uint64_t allocationSize =
+        roundUp(objectOffset + extent, allocationAlignment);
+    std::optional<uint64_t> objectIdentity = acquireObjectIdentity();
+    if (!objectIdentity)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    uint64_t currentEpoch = allocatorEpoch.load(std::memory_order_acquire);
+    ThreadAllocationCache &cache = allocationCache(this, id, currentEpoch);
+    ObjectMetadata *metadata = nullptr;
+    uint8_t *slotMemory = nullptr;
+    if (allocationSize <= kMaximumSmallSlot &&
+        allocationAlignment <= kChunkAlignment) {
+      uint32_t classSize = 0;
+      unsigned classIndex = sizeClassFor(allocationSize, classSize);
+      Span *span = cache.spans[classIndex];
+      if (!span || !span->hasSpace()) {
+        span = acquireSpan(classIndex, classSize);
+        cache.spans[classIndex] = span;
+      }
+
+      uint32_t slot = 0;
+      if (span->freeHead != UINT32_MAX) {
+        slot = span->freeHead;
+        uint8_t *freeMemory = span->memory + uint64_t(slot) * span->slotSize;
+        std::memcpy(&span->freeHead, freeMemory, sizeof(span->freeHead));
+      } else {
+        slot = span->bump++;
+      }
+      slotMemory = span->memory + uint64_t(slot) * span->slotSize;
+      metadata = &span->metadata[slot];
+      metadata->heap = this;
+      ++span->live;
+    } else {
+      auto large =
+          std::make_unique<LargeAllocation>(allocationSize, allocationAlignment);
+      slotMemory = large->storage;
+      metadata = &large->metadata;
+      metadata->heap = this;
+      {
+        std::lock_guard<std::mutex> lock(allocatorMutex);
+        largeAllocations.push_back(std::move(large));
+      }
+      largeAllocationCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    std::memset(slotMemory, 0, allocationSize);
+    auto *object =
+        reinterpret_cast<obelisk_rt_object_v1 *>(slotMemory + objectOffset);
+    auto *prefix = reinterpret_cast<SlotPrefix *>(
+        reinterpret_cast<uint8_t *>(object) - sizeof(SlotPrefix));
+    prefix->metadata = metadata;
+    prefix->magic = kObjectMagic;
+    metadata->object = object;
+    metadata->descriptor =
+        kind == OBELISK_RT_MANAGED_CLASS
+            ? static_cast<const obelisk_rt_class_descriptor_v1 *>(
+                  runtimeDescriptor)
+            : nullptr;
+    metadata->identity = *objectIdentity;
+    metadata->extent = extent;
+    metadata->allocationSize = allocationSize;
+    metadata->kind = kind;
+    metadata->alignment = static_cast<uint32_t>(alignment);
+    metadata->pins.store(0, std::memory_order_relaxed);
+    metadata->nextTicket.store(0, std::memory_order_relaxed);
+    metadata->servingTicket.store(0, std::memory_order_relaxed);
+    metadata->marked = false;
+    std::memcpy(object, &runtimeDescriptor, sizeof(runtimeDescriptor));
+    metadata->allocated.store(true, std::memory_order_release);
+    registerMetadata(metadata);
+
+    allocatedObjects.fetch_add(1, std::memory_order_relaxed);
+    allocatedSinceCollection.fetch_add(allocationSize,
+                                       std::memory_order_relaxed);
+    liveObjects.fetch_add(1, std::memory_order_relaxed);
+    liveBytes.fetch_add(allocationSize, std::memory_order_relaxed);
+    *outObject = object;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    setLastError(context, "runtime allocation failed");
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setLastError(context, "unexpected runtime exception");
+    return OBELISK_RT_IO_ERROR;
+  }
+}
 
 ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context) {
   return new ManagedHeap(context);

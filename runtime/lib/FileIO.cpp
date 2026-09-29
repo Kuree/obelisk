@@ -1062,7 +1062,7 @@ obelisk_rt_v1_file_scan_dynamic(
     return OBELISK_RT_INVALID_ARGUMENT;
   }
 
-  return obelisk_rt_feature_guarded(context, [&]() OBELISK_RT_FEATURE_HELPER {
+  return obelisk_rt_feature_guarded(context, [&]() {
     FileEntry *entry;
     std::unique_lock<std::recursive_mutex> lock;
     obelisk_rt_status checked =
@@ -1074,17 +1074,17 @@ obelisk_rt_v1_file_scan_dynamic(
     if (checked != OBELISK_RT_OK)
       return checked;
 
-    auto letter = [](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+    auto letter = [](uint32_t specifier) {
       return static_cast<char>(std::tolower(
           static_cast<unsigned char>(static_cast<char>(specifier))));
     };
-    auto allowed = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+    auto allowed = [&](uint32_t specifier) {
       char normalized = letter(specifier);
       return normalized >= 'a' && normalized <= 'z' &&
              (allowedSpecifiers &
               (UINT64_C(1) << static_cast<unsigned>(normalized - 'a'))) != 0;
     };
-    auto conversionKind = [&](uint32_t specifier) OBELISK_RT_FEATURE_HELPER {
+    auto conversionKind = [&](uint32_t specifier) {
       switch (letter(specifier)) {
       case 's':
       case 'c':
@@ -1113,7 +1113,7 @@ obelisk_rt_v1_file_scan_dynamic(
       }
     };
     auto interpret = [&](auto synthetic)
-                         OBELISK_RT_FEATURE_HELPER -> obelisk_rt_status {
+                         -> obelisk_rt_status {
       constexpr bool Synthetic = decltype(synthetic)::value;
       for (size_t ordinal = planCursor; ordinal != plan->conversions.size();
            ++ordinal) {

@@ -51,6 +51,30 @@ config.substitutions.append(
 )
 config.substitutions.append(("%obj_root", config.obelisk_obj_root))
 config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
+config.substitutions.append(("%target_triple", config.obelisk_target_triple))
+target_llc_options = ["-mtriple={}".format(config.obelisk_target_triple)]
+if config.obelisk_target_triple.startswith("aarch64-"):
+    # Long fused evaluation groups can form linear chains of hundreds of
+    # dependent selects. AArch64 SelectionDAG is pathologically slow on that
+    # shape; GlobalISel handles it in linear time and falls back safely for
+    # operations it does not support.
+    target_llc_options.extend(["-global-isel=true", "-global-isel-abort=0"])
+config.substitutions.append(
+    (
+        "%llc",
+        '"{}/bin/llc" {}'.format(
+            config.obelisk_llvm_dist, " ".join(target_llc_options)
+        ),
+    )
+)
+config.substitutions.append(
+    (
+        "%target_clang",
+        '"{}/bin/clang" --target={}'.format(
+            config.obelisk_llvm_dist, config.obelisk_target_triple
+        ),
+    )
+)
 config.substitutions.append(
     ("%runtime_archive", config.obelisk_runtime_archive)
 )

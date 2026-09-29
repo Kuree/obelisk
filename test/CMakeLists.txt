@@ -111,7 +111,8 @@ function(obelisk_add_generated_process_object output_var directory input_file)
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
             "-passes=default<O3>"
             -S "${generated_raw_llvm}" -o "${generated_llvm}"
-    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc" -filetype=obj
+    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc"
+            "-mtriple=${OBELISK_TARGET_TRIPLE}" -filetype=obj
             -relocation-model=pic "${generated_llvm}"
             -o "${generated_object}"
     DEPENDS

@@ -178,7 +178,8 @@ def ObeliskSimLowerRealConversionsPass
     backend type boundary.
   }];
   let dependentDialects = [
-    "mlir::arith::ArithDialect"
+    "mlir::arith::ArithDialect",
+    "mlir::math::MathDialect"
   ];
 }
 

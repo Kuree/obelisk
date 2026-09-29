@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c \
+// RUN: %target_clang -fPIC -c \
 // RUN:   %S/Inputs/dpi_integer_time.c \
 // RUN:   -I%resource_dir/include -o %t.o
 // RUN: obelisk -O0 --vpi=off %s %t.o -o %t.o0.native

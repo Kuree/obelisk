@@ -2,14 +2,14 @@
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | mlir-translate --mlir-to-llvmir > %t.ll
 // RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o0.o
+// RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
 // RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a \
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
 // RUN: %t.o0.exe --execution-tier=native | FileCheck %s
 // RUN: %t.o0.exe --execution-tier=bytecode | FileCheck %s
 // RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll \
-// RUN:   | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o3.o
+// RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o3.o
 // RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a \
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe

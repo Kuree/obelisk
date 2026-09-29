@@ -9,7 +9,7 @@
 // RUN: mlir-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.proof.ll
 // RUN: %llvm_dist/bin/clang++ -O3 %t.proof.ll %S/Inputs/check-promotion-multiword.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O2>' | %llvm_dist/bin/llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O2>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s

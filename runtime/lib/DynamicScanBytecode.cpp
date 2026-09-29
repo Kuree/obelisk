@@ -86,17 +86,17 @@ obelisk_rt_v1_dynamic_scan_link_anchor() {}
 OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeDynamicScanIntrinsic(
     const Image &image, Frame &frame, obelisk_rt_context *context,
     IntrinsicSite site, uint32_t intrinsicId) {
-  auto inputRegister = [&](uint32_t index) OBELISK_RT_FEATURE_HELPER {
+  auto inputRegister = [&](uint32_t index) {
     return operandAt(image, site.firstOperand + index).second;
   };
-  auto outputRegister = [&](uint32_t index) OBELISK_RT_FEATURE_HELPER {
+  auto outputRegister = [&](uint32_t index) {
     return operandAt(image, site.firstOperand + site.inputCount + index).first;
   };
-  auto scalar = [&](uint32_t index) OBELISK_RT_FEATURE_HELPER {
+  auto scalar = [&](uint32_t index) {
     return readScalar(image, frame, inputRegister(index));
   };
   auto sentinel = [&](uint32_t index,
-                      uint64_t value) OBELISK_RT_FEATURE_HELPER {
+                      uint64_t value) {
     return writeScalar(image, frame, outputRegister(index), value)
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_BYTECODE;

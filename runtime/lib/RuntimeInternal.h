@@ -34,7 +34,10 @@
 #include <utility>
 #include <vector>
 
-#if (defined(__clang__) || defined(__GNUC__)) && !defined(__wasm__)
+// Named feature sections are an ELF optimization. Mach-O and COFF use
+// different section naming rules, while WebAssembly has a single code section.
+#if defined(__ELF__) && (defined(__clang__) || defined(__GNUC__)) &&           \
+    !defined(__wasm__)
 #define OBELISK_RT_FEATURE_TEXT                                                \
   __attribute__((noinline, cold, section(".obelisk.feature.text")))
 #define OBELISK_RT_FEATURE_HELPER                                              \
@@ -44,6 +47,12 @@
                  section(".obelisk.feature.recursive_bitstream.text")))
 #define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER                                  \
   __attribute__((section(".obelisk.feature.recursive_bitstream.text")))
+
+// Do not apply the explicit section attributes to closure call operators.
+// GCC emits closures as COMDAT functions and, on AArch64, rejects mixing them
+// with ordinary functions in the same named section. Their enclosing feature
+// functions stay in the sections above; -ffunction-sections keeps an outlined
+// closure independently collectible when it is not inlined.
 #elif defined(__clang__) || defined(__GNUC__)
 // WebAssembly has a single code section, so it cannot provide the ELF-style
 // feature text section above.  Keep feature services out of their callers and

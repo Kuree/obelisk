@@ -64,8 +64,10 @@ module {
 // CHECK-NOT: simulation.time.to_real
 // CHECK-LABEL: simulation.func @real_function
 // CHECK: arith.sitofp
-// CHECK: arith.uitofp
-// CHECK: arith.constant 0x7FF0000000000000 : f64
+// With no AArch64 target triple, retain LLVM's direct arbitrary-width
+// conversion path rather than expanding it for targets such as x86.
+// CHECK: arith.uitofp {{.*}} : i1025 to f64
+// CHECK-NOT: math.ctlz
 // CHECK: arith.bitcast
 // CHECK: arith.shrui
 // CHECK: simulation.return

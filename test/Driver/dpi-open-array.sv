@@ -1,4 +1,4 @@
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC -c %S/Inputs/dpi_open_array_impl.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang -fPIC -c %S/Inputs/dpi_open_array_impl.c -I%resource_dir/include -o %t.o
 // RUN: %obelisk --target=native -o %t.native %s %t.o
 // RUN: %t.native | FileCheck %s
 // RUN: %obelisk --execution-tier=bytecode -o %t.bytecode %s %t.o

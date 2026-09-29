@@ -353,6 +353,15 @@ public:
     for (const auto &feature : sys::getHostCPUFeatures())
       features.AddFeature(feature.getKey(), feature.getValue());
     TargetOptions targetOptions;
+    if (triple.isAArch64()) {
+      // Large fused evaluation groups contain long dependent select chains.
+      // SelectionDAG takes superlinear time on this shape on AArch64, while
+      // GlobalISel lowers it promptly. Allow unsupported operations to fall
+      // back to SelectionDAG instead of turning target coverage into a hard
+      // compilation failure.
+      targetOptions.EnableGlobalISel = true;
+      targetOptions.GlobalISelAbort = GlobalISelAbortMode::Disable;
+    }
     return std::unique_ptr<TargetMachine>(target->createTargetMachine(
         triple, cpu, features.getString(), targetOptions, Reloc::PIC_,
         CodeModel::Small, getCodeGenOptLevel(optLevel)));

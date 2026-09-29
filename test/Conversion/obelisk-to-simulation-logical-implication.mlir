@@ -165,8 +165,8 @@ module {
 // CHECK: ^bb2(
 // CHECK: %[[EA:.*]] = simulation.logic.reduction or
 // CHECK: %[[EB:.*]] = simulation.logic.reduction or
-// CHECK: %[[NOT_EB:.*]] = simulation.logic.unary logical_not %[[EB]]
-// CHECK: %[[BACKWARD:.*]] = simulation.logic.logical or %[[NOT_EB]], %[[EA]]
-// CHECK: %[[NOT_EA:.*]] = simulation.logic.unary logical_not %[[EA]]
-// CHECK: %[[FORWARD:.*]] = simulation.logic.logical or %[[NOT_EA]], %[[EB]]
+// CHECK-DAG: %[[NOT_EB:.*]] = simulation.logic.unary logical_not %[[EB]]
+// CHECK-DAG: %[[BACKWARD:.*]] = simulation.logic.logical or %[[NOT_EB]], %[[EA]]
+// CHECK-DAG: %[[NOT_EA:.*]] = simulation.logic.unary logical_not %[[EA]]
+// CHECK-DAG: %[[FORWARD:.*]] = simulation.logic.logical or %[[NOT_EA]], %[[EB]]
 // CHECK: simulation.logic.logical and %[[FORWARD]], %[[BACKWARD]]

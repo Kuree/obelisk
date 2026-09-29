@@ -1,9 +1,9 @@
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN: %target_clang -fPIC \
 // RUN:   -shared -nostdlib %S/Inputs/vpi_startup.c \
 // RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
-// RUN: %llvm_dist/bin/clang --target=x86_64-unknown-linux-gnu -fPIC \
+// RUN: %target_clang -fPIC \
 // RUN:   -shared -nostdlib %S/Inputs/vpi_startup_second.c \
 // RUN:   -I%resource_dir/include \
 // RUN:   -Wl,-soname,libobelisk_vpi_second.so \

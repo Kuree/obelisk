@@ -335,7 +335,7 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
 
   ContextTransaction transaction(context);
   obelisk_rt_status result =
-      obelisk_rt_feature_guarded(context, [&]() OBELISK_RT_FEATURE_HELPER {
+      obelisk_rt_feature_guarded(context, [&]() {
         if (exportDepth == std::numeric_limits<size_t>::max())
           return fail(OBELISK_RT_OUT_OF_RESOURCES);
         size_t frameIndex = exportDepth;
