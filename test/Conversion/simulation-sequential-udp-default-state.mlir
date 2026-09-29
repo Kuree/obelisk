@@ -69,7 +69,8 @@ module attributes {
 
 // Independently addressable storage, net, and driver roots occupy separate
 // bytes. The unresolved net is Z; the storage and certified UDP driver are X.
-// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\01\01\01\00\00\00\00\00\00\00\00")
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\00\01\00\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal constant @__obelisk_state_initializers_v1(dense<[0, 1, 0, 1, 8, 1, 1, 1, 16, 1, 0, 1]> : tensor<12xi64>)
+// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown()
+// NATIVE: llvm.mlir.global internal @__obelisk_state_value()
 
 // BYTECODE: kind=driver flags=17337

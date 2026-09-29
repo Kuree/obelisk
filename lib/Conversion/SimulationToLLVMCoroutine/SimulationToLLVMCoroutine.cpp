@@ -161,7 +161,6 @@ using detail::makeProcessDescriptor;
 using detail::makeProcessSpawnHelper;
 using detail::makeRuntimeCheckpointWrapper;
 using detail::makeSchedulerMain;
-using detail::makeStatePlane;
 using detail::materializeDPIThunks;
 using detail::materializeGeneratedNBAAccumulators;
 using detail::materializeManagedMethodThunks;
@@ -169,6 +168,7 @@ using detail::materializeNativeDPIExportThunks;
 using detail::materializeNativeObserverThunks;
 using detail::materializeNativePeriodicClockPlan;
 using detail::materializeNativeSchedulerGlobals;
+using detail::materializeNativeStatePlanes;
 using detail::NativeDirectFragment;
 using detail::NativeEvalFanoutOwner;
 using detail::NativeEvalFanoutOwnerKind;
@@ -1184,12 +1184,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
   bytecodeOnly = executionFlags && (executionFlags.getValue().getZExtValue() &
                                     OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
   if (bytecodeOnly) {
-    uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
-    constexpr uint64_t stateGuardBytes = sizeof(uint64_t);
-    makeStatePlane(module, "__obelisk_state_value",
-                   stateBytes + stateGuardBytes, false, *stateLayout);
-    makeStatePlane(module, "__obelisk_state_unknown",
-                   stateBytes + stateGuardBytes, true, *stateLayout);
+    materializeNativeStatePlanes(module, *stateLayout);
     materializeNativeSchedulerGlobals(module);
     declareNativeRuntimeABI(module);
     if (failed(materializeDPIThunks(module)))
@@ -1266,16 +1261,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
 LogicalResult NativePipelineAnalysis::prepareFrames() {
   if (bytecodeOnly)
     return success();
-  uint64_t stateBytes = (stateLayout->bitCount + 7) / 8;
-  // Generated scalar root commits use an unaligned 64-bit window. Keep one
-  // zeroed guard word after the canonical packed plane so a final narrow root
-  // can use the same branch-free load/store sequence without crossing the
-  // allocation. The public state bit count and snapshots exclude this padding.
-  constexpr uint64_t stateGuardBytes = sizeof(uint64_t);
-  makeStatePlane(module, "__obelisk_state_value", stateBytes + stateGuardBytes,
-                 false, *stateLayout);
-  makeStatePlane(module, "__obelisk_state_unknown",
-                 stateBytes + stateGuardBytes, true, *stateLayout);
+  materializeNativeStatePlanes(module, *stateLayout);
   materializeNativeSchedulerGlobals(module);
   declareNativeRuntimeABI(module);
   declareProcessSpawnRuntimeABI(module);

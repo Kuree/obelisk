@@ -167,11 +167,46 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   builder.setInsertionPointToStart(ready);
   Value runtimeContext =
       LLVM::LoadOp::create(builder, location, pointer, outContext, 8);
+  auto initializers =
+      module.lookupSymbol<LLVM::GlobalOp>("__obelisk_state_initializers_v1");
+  if (!initializers)
+    return module.emitError("native state initializers are missing");
+  uint64_t fillCount =
+      cast<LLVM::LLVMArrayType>(initializers.getGlobalType()).getNumElements() /
+      4;
+  auto initialized = LLVM::CallOp::create(
+      builder, location, TypeRange{i32},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_initialize"),
+      ValueRange{runtimeContext,
+                 LLVM::AddressOfOp::create(builder, location, pointer,
+                                           "__obelisk_state_value"),
+                 LLVM::AddressOfOp::create(builder, location, pointer,
+                                           "__obelisk_state_unknown"),
+                 llvmConstant(builder, location, i64, stateLayout.bitCount),
+                 LLVM::AddressOfOp::create(builder, location, pointer,
+                                           initializers.getSymName()),
+                 llvmConstant(builder, location, i64, fillCount)});
+  Block *initializedReady = new Block, *initializeFailed = new Block;
+  main.getBody().push_back(initializedReady);
+  main.getBody().push_back(initializeFailed);
+  LLVM::CondBrOp::create(
+      builder, location,
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                            initialized.getResult(),
+                            llvmConstant(builder, location, i32, 0)),
+      initializedReady, initializeFailed);
+  builder.setInsertionPointToStart(initializeFailed);
+  LLVM::CallOp::create(
+      builder, location, TypeRange{},
+      SymbolRefAttr::get(context, "obelisk_rt_v1_context_destroy"),
+      runtimeContext);
+  LLVM::ReturnOp::create(builder, location, initialized.getResult());
+  builder.setInsertionPointToStart(initializedReady);
   if (sharedNativeState) {
     Value value = LLVM::AddressOfOp::create(builder, location, pointer,
-                                           "__obelisk_state_value");
+                                            "__obelisk_state_value");
     Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                             "__obelisk_state_unknown");
+                                              "__obelisk_state_unknown");
     Value status = LLVM::CallOp::create(
                        builder, location, TypeRange{i32},
                        SymbolRefAttr::get(
@@ -693,6 +728,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   else
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_create", i32,
                              {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_initialize", i32,
+                           {pointer, pointer, pointer, i64, pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_destroy", voidType,
                            {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_configure_argv", i32,

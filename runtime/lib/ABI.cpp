@@ -932,6 +932,17 @@ static_assert(std::is_same_v<obelisk_rt_native_fragment_v1, NativeFragment>);
   static_assert(std::is_same_v<decltype(&Name), Type>,                         \
                 #Name " signature changed")
 
+ABI_SIZE_ALIGN(obelisk_rt_native_state_fill_v1, 32, 8);
+ABI_OFFSET(obelisk_rt_native_state_fill_v1, bit_offset, 0);
+ABI_OFFSET(obelisk_rt_native_state_fill_v1, bit_width, 8);
+ABI_OFFSET(obelisk_rt_native_state_fill_v1, value, 16);
+ABI_OFFSET(obelisk_rt_native_state_fill_v1, unknown, 24);
+ABI_FUNCTION(obelisk_rt_v1_native_state_initialize,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint8_t *,
+                                   uint64_t,
+                                   const obelisk_rt_native_state_fill_v1 *,
+                                   uint64_t));
+
 ABI_FUNCTION(obelisk_rt_v1_context_create,
              obelisk_rt_status (*)(obelisk_rt_context **));
 ABI_FUNCTION(obelisk_rt_v1_context_configure_argv,

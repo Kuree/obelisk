@@ -5214,6 +5214,57 @@ TEST(Scheduler, KnownnessPublicationMatchesScalarBitTransitions) {
   EXPECT_EQ(schedulerPromotionInvalidationCount, 3u);
 }
 
+TEST(Scheduler, NativePlaneFillsPreserveBitsAndInitializeOnce) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 195;
+  alignas(8) std::array<uint8_t, 40> value, unknown;
+  constexpr obelisk_rt_native_state_fill_v1 fills[] = {
+      {3, 4, 1, 0}, {9, 71, 0, 1}, {81, 66, 1, 1}, {160, 35, 1, 0}};
+  std::array<uint8_t, 40> expectedValue{}, expectedUnknown{};
+  for (size_t i = 33; i < 40; ++i)
+    expectedValue[i] = expectedUnknown[i] = 0xa5;
+  for (const auto &fill : fills)
+    for (uint64_t bit = fill.bit_offset; bit < fill.bit_offset + fill.bit_width;
+         ++bit) {
+      if (fill.value)
+        expectedValue[bit / 8] |= uint8_t(1u << (bit % 8));
+      if (fill.unknown)
+        expectedUnknown[bit / 8] |= uint8_t(1u << (bit % 8));
+    }
+  for (unsigned instance = 0; instance < 2; ++instance) {
+    value.fill(0xa5);
+    unknown.fill(0xa5);
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    const obelisk_rt_native_state_fill_v1 malformed[] = {{0, 8, 1, 1},
+                                                         {7, 1, 0, 1}};
+    EXPECT_EQ(obelisk_rt_v1_native_state_initialize(
+                  context, value.data(), unknown.data(), 195, malformed, 2),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(value.front(), 0xa5);
+    EXPECT_EQ(unknown.front(), 0xa5);
+    ASSERT_EQ(obelisk_rt_v1_native_state_initialize(
+                  context, value.data(), unknown.data(), 195, fills, 4),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, expectedValue);
+    EXPECT_EQ(unknown, expectedUnknown);
+    value[0] = 0x5a;
+    EXPECT_EQ(obelisk_rt_v1_native_state_initialize(
+                  context, value.data(), unknown.data(), 195, fills, 4),
+              OBELISK_RT_INVALID_LIFECYCLE);
+    EXPECT_EQ(value[0], 0x5a);
+    ASSERT_EQ(obelisk_rt_v1_native_state_bind_shared(context, value.data(),
+                                                     unknown.data(), 195),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->stateValue.data(),
+              reinterpret_cast<uint64_t *>(value.data()));
+    EXPECT_EQ(context->stateValue[0] & 0xff, 0x5au);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(Scheduler, SharedPlanesKeepInitializersTailAndKnownnessNotifications) {
   // IEEE 1800-2023 6.8, 9.4.2: sharing must preserve compiler initial values
   // and invalidate/recheck two-state proofs even after a runtime write has

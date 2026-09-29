@@ -794,9 +794,13 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
             spawn = call;
           else if (callee->getName() == "obelisk_rt_v1_scheduler_report_status")
             report = call;
-          else if (callee->getName() == "obelisk_rt_v1_context_destroy")
-            destroy = call;
         }
+  if (report)
+    for (llvm::Instruction &instruction : *report->getParent())
+      if (auto *call = dyn_cast<llvm::CallBase>(&instruction))
+        if (llvm::Function *callee = call->getCalledFunction())
+          if (callee->getName() == "obelisk_rt_v1_context_destroy")
+            destroy = call;
   auto *returnStatus =
       destroy
           ? dyn_cast<llvm::ReturnInst>(destroy->getParent()->getTerminator())

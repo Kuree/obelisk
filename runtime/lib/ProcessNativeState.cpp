@@ -87,6 +87,66 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
   instance->ownership_context = nullptr;
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
+    obelisk_rt_context *context, uint8_t *value, uint8_t *unknown,
+    uint64_t bitCount, const obelisk_rt_native_state_fill_v1 *fills,
+    uint64_t fillCount) {
+  if (!context || !value || !unknown || value == unknown ||
+      (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
+      (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)) ||
+      (fillCount && !fills) ||
+      fillCount > SIZE_MAX / sizeof(obelisk_rt_native_state_fill_v1) ||
+      bitCount > UINT64_MAX - 7 || (bitCount + 7) / 8 > SIZE_MAX - 8)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextTransaction transaction(context);
+  ContextMutexLock lock(context);
+  if (context->nativeStateInitialized || context->nativeStateValue ||
+      context->nativeSchedulePlan || !context->nativeStaticStates.empty() ||
+      !context->scheduledProcesses.empty())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  if (context->execution && context->execution->state_bit_count != bitCount)
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  uint64_t end = 0;
+  for (uint64_t i = 0; i < fillCount; ++i) {
+    const auto &fill = fills[i];
+    if (!fill.bit_width || fill.bit_offset < end ||
+        fill.bit_offset > bitCount ||
+        fill.bit_width > bitCount - fill.bit_offset || fill.value > 1 ||
+        fill.unknown > 1)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    end = fill.bit_offset + fill.bit_width;
+  }
+  // IEEE 1800-2023 4.5, 6.7.1, 6.8: initialize before design activation,
+  // including partial bytes and zero padding outside the canonical state.
+  size_t bytes = static_cast<size_t>((bitCount + 7) / 8) + 8;
+  std::memset(value, 0, bytes);
+  std::memset(unknown, 0, bytes);
+  auto set = [](uint8_t *plane, uint64_t begin, uint64_t width) {
+    uint64_t end = begin + width;
+    size_t first = static_cast<size_t>(begin / 8);
+    size_t last = static_cast<size_t>(end / 8);
+    unsigned low = begin % 8, high = end % 8;
+    if (first == last) {
+      plane[first] |= static_cast<uint8_t>(((1u << width) - 1) << low);
+      return;
+    }
+    if (low)
+      plane[first++] |= static_cast<uint8_t>(0xffu << low);
+    std::memset(plane + first, 0xff, last - first);
+    if (high)
+      plane[last] |= static_cast<uint8_t>((1u << high) - 1);
+  };
+  for (uint64_t i = 0; i < fillCount; ++i) {
+    const auto &fill = fills[i];
+    if (fill.value)
+      set(value, fill.bit_offset, fill.bit_width);
+    if (fill.unknown)
+      set(unknown, fill.bit_offset, fill.bit_width);
+  }
+  context->nativeStateInitialized = true;
+  return OBELISK_RT_OK;
+}
+
 bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                     const uint8_t *value,
                                     const uint8_t *unknown, uint64_t bitCount) {

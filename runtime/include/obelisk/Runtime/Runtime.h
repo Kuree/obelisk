@@ -4044,14 +4044,30 @@ obelisk_rt_status obelisk_rt_v1_native_state_sync(obelisk_rt_context *context,
                                                   uint8_t *value,
                                                   uint8_t *unknown,
                                                   uint64_t bit_count);
+// Sorted, disjoint bit ranges. Each plane pattern is either zero or one.
+typedef struct obelisk_rt_native_state_fill_v1 {
+  uint64_t bit_offset;
+  uint64_t bit_width;
+  uint64_t value;
+  uint64_t unknown;
+} obelisk_rt_native_state_fill_v1;
+
+// Initialize generated planes once per context, before binding or registration.
+// Each allocation includes ceil(bit_count/8) bytes plus an eight-byte guard.
+obelisk_rt_status obelisk_rt_v1_native_state_initialize(
+    obelisk_rt_context *context, uint8_t *value, uint8_t *unknown,
+    uint64_t bit_count, const obelisk_rt_native_state_fill_v1 *fills,
+    uint64_t fill_count);
+
 // Share generated storage before any static roots/processes are registered.
 // Both planes must be 8-byte aligned, contain ceil(bit_count/64) limbs, and
 // outlive the context. The compiler must exclude source-order observation
 // snapshots (IEEE 1800-2023 4.6(a), 9.4.2); VPI and observer designs retain
 // independent canonical storage. Compiler initializers remain authoritative.
-obelisk_rt_status obelisk_rt_v1_native_state_bind_shared(
-    obelisk_rt_context *context, uint8_t *value, uint8_t *unknown,
-    uint64_t bit_count);
+obelisk_rt_status
+obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
+                                       uint8_t *value, uint8_t *unknown,
+                                       uint64_t bit_count);
 // Bind the generated direct-access guard after state synchronization. Generic
 // scheduling retains ordinary publications and ordered updates; a native
 // schedule plan owns its own guard instead. The flag outlives the context.

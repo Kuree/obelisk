@@ -124,8 +124,9 @@ module attributes {
 // Each net and ordinary delayed driver starts at Z. Module-path delayed
 // drivers start at X. Every four-state slot therefore has its unknown plane
 // set, while the value plane distinguishes Z from X.
-// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown("\01\01\01\01\01\01\01\01\01\00\00\00\00\00\00\00\00")
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value("\01\01\00\01\01\01\01\00\00\00\00\00\00\00\00\00\00")
+// NATIVE: llvm.mlir.global internal constant @__obelisk_state_initializers_v1(dense<[0, 1, 1, 1, 8, 1, 1, 1, 16, 1, 0, 1, 24, 1, 1, 1, 32, 1, 1, 1, 40, 1, 1, 1, 48, 1, 1, 1, 56, 1, 0, 1, 64, 1, 0, 1]> : tensor<36xi64>)
+// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown()
+// NATIVE: llvm.mlir.global internal @__obelisk_state_value()
 
 // Bit 14 records initial X only on module-path driver descriptors, including
 // both strength banks.

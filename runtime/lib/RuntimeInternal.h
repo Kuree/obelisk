@@ -1968,6 +1968,7 @@ struct obelisk_rt_context {
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
   std::vector<obelisk::runtime::EvalNBAQueue *> nativeEvalNBAQueues;
+  bool nativeStateInitialized = false;
   uint8_t *nativeStateValue = nullptr;
   uint8_t *nativeStateUnknown = nullptr;
   uint64_t nativeStateBitCount = 0;

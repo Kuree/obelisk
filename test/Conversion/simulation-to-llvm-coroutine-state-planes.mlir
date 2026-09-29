@@ -20,14 +20,10 @@ module attributes {
   }
 }
 
-// Each plane is one byte blob rather than a chain of inserts: an insertvalue
-// per set byte constant-folds into a fresh whole-plane array, which is
-// quadratic once a design carries a large unpacked array.
-//
-// Byte 0 holds the two-state i8 root, so it starts known-zero in both planes.
-// Byte 1 holds the four-state logic<8> root: unknown, value zero. Byte 2 holds
-// the two logic<4> nets and byte 3 the driver, all at high impedance.
-// Generated scalar accesses may use an unaligned word at the final root, so
-// the canonical 32-bit plane carries one private 8-byte guard word.
-// CHECK: llvm.mlir.global internal @__obelisk_state_unknown("\00\FF\0F\0F\0F\00\00\00\00\00\00\00\00")
-// CHECK: llvm.mlir.global internal @__obelisk_state_value("\00\00\0F\0F\0F\00\00\00\00\00\00\00\00")
+// IEEE 1800-2023 6.7.1, 6.8: initialization is represented by sorted bit
+// ranges. The two-state byte and the padding between four-bit roots stay zero.
+// CHECK: llvm.mlir.global internal constant @__obelisk_state_initializers_v1(dense<[8, 8, 0, 1, 16, 4, 1, 1, 24, 4, 1, 1, 32, 4, 1, 1]> : tensor<16xi64>)
+// CHECK: llvm.mlir.global internal @__obelisk_state_unknown()
+// CHECK: llvm.mlir.zero : !llvm.array<13 x i8>
+// CHECK: llvm.mlir.global internal @__obelisk_state_value()
+// CHECK: llvm.mlir.zero : !llvm.array<13 x i8>

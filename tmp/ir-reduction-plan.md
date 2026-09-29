@@ -1,6 +1,6 @@
 # Plan: cut IR generated before LLVM
 
-Status: revised 2026-09-27 after implementation and LRM review. W1's
+Status: revised 2026-09-28 after implementation and LRM review. W1's
 startup-product reduction and W2 are implemented and validated. W3's table
 processes, W4's spawning/batching and wrapper reductions, and W7's native
 bytecode pruning are implemented. W5's shared readiness scanner, fallback
@@ -8,8 +8,9 @@ outlining, and direct variant selection are implemented; the optional group
 sweep is covered by the existing ranked-group specialization. W6a's strict copy
 admission, coroutine-free activation, and shared native copy kernels are
 implemented. W8's scalar commit-code reduction is implemented, preserving
-unrolled promoted fast paths and the runtime accumulator ABI. W1's optional
-attribute storage work, W6b, and W9–W11 remain outstanding. Existing
+unrolled promoted fast paths and the runtime accumulator ABI. W9's compact
+state-plane fills are implemented. W1's optional attribute storage work, W6b,
+and W10–W11 remain outstanding. Existing
 four-state/two-state eval bodies remain, now selected by direct branches. Paths use the current Schedule dialect
 layout; historical line numbers are navigation hints, not stable references.
 This existing plan is updated in place.
@@ -1080,20 +1081,73 @@ bytecode scope.
 
 ### W9. State-plane initializers
 
-- **Today:** `makeStatePlane` (`SimulationStatePlaneMaterialization.cpp:24–100`)
-  builds both planes bit by bit and emits the whole plane as a StringAttr blob
-  whenever any bit is set.
-- **Change:**
-  - Zero-initialize both planes.
-  - Emit a compact fill table of (offset, width, value pattern) that the runtime
-    applies at context creation. This interacts with the shared-state-plane plan
-    (`__obelisk_state_value` aliasing), so apply it once, at the same point.
-  - Build the fill table from ranges, not bit loops. Preserve connectivity
-    canonicalization and pull/supply/trireg initialization, not just ordinary
-    four-state X defaults. Apply exactly once per owning context, before any
-    design startup code or observer can access the planes.
-- **Expected:** removes about 64 MB of `.data` from RSD, plus its MLIR attribute,
-  bitcode and object serialization cost.
+- **Implemented:** `materializeNativeStatePlanes` in
+  `SimulationStatePlaneMaterialization.cpp` emits zero-initialized globals and
+  a constant table of `(bit offset, bit width, value bit, unknown bit)` records.
+  Ranges come from storage/driver/net bounds and sparse connectivity facts;
+  neighboring equal fills coalesce. Large uniform variables and unconnected
+  nets no longer require per-bit initializer walks or plane-sized attributes.
+- **Startup:** the generated main calls the new
+  `obelisk_rt_v1_native_state_initialize` helper immediately after context
+  creation, before shared binding, static-state registration, root activation,
+  or VPI startup. The helper validates all ranges before writing, clears both
+  planes and their guard words, and applies masked boundaries plus byte fills.
+  Reinitializing the same context is rejected; a fresh context can reuse the
+  storage. Initialization failure destroys the context and returns its status.
+  VPI shutdown now selects the destroy call in the normal status-report block,
+  avoiding the new early-failure cleanup path.
+- **LRM review:** IEEE 1800-2023 §4.5 requires initialization before time-zero
+  events; §6.8/Table 6-7 preserves two-state zero and four-state X defaults.
+  §§6.6.5, 6.6.6, and 6.7.1 preserve pull/supply values, ordinary-net Z, and
+  trireg X. Connected bits use the existing dominant resolution facts under
+  §23.3.3.7. Driver defaults, state bit counts, padding, shared-plane ownership,
+  and later canonical synchronization are preserved. This adds a runtime entry
+  point and fill record; existing state-binding and scheduler ABIs are unchanged.
+- **Regression coverage:** a 268M-bit variable produces one fill record;
+  partially connected pull nets preserve unaffected Z bits and padding.
+  Runtime coverage checks unaligned ranges, byte/word boundaries, gaps, tail
+  and guard bytes, malformed-table atomic rejection, once-per-context behavior,
+  shared binding, and reuse by a fresh context. End-to-end tests check defaults
+  and retained writes at O0/O3 with native, generic, and bytecode execution.
+
+Validation: the complete suite passes 2,941 tests with 17 expected failures.
+The emitted tables reconstruct both previous initializer planes byte for byte,
+including padding, for RSD, Ibex, and PicoRV. The record counts are 6,124,
+1,288, and 206 respectively. RSD's two 33,637,201-byte initializer blobs become
+a 195,968-byte table; the plane allocations move to `.bss`.
+
+Fresh single compile pairs use `-O3 -fno-lto --compile-threads=8`:
+
+| Metric | Before W9 | After W9 |
+| --- | ---: | ---: |
+| RSD compile wall time | 128.46 s | 116.53 s |
+| RSD compile peak RSS | 4,609,012 KiB | 4,124,952 KiB |
+| RSD executable bytes | 130,222,344 | 63,148,664 |
+| RSD `.data` bytes | 67,276,328 | 1,912 |
+| RSD `.bss` bytes | 3,944,732 | 71,219,068 |
+| RSD `.rodata` bytes | 3,881,188 | 4,077,700 |
+| Ibex compile wall time | 22.97 s | 22.58 s |
+| Ibex executable bytes | 17,650,576 | 17,680,472 |
+| PicoRV compile wall time | 2.66 s | 2.64 s |
+| PicoRV executable bytes | 7,073,568 | 7,076,976 |
+
+The RSD compile pair improves 9.3%, with 10.5% lower peak RSS; timings remain
+single-pair observations. Managed lowering/state layout falls from 2.643 s to
+0.495 s, while translation is essentially unchanged (11.898 s to 12.097 s).
+Fixed-size fill records cost more than byte blobs for many small roots: Ibex
+and PicoRV executables grow 29,896 and 3,408 bytes despite removing their
+initialized planes. Their serialized bytecode, and RSD's, remain byte-identical.
+PicoRV output matches; Ibex retains the baseline lifecycle status 14 and is
+not a passing functional benchmark. Artifacts: `tmp/ir-reduction-w9/`.
+
+All six RSD HelloWorld runs match the architectural register/serial oracle
+(4,275 cycles, 4,506 retired operations). Three alternating before/after pairs
+give median wall times of 28.043 s and 28.520 s (+1.7%); observed ranges are
+27.675–28.483 s and 28.460–29.218 s. This is a compile/storage improvement,
+not a measured runtime speedup. Five PicoRV pairs give medians of 0.2927 s and
+0.2947 s (+0.7%), with matching output. Hardware counters are unavailable:
+the host's `perf_event_paranoid=4` blocks them both inside and outside the
+sandbox. Changed C++ was formatted with `clang-format -i`.
 
 ### W10. Symbols generated and then deleted
 
@@ -1126,7 +1180,7 @@ bytecode scope.
 5. W5 readiness, fallback outlining, and direct variants are implemented;
    the optional sweep is covered by existing ranked-group specialization.
    W8 scalar commit-code reduction is implemented with the runtime ABI and
-   promoted fast paths preserved. W9 state-plane initializers are next.
+   promoted fast paths preserved. W9 state-plane initializers are implemented.
 6. W6b net collapsing within the LRM's explicit permissions, with W7's access
    analysis where needed. Variable collapsing remains deferred pending proof.
 7. W10 and W11 as independent follow-up work.

@@ -452,9 +452,8 @@ mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
 void declareNativeRuntimeABI(mlir::ModuleOp module);
 mlir::FailureOr<NativeStateLayout>
 buildNativeStateLayout(mlir::ModuleOp module);
-mlir::LLVM::GlobalOp makeStatePlane(mlir::ModuleOp module, llvm::StringRef name,
-                                    uint64_t bytes, bool unknown,
-                                    const NativeStateLayout &layout);
+void materializeNativeStatePlanes(mlir::ModuleOp module,
+                                  const NativeStateLayout &layout);
 
 } // namespace obelisk::detail
 
