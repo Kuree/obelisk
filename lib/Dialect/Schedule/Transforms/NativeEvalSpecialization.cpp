@@ -5,6 +5,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -584,6 +585,7 @@ LogicalResult materializeEvalTwoStateVariants(
       bool closureRuntimeFree = true;
       bool closureCheckpointSafe = true;
       bool explicitUnknownNBA = false;
+      bool alwaysUnknownNBA = false;
       for (size_t index = 0; index != closure.size(); ++index) {
         sim::SimFuncOp function = closure[index];
         if (!seen.insert(function.getOperation()).second)
@@ -599,6 +601,17 @@ LogicalResult materializeEvalTwoStateVariants(
         for (PhysicalRange range : inductiveRangeMap[function.getOperation()])
           inductiveClosureRanges.insert(range);
         function.walk([&](sim::SimNBAEnqueueOp nba) {
+          if (knownStateDomains->getWithInductiveRoots(nba.getValue()).reason ==
+              StateDomainReason::UnknownConstant) {
+            DominanceInfo dominance(function);
+            bool dominatesReturns = true;
+            bool hasReturn = false;
+            function.walk([&](sim::SimReturnOp returnOp) {
+              hasReturn = true;
+              dominatesReturns &= dominance.dominates(nba, returnOp);
+            });
+            alwaysUnknownNBA |= hasReturn && dominatesReturns;
+          }
           SmallVector<Value> pending{nba.getValue()};
           llvm::SmallPtrSet<Operation *, 16> examined;
           while (!pending.empty()) {
@@ -630,6 +643,11 @@ LogicalResult materializeEvalTwoStateVariants(
         if (detail::containsLogic(argument.getType()))
           closureKnownPreserving &= domains->isTwoState(argument);
       if (!closureRuntimeFree && !closureCheckpointSafe)
+        continue;
+      // A value-domain predicate cannot admit an activation whose unknown
+      // NBA payload dominates every return. Keep its four-state executor;
+      // path-local predicates remain useful for conditional X/Z writes.
+      if (alwaysUnknownNBA)
         continue;
       if (closureRuntimeFree)
         for (PhysicalRange range : inductiveClosureRanges)
@@ -665,8 +683,8 @@ LogicalResult materializeEvalTwoStateVariants(
       // on another. Its inductive ranges alone cannot guard the read after
       // the X/Z commit. Use the same generated CFG predicate as checkpoint
       // owners, so only reads reached by this activation constrain promotion.
-      bool knownOnlyPath = closureRuntimeFree && !closureKnownPreserving &&
-                           explicitUnknownNBA;
+      bool knownOnlyPath =
+          closureRuntimeFree && !closureKnownPreserving && explicitUnknownNBA;
       if (!closureRuntimeFree || knownOnlyPath)
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
@@ -1441,10 +1459,9 @@ LogicalResult materializeEvalTwoStateVariants(
               operation))
         publications.push_back(operation);
     });
-    for (Operation *publication : publications)
-      publication->erase();
-
     if (!trackKnownState) {
+      for (Operation *publication : publications)
+        publication->erase();
       SmallVector<sim::SimReturnOp> returns;
       probe.walk([&](sim::SimReturnOp returnOp) {
         if (!checkpointBlocks.contains(returnOp->getBlock()))
@@ -1490,12 +1507,15 @@ LogicalResult materializeEvalTwoStateVariants(
     DenseMap<Block *, Value> outgoingKnown;
     for (Block &block : probe.getBody()) {
       Value knownSoFar = incomingKnown.lookup(&block);
-      SmallVector<Value> blockLoads;
-      for (Operation &operation : block)
+      SmallVector<std::pair<Operation *, Value>> blockValues;
+      for (Operation &operation : block) {
         for (Value result : operation.getResults())
           if (stateLoads.contains(result))
-            blockLoads.push_back(result);
-      for (Value loaded : blockLoads) {
+            blockValues.emplace_back(&operation, result);
+        if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation))
+          blockValues.emplace_back(&operation, nba.getValue());
+      }
+      for (auto [operation, loaded] : blockValues) {
         // Integer control storage is intrinsically two-state; only packed
         // language values have an unknown plane to inspect.
         if (isa<IntegerType>(loaded.getType()))
@@ -1519,8 +1539,11 @@ LogicalResult materializeEvalTwoStateVariants(
           variantSymbols.erase(probe);
           return sim::SimFuncOp{};
         }
-        Operation *load = loaded.getDefiningOp();
-        builder.setInsertionPointAfter(load);
+        Operation *load = operation;
+        if (isa<sim::SimNBAEnqueueOp>(operation))
+          builder.setInsertionPoint(operation);
+        else
+          builder.setInsertionPointAfter(operation);
         auto logicType = sim::LogicType::get(module.getContext(), *width);
         Value flattened = loaded;
         if (loaded.getType() != logicType)
@@ -1539,6 +1562,8 @@ LogicalResult materializeEvalTwoStateVariants(
       }
       outgoingKnown[&block] = knownSoFar;
     }
+    for (Operation *publication : publications)
+      publication->erase();
 
     SmallVector<Operation *> branches;
     probe.walk([&](Operation *operation) {
