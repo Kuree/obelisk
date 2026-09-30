@@ -136,7 +136,8 @@ LogicalResult makeNativeAOTPlanLegacy(
       });
 
   Type nbaRootType =
-      LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64, pointer});
+      LLVM::LLVMStructType::getLiteral(context,
+                                       {i32, i32, i64, pointer, pointer, i64});
   if (!nbaRoots.empty()) {
     Type rootsType = LLVM::LLVMArrayType::get(nbaRootType, nbaRoots.size());
     makeConstantGlobal(

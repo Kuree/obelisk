@@ -648,6 +648,8 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
   if (context->nativeScheduleHasGeneratedNBAAccumulators)
     for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
          ++root) {
+      if (hasGeneratedNBASlots(context->nativeScheduleNBARoots[root]))
+        return true;
       const obelisk_rt_generated_nba_accumulator_256 *generated =
           context->nativeScheduleNBARoots[root].generated_accumulator;
       if (generated && hasGeneratedNBAStages(*generated) &&
@@ -1482,6 +1484,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         (root.generated_accumulator &&
          root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS))
       return OBELISK_RT_INVALID_ARGUMENT;
+    if (root.generated_slot_count && !root.generated_slots)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    for (uint64_t slot = 0; slot != root.generated_slot_count; ++slot) {
+      const auto &entry = root.generated_slots[slot];
+      if (!entry.offset || !entry.value || !entry.unknown || !entry.valid ||
+          !entry.transition ||
+          !entry.bit_width || entry.bit_width > 64 ||
+          entry.bit_width > root.bit_width)
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
     for (uint32_t previous = 0; previous != index; ++previous)
       if (nbaRoots[previous].static_state == root.static_state)
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -1749,7 +1761,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       for (uint32_t index = 0; index != nbaRootCount; ++index) {
         const obelisk_rt_static_nba_root &root = nbaRoots[index];
         context->nativeScheduleHasGeneratedNBAAccumulators |=
-            root.generated_accumulator != nullptr;
+            root.generated_accumulator != nullptr || root.generated_slot_count;
         const obelisk_rt_static_fanout_entry *fanout = std::lower_bound(
             fanoutEntries, fanoutEntries + fanoutEntryCount, root.static_state,
             [](const auto &entry, uint32_t staticState) {
@@ -1782,6 +1794,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         context->staticNBAAccumulators.push_back(std::move(accumulator));
         if (root.generated_accumulator)
           *root.generated_accumulator = {};
+        for (uint64_t slot = 0; slot != root.generated_slot_count; ++slot)
+          *root.generated_slots[slot].valid = 0;
       }
       context->nativeScheduleNBASiteIndex.clear();
       context->nativeScheduleNBARootIndex.clear();

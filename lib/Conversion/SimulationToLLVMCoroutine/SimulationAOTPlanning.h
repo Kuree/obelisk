@@ -87,6 +87,7 @@ struct NativeDirectFragment {
   bool instanceCoordinator = false;
   bool initialActivation = false;
   bool tier2Convergence = false;
+  bool runtimeCheckpoint = false;
 };
 
 enum class NativeEvalFanoutOwnerKind : uint8_t {

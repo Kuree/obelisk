@@ -253,6 +253,7 @@ LogicalResult materializeEvalTwoStateVariants(
             display, UnitAttr::get(module.getContext()));
     });
   llvm::SmallPtrSet<Operation *, 32> variantEligibleSources;
+  llvm::SmallPtrSet<Operation *, 16> knownOnlyPathSources;
   if (!forceTwoState) {
     // A transient two-state route need not be globally two-state.  It is
     // sufficient that (1) every canonical input/output slice is known at the
@@ -582,6 +583,7 @@ LogicalResult materializeEvalTwoStateVariants(
       bool closureKnownPreserving = true;
       bool closureRuntimeFree = true;
       bool closureCheckpointSafe = true;
+      bool explicitUnknownNBA = false;
       for (size_t index = 0; index != closure.size(); ++index) {
         sim::SimFuncOp function = closure[index];
         if (!seen.insert(function.getOperation()).second)
@@ -596,6 +598,19 @@ LogicalResult materializeEvalTwoStateVariants(
           closureRanges.insert(range);
         for (PhysicalRange range : inductiveRangeMap[function.getOperation()])
           inductiveClosureRanges.insert(range);
+        function.walk([&](sim::SimNBAEnqueueOp nba) {
+          SmallVector<Value> pending{nba.getValue()};
+          llvm::SmallPtrSet<Operation *, 16> examined;
+          while (!pending.empty()) {
+            Operation *op = pending.pop_back_val().getDefiningOp();
+            if (!op || !examined.insert(op).second)
+              continue;
+            if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
+              explicitUnknownNBA |= !constant.getUnknown().isZero();
+            else if (!isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op))
+              llvm::append_range(pending, op->getOperands());
+          }
+        });
         function.walk([&](sim::SimCallOp call) {
           sim::SimFuncOp callee =
               variantSymbols.lookup<sim::SimFuncOp>(call.getCallee());
@@ -646,16 +661,24 @@ LogicalResult materializeEvalTwoStateVariants(
             ::obelisk::schedule::Field::EvalConditionallyTwoState>(
             source, UnitAttr::get(module.getContext()));
       }
-      if (!closureRuntimeFree)
+      // A pure activation can explicitly stage X/Z and read that register
+      // on another. Its inductive ranges alone cannot guard the read after
+      // the X/Z commit. Use the same generated CFG predicate as checkpoint
+      // owners, so only reads reached by this activation constrain promotion.
+      bool knownOnlyPath = closureRuntimeFree && !closureKnownPreserving &&
+                           explicitUnknownNBA;
+      if (!closureRuntimeFree || knownOnlyPath)
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             source, UnitAttr::get(module.getContext()));
+      if (knownOnlyPath)
+        knownOnlyPathSources.insert(source.getOperation());
       if (!closureRuntimeFree && closureKnownPreserving)
         ::obelisk::schedule::set<
             schedule::metadata::evalPathGuardedKnownPreserving>(
             source, UnitAttr::get(module.getContext()));
       if (closureKnownPreserving || !orderedRanges.empty() ||
-          !closureRuntimeFree)
+          !closureRuntimeFree || knownOnlyPath)
         routeEligibleSources.insert(source.getOperation());
     }
     // Do not build a nominal two-state owner that can retain a permanently
@@ -1489,6 +1512,13 @@ LogicalResult materializeEvalTwoStateVariants(
           variantSymbols.erase(probe);
           return sim::SimFuncOp{};
         }
+        if (isa<sim::UnpackedArrayType, sim::UnpackedStructType,
+                sim::UnpackedUnionType>(loaded.getType())) {
+          traceRejection("unpacked load needs an aggregate knownness predicate",
+                         loaded.getDefiningOp());
+          variantSymbols.erase(probe);
+          return sim::SimFuncOp{};
+        }
         Operation *load = loaded.getDefiningOp();
         builder.setInsertionPointAfter(load);
         auto logicType = sim::LogicType::get(module.getContext(), *width);
@@ -1597,6 +1627,9 @@ LogicalResult materializeEvalTwoStateVariants(
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFourStateSource>(
         variant,
         FlatSymbolRefAttr::get(module.getContext(), source.getSymName()));
+    if (knownOnlyPathSources.contains(source.getOperation()))
+      ::obelisk::schedule::set<schedule::Field::EvalInfallible>(
+          variant, builder.getUnitAttr());
     variant.walk([&](sim::SimNBAEnqueueOp nba) {
       ::obelisk::schedule::set<schedule::metadata::evalCompactNBAMetadata>(
           nba, UnitAttr::get(module.getContext()));

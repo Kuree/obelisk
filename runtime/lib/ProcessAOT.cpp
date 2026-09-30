@@ -2156,6 +2156,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
       return OBELISK_RT_LAYOUT_MISMATCH;
     for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
          ++root) {
+      if (hasGeneratedNBASlots(context->nativeScheduleNBARoots[root]))
+        if (auto status = materializeGeneratedNBAAccumulatorUnlocked(
+                context, root, OBELISK_RT_REGION_NBA); status != OBELISK_RT_OK)
+          return status;
       const obelisk_rt_generated_nba_accumulator_256 *generated =
           context->nativeScheduleNBARoots[root].generated_accumulator;
       if (!generated || !hasGeneratedNBAStages(*generated))
@@ -2869,9 +2873,13 @@ void obelisk_rt_release_native_schedule_plan(
     invalidateNativeStaticSpecializationFastUnlocked(context);
     if (context->nativeSchedulePlan->promotion_invalidate)
       context->nativeSchedulePlan->promotion_invalidate();
-    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount; ++root)
-      if (context->nativeScheduleNBARoots[root].generated_accumulator)
-        *context->nativeScheduleNBARoots[root].generated_accumulator = {};
+    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount; ++root) {
+      const auto &entry = context->nativeScheduleNBARoots[root];
+      if (entry.generated_accumulator)
+        *entry.generated_accumulator = {};
+      for (uint64_t slot = 0; slot != entry.generated_slot_count; ++slot)
+        *entry.generated_slots[slot].valid = 0;
+    }
     for (uint32_t slot = 0; slot != context->nativeScheduleActors.size();
          ++slot)
       if (context->nativeScheduleActors[slot])

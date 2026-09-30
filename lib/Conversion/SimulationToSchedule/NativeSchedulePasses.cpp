@@ -512,14 +512,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     // IEEE 1800-2023 4.4.2.4, 4.5, 4.6(b), 10.4.2: a runtime calendar
     // shares the NBA barrier with generated Active work. Preserve execution
     // order whenever intermediate updates are observable (9.4.2).
-    // Scalar merge-safe accumulators are visible to that barrier, so their
-    // writers need no checkpoint. Wide eval latches and ordered queues are
-    // private to the generated barrier and retain runtime ownership here.
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module))
-      for (auto [index, root] : llvm::enumerate(staticNBAPlan.roots))
-        if (root.bit_width > 64)
-          staticNBAPlan.mergeSafeRoots[index] = false;
+    // Merge-safe roots use compiler-owned accumulators or fixed clocked
+    // slots visible to that barrier. Width alone does not require scheduling
+    // an event. Observable update sequences retain their ordering boundary.
     staticNBA = !staticNBAPlan.roots.empty();
     // The generated queue orders all executions of its certified NBA sites,
     // splitting wide payloads into records. Before packed lowering, retain a
@@ -535,6 +530,21 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                                                                : origin->second;
     };
     SmallVector<sim::SimFuncOp> admittedBodies;
+    SmallVector<bool> clockedBodies;
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
+      auto clocks = buildNativePeriodicClockPlan(
+          module, *stateLayout, aotEligibility.getActorSlots());
+      if (failed(clocks))
+        return failure();
+      auto aliases = buildNativePeriodicAliasPlan(
+          module, *stateLayout, aotEligibility.getActorSlots(), *clocks);
+      if (failed(aliases))
+        return failure();
+      stateLayout->clockFacts =
+          buildNativeClockInferencePlan(module, *stateLayout,
+                                        aotEligibility.getActorSlots(), *clocks);
+    }
     llvm::SmallPtrSet<Operation *, 8> mixedTierBodies;
     if (metadataDesign)
       metadataDesign.walk([&](sim::SimFuncOp actor) {
@@ -548,6 +558,29 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                   planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
                                                                  body)) {
             admittedBodies.push_back(function);
+            unsigned suspensions = 0;
+            bool edgeActivation = false;
+            actor.walk([&](Operation *operation) {
+              if (!sim::isSuspensionOp(operation))
+                return;
+              ++suspensions;
+              edgeActivation |= isa<sim::SimSuspendEdgeOp>(operation);
+            });
+            bool periodicIngress = false;
+            bool nonPeriodicIngress = false;
+            for (const auto &entry : staticFanoutPlan.entries)
+              if (entry.actor_slot == *aotActorSlotFor(actor)) {
+                auto bound = llvm::find_if(stateLayout->bounds, [&](const auto &b) {
+                  return b.handleID == entry.static_state;
+                });
+                bool periodic = bound != stateLayout->bounds.end() &&
+                    entry.bit_width == 1 && stateLayout->hasClockTickBound(
+                        entry.static_state, bound->offset + entry.low_bit);
+                periodicIngress |= periodic;
+                nonPeriodicIngress |= !periodic;
+              }
+            clockedBodies.push_back(suspensions == 1 && edgeActivation &&
+                                    periodicIngress && !nonPeriodicIngress);
             auto bytecode = aotEligibility.getBytecodeFragments().find(
                 actor.getOperation());
             if (bytecode != aotEligibility.getBytecodeFragments().end() &&
@@ -703,10 +736,33 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                 ::obelisk::schedule::Field::EvalCheckpointOnly>(function) ||
             (bodyNeedsOrderedNBA[index] && !everySiteGenerated) ||
             llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
-              return !orderedRootClosed[root] || !queuePayloadSupported[root];
+              bool sharedCalendar = ::obelisk::schedule::has<
+                  ::obelisk::schedule::Field::EvalRuntimeCalendar>(module);
+              bool fixedSlots = clockedBodies[index] &&
+                  staticNBAPlan.mergeSafeRoots[root] &&
+                  (generatedOrigins[root].size() == 1 ||
+                   staticNBAPlan.independentSiteWrites[root]);
+              return !orderedRootClosed[root] || !queuePayloadSupported[root] ||
+                     (sharedCalendar && !fixedSlots);
             });
         if (!runtimeOwner)
           continue;
+        if (detailedTiming &&
+            !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function)) {
+          llvm::errs() << "obelisk eval checkpoint admission: body="
+                       << function.getSymName()
+                       << " reason=runtime-nba-owner ordered="
+                       << bodyNeedsOrderedNBA[index]
+                       << " global-queue-closed=" << everySiteGenerated
+                       << " wide-roots=";
+          for (uint32_t root : bodyWideRoots[index])
+            llvm::errs() << root << ":"
+                         << staticNBAPlan.roots[root].bit_width << ":"
+                         << static_cast<bool>(orderedRootClosed[root]) << ":"
+                         << static_cast<bool>(queuePayloadSupported[root])
+                         << ",";
+          llvm::errs() << '\n';
+        }
         ::obelisk::schedule::set<evalRuntimeNBARequiredAttr>(
             function, UnitAttr::get(module.getContext()));
         if (bodyNeedsOrderedNBA[index] && everySiteGenerated) {
@@ -1451,6 +1507,20 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
               "direct eval body crosses multiple fusion groups");
         direct.fusionGroup = group->second;
       }
+  }
+  if (detailedTiming && succeeded(directFragments)) {
+    unsigned tier1 = 0, tier2 = 0, checkpoints = 0;
+    for (const NativeDirectFragment &direct : *directFragments) {
+      if (direct.runtimeCheckpoint)
+        ++checkpoints;
+      else if (direct.tier2Convergence)
+        ++tier2;
+      else
+        ++tier1;
+    }
+    llvm::errs() << "obelisk eval executor inventory: tier1=" << tier1
+                 << " tier2=" << tier2
+                 << " runtime_checkpoints=" << checkpoints << '\n';
   }
   markTiming("eval ownership and graph planning");
 

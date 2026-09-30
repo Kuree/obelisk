@@ -286,6 +286,8 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
           function);
   auto evalPathKnownPredicate = ::obelisk::schedule::get<
       ::obelisk::schedule::Field::EvalPathKnownPredicate>(function);
+  auto evalInfallible =
+      ::obelisk::schedule::get<schedule::Field::EvalInfallible>(function);
   ArrayAttr outlinedPassthrough;
   if (::obelisk::schedule::has<
           ::obelisk::schedule::Field::OutlinedPrimitiveMember>(function)) {
@@ -332,6 +334,9 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
     ::obelisk::schedule::set<
         ::obelisk::schedule::Field::EvalPathKnownPredicate>(
         replacement, evalPathKnownPredicate);
+  if (evalInfallible)
+    ::obelisk::schedule::set<schedule::Field::EvalInfallible>(replacement,
+                                                          evalInfallible);
   replacement.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : replacement.getBody())

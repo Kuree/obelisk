@@ -293,6 +293,7 @@ uint32_t nextDueNativeNBABarrierRegionUnlocked(
 
 bool hasGeneratedNBAStages(
     const obelisk_rt_generated_nba_accumulator_256 &generated);
+bool hasGeneratedNBASlots(const obelisk_rt_static_nba_root &root);
 void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
                                      uint32_t rootIndex,
                                      StaticNBAAccumulator &accumulator);

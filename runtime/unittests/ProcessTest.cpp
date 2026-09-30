@@ -7544,6 +7544,93 @@ TEST(RuntimeInternals, WritableNBADirectCommitRequiresCleanLockedBoundary) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, GeneratedFixedNBASlotsShareBarrierAndSnapshotWithoutQueue) {
+  AOTTestState state;
+  std::array<int64_t, 2> offsets{0, 64};
+  std::array<uint64_t, 2> values{}, unknowns{};
+  std::array<uint32_t, 2> valid{};
+  std::array<std::array<uint64_t, 4>, 2> transitions{};
+  const obelisk_rt_generated_nba_slot slots[] = {
+      {&offsets[0], &values[0], &unknowns[0], &valid[0], transitions[0].data(), 64},
+      {&offsets[1], &values[1], &unknowns[1], &valid[1], transitions[1].data(), 64}};
+  const obelisk_rt_static_nba_root roots[] = {{17, 1, 128, nullptr, slots, 2}};
+  std::array<uint8_t, 16> valuePlane{}, unknownPlane{};
+  uint64_t dirtyRoots = 0, dirtySummary = 0;
+  auto plan = makeAOTPlan(state, 1);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+               OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.state_value = valuePlane.data();
+  plan.state_unknown = unknownPlane.data();
+  plan.state_bit_count = 128;
+  plan.nba_roots = roots;
+  plan.nba_root_count = 1;
+  plan.nba_dirty_roots = &dirtyRoots;
+  plan.nba_dirty_word_count = 1;
+  plan.nba_dirty_summary = &dirtySummary;
+  plan.nba_dirty_summary_word_count = 1;
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 128;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context), OBELISK_RT_OK);
+  context->stateUnknown.assign(2, 0);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 128), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  // A runtime handover can detach the canonical planes from generated storage.
+  // Both images must receive the fixed-slot commit before its publication.
+  context->stateValue.assign(2, 0);
+  context->stateUnknown.assign(2, 0);
+  ASSERT_FALSE(context->stateValue.shared());
+  ASSERT_FALSE(context->stateUnknown.shared());
+
+  values = {0x1234, 0x5678};
+  unknowns = {0x80, 0x40};
+  valid = {1, 1};
+  dirtyRoots = dirtySummary = 1;
+  EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), OBELISK_RT_REGION_NBA);
+  uint32_t changed = 0;
+  ASSERT_EQ(obelisk_rt_v1_static_nba_commit_roots(
+      context, 1, OBELISK_RT_REGION_ACTIVE, &changed), OBELISK_RT_OK);
+  EXPECT_EQ(valid[0], 1u);
+  EXPECT_EQ(dirtyRoots, 1u);
+  ASSERT_EQ(obelisk_rt_v1_static_nba_commit_roots(
+      context, 1, OBELISK_RT_REGION_NBA, &changed), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0], values[0]);
+  EXPECT_EQ(context->stateValue[1], values[1]);
+  EXPECT_EQ(context->stateUnknown[0], unknowns[0]);
+  EXPECT_EQ(context->stateUnknown[1], unknowns[1]);
+  std::array<uint64_t, 2> generatedValues{}, generatedUnknowns{};
+  std::memcpy(generatedValues.data(), valuePlane.data(), valuePlane.size());
+  std::memcpy(generatedUnknowns.data(), unknownPlane.data(), unknownPlane.size());
+  EXPECT_EQ(generatedValues, values);
+  EXPECT_EQ(generatedUnknowns, unknowns);
+  EXPECT_EQ(valid[0] | valid[1], 0u);
+  EXPECT_EQ(dirtyRoots | dirtySummary, 0u);
+  EXPECT_FALSE(context->staticNBAAccumulators[0].valid);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), UINT32_MAX);
+
+  // A clipped selection stages only its overlapping source bits. Snapshot
+  // materializes this fixed storage once, so deoptimization cannot lose it.
+  offsets[0] = -4;
+  values[0] = 0xabcd;
+  unknowns[0] = 0x120;
+  valid[0] = 1;
+  dirtyRoots = dirtySummary = 1;
+  obelisk_rt_aot_deopt_snapshot snapshot{};
+  ASSERT_EQ(obelisk_rt_v1_scheduler_snapshot_aot(context, &snapshot), OBELISK_RT_OK);
+  EXPECT_EQ(snapshot.nba_count, 1u);
+  EXPECT_EQ(valid[0], 0u);
+  EXPECT_TRUE(context->staticNBAAccumulators[0].valid);
+  EXPECT_TRUE(context->scheduledNBAs.empty());
+  ASSERT_EQ(obelisk_rt_v1_static_nba_commit_roots(
+      context, 1, OBELISK_RT_REGION_NBA, &changed), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateValue[0], 0xabcu);
+  EXPECT_EQ(context->stateUnknown[0], 0x12u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedNBAScalarCommitsValueUnknownAndPartMaskDirectly) {
   AOTTestState state;
   obelisk_rt_generated_nba_accumulator_256 generated{};

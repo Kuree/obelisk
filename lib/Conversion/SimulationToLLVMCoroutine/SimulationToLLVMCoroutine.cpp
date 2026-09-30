@@ -1034,7 +1034,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
          fusionGroup,
          ::obelisk::schedule::has<
              ::obelisk::schedule::Field::EvalInstanceCoordinator>(pending.body),
-         initialActivation});
+         initialActivation, /*tier2Convergence=*/false,
+         pending.runtimeCheckpoint});
   }
   if (!checkpointRoutes.empty())
     ::obelisk::schedule::set<schedule::metadata::evalCheckpointRoutes>(
@@ -2036,7 +2037,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     size_t routeIndex = routes.size();
     std::optional<uint32_t> checkpointActor;
     std::optional<uint32_t> checkpointContinuation;
-    if (pathKnownProbe) {
+    if (pathKnownProbe &&
+        !::obelisk::schedule::has<schedule::Field::EvalInfallible>(function)) {
       auto owner = checkpointOwners.find(fourState.getSymName());
       if (owner == checkpointOwners.end()) {
         function.emitError("path-sensitive checkpoint route ")
@@ -2172,7 +2174,58 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         LLVM::LLVMFunctionType::get(builder.getI32Type(), {pointer}));
   LLVM::LLVMFuncOp syncCheckpointStateFunction;
   for (auto [routeIndex, route] : llvm::enumerate(routes)) {
-    if (route.pathKnownProbe) {
+    if (route.pathKnownProbe &&
+        ::obelisk::schedule::has<schedule::Field::EvalInfallible>(
+            route.twoState)) {
+      // This predicate chooses only the value domain. A pure activation has
+      // no runtime checkpoint and retains its ordinary body signature.
+      auto bodyType = route.fourState.getFunctionType();
+      auto probeType = route.pathKnownProbe.getFunctionType();
+      if (probeType.getParams() != bodyType.getParams() ||
+          probeType.getReturnType() != i8)
+        return route.pathKnownProbe.emitError(
+            "path-known probe ABI does not match its eval body");
+      builder.setInsertionPointToEnd(module.getBody());
+      route.dispatcher = LLVM::LLVMFuncOp::create(
+          builder, route.twoState.getLoc(), route.dispatcherName, bodyType);
+      detail::copyNativePartition(route.twoState, route.dispatcher);
+      route.dispatcher.setPrivate();
+      route.dispatcher->setAttr(
+          "passthrough",
+          builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
+      Block *entry = route.dispatcher.addEntryBlock(builder);
+      Block *known = new Block, *unknown = new Block;
+      route.dispatcher.getBody().push_back(known);
+      route.dispatcher.getBody().push_back(unknown);
+      builder.setInsertionPointToStart(entry);
+      SmallVector<Value> arguments(entry->getArguments());
+      Value path = LLVM::CallOp::create(builder, route.twoState.getLoc(),
+                                        route.pathKnownProbe, arguments)
+                       .getResult();
+      Value isKnown = LLVM::ICmpOp::create(
+          builder, route.twoState.getLoc(), LLVM::ICmpPredicate::eq, path,
+          detail::llvmConstant(builder, route.twoState.getLoc(), i8, 1));
+      LLVM::CondBrOp::create(builder, route.twoState.getLoc(), isKnown, known,
+                             unknown);
+      builder.setInsertionPointToStart(known);
+      auto knownCall = LLVM::CallOp::create(builder, route.twoState.getLoc(),
+                                            route.twoState, arguments);
+      LLVM::ReturnOp::create(builder, route.twoState.getLoc(),
+                             knownCall.getResults());
+      builder.setInsertionPointToStart(unknown);
+      if (auto fallback = inputSymbols.lookup<LLVM::GlobalOp>(
+              "__obelisk_eval_step_four_state_fallback_v1"))
+        LLVM::StoreOp::create(
+            builder, route.fourState.getLoc(),
+            detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
+            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(), pointer,
+                                      fallback.getSymName()),
+            1);
+      auto unknownCall = LLVM::CallOp::create(builder, route.fourState.getLoc(),
+                                              route.fourState, arguments);
+      LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
+                             unknownCall.getResults());
+    } else if (route.pathKnownProbe) {
       auto probeType = route.pathKnownProbe.getFunctionType();
       auto bodyType = route.fourState.getFunctionType();
       if (probeType.getParams() != bodyType.getParams() ||

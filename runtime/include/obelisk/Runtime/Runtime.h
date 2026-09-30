@@ -3326,11 +3326,27 @@ typedef struct obelisk_rt_generated_nba_accumulator_256 {
   uint64_t transient[4];
 } obelisk_rt_generated_nba_accumulator_256;
 
+// A certified clock activation writes each slot at most once per time slot.
+// The compiler owns its payload and validity flag; the common NBA barrier
+// consumes it directly. There is no enqueue operation or growable storage.
+typedef struct obelisk_rt_generated_nba_slot {
+  int64_t *offset;
+  uint64_t *value;
+  uint64_t *unknown;
+  uint32_t *valid;
+  // Fixed commit scratch: old value/unknown, then new value/unknown. Store
+  // the complete certified batch before publishing any transition.
+  uint64_t *transition;
+  uint64_t bit_width;
+} obelisk_rt_generated_nba_slot;
+
 typedef struct obelisk_rt_static_nba_root {
   uint32_t commit_node;
   uint32_t static_state;
   uint64_t bit_width;
   obelisk_rt_generated_nba_accumulator_256 *generated_accumulator;
+  const obelisk_rt_generated_nba_slot *generated_slots;
+  uint64_t generated_slot_count;
 } obelisk_rt_static_nba_root;
 
 typedef struct obelisk_rt_static_nba_site {

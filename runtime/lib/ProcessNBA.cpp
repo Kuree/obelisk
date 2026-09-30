@@ -62,21 +62,56 @@ bool hasGeneratedNBAStages(
   return generated.valid != 0;
 }
 
+bool hasGeneratedNBASlots(const obelisk_rt_static_nba_root &root) {
+  for (uint64_t index = 0; index != root.generated_slot_count; ++index)
+    if (*root.generated_slots[index].valid)
+      return true;
+  return false;
+}
+
+// The source index may select a partially overlapping range. Clip before
+// shifting, including INT64_MIN, so an invalid selection never touches state.
+template <typename Consume>
+static obelisk_rt_status
+consumeGeneratedNBASlots(const obelisk_rt_static_nba_root &root,
+                         Consume consume, bool clearValidity = true) {
+  for (uint64_t index = 0; index != root.generated_slot_count; ++index) {
+    const auto &slot = root.generated_slots[index];
+    if (!*slot.valid)
+      continue;
+    int64_t requested = *slot.offset;
+    uint64_t source = requested < 0 ? uint64_t{0} - uint64_t(requested) : 0;
+    uint64_t destination = requested < 0 ? 0 : uint64_t(requested);
+    if (source < slot.bit_width && destination < root.bit_width) {
+      uint64_t width =
+          std::min(slot.bit_width - source, root.bit_width - destination);
+      obelisk_rt_status status = consume(
+          destination, width, (*slot.value >> source) & packedWidthMask(width),
+          (*slot.unknown >> source) & packedWidthMask(width), slot);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    if (clearValidity)
+      *slot.valid = 0;
+  }
+  return OBELISK_RT_OK;
+}
+
 // Record staged bits that a new write replaces with a different value before
 // merging it. `mask`, `value` and `unknown` are positioned within `word`.
 static void recordStaticNBATransient(StaticNBAAccumulator &accumulator,
-                                     size_t word, uint64_t mask,
-                                     uint64_t value, uint64_t unknown) {
+                                     size_t word, uint64_t mask, uint64_t value,
+                                     uint64_t unknown) {
   if (word >= accumulator.transient.size())
     return;
-  accumulator.transient[word] |=
-      accumulator.writeMask[word] & mask &
+  accumulator.transient[word] |= accumulator.writeMask[word] & mask &
       ((accumulator.value[word] ^ value) |
        (accumulator.unknown[word] ^ unknown));
 }
 
-uint32_t nextDueNativeNBABarrierRegionUnlocked(
-    const obelisk_rt_context *context, bool includeGenerated) {
+uint32_t
+nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+                                      bool includeGenerated) {
   uint32_t region = UINT32_MAX;
   // IEEE 1800-2023 4.4.2.4, 4.4.2.8, 4.5: static accumulators commit
   // only in NBA or Re-NBA. Once the earliest eligible region is found,
@@ -90,8 +125,12 @@ uint32_t nextDueNativeNBABarrierRegionUnlocked(
           schedulerRegionEligible(context, accumulator.execRegion))
         region = std::min(region, accumulator.execRegion);
     }
-    if (includeGenerated && context->nativeScheduleHasGeneratedNBAAccumulators &&
+    if (includeGenerated &&
+        context->nativeScheduleHasGeneratedNBAAccumulators &&
         root < context->nativeScheduleNBARootCount) {
+      if (hasGeneratedNBASlots(context->nativeScheduleNBARoots[root]) &&
+          schedulerRegionEligible(context, OBELISK_RT_REGION_NBA))
+        region = std::min(region, uint32_t{OBELISK_RT_REGION_NBA});
       const auto *generated =
           context->nativeScheduleNBARoots[root].generated_accumulator;
       if (generated && hasGeneratedNBAStages(*generated) &&
@@ -334,7 +373,7 @@ static obelisk_rt_status schedulerNBA(
       if (root.static_state != staticID ||
           root.bit_width != staticState->bitWidth)
         return fail(OBELISK_RT_LAYOUT_MISMATCH);
-      if (root.generated_accumulator) {
+      if (root.generated_accumulator || root.generated_slot_count) {
         // A source-ordered generic site may follow generated direct stages for
         // the same root. Materialize first so the generic write remains the
         // last write at the barrier.
@@ -377,10 +416,8 @@ static obelisk_rt_status schedulerNBA(
         if (packedStage) {
           uint64_t packedValue =
               loadPackedBytes(value, sourceBitOffset, bitWidth);
-          uint64_t packedUnknown = unknownPlane
-                                       ? loadPackedBytes(unknown,
-                                                         sourceBitOffset,
-                                                         bitWidth)
+          uint64_t packedUnknown =
+              unknownPlane ? loadPackedBytes(unknown, sourceBitOffset, bitWidth)
                                        : 0;
           uint64_t sourceMask = packedWidthMask(bitWidth);
           packedValue &= sourceMask;
@@ -1139,8 +1176,7 @@ static obelisk_rt_status schedulerInertialPath(
         bool differs = currentBit(false, bit) != targetValue ||
                        currentBit(true, bit) != targetUnknown;
         bool changed =
-            differs ||
-            pending.scheduledSequence[static_cast<size_t>(bit)] != 0;
+            differs || pending.scheduledSequence[static_cast<size_t>(bit)] != 0;
         pending.valid[static_cast<size_t>(bit)] = 1;
         pending.delayed[static_cast<size_t>(bit)] = active ? 1 : 0;
         if (active) {
@@ -1517,8 +1553,7 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
                           uint64_t bit) {
       uint64_t absolute = selection.state->bitOffset +
                           static_cast<uint64_t>(selection.offset) + bit;
-      const auto &plane =
-          unknown ? context->stateUnknown : context->stateValue;
+      const auto &plane = unknown ? context->stateUnknown : context->stateValue;
       return absolute / 64 < plane.size() &&
              ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
     };
@@ -1795,8 +1830,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
                           uint64_t bit) {
       uint64_t absolute = selection.state->bitOffset +
                           static_cast<uint64_t>(selection.offset) + bit;
-      const auto &plane =
-          unknown ? context->stateUnknown : context->stateValue;
+      const auto &plane = unknown ? context->stateUnknown : context->stateValue;
       return absolute / 64 < plane.size() &&
              ((plane[absolute / 64] >> (absolute % 64)) & 1) != 0;
     };
@@ -2398,6 +2432,45 @@ obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
     return OBELISK_RT_INVALID_DESIGN;
   const obelisk_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
+  if (hasGeneratedNBASlots(root)) {
+    const auto *plan = context->nativeSchedulePlan;
+    StaticNBAAccumulator &accumulator =
+        context->staticNBAAccumulators[rootIndex];
+    if (!plan || execRegion != OBELISK_RT_REGION_NBA ||
+        (accumulator.valid && accumulator.execRegion != execRegion))
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    accumulator.valuePlane = plan->state_value;
+    accumulator.unknownPlane = plan->state_unknown;
+    accumulator.planeBitCount = plan->state_bit_count;
+    accumulator.execRegion = execRegion;
+    auto status = consumeGeneratedNBASlots(
+        root, [&](uint64_t offset, uint64_t width, uint64_t value,
+                  uint64_t unknown, const obelisk_rt_generated_nba_slot &) {
+          size_t word = offset / 64;
+          unsigned shift = offset % 64;
+          uint64_t mask = packedWidthMask(width);
+          auto merge = [&](size_t word, uint64_t mask, uint64_t value,
+                           uint64_t unknown) {
+            recordStaticNBATransient(accumulator, word, mask, value, unknown);
+            accumulator.value[word] = (accumulator.value[word] & ~mask) | value;
+            accumulator.unknown[word] =
+                (accumulator.unknown[word] & ~mask) | unknown;
+            accumulator.writeMask[word] |= mask;
+          };
+          merge(word, mask << shift, value << shift, unknown << shift);
+          if (shift && width > 64 - shift)
+            merge(word + 1, mask >> (64 - shift), value >> (64 - shift),
+                  unknown >> (64 - shift));
+          if (!context->nextSchedulerSequence)
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          accumulator.sequence = context->nextSchedulerSequence++;
+          markStaticNBAAccumulatorPending(context, rootIndex, accumulator);
+          ++context->signalDiagnostics.aotNBAStages;
+          return OBELISK_RT_OK;
+        });
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
   obelisk_rt_generated_nba_accumulator_256 *generated =
       root.generated_accumulator;
   if (!generated || !hasGeneratedNBAStages(*generated))
@@ -2745,8 +2818,9 @@ __attribute__((target("avx2"))) bool commitStaticNBA256AVX2(
 #endif
 
 #if defined(__x86_64__) || defined(_M_X64)
-static bool validBoundNativeStateRangeUnlocked(
-    const obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth) {
+static bool
+validBoundNativeStateRangeUnlocked(const obelisk_rt_context *context,
+                                   uint64_t bitOffset, uint64_t bitWidth) {
   if (!context->nativeStateValue && !context->nativeStateUnknown &&
       context->nativeStateBitCount == 0)
     return true;
@@ -2755,10 +2829,8 @@ static bool validBoundNativeStateRangeUnlocked(
          bitWidth <= context->nativeStateBitCount - bitOffset;
 }
 
-static obelisk_rt_status
-syncBoundNativeStateFromScheduleUnlocked(obelisk_rt_context *context,
-                                         uint64_t bitOffset,
-                                         uint64_t bitWidth) {
+static obelisk_rt_status syncBoundNativeStateFromScheduleUnlocked(
+    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth) {
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (!context->nativeStateValue && !context->nativeStateUnknown &&
       context->nativeStateBitCount == 0)
@@ -2939,6 +3011,85 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   return context->schedulerStatus;
 }
 
+// Certified independent fixed slots publish their final transitions at the
+// common NBA barrier. This traverses static storage, never a runtime queue.
+static obelisk_rt_status
+commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
+                                bool &changed) {
+  const auto &root = context->nativeScheduleNBARoots[rootIndex];
+  const auto *plan = context->nativeSchedulePlan;
+  const auto *state = findNativeStaticState(context, root.static_state);
+  if (!plan || !state || state->bitWidth != root.bit_width ||
+      state->bitOffset > plan->state_bit_count ||
+      root.bit_width > plan->state_bit_count - state->bitOffset)
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  bool canonical = context->execution &&
+                   context->execution->state_bit_count == plan->state_bit_count;
+  if (canonical &&
+      (context->stateValue.size() != (plan->state_bit_count + 63) / 64 ||
+       context->stateUnknown.size() != context->stateValue.size()))
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  auto status = consumeGeneratedNBASlots(
+      root,
+      [&](uint64_t offset, uint64_t width, uint64_t value, uint64_t unknown,
+          const obelisk_rt_generated_nba_slot &slot) {
+        uint64_t planeBit = state->bitOffset + offset;
+        auto overrideMask = [&](const std::vector<uint64_t> &plane) {
+          return plane.empty()
+                     ? uint64_t{0}
+                     : loadPackedBytes(
+                           reinterpret_cast<const uint8_t *>(plane.data()),
+                           planeBit, width);
+        };
+        uint64_t mask =
+            packedWidthMask(width) & ~(overrideMask(context->forceMask) |
+                                       overrideMask(context->assignMask));
+        uint64_t oldValue = loadPackedBytes(plan->state_value, planeBit, width);
+        uint64_t oldUnknown =
+            loadPackedBytes(plan->state_unknown, planeBit, width);
+        uint64_t newValue = (oldValue & ~mask) | (value & mask);
+        uint64_t newUnknown = (oldUnknown & ~mask) | (unknown & mask);
+        // Runtime actors can read the canonical planes after a handover even
+        // when they no longer share the generated storage. Commit both images,
+        // as the ordinary root accumulator does, before publishing any chunk.
+        if (canonical) {
+          storePackedBytes(
+              reinterpret_cast<uint8_t *>(context->stateValue.data()),
+              planeBit, width, newValue);
+          storePackedBytes(
+              reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+              planeBit, width, newUnknown);
+        }
+        if (!storeNativeScheduleStateUnlocked(context, planeBit, width,
+                                              newValue, newUnknown))
+          return OBELISK_RT_LAYOUT_MISMATCH;
+        slot.transition[0] = oldValue;
+        slot.transition[1] = oldUnknown;
+        slot.transition[2] = newValue;
+        slot.transition[3] = newUnknown;
+        ++context->signalDiagnostics.aotNBAStages;
+        ++context->signalDiagnostics.aotNBACommits;
+        return OBELISK_RT_OK;
+      },
+      false);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return consumeGeneratedNBASlots(
+      root, [&](uint64_t offset, uint64_t width, uint64_t, uint64_t,
+                const obelisk_rt_generated_nba_slot &slot) {
+        uint64_t oldValue = slot.transition[0], oldUnknown = slot.transition[1];
+        uint64_t newValue = slot.transition[2], newUnknown = slot.transition[3];
+        bool transition =
+            ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
+        changed |= transition;
+        if (transition)
+          obelisk_rt_v1_scheduler_static_transition(
+              context, root.static_state, offset, width, oldValue, oldUnknown,
+              newValue, newUnknown);
+        return context->schedulerStatus;
+      });
+}
+
 obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
                                               uint32_t rootIndex,
                                               uint32_t barrierRegion,
@@ -2954,6 +3105,14 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   obelisk_rt_generated_nba_accumulator_256 *generated =
       root.generated_accumulator;
+  if (barrierRegion == OBELISK_RT_REGION_NBA && hasGeneratedNBASlots(root)) {
+    if (!accumulator.valid)
+      return commitGeneratedNBASlotsUnlocked(context, rootIndex, changed);
+    if (auto status = materializeGeneratedNBAAccumulatorUnlocked(
+            context, rootIndex, barrierRegion);
+        status != OBELISK_RT_OK)
+      return status;
+  }
   if ((!generated || !hasGeneratedNBAStages(*generated)) &&
       (!accumulator.valid || accumulator.execRegion != barrierRegion))
     return OBELISK_RT_OK;
@@ -2976,8 +3135,8 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
   if (!accumulator.valid || accumulator.execRegion != barrierRegion)
     return OBELISK_RT_OK;
   // A round trip leaves old == new, so only per-bit publication reports it.
-  trackTransitions |= std::any_of(accumulator.transient.begin(),
-                                  accumulator.transient.end(),
+  trackTransitions |=
+      std::any_of(accumulator.transient.begin(), accumulator.transient.end(),
                                   [](uint64_t word) { return word != 0; });
   const NativeStaticState *staticState =
       findNativeStaticState(context, root.static_state);
@@ -3109,8 +3268,7 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
               reinterpret_cast<uint8_t *>(accumulator.negedge.data()), 0,
               &sequence, nullptr, nullptr,
               reinterpret_cast<const uint8_t *>(accumulator.value.data()),
-              reinterpret_cast<const uint8_t *>(
-                  accumulator.unknown.data())))
+              reinterpret_cast<const uint8_t *>(accumulator.unknown.data())))
         return context->schedulerStatus;
       obelisk_rt_invalidate_signal_snapshots_unlocked(context, rootHandle,
                                                       root.bit_width);
@@ -3260,8 +3418,9 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
     const obelisk_rt_static_nba_root &rootPlan =
         context->nativeScheduleNBARoots[root];
     bool generatedPending =
-        rootPlan.generated_accumulator &&
-        hasGeneratedNBAStages(*rootPlan.generated_accumulator);
+        hasGeneratedNBASlots(rootPlan) ||
+        (rootPlan.generated_accumulator &&
+         hasGeneratedNBAStages(*rootPlan.generated_accumulator));
     bool accumulatorPending = context->staticNBAAccumulators[root].valid;
     if (!generatedPending && !accumulatorPending)
       return OBELISK_RT_OK;
@@ -3313,8 +3472,9 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
         const obelisk_rt_static_nba_root &rootPlan =
             context->nativeScheduleNBARoots[root];
         bool generatedPending =
-            rootPlan.generated_accumulator &&
-            hasGeneratedNBAStages(*rootPlan.generated_accumulator);
+            hasGeneratedNBASlots(rootPlan) ||
+            (rootPlan.generated_accumulator &&
+             hasGeneratedNBAStages(*rootPlan.generated_accumulator));
         bool accumulatorPending =
             root < context->staticNBAAccumulators.size() &&
             context->staticNBAAccumulators[root].valid;
