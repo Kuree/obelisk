@@ -17,7 +17,6 @@ module native_tier1_partial_wide_nba_whole_root;
   logic clk = 0;
   logic [7:0] q[0:31];
   logic [127:0] wide = 0;
-  string message;
 
   always #5 clk = ~clk;
   genvar i;
@@ -34,6 +33,7 @@ module native_tier1_partial_wide_nba_whole_root;
   end
 
   initial begin
+    automatic string message;
     message = "test";
     repeat (4) @(posedge clk);
     $display("%s %d %d", message, q[31], wide[63:0]);

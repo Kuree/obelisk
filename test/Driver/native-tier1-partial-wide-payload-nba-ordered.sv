@@ -12,7 +12,8 @@
 // Two whole-root NBAs with a 128-bit payload write the same root in one
 // activation. IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order,
 // so bit 0 and bit 100 each see a 0 -> 1 -> 0 pulse that the edge watchers
-// count (9.4.2). The runtime calendar keeps this partial design's NBA queue
+// count (9.4.2). A suspension-live string keeps a runtime continuation.
+// The runtime calendar keeps this partial design's NBA queue
 // and complete payloads at checkpoints; the independent combinational chain
 // still executes through the generated evaluator.
 module native_tier1_partial_wide_payload_nba_ordered;
@@ -21,7 +22,6 @@ module native_tier1_partial_wide_payload_nba_ordered;
   int low_edges = 0;
   int high_edges = 0;
   logic [31:0] mix [0:63];
-  string message;
 
   always #5 clk = ~clk;
   always @(posedge wide[0]) low_edges = low_edges + 1;
@@ -38,6 +38,7 @@ module native_tier1_partial_wide_payload_nba_ordered;
   end
 
   initial begin
+    automatic string message;
     message = "ordered";
     #36;
     $display("%s top=%0d low_edges=%0d high_edges=%0d mix=%h", message,

@@ -2,11 +2,11 @@
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
-// An unrelated user control loop cannot inherit forced-hybrid admission from
-// a coordinator elsewhere in the design.
+// An unrelated suspension with managed live state cannot inherit
+// forced-hybrid admission from a coordinator elsewhere in the design.
 // CHECK: native-aot eligible=true fully=false{{.*}}forced_hybrid=false
 // CHECK: bytecode @unrelated
-// CHECK: reason control-loop group requires bytecode scheduling
+// CHECK: reason suspension retains managed state
 
 module {
   simulation.design @unrelated {
@@ -55,10 +55,11 @@ module {
         attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
-      %delay = simulation.time.constant 1
-      simulation.suspend.delay %delay to ^resume
-    ^resume:
       %text = simulation.string.literal "unrelated"
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^resume(%text : !simulation.string)
+    ^resume(%saved: !simulation.string):
+      %length = "simulation.string.length"(%saved) : (!simulation.string) -> i64
       cf.br ^wait
     }
   }

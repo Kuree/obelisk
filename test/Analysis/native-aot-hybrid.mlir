@@ -5,11 +5,10 @@
 // CHECK: native-aot eligible=true fully=false
 // CHECK-NEXT: actor 0 @root
 // CHECK-NEXT: actor 1 @native
+// CHECK-NEXT: actor 2 @managed
 // CHECK-NEXT: bytecode @clock_coordinator bb0
-// CHECK-NEXT: bytecode @managed bb0
 // CHECK-NEXT: bytecode @real_reactive bb0
 // CHECK-NEXT: reason clock cohort wait requires runtime ordering
-// CHECK-NEXT: reason managed or string state is present
 // CHECK-NEXT: reason real-valued reactive state requires bytecode
 
 module {
@@ -51,7 +50,7 @@ module {
         %ctx: !simulation.context
             {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
-      %text = simulation.string.literal "bytecode"
+      %text = simulation.string.literal "native"
       simulation.return
     }
 

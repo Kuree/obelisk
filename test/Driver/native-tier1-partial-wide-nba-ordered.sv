@@ -8,14 +8,14 @@
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
 
 // Two statements overlap on a wide root, and the loop executes one site
-// repeatedly. The runtime-calendar queue must retain every enqueue in source
+// repeatedly. The suspension-live string requires a runtime continuation;
+// its calendar queue must retain every enqueue in source
 // order (IEEE 1800-2023 4.6(b), 10.4.2), across generated actor checkpoints.
 module native_tier1_partial_wide_nba_ordered;
   logic clk = 0;
   logic [127:0] wide = 0;
   int edges = 0;
   int loop_edges = 0;
-  string message;
 
   always #5 clk = ~clk;
   always @(posedge wide[0]) edges = edges + 1;
@@ -30,6 +30,7 @@ module native_tier1_partial_wide_nba_ordered;
   end
 
   initial begin
+    automatic string message;
     message = "ordered";
     #36;
     $display("%s low=%0d high=%0d edges=%0d loop_edges=%0d", message,

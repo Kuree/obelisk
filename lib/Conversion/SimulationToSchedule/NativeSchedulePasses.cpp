@@ -198,16 +198,6 @@ LogicalResult NativePipelineAnalysis::planActors() {
         nativeScheduler == schedule::NativeSchedulerMode::AOT || evalScheduler;
     useAOT = aotEligibility.isEligible() &&
              (forcedAOT || aotEligibility.isAOTCostEffective());
-    if (forcedAOT && !aotEligibility.isFullyEligible() &&
-        !aotEligibility.isForcedHybridEligible()) {
-      InFlightDiagnostic diagnostic =
-          module.emitError("design is ineligible for native AOT scheduling: ");
-      if (aotEligibility.getReasons().empty())
-        diagnostic << "no statically schedulable process actors";
-      else
-        llvm::interleaveComma(aotEligibility.getReasons(), diagnostic);
-      return failure();
-    }
   }
   // IEEE 1800-2017 16.14 and Clause 31 coordinators deliberately retain cohort
   // ordering in a runtime-owned actor. Forced-hybrid eligibility alone also
@@ -235,6 +225,25 @@ LogicalResult NativePipelineAnalysis::planActors() {
             "native lowering rejected stale static-superstep actor order");
     }
     certifiedStaticSuperstep = true;
+  }
+  // IEEE 1800-2023 4.4-4.7 requires common region arbitration, not a common
+  // executor for unrelated processes. Eval can require a certified static
+  // island while leaving testbench strings, real values and task control at
+  // their existing runtime boundaries. The actor inventory above and final
+  // eval call-closure verification still reject an incomplete hot closure.
+  // The legacy AOT executor has no equivalent island contract.
+  bool forcedAOT =
+      nativeScheduler == schedule::NativeSchedulerMode::AOT || evalScheduler;
+  if (forcedAOT && !aotEligibility.isFullyEligible() &&
+      !aotEligibility.isForcedHybridEligible() &&
+      !(evalScheduler && certifiedStaticSuperstep)) {
+    InFlightDiagnostic diagnostic =
+        module.emitError("design is ineligible for native AOT scheduling: ");
+    if (aotEligibility.getReasons().empty())
+      diagnostic << "no statically schedulable process actors";
+    else
+      llvm::interleaveComma(aotEligibility.getReasons(), diagnostic);
+    return failure();
   }
   // The legacy hybrid AOT scheduler must retain generic fanout for its cold
   // coordinator. Only eval has the explicit island ABI and periodic overlap
@@ -347,7 +356,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
   // selected per operation by resolveDirectStaticStateRange; a wide or
   // otherwise generic root does not prevent an independent narrow root from
   // using generated planes.
-  if (nativeScheduler == schedule::NativeSchedulerMode::Auto &&
+  if ((nativeScheduler == schedule::NativeSchedulerMode::Auto || evalScheduler) &&
       metadataDesign) {
     // An unpromoted automatic reference needs a runtime activation frame
     // (IEEE 1800-2023 6.21). Keep its complete owner at a checkpoint before
@@ -420,7 +429,15 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             // bounded, override-aware plane API. Preserve the complete
             // source activation at a checkpoint (IEEE 1800-2023 4.6(a),
             // 9.4.2, 11.5.1), including its transition publications.
-            if (isa<sim::SimRefAllocOp>(operation))
+            // Managed heap access uses the native actor's GC lane and root
+            // scope. Keep that compiled activation at a runtime service
+            // checkpoint; it is not a bytecode or coroutine requirement.
+            // This also preserves notifications from managed field stores.
+            if (isa<sim::SimRefAllocOp, sim::SimClassAllocOp,
+                    sim::SimClassCopyOp, sim::SimManagedLoadOp,
+                    sim::SimManagedStoreOp, sim::SimManagedBitsDynStoreOp,
+                    sim::SimClassDirectCallOp,
+                    sim::SimClassVirtualCallOp>(operation))
               classification->second = true;
             else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
               classification->second |= runtimeStore(store.getReference());
@@ -448,10 +465,17 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             pending.push_back(callee);
         });
       }
-      if (runtimeLocal)
+      if (runtimeLocal) {
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalCheckpointOnly>(
             function, UnitAttr::get(module.getContext()));
+        if (detailedTiming)
+          llvm::errs() << "obelisk eval checkpoint admission: actor="
+                       << *aotActorSlotFor(actor)
+                       << " function=" << actor.getSymName()
+                       << " body=" << function.getSymName()
+                       << " reason=runtime-state-access\n";
+      }
     });
     bool hasObserver = false;
     bool hasInactiveDelay = false;

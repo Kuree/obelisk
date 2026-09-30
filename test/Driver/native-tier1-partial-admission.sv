@@ -7,6 +7,10 @@
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.eval.diag
+// RUN: diff -u %t.generic.out %t.eval.out
+// RUN: FileCheck %s --check-prefix=DIAG < %t.eval.diag
 // RUN: obelisk -O3 --vpi=read --mlir-timing -emit-llvm %s -o %t.read.ll 2> %t.read.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.read.timing
 // RUN: FileCheck %s --check-prefix=EVAL < %t.read.ll
@@ -48,3 +52,6 @@ endmodule
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 // EVAL: @__obelisk_direct_fragment_
 // EVAL: @__obelisk_eval_dispatch_v1
+// DIAG: obelisk-signal-diagnostics
+// DIAG-SAME: aot_fallbacks=0
+// DIAG-SAME: eval_dispatches={{[1-9][0-9]*}}

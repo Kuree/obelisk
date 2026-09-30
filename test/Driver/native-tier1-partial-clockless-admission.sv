@@ -11,17 +11,18 @@
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
 
 // A large event-driven island can use generated eval without a structural
-// periodic clock. The string actor remains outside the admitted island.
+// periodic clock. The actor with a suspension-live string remains outside
+// the admitted island.
 module native_tier1_partial_clockless_admission;
   logic [7:0] stimulus = 0;
   logic [7:0] value [0:255];
-  string message;
 
   for (genvar i = 0; i < 256; i++) begin : g
     always_comb value[i] = stimulus + i;
   end
 
   initial begin
+    automatic string message;
     message = "probe";
     #1 stimulus = 3;
     #1 $display("%s %d", message, value[255]);

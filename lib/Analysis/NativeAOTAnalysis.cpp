@@ -46,25 +46,6 @@ bool isManagedType(Type type) {
   return false;
 }
 
-// Plusarg queries use managed strings as a temporary ABI, even for literal
-// prefixes and integral destinations. Those values need no scheduler-owned
-// lifetime when they are consumed within the same activation block. Native
-// lowering already roots them across the query and parsing calls.
-bool isTransientPlusargString(Value value) {
-  if (!isa<sim::StringType>(value.getType()) || value.use_empty())
-    return false;
-  Operation *definition = value.getDefiningOp();
-  if (!definition || !isa<sim::SimStringLiteralOp, sim::SimPlusargValueOp,
-                          sim::SimPlusargScanOp>(definition))
-    return false;
-  return llvm::all_of(value.getUsers(), [&](Operation *user) {
-    return user->getBlock() == definition->getBlock() &&
-           isa<sim::SimPlusargTestOp, sim::SimPlusargValueOp,
-               sim::SimPlusargScanOp, sim::SimPlusargParseLogicOp,
-               sim::SimPlusargParseRealOp>(user);
-  });
-}
-
 /// Certify the lifecycle CFG emitted for a persistent $monitor/$fmonitor
 /// callback. The marker provides compiler provenance; the structural checks
 /// ensure this is one bounded actor which either waits for its next argument
@@ -1285,12 +1266,14 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                               "real-valued reactive state requires bytecode");
       excludeBytecodeActor(operation);
     }
-    auto needsManagedState = [](Value value) {
-      return isManagedType(value.getType()) && !isTransientPlusargString(value);
-    };
-    if (llvm::any_of(operation->getOperands(), needsManagedState) ||
-        llvm::any_of(operation->getResults(), needsManagedState)) {
-      requireBytecodeFragment(operation, "managed or string state is present");
+    // IEEE 1800-2023 13.4: an ordinary class function returns without
+    // suspending its caller. Managed values within an activation use native
+    // root instrumentation; their presence does not require bytecode. The
+    // direct continuation ABI still cannot transport managed live values
+    // through a wait, so retain a boundary at that actual suspension.
+    if (sim::isSuspensionOp(operation) &&
+        llvm::any_of(operation->getOperandTypes(), isManagedType)) {
+      requireBytecodeFragment(operation, "suspension retains managed state");
       excludeBytecodeActor(operation);
     }
   });

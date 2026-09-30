@@ -9,7 +9,21 @@
 // RUN: %t.o3.bytecode > %t.o3.bytecode.out
 // RUN: diff -u %t.o0.native.out %t.o3.native.out
 // RUN: diff -u %t.o0.native.out %t.o3.bytecode.out
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=auto --mlir-timing \
+// RUN:   -emit-llvm %s -o %t.eval.ll 2> %t.eval.timing
+// RUN: FileCheck %s --check-prefix=ADMISSION < %t.eval.timing
+// RUN: FileCheck %s --check-prefix=NO-SUSPENSION < %t.eval.ll
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: %t.eval > %t.eval.out
+// RUN: diff -u %t.o0.native.out %t.eval.out
 // RUN: FileCheck %s < %t.o0.native.out
+
+// Ordinary constructors and methods need managed roots, but no coroutine or
+// bytecode continuation. Class use alone must permit forced eval admission.
+// ADMISSION: native eligibility: eligible=1 fully_eligible=1
+// NO-SUSPENSION-NOT: __obelisk_native_coro_destroy_v1
+// NO-SUSPENSION: define
+// NO-SUSPENSION-NOT: __obelisk_native_coro_destroy_v1
 
 class item;
   static int count = 10;

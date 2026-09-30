@@ -1,16 +1,16 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/transient.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
-// RUN: obelisk-opt %t/persistent.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
+// RUN: obelisk-opt %t/persistent.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
 // RUN: obelisk-opt %t/suspended.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
-// RUN: obelisk-opt %t/unrelated.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
+// RUN: obelisk-opt %t/unrelated.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
 
-// Only block-local query strings are exempt from managed-state rejection.
-// Stored strings, suspension-live strings, and unrelated managed operations
-// must still retain their existing lifecycle classification.
+// Native roots support both temporary and stored strings within an
+// activation. Only an actual suspension with managed live operands requires
+// the continuation lifecycle boundary.
 // ELIGIBLE: native-aot eligible=true fully=true
 // ELIGIBLE-NOT: reason
 // MANAGED: native-aot eligible=false fully=false
-// MANAGED: reason managed or string state is present
+// MANAGED: reason suspension retains managed state
 
 //--- transient.mlir
 module {
@@ -73,4 +73,3 @@ module {
     }
   }
 }
-
