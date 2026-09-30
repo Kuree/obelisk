@@ -1084,25 +1084,25 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
             context->nativeSchedulePlan &&
             (context->nativeSchedulePlan->flags &
              OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-            !context->nativeStaticEvalIslandCertified &&
             canUseStaticAOTFanout(context)) {
           // IEEE 1800-2023 9.4.2: deliver this publication to both generated
           // and runtime waiters. Route only a certified native continuation
           // into generated ingress; leave every other subscription below.
           ScheduledProcess *scheduled =
               findScheduledProcess(context, subscription->waiterToken);
-          uint32_t node = scheduled && scheduled->instance
-                              ? findNativeAOTNodeUnlocked(
-                                    context, scheduled->aotActorSlot,
-                                    scheduled->instance->continuation)
-                              : UINT32_MAX;
+          uint32_t node =
+              scheduled && scheduled->instance
+                  ? findNativeAOTNodeUnlocked(context, scheduled->aotActorSlot,
+                                              scheduled->instance->continuation)
+                  : UINT32_MAX;
           if (node < context->nativeScheduleNodeIngress.size()) {
             uint64_t index = context->nativeScheduleNodeIngress[node];
             if (index < context->nativeScheduleFanoutEntryCount) {
               const auto &entry = context->nativeScheduleFanoutEntries[index];
               const auto &kernel =
                   context->nativeSchedulePlan->clock_kernels[entry.kernel];
-              obelisk::runtime::publishClockKernelReady(kernel, entry.merged_bit);
+              obelisk::runtime::publishClockKernelReady(kernel,
+                                                        entry.merged_bit);
               context->nativeScheduleClockIngressPending = true;
               continue;
             }
@@ -1134,8 +1134,10 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
                     ? context->nativePollCandidates
                     : context->designPollCandidates;
             OBELISK_RT_TRY {
-              bool inserted = candidates.insert(subscription->waiterToken).second;
-              if (subscription->target == SignalSubscription::NativeDirectWait) {
+              bool inserted =
+                  candidates.insert(subscription->waiterToken).second;
+              if (subscription->target ==
+                  SignalSubscription::NativeDirectWait) {
                 obelisk_rt_record_native_ready_publication_unlocked(
                     context, subscription->waiterToken, inserted);
                 recordedNativePublication = true;
@@ -1748,8 +1750,7 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
     obelisk_rt_coverage_record_transition_unlocked(
         context, stableID, bitWidth, changed, newValue, newUnknown);
   ClockOccurrenceFeatureState *feature = context->clockOccurrences.get();
-  if ((!feature || feature->waits.empty()) && !context->covergroupClockEvents &&
-      edgeBitOffset == 0) {
+  if (edgeBitOffset == 0) {
     uint64_t sequence = 0;
     if (publishStaticAOTSignalTransitionUnlocked(context, stableID, bitWidth,
                                                  changed, posedge, negedge,
@@ -1758,13 +1759,16 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
       // their exact fanout first, then retain the runtime subscriber walk for
       // consumers outside that table (IEEE 1800-2023 9.4.2). The walk routes
       // any already-armed native subscription to the same idempotent ingress
-      // bit, never to a duplicate framed activation.
+      // bit, never to a duplicate framed activation. Clock observers still
+      // need that walk, but must not suppress the generated fanout.
       if ((context->nativeSchedulePlan->flags &
-           OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-          !context->nativeStaticEvalIslandCertified)
+           OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) != 0 ||
+          (feature && !feature->waits.empty()) ||
+          context->covergroupClockEvents)
         return publishSignalTransitionBatchImpl(
-            context, stableID, bitWidth, changed, posedge, negedge, edgeBitOffset,
-            outSequence, oldValue, oldUnknown, newValue, newUnknown);
+            context, stableID, bitWidth, changed, posedge, negedge,
+            edgeBitOffset, outSequence, oldValue, oldUnknown, newValue,
+            newUnknown);
       if (!recordStaticClockingOutputOccurrencesUnlocked(
               context, stableID, bitWidth, changed, posedge, negedge,
               edgeBitOffset, sequence))
@@ -1952,8 +1956,7 @@ bool publishNativeSignalTransitionUnlocked(
     return false;
   uint64_t firstCanonicalBit = 0;
   uint64_t lastCanonicalBit = 0;
-  bool packedCanonical = bitWidth != 0 &&
-                         canonicalBit(0, firstCanonicalBit) &&
+  bool packedCanonical = bitWidth != 0 && canonicalBit(0, firstCanonicalBit) &&
                          canonicalBit(bitWidth - 1, lastCanonicalBit);
   // Shared storage is admitted only without source-order observer snapshots
   // (IEEE 1800-2023 4.6(a), 9.4.2). The generated store already committed it;
@@ -2108,9 +2111,11 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
         uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
         uint64_t mask = packedWidthMask(width);
         uint64_t oldV = loadPackedBytes(oldValue, bit, width);
-        uint64_t oldU = oldUnknown ? loadPackedBytes(oldUnknown, bit, width) : 0;
+        uint64_t oldU =
+            oldUnknown ? loadPackedBytes(oldUnknown, bit, width) : 0;
         uint64_t newV = loadPackedBytes(newValue, bit, width);
-        uint64_t newU = newUnknown ? loadPackedBytes(newUnknown, bit, width) : 0;
+        uint64_t newU =
+            newUnknown ? loadPackedBytes(newUnknown, bit, width) : 0;
         uint64_t delta = (oldV ^ newV) | (oldU ^ newU);
         uint64_t oldZero = ~oldU & ~oldV;
         uint64_t oldOne = ~oldU & oldV;
@@ -2245,6 +2250,32 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   uint64_t handle = obelisk_rt_stable_handle_encode(
       OBELISK_RT_STABLE_HANDLE_STATIC, staticState,
       static_cast<int64_t>(lowBit));
+  if ((context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0 &&
+      (context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) != 0) {
+    // Generated ingress is already published, but retained transitions also
+    // feed runtime-owned waiters. Preserve the source-order canonical image
+    // and notify those subscribers before the calendar can advance (9.4.2,
+    // 31.9.1). Native subscribers route to idempotent generated ingress.
+    uint64_t oldZero = ~oldUnknown & ~oldValue & widthMask;
+    uint64_t oldOne = ~oldUnknown & oldValue & widthMask;
+    uint64_t newZero = ~newUnknown & ~newValue & widthMask;
+    uint64_t newOne = ~newUnknown & newValue & widthMask;
+    uint64_t posedge =
+        ((oldZero & ~newZero) | (oldUnknown & newOne)) & widthMask;
+    uint64_t negedge =
+        ((oldOne & ~newOne) | (oldUnknown & newZero)) & widthMask;
+    (void)publishNativeSignalTransitionUnlocked(
+        context, handle, bitWidth, reinterpret_cast<const uint8_t *>(&changed),
+        reinterpret_cast<const uint8_t *>(&posedge),
+        reinterpret_cast<const uint8_t *>(&negedge),
+        reinterpret_cast<const uint8_t *>(&oldValue),
+        reinterpret_cast<const uint8_t *>(&oldUnknown),
+        reinterpret_cast<const uint8_t *>(&newValue),
+        reinterpret_cast<const uint8_t *>(&newUnknown), false);
+    return;
+  }
   if (context->coverage)
     obelisk_rt_coverage_record_transition_unlocked(
         context, handle, bitWidth, reinterpret_cast<const uint8_t *>(&changed),

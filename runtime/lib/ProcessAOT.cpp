@@ -929,6 +929,17 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
 
   obelisk_rt_fragment_action_v1 action{};
   obelisk_rt_status status = OBELISK_RT_OK;
+  auto ownsStaticSignalWait = [&](uint32_t continuation) {
+    if (!canUseStaticAOTFanout(context))
+      return false;
+    if ((context->nativeSchedulePlan->flags &
+         OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) == 0)
+      return true;
+    uint32_t node = findNativeAOTNodeUnlocked(context, actorSlot, continuation);
+    return node < context->nativeScheduleNodeIngress.size() &&
+           context->nativeScheduleNodeIngress[node] <
+               context->nativeScheduleFanoutEntryCount;
+  };
   generatedActions &= tier == OBELISK_RT_TIER_NATIVE;
   if (tier == OBELISK_RT_TIER_BYTECODE) {
     ContextMutexLock lock(context);
@@ -1034,6 +1045,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       uint64_t delay =
           action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ? wait->payload : 1;
       if (delay != 0 && canUseStaticAOTFanout(context) &&
+          (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ||
+           ownsStaticSignalWait(action.continuation)) &&
           !context->nativeScheduleExternalWritePending &&
           scheduled.signalSubscriptions.empty() &&
           !scheduled.computedObserverWaitRegistered &&
@@ -1226,9 +1239,10 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         // completed its periodic handoff, static fanout is deliberately
         // unavailable; a checkpointed writer must therefore retain its
         // ordinary runtime subscription through the finite bootstrap prefix.
-        // Once exact fanout is active, the generated checkpoint wrapper owns
-        // the same continuation and the duplicate subscription can be removed.
-        if (canUseStaticAOTFanout(context)) {
+        // Remove a duplicate subscription only when this exact continuation
+        // has generated ingress. A partial island's table omits runtime-owned
+        // writers even while static fanout is active for unrelated actors.
+        if (ownsStaticSignalWait(action.continuation)) {
           if (!scheduled.signalSubscriptions.empty() ||
               scheduled.computedObserverWaitRegistered)
             obelisk_rt_unregister_signal_wait_unlocked(
@@ -1401,13 +1415,13 @@ private:
 // ordinary execution. Restrict only calendar advancement, not executor tiers.
 obelisk_rt_status
 drainNativeAOTCurrentSlotUnlocked(obelisk_rt_context *context,
-                                 bool returnGeneratedIngress = false) {
+                                  bool returnGeneratedIngress = false) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return OBELISK_RT_INVALID_LIFECYCLE;
-  return runScheduler(context, {/*nativePlan=*/true,
-                                /*currentSlotOnly=*/true,
-                                returnGeneratedIngress});
+  return runScheduler(context,
+                      {/*nativePlan=*/true,
+                       /*currentSlotOnly=*/true, returnGeneratedIngress});
 }
 
 } // namespace
@@ -2181,7 +2195,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
          ++root) {
       if (hasGeneratedNBASlots(context->nativeScheduleNBARoots[root]))
         if (auto status = materializeGeneratedNBAAccumulatorUnlocked(
-                context, root, OBELISK_RT_REGION_NBA); status != OBELISK_RT_OK)
+                context, root, OBELISK_RT_REGION_NBA);
+            status != OBELISK_RT_OK)
           return status;
       const obelisk_rt_generated_nba_accumulator_256 *generated =
           context->nativeScheduleNBARoots[root].generated_accumulator;
@@ -2896,7 +2911,8 @@ void obelisk_rt_release_native_schedule_plan(
     invalidateNativeStaticSpecializationFastUnlocked(context);
     if (context->nativeSchedulePlan->promotion_invalidate)
       context->nativeSchedulePlan->promotion_invalidate();
-    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount; ++root) {
+    for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
+         ++root) {
       const auto &entry = context->nativeScheduleNBARoots[root];
       if (entry.generated_accumulator)
         *entry.generated_accumulator = {};

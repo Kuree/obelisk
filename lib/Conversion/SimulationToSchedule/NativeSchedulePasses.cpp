@@ -142,7 +142,8 @@ LogicalResult NativePipelineAnalysis::planActors() {
     // Preserve the full Clause 31.9.1 structural proof across later CFG and
     // coroutine rewrites. Input IR cannot forge this internal certificate: it
     // is cleared above and recreated only after the exact commit audit.
-    if (analysis::isNegativeTimingDelayCommit(function))
+    if (analysis::isNegativeTimingDelayCommit(function) ||
+        aotEligibility.getRuntimeObservedWriterActors().contains(function))
       function->setAttr(runtimePublicationCertificate, UnitAttr::get(context));
   }
   if (module->hasAttr("obelisk.bytecode.image")) {

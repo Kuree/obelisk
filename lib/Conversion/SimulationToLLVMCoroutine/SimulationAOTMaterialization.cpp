@@ -4265,7 +4265,8 @@ FailureOr<bool> makeNativeEvalPlan(
 
     builder.setInsertionPointToStart(completeStep);
     Value completedStatus = completeStep->getArgument(0);
-    if (::obelisk::schedule::has<
+    if (!nbaRoots.empty() &&
+        ::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
       // IEEE 1800-2023 4.5, 10.4.2: a mixed calendar commits generated
       // accumulators at the shared NBA

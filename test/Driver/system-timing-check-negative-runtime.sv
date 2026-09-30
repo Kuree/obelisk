@@ -64,6 +64,8 @@ endmodule
 // SIM-DAG: simulation.suspend.delay
 // SIM-DAG: simulation.suspend.clock_set
 // SIM-NOT: timing_check_table
+// LRM 31.9.1: the reference at 1 ns creates the open interval (3 ns, 6 ns).
+// Only the 3.001 ns data edge violates; both endpoints are excluded.
 // OUT: negative-open-window 010
 // OUT-NEXT: negative-periodic 6
 // AOTDIAG: obelisk-signal-diagnostics
