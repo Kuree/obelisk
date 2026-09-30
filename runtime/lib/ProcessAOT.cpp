@@ -1520,35 +1520,58 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
         };
     auto hasTier3PeriodicWork = [&] {
       ContextMutexLock lock(context);
-      for (const ScheduledProcess &scheduled : context->scheduledProcesses) {
-        if (!scheduled.instance || scheduled.phase != 0)
+      // Every unstarted or nonsuspended process is in the existing poll
+      // index. Blocked generated actors have neither a poll entry nor a live
+      // subscription, so a periodic bootstrap must not walk their frames on
+      // each edge. Scheduling, resumption and task handoff maintain this
+      // index even when the bootstrap creates new processes.
+      for (uint64_t token : context->nativePollCandidates) {
+        const ScheduledProcess *scheduled =
+            findScheduledProcess(context, token);
+        if (!scheduled || !scheduled->instance || scheduled->phase != 0)
           continue;
-        if (!scheduled.started ||
-            scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE) {
+        if (!scheduled->started ||
+            scheduled->suspendKind == OBELISK_RT_SUSPEND_NONE) {
           if (context->signalDiagnosticsEnabled)
             std::fprintf(stderr,
                          "obelisk-periodic-bootstrap=runnable actor=%u "
                          "continuation=%u initial=%u started=%u suspend=%u\n",
-                         scheduled.aotActorSlot,
-                         scheduled.instance->continuation,
-                         scheduled.initialProcess, scheduled.started,
-                         scheduled.suspendKind);
+                         scheduled->aotActorSlot,
+                         scheduled->instance->continuation,
+                         scheduled->initialProcess, scheduled->started,
+                         scheduled->suspendKind);
           return true;
         }
-        for (const auto &subscription : scheduled.signalSubscriptions)
-          if (subscription && subscriptionTouchesClock(*subscription) &&
-              !hasGeneratedPeriodicOwner(scheduled.aotActorSlot,
-                                         scheduled.instance->continuation,
+      }
+      // Direct and computed signal waits already have an exact live index.
+      // A wide subscription occupies several buckets; its first slot suffices
+      // because the overlap check below uses the subscription's full range.
+      for (const auto &[key, bucket] : context->signalSubscriptionBuckets) {
+        (void)key;
+        for (const auto &entry : bucket) {
+          const auto *subscription = entry.subscription;
+          if (!subscription || entry.slotIndex != 0 ||
+              (subscription->target != SignalSubscription::NativeDirectWait &&
+               subscription->target !=
+                   SignalSubscription::NativeComputedWait) ||
+              !subscriptionTouchesClock(*subscription))
+            continue;
+          const ScheduledProcess *scheduled =
+              findScheduledProcess(context, subscription->waiterToken);
+          if (scheduled && scheduled->instance && scheduled->phase == 0 &&
+              !hasGeneratedPeriodicOwner(scheduled->aotActorSlot,
+                                         scheduled->instance->continuation,
                                          *subscription)) {
             if (context->signalDiagnosticsEnabled)
               std::fprintf(stderr,
                            "obelisk-periodic-bootstrap=subscription actor=%u "
                            "continuation=%u initial=%u\n",
-                           scheduled.aotActorSlot,
-                           scheduled.instance->continuation,
-                           scheduled.initialProcess);
+                           scheduled->aotActorSlot,
+                           scheduled->instance->continuation,
+                           scheduled->initialProcess);
             return true;
           }
+        }
       }
       for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
         if (task.terminated || task.phase != 0)
