@@ -75,9 +75,9 @@ static FailureOr<SmallVector<SimulationSampledRange>>
 planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
   SmallVector<SimulationSampledRange> sampledRanges;
   bool invalidSampledRange = false;
-  std::optional<analysis::DescriptorProvenanceAnalysis> provenanceAnalysis;
+  std::optional<analysis::HandleDataflowAnalysis> provenanceAnalysis;
   design.walk([&](sim::SimFuncOp function) {
-    std::optional<analysis::DescriptorProvenanceMap> provenance;
+    std::optional<analysis::HandleFacts> provenance;
     function.walk([&](sim::SimSampledReadOp sampled) {
       // Sampling is opt-in. Derive value provenance only for a body that
       // actually samples, and share the immutable driver-to-net index across
@@ -121,8 +121,7 @@ planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
       auto base = offsets ? offsets->find(*found->second.descriptor)
                           : state.storageOffsets.end();
       if (!offsets || base == offsets->end() ||
-          base->second >
-              std::numeric_limits<uint64_t>::max() - low) {
+          base->second > std::numeric_limits<uint64_t>::max() - low) {
         sampled.emitOpError("references an unknown canonical state object");
         invalidSampledRange = true;
         return;

@@ -3,6 +3,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   ClassBitstreamPlan.cpp
   ClassDispatchAnalysis.cpp
   ClockInferenceAnalysis.cpp
+  HandleDataflowAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   NativeAOTAnalysis.cpp
   NativeStateLayoutAnalysis.cpp
@@ -15,6 +16,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   SimulationVPIAnalysis.cpp
   StaticSpecializationAnalysis.cpp
   StateDomainAnalysis.cpp
+  StorageWriteAnalysis.cpp
 
   DEPENDS
   ObeliskSimulationOpsIncGen

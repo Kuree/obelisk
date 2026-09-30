@@ -18,8 +18,7 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
-constexpr StringLiteral continuousStoreAttrName =
-    "simulation.continuous_store";
+constexpr StringLiteral continuousStoreAttrName = "simulation.continuous_store";
 constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
     "obelisk.native.bulk_copy_source_assume_clean";
 constexpr StringLiteral guardedRefStoreAttr =
@@ -370,7 +369,9 @@ public:
     if (isa<FloatType>(valueType))
       storedValue =
           arith::BitcastOp::create(rewriter, op.getLoc(), plane, storedValue);
-    if (!directRange && !runtimePublication && containsLogic(valueType) &&
+    if (!directRange && !runtimePublication &&
+        (isa_and_nonnull<IntegerType>(sim::getPackedScalarType(valueType)) ||
+         containsLogic(valueType)) &&
         emitDirectDynamicPackedStore(
             rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
             adaptor.getValue().size() == 2 ? adaptor.getValue()[1] : Value{},

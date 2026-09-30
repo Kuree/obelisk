@@ -177,10 +177,10 @@ bool hasInRangeConstantIndex(sim::SimLogicDynExtractOp op) {
   return low <= inputWidth && resultWidth <= inputWidth - low;
 }
 
-StateDomainFact
-transferOperation(Operation *op, const DenseMap<Value, StateDomainFact> &facts,
-                  const analysis::DescriptorProvenanceMap &provenance,
-                  const RootSet &assumedKnownRoots) {
+StateDomainFact transferOperation(Operation *op,
+                                  const DenseMap<Value, StateDomainFact> &facts,
+                                  const analysis::HandleFacts &provenance,
+                                  const RootSet &assumedKnownRoots) {
   if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
     return constant.getUnknown().isZero()
                ? twoState(StateDomainReason::LogicConstant)
@@ -329,7 +329,7 @@ struct BlockArgumentSummary {
 /// Read-only structural dependencies collected independently for one function.
 struct FunctionSummary {
   sim::SimFuncOp function;
-  analysis::DescriptorProvenanceMap provenance;
+  analysis::HandleFacts provenance;
   SmallVector<Block *> blocks;
   SmallVector<BlockArgumentSummary> blockArguments;
   SmallVector<Operation *> operations;
@@ -337,10 +337,10 @@ struct FunctionSummary {
   SmallVector<sim::SimReturnOp> returns;
 };
 
-FunctionSummary buildSummary(
-    sim::SimFuncOp function,
-    const analysis::ClassDispatchAnalysis &classDispatch,
-    const analysis::DescriptorProvenanceAnalysis &descriptorProvenance) {
+FunctionSummary
+buildSummary(sim::SimFuncOp function,
+             const analysis::ClassDispatchAnalysis &classDispatch,
+             const analysis::HandleDataflowAnalysis &descriptorProvenance) {
   FunctionSummary summary;
   summary.function = function;
   summary.provenance = descriptorProvenance.derive(function);
@@ -829,7 +829,7 @@ ValueFactProgram::ValueFactProgram(sim::SimDesignOp design)
   });
 
   analysis::ClassDispatchAnalysis classDispatch(design);
-  analysis::DescriptorProvenanceAnalysis descriptorProvenance(design);
+  analysis::HandleDataflowAnalysis descriptorProvenance(design);
   summaries.resize(functions.size());
   parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
     summaries[index] =
@@ -1068,8 +1068,7 @@ computeValueFacts(sim::SimDesignOp design, const RootSet &assumedKnownRoots) {
 }
 
 std::optional<RootKey>
-getConcreteRoot(Value handle,
-                const analysis::DescriptorProvenanceMap &provenance) {
+getConcreteRoot(Value handle, const analysis::HandleFacts &provenance) {
   auto found = provenance.find(handle);
   if (found == provenance.end() || !found->second.descriptor ||
       (found->second.resource != schedule::ComputeResourceKind::Storage &&
@@ -1219,7 +1218,7 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
     llvm::SmallDenseSet<unsigned, 8> rejectedResources;
     for (const FunctionSummary &summary : program.summaries) {
       sim::SimFuncOp function = summary.function;
-      const analysis::DescriptorProvenanceMap &provenance = summary.provenance;
+      const analysis::HandleFacts &provenance = summary.provenance;
       function.walk([&](Operation *operation) {
         auto rejectWrite = [&](Value destination, Value value) {
           if (getValueFact(facts, value).domain == StateDomain::TwoState)

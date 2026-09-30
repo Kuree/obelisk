@@ -342,8 +342,7 @@ LogicalResult lowerPackedSimulationOperations(
                     ? guardedDomains.isTwoStateWithInductiveRoots(value)
                     : stateDomains->isTwoState(value));
       };
-      analysis::DescriptorProvenanceMap provenance =
-          analysis::deriveDescriptorProvenance(function);
+      analysis::HandleFacts provenance = analysis::deriveHandleFacts(function);
       auto isPromotableAccess = [&](Value handle, Value result) {
         if (!guardedDomains.isTwoStateWithInductiveRoots(result))
           return false;

@@ -62,8 +62,8 @@ bool hasOnlyStaticDigitalOrTimeValues(Operation *operation) {
          llvm::all_of(operation->getResultTypes(), eligible);
 }
 
-bool hasConcreteDescriptor(
-    Value value, const analysis::DescriptorProvenanceMap &provenance) {
+bool hasConcreteDescriptor(Value value,
+                           const analysis::HandleFacts &provenance) {
   auto found = provenance.find(value);
   if (found == provenance.end() || !found->second.descriptor)
     return false;
@@ -71,8 +71,8 @@ bool hasConcreteDescriptor(
          found->second.resource == schedule::ComputeResourceKind::Net;
 }
 
-bool hasConcreteHandleValues(
-    Operation *operation, const analysis::DescriptorProvenanceMap &provenance) {
+bool hasConcreteHandleValues(Operation *operation,
+                             const analysis::HandleFacts &provenance) {
   auto check = [&](Value value) {
     Type type = value.getType();
     if (!isa<sim::RefType, sim::NetType, sim::DriverType>(type))
@@ -109,7 +109,7 @@ bool rangesOverlap(schedule::ComputeEffectAttr lhs,
 
 bool isComputeBodyFusionEligibleImpl(
     sim::SimFuncOp function,
-    const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis,
+    const analysis::HandleDataflowAnalysis &provenanceAnalysis,
     llvm::DenseMap<Operation *, bool> &cache,
     llvm::SmallPtrSetImpl<Operation *> &active, bool primitiveDriverOps) {
   if (!function || function.isExternal() ||
@@ -122,8 +122,7 @@ bool isComputeBodyFusionEligibleImpl(
     return false;
 
   sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
-  analysis::DescriptorProvenanceMap provenance =
-      provenanceAnalysis.derive(function);
+  analysis::HandleFacts provenance = provenanceAnalysis.derive(function);
   bool eligible = true;
   function.walk([&](Operation *operation) {
     if (!eligible || operation == function.getOperation())
@@ -213,7 +212,7 @@ class FormalWriteResolver {
 public:
   FormalWriteResolver(
       sim::SimDesignOp design,
-      const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis)
+      const analysis::HandleDataflowAnalysis &provenanceAnalysis)
       : design(design), provenanceAnalysis(provenanceAnalysis) {}
 
   /// Calls `emit` with a descriptor-target copy of `effect` for every storage
@@ -306,19 +305,19 @@ private:
   }
 
   sim::SimDesignOp design;
-  const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis;
+  const analysis::HandleDataflowAnalysis &provenanceAnalysis;
   bool indexed = false;
   bool unsupportedCalls = false;
   llvm::StringMap<sim::SimFuncOp> functions;
   llvm::StringMap<SmallVector<Operation *>> callers;
-  DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
+  DenseMap<Operation *, analysis::HandleFacts> provenance;
 };
 
 } // namespace
 
 CombinationalFusionAnalysis::CombinationalFusionAnalysis(
     sim::SimDesignOp design,
-    const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis) {
+    const analysis::HandleDataflowAnalysis &provenanceAnalysis) {
   auto graph = design.getComputeGraphAttr();
   // Full foreign mutation needs a range-scoped invalidation route for this
   // idempotent kernel. Existing externally driven evaluators retain their
@@ -374,7 +373,7 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
 
 std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     sim::SimFuncOp function,
-    const analysis::DescriptorProvenanceAnalysis &analysis) const {
+    const analysis::HandleDataflowAnalysis &analysis) const {
   if (unsupported || !function || function.isExternal() ||
       function.getEntryKind() != sim::EntryKind::AlwaysComb ||
       function.getHomeRegion() != sim::EventRegion::Active ||
@@ -437,7 +436,7 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
   for (Operation *store : stores)
     if (!dominance.dominates(store, result.suspend))
       return std::nullopt;
-  auto precise = [&](Value value) -> const analysis::DescriptorProvenance * {
+  auto precise = [&](Value value) -> const analysis::HandleFact * {
     auto found = provenance.find(value);
     if (found == provenance.end() || !found->second.descriptor ||
         found->second.dynamic || !found->second.width ||
@@ -524,7 +523,7 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
 
 bool isComputeBodyFusionEligible(
     sim::SimFuncOp function,
-    const analysis::DescriptorProvenanceAnalysis &provenance) {
+    const analysis::HandleDataflowAnalysis &provenance) {
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
   return isComputeBodyFusionEligibleImpl(function, provenance, cache, active,
@@ -533,7 +532,7 @@ bool isComputeBodyFusionEligible(
 
 bool isPrimitiveComputeBodyFusionEligible(
     sim::SimFuncOp function,
-    const analysis::DescriptorProvenanceAnalysis &provenance) {
+    const analysis::HandleDataflowAnalysis &provenance) {
   llvm::DenseMap<Operation *, bool> cache;
   llvm::SmallPtrSet<Operation *, 8> active;
   return isComputeBodyFusionEligibleImpl(function, provenance, cache, active,
@@ -819,7 +818,7 @@ computeNBATransientObservers(sim::SimDesignOp design) {
   // be resolved leaves the inventory incomplete; that disables those proofs,
   // not the whole analysis.
   bool writersComplete = true;
-  analysis::DescriptorProvenanceAnalysis provenanceAnalysis(design);
+  analysis::HandleDataflowAnalysis provenanceAnalysis(design);
   FormalWriteResolver formals(design, provenanceAnalysis);
   design.walk([&](sim::SimFuncOp function) {
     functions.push_back(function);
@@ -983,7 +982,7 @@ computeNBATransientObservers(sim::SimDesignOp design) {
     return spawns.lookup(name) == 1 && !spawnedOutsideRoot.contains(name) &&
            !called.contains(name);
   };
-  llvm::DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenance;
+  llvm::DenseMap<Operation *, analysis::HandleFacts> provenance;
   using Resource = std::pair<schedule::ComputeResourceKind, uint64_t>;
   auto resourceOf = [&](sim::SimFuncOp function,
                         Value value) -> std::optional<Resource> {

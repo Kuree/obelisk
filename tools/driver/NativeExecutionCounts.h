@@ -24,6 +24,7 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
     StringRef name = function.getName();
     if (!function.isDeclaration() &&
         (name.starts_with("__obelisk_eval_ranked_group_") ||
+         name.starts_with("__obelisk_direct_fragment_") ||
          name == "__obelisk_eval_dispatch_v1" ||
          name.starts_with("__obelisk_aot_static_nba_commit") ||
          name.contains(".__obelisk_eval_body_")))

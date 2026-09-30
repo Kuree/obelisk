@@ -110,8 +110,8 @@ ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function);
 /// including through continuation block arguments added by frame threading.
 bool isConstantTimeValue(::mlir::Value value);
 
-using DescriptorProvenance = ::obelisk::analysis::DescriptorProvenance;
-using DescriptorProvenanceMap = ::obelisk::analysis::DescriptorProvenanceMap;
+using HandleFact = ::obelisk::analysis::HandleFact;
+using HandleFacts = ::obelisk::analysis::HandleFacts;
 
 } // namespace obelisk::simlowering
 

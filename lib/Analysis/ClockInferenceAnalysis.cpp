@@ -166,7 +166,7 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
   DenseMap<uint32_t, SmallVector<Writer>> writers;
   DenseMap<ClockBit, ClockFact> initialConstants;
   module.walk([&](sim::SimDesignOp design) {
-    DescriptorProvenanceAnalysis analysis(design);
+    HandleDataflowAnalysis analysis(design);
     // Outlined activations are another representation of their owning actor,
     // not additional physical drivers. Ordinary subroutines still contribute
     // conservative writer coverage below.
@@ -196,7 +196,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
       // A method called during bootstrap can also be a runtime writer through
       // any compatible virtual target, including writes to hidden globals.
       function.walk([&](sim::SimClassVirtualCallOp call) {
-        auto receiver = cast<sim::ClassHandleType>(call.getReceiver().getType());
+        auto receiver =
+            cast<sim::ClassHandleType>(call.getReceiver().getType());
         for (auto method : dispatch.compatibleImplementations(
                  dispatch.lookup(receiver), call.getSlot(),
                  call.getSignatureId(), false))

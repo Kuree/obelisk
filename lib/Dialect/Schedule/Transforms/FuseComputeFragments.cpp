@@ -131,7 +131,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   };
   DenseMap<Operation *, bool> bodyEligibility;
   DenseMap<Operation *, bool> primitiveBodyEligibility;
-  analysis::DescriptorProvenanceAnalysis provenance(design);
+  analysis::HandleDataflowAnalysis provenance(design);
   auto isBodyEligible = [&](sim::SimFuncOp function, bool primitive) {
     if (!function)
       return false;

@@ -245,10 +245,9 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
 }
 
 llvm::DenseMap<analysis::ClockBit, analysis::ClockFact>
-buildNativeClockInferencePlan(
-    ModuleOp module, const NativeStateLayout &layout,
-    const DenseMap<Operation *, uint32_t> &actorSlots,
-    ArrayRef<NativePeriodicClock> clocks) {
+buildNativeClockInferencePlan(ModuleOp module, const NativeStateLayout &layout,
+                              const DenseMap<Operation *, uint32_t> &actorSlots,
+                              ArrayRef<NativePeriodicClock> clocks) {
   SmallVector<analysis::PeriodicClockSeed> seeds;
   for (const auto &clock : clocks) {
     auto actor = llvm::find_if(actorSlots, [&](const auto &entry) {
@@ -256,7 +255,8 @@ buildNativeClockInferencePlan(
     });
     if (actor != actorSlots.end())
       seeds.push_back({{clock.getStaticState(), clock.getBitOffset()},
-                       actor->first, clock.getHalfPeriod()});
+                       actor->first,
+                       clock.getHalfPeriod()});
   }
   analysis::ClockInferenceAnalysis inference(module, layout, seeds);
   llvm::DenseSet<analysis::ClockBit> periodic;
@@ -661,8 +661,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         // observer plan. Reconstruct those same roots from the bound observer
         // operands so direct AOT publications retain the transition bridge
         // without pretending that the cold actor owns a generated slot.
-        analysis::DescriptorProvenanceMap provenance =
-            analysis::deriveDescriptorProvenance(function);
+        analysis::HandleFacts provenance =
+            analysis::deriveHandleFacts(function);
         auto registrations =
             function.getOps<sim::SimCovergroupClockEventRegisterOp>();
         auto registration =

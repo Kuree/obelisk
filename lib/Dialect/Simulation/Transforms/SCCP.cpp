@@ -124,7 +124,7 @@ struct FunctionObservation {
 };
 
 static void addNetSeeds(sim::SimFuncOp function,
-                        const analysis::DescriptorProvenanceMap &provenance,
+                        const analysis::HandleFacts &provenance,
                         const DenseMap<uint64_t, BoundaryFact> &netFacts,
                         DenseMap<Value, BoundaryFact> &seeds) {
   if (netFacts.empty())
@@ -198,7 +198,7 @@ static void addBoundarySeeds(ArrayRef<FunctionInfo> functions,
 
 static LogicalResult
 analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
-                const analysis::DescriptorProvenanceAnalysis &provenanceAnalysis,
+                const analysis::HandleDataflowAnalysis &provenanceAnalysis,
                 const DenseMap<uint64_t, BoundaryFact> &netFacts,
                 FunctionObservation &observation) {
   const FunctionInfo &info = functions[functionIndex];
@@ -207,8 +207,7 @@ analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
     return success();
 
   DenseMap<Value, BoundaryFact> seeds;
-  analysis::DescriptorProvenanceMap provenance =
-      provenanceAnalysis.derive(function);
+  analysis::HandleFacts provenance = provenanceAnalysis.derive(function);
   addBoundarySeeds(functions, functionIndex, seeds);
   if (info.canUseNetFacts)
     addNetSeeds(function, provenance, netFacts, seeds);
@@ -343,7 +342,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   // Driver declarations remain fixed across all solver waves. Share only
   // their immutable index; each worker derives its own current value facts.
-  analysis::DescriptorProvenanceAnalysis provenance(design);
+  analysis::HandleDataflowAnalysis provenance(design);
   analysis::ClassDispatchAnalysis classDispatch(design);
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> symbolToFunction;
@@ -854,8 +853,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
       if (failed(failableParallelForEach(
               design.getContext(), deterministicOrder, [&](unsigned index) {
                 auto observation = std::make_unique<FunctionObservation>();
-                if (failed(analyzeFunction(functions, index, provenance, netFacts,
-                                           *observation)))
+                if (failed(analyzeFunction(functions, index, provenance,
+                                           netFacts, *observation)))
                   return failure();
                 observations[index] = std::move(observation);
                 return success();

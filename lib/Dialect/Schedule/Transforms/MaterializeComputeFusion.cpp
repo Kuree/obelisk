@@ -1585,7 +1585,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
     FusionInputIndex &inputIndex, schedule::ComputeFusionAttr fusion,
     schedule::ComputeGraphAttr graph,
-    const analysis::DescriptorProvenanceAnalysis &provenance,
+    const analysis::HandleDataflowAnalysis &provenance,
     const CombinationalFusionAnalysis &combinational,
     const DenseMap<int64_t, int64_t> &resumeTargets,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
@@ -2811,7 +2811,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
     FusionInputIndex &inputIndex, schedule::ComputeFusionAttr fusion,
     schedule::ComputeGraphAttr graph,
-    const analysis::DescriptorProvenanceAnalysis &provenance,
+    const analysis::HandleDataflowAnalysis &provenance,
     const DenseMap<uint32_t, uint32_t> &scheduleOrder,
     const DenseMap<uint32_t, uint32_t> &resumeTargets,
     const DenseMap<StringAttr, uint32_t> &entryOrder,
@@ -3455,7 +3455,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   CodeUnitIndex codeUnits(design);
   // Fusion changes function bodies but never driver declarations. Reuse the
   // immutable driver-to-net index while deriving fresh per-body value facts.
-  analysis::DescriptorProvenanceAnalysis provenance(design);
+  analysis::HandleDataflowAnalysis provenance(design);
   DenseSet<uint64_t> controlTargets;
   bool foreignControl = false;
   design.walk([&](Operation *operation) {

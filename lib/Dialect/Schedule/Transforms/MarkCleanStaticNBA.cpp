@@ -96,11 +96,14 @@ LogicalResult markCleanStaticNBAsInGuardedBodies(
     // A generic enqueue claims its root's slow path for the rest of the slot.
     // Elide per-site guards only when every reachable enqueue is statically
     // staged and cannot invalidate that invariant mid-activation.
+    analysis::HandleDataflowAnalysis handleAnalysis(
+        function->getParentOfType<sim::SimDesignOp>());
+    auto handleFacts = handleAnalysis.analyze(function);
     bool nbaActivationIsNonInvalidating = true;
     for (Block *block : activationBlocks)
       block->walk([&](sim::SimNBAEnqueueOp nba) {
         nbaActivationIsNonInvalidating &= isNonInvalidatingStaticNBA(
-            nba, staticNBASiteRoots, staticNBARoots, stateLayout);
+            nba, staticNBASiteRoots, staticNBARoots, stateLayout, handleFacts);
       });
 
     for (Block *source : activationBlocks)

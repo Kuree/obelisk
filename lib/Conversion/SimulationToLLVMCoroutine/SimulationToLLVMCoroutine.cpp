@@ -2009,6 +2009,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         ::obelisk::schedule::Field::EvalLocalPromotionRanges>(function);
     if (!source || !ranges)
       return;
+    if (!::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalSelectedTwoState>(function))
+      return;
     LLVM::LLVMFuncOp fourState =
         inputSymbols.lookup<LLVM::LLVMFuncOp>(source.getValue());
     if (!fourState || fourState.getFunctionType() != function.getFunctionType())
@@ -2218,8 +2221,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         LLVM::StoreOp::create(
             builder, route.fourState.getLoc(),
             detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
-            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(), pointer,
-                                      fallback.getSymName()),
+            LLVM::AddressOfOp::create(builder, route.fourState.getLoc(),
+                                      pointer, fallback.getSymName()),
             1);
       auto unknownCall = LLVM::CallOp::create(builder, route.fourState.getLoc(),
                                               route.fourState, arguments);
@@ -2516,14 +2519,15 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       builder.setInsertionPointToStart(entry);
       SmallVector<Value> arguments(entry->getArguments());
       Value promoted = detail::llvmConstant(builder, route.twoState.getLoc(),
-                                             builder.getI1Type(), 0);
+                                            builder.getI1Type(), 0);
       if (clocklessEval)
         promoted = LLVM::ICmpOp::create(
             builder, route.twoState.getLoc(), LLVM::ICmpPredicate::ne,
-            LLVM::LoadOp::create(
-                builder, route.twoState.getLoc(), i8,
-                LLVM::AddressOfOp::create(builder, route.twoState.getLoc(),
-                    pointer, "__obelisk_eval_promotion_latched_v1"), 1),
+            LLVM::LoadOp::create(builder, route.twoState.getLoc(), i8,
+                                 LLVM::AddressOfOp::create(
+                                     builder, route.twoState.getLoc(), pointer,
+                                     "__obelisk_eval_promotion_latched_v1"),
+                                 1),
             detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0));
       LLVM::CondBrOp::create(builder, route.twoState.getLoc(), promoted,
                              knownStateProbe, fullProbe);

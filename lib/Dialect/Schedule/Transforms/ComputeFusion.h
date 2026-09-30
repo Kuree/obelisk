@@ -24,10 +24,10 @@ class CombinationalFusionAnalysis {
 public:
   CombinationalFusionAnalysis(
       sim::SimDesignOp design,
-      const analysis::DescriptorProvenanceAnalysis &provenance);
+      const analysis::HandleDataflowAnalysis &provenance);
   std::optional<CombinationalFusionBody>
   analyze(sim::SimFuncOp function,
-          const analysis::DescriptorProvenanceAnalysis &provenance) const;
+          const analysis::HandleDataflowAnalysis &provenance) const;
 
 private:
   bool unsupported = false;
@@ -40,14 +40,14 @@ private:
 /// actor-local state or admitting behavior outside the static digital subset.
 bool isComputeBodyFusionEligible(
     sim::SimFuncOp function,
-    const analysis::DescriptorProvenanceAnalysis &provenance);
+    const analysis::HandleDataflowAnalysis &provenance);
 
 /// Primitive-only union kernels additionally admit the UDP driver-state read
 /// and inertial publication operations that their materializer preserves.
 /// General and eval body fusion deliberately retain the narrower contract.
 bool isPrimitiveComputeBodyFusionEligible(
     sim::SimFuncOp function,
-    const analysis::DescriptorProvenanceAnalysis &provenance);
+    const analysis::HandleDataflowAnalysis &provenance);
 
 /// Storage descriptors classified by who can observe their intermediate
 /// nonblocking updates in one NBA region. IEEE 1800-2017 4.6(b) requires NBAs

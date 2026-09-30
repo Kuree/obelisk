@@ -49,14 +49,14 @@ namespace {
 // Descriptor provenance
 //===----------------------------------------------------------------------===//
 
-DescriptorProvenance widenDynamic(DescriptorProvenance provenance) {
+HandleFact widenDynamic(HandleFact provenance) {
   if (provenance.resource != schedule::ComputeResourceKind::Unknown)
     provenance.dynamic = true;
   return provenance;
 }
 
-DescriptorProvenance narrowProvenance(DescriptorProvenance provenance,
-                                      uint64_t low, uint64_t width) {
+HandleFact narrowProvenance(HandleFact provenance, uint64_t low,
+                            uint64_t width) {
   if (provenance.resource == schedule::ComputeResourceKind::Unknown)
     return provenance;
   if (provenance.low > provenance.rootWidth ||
@@ -71,7 +71,7 @@ DescriptorProvenance narrowProvenance(DescriptorProvenance provenance,
 /// The complete statically known base range a slice belongs to. Formal handles
 /// with no concrete descriptor widen all the way to unknown because two callers
 /// may bind them to different roots.
-DescriptorProvenance getRootProvenance(DescriptorProvenance provenance) {
+HandleFact getRootProvenance(HandleFact provenance) {
   if (provenance.resource == schedule::ComputeResourceKind::Unknown)
     return {};
   if (provenance.formal && !provenance.descriptor)
@@ -82,9 +82,8 @@ DescriptorProvenance getRootProvenance(DescriptorProvenance provenance) {
   return provenance;
 }
 
-bool provenanceLess(const DescriptorProvenance &lhs,
-                    const DescriptorProvenance &rhs) {
-  auto key = [](const DescriptorProvenance &provenance) {
+bool provenanceLess(const HandleFact &lhs, const HandleFact &rhs) {
+  auto key = [](const HandleFact &provenance) {
     return std::tuple<unsigned, uint64_t, unsigned, uint64_t, uint64_t,
                       uint64_t, bool>(
         static_cast<unsigned>(provenance.resource),
@@ -97,8 +96,7 @@ bool provenanceLess(const DescriptorProvenance &lhs,
 }
 
 /// Whether two resolved ranges may denote overlapping state.
-bool provenancesAlias(const DescriptorProvenance &lhs,
-                      const DescriptorProvenance &rhs) {
+bool provenancesAlias(const HandleFact &lhs, const HandleFact &rhs) {
   if (lhs.resource == schedule::ComputeResourceKind::Unknown ||
       rhs.resource == schedule::ComputeResourceKind::Unknown)
     return true;
@@ -124,7 +122,7 @@ bool provenancesAlias(const DescriptorProvenance &lhs,
 
 struct ComputeEffect {
   schedule::ComputeEffectKind kind = schedule::ComputeEffectKind::Read;
-  DescriptorProvenance target;
+  HandleFact target;
   schedule::ComputeTriggerKind trigger = schedule::ComputeTriggerKind::None;
   bool deferred = false;
 
@@ -157,8 +155,8 @@ void normalizeEffects(SmallVectorImpl<ComputeEffect> &effects) {
   // Graph aliasing is range based, so this preserves all conflicts while
   // avoiding 32 or 64 copies of the same edge and downstream fanout work.
   auto compatible = [](const ComputeEffect &left, const ComputeEffect &right) {
-    const DescriptorProvenance &lhs = left.target;
-    const DescriptorProvenance &rhs = right.target;
+    const HandleFact &lhs = left.target;
+    const HandleFact &rhs = right.target;
     return left.kind == right.kind &&
            left.kind != schedule::ComputeEffectKind::NBA &&
            left.kind != schedule::ComputeEffectKind::Trigger &&
@@ -174,7 +172,7 @@ void normalizeEffects(SmallVectorImpl<ComputeEffect> &effects) {
   coalesced.reserve(effects.size());
   for (const ComputeEffect &effect : effects) {
     if (!coalesced.empty() && compatible(coalesced.back(), effect)) {
-      DescriptorProvenance &range = coalesced.back().target;
+      HandleFact &range = coalesced.back().target;
       uint64_t end = std::max(range.low + range.width,
                               effect.target.low + effect.target.width);
       range.width = end - range.low;
@@ -210,7 +208,7 @@ schedule::ComputeEffectAttr getEffectAttr(MLIRContext *context,
   // An unresolved handle keeps no range: propagation can reach `unknown` while
   // still carrying the width of the type it started from, and publishing that
   // would build an attribute this dialect's own verifier rejects.
-  DescriptorProvenance provenance = effect.target;
+  HandleFact provenance = effect.target;
   if (provenance.resource == schedule::ComputeResourceKind::Unknown)
     provenance = {};
   schedule::ComputeTargetKind target = schedule::ComputeTargetKind::Unknown;
@@ -263,8 +261,7 @@ public:
   }
 
   template <typename Callback>
-  void forEachAlias(const DescriptorProvenance &target,
-                    Callback &&callback) const {
+  void forEachAlias(const HandleFact &target, Callback &&callback) const {
     auto visit = [&](ArrayRef<IndexedEffect> effects) {
       for (IndexedEffect effect : effects)
         callback(effect);
@@ -309,7 +306,7 @@ struct FunctionInfo {
   sim::SimFuncOp getFunction() const { return function; }
 
   sim::SimFuncOp function;
-  DenseMap<Value, DescriptorProvenance> provenance;
+  DenseMap<Value, HandleFact> provenance;
   SmallVector<ComputeEffect> baseEffects;
   SmallVector<ComputeEffect> summary;
   SmallVector<sim::SimCallOp> calls;
@@ -350,7 +347,7 @@ void appendEffect(
     bool deferred = false) {
   auto provenance = info.provenance.find(handle);
   if (provenance == info.provenance.end()) {
-    effects.push_back({kind, DescriptorProvenance{}, trigger, deferred});
+    effects.push_back({kind, HandleFact{}, trigger, deferred});
     return;
   }
   // Process-local allocations are never shared scheduling resources.
@@ -508,21 +505,17 @@ ComputeEffect substituteEffect(const ComputeEffect &effect, sim::SimCallOp call,
   // itself continued to name the unknown commit.
   if (effect.kind == schedule::ComputeEffectKind::NBA ||
       (effect.kind == schedule::ComputeEffectKind::Trigger && effect.deferred))
-    return {effect.kind, DescriptorProvenance{}, effect.trigger,
-            effect.deferred};
+    return {effect.kind, HandleFact{}, effect.trigger, effect.deferred};
   unsigned index = *effect.target.formal;
   if (index >= call.getNumOperands())
-    return {effect.kind, DescriptorProvenance{}, effect.trigger,
-            effect.deferred};
+    return {effect.kind, HandleFact{}, effect.trigger, effect.deferred};
   auto actual = caller.provenance.find(call.getOperand(index));
   if (actual == caller.provenance.end())
-    return {effect.kind, DescriptorProvenance{}, effect.trigger,
-            effect.deferred};
-  DescriptorProvenance target =
-      effect.target.dynamic || actual->second.dynamic
-          ? widenDynamic(actual->second)
-          : narrowProvenance(actual->second, effect.target.low,
-                             effect.target.width);
+    return {effect.kind, HandleFact{}, effect.trigger, effect.deferred};
+  HandleFact target = effect.target.dynamic || actual->second.dynamic
+                          ? widenDynamic(actual->second)
+                          : narrowProvenance(actual->second, effect.target.low,
+                                             effect.target.width);
   return {effect.kind, target, effect.trigger, effect.deferred};
 }
 
@@ -536,21 +529,17 @@ ComputeEffect substituteObserverEffect(const ComputeEffect &effect,
     return effect;
   if (effect.kind == schedule::ComputeEffectKind::NBA ||
       (effect.kind == schedule::ComputeEffectKind::Trigger && effect.deferred))
-    return {effect.kind, DescriptorProvenance{}, effect.trigger,
-            effect.deferred};
+    return {effect.kind, HandleFact{}, effect.trigger, effect.deferred};
   unsigned formal = *effect.target.formal;
   if (formal == 0 || formal - 1 >= binding.getCaptures().size())
-    return {effect.kind, DescriptorProvenance{}, effect.trigger,
-            effect.deferred};
+    return {effect.kind, HandleFact{}, effect.trigger, effect.deferred};
   auto actual = waiter.provenance.find(binding.getCaptures()[formal - 1]);
   if (actual == waiter.provenance.end())
-    return {effect.kind, DescriptorProvenance{}, effect.trigger,
-            effect.deferred};
-  DescriptorProvenance target =
-      effect.target.dynamic || actual->second.dynamic
-          ? widenDynamic(actual->second)
-          : narrowProvenance(actual->second, effect.target.low,
-                             effect.target.width);
+    return {effect.kind, HandleFact{}, effect.trigger, effect.deferred};
+  HandleFact target = effect.target.dynamic || actual->second.dynamic
+                          ? widenDynamic(actual->second)
+                          : narrowProvenance(actual->second, effect.target.low,
+                                             effect.target.width);
   return {effect.kind, target, effect.trigger, effect.deferred};
 }
 
@@ -561,7 +550,7 @@ struct ProgramAnalysis {
 
   ::obelisk::analysis::ClassDispatchAnalysis classDispatch;
   ::obelisk::analysis::NetConnectivityAnalysis connectivity;
-  ::obelisk::analysis::DescriptorProvenanceAnalysis descriptorProvenance;
+  ::obelisk::analysis::HandleDataflowAnalysis descriptorProvenance;
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> functionIndex;
   DenseMap<Operation *, unsigned> indexForFunction;
@@ -976,7 +965,7 @@ private:
 schedule::ComputeNBAStorageKind
 getNBAStorageKind(sim::SimNBAEnqueueOp nba, sim::SimFuncOp function,
                   const SpawnMultiplicity &multiplicity,
-                  const DescriptorProvenance &destination) {
+                  const HandleFact &destination) {
   bool fixed = function.getEntryKind() != sim::EntryKind::Function &&
                !multiplicity.isDynamicallySpawned(function) &&
                !multiplicity.mayReexecute(function, nba->getBlock());
@@ -1212,8 +1201,8 @@ public:
 private:
   /// Commit nodes are keyed by the root range their sites share, so every
   /// slice of one descriptor commits through one ordered journal.
-  std::optional<uint32_t> findCommit(ArrayRef<DescriptorProvenance> roots,
-                                     const DescriptorProvenance &root) const;
+  std::optional<uint32_t> findCommit(ArrayRef<HandleFact> roots,
+                                     const HandleFact &root) const;
 
   schedule::ComputeEffectAttr effectAttr(const ComputeEffect &effect) {
     return getEffectAttr(design.getContext(), effect);
@@ -1249,7 +1238,7 @@ private:
   /// skips them, exactly as an unrolled backedge would have been absent.
   DenseSet<std::pair<uint32_t, uint32_t>> boundedBackedges;
 
-  SmallVector<DescriptorProvenance> nbaRoots, eventRoots;
+  SmallVector<HandleFact> nbaRoots, eventRoots;
   SmallVector<uint32_t> nbaCommitIds, eventCommitIds;
   SmallVector<SmallVector<int64_t>> nbaSlots, nbaAccumulatorSites,
       nbaFrontierSites, eventSites;
@@ -1273,8 +1262,8 @@ Block *skipObserverCaptureBridges(Block *block) {
 }
 
 std::optional<uint32_t>
-ComputeGraphBuilder::findCommit(ArrayRef<DescriptorProvenance> roots,
-                                const DescriptorProvenance &root) const {
+ComputeGraphBuilder::findCommit(ArrayRef<HandleFact> roots,
+                                const HandleFact &root) const {
   auto found = llvm::lower_bound(roots, root, provenanceLess);
   if (found == roots.end() || !(*found == root))
     return std::nullopt;
@@ -1317,8 +1306,8 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
   // from fragment effects (which include substituted callee summaries) and
   // from every staging operation, including those inside zero-time functions
   // whose own root is not what any single caller sees.
-  auto addRoot = [](SmallVectorImpl<DescriptorProvenance> &roots,
-                    const DescriptorProvenance &target) {
+  auto addRoot = [](SmallVectorImpl<HandleFact> &roots,
+                    const HandleFact &target) {
     roots.push_back(getRootProvenance(target));
   };
   for (Fragment &fragment : fragments)
@@ -1337,8 +1326,7 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
                trigger && trigger.getNonblocking())
         addRoot(eventRoots, info.provenance.lookup(trigger.getEvent()));
     });
-  for (SmallVectorImpl<DescriptorProvenance> *roots :
-       {&nbaRoots, &eventRoots}) {
+  for (SmallVectorImpl<HandleFact> *roots : {&nbaRoots, &eventRoots}) {
     llvm::sort(*roots, provenanceLess);
     roots->erase(std::unique(roots->begin(), roots->end()), roots->end());
   }
@@ -1406,7 +1394,7 @@ void ComputeGraphBuilder::orderStartupSpawns() {
       continue;
     Flow &flow = flows[fragment.function.getSymName()];
     for (const ComputeEffect &effect : fragment.effects) {
-      DescriptorProvenance provenance = getRootProvenance(effect.target);
+      HandleFact provenance = getRootProvenance(effect.target);
       if (!provenance.descriptor)
         continue;
       switch (effect.kind) {
@@ -1760,7 +1748,7 @@ void ComputeGraphBuilder::buildDataEdges() {
           effect.deferred;
       if (!nba && !deferredTrigger)
         continue;
-      ArrayRef<DescriptorProvenance> roots = nba ? nbaRoots : eventRoots;
+      ArrayRef<HandleFact> roots = nba ? nbaRoots : eventRoots;
       ArrayRef<uint32_t> ids = nba ? nbaCommitIds : eventCommitIds;
       uint32_t commit =
           ids[*findCommit(roots, getRootProvenance(effect.target))];
@@ -1770,18 +1758,18 @@ void ComputeGraphBuilder::buildDataEdges() {
               effectAttr(effect));
     }
   for (auto activationSet :
-       {std::tuple{ArrayRef<DescriptorProvenance>(nbaRoots),
+       {std::tuple{ArrayRef<HandleFact>(nbaRoots),
                    ArrayRef<uint32_t>(nbaCommitIds),
                    schedule::ComputeEdgeKind::NBAActivate},
-        std::tuple{ArrayRef<DescriptorProvenance>(eventRoots),
+        std::tuple{ArrayRef<HandleFact>(eventRoots),
                    ArrayRef<uint32_t>(eventCommitIds),
                    schedule::ComputeEdgeKind::DeferredActivate}}) {
-    ArrayRef<DescriptorProvenance> roots = std::get<0>(activationSet);
+    ArrayRef<HandleFact> roots = std::get<0>(activationSet);
     ArrayRef<uint32_t> ids = std::get<1>(activationSet);
     schedule::ComputeEdgeKind activate = std::get<2>(activationSet);
     for (auto indexedRoot : llvm::enumerate(roots)) {
       size_t index = indexedRoot.index();
-      const DescriptorProvenance &root = indexedRoot.value();
+      const HandleFact &root = indexedRoot.value();
       uint32_t id = ids[index];
       watchedEffects.forEachAlias(
           root, [&, root = root](IndexedEffect consumed) {
@@ -1823,7 +1811,7 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
                     ? schedule::ComputeTimingKind::Calendar
                     : schedule::ComputeTimingKind::DeadlineSlot);
           if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
-            DescriptorProvenance destination =
+            HandleFact destination =
                 info.provenance.lookup(nba.getDestination());
             std::optional<uint32_t> commit =
                 findCommit(nbaRoots, getRootProvenance(destination));
@@ -1854,8 +1842,7 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
           }
           if (auto trigger = dyn_cast<sim::SimEventTriggerOp>(operation);
               trigger && trigger.getNonblocking()) {
-            DescriptorProvenance destination =
-                info.provenance.lookup(trigger.getEvent());
+            HandleFact destination = info.provenance.lookup(trigger.getEvent());
             std::optional<uint32_t> commit =
                 findCommit(eventRoots, getRootProvenance(destination));
             if (!commit)

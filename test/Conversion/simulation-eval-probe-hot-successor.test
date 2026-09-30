@@ -1,4 +1,9 @@
-// RUN: sed 's/cf.cond_br %bad, ^cold, ^wait/cf.cond_br %bad, ^cold, ^after_cold/' %S/simulation-eval-probe-cold-successors.mlir | not obelisk-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s
+// RUN: sed 's/cf.cond_br %bad, ^cold, ^wait/cf.cond_br %bad, ^cold, ^after_cold/' %S/simulation-eval-probe-cold-successors.mlir | obelisk-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
-// A second hot edge makes the checkpoint successor part of the predicate.
-// CHECK: unguarded runtime leaf
+// A second hot edge exposes a local allocation. Keep the complete activation
+// behind a runtime checkpoint, leaving unrelated generated actors native.
+// LRM 4.6 and 6.21 require execution order and local lifetime; the checkpoint
+// is compiler policy. Verify it names the work owner (actor 2).
+// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_2_{{[0-9]+}}.__obelisk_execute.checkpoint(
+// CHECK: %[[ACTOR:.*]] = llvm.mlir.constant(2 : i32) : i32
+// CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor(%arg0, %[[ACTOR]])

@@ -3,6 +3,7 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONANALYSIS_H
 
+#include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationEnums.h"
@@ -19,45 +20,9 @@
 namespace obelisk::sim {
 class SimDesignOp;
 class SimFuncOp;
-}
+} // namespace obelisk::sim
 
 namespace obelisk::analysis {
-
-/// Concrete descriptor provenance recomputed from executable SSA and CFG.
-/// Absence from a map means no fact has reached the value; a present unknown
-/// fact means analysis proved that the value cannot retain concrete identity.
-struct DescriptorProvenance {
-  schedule::ComputeResourceKind resource =
-      schedule::ComputeResourceKind::Unknown;
-  std::optional<uint64_t> descriptor;
-  std::optional<unsigned> formal;
-  uint64_t low = 0;
-  uint64_t width = 0;
-  uint64_t rootWidth = 0;
-  bool dynamic = false;
-
-  bool operator==(const DescriptorProvenance &other) const {
-    return resource == other.resource && descriptor == other.descriptor &&
-           formal == other.formal && low == other.low && width == other.width &&
-           rootWidth == other.rootWidth && dynamic == other.dynamic;
-  }
-};
-
-using DescriptorProvenanceMap =
-    llvm::DenseMap<mlir::Value, DescriptorProvenance>;
-
-/// Immutable design-wide descriptor lookup shared by provenance queries.
-/// Construct one when deriving provenance for multiple functions so driver
-/// normalization does not rescan the design for every function.
-class DescriptorProvenanceAnalysis {
-public:
-  explicit DescriptorProvenanceAnalysis(sim::SimDesignOp design);
-
-  DescriptorProvenanceMap derive(sim::SimFuncOp function) const;
-
-private:
-  llvm::DenseMap<uint64_t, uint64_t> driverNets;
-};
 
 /// Which NBA commit roots may merge several updates between two NBA barriers
 /// into one old-to-final transition. IEEE 1800-2017 4.6(b) performs each NBA
@@ -106,11 +71,6 @@ std::optional<unsigned> getSimulationStorageBitWidth(mlir::Type type);
 /// Managed handles are opaque two-state words even when their pointee types
 /// contain logic.
 bool containsFourStateLogic(mlir::Type type);
-
-/// Derive stable descriptor roots and ranges for all handle-typed values in a
-/// defined simulation function. Driver handles are normalized to their net.
-/// Prefer DescriptorProvenanceAnalysis when querying multiple functions.
-DescriptorProvenanceMap deriveDescriptorProvenance(sim::SimFuncOp function);
 
 /// Weighted cost shared by IPO growth accounting and compute-graph lane
 /// balancing. Terminators are free, ordinary operations cost one, state access

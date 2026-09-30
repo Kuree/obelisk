@@ -178,8 +178,8 @@ preparePlainNativeProcess(sim::SimFuncOp function,
     for (BlockArgument argument : block.getArguments())
       argument.setType(convertProcessType(argument.getType(), context));
   return PreparedPlainNativeProcess{
-      module, body, location, std::move(baseName), stableID, &analysis,
-      unmanagedNative};
+      module,   body,      location,       std::move(baseName),
+      stableID, &analysis, unmanagedNative};
 }
 
 LogicalResult
@@ -288,6 +288,8 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
       ::obelisk::schedule::Field::EvalPathKnownPredicate>(function);
   auto evalInfallible =
       ::obelisk::schedule::get<schedule::Field::EvalInfallible>(function);
+  auto evalSelectedTwoState = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
   ArrayAttr outlinedPassthrough;
   if (::obelisk::schedule::has<
           ::obelisk::schedule::Field::OutlinedPrimitiveMember>(function)) {
@@ -336,7 +338,10 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
         replacement, evalPathKnownPredicate);
   if (evalInfallible)
     ::obelisk::schedule::set<schedule::Field::EvalInfallible>(replacement,
-                                                          evalInfallible);
+                                                              evalInfallible);
+  if (evalSelectedTwoState)
+    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSelectedTwoState>(
+        replacement, evalSelectedTwoState);
   replacement.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : replacement.getBody())

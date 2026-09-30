@@ -273,7 +273,7 @@ LogicalResult materializeEvalTwoStateVariants(
     llvm::SmallPtrSet<Operation *, 16> routeEligibleSources;
     bool invalidRange = false;
     auto selectRange =
-        [&](Value handle, const analysis::DescriptorProvenanceMap &provenance,
+        [&](Value handle, const analysis::HandleFacts &provenance,
             llvm::SmallDenseSet<PhysicalRange, 8> &localRanges) -> bool {
       auto found = provenance.find(handle);
       if (found == provenance.end() || !found->second.descriptor ||
@@ -320,8 +320,7 @@ LogicalResult materializeEvalTwoStateVariants(
       return true;
     };
     for (sim::SimFuncOp source : sources) {
-      analysis::DescriptorProvenanceMap provenance =
-          analysis::deriveDescriptorProvenance(source);
+      analysis::HandleFacts provenance = analysis::deriveHandleFacts(source);
       llvm::SmallDenseSet<PhysicalRange, 8> localRanges;
       llvm::SmallDenseSet<PhysicalRange, 8> inductiveRanges;
       bool preserving = true;
@@ -935,7 +934,7 @@ LogicalResult materializeEvalTwoStateVariants(
     // captures can alias the same storage. Unknown/dynamic references remain
     // conservatively aliasing. No speculative state overlay is needed when
     // all reads are disjoint, or when the publication is terminal.
-    auto provenance = analysis::deriveDescriptorProvenance(source);
+    auto provenance = analysis::deriveHandleFacts(source);
     using ProbeRange = std::pair<uint64_t, uint64_t>;
     DenseMap<Value, std::optional<ProbeRange>> probeRanges;
     DenseMap<Value, std::optional<ProbeRange>> boundedProbeRanges;

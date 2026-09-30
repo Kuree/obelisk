@@ -4,6 +4,7 @@
 #include "SimulationEvalNBAQueue.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -48,11 +49,8 @@ static std::optional<uint64_t> constantU64(Value value) {
 
 static bool
 isGeneratedEvalBody(sim::SimFuncOp function,
-    const llvm::StringSet<> *selectedRawBodies = nullptr) {
-  if (selectedRawBodies &&
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
-          function) &&
-      !selectedRawBodies->contains(function.getSymName()))
+                    const llvm::StringSet<> *selectedRawBodies = nullptr) {
+  if (selectedRawBodies && !selectedRawBodies->contains(function.getSymName()))
     return false;
   return !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function) &&
          (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
@@ -177,34 +175,6 @@ struct DynamicEvalNBAProof {
   bool siteExecutesAtMostOnce = false;
 };
 
-/// Return true only when `operation` cannot be revisited through its enclosing
-/// function's structured or CFG control flow. Generated call-graph
-/// multiplicity is checked separately before this local fact is consumed.
-static bool locallyExecutesAtMostOnce(Operation *operation,
-                                      sim::SimFuncOp enclosing) {
-  for (Operation *ancestor = operation->getParentOp();
-       ancestor && ancestor != enclosing.getOperation();
-       ancestor = ancestor->getParentOp())
-    if (isa<LoopLikeOpInterface>(ancestor))
-      return false;
-
-  Block *origin = operation->getBlock();
-  SmallVector<Block *, 8> worklist;
-  for (Block *successor : origin->getTerminator()->getSuccessors())
-    worklist.push_back(successor);
-  llvm::SmallPtrSet<Block *, 16> visited;
-  while (!worklist.empty()) {
-    Block *block = worklist.pop_back_val();
-    if (block == origin)
-      return false;
-    if (!visited.insert(block).second)
-      continue;
-    for (Block *successor : block->getTerminator()->getSuccessors())
-      worklist.push_back(successor);
-  }
-  return true;
-}
-
 static uint32_t
 getDynamicNBACommitRegion(sim::SimFuncOp function,
                           const DynamicEvalNBAProofContext &proofContext) {
@@ -278,7 +248,8 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
 static FailureOr<DynamicEvalNBAProof>
 proveDynamicEvalNBA(LLVM::CallOp call,
                     const DynamicEvalNBAProofContext &proofContext,
-                    bool enclosingExecutesAtMostOnce) {
+                    bool enclosingExecutesAtMostOnce,
+                    const analysis::WriteExecutionBounds &execution) {
   ValueRange arguments = call.getArgOperands();
   if (arguments.size() != 9)
     return call.emitError("malformed static NBA ABI"), failure();
@@ -346,8 +317,8 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       return b.handleID == fanout.static_state;
     });
     if (bound != stateLayout.bounds.end() && fanout.bit_width == 1 &&
-        stateLayout.hasClockTickBound(
-            fanout.static_state, bound->offset + fanout.low_bit))
+        stateLayout.hasClockTickBound(fanout.static_state,
+                                      bound->offset + fanout.low_bit))
       return true;
     auto periodicBitTouches = [&](uint64_t bit) {
       if (fanout.low_bit > bit || bit - fanout.low_bit >= fanout.bit_width)
@@ -400,11 +371,14 @@ proveDynamicEvalNBA(LLVM::CallOp call,
           }
           ++proof.periodicIngressCount;
           uint64_t end = fanout.low_bit + fanout.bit_width;
-          auto inferredBound = llvm::find_if(stateLayout.bounds, [&](const auto &b) {
-            return b.handleID == fanout.static_state;
-          });
-          bool inferredTickBound = inferredBound != stateLayout.bounds.end() &&
-              fanout.bit_width == 1 && stateLayout.hasClockTickBound(
+          auto inferredBound =
+              llvm::find_if(stateLayout.bounds, [&](const auto &b) {
+                return b.handleID == fanout.static_state;
+              });
+          bool inferredTickBound =
+              inferredBound != stateLayout.bounds.end() &&
+              fanout.bit_width == 1 &&
+              stateLayout.hasClockTickBound(
                   fanout.static_state, inferredBound->offset + fanout.low_bit);
           bool conflict = llvm::any_of(
               proofContext.generatedTransitionRanges, [&](const auto &range) {
@@ -466,7 +440,7 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   }
   proof.siteExecutesAtMostOnce =
       matchingSiteCalls == 1 && enclosingExecutesAtMostOnce &&
-      locallyExecutesAtMostOnce(call.getOperation(), enclosing);
+      execution.executesAtMostOnce(call.getOperation());
 
   auto fixedHandle = constantU64(arguments[5]);
   if (!fixedHandle)
@@ -554,13 +528,13 @@ proveDynamicEvalNBA(LLVM::CallOp call,
        staticNBAPlan.independentSiteWrites[root->second]);
   bool latchSafe =
       mergeSafe || (root != staticNBAPlan.siteRoots.end() &&
-       root->second < staticNBAPlan.changeWatchedRoots.size() &&
-       staticNBAPlan.changeWatchedRoots[root->second]);
+                    root->second < staticNBAPlan.changeWatchedRoots.size() &&
+                    staticNBAPlan.changeWatchedRoots[root->second]);
   proof.periodicWideLatch =
       (commonDynamicRoot || chunkedPayload) && latchSafe && independentSites &&
       proof.exclusivePeriodicIngress && proof.siteExecutesAtMostOnce &&
-                            proof.commitRegion == OBELISK_RT_REGION_NBA &&
-                            staticNBAPlan.roots[root->second].bit_width > 64;
+      proof.commitRegion == OBELISK_RT_REGION_NBA &&
+      staticNBAPlan.roots[root->second].bit_width > 64;
   // The generated queue records every enqueue and drains in execution order,
   // including overlapping sites and repeated executions of the same site.
   // Those cases cannot use a final-value latch, but do not need the runtime
@@ -570,9 +544,9 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       !::obelisk::schedule::has<
           ::obelisk::schedule::Field::EvalRuntimeCalendar>(
           call->getParentOfType<ModuleOp>()) &&
-                      root->second < proofContext.orderedRootClosed.size() &&
-                      proofContext.orderedRootClosed[root->second] &&
-                      proof.commitRegion == OBELISK_RT_REGION_NBA &&
+      root->second < proofContext.orderedRootClosed.size() &&
+      proofContext.orderedRootClosed[root->second] &&
+      proof.commitRegion == OBELISK_RT_REGION_NBA &&
       (!mergeSafe || staticNBAPlan.roots[root->second].bit_width > 64) &&
       !directAccumulator && !proof.periodicWideLatch;
   proof.eligible =
@@ -673,15 +647,46 @@ FailureOr<bool> makeNativeEvalPlan(
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   llvm::StringSet<> selectedEvalBodies;
-  if (staticEvalIsland)
-    for (const NativeDirectFragment &direct : directFragments) {
-      if (!direct.body.empty())
-        selectedEvalBodies.insert(direct.body);
-      if (!direct.twoStateBody.empty())
-        selectedEvalBodies.insert(direct.twoStateBody);
+  for (const NativeDirectFragment &direct : directFragments) {
+    if (!direct.body.empty())
+      selectedEvalBodies.insert(direct.body);
+    if (!direct.twoStateBody.empty())
+      selectedEvalBodies.insert(direct.twoStateBody);
+  }
+  {
+    SymbolTableCollection symbols;
+    SmallVector<sim::SimFuncOp> pending;
+    module.walk([&](sim::SimFuncOp function) {
+      if (isGeneratedEvalBody(function, &selectedEvalBodies))
+        pending.push_back(function);
+    });
+    llvm::SmallPtrSet<Operation *, 16> visited;
+    auto select = [&](sim::SimDesignOp design, StringRef name) {
+      auto function = symbols.lookupSymbolIn<sim::SimFuncOp>(
+          design, StringAttr::get(context, name));
+      if (function && selectedEvalBodies.insert(name).second)
+        pending.push_back(function);
+    };
+    ArrayAttr probeRoutes = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::EvalPathProbeRoutes>(module);
+    while (!pending.empty()) {
+      sim::SimFuncOp function = pending.pop_back_val();
+      if (!visited.insert(function.getOperation()).second)
+        continue;
+      sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
+      function.walk(
+          [&](sim::SimCallOp call) { select(design, call.getCallee()); });
+      if (probeRoutes)
+        for (Attribute attribute : probeRoutes) {
+          auto route = cast<schedule::PathProbeRouteAttr>(attribute);
+          if (route.getTwoState().getValue() != function.getSymName())
+            continue;
+          select(design, route.getProbe().getValue());
+          select(design, route.getCheckpointProbe().getValue());
+        }
     }
-  const llvm::StringSet<> *selectedRawBodies =
-      staticEvalIsland ? &selectedEvalBodies : nullptr;
+  }
+  const llvm::StringSet<> *selectedRawBodies = &selectedEvalBodies;
 
   // Route shells and runtime checkpoint wrappers can both reference this
   // tuple, including across a conservative late Eval handoff.
@@ -804,6 +809,39 @@ FailureOr<bool> makeNativeEvalPlan(
           incomingEvalCalls[callee.getOperation()].push_back(operation);
       });
     }
+    DenseMap<Operation *, std::unique_ptr<analysis::WriteExecutionBounds>>
+        executionBounds;
+    auto boundsFor =
+        [&](sim::SimFuncOp function) -> analysis::WriteExecutionBounds & {
+      auto &bounds = executionBounds[function.getOperation()];
+      if (!bounds) {
+        auto design = function->getParentOfType<sim::SimDesignOp>();
+        SmallVector<Operation *> calls;
+        function.walk([&](Operation *op) {
+          StringRef calleeName;
+          if (auto call = dyn_cast<sim::SimCallOp>(op))
+            calleeName = call.getCallee();
+          else if (auto call = dyn_cast<LLVM::CallOp>(op)) {
+            if (!call.getCallee())
+              return;
+            calleeName = *call.getCallee();
+          } else
+            return;
+          auto callee = design
+                            ? callSymbols.lookupSymbolIn<sim::SimFuncOp>(
+                                  design, StringAttr::get(context, calleeName))
+                            : sim::SimFuncOp{};
+          if (calleeName == "obelisk_rt_v1_scheduler_static_nba" ||
+              (callee && evalClosureSet.contains(callee)))
+            calls.push_back(op);
+        });
+        // The call closure below checks re-entry and multiplicity. This local
+        // lattice counts the explicit call instructions after conversion.
+        bounds = std::make_unique<analysis::WriteExecutionBounds>(function,
+                                                                  calls, false);
+      }
+      return *bounds;
+    };
     DenseMap<Operation *, bool> closureOnceMemo;
     llvm::SmallPtrSet<Operation *, 16> closureOnceVisiting;
     std::function<bool(sim::SimFuncOp)> closureExecutesAtMostOnce =
@@ -819,7 +857,7 @@ FailureOr<bool> makeNativeEvalPlan(
           if (incoming.size() == 1) {
             Operation *call = incoming.front();
             sim::SimFuncOp caller = call->getParentOfType<sim::SimFuncOp>();
-            once = caller && locallyExecutesAtMostOnce(call, caller) &&
+            once = caller && boundsFor(caller).executesAtMostOnce(call) &&
                    closureExecutesAtMostOnce(caller);
           }
           closureOnceVisiting.erase(function.getOperation());
@@ -849,7 +887,8 @@ FailureOr<bool> makeNativeEvalPlan(
           return;
         }
         FailureOr<DynamicEvalNBAProof> proof = proveDynamicEvalNBA(
-            call, proofContext, closureExecutesAtMostOnce(function));
+            call, proofContext, closureExecutesAtMostOnce(function),
+            boundsFor(function));
         if (failed(proof)) {
           valid = failure();
           return;
@@ -1901,15 +1940,15 @@ FailureOr<bool> makeNativeEvalPlan(
           uint64_t chunkWidth = std::min<uint64_t>(64, *width - index * 64);
           Value address = index == 0
                               ? payload
-                         : byteGEP(nbaBuilder, call.getLoc(), payload,
-                                   index * sizeof(uint64_t));
+                              : byteGEP(nbaBuilder, call.getLoc(), payload,
+                                        index * sizeof(uint64_t));
           Value chunk = LLVM::LoadOp::create(
               nbaBuilder, call.getLoc(), IntegerType::get(context, chunkWidth),
               address, 1);
           return chunkWidth == 64 ? chunk
                                   : LLVM::ZExtOp::create(
                                         nbaBuilder, call.getLoc(), i64, chunk)
-                           .getResult();
+                                        .getResult();
         };
         // A locally promoted executor can still contain four-state literals
         // or values unrelated to its promoted inputs. The NBA ABI, not the
@@ -1996,8 +2035,8 @@ FailureOr<bool> makeNativeEvalPlan(
             uint64_t recordSite = chunkSite(index);
             if (llvm::none_of(dynamicEvalNBAs,
                               [&](const DynamicEvalNBA &entry) {
-                  return entry.site == recordSite;
-                })) {
+                                return entry.site == recordSite;
+                              })) {
               DynamicEvalNBA entry{root->second, recordSite,
                                    std::min<uint64_t>(64, *width - index * 64)};
               entry.queued = true;
@@ -2075,11 +2114,11 @@ FailureOr<bool> makeNativeEvalPlan(
                 chunks == 1 ? stagedUnknown64 : loadUnknownChunk(index);
             Value chunkStart =
                 index == 0 ? requestedStart
-                    : arith::AddIOp::create(
-                          nbaBuilder, call.getLoc(), requestedStart,
-                          llvmConstant(nbaBuilder, call.getLoc(), i64,
-                                       index * 64))
-                          .getResult();
+                           : arith::AddIOp::create(
+                                 nbaBuilder, call.getLoc(), requestedStart,
+                                 llvmConstant(nbaBuilder, call.getLoc(), i64,
+                                              index * 64))
+                                 .getResult();
             Value data = LLVM::LoadOp::create(
                 nbaBuilder, call.getLoc(), pointer,
                 evalNBAQueueField(nbaBuilder, call.getLoc(), 0));
@@ -2087,12 +2126,12 @@ FailureOr<bool> makeNativeEvalPlan(
                 arith::ExtUIOp::create(nbaBuilder, call.getLoc(), i64, size);
             Value record =
                 LLVM::GEPOp::create(nbaBuilder, call.getLoc(), pointer,
-                LLVM::LLVMArrayType::get(i64, 4), data,
-                ValueRange{recordIndex});
+                                    LLVM::LLVMArrayType::get(i64, 4), data,
+                                    ValueRange{recordIndex});
             for (auto [field, value] : llvm::enumerate(
                      SmallVector<Value>{llvmConstant(nbaBuilder, call.getLoc(),
                                                      i64, chunkSite(index)),
-                     chunkStart, chunkValue, chunkUnknown}))
+                                        chunkStart, chunkValue, chunkUnknown}))
               LLVM::StoreOp::create(
                   nbaBuilder, call.getLoc(), value,
                   byteGEP(nbaBuilder, call.getLoc(), record, field * 8), 8);
@@ -2121,7 +2160,8 @@ FailureOr<bool> makeNativeEvalPlan(
               entry.valueName =
                   (Twine("__obelisk_eval_nba_value_") + Twine(slotSite)).str();
               entry.unknownName =
-                  (Twine("__obelisk_eval_nba_unknown_") + Twine(slotSite)).str();
+                  (Twine("__obelisk_eval_nba_unknown_") + Twine(slotSite))
+                      .str();
               entry.validName =
                   (Twine("__obelisk_eval_nba_valid_") + Twine(slotSite)).str();
               auto makeZero = [&](StringRef name, Type type,
@@ -2149,11 +2189,11 @@ FailureOr<bool> makeNativeEvalPlan(
             }
             auto storeGlobal = [&](StringRef name, Value value,
                                    unsigned alignment) {
-              LLVM::StoreOp::create(
-                  nbaBuilder, call.getLoc(), value,
-                  LLVM::AddressOfOp::create(nbaBuilder, call.getLoc(), pointer,
-                                            name),
-                  alignment);
+              LLVM::StoreOp::create(nbaBuilder, call.getLoc(), value,
+                                    LLVM::AddressOfOp::create(nbaBuilder,
+                                                              call.getLoc(),
+                                                              pointer, name),
+                                    alignment);
             };
             Value chunkStart =
                 index == 0 ? requestedStart
@@ -2471,15 +2511,15 @@ FailureOr<bool> makeNativeEvalPlan(
       auto requireValid = [&](Value guard) {
         sourceValid = sourceValid
                           ? arith::AndIOp::create(chainBuilder, call.getLoc(),
-                                                sourceValid, guard)
-                              .getResult()
-                        : guard;
+                                                  sourceValid, guard)
+                                .getResult()
+                          : guard;
       };
       if (sourceValid && invertSourceValid) {
         sourceValid =
             arith::XOrIOp::create(chainBuilder, call.getLoc(), sourceValid,
-            llvmConstant(chainBuilder, call.getLoc(),
-                         chainBuilder.getI1Type(), 1));
+                                  llvmConstant(chainBuilder, call.getLoc(),
+                                               chainBuilder.getI1Type(), 1));
         invertSourceValid = false;
       }
       while (true) {
@@ -2506,8 +2546,8 @@ FailureOr<bool> makeNativeEvalPlan(
         } else if (trueConstant && *trueConstant == UINT64_MAX) {
           guard =
               arith::XOrIOp::create(chainBuilder, call.getLoc(), guard,
-              llvmConstant(chainBuilder, call.getLoc(),
-                           chainBuilder.getI1Type(), 1));
+                                    llvmConstant(chainBuilder, call.getLoc(),
+                                                 chainBuilder.getI1Type(), 1));
           chainBase = select->getOperand(2);
         } else {
           break;
@@ -2616,12 +2656,12 @@ FailureOr<bool> makeNativeEvalPlan(
                                           address, 1);
         Value shift =
             spanWidth < 64 ? LLVM::TruncOp::create(loadBuilder, call.getLoc(),
-                                                  spanType, bitOffset)
-                                .getResult()
+                                                   spanType, bitOffset)
+                                 .getResult()
             : spanWidth == 64 ? bitOffset
-                          : LLVM::ZExtOp::create(loadBuilder, call.getLoc(),
-                                                 spanType, bitOffset)
-                                .getResult();
+                              : LLVM::ZExtOp::create(loadBuilder, call.getLoc(),
+                                                     spanType, bitOffset)
+                                    .getResult();
         Value shifted =
             arith::ShRUIOp::create(loadBuilder, call.getLoc(), span, shift);
         loaded = spanWidth == *width
@@ -3197,11 +3237,11 @@ FailureOr<bool> makeNativeEvalPlan(
         8);
     Value queued =
         LLVM::CallOp::create(
-                       builder, location, TypeRange{i32},
+            builder, location, TypeRange{i32},
             SymbolRefAttr::get(context,
                                "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
             ValueRange{runEntry->getArgument(1), actor, continuation, callback})
-                       .getResult();
+            .getResult();
     Value ok = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, queued,
         llvmConstant(builder, location, i32, OBELISK_RT_OK));
@@ -4256,10 +4296,10 @@ FailureOr<bool> makeNativeEvalPlan(
     // local to the selected executor, never another model-wide controller.
     Value stepStatus =
         LLVM::CallOp::create(
-        builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, evalDispatchName),
-        ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
-        .getResult();
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, evalDispatchName),
+            ValueRange{runEntry->getArgument(0), runEntry->getArgument(1)})
+            .getResult();
     cf::BranchOp::create(builder, location, completeStep,
                          ValueRange{stepStatus});
 
@@ -5699,8 +5739,8 @@ FailureOr<bool> makeNativeEvalPlan(
             arith::AndIOp::create(builder, location,
                                   LLVM::LoadOp::create(builder, location, i64,
                                                        transientAddress, 8),
-                llvmConstant(builder, location, i64,
-                             scalarMask(root.bit_width))));
+                                  llvmConstant(builder, location, i64,
+                                               scalarMask(root.bit_width))));
         LLVM::StoreOp::create(builder, location,
                               llvmConstant(builder, location, i64, 0),
                               transientAddress, 8);

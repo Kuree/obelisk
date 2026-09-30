@@ -30,111 +30,35 @@ struct StaticNBADestination {
   uint64_t offset;
 };
 
+/// Consume the dataflow certificate; this is layout validation, not another
+/// reference walk. Known capture metadata alone is not a constant-handle proof.
 inline std::optional<StaticNBADestination>
-resolveStaticNBADestination(Value value, const NativeStateLayout &layout,
-                            DenseSet<Value> &active) {
-  if (!value || !active.insert(value).second)
+getStaticNBAReference(Value value, const NativeStateLayout &layout,
+                      const analysis::HandleDataflowResult &analysis) {
+  auto fact = analysis.facts.find(value);
+  auto proof = analysis.certificates.find(value);
+  if (fact == analysis.facts.end() || proof == analysis.certificates.end() ||
+      !proof->second.constantAddress || fact->second.dynamic ||
+      fact->second.resource != schedule::ComputeResourceKind::Storage ||
+      !fact->second.descriptor)
     return std::nullopt;
-  auto finish = [&](std::optional<StaticNBADestination> result) {
-    active.erase(value);
-    return result;
-  };
-  auto addOffset = [&](std::optional<StaticNBADestination> base,
-                       uint64_t offset) -> std::optional<StaticNBADestination> {
-    if (!base || offset > std::numeric_limits<uint64_t>::max() - base->offset)
-      return std::nullopt;
-    base->offset += offset;
-    return base;
-  };
-  auto resolveDescriptor =
-      [&](uint64_t descriptor) -> std::optional<StaticNBADestination> {
-    auto handle = layout.storage.find(descriptor);
-    if (handle == layout.storage.end())
-      return std::nullopt;
-    obelisk_rt_stable_handle_v1 decoded{};
-    if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
-      return std::nullopt;
-    return StaticNBADestination{decoded.id,
-                                static_cast<uint64_t>(decoded.offset)};
-  };
-
-  if (auto argument = dyn_cast<BlockArgument>(value)) {
-    auto function =
-        dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
-    if (!function)
-      return finish(std::nullopt);
-    // Capture specialization has already replaced every direct context
-    // descriptor with a SimContextStorageOp. A surviving entry argument may
-    // be a view or another runtime-selected handle; descriptor provenance does
-    // not prove that native lowering will materialize it as a constant.
-    if (argument.getOwner() == &function.getBody().front())
-      return finish(std::nullopt);
-
-    std::optional<StaticNBADestination> resolved;
-    Block *block = argument.getOwner();
-    for (Block *predecessor : block->getPredecessors()) {
-      Operation *terminator = predecessor->getTerminator();
-      auto branch = dyn_cast<BranchOpInterface>(terminator);
-      if (!branch)
-        return finish(std::nullopt);
-      for (unsigned successor = 0; successor != terminator->getNumSuccessors();
-           ++successor) {
-        if (terminator->getSuccessor(successor) != block)
-          continue;
-        SuccessorOperands operands = branch.getSuccessorOperands(successor);
-        unsigned index = argument.getArgNumber();
-        if (index >= operands.size() || operands.isOperandProduced(index))
-          return finish(std::nullopt);
-        std::optional<StaticNBADestination> incoming =
-            resolveStaticNBADestination(operands[index], layout, active);
-        if (!incoming ||
-            (resolved && (resolved->staticID != incoming->staticID ||
-                          resolved->offset != incoming->offset)))
-          return finish(std::nullopt);
-        resolved = incoming;
-      }
-    }
-    return finish(resolved);
-  }
-
-  if (auto storage = value.getDefiningOp<sim::SimContextStorageOp>())
-    return finish(resolveDescriptor(storage.getId()));
-  if (auto view = value.getDefiningOp<sim::SimRefExtractOp>())
-    return finish(
-        addOffset(resolveStaticNBADestination(view.getInput(), layout, active),
-                  view.getLowBit()));
-  if (auto view = value.getDefiningOp<sim::SimRefSubelementOp>()) {
-    uint64_t offset = 0;
-    Type type = cast<sim::RefType>(view.getInput().getType()).getElementType();
-    for (int64_t index : view.getIndices()) {
-      if (index < 0)
-        return finish(std::nullopt);
-      auto child = sim::getAggregateProvenanceSubelement(
-          type, static_cast<unsigned>(index));
-      if (!child ||
-          child->first > std::numeric_limits<uint64_t>::max() - offset)
-        return finish(std::nullopt);
-      offset += child->first;
-      type = sim::getAggregateElementType(type, static_cast<unsigned>(index));
-    }
-    return finish(addOffset(
-        resolveStaticNBADestination(view.getInput(), layout, active), offset));
-  }
-  return finish(std::nullopt);
-}
-
-inline std::optional<StaticNBADestination>
-resolveStaticNBADestination(Value value, const NativeStateLayout &layout) {
-  DenseSet<Value> active;
-  return resolveStaticNBADestination(value, layout, active);
+  auto handle = layout.storage.find(*fact->second.descriptor);
+  obelisk_rt_stable_handle_v1 decoded{};
+  if (handle == layout.storage.end() ||
+      !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0 ||
+      fact->second.low > UINT64_MAX - uint64_t(decoded.offset))
+    return std::nullopt;
+  return StaticNBADestination{decoded.id,
+                              uint64_t(decoded.offset) + fact->second.low};
 }
 
 inline bool isNonInvalidatingStaticNBA(
     sim::SimNBAEnqueueOp op,
     const DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
     ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
-    const NativeStateLayout &stateLayout) {
+    const NativeStateLayout &stateLayout,
+    const analysis::HandleDataflowResult &analysis) {
   schedule::NBASiteAttr site = op.getSiteAttr();
   std::optional<unsigned> width = nativeStateWidth(op.getValue().getType());
   if (!site || !width || *width > 64 || op.getDelay() || site.getTiming() ||
@@ -145,7 +69,7 @@ inline bool isNonInvalidatingStaticNBA(
       planned->second >= staticNBARoots.size())
     return false;
   std::optional<StaticNBADestination> destination =
-      resolveStaticNBADestination(op.getDestination(), stateLayout);
+      getStaticNBAReference(op.getDestination(), stateLayout, analysis);
   const obelisk_rt_static_nba_root &root = staticNBARoots[planned->second];
   return destination && destination->staticID == root.static_state &&
          destination->offset <= root.bit_width &&

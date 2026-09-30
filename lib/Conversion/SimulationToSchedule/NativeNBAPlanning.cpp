@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -25,12 +26,13 @@ using namespace mlir;
 namespace obelisk::detail {
 /// Return true when `enqueue` cannot execute more than once between two NBA
 /// barriers. Its statement must occur once in this call closure, sit
-/// outside any loop, lie in a function no call can re-enter, and have no
-/// control-flow path back to its own block without advancing simulation time.
+/// in a function no call can re-enter. Dense dataflow proves the execution
+/// bound through loops and branches, resetting only on a positive delay.
 static bool nbaEnqueueExecutesAtMostOnce(
     sim::SimNBAEnqueueOp enqueue, const NativeStaticNBAPlan &plan,
     const llvm::DenseMap<uint64_t, unsigned> &closureSiteOps,
-    const llvm::SmallPtrSetImpl<Operation *> &callees) {
+    const llvm::SmallPtrSetImpl<Operation *> &callees,
+    const analysis::StorageWriteAnalysis &writes) {
   schedule::NBASiteAttr site = enqueue.getSiteAttr();
   if (!site)
     return false;
@@ -46,40 +48,7 @@ static bool nbaEnqueueExecutesAtMostOnce(
   sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
   if (!function || callees.contains(function.getOperation()))
     return false;
-  for (Operation *ancestor = enqueue->getParentOp();
-       ancestor && ancestor != function.getOperation();
-       ancestor = ancestor->getParentOp())
-    if (isa<LoopLikeOpInterface>(ancestor))
-      return false;
-  // An event or #0 suspension can resume the process in the same time slot
-  // before the NBA region. Only a strictly positive delay guarantees that
-  // the next activation starts after a fresh NBA barrier (LRM 4.4.2.3-4).
-  auto advancesTime = [](Operation *terminator) {
-    auto delay = dyn_cast<sim::SimSuspendDelayOp>(terminator);
-    auto constant =
-        delay ? delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>()
-              : sim::SimTimeConstantOp{};
-    return constant && constant.getValue() != 0;
-  };
-  Block *originBlock = enqueue->getBlock();
-  if (advancesTime(originBlock->getTerminator()))
-    return true;
-  SmallVector<Block *, 8> worklist;
-  for (Block *successor : originBlock->getTerminator()->getSuccessors())
-    worklist.push_back(successor);
-  llvm::SmallPtrSet<Block *, 16> visited;
-  while (!worklist.empty()) {
-    Block *block = worklist.pop_back_val();
-    if (block == originBlock)
-      return false;
-    if (!visited.insert(block).second)
-      continue;
-    if (advancesTime(block->getTerminator()))
-      continue;
-    for (Block *successor : block->getTerminator()->getSuccessors())
-      worklist.push_back(successor);
-  }
-  return true;
+  return writes.executesAtMostOnce(enqueue);
 }
 
 FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
@@ -165,6 +134,21 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         site.getId(), origin ? origin.getValue().getZExtValue() : site.getId());
   });
 
+  sim::SimDesignOp design;
+  module.walk([&](sim::SimDesignOp candidate) {
+    design = candidate;
+    return WalkResult::interrupt();
+  });
+  analysis::HandleDataflowAnalysis handleAnalysis(design);
+  DenseMap<Operation *, std::unique_ptr<analysis::StorageWriteAnalysis>> writes;
+  auto writesFor =
+      [&](sim::SimFuncOp function) -> analysis::StorageWriteAnalysis & {
+    auto &entry = writes[function.getOperation()];
+    if (!entry)
+      entry = std::make_unique<analysis::StorageWriteAnalysis>(function,
+                                                               handleAnalysis);
+    return *entry;
+  };
   struct Lane {
     uint64_t stride;
     uint64_t low;
@@ -202,37 +186,22 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
                         previous->second.width != lane.width))
         reject();
     };
-    // A fixed subelement is a lane in a single root-sized element. This
-    // proves disjoint packed words as well as unpacked array elements without
-    // assuming that distinct descriptors or source expressions cannot alias.
-    if (auto fixed = resolveStaticNBADestination(reference, stateLayout)) {
-      if (fixed->staticID != root.static_state || !width || *width == 0 ||
-          *width > 64 || fixed->offset > root.bit_width ||
-          *width > root.bit_width - fixed->offset)
-        return reject();
-      return recordLane({root.bit_width, fixed->offset, *width});
-    }
-    uint64_t low = 0;
-    if (auto extract = reference.getDefiningOp<sim::SimRefExtractOp>()) {
-      low = extract.getLowBit();
-      reference = extract.getInput();
-    }
-    auto element = reference.getDefiningOp<sim::SimRefArrayElementOp>();
-    if (!element)
+    auto target = writesFor(function).lookup(reference);
+    auto handle = target.hasRoot() ? stateLayout.storage.find(target.descriptor)
+                                   : stateLayout.storage.end();
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (!target.hasLane() || target.clipped || !width || !*width ||
+        *width > 64 || *width != target.width ||
+        handle == stateLayout.storage.end() ||
+        !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+        decoded.id != root.static_state || decoded.offset != 0 ||
+        target.rootWidth != root.bit_width)
       return reject();
-    auto base = resolveStaticNBADestination(element.getInput(), stateLayout);
-    auto stride =
-        nativeStateWidth(element.getResult().getType().getElementType());
-    auto arrayWidth =
-        nativeStateWidth(element.getInput().getType().getElementType());
-    // Restrict this proof to complete, fixed-width arrays rooted at zero.
-    // Unknown/out-of-range indices remain guarded by normal handle lowering;
-    // partially clipped slices and runtime-selected lanes are not admitted.
-    if (!base || base->staticID != root.static_state || base->offset != 0 ||
-        !stride || !arrayWidth || *arrayWidth != root.bit_width || !width ||
-        *width == 0 || *width > 64 || low > *stride || *width > *stride - low)
+    uint64_t stride = target.dynamic ? target.stride : target.rootWidth;
+    if (!stride || target.low > stride || target.width > stride - target.low)
       return reject();
-    recordLane({*stride, low, *width});
+    recordLane({stride, target.low, target.width});
   });
   // Overlapping slots are also independent if their statements cannot both
   // execute. Require one occurrence of each origin in the same outlined
@@ -246,25 +215,9 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     if (a.size() != 1 || b.size() != 1)
       return false;
     auto function = a.front()->getParentOfType<sim::SimFuncOp>();
-    if (!function || function != b.front()->getParentOfType<sim::SimFuncOp>() ||
-        a.front()->getParentRegion() != &function.getBody() ||
-        b.front()->getParentRegion() != &function.getBody())
+    if (!function || function != b.front()->getParentOfType<sim::SimFuncOp>())
       return false;
-    auto reaches = [](Block *from, Block *to) {
-      SmallVector<Block *> pending{from};
-      llvm::SmallPtrSet<Block *, 16> seen;
-      while (!pending.empty()) {
-        Block *current = pending.pop_back_val();
-        if (current == to)
-          return true;
-        if (!seen.insert(current).second)
-          continue;
-        llvm::append_range(pending, current->getSuccessors());
-      }
-      return false;
-    };
-    return !reaches(a.front()->getBlock(), b.front()->getBlock()) &&
-           !reaches(b.front()->getBlock(), a.front()->getBlock());
+    return writesFor(function).mutuallyExclusive(a.front(), b.front());
   };
   plan.independentSiteWrites.assign(plan.roots.size(), false);
   for (uint32_t root = 0; root != plan.roots.size(); ++root) {
@@ -393,18 +346,14 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         (function.getEntryKind() == sim::EntryKind::RootInitializer ||
          (spawnCounts.lookup(function.getSymName()) == 1 &&
           !potentiallyRepeatedSpawns.contains(function.getSymName())));
-    if (!uniqueProcess ||
-        !nbaEnqueueExecutesAtMostOnce(enqueue, plan,
-                                      closureSiteOpsFor(function), callees))
+    if (!uniqueProcess || !nbaEnqueueExecutesAtMostOnce(
+                              enqueue, plan, closureSiteOpsFor(function),
+                              callees, writesFor(function)))
       plan.mergeSafeRoots[mapped->second] = false;
   });
   // A root whose intermediate NBA values nothing observes may merge any
   // number of updates, in any order relative to other roots.
-  sim::SimDesignOp design;
-  module.walk([&](sim::SimDesignOp candidate) {
-    design = candidate;
-    return WalkResult::interrupt();
-  });
+
   analysis::NBAMergeSafety mergeSafety(design);
   SmallVector<bool> unobservable(plan.roots.size());
   plan.trackTransients.assign(plan.roots.size(), false);
@@ -485,11 +434,11 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     seen[rootIndex] = true;
     std::optional<unsigned> width =
         nativeStateWidth(enqueue.getValue().getType());
-    DenseSet<Value> active;
-    std::optional<StaticNBADestination> destination =
-        resolveStaticNBADestination(enqueue.getDestination(), stateLayout,
-                                    active);
     sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
+    std::optional<StaticNBADestination> destination =
+        function ? getStaticNBAReference(enqueue.getDestination(), stateLayout,
+                                         writesFor(function).getHandles())
+                 : std::nullopt;
     uint32_t homeRegion =
         function ? getRuntimeEventRegion(function.getHomeRegion()) : UINT32_MAX;
     uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||

@@ -8,6 +8,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
@@ -357,13 +358,14 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
   // selected per operation by resolveDirectStaticStateRange; a wide or
   // otherwise generic root does not prevent an independent narrow root from
   // using generated planes.
-  if ((nativeScheduler == schedule::NativeSchedulerMode::Auto || evalScheduler) &&
+  if ((nativeScheduler == schedule::NativeSchedulerMode::Auto ||
+       evalScheduler) &&
       metadataDesign) {
     // An unpromoted automatic reference needs a runtime activation frame
     // (IEEE 1800-2023 6.21). Keep its complete owner at a checkpoint before
     // certifying NBA ownership; a helper's local packed temporary must not
     // introduce allocation/load calls into the runtime-free eval closure.
-    analysis::DescriptorProvenanceAnalysis provenanceAnalysis(metadataDesign);
+    analysis::HandleDataflowAnalysis provenanceAnalysis(metadataDesign);
     llvm::DenseSet<uint64_t> runtimeObservedNets;
     for (const auto &net : stateLayout->netLayouts)
       if (staticFanoutPlan.runtimeTransitionStates.contains(net.handleID))
@@ -378,6 +380,16 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           runtimeObservedNets.insert(bit.net);
     }
     DenseMap<Operation *, bool> runtimeStateFunctions;
+    DenseMap<Operation *, Operation *> runtimeStateOperations;
+    DenseMap<Operation *, std::unique_ptr<analysis::NativeHotPathReachability>>
+        hotPaths;
+    auto hotFor =
+        [&](sim::SimFuncOp function) -> analysis::NativeHotPathReachability & {
+      auto &entry = hotPaths[function];
+      if (!entry)
+        entry = std::make_unique<analysis::NativeHotPathReachability>(function);
+      return *entry;
+    };
     metadataDesign.walk([&](sim::SimFuncOp actor) {
       if (!aotActorSlotFor(actor))
         return;
@@ -390,6 +402,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       if (!function)
         return;
       bool runtimeLocal = false;
+      Operation *runtimeOperation = nullptr;
       SmallVector<sim::SimFuncOp> pending{function};
       llvm::SmallPtrSet<Operation *, 8> visited;
       while (!pending.empty()) {
@@ -399,13 +412,34 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         auto [classification, inserted] =
             runtimeStateFunctions.try_emplace(current.getOperation(), false);
         if (inserted) {
-          auto provenance = provenanceAnalysis.derive(current);
+          analysis::StorageWriteAnalysis writeAnalysis(
+              current, provenanceAnalysis.analyze(current), false);
+          const auto &provenance = writeAnalysis.getHandles().facts;
+          auto directDynamicStore = [&](Value destination) {
+            auto target = writeAnalysis.lookup(destination);
+            if (!writeAnalysis.hasDirectDynamicSelection(destination) ||
+                target.rootWidth > 64 || target.width > 64)
+              return false;
+            Type element =
+                cast<sim::RefType>(destination.getType()).getElementType();
+            if (!isa_and_nonnull<IntegerType, sim::LogicType>(
+                    sim::getPackedScalarType(element)))
+              return false;
+            auto handle = stateLayout->storage.find(target.descriptor);
+            obelisk_rt_stable_handle_v1 decoded{};
+            return handle != stateLayout->storage.end() &&
+                   obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
+                   decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+                   stateLayout->directHandles.contains(decoded.id);
+          };
           auto runtimeStore = [&](Value destination,
                                   bool requireStaticAccess = true,
-                                  bool requireStaticNBA = false) {
+                                  bool requireStaticNBA = false,
+                                  bool allowDirectDynamicStore = false) {
             auto found = provenance.find(destination);
             if (found == provenance.end() || !found->second.descriptor ||
-                (requireStaticAccess && found->second.dynamic))
+                (requireStaticAccess && found->second.dynamic &&
+                 !(allowDirectDynamicStore && directDynamicStore(destination))))
               return true;
             // Runtime-owned waiters need publication while the original
             // actor identity is active (IEEE 1800-2023 9.4.2). Generated
@@ -426,40 +460,53 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                      !stateLayout->nbaHandles.contains(decoded.id)));
           };
           current.walk([&](Operation *operation) {
-            // Dynamic blocking stores still lower through the runtime's
-            // bounded, override-aware plane API. Preserve the complete
-            // source activation at a checkpoint (IEEE 1800-2023 4.6(a),
-            // 9.4.2, 11.5.1), including its transition publications.
-            // Managed heap access uses the native actor's GC lane and root
-            // scope. Keep that compiled activation at a runtime service
-            // checkpoint; it is not a bytecode or coroutine requirement.
-            // This also preserves notifications from managed field stores.
+            if (!hotFor(current).canExecute(operation))
+              return;
+            bool requiresRuntime = false;
+            // Dynamic stores without a direct-lowering certificate use
+            // the bounded, override-aware runtime plane API. Preserve the
+            // complete source activation at a checkpoint (IEEE
+            // 1800-2023 4.6(a), 9.4.2, 11.5.1), including its transition
+            // publications. Managed heap access uses the native actor's GC lane
+            // and root scope. Keep that compiled activation at a runtime
+            // service checkpoint; it is not a bytecode or coroutine
+            // requirement. This also preserves notifications from managed field
+            // stores.
             if (isa<sim::SimRefAllocOp, sim::SimClassAllocOp,
                     sim::SimClassCopyOp, sim::SimManagedLoadOp,
                     sim::SimManagedStoreOp, sim::SimManagedBitsDynStoreOp,
-                    sim::SimClassDirectCallOp,
-                    sim::SimClassVirtualCallOp>(operation))
-              classification->second = true;
+                    sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp>(
+                    operation))
+              requiresRuntime = true;
             else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
-              classification->second |= runtimeStore(store.getReference());
+              requiresRuntime =
+                  isa<sim::StringType>(store.getValue().getType()) ||
+                  runtimeStore(store.getReference(), true, false, true);
             else if (auto copy = dyn_cast<sim::SimRefCopyOp>(operation))
-              classification->second |= runtimeStore(copy.getDestination());
+              requiresRuntime = runtimeStore(copy.getDestination());
             else if (auto store = dyn_cast<sim::SimNetWriteOp>(operation))
-              classification->second |= runtimeStore(store.getNet());
+              requiresRuntime = runtimeStore(store.getNet());
             else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation))
-              classification->second |= runtimeStore(drive.getDriver());
+              requiresRuntime = runtimeStore(drive.getDriver());
             else if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
               // LRM 4.6(b), 10.4.2: roots excluded from static NBA
               // specialization (including delayed/immediate mixtures)
               // keep their complete owner at the ordered runtime queue.
-              classification->second |=
+              requiresRuntime =
                   staticEvalIsland &&
                   runtimeStore(enqueue.getDestination(), false, true);
             }
+            classification->second |= requiresRuntime;
+            if (requiresRuntime && detailedTiming)
+              runtimeStateOperations.try_emplace(current, operation);
           });
         }
         runtimeLocal |= classification->second;
+        if (!runtimeOperation)
+          runtimeOperation = runtimeStateOperations.lookup(current);
         current.walk([&](sim::SimCallOp call) {
+          if (!hotFor(current).canExecute(call))
+            return;
           if (sim::SimFuncOp callee =
                   planningSymbols.lookupSymbolIn<sim::SimFuncOp>(
                       metadataDesign, call.getCalleeAttr()))
@@ -470,12 +517,17 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalCheckpointOnly>(
             function, UnitAttr::get(module.getContext()));
-        if (detailedTiming)
+        if (detailedTiming) {
           llvm::errs() << "obelisk eval checkpoint admission: actor="
                        << *aotActorSlotFor(actor)
                        << " function=" << actor.getSymName()
                        << " body=" << function.getSymName()
-                       << " reason=runtime-state-access\n";
+                       << " reason=runtime-state-access";
+          if (runtimeOperation)
+            llvm::errs() << " operation=" << runtimeOperation->getName()
+                         << " source=" << runtimeOperation->getLoc();
+          llvm::errs() << '\n';
+        }
       }
     });
     bool hasObserver = false;
@@ -542,9 +594,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           module, *stateLayout, aotEligibility.getActorSlots(), *clocks);
       if (failed(aliases))
         return failure();
-      stateLayout->clockFacts =
-          buildNativeClockInferencePlan(module, *stateLayout,
-                                        aotEligibility.getActorSlots(), *clocks);
+      stateLayout->clockFacts = buildNativeClockInferencePlan(
+          module, *stateLayout, aotEligibility.getActorSlots(), *clocks);
     }
     llvm::SmallPtrSet<Operation *, 8> mixedTierBodies;
     if (metadataDesign)
@@ -571,11 +622,14 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             bool nonPeriodicIngress = false;
             for (const auto &entry : staticFanoutPlan.entries)
               if (entry.actor_slot == *aotActorSlotFor(actor)) {
-                auto bound = llvm::find_if(stateLayout->bounds, [&](const auto &b) {
-                  return b.handleID == entry.static_state;
-                });
-                bool periodic = bound != stateLayout->bounds.end() &&
-                    entry.bit_width == 1 && stateLayout->hasClockTickBound(
+                auto bound =
+                    llvm::find_if(stateLayout->bounds, [&](const auto &b) {
+                      return b.handleID == entry.static_state;
+                    });
+                bool periodic =
+                    bound != stateLayout->bounds.end() &&
+                    entry.bit_width == 1 &&
+                    stateLayout->hasClockTickBound(
                         entry.static_state, bound->offset + entry.low_bit);
                 periodicIngress |= periodic;
                 nonPeriodicIngress |= !periodic;
@@ -740,9 +794,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
               bool sharedCalendar = ::obelisk::schedule::has<
                   ::obelisk::schedule::Field::EvalRuntimeCalendar>(module);
               bool fixedSlots = clockedBodies[index] &&
-                  staticNBAPlan.mergeSafeRoots[root] &&
-                  (generatedOrigins[root].size() == 1 ||
-                   staticNBAPlan.independentSiteWrites[root]);
+                                staticNBAPlan.mergeSafeRoots[root] &&
+                                (generatedOrigins[root].size() == 1 ||
+                                 staticNBAPlan.independentSiteWrites[root]);
               return !orderedRootClosed[root] || !queuePayloadSupported[root] ||
                      (sharedCalendar && !fixedSlots);
             });
@@ -755,13 +809,16 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                        << " reason=runtime-nba-owner ordered="
                        << bodyNeedsOrderedNBA[index]
                        << " global-queue-closed=" << everySiteGenerated
-                       << " wide-roots=";
+                       << " clocked=" << clockedBodies[index] << " wide-roots=";
           for (uint32_t root : bodyWideRoots[index])
-            llvm::errs() << root << ":"
-                         << staticNBAPlan.roots[root].bit_width << ":"
-                         << static_cast<bool>(orderedRootClosed[root]) << ":"
-                         << static_cast<bool>(queuePayloadSupported[root])
-                         << ",";
+            llvm::errs()
+                << root << ":" << staticNBAPlan.roots[root].bit_width << ":"
+                << static_cast<bool>(orderedRootClosed[root]) << ":"
+                << static_cast<bool>(queuePayloadSupported[root]) << ":merge="
+                << static_cast<bool>(staticNBAPlan.mergeSafeRoots[root])
+                << ":independent="
+                << static_cast<bool>(staticNBAPlan.independentSiteWrites[root])
+                << ",";
           llvm::errs() << '\n';
         }
         ::obelisk::schedule::set<evalRuntimeNBARequiredAttr>(
@@ -937,9 +994,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     if (failed(aliases))
       return failure();
     periodicAliases = std::move(*aliases);
-    stateLayout->clockFacts =
-        buildNativeClockInferencePlan(module, *stateLayout,
-                                      aotEligibility.getActorSlots(), periodicClocks);
+    stateLayout->clockFacts = buildNativeClockInferencePlan(
+        module, *stateLayout, aotEligibility.getActorSlots(), periodicClocks);
   }
   // Auto selects the generated eval form after the closed-world slot and
   // fanout proofs exist. A periodic clock enables run-until compression;
@@ -1520,8 +1576,8 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
         ++tier1;
     }
     llvm::errs() << "obelisk eval executor inventory: tier1=" << tier1
-                 << " tier2=" << tier2
-                 << " runtime_checkpoints=" << checkpoints << '\n';
+                 << " tier2=" << tier2 << " runtime_checkpoints=" << checkpoints
+                 << '\n';
   }
   markTiming("eval ownership and graph planning");
 

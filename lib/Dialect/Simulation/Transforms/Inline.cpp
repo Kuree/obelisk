@@ -324,7 +324,7 @@ void ObeliskSimInlinePass::runOnOperation() {
     designBaseline = addSaturating(designBaseline, cost);
   DenseMap<Operation *, uint64_t> callerCurrentCosts = callerBaselines;
   uint64_t currentDesignCost = designBaseline;
-  DenseMap<Operation *, analysis::DescriptorProvenanceMap> provenanceCache;
+  DenseMap<Operation *, analysis::HandleFacts> provenanceCache;
   DenseMap<Operation *, uint64_t> regionCostCache;
   DenseMap<Operation *, bool> leafCache;
   llvm::DenseSet<uint64_t> selectedInlineIDs;
@@ -508,9 +508,9 @@ void ObeliskSimInlinePass::runOnOperation() {
       if (cached == provenanceCache.end())
         cached = provenanceCache
                      .try_emplace(caller.getOperation(),
-                                  analysis::deriveDescriptorProvenance(caller))
+                                  analysis::deriveHandleFacts(caller))
                      .first;
-      const analysis::DescriptorProvenanceMap &actuals = cached->second;
+      const analysis::HandleFacts &actuals = cached->second;
       Block &entry = callee.getBody().front();
       for (auto [index, argument] : llvm::enumerate(entry.getArguments())) {
         if (argument.use_empty() || index >= call.getNumOperands())

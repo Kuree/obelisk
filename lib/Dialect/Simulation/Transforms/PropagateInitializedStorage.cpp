@@ -1,4 +1,5 @@
-//===- PropagateInitializedStorage.cpp -------------------------------------===//
+//===- PropagateInitializedStorage.cpp
+//-------------------------------------===//
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
@@ -156,12 +157,11 @@ private:
       });
     }
 
-    analysis::DescriptorProvenanceAnalysis provenanceAnalysis(design);
+    analysis::HandleDataflowAnalysis provenanceAnalysis(design);
     bool unknownWrite = false;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
-      analysis::DescriptorProvenanceMap provenance =
-          provenanceAnalysis.derive(function);
+      analysis::HandleFacts provenance = provenanceAnalysis.derive(function);
       function.walk([&](Operation *operation) {
         // Some effects can reach storage without carrying a sim.ref operand
         // (for example, a class dispatch or an erased argument reference).
@@ -217,7 +217,7 @@ private:
           if (candidate == candidates.end())
             continue;
           StorageCandidate &info = candidate->second;
-          const analysis::DescriptorProvenance &span = found->second;
+          const analysis::HandleFact &span = found->second;
           // A fixed view is an alias, not a write. Inspect its consumers too;
           // partial stores and opaque escapes still invalidate the root.
           if (isa<sim::SimRefExtractOp>(operation))
