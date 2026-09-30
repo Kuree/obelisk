@@ -6,6 +6,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
+#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -241,6 +242,33 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
                  "multiple periodic generators drive the same physical bit"),
              failure();
   return clocks;
+}
+
+llvm::DenseMap<analysis::ClockBit, analysis::ClockFact>
+buildNativeClockInferencePlan(
+    ModuleOp module, const NativeStateLayout &layout,
+    const DenseMap<Operation *, uint32_t> &actorSlots,
+    ArrayRef<NativePeriodicClock> clocks) {
+  SmallVector<analysis::PeriodicClockSeed> seeds;
+  for (const auto &clock : clocks) {
+    auto actor = llvm::find_if(actorSlots, [&](const auto &entry) {
+      return entry.second == clock.getActorSlot();
+    });
+    if (actor != actorSlots.end())
+      seeds.push_back({{clock.getStaticState(), clock.getBitOffset()},
+                       actor->first, clock.getHalfPeriod()});
+  }
+  analysis::ClockInferenceAnalysis inference(module, layout, seeds);
+  llvm::DenseSet<analysis::ClockBit> periodic;
+  for (const auto &[bit, fact] : inference.getFacts())
+    if (fact.hasTickBound())
+      periodic.insert(bit);
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk periodic signal proof: clocks=" << clocks.size()
+                 << " copies=" << inference.getCopyCount()
+                 << " cadence-outputs=" << inference.getCadenceCount()
+                 << " periodic-bits=" << periodic.size() << '\n';
+  return inference.getFacts();
 }
 
 FailureOr<SmallVector<NativePeriodicAlias>>

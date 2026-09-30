@@ -3,6 +3,7 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
+#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "SimulationProcessRuntimeABI.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
@@ -116,6 +117,13 @@ struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
   llvm::DenseSet<uint32_t> guardedHandles;
   llvm::DenseSet<uint32_t> nbaHandles;
   llvm::DenseSet<uint32_t> transitionHandles;
+  // Inferred waveform, source domain, and update cadence, independent of
+  // calendar ownership. Tick-driven signals need not have periodic waveforms.
+  llvm::DenseMap<analysis::ClockBit, analysis::ClockFact> clockFacts;
+  bool hasClockTickBound(uint32_t state, uint64_t bit) const {
+    auto fact = clockFacts.find({state, bit});
+    return fact != clockFacts.end() && fact->second.hasTickBound();
+  }
   bool transitionHandlesExact = false;
   bool directContinuous = false;
 };

@@ -2,6 +2,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   ClassBitstreamAnalysis.cpp
   ClassBitstreamPlan.cpp
   ClassDispatchAnalysis.cpp
+  ClockInferenceAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   NativeAOTAnalysis.cpp
   NativeStateLayoutAnalysis.cpp
@@ -20,6 +21,7 @@ add_mlir_library(ObeliskSimulationAnalysis
 
   LINK_LIBS PUBLIC
   ObeliskSimulationIR
+  MLIRAnalysis
   MLIRControlFlowDialect
   MLIRControlFlowInterfaces
   MLIRIR

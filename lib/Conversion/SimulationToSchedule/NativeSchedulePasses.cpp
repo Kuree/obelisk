@@ -880,6 +880,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     if (failed(aliases))
       return failure();
     periodicAliases = std::move(*aliases);
+    stateLayout->clockFacts =
+        buildNativeClockInferencePlan(module, *stateLayout,
+                                      aotEligibility.getActorSlots(), periodicClocks);
   }
   // Auto selects the generated eval form after the closed-world slot and
   // fanout proofs exist. A periodic clock enables run-until compression;

@@ -3,6 +3,7 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 
+#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "SimulationNBALowering.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
@@ -219,6 +220,11 @@ using NativePeriodicClock = schedule::PeriodicClockAttr;
 /// generated loop updates both canonical driver and resolved-net planes and
 /// seeds the target fanout directly, avoiding a forwarding actor per edge.
 using NativePeriodicAlias = schedule::PeriodicAliasAttr;
+
+llvm::DenseMap<analysis::ClockBit, analysis::ClockFact> buildNativeClockInferencePlan(
+    mlir::ModuleOp module, const NativeStateLayout &stateLayout,
+    const mlir::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
+    llvm::ArrayRef<NativePeriodicClock> clocks);
 
 mlir::LogicalResult
 specializeNativeAOTCaptures(mlir::ModuleOp module,

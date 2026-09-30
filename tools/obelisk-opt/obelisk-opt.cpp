@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
   obelisk::registerSimulationToSchedulePipeline();
   obelisk::registerObeliskToSimulationPipeline();
 #ifdef OBELISK_INCLUDE_TESTS
+  obelisk::registerClockInferenceAnalysisTestPass();
   obelisk::registerManagedClassLayoutAnalysisTestPass();
   obelisk::registerNativeAOTAnalysisTestPass();
   obelisk::registerNativeStateLayoutAnalysisTestPass();

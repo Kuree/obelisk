@@ -5,6 +5,7 @@
 
 namespace obelisk {
 
+void registerClockInferenceAnalysisTestPass();
 void registerManagedClassLayoutAnalysisTestPass();
 void registerNativeAOTAnalysisTestPass();
 void registerNativeStateLayoutAnalysisTestPass();

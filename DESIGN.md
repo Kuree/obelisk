@@ -535,6 +535,23 @@ Tier 2 is a generated local
 dirty-mask convergence algorithm, and Tier 3 is the existing bytecode boundary
 for dynamic or unsupported control.
 
+Clock inference uses a finite-height lattice over physical state bits. The
+facts distinguish constants, exact periodic waveforms, waveforms updated at
+most once per source tick, and unknown timing. Forwarding preserves the source
+domain; an edge-driven output retains its source domain and update bound
+without claiming an exact periodic waveform. Writer coverage includes physical
+aliases and writes through reference arguments. Conflicting writers invalidate
+the timing fact; bootstrap-only declaration initializers do not introduce an
+asynchronous writer into the periodic regime.
+
+The inference reaches a monotone fixed point over the signal graph. A dense
+forward CFG analysis uses the product lattice of zero, one, or many writes per
+output between suspensions. Joins take the maximum across paths, suspensions
+reset the activation count, and zero-time loops converge without a recursion
+cutoff. Scheduler admission and NBA materialization consume the same inferred
+facts. Exact waveform facts can support calendar reasoning; update bounds
+alone support fixed NBA slots and do not authorize synthesized clock edges.
+
 The replacement target is one event loop owning time, region arbitration,
 ordered updates, and suspended identities across all three tiers. Selecting a
 tier selects an executor; it must not start another time/region scheduler.
