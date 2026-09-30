@@ -6,7 +6,7 @@
 // Three fixed packed words share a 96-bit root. Distinct source
 // sites must not disable Eval when their exact physical slices are disjoint.
 // Each keeps its own pending slot; samples straddle the first clock edge.
-// PLAN-COUNT-3: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// PLAN-COUNT-3: llvm.mlir.global internal @__obelisk_eval_nba_valid_{{[0-9]+}}()
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 

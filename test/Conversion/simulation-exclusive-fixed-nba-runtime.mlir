@@ -7,7 +7,7 @@
 // Verify non-byte-aligned / cross-word slots and four-state publication. On
 // the second edge only the OTHER two slots are valid; stale first-edge values
 // must not be replayed over them. The runtime companion checks the resulting values.
-// PLAN-COUNT-4: llvm.mlir.global internal @__obelisk_eval_nba_valid_
+// PLAN-COUNT-4: llvm.mlir.global internal @__obelisk_eval_nba_valid_{{[0-9]+}}()
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 
