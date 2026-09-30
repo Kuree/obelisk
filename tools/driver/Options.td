@@ -136,6 +136,8 @@ def O3 : Flag<["-"], "O3">, Group<Compilation_Group>,
 def I : JoinedOrSeparate<["-"], "I">, Group<Preprocessor_Group>,
   MetaVarName<"<dir>">,
   HelpText<"Add a directory to the include search path">;
+def incdir_PLUS : Joined<["+"], "incdir+">, Alias<I>,
+  HelpText<"Add '+'-separated directories to the include search path">;
 def include_directory : Separate<["--"], "include-directory">, Alias<I>,
   Flags<[HelpHidden]>;
 def isystem : JoinedOrSeparate<["-"], "isystem">,
@@ -144,6 +146,8 @@ def isystem : JoinedOrSeparate<["-"], "isystem">,
 def D : JoinedOrSeparate<["-"], "D">, Group<Preprocessor_Group>,
   MetaVarName<"<macro[=value]>">,
   HelpText<"Define a preprocessor macro">;
+def define_PLUS : Joined<["+"], "define+">, Alias<D>,
+  HelpText<"Define '+'-separated preprocessor macros">;
 def U : JoinedOrSeparate<["-"], "U">, Group<Preprocessor_Group>,
   MetaVarName<"<macro>">,
   HelpText<"Undefine a preprocessor macro">;

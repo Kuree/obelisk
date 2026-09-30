@@ -936,9 +936,37 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
     const InputArgList &args, bool &valid,
     const obelisk::driver::ProtectedEnvelopeConfiguration &protectConfig) {
   obelisk::frontend::FrontendOptions options;
-  options.includeDirs = args.getAllArgValues(OPT_I);
+  // Split only the conventional '+' aliases. A canonical -I or -D value may
+  // itself contain '+' (a directory name or an arithmetic macro expression).
+  auto appendPreprocessorValues = [&](unsigned option, StringRef plusSpelling,
+                                      StringRef description,
+                                      std::vector<std::string> &values) {
+    for (Arg *arg : args.filtered(option)) {
+      arg->claim();
+      const Arg *alias = arg->getAlias();
+      if (!alias || alias->getSpelling() != plusSpelling) {
+        values.emplace_back(arg->getValue());
+        continue;
+      }
+      SmallVector<StringRef> entries;
+      StringRef(arg->getValue())
+          .split(entries, '+', /*MaxSplit=*/-1, /*KeepEmpty=*/true);
+      for (StringRef entry : entries) {
+        if (entry.empty()) {
+          emitDriverError(Twine("empty ") + description + " in '" +
+                          alias->getAsString(args) + "'");
+          valid = false;
+          continue;
+        }
+        values.emplace_back(entry);
+      }
+    }
+  };
+  appendPreprocessorValues(OPT_I, "+incdir+", "include directory",
+                           options.includeDirs);
   options.includeSystemDirs = args.getAllArgValues(OPT_isystem);
-  options.defines = args.getAllArgValues(OPT_D);
+  appendPreprocessorValues(OPT_D, "+define+", "macro definition",
+                           options.defines);
   options.undefines = args.getAllArgValues(OPT_U);
   options.libDirs = args.getAllArgValues(OPT_y);
   for (Arg *arg : args.filtered(OPT_Y)) {
