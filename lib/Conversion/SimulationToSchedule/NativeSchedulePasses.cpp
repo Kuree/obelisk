@@ -781,59 +781,78 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     // ownership proof. Moving one owner to a checkpoint also opens its other
     // roots, so propagate the boundary before lowering any publications
     // (IEEE 1800-2023 4.6(b), 10.4.2).
-    bool addedRuntimeOwner;
-    do {
-      addedRuntimeOwner = false;
-      for (auto [index, function] : llvm::enumerate(admittedBodies)) {
-        bool runtimeOwner =
-            ::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function) ||
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalCheckpointOnly>(function) ||
-            (bodyNeedsOrderedNBA[index] && !everySiteGenerated) ||
-            llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
-              bool sharedCalendar = ::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalRuntimeCalendar>(module);
-              bool fixedSlots = clockedBodies[index] &&
-                                staticNBAPlan.mergeSafeRoots[root] &&
-                                (generatedOrigins[root].size() == 1 ||
-                                 staticNBAPlan.independentSiteWrites[root]);
-              return !orderedRootClosed[root] || !queuePayloadSupported[root] ||
-                     (sharedCalendar && !fixedSlots);
-            });
-        if (!runtimeOwner)
-          continue;
-        if (detailedTiming &&
-            !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function)) {
-          llvm::errs() << "obelisk eval checkpoint admission: body="
-                       << function.getSymName()
-                       << " reason=runtime-nba-owner ordered="
-                       << bodyNeedsOrderedNBA[index]
-                       << " global-queue-closed=" << everySiteGenerated
-                       << " clocked=" << clockedBodies[index] << " wide-roots=";
-          for (uint32_t root : bodyWideRoots[index])
-            llvm::errs()
-                << root << ":" << staticNBAPlan.roots[root].bit_width << ":"
-                << static_cast<bool>(orderedRootClosed[root]) << ":"
-                << static_cast<bool>(queuePayloadSupported[root]) << ":merge="
-                << static_cast<bool>(staticNBAPlan.mergeSafeRoots[root])
-                << ":independent="
-                << static_cast<bool>(staticNBAPlan.independentSiteWrites[root])
-                << ",";
-          llvm::errs() << '\n';
-        }
-        ::obelisk::schedule::set<evalRuntimeNBARequiredAttr>(
-            function, UnitAttr::get(module.getContext()));
-        if (bodyNeedsOrderedNBA[index] && everySiteGenerated) {
-          everySiteGenerated = false;
-          addedRuntimeOwner = true;
-        }
+    DenseMap<uint32_t, SmallVector<unsigned>> ownersByRoot;
+    SmallVector<unsigned> ownerWorklist;
+    DenseSet<unsigned> ownerQueued, processedRuntimeOwners;
+    auto enqueueOwner = [&](unsigned index) {
+      if (ownerQueued.insert(index).second)
+        ownerWorklist.push_back(index);
+    };
+    for (auto [index, roots] : llvm::enumerate(bodyWideRoots)) {
+      for (uint32_t root : roots)
+        ownersByRoot[root].push_back(index);
+      enqueueOwner(index);
+    }
+    while (!ownerWorklist.empty()) {
+      unsigned index = ownerWorklist.pop_back_val();
+      ownerQueued.erase(index);
+      sim::SimFuncOp function = admittedBodies[index];
+      if (processedRuntimeOwners.contains(index))
+        continue;
+      bool runtimeOwner =
+          ::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function) ||
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalCheckpointOnly>(function) ||
+          (bodyNeedsOrderedNBA[index] && !everySiteGenerated) ||
+          llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
+            bool sharedCalendar = ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalRuntimeCalendar>(module);
+            bool fixedSlots = clockedBodies[index] &&
+                              staticNBAPlan.mergeSafeRoots[root] &&
+                              (generatedOrigins[root].size() == 1 ||
+                               staticNBAPlan.independentSiteWrites[root]);
+            return !orderedRootClosed[root] || !queuePayloadSupported[root] ||
+                   (sharedCalendar && !fixedSlots);
+          });
+      if (!runtimeOwner)
+        continue;
+      if (detailedTiming &&
+          !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function)) {
+        llvm::errs() << "obelisk eval checkpoint admission: body="
+                     << function.getSymName()
+                     << " reason=runtime-nba-owner ordered="
+                     << bodyNeedsOrderedNBA[index]
+                     << " global-queue-closed=" << everySiteGenerated
+                     << " clocked=" << clockedBodies[index] << " wide-roots=";
         for (uint32_t root : bodyWideRoots[index])
-          if (orderedRootClosed[root]) {
-            orderedRootClosed[root] = 0;
-            addedRuntimeOwner = true;
-          }
+          llvm::errs() << root << ":" << staticNBAPlan.roots[root].bit_width
+                       << ":" << static_cast<bool>(orderedRootClosed[root])
+                       << ":" << static_cast<bool>(queuePayloadSupported[root])
+                       << ":merge="
+                       << static_cast<bool>(staticNBAPlan.mergeSafeRoots[root])
+                       << ":independent="
+                       << static_cast<bool>(
+                              staticNBAPlan.independentSiteWrites[root])
+                       << ",";
+        llvm::errs() << '\n';
       }
-    } while (addedRuntimeOwner);
+      ::obelisk::schedule::set<evalRuntimeNBARequiredAttr>(
+          function, UnitAttr::get(module.getContext()));
+      processedRuntimeOwners.insert(index);
+      if (bodyNeedsOrderedNBA[index] && everySiteGenerated) {
+        everySiteGenerated = false;
+        for (unsigned dependent = 0; dependent != admittedBodies.size();
+             ++dependent)
+          if (bodyNeedsOrderedNBA[dependent])
+            enqueueOwner(dependent);
+      }
+      for (uint32_t root : bodyWideRoots[index])
+        if (orderedRootClosed[root]) {
+          orderedRootClosed[root] = 0;
+          for (unsigned dependent : ownersByRoot.lookup(root))
+            enqueueOwner(dependent);
+        }
+    }
     for (auto [index, function] : llvm::enumerate(admittedBodies))
       if (bodyNeedsOrderedNBA[index] &&
           !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function))
