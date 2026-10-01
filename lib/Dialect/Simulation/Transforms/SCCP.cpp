@@ -120,7 +120,7 @@ struct DriveObservation {
 struct FunctionObservation {
   SmallVector<SiteObservation> sites;
   SmallVector<DriveObservation> drives;
-  std::unique_ptr<DataFlowSolver> solver;
+  DenseMap<Value, ConstantValue> constants;
 };
 
 static void addNetSeeds(sim::SimFuncOp function,
@@ -261,14 +261,32 @@ analyzeFunction(ArrayRef<FunctionInfo> functions, unsigned functionIndex,
     observation.drives.push_back(
         {*found->second.descriptor, getFact(*solver, value)});
   });
-  observation.solver = std::move(solver);
+  // Keep the rewrite facts, not the complete solver. Thousands of live
+  // solvers retain thousands of storage-uniquer thread-local caches; creating
+  // another solver then scans those caches to remove expired entries. This
+  // becomes quadratic when an entire design is analyzed on one thread.
+  auto recordConstant = [&](Value value) {
+    const auto *lattice = solver->lookupState<Lattice<ConstantValue>>(value);
+    if (lattice && !lattice->getValue().isUninitialized() &&
+        lattice->getValue().getConstantValue())
+      observation.constants.try_emplace(value, lattice->getValue());
+  };
+  function.walk([&](Operation *operation) {
+    for (Value result : operation->getResults())
+      recordConstant(result);
+    for (Region &region : operation->getRegions())
+      for (Block &block : region)
+        for (BlockArgument argument : block.getArguments())
+          recordConstant(argument);
+  });
   return success();
 }
 
 /// Replace constants and newly dead operations using the same rewrite order as
 /// MLIR's SCCP pass. Each invocation owns its builder and folder and touches
 /// only one isolated function body.
-static void rewriteFunction(DataFlowSolver &solver, sim::SimFuncOp function) {
+static void rewriteFunction(const DenseMap<Value, ConstantValue> &constants,
+                            sim::SimFuncOp function) {
   SmallVector<Block *> worklist;
   auto addToWorklist = [&](MutableArrayRef<Region> regions) {
     for (Region &region : regions)
@@ -285,14 +303,12 @@ static void rewriteFunction(DataFlowSolver &solver, sim::SimFuncOp function) {
       builder.setInsertionPoint(&operation);
       bool replacedAll = operation.getNumResults() != 0;
       for (Value result : operation.getResults()) {
-        const auto *lattice =
-            solver.lookupState<Lattice<ConstantValue>>(result);
-        if (!lattice || lattice->getValue().isUninitialized() ||
-            !lattice->getValue().getConstantValue()) {
+        auto fact = constants.find(result);
+        if (fact == constants.end()) {
           replacedAll = false;
           continue;
         }
-        const ConstantValue &value = lattice->getValue();
+        const ConstantValue &value = fact->second;
         Value constant = folder.getOrCreateConstant(
             builder.getInsertionBlock(), value.getConstantDialect(),
             value.getConstantValue(), result.getType());
@@ -316,12 +332,10 @@ static void rewriteFunction(DataFlowSolver &solver, sim::SimFuncOp function) {
 
     builder.setInsertionPointToStart(block);
     for (BlockArgument argument : block->getArguments()) {
-      const auto *lattice =
-          solver.lookupState<Lattice<ConstantValue>>(argument);
-      if (!lattice || lattice->getValue().isUninitialized() ||
-          !lattice->getValue().getConstantValue())
+      auto fact = constants.find(argument);
+      if (fact == constants.end())
         continue;
-      const ConstantValue &value = lattice->getValue();
+      const ConstantValue &value = fact->second;
       Value constant = folder.getOrCreateConstant(
           builder.getInsertionBlock(), value.getConstantDialect(),
           value.getConstantValue(), argument.getType());
@@ -512,7 +526,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
   };
   for (unsigned index : deterministicOrder)
     markDirty(index);
-  std::vector<std::unique_ptr<DataFlowSolver>> finalSolvers(functions.size());
+  std::vector<DenseMap<Value, ConstantValue>> finalConstants(functions.size());
   auto runBoundaryFixedPoint = [&]() -> LogicalResult {
     while (!dirty.empty()) {
       SmallVector<unsigned> wave;
@@ -568,8 +582,8 @@ void ObeliskSimSCCPPass::runOnOperation() {
           if (changed)
             markDirty(*site.callee);
         }
-        finalSolvers[functionIndex] =
-            std::move(observations[functionIndex]->solver);
+        finalConstants[functionIndex] =
+            std::move(observations[functionIndex]->constants);
       }
     }
     return success();
@@ -901,7 +915,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
       }
       for (unsigned index : deterministicOrder)
         if (observations[index])
-          finalSolvers[index] = std::move(observations[index]->solver);
+          finalConstants[index] = std::move(observations[index]->constants);
       if (!changed)
         break;
     }
@@ -911,12 +925,7 @@ void ObeliskSimSCCPPass::runOnOperation() {
           design.getContext(), deterministicOrder, [&](unsigned index) {
             if (functions[index].function.isExternal())
               return success();
-            if (!finalSolvers[index]) {
-              functions[index].function.emitError(
-                  "SCCP final solver state is missing");
-              return failure();
-            }
-            rewriteFunction(*finalSolvers[index], functions[index].function);
+            rewriteFunction(finalConstants[index], functions[index].function);
             return success();
           })))
     signalPassFailure();
