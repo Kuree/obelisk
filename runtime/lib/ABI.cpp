@@ -674,7 +674,7 @@ ABI_OFFSET(obelisk_rt_static_actor_root, reserved, 12);
 ABI_SIZE_ALIGN(obelisk_rt_native_promotion_dependency, 32, 8);
 ABI_OFFSET(obelisk_rt_native_promotion_dependency, begin, 0);
 ABI_OFFSET(obelisk_rt_native_promotion_dependency, end, 8);
-ABI_OFFSET(obelisk_rt_native_promotion_dependency, prefix_end, 16);
+ABI_OFFSET(obelisk_rt_native_promotion_dependency, subtree_end, 16);
 ABI_OFFSET(obelisk_rt_native_promotion_dependency, certificate, 24);
 ABI_SIZE_ALIGN(obelisk_rt_native_promotion_certificate, ABI_PTR(40, 24), 8);
 ABI_OFFSET(obelisk_rt_native_promotion_certificate, latch, 0);

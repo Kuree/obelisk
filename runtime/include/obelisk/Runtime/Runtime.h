@@ -3443,13 +3443,14 @@ typedef void (*obelisk_rt_native_promotion_invalidate_range)(
 typedef obelisk_rt_status (*obelisk_rt_native_checkpoint_callback)(
     obelisk_rt_context *context);
 
-// Immutable compiler-verified reverse index. Entries are sorted by begin and
-// carry the maximum end of their prefix. Certificate IDs index idempotent
-// proof-state actions; all fields have target-independent widths.
+// Immutable compiler-verified reverse index. Entries are sorted by begin; the
+// midpoint of each balanced subtree carries its maximum end. Certificate IDs
+// index idempotent proof-state actions for unknown-plane changes (LRM 6.11.2,
+// 38.34); all fields have target-independent widths.
 typedef struct obelisk_rt_native_promotion_dependency {
   uint64_t begin;
   uint64_t end;
-  uint64_t prefix_end;
+  uint64_t subtree_end;
   uint64_t certificate;
 } obelisk_rt_native_promotion_dependency;
 

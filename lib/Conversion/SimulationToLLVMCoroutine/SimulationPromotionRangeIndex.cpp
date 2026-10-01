@@ -166,7 +166,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   for (const auto &dependency : entries)
     llvm::append_range(dependencyWords,
                        ArrayRef<uint64_t>{dependency.begin, dependency.end,
-                                          dependency.prefix_end,
+                                          dependency.subtree_end,
                                           dependency.certificate});
   auto dependencyArray = LLVM::LLVMArrayType::get(
       LLVM::LLVMArrayType::get(i64, 4), entries.size());

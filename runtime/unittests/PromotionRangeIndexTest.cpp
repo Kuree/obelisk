@@ -20,8 +20,9 @@ TEST(PromotionRangeIndex, MergesOnlyTheSameProofAndRejectsInvalidRanges) {
   EXPECT_EQ(entries[0].begin, 1u);
   EXPECT_EQ(entries[0].end, 25u);
   EXPECT_EQ(entries[1].certificate, 1u);
-  EXPECT_EQ(entries[1].prefix_end, 25u);
-  EXPECT_EQ(entries[2].prefix_end, 31u);
+  EXPECT_EQ(entries[0].subtree_end, 25u);
+  EXPECT_EQ(entries[1].subtree_end, 31u);
+  EXPECT_EQ(entries[2].subtree_end, 31u);
   for (auto invalid : std::vector<obelisk_rt_native_promotion_dependency>{
            {1, 1, 0, 0}, {2, 1, 0, 0}, {0, 33, 0, 0}, {0, 1, 0, 2}}) {
     std::vector<obelisk_rt_native_promotion_dependency> bad{invalid};

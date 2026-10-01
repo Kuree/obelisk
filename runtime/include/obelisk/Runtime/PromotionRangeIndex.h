@@ -39,9 +39,20 @@ inline bool buildPromotionRangeIndex(
     return std::tie(a.begin, a.end, a.certificate) <
            std::tie(b.begin, b.end, b.certificate);
   });
-  uint64_t prefixEnd = 0;
-  for (auto &entry : entries)
-    entry.prefix_end = prefixEnd = std::max(prefixEnd, entry.end);
+  // LRM 6.11.2, 38.34: unknown-plane changes must reach every dependent
+  // proof, including overlapping spans. A balanced interval index lets a
+  // long memory dependency coexist with small ranges without a linear scan.
+  auto index = [&](auto &&self, uint64_t low, uint64_t high) -> uint64_t {
+    if (low == high)
+      return 0;
+    uint64_t middle = low + (high - low) / 2;
+    auto &entry = entries[middle];
+    entry.subtree_end =
+        std::max(entry.end, std::max(self(self, low, middle),
+                                     self(self, middle + 1, high)));
+    return entry.subtree_end;
+  };
+  index(index, 0, entries.size());
   return true;
 }
 
@@ -55,19 +66,20 @@ inline void visitPromotionRangeDependencies(
   if (!width || !count)
     return;
   uint64_t end = width > UINT64_MAX - offset ? UINT64_MAX : offset + width;
-  uint64_t low = 0, high = count;
-  while (low != high) {
+  auto visit = [&](auto &&self, uint64_t low, uint64_t high) -> void {
+    if (low == high || entries[low].begin >= end)
+      return;
     uint64_t middle = low + (high - low) / 2;
-    if (entries[middle].begin < end)
-      low = middle + 1;
-    else
-      high = middle;
-  }
-  while (low && entries[low - 1].prefix_end > offset) {
-    const auto &entry = entries[--low];
-    if (entry.end > offset)
+    const auto &entry = entries[middle];
+    if (entry.subtree_end <= offset)
+      return;
+    self(self, low, middle);
+    if (entry.begin < end && entry.end > offset)
       invalidate(entry.certificate);
-  }
+    if (entry.begin < end)
+      self(self, middle + 1, high);
+  };
+  visit(visit, 0, count);
 }
 
 } // namespace obelisk::runtime
