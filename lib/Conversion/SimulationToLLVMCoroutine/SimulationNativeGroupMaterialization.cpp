@@ -16,15 +16,16 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/InliningUtils.h"
 #include "mlir/Transforms/Mem2Reg.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <map>
@@ -60,14 +61,14 @@ std::optional<uint64_t> staticByteOffset(Value pointer) {
 /// and acquire their result afterward. Returns publish even on rejection or
 /// error, so a handoff never restarts completed work or loses pending work.
 LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
-                                     SymbolTable &symbols, uint64_t &budget) {
+                                     const llvm::StringMap<Type> &globalTypes,
+                                     uint64_t &budget) {
   auto reference =
       ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
           function);
-  auto global = reference ? symbols.lookup<LLVM::GlobalOp>(reference.getValue())
-                          : LLVM::GlobalOp{};
-  auto array = global ? dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType())
-                      : LLVM::LLVMArrayType{};
+  auto array = reference ? dyn_cast_or_null<LLVM::LLVMArrayType>(
+                               globalTypes.lookup(reference.getValue()))
+                         : LLVM::LLVMArrayType{};
   if (!array || !array.getElementType().isInteger(64))
     return success();
 
@@ -189,11 +190,10 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
 /// value-domain proof is inferred here. Original transition computations and
 /// invalidation hooks still execute at each logical store. Only its physical
 /// publication is deferred until the next boundary (LRM 4.3, 4.6, 4.10).
-LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
+LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
+                                const llvm::StringMap<Type> &globalTypes,
                                 StringRef name, uint64_t &budget) {
-  auto global = symbols.lookup<LLVM::GlobalOp>(name);
-  auto array = global ? dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType())
-                      : LLVM::LLVMArrayType{};
+  auto array = dyn_cast_or_null<LLVM::LLVMArrayType>(globalTypes.lookup(name));
   if (!array || !array.getElementType().isInteger(8))
     return success();
   struct Range {
@@ -235,7 +235,7 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
     while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
       root = gep.getBase();
     auto address = root.getDefiningOp<LLVM::AddressOfOp>();
-    if (!address || !symbols.lookup<LLVM::GlobalOp>(address.getGlobalName())) {
+    if (!address || !globalTypes.contains(address.getGlobalName())) {
       // A returned pointer or an indirect context access may alias canonical
       // state. Local allocation addresses are the only non-global exception.
       if (!root.getDefiningOp<LLVM::AllocaOp>())
@@ -383,6 +383,69 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
   return success();
 }
 
+struct NativeGroupPromotionInputs {
+  explicit NativeGroupPromotionInputs(Operation *operation) {
+    for (auto global : cast<ModuleOp>(operation).getOps<LLVM::GlobalOp>())
+      globalTypes.try_emplace(global.getSymName(), global.getGlobalType());
+    debugTiming = operation->hasAttr("obelisk.debug.native_timing");
+  }
+  llvm::StringMap<Type> globalTypes;
+  DenseMap<Operation *, std::pair<uint64_t, size_t>> residuals;
+  std::shared_ptr<NativeGroupPromotionReport> report;
+  bool debugTiming = false;
+};
+
+class PromoteNativeGroupFunctionPass final
+    : public PassWrapper<PromoteNativeGroupFunctionPass,
+                         OperationPass<LLVM::LLVMFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PromoteNativeGroupFunctionPass)
+  StringRef getArgument() const final {
+    return "promote-native-group-function";
+  }
+  void runOnOperation() override {
+    auto function = getOperation();
+    auto cached = getCachedParentAnalysis<NativeGroupPromotionInputs>(
+        function->getParentOfType<ModuleOp>());
+    if (!cached) {
+      function.emitError("native group promotion requires cached global types");
+      return signalPassFailure();
+    }
+    const auto &inputs = cached->get();
+    auto found = inputs.residuals.find(function);
+    if (found == inputs.residuals.end()) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    auto [budget, index] = found->second;
+    uint64_t remaining = budget;
+    if (failed(
+            promoteGroupReadyWords(function, inputs.globalTypes, remaining)) ||
+        failed(promoteGroupState(function, inputs.globalTypes,
+                                 "__obelisk_state_value", remaining)) ||
+        failed(promoteGroupState(function, inputs.globalTypes,
+                                 "__obelisk_state_unknown", remaining)))
+      return signalPassFailure();
+    if (remaining == budget)
+      markAllAnalysesPreserved();
+    if (!inputs.debugTiming)
+      return;
+    llvm::raw_string_ostream diagnostic(inputs.report->diagnostics[index]);
+    auto count = [&](schedule::Field name) -> uint64_t {
+      auto value = schedule::get<IntegerAttr>(function, name);
+      return value ? value.getUInt() : 0;
+    };
+    diagnostic << "obelisk native group: " << function.getSymName()
+               << " expanded_calls="
+               << count(schedule::Field::EvalMaterializedGroupCalls)
+               << " ready_words=" << count(schedule::Field::EvalSsaReadyWords)
+               << " value_ranges=" << count(schedule::Field::EvalSsaValueRanges)
+               << " unknown_ranges="
+               << count(schedule::Field::EvalSsaUnknownRanges)
+               << " remaining_budget=" << remaining << '\n';
+  }
+};
+
 } // namespace
 
 /// Materialize certified activation bodies before native partitioning. The
@@ -394,14 +457,18 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function, SymbolTable &symbols,
 /// exposes a direct body; an unresolved route remains an executor boundary.
 /// In particular, do not select a two-state callee just because it appears in
 /// an indirect call's allowed-callee inventory.
-LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
+FailureOr<std::shared_ptr<NativeGroupPromotionReport>>
+materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
+  auto report = std::make_shared<NativeGroupPromotionReport>();
   SmallVector<LLVM::LLVMFuncOp> groups;
   for (auto function : module.getOps<LLVM::LLVMFuncOp>())
     if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRankedMembers>(
             function))
       groups.push_back(function);
   if (groups.empty())
-    return success();
+    return report;
+  auto &inputs = manager.getAnalysis<NativeGroupPromotionInputs>();
+  inputs.report = report;
   DialectRegistry registry;
   LLVM::registerInlinerInterface(registry);
   module.getContext()->appendDialectRegistry(registry);
@@ -541,10 +608,10 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
           ::obelisk::schedule::Field::EvalRankedMembers>(function);
       auto pendingGlobal = symbols.lookup<LLVM::GlobalOp>(
           "__obelisk_eval_promotion_pending_mask_v1");
-      auto pendingType = pendingGlobal
-                             ? dyn_cast<LLVM::LLVMArrayType>(
-                                   pendingGlobal.getGlobalType())
-                             : LLVM::LLVMArrayType{};
+      auto pendingType =
+          pendingGlobal
+              ? dyn_cast<LLVM::LLVMArrayType>(pendingGlobal.getGlobalType())
+              : LLVM::LLVMArrayType{};
       bool identitiesValid =
           original && original != function && !original.empty() &&
           !::obelisk::schedule::has<
@@ -571,21 +638,20 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
               owner >= 0 &&
               uint32_t(owner) / 64 < pendingType.getNumElements() &&
               identities.insert(owner).second;
-      bool accepted = identitiesValid &&
-                      materializeNativeGroupDataflow(function, symbols,
-                                                       operationLimit);
+      bool accepted = identitiesValid && materializeNativeGroupDataflow(
+                                             function, symbols, operationLimit);
       if (module->hasAttr("obelisk.debug.native_timing"))
         llvm::errs() << "obelisk group dataflow: " << function.getSymName()
                      << " accepted=" << accepted << '\n';
       if (!accepted) {
         if (identitiesValid) {
-          auto [root, inserted] = refinementRoots.try_emplace(
-              function, refinementBudgets.size());
+          auto [root, inserted] =
+              refinementRoots.try_emplace(function, refinementBudgets.size());
           if (inserted)
             refinementBudgets.push_back(operationLimit);
           unsigned rootID = root->second;
-          auto children = splitNativeEvalGroup(
-              original, function, symbols, refinementBudgets[rootID]);
+          auto children = splitNativeEvalGroup(original, function, symbols,
+                                               refinementBudgets[rootID]);
           llvm::append_range(groups, children);
           if (!children.empty()) {
             refinements.push_back({original, {children[0], children[2]}});
@@ -607,11 +673,14 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       // materialization never introduces loads on a collapsed child's entry.
       if (auto remaining = residualBudgets.find(original);
           remaining != residualBudgets.end()) {
-        if (failed(promoteGroupReadyWords(original, symbols, remaining->second)) ||
-            failed(promoteGroupState(original, symbols, "__obelisk_state_value",
-                                      remaining->second)) ||
-            failed(promoteGroupState(original, symbols, "__obelisk_state_unknown",
-                                      remaining->second)))
+        if (failed(promoteGroupReadyWords(original, inputs.globalTypes,
+                                          remaining->second)) ||
+            failed(promoteGroupState(original, inputs.globalTypes,
+                                     "__obelisk_state_value",
+                                     remaining->second)) ||
+            failed(promoteGroupState(original, inputs.globalTypes,
+                                     "__obelisk_state_unknown",
+                                     remaining->second)))
           return failure();
         finalized.insert(original);
       }
@@ -731,8 +800,8 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
         ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
             parent);
     Value ready = LLVM::AddressOfOp::create(
-        builder, parent.getLoc(), LLVM::LLVMPointerType::get(module.getContext()),
-        ingress.getValue());
+        builder, parent.getLoc(),
+        LLVM::LLVMPointerType::get(module.getContext()), ingress.getValue());
     SmallVector<Attribute> references;
     for (auto child : refinement.children) {
       references.push_back(FlatSymbolRefAttr::get(child));
@@ -745,10 +814,12 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
                ::obelisk::schedule::Field::EvalRankedMembers>(child)
                .asArrayRef())
         masks[unsigned(owner) / 64] |= uint64_t{1} << (unsigned(owner) % 64);
-      Value pending = llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0);
+      Value pending =
+          llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0);
       for (auto [word, mask] : masks) {
         Value bits = LLVM::AndOp::create(
-            builder, parent.getLoc(), loadOwnerWord(builder, parent.getLoc(), ready, word),
+            builder, parent.getLoc(),
+            loadOwnerWord(builder, parent.getLoc(), ready, word),
             llvmConstant(builder, parent.getLoc(), builder.getI64Type(), mask));
         pending = LLVM::OrOp::create(builder, parent.getLoc(), pending, bits);
       }
@@ -758,8 +829,8 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
       auto *execute = new Block, *next = new Block;
       parent.getBody().push_back(execute);
       parent.getBody().push_back(next);
-      LLVM::CondBrOp::create(builder, parent.getLoc(), active, execute, ValueRange{},
-                             next, ValueRange{});
+      LLVM::CondBrOp::create(builder, parent.getLoc(), active, execute,
+                             ValueRange{}, next, ValueRange{});
       builder.setInsertionPointToStart(execute);
       if (auto fast = ::obelisk::schedule::get<
               ::obelisk::schedule::Field::EvalDataflowExecutor>(child)) {
@@ -767,12 +838,14 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
             builder, parent.getLoc(),
             LLVM::LLVMPointerType::get(module.getContext()),
             "__obelisk_eval_promotion_pending_mask_v1");
-        Value needed = llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0);
+        Value needed =
+            llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0);
         for (auto [word, mask] : masks) {
           Value bits = LLVM::AndOp::create(
               builder, parent.getLoc(),
               loadOwnerWord(builder, parent.getLoc(), proof, word),
-              llvmConstant(builder, parent.getLoc(), builder.getI64Type(), mask));
+              llvmConstant(builder, parent.getLoc(), builder.getI64Type(),
+                           mask));
           needed = LLVM::OrOp::create(builder, parent.getLoc(), needed, bits);
         }
         Value known = LLVM::ICmpOp::create(
@@ -809,44 +882,15 @@ LogicalResult materializeNativeEvalGroupBodies(ModuleOp module) {
            ::obelisk::schedule::has<
                ::obelisk::schedule::Field::EvalGroupChildren>(function);
   });
-  bool debugTiming = module->hasAttr("obelisk.debug.native_timing");
-  SmallVector<std::string> diagnostics(residuals.size());
-  if (failed(failableParallelForEach(
-          module.getContext(), llvm::seq<size_t>(0, residuals.size()),
-          [&](size_t index) -> LogicalResult {
-            auto [function, remaining] = residuals[index];
-            if (failed(promoteGroupReadyWords(function, symbols, remaining)))
-              return failure();
-            if ((failed(promoteGroupState(
-                     function, symbols, "__obelisk_state_value", remaining)) ||
-                 failed(promoteGroupState(
-                     function, symbols, "__obelisk_state_unknown", remaining))))
-              return failure();
-            if (debugTiming) {
-              llvm::raw_string_ostream diagnostic(diagnostics[index]);
-              auto count = [&](schedule::Field name) -> uint64_t {
-                auto value = schedule::get<IntegerAttr>(function, name);
-                return value ? value.getUInt() : 0;
-              };
-              diagnostic
-                  << "obelisk native group: " << function.getSymName()
-                  << " expanded_calls="
-                  << count(
-                         ::obelisk::schedule::Field::EvalMaterializedGroupCalls)
-                  << " ready_words="
-                  << count(::obelisk::schedule::Field::EvalSsaReadyWords)
-                  << " value_ranges="
-                  << count(::obelisk::schedule::Field::EvalSsaValueRanges)
-                  << " unknown_ranges="
-                  << count(::obelisk::schedule::Field::EvalSsaUnknownRanges)
-                  << " remaining_budget=" << remaining << '\n';
-            }
-            return success();
-          })))
-    return failure();
-  for (const auto &diagnostic : diagnostics)
-    llvm::errs() << diagnostic;
-  return success();
+  report->diagnostics.resize(residuals.size());
+  for (auto [index, residual] : llvm::enumerate(residuals))
+    inputs.residuals.try_emplace(residual.first,
+                                 std::make_pair(residual.second, index));
+  return report;
+}
+
+std::unique_ptr<Pass> createPromoteNativeGroupFunctionPass() {
+  return std::make_unique<PromoteNativeGroupFunctionPass>();
 }
 
 } // namespace obelisk::detail
@@ -863,8 +907,19 @@ struct MaterializeObeliskNativeEvalGroupsPass
       MaterializeObeliskNativeEvalGroupsPassBase;
 
   void runOnOperation() override {
-    if (failed(detail::materializeNativeEvalGroupBodies(getOperation())))
-      signalPassFailure();
+    auto report = detail::materializeNativeEvalGroupBodies(
+        getOperation(), getAnalysisManager());
+    if (failed(report))
+      return signalPassFailure();
+    if (!(*report)->diagnostics.empty()) {
+      OpPassManager functions(ModuleOp::getOperationName());
+      functions.nest<LLVM::LLVMFuncOp>().addPass(
+          detail::createPromoteNativeGroupFunctionPass());
+      if (failed(runPipeline(functions, getOperation())))
+        return signalPassFailure();
+    }
+    for (const auto &diagnostic : (*report)->diagnostics)
+      llvm::errs() << diagnostic;
   }
 };
 } // namespace

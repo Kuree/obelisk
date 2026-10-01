@@ -3645,20 +3645,20 @@ public:
       return;
     }
     markTiming("promotion write materialization");
-    if (failed(detail::materializeNativeEvalGroupBodies(module))) {
-      signalPassFailure();
-      return;
-    }
+    auto groupPromotions = detail::materializeNativeEvalGroupBodies(
+        module, getAnalysisManager());
+    if (failed(groupPromotions))
+      return signalPassFailure();
     markTiming("native activation group materialization");
     if (failed(verifyGeneratedEvalCallClosures(module))) {
       signalPassFailure();
       return;
     }
     markTiming("eval call closure verification");
-    if (failed(detail::finalizeNativePartitionManifest(module))) {
-      signalPassFailure();
-      return;
-    }
+    auto partitionInventory = detail::prepareNativePartitionManifest(
+        module, getAnalysisManager());
+    if (failed(partitionInventory))
+      return signalPassFailure();
     markTiming("post-conversion materialization");
     // The remaining rewrites only inspect and mutate one function. Run them
     // as a nested pass so MLIR owns scheduling and the single-threaded path
@@ -3667,12 +3667,24 @@ public:
             module, getAnalysisManager())))
       return signalPassFailure();
     OpPassManager finalization(ModuleOp::getOperationName());
-    finalization.nest<LLVM::LLVMFuncOp>().addPass(
-        detail::createNativeFunctionFinalizationPass());
+    auto &functions = finalization.nest<LLVM::LLVMFuncOp>();
+    if (!(*groupPromotions)->diagnostics.empty())
+      functions.addPass(detail::createPromoteNativeGroupFunctionPass());
+    if (*partitionInventory)
+      functions.addPass(detail::createInventoryNativeFunctionSymbolsPass());
+    functions.addPass(detail::createNativeFunctionFinalizationPass());
     if (failed(runPipeline(finalization, module))) {
       signalPassFailure();
       return;
     }
+    // Results have independent ownership beyond the analysis manager's
+    // pipeline lifetime. Workers only publish into their own stable slots.
+    for (const auto &diagnostic : (*groupPromotions)->diagnostics)
+      llvm::errs() << diagnostic;
+    if (*partitionInventory &&
+        failed(detail::publishNativePartitionManifest(
+            module, **partitionInventory)))
+      return signalPassFailure();
     module->removeAttr("obelisk.native.optimization_level");
     ::obelisk::schedule::remove<::obelisk::schedule::Field::MaxInlineOps>(
         module);

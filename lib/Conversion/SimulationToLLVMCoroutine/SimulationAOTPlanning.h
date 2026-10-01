@@ -3,8 +3,8 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "SimulationNBALowering.h"
+#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
@@ -18,7 +18,13 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <memory>
 #include <tuple>
+
+namespace mlir {
+class AnalysisManager;
+class Pass;
+} // namespace mlir
 
 namespace mlir::LLVM {
 class LLVMFuncOp;
@@ -222,7 +228,8 @@ using NativePeriodicClock = schedule::PeriodicClockAttr;
 /// seeds the target fanout directly, avoiding a forwarding actor per edge.
 using NativePeriodicAlias = schedule::PeriodicAliasAttr;
 
-llvm::DenseMap<analysis::ClockBit, analysis::ClockFact> buildNativeClockInferencePlan(
+llvm::DenseMap<analysis::ClockBit, analysis::ClockFact>
+buildNativeClockInferencePlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const mlir::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
     llvm::ArrayRef<NativePeriodicClock> clocks);
@@ -261,13 +268,21 @@ mlir::FailureOr<ResolvedNativeEvalPlan> resolveNativeEvalPlan(
     schedule::ComputeGraphAttr computeGraph,
     mlir::ArrayRef<NativePeriodicClock> periodicClocks,
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases);
-mlir::LogicalResult materializeNativeEvalGroupBodies(mlir::ModuleOp module);
+struct NativeGroupPromotionReport {
+  llvm::SmallVector<std::string> diagnostics;
+};
+mlir::FailureOr<std::shared_ptr<NativeGroupPromotionReport>>
+materializeNativeEvalGroupBodies(mlir::ModuleOp module,
+                                 mlir::AnalysisManager manager);
+std::unique_ptr<mlir::Pass> createPromoteNativeGroupFunctionPass();
 
-mlir::FailureOr<llvm::SmallVector<std::string>> materializeNativeRankedGroups(
-    mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan);
+mlir::FailureOr<llvm::SmallVector<std::string>>
+materializeNativeRankedGroups(mlir::ModuleOp module,
+                              const NativeEvalCoordinatorPlan &plan);
 
-mlir::LogicalResult materializeNativeEvalDispatch(
-    mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan);
+mlir::LogicalResult
+materializeNativeEvalDispatch(mlir::ModuleOp module,
+                              const NativeEvalCoordinatorPlan &plan);
 mlir::FailureOr<llvm::SmallVector<NativePeriodicClock>>
 buildNativePeriodicClockPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,

@@ -1,12 +1,12 @@
 //===- SimulationNativePartitionPlanning.cpp - Stable native partitions --===//
 
+#include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/Threading.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -319,31 +319,126 @@ public:
 
 namespace detail {
 
-LogicalResult finalizeNativePartitionManifest(ModuleOp module) {
+struct NativePhysicalPartitions {
+  struct SymbolRecord {
+    Operation *operation;
+    std::string name;
+    std::string partition;
+  };
+  struct PhysicalPartition {
+    std::string id;
+    SmallVector<unsigned> members;
+    llvm::StringSet<> imports;
+    llvm::StringSet<> exports;
+    llvm::StringSet<> dependencies;
+  };
+  SmallVector<SymbolRecord> symbols;
+  llvm::StringMap<unsigned> symbolIndices;
+  SmallVector<PhysicalPartition> partitions;
+  llvm::StringMap<unsigned> partitionIndices;
+  DenseMap<Operation *, unsigned> functionIndices;
+  SmallVector<unsigned> symbolPartitions;
+  SmallVector<SmallVector<unsigned>> referencedSymbols;
+};
+
+static FailureOr<std::shared_ptr<NativePhysicalPartitions>>
+collectNativePartitionInventory(ModuleOp module);
+
+namespace {
+struct NativePartitionInputs {
+  explicit NativePartitionInputs(Operation *operation) {
+    auto result = collectNativePartitionInventory(cast<ModuleOp>(operation));
+    if (failed(result)) {
+      valid = false;
+      return;
+    }
+    inventory = std::move(*result);
+  }
+  std::shared_ptr<NativePhysicalPartitions> inventory;
+  bool valid = true;
+};
+
+struct NativeFunctionSymbolUses {
+  explicit NativeFunctionSymbolUses(Operation *operation) {
+    auto uses = SymbolTable::getSymbolUses(operation);
+    if (!uses) {
+      operation->emitError("cannot enumerate physical partition symbol uses");
+      valid = false;
+      return;
+    }
+    llvm::SmallDenseSet<StringAttr> unique;
+    for (const auto &use : *uses) {
+      auto target = use.getSymbolRef().getRootReference();
+      if (unique.insert(target).second)
+        references.push_back(target);
+    }
+  }
+  SmallVector<StringAttr> references;
+  bool valid = true;
+};
+
+class InventoryNativeFunctionSymbolsPass final
+    : public PassWrapper<InventoryNativeFunctionSymbolsPass,
+                         OperationPass<LLVM::LLVMFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      InventoryNativeFunctionSymbolsPass)
+  StringRef getArgument() const final {
+    return "inventory-native-function-symbols";
+  }
+  void runOnOperation() override {
+    auto function = getOperation();
+    auto cached = getCachedParentAnalysis<NativePartitionInputs>(
+        function->getParentOfType<ModuleOp>());
+    if (!cached || !cached->get().inventory) {
+      function.emitError(
+          "native partition inventory requires cached symbol inputs");
+      return signalPassFailure();
+    }
+    const auto &inventory = *cached->get().inventory;
+    auto found = inventory.functionIndices.find(function);
+    if (found != inventory.functionIndices.end()) {
+      const auto &uses = getAnalysis<NativeFunctionSymbolUses>();
+      if (!uses.valid)
+        return signalPassFailure();
+      unsigned index = found->second;
+      auto &result = cached->get().inventory->referencedSymbols[index];
+      for (auto name : uses.references) {
+        auto target = inventory.symbolIndices.find(name.getValue());
+        if (target != inventory.symbolIndices.end() &&
+            inventory.symbolPartitions[index] !=
+                inventory.symbolPartitions[target->second])
+          result.push_back(target->second);
+      }
+    }
+    // Publish into this function's preallocated slot without changing the IR.
+    markAllAnalysesPreserved();
+  }
+};
+} // namespace
+
+static FailureOr<std::shared_ptr<NativePhysicalPartitions>>
+collectNativePartitionInventory(ModuleOp module) {
   // The physical inventory is meaningful only when the target requested the
   // semantic plan. Avoid annotating the ordinary unsplit/wasm pipeline.
   if (!module->hasAttr(sim::metadata::nativePartitionManifests)) {
-    module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
-    return success();
+    return std::shared_ptr<NativePhysicalPartitions>{};
   }
 
   // LLVM module assembly and definition-like symbols other than ordinary
   // functions/globals need target-specific ownership rules. Preserve the
   // correctness fallback by declining to publish a physical split plan.
   if (module->hasAttr(LLVM::LLVMDialect::getModuleLevelAsmAttrName())) {
-    module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
-    return success();
+    return std::shared_ptr<NativePhysicalPartitions>{};
   }
   for (Operation &operation : module.getBody()->getOperations())
     if (!isa<LLVM::LLVMFuncOp, LLVM::GlobalOp>(operation)) {
-      module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
-      return success();
+      return std::shared_ptr<NativePhysicalPartitions>{};
     }
   bool hasBlockAddress = false;
   module.walk([&](LLVM::BlockAddressOp) { hasBlockAddress = true; });
   if (hasBlockAddress) {
-    module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
-    return success();
+    return std::shared_ptr<NativePhysicalPartitions>{};
   }
 
   llvm::StringSet<> validPartitions;
@@ -354,31 +449,30 @@ LogicalResult finalizeNativePartitionManifest(ModuleOp module) {
   // qualified by design, duplicate local class/code-unit IDs across designs
   // must retain the unsplit correctness path.
   if (semanticManifests.size() != 1) {
-    module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
-    return success();
+    return std::shared_ptr<NativePhysicalPartitions>{};
   }
   for (Attribute designAttr : semanticManifests) {
     auto design = dyn_cast<DictionaryAttr>(designAttr);
     auto partitions =
         design ? design.getAs<ArrayAttr>("partitions") : ArrayAttr{};
-    if (!partitions)
-      return module.emitError("has a malformed semantic partition manifest");
+    if (!partitions) {
+      module.emitError("has a malformed semantic partition manifest");
+      return failure();
+    }
     for (Attribute partitionAttr : partitions) {
       auto partition = dyn_cast<DictionaryAttr>(partitionAttr);
       auto id = partition ? partition.getAs<StringAttr>("id") : StringAttr{};
-      if (!id)
-        return module.emitError("has a malformed semantic partition ID");
+      if (!id) {
+        module.emitError("has a malformed semantic partition ID");
+        return failure();
+      }
       validPartitions.insert(id.getValue());
     }
   }
 
-  struct SymbolRecord {
-    Operation *operation;
-    std::string name;
-    std::string partition;
-  };
-  SmallVector<SymbolRecord> symbols;
-  llvm::StringMap<unsigned> symbolIndices;
+  auto inventory = std::make_shared<NativePhysicalPartitions>();
+  auto &symbols = inventory->symbols;
+  auto &symbolIndices = inventory->symbolIndices;
   Builder builder(module.getContext());
   for (Operation &operation : module.getBody()->getOperations()) {
     bool definition = false;
@@ -395,26 +489,23 @@ LogicalResult finalizeNativePartitionManifest(ModuleOp module) {
         operation.getAttrOfType<StringAttr>(sim::metadata::nativePartition);
     if (!partition) {
       partition = builder.getStringAttr("primary");
-      operation.setAttr(sim::metadata::nativePartition, partition);
     }
-    if (!validPartitions.contains(partition.getValue()))
-      return operation.emitError("references unknown native partition '")
-             << partition.getValue() << "'";
-    if (!symbolIndices.try_emplace(name, symbols.size()).second)
-      return operation.emitError("duplicates a physical partition symbol");
+    if (!validPartitions.contains(partition.getValue())) {
+      operation.emitError("references unknown native partition '")
+          << partition.getValue() << "'";
+      return failure();
+    }
+    if (!symbolIndices.try_emplace(name, symbols.size()).second) {
+      operation.emitError("duplicates a physical partition symbol");
+      return failure();
+    }
     symbols.push_back(
         {&operation, std::move(name), partition.getValue().str()});
   }
 
-  struct PhysicalPartition {
-    std::string id;
-    SmallVector<unsigned> members;
-    llvm::StringSet<> imports;
-    llvm::StringSet<> exports;
-    llvm::StringSet<> dependencies;
-  };
-  llvm::StringMap<unsigned> partitionIndices;
-  SmallVector<PhysicalPartition> partitions;
+  using PhysicalPartition = NativePhysicalPartitions::PhysicalPartition;
+  auto &partitionIndices = inventory->partitionIndices;
+  auto &partitions = inventory->partitions;
   for (auto [index, symbol] : llvm::enumerate(symbols)) {
     auto [entry, inserted] =
         partitionIndices.try_emplace(symbol.partition, partitions.size());
@@ -436,34 +527,73 @@ LogicalResult finalizeNativePartitionManifest(ModuleOp module) {
   for (auto [index, partition] : llvm::enumerate(partitions))
     partitionIndices[partition.id] = index;
 
-  // Inventory each definition independently while the symbol namespace is
-  // frozen. Repeated calls to one target contribute one dependency, not one
-  // string-set insertion per call. Merge in source order after workers finish.
-  SmallVector<unsigned> symbolPartitions;
+  // Function use inventories run on function anchors. Global initializers
+  // remain with the module owner; all symbol identities are frozen beforehand.
+  auto &symbolPartitions = inventory->symbolPartitions;
   for (const auto &symbol : symbols)
     symbolPartitions.push_back(partitionIndices.lookup(symbol.partition));
-  SmallVector<SmallVector<unsigned>> referencedSymbols(symbols.size());
-  if (failed(failableParallelForEach(
-          module.getContext(), llvm::seq<size_t>(0, symbols.size()),
-          [&](size_t index) -> LogicalResult {
-            const SymbolRecord &source = symbols[index];
-            std::optional<SymbolTable::UseRange> uses =
-                SymbolTable::getSymbolUses(source.operation);
-            if (!uses)
-              return source.operation->emitError(
-                  "cannot enumerate physical partition symbol uses");
-            llvm::SmallDenseSet<unsigned> uniqueTargets;
-            for (const SymbolTable::SymbolUse &use : *uses) {
-              StringRef name = use.getSymbolRef().getRootReference().getValue();
-              auto target = symbolIndices.find(name);
-              if (target != symbolIndices.end() &&
-                  symbolPartitions[index] != symbolPartitions[target->second] &&
-                  uniqueTargets.insert(target->second).second)
-                referencedSymbols[index].push_back(target->second);
-            }
-            return success();
-          })))
+  inventory->referencedSymbols.resize(symbols.size());
+  for (auto [index, symbol] : llvm::enumerate(symbols)) {
+    if (isa<LLVM::LLVMFuncOp>(symbol.operation)) {
+      inventory->functionIndices.try_emplace(symbol.operation, index);
+      continue;
+    }
+    auto uses = SymbolTable::getSymbolUses(symbol.operation);
+    if (!uses) {
+      symbol.operation->emitError(
+          "cannot enumerate physical partition symbol uses");
+      return failure();
+    }
+    llvm::SmallDenseSet<unsigned> uniqueTargets;
+    for (const auto &use : *uses) {
+      auto target =
+          symbolIndices.find(use.getSymbolRef().getRootReference().getValue());
+      if (target != symbolIndices.end() &&
+          symbolPartitions[index] != symbolPartitions[target->second] &&
+          uniqueTargets.insert(target->second).second)
+        inventory->referencedSymbols[index].push_back(target->second);
+    }
+  }
+  return inventory;
+}
+
+FailureOr<std::shared_ptr<NativePhysicalPartitions>>
+prepareNativePartitionManifest(ModuleOp module, AnalysisManager manager) {
+  const auto &inputs = manager.getAnalysis<NativePartitionInputs>();
+  if (!inputs.valid)
     return failure();
+  if (!inputs.inventory) {
+    module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
+    return std::shared_ptr<NativePhysicalPartitions>{};
+  }
+  Builder builder(module.getContext());
+  for (const auto &symbol : inputs.inventory->symbols)
+    if (!symbol.operation->hasAttr(sim::metadata::nativePartition))
+      symbol.operation->setAttr(sim::metadata::nativePartition,
+                                builder.getStringAttr(symbol.partition));
+  return inputs.inventory;
+}
+
+std::unique_ptr<Pass> createInventoryNativeFunctionSymbolsPass() {
+  return std::make_unique<InventoryNativeFunctionSymbolsPass>();
+}
+
+LogicalResult
+publishNativePartitionManifest(ModuleOp module,
+                               const NativePhysicalPartitions &inventory) {
+  using SymbolRecord = NativePhysicalPartitions::SymbolRecord;
+  const auto &symbols = inventory.symbols;
+  const auto &symbolPartitions = inventory.symbolPartitions;
+  const auto &referencedSymbols = inventory.referencedSymbols;
+  // Merge worker publications in definition order and sort the final manifest.
+  SmallVector<NativePhysicalPartitions::PhysicalPartition> partitions;
+  for (const auto &partition : inventory.partitions) {
+    auto &copy = partitions.emplace_back();
+    copy.id = partition.id;
+    copy.members = partition.members;
+  }
+  using PhysicalPartition = NativePhysicalPartitions::PhysicalPartition;
+  Builder builder(module.getContext());
   for (auto [index, references] : llvm::enumerate(referencedSymbols)) {
     unsigned sourcePartition = symbolPartitions[index];
     for (unsigned targetIndex : references) {

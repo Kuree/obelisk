@@ -311,7 +311,14 @@ void copyNativePartition(mlir::Operation *source, mlir::Operation *target);
 
 /// Build the link-complete physical partition manifest after every native
 /// function, helper, and global has been materialized.
-mlir::LogicalResult finalizeNativePartitionManifest(mlir::ModuleOp module);
+struct NativePhysicalPartitions;
+mlir::FailureOr<std::shared_ptr<NativePhysicalPartitions>>
+prepareNativePartitionManifest(mlir::ModuleOp module,
+                               mlir::AnalysisManager manager);
+std::unique_ptr<mlir::Pass> createInventoryNativeFunctionSymbolsPass();
+mlir::LogicalResult
+publishNativePartitionManifest(mlir::ModuleOp module,
+                               const NativePhysicalPartitions &inventory);
 
 mlir::LogicalResult lowerNativeDPICalls(mlir::Operation *root);
 void materializeNativeSpawnBatches(mlir::Operation *root);

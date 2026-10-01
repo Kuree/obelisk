@@ -1,0 +1,13 @@
+// RUN: obelisk-opt %S/simulation-native-group-state-boundary.mlir --obelisk-materialize-native-eval-groups --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s --check-prefix=GROUP
+// RUN: obelisk-opt %S/simulation-native-partitions.mlir --obelisk-sim-plan-native-partitions --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s --check-prefix=PARTITION
+
+// Local group promotion runs on the function whose body it rewrites.
+// GROUP: IR Dump After {{.*}}PromoteNativeGroupFunctionPass (promote-native-group-function)
+// GROUP-NEXT: llvm.func
+
+// Inventory and finalization share one function pipeline. The inventory only
+// publishes into its stable result slot, so finalization follows on that body.
+// PARTITION: IR Dump After {{.*}}InventoryNativeFunctionSymbolsPass (inventory-native-function-symbols)
+// PARTITION-NEXT: llvm.func{{( internal)?}} [[FUNCTION:@[^(]+]](
+// PARTITION: IR Dump After {{.*}}NativeFunctionFinalizationPass (obelisk-native-finalize-function)
+// PARTITION-NEXT: llvm.func{{( internal)?}} [[FUNCTION]](
