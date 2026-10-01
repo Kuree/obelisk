@@ -165,6 +165,29 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
   SmallVector<Transfer> transfers;
   DenseMap<uint32_t, SmallVector<Writer>> writers;
   DenseMap<ClockBit, ClockFact> initialConstants;
+  SmallVector<const NativeStateLayoutAnalysis::Bound *> boundsByOffset;
+  for (const auto &bound : layout.bounds)
+    if (bound.width)
+      boundsByOffset.push_back(&bound);
+  llvm::sort(boundsByOffset, [](const auto *lhs, const auto *rhs) {
+    return lhs->offset < rhs->offset;
+  });
+  auto boundAt = [&](uint64_t bit) -> const NativeStateLayoutAnalysis::Bound * {
+    auto end = llvm::upper_bound(
+        boundsByOffset, bit,
+        [](uint64_t bit, const auto *bound) { return bit < bound->offset; });
+    if (end == boundsByOffset.begin())
+      return nullptr;
+    const auto *bound = *std::prev(end);
+    return bit - bound->offset < bound->width ? bound : nullptr;
+  };
+  DenseMap<uint64_t, SmallVector<const NativeStateLayoutAnalysis::Driver *>>
+      driversByNet;
+  DenseMap<uint64_t, const NativeStateLayoutAnalysis::Net *> netsByID;
+  for (const auto &driver : layout.driverLayouts)
+    driversByNet[driver.netId].push_back(&driver);
+  for (const auto &net : layout.netLayouts)
+    netsByID[net.id] = &net;
   module.walk([&](sim::SimDesignOp design) {
     HandleDataflowAnalysis analysis(design);
     // Outlined activations are another representation of their owning actor,
@@ -251,22 +274,16 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
         auto r = range(reference);
         if (!r || r->width != 1)
           return std::nullopt;
-        auto bound = llvm::find_if(layout.bounds, [&](const auto &b) {
-          return r->low >= b.offset && r->low - b.offset < b.width;
-        });
-        return bound == layout.bounds.end()
-                   ? std::nullopt
-                   : std::optional<ClockBit>{{bound->handleID, r->low}};
+        const auto *bound = boundAt(r->low);
+        return bound ? std::optional<ClockBit>{{bound->handleID, r->low}}
+                     : std::nullopt;
       };
       auto recordWriter = [&](Value reference) {
         if (initializer)
           return;
         if (auto r = range(reference))
-          for (const auto &b : layout.bounds)
-            if (r->low >= b.offset && r->low - b.offset < b.width) {
-              writers[b.handleID].push_back(*r);
-              break;
-            }
+          if (const auto *bound = boundAt(r->low))
+            writers[bound->handleID].push_back(*r);
       };
       Value input, output;
       Operation *wait = nullptr;
@@ -285,24 +302,22 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
           destination = drive.getDriver();
           value = drive.getValue();
           auto p = provenance.find(destination);
-          if (p == provenance.end() || !p->second.descriptor ||
-              llvm::count_if(layout.driverLayouts, [&](const auto &d) {
-                return d.netId == *p->second.descriptor;
-              }) != 1)
+          if (p == provenance.end() || !p->second.descriptor) {
             pure = false;
-          for (const auto &d : layout.driverLayouts)
-            if (p != provenance.end() && p->second.descriptor &&
-                d.netId == *p->second.descriptor)
-              pure &= d.width == 1 && d.drivenWidth == 1 &&
-                      d.strength0 != sim::Strength::HighZ &&
-                      d.strength1 != sim::Strength::HighZ;
-          for (const auto &net : layout.netLayouts)
-            if (p != provenance.end() && p->second.descriptor &&
-                net.id == *p->second.descriptor)
+          } else {
+            ArrayRef<const NativeStateLayoutAnalysis::Driver *> drivers =
+                driversByNet[*p->second.descriptor];
+            pure &= drivers.size() == 1;
+            for (const auto *driver : drivers)
+              pure &= driver->width == 1 && driver->drivenWidth == 1 &&
+                      driver->strength0 != sim::Strength::HighZ &&
+                      driver->strength1 != sim::Strength::HighZ;
+            if (const auto *net = netsByID.lookup(*p->second.descriptor))
               pure &=
-                  llvm::none_of(net.propagationDelays, [](const auto &delay) {
+                  llvm::none_of(net->propagationDelays, [](const auto &delay) {
                     return delay.has_value();
                   });
+          }
         } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(op)) {
           destination = nba.getDestination();
         }

@@ -86,6 +86,10 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
   for (auto &[root, members] : components)
     llvm::sort(members);
 
+  // Partition each directed connection by its canonical component once.
+  DenseMap<uint64_t, SmallVector<DirectedConnection>> connectionsByRoot;
+  for (const DirectedConnection &connection : directedConnections)
+    connectionsByRoot[find(connection.lhs)].push_back(connection);
   for (const auto &[root, members] : components) {
     if (members.size() == 1) {
       dominance[root] = {NetDominanceKind::Isolated, members.front()};
@@ -94,9 +98,8 @@ NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
     }
     bool incomplete = false;
     DenseMap<uint64_t, SmallVector<uint64_t, 2>> outgoing;
-    for (const DirectedConnection &connection : directedConnections) {
-      if (find(connection.lhs) != root)
-        continue;
+    for (const DirectedConnection &connection :
+         connectionsByRoot.lookup(root)) {
       if (!connection.rhsDominates) {
         incomplete = true;
         continue;
