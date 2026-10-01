@@ -213,6 +213,21 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
   if (allocations.empty())
     return success();
 
+  // LRM 6.21: an automatic owner must survive every live spawned/continued
+  // use. Plan all exits against one immutable CFG, then split shared edges
+  // once, forwarding every departing owner into the same cleanup block.
+  DominanceInfo dominance(function);
+  Liveness liveness(function);
+  struct Release {
+    sim::SimRefAllocOp allocation;
+    Value representative;
+  };
+  DenseMap<Operation *, SmallVector<Release>> blockReleases;
+  using ExitEdge = std::pair<Operation *, unsigned>;
+  DenseMap<ExitEdge, SmallVector<Release>> edgeReleases;
+  SmallVector<Operation *> blockOrder;
+  SmallVector<ExitEdge> edgeOrder;
+  SmallVector<sim::SimRefAllocOp> plannedAllocations;
   for (sim::SimRefAllocOp allocation : allocations) {
     if (allocation->hasAttr(automaticOwnerReleaseInstrumentedAttr))
       continue;
@@ -229,10 +244,13 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
         continue;
       Block *owner = argument.getOwner();
       unsigned argumentIndex = argument.getArgNumber();
-      for (Block &predecessor : function.getBody()) {
-        Operation *terminator = predecessor.getTerminator();
+      llvm::SmallPtrSet<Block *, 8> predecessors;
+      for (Block *predecessor : owner->getPredecessors()) {
+        if (!predecessors.insert(predecessor).second)
+          continue;
+        Operation *terminator = predecessor->getTerminator();
         for (auto [successorIndex, successor] :
-             llvm::enumerate(predecessor.getSuccessors())) {
+             llvm::enumerate(predecessor->getSuccessors())) {
           if (successor != owner)
             continue;
           auto branch = dyn_cast<BranchOpInterface>(terminator);
@@ -252,10 +270,6 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
       }
     }
 
-    // Earlier allocations may have split lifetime-exit edges, so recompute
-    // dominance for the current CFG rather than retaining a stale analysis.
-    DominanceInfo dominance(function);
-    Liveness liveness(function);
     auto isLiveInto = [&](Block *block) {
       for (Value reference : family) {
         if (liveness.getLiveIn(block).contains(reference))
@@ -296,10 +310,11 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
           worklist.push_back(successor);
       }
 
-      OpBuilder builder(terminator);
       if (!anyLive) {
-        insertAutomaticOwnerRelease(builder, allocation.getLoc(),
-                                    representative);
+        auto [found, inserted] = blockReleases.try_emplace(terminator);
+        if (inserted)
+          blockOrder.push_back(terminator);
+        found->second.push_back({allocation, representative});
         continue;
       }
       if (llvm::all_of(liveEdges, [](bool live) { return live; }))
@@ -313,35 +328,56 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
            successorIndex != end; ++successorIndex) {
         if (liveEdges[successorIndex])
           continue;
-        Block *destination = terminator->getSuccessor(successorIndex);
         SuccessorOperands successorOperands =
             branch.getSuccessorOperands(successorIndex);
         if (successorOperands.getProducedOperandCount() != 0)
           return allocation.emitError(
               "cannot split a produced automatic-reference CFG edge");
-        SmallVector<Value> forwarded(
-            successorOperands.getForwardedOperands().begin(),
-            successorOperands.getForwardedOperands().end());
-        successorOperands.getMutableForwardedOperands().append(representative);
-
-        auto *cleanup = new Block;
-        function.getBody().push_back(cleanup);
-        for (Value value : forwarded)
-          cleanup->addArgument(value.getType(), terminator->getLoc());
-        BlockArgument cleanupHandle = cleanup->addArgument(
-            representative.getType(), terminator->getLoc());
-        terminator->setSuccessor(cleanup, successorIndex);
-
-        OpBuilder cleanupBuilder(cleanup, cleanup->end());
-        insertAutomaticOwnerRelease(cleanupBuilder, allocation.getLoc(),
-                                    cleanupHandle);
-        cf::BranchOp::create(cleanupBuilder, terminator->getLoc(), destination,
-                             cleanup->getArguments().drop_back());
+        ExitEdge edge{terminator, successorIndex};
+        auto [found, inserted] = edgeReleases.try_emplace(edge);
+        if (inserted)
+          edgeOrder.push_back(edge);
+        found->second.push_back({allocation, representative});
       }
     }
+    plannedAllocations.push_back(allocation);
+  }
+  for (Operation *terminator : blockOrder) {
+    OpBuilder builder(terminator);
+    for (Release release : blockReleases.lookup(terminator))
+      insertAutomaticOwnerRelease(builder, release.allocation.getLoc(),
+                                  release.representative);
+  }
+  for (ExitEdge edge : edgeOrder) {
+    auto [terminator, successorIndex] = edge;
+    auto branch = cast<BranchOpInterface>(terminator);
+    Block *destination = terminator->getSuccessor(successorIndex);
+    SuccessorOperands operands = branch.getSuccessorOperands(successorIndex);
+    SmallVector<Value> forwarded(operands.getForwardedOperands());
+    auto *cleanup = new Block;
+    function.getBody().push_back(cleanup);
+    for (Value value : forwarded)
+      cleanup->addArgument(value.getType(), terminator->getLoc());
+    SmallVector<Release> releases = edgeReleases.lookup(edge);
+    for (Release release : releases) {
+      branch.getSuccessorOperands(successorIndex)
+          .getMutableForwardedOperands()
+          .append(release.representative);
+      cleanup->addArgument(release.representative.getType(),
+                           terminator->getLoc());
+    }
+    terminator->setSuccessor(cleanup, successorIndex);
+    OpBuilder builder(cleanup, cleanup->end());
+    for (auto [index, release] : llvm::enumerate(releases))
+      insertAutomaticOwnerRelease(
+          builder, release.allocation.getLoc(),
+          cleanup->getArgument(forwarded.size() + index));
+    cf::BranchOp::create(builder, terminator->getLoc(), destination,
+                         cleanup->getArguments().take_front(forwarded.size()));
+  }
+  for (sim::SimRefAllocOp allocation : plannedAllocations)
     allocation->setAttr(automaticOwnerReleaseInstrumentedAttr,
                         UnitAttr::get(function.getContext()));
-  }
   return success();
 }
 

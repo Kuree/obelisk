@@ -35,6 +35,25 @@ module {
       simulation.return
     }
 
+    simulation.code_unit.decl 4 in 0 function hierarchy "reference_lifetimes.shared_exit"
+    // Both owners leave on the same edge. The cleanup must forward and
+    // release each exactly once, including when instrumentation is repeated.
+    simulation.func @shared_exit(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %initial: i64 {simulation.capture_kind = 2 : i32},
+        %choose: i1 {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
+      %a = simulation.ref.alloc %initial : i64 -> !simulation.ref<i64>
+      %b = simulation.ref.alloc %initial : i64 -> !simulation.ref<i64>
+      cf.cond_br %choose, ^use(%a, %b : !simulation.ref<i64>, !simulation.ref<i64>), ^done
+    ^use(%ra: !simulation.ref<i64>, %rb: !simulation.ref<i64>):
+      %va = simulation.ref.load %ra : !simulation.ref<i64> -> i64
+      %vb = simulation.ref.load %rb : !simulation.ref<i64> -> i64
+      simulation.return
+    ^done:
+      simulation.return
+    }
+
     simulation.func @branch(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %initial: i64 {simulation.capture_kind = 2 : i32},
@@ -65,6 +84,14 @@ module {
 // CHECK-SAME: obelisk.owner_release_instrumented
 // CHECK: simulation.ref.release_owner
 // CHECK-NEXT: cf.cond_br
+
+// CHECK-LABEL: simulation.func @shared_exit
+// CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%{{.*}}, %{{.*}} : !simulation.ref<i64>, !simulation.ref<i64>), ^[[CLEANUP:.*]](%{{.*}}, %{{.*}} : !simulation.ref<i64>, !simulation.ref<i64>)
+// CHECK-COUNT-2: simulation.ref.release_owner
+// CHECK: ^[[CLEANUP]](%[[A:.*]]: !simulation.ref<i64>, %[[B:.*]]: !simulation.ref<i64>):
+// CHECK-NEXT: simulation.ref.release_owner %[[A]]
+// CHECK-NEXT: simulation.ref.release_owner %[[B]]
+// CHECK-NEXT: cf.br
 
 // CHECK-LABEL: simulation.func @branch
 // CHECK: simulation.ref.alloc
