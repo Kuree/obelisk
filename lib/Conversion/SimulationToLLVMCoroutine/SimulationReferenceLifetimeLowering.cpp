@@ -385,7 +385,8 @@ LogicalResult
 releaseNativeAutomaticState(ModuleOp module,
                             const ReferenceArgumentMap &referenceArguments) {
   SmallVector<sim::SimFuncOp> functions;
-  module.walk([&](sim::SimFuncOp function) { functions.push_back(function); });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) { functions.push_back(function); });
   for (sim::SimFuncOp function : functions) {
     auto arguments = referenceArguments.find(function.getOperation());
     if (arguments == referenceArguments.end() || function.getBody().empty())

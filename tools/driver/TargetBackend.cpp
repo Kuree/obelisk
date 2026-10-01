@@ -1161,10 +1161,10 @@ LogicalResult emitTargetOutput(ModuleOp module,
   registerLLVMDialectTranslation(*module.getContext());
   registerBuiltinDialectTranslation(*module.getContext());
   llvm::StringSet<> nativeExports;
-  module.walk([&](LLVM::LLVMFuncOp function) {
+  for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
     if (function->hasAttr("obelisk.dpi.export_id"))
       nativeExports.insert(function.getSymName());
-  });
+  }
   if (pruneModel) {
     // The manifest is an ownership inventory, not a set of live entry points.
     // It has been read above; retain only surviving members in the C++ plan.

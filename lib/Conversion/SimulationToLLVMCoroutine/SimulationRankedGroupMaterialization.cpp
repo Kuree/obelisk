@@ -24,9 +24,10 @@ materializeNativeRankedGroups(ModuleOp module,
   if (plan.clockKernels.empty() || plan.rankedNodes.empty())
     return executors;
   llvm::StringMap<sim::SimFuncOp> functions;
-  module.walk([&](sim::SimFuncOp function) {
-    functions.try_emplace(function.getSymName(), function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        functions.try_emplace(function.getSymName(), function);
+      });
   // Only closed, raw-capture computation may bypass its fragment wrapper.
   // Graph effects establish activation safety; the executable body must also
   // have no runtime/status boundary. Unproved bodies keep their executor.

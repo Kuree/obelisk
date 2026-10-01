@@ -71,10 +71,11 @@ static SmallVector<sim::SimFuncOp> collectGeneratedEvalCallClosure(
   SmallVector<sim::SimFuncOp> closure;
   SmallVector<sim::SimFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 16> visited;
-  module.walk([&](sim::SimFuncOp function) {
-    if (isGeneratedEvalBody(function, selectedRawBodies))
-      pending.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (isGeneratedEvalBody(function, selectedRawBodies))
+          pending.push_back(function);
+      });
   while (!pending.empty()) {
     sim::SimFuncOp function = pending.pop_back_val();
     if (!visited.insert(function.getOperation()).second)
@@ -723,10 +724,11 @@ FailureOr<bool> makeNativeEvalPlan(
   {
     SymbolTableCollection symbols;
     SmallVector<sim::SimFuncOp> pending;
-    module.walk([&](sim::SimFuncOp function) {
-      if (isGeneratedEvalBody(function, &selectedEvalBodies))
-        pending.push_back(function);
-    });
+    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+        module, [&](sim::SimFuncOp function) {
+          if (isGeneratedEvalBody(function, &selectedEvalBodies))
+            pending.push_back(function);
+        });
     llvm::SmallPtrSet<Operation *, 16> visited;
     auto select = [&](sim::SimDesignOp design, StringRef name) {
       auto function = symbols.lookupSymbolIn<sim::SimFuncOp>(
@@ -845,13 +847,14 @@ FailureOr<bool> makeNativeEvalPlan(
           staticNBAPlan.runtimeQueueRoots[root])
         orderedRootClosed[root] = 1;
     DenseMap<std::pair<Operation *, uint64_t>, uint32_t> sourceRegions;
-    module.walk([&](sim::SimFuncOp function) {
-      auto design = function->getParentOfType<sim::SimDesignOp>();
-      if (design && function.getCodeUnitIdAttr())
-        sourceRegions.try_emplace(
-            {design, function.getCodeUnitIdAttr().getUInt()},
-            getRuntimeEventRegion(function.getHomeRegion()));
-    });
+    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+        module, [&](sim::SimFuncOp function) {
+          auto design = function->getParentOfType<sim::SimDesignOp>();
+          if (design && function.getCodeUnitIdAttr())
+            sourceRegions.try_emplace(
+                {design, function.getCodeUnitIdAttr().getUInt()},
+                getRuntimeEventRegion(function.getHomeRegion()));
+        });
     DynamicEvalNBAProofContext proofContext{stateLayout,
                                             staticNBAPlan,
                                             resolved->fanoutEntries,
@@ -1039,7 +1042,8 @@ FailureOr<bool> makeNativeEvalPlan(
       std::move(resolved->recordNBATaintMasks);
   llvm::BitVector nbaTaintedRecords = std::move(resolved->nbaTaintedRecords);
   bool prioritySignalHandoff = false;
-  module.walk([&](sim::SimFuncOp function) {
+  ::obelisk::detail::walkNativeFunctions<
+      sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
     prioritySignalHandoff |= ::obelisk::schedule::has<
         ::obelisk::schedule::Field::PrioritySignalResume>(function);
   });
@@ -2050,7 +2054,8 @@ FailureOr<bool> makeNativeEvalPlan(
     // offset/value locally and the generated NBA epilogue publishes it after
     // the activation returns, without constructing a runtime NBA object.
     SmallVector<std::pair<LLVM::CallOp, bool>> runtimeEscapes;
-    module.walk([&](sim::SimFuncOp function) {
+    ::obelisk::detail::walkNativeFunctions<
+        sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
       bool twoState = ::obelisk::schedule::has<
@@ -2663,7 +2668,8 @@ FailureOr<bool> makeNativeEvalPlan(
     // and the root bounds check, but do not re-enter the runtime for each
     // register-file read.
     SmallVector<std::pair<LLVM::CallOp, bool>> dynamicPlaneLoads;
-    module.walk([&](sim::SimFuncOp function) {
+    ::obelisk::detail::walkNativeFunctions<
+        sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
       bool twoState = ::obelisk::schedule::has<
@@ -2990,7 +2996,8 @@ FailureOr<bool> makeNativeEvalPlan(
     // handle as the outer slice's base. Inline that pure constant-root offset
     // calculation, including the signed 32-bit handle bounds. The outer NBA
     // guard still rejects invalid array indices and a mismatched root tag.
-    module.walk([&](sim::SimFuncOp function) {
+    ::obelisk::detail::walkNativeFunctions<
+        sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
       if (!isGeneratedEvalBody(function, selectedRawBodies))
         return;
       SmallVector<LLVM::CallOp> offsets;
@@ -3065,7 +3072,8 @@ FailureOr<bool> makeNativeEvalPlan(
     // verifier sees neither the obsolete runtime call nor its guard plumbing.
     while (true) {
       SmallVector<Operation *> deadHandleOperations;
-      module.walk([&](sim::SimFuncOp function) {
+      ::obelisk::detail::walkNativeFunctions<
+          sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
         if (!isGeneratedEvalBody(function, selectedRawBodies))
           return;
         function.walk([&](Operation *operation) {

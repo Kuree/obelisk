@@ -1565,13 +1565,15 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
     return success();
   SmallVector<sim::SimFuncOp> bridges;
   llvm::StringMap<LLVM::LLVMFuncOp> functions;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function->hasAttr("simulation.dpi_export_bridge"))
-      bridges.push_back(function);
-  });
-  module.walk([&](LLVM::LLVMFuncOp function) {
-    functions.try_emplace(function.getSymName(), function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (function->hasAttr("simulation.dpi_export_bridge"))
+          bridges.push_back(function);
+      });
+  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+      module, [&](LLVM::LLVMFuncOp function) {
+        functions.try_emplace(function.getSymName(), function);
+      });
   llvm::sort(bridges, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
     return lhs.getSymName() < rhs.getSymName();
   });
@@ -1652,11 +1654,12 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> thunks;
   SmallVector<LLVM::LLVMFuncOp> bodies;
   llvm::StringMap<LLVM::LLVMFuncOp> functions;
-  module.walk([&](LLVM::LLVMFuncOp function) {
-    functions.try_emplace(function.getSymName(), function);
-    if (function->hasAttr("obelisk.dpi.export_bridge"))
-      thunks.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+      module, [&](LLVM::LLVMFuncOp function) {
+        functions.try_emplace(function.getSymName(), function);
+        if (function->hasAttr("obelisk.dpi.export_bridge"))
+          thunks.push_back(function);
+      });
   for (LLVM::LLVMFuncOp thunk : thunks) {
     auto bridgeName =
         thunk->getAttrOfType<StringAttr>("obelisk.dpi.export_bridge");

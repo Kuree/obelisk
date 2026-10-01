@@ -35,13 +35,14 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     return success();
   sim::SimFuncOp root;
   bool multipleRoots = false;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() != sim::EntryKind::RootInitializer)
-      return;
-    multipleRoots |= static_cast<bool>(root);
-    if (!root)
-      root = function;
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (function.getEntryKind() != sim::EntryKind::RootInitializer)
+          return;
+        multipleRoots |= static_cast<bool>(root);
+        if (!root)
+          root = function;
+      });
   if (multipleRoots)
     return module.emitError("design has multiple root processes");
   if (!root)
@@ -323,10 +324,11 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         ValueRange{runtimeContext, status});
   }
   SmallVector<LLVM::LLVMFuncOp> dpiThunks;
-  module.walk([&](LLVM::LLVMFuncOp function) {
-    if (function->hasAttr("obelisk.dpi.import_id"))
-      dpiThunks.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+      module, [&](LLVM::LLVMFuncOp function) {
+        if (function->hasAttr("obelisk.dpi.import_id"))
+          dpiThunks.push_back(function);
+      });
   llvm::sort(dpiThunks, [](LLVM::LLVMFuncOp lhs, LLVM::LLVMFuncOp rhs) {
     return lhs->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id").getInt() <
            rhs->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id").getInt();

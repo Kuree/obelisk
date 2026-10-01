@@ -1,5 +1,6 @@
 //===- SimulationDPIExportBridge.cpp - Scope-local DPI export bridges ----===//
 
+#include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
@@ -143,23 +144,28 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
   if (!module->hasAttr("simulation.has_dpi_exports"))
     return success();
   SmallVector<sim::SimFuncOp> exports;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function->hasAttr(kExportAttr) && !function->hasAttr(kExportBridgeAttr))
-      exports.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (function->hasAttr(kExportAttr) &&
+            !function->hasAttr(kExportBridgeAttr))
+          exports.push_back(function);
+      });
   if (exports.empty())
     return success();
 
   llvm::DenseSet<std::pair<Operation *, StringAttr>> siblingSymbols;
-  module.walk([&](sim::SimFuncOp function) {
-    siblingSymbols.insert({function->getParentOp(), function.getSymNameAttr()});
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        siblingSymbols.insert(
+            {function->getParentOp(), function.getSymNameAttr()});
+      });
   llvm::DenseSet<uint64_t> codeUnitIDs;
   llvm::DenseMap<uint64_t, sim::SimCodeUnitDeclOp> codeUnitDeclarations;
-  module.walk([&](sim::SimFuncOp function) {
-    if (std::optional<int64_t> id = function.getCodeUnitId(); id && *id > 0)
-      codeUnitIDs.insert(static_cast<uint64_t>(*id));
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (std::optional<int64_t> id = function.getCodeUnitId(); id && *id > 0)
+          codeUnitIDs.insert(static_cast<uint64_t>(*id));
+      });
   module.walk([&](sim::SimCodeUnitDeclOp declaration) {
     if (declaration.getId() > 0) {
       codeUnitIDs.insert(static_cast<uint64_t>(declaration.getId()));

@@ -92,11 +92,12 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
   Builder builder(context);
 
   SmallVector<sim::SimFuncOp> functions;
-  design.walk([&](sim::SimFuncOp function) {
-    function->removeAttr(sim::metadata::nativePartition);
-    if (!function.isExternal())
-      functions.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      design, [&](sim::SimFuncOp function) {
+        function->removeAttr(sim::metadata::nativePartition);
+        if (!function.isExternal())
+          functions.push_back(function);
+      });
   llvm::sort(functions, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
     return lhs.getSymName() < rhs.getSymName();
   });

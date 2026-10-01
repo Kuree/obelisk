@@ -477,10 +477,11 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     return coverage;
   };
   SmallVector<sim::SimFuncOp> currentActors;
-  design.walk([&](sim::SimFuncOp actor) {
-    if (actorSlotFor(actor))
-      currentActors.push_back(actor);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      design, [&](sim::SimFuncOp actor) {
+        if (actorSlotFor(actor))
+          currentActors.push_back(actor);
+      });
   for (sim::SimFuncOp actor : currentActors) {
     // IEEE 1800-2023 4.5: this evaluator drains Active work. Reactive
     // activations must retain their runtime identity and region arbitration
@@ -1257,10 +1258,11 @@ LogicalResult NativePipelineAnalysis::initialize() {
     std::string rootSpawnName = root.getSymName().str();
     rootSpawnName += ".__obelisk_spawn";
     LLVM::LLVMFuncOp rootSpawn;
-    metadataDesign.walk([&](LLVM::LLVMFuncOp function) {
-      if (function.getSymName() == rootSpawnName)
-        rootSpawn = function;
-    });
+    ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+        metadataDesign, [&](LLVM::LLVMFuncOp function) {
+          if (function.getSymName() == rootSpawnName)
+            rootSpawn = function;
+        });
     if (!rootSpawn)
       return module.emitError("bytecode-only root spawn helper is missing");
     rootSpawn->moveBefore(metadataDesign);
@@ -1318,12 +1320,13 @@ LogicalResult NativePipelineAnalysis::prepareFrameInputs() {
   declareNativeRuntimeABI(module);
   declareProcessSpawnRuntimeABI(module);
   // Freeze this source-shape proof before any function worker threads state.
-  module.walk([&](sim::SimFuncOp function) {
-    if (analysis::isCaptureCopyProcess(function))
-      copyActivations.insert(function);
-    frameResults.insert(
-        {function, std::make_unique<NativeFunctionFrameResult>()});
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (analysis::isCaptureCopyProcess(function))
+          copyActivations.insert(function);
+        frameResults.insert(
+            {function, std::make_unique<NativeFunctionFrameResult>()});
+      });
   return success();
 }
 
@@ -1365,11 +1368,12 @@ LogicalResult NativePipelineAnalysis::prepareRoots(
   // Certify before packed lowering turns scalar storage accesses into runtime
   // ABI calls and pointers. Those implementation details are not managed heap
   // use. Generated bodies added later conservatively retain a managed scope.
-  module.walk([&](sim::SimFuncOp function) {
-    function->removeAttr("obelisk.native.unmanaged");
-    if (detail::isUnmanagedNativeProcess(function))
-      function->setAttr("obelisk.native.unmanaged", UnitAttr::get(context));
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        function->removeAttr("obelisk.native.unmanaged");
+        if (detail::isUnmanagedNativeProcess(function))
+          function->setAttr("obelisk.native.unmanaged", UnitAttr::get(context));
+      });
   // Root records are native implementation details, not canonical process
   // state. Insert them only after suspension-live semantic values have been
   // threaded and the shared native/bytecode frame has been analyzed. LLVM
@@ -1410,10 +1414,11 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   bool invalidPreLowerFusion = false;
   SmallVector<sim::SimFuncOp> currentActors;
   if (metadataDesign)
-    metadataDesign.walk([&](sim::SimFuncOp actor) {
-      if (aotActorSlotFor(actor))
-        currentActors.push_back(actor);
-    });
+    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+        metadataDesign, [&](sim::SimFuncOp actor) {
+          if (aotActorSlotFor(actor))
+            currentActors.push_back(actor);
+        });
   for (sim::SimFuncOp actor : currentActors) {
     uint32_t actorSlot = *aotActorSlotFor(actor);
     if (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(actor) &&
@@ -1490,10 +1495,11 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   // An observer's scalar semantic result can expand to two native planes.
   // Complete its ordinary-function conversion at this representation boundary.
   SmallVector<sim::SimFuncOp> observers;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Observer)
-      observers.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (function.getEntryKind() == sim::EntryKind::Observer)
+          observers.push_back(function);
+      });
   for (auto observer : observers) {
     auto prepared = prepareOrdinaryFunction(observer);
     if (failed(prepared) || failed(lowerPreparedOrdinaryFunction(*prepared)))
@@ -1682,11 +1688,12 @@ LogicalResult NativePipelineAnalysis::materialize() {
   markTiming("two-state executor body materialization");
 
   SmallVector<sim::SimFuncOp> ordinary;
-  module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Function ||
-        function.getEntryKind() == sim::EntryKind::Observer)
-      ordinary.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (function.getEntryKind() == sim::EntryKind::Function ||
+            function.getEntryKind() == sim::EntryKind::Observer)
+          ordinary.push_back(function);
+      });
   SmallVector<PreparedOrdinaryNativeFunction> ordinaryFunctions;
   ordinaryFunctions.reserve(ordinary.size());
   for (sim::SimFuncOp function : ordinary) {
@@ -2026,7 +2033,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   };
   SmallVector<Route> routes;
   bool routeError = false;
-  module.walk([&](LLVM::LLVMFuncOp function) {
+  ::obelisk::detail::walkNativeFunctions<
+      LLVM::LLVMFuncOp>(module, [&](LLVM::LLVMFuncOp function) {
     auto source = ::obelisk::schedule::get<
         ::obelisk::schedule::Field::EvalFourStateSource>(function);
     auto ranges = ::obelisk::schedule::get<

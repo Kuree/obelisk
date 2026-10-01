@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace llvm {
@@ -51,6 +52,23 @@ class SimFuncOp;
 } // namespace obelisk::sim
 
 namespace obelisk::detail {
+
+/// Function declarations never contain other native function declarations.
+/// Inventory their symbols without walking every operation in every body.
+template <typename FunctionOp, typename Callback>
+mlir::WalkResult walkNativeFunctions(mlir::Operation *root,
+                                     Callback &&callback) {
+  return root->walk<mlir::WalkOrder::PreOrder>([&](FunctionOp function) {
+    if constexpr (std::is_same_v<std::invoke_result_t<Callback, FunctionOp>,
+                                 mlir::WalkResult>) {
+      if (callback(function).wasInterrupted())
+        return mlir::WalkResult::interrupt();
+    } else {
+      callback(function);
+    }
+    return mlir::WalkResult::skip();
+  });
+}
 
 inline constexpr llvm::StringLiteral nativeStringGlobalAttr =
     "obelisk.native.string_global";

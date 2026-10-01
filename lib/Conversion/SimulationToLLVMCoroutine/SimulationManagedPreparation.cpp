@@ -452,12 +452,13 @@ prepareManagedClassInventory(ModuleOp module,
     }
   }
   llvm::StringMap<uint32_t> bytecodeFunctions;
-  module.walk([&](sim::SimFuncOp function) {
-    if (auto index =
-            function->getAttrOfType<IntegerAttr>("obelisk.bytecode.function"))
-      bytecodeFunctions[function.getSymName()] =
-          static_cast<uint32_t>(index.getValue().getZExtValue());
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (auto index = function->getAttrOfType<IntegerAttr>(
+                "obelisk.bytecode.function"))
+          bytecodeFunctions[function.getSymName()] =
+              static_cast<uint32_t>(index.getValue().getZExtValue());
+      });
 
   // Base descriptors must exist before derived initializers take their
   // addresses. The validated inventory order above already provides that

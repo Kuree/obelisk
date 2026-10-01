@@ -404,10 +404,11 @@ serializeComputedObserverWait(Operation *operation, Value wait,
 
 LogicalResult materializeNativeObserverThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> evaluators;
-  module.walk([&](LLVM::LLVMFuncOp function) {
-    if (function->hasAttr("obelisk.observer_width"))
-      evaluators.push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+      module, [&](LLVM::LLVMFuncOp function) {
+        if (function->hasAttr("obelisk.observer_width"))
+          evaluators.push_back(function);
+      });
   for (LLVM::LLVMFuncOp evaluator : evaluators) {
     auto width =
         evaluator->getAttrOfType<IntegerAttr>("obelisk.observer_width");

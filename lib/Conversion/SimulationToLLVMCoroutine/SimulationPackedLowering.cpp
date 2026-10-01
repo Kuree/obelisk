@@ -827,9 +827,10 @@ LogicalResult lowerPackedSimulationOperations(
   if (virtualTaskABI.wasInterrupted())
     return failure();
   ReferenceArgumentMap referenceArguments;
-  WalkResult lifetimeInputs = module.walk([&](sim::SimFuncOp function) {
+  WalkResult lifetimeInputs = module.walk<
+      WalkOrder::PreOrder>([&](sim::SimFuncOp function) {
     if (function.getBody().empty())
-      return WalkResult::advance();
+      return WalkResult::skip();
     // Observer captures are borrowed from the persistent computed-wait
     // record. Unlike an ordinary direct call, invoking an observer does not
     // transfer one retained reference per argument, so its return must not
@@ -838,7 +839,7 @@ LogicalResult lowerPackedSimulationOperations(
     if (function.getEntryKind() == sim::EntryKind::Observer ||
         ::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
-      return WalkResult::advance();
+      return WalkResult::skip();
     unsigned physical = 0;
     for (BlockArgument argument : function.getBody().front().getArguments()) {
       SmallVector<Type> converted;
@@ -856,16 +857,17 @@ LogicalResult lowerPackedSimulationOperations(
       referenceIndices.push_back(index);
     function->setAttr(nativeTransferredReferencesAttr,
                       DenseI64ArrayAttr::get(context, referenceIndices));
-    return WalkResult::advance();
+    return WalkResult::skip();
   });
   if (lifetimeInputs.wasInterrupted())
     return failure();
   markTiming("managed lifetime inventory");
   // This is transaction-local metadata produced only by the AOT signature
   // pattern below. Never consume a same-named source attribute.
-  module.walk([](sim::SimFuncOp function) {
-    function->removeAttr(nativeTwoStateBlockUnknownsAttr);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [](sim::SimFuncOp function) {
+        function->removeAttr(nativeTwoStateBlockUnknownsAttr);
+      });
   NativeStateLayout cleanEvalLayout = makeCleanEvalStateLayout(stateLayout);
   auto populatePackedPatterns = [&](SimulationToStandardTypeConverter &c,
                                     RewritePatternSet &patterns,
@@ -1062,15 +1064,16 @@ LogicalResult lowerPackedSimulationOperations(
 
   SmallVector<SmallVector<Operation *>> functionChunks;
   constexpr size_t functionsPerChunk = 64;
-  module.walk([&](sim::SimFuncOp function) {
-    if (functionChunks.empty() ||
-        functionChunks.back().size() == functionsPerChunk ||
-        ::obelisk::schedule::has<cleanEvalBodyAttr>(
-            functionChunks.back().front()) !=
-            ::obelisk::schedule::has<cleanEvalBodyAttr>(function))
-      functionChunks.emplace_back();
-    functionChunks.back().push_back(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        if (functionChunks.empty() ||
+            functionChunks.back().size() == functionsPerChunk ||
+            ::obelisk::schedule::has<cleanEvalBodyAttr>(
+                functionChunks.back().front()) !=
+                ::obelisk::schedule::has<cleanEvalBodyAttr>(function))
+          functionChunks.emplace_back();
+        functionChunks.back().push_back(function);
+      });
   if (failed(failableParallelForEach(
           context, functionChunks, [&](ArrayRef<Operation *> functions) {
             SimulationToStandardTypeConverter workerConverter;
@@ -1110,7 +1113,8 @@ LogicalResult lowerPackedSimulationOperations(
   // doing this inside the signature pattern would not update future one-to-N
   // operand adaptors owned by the conversion driver.
   WalkResult specializedBlockArguments =
-      module.walk([&](sim::SimFuncOp function) {
+      ::obelisk::detail::walkNativeFunctions<
+          sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
         auto mappings =
             function->getAttrOfType<ArrayAttr>(nativeTwoStateBlockUnknownsAttr);
         if (!mappings)
