@@ -3592,7 +3592,13 @@ public:
       return;
     }
     markTiming("observer and DPI thunk materialization");
-    if (failed(detail::materializeNativePromotionWrites(module))) {
+    if (failed(detail::prepareNativeProofPublicationInputs(
+            module, getAnalysisManager())))
+      return signalPassFailure();
+    OpPassManager publications(ModuleOp::getOperationName());
+    publications.nest<LLVM::LLVMFuncOp>().addPass(
+        detail::createPublishNativeFunctionProofsPass());
+    if (failed(runPipeline(publications, module))) {
       signalPassFailure();
       return;
     }

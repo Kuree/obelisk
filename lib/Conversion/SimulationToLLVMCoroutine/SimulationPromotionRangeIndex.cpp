@@ -1,6 +1,6 @@
 //===- SimulationPromotionRangeIndex.cpp - Scoped proof invalidation -----===//
 
-#include "SimulationToLLVMCoroutinePrivate.h"
+#include "SimulationPackedLowering.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
@@ -8,7 +8,8 @@
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/IR/Threading.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
@@ -278,8 +279,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
     if (auto global = module.lookupSymbol<LLVM::GlobalOp>(name))
       LLVM::StoreOp::create(
           builder, location,
-          llvmConstant(builder, location, builder.getI8Type(),
-                       1),
+          llvmConstant(builder, location, builder.getI8Type(), 1),
           LLVM::AddressOfOp::create(builder, location, pointer, name));
   LLVM::ReturnOp::create(builder, location, ValueRange{});
   builder.setInsertionPointToStart(recheckEntry);
@@ -316,31 +316,233 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   return success();
 }
 
+namespace {
+struct NativeProofPublicationInputs {
+  explicit NativeProofPublicationInputs(Operation *operation) {
+    auto module = cast<ModuleOp>(operation);
+    auto hook = module.lookupSymbol<LLVM::LLVMFuncOp>(
+        "__obelisk_eval_promotion_invalidate_range_v1");
+    auto dependencies = module.lookupSymbol<LLVM::GlobalOp>(
+        "__obelisk_eval_proof_dependencies_v1");
+    active = hook && dependencies;
+    if (!active)
+      return;
+    coverage = schedule::get<schedule::Field::EvalProofCoverage>(dependencies);
+    if (!coverage || coverage.size() % 2) {
+      dependencies.emitError("missing verified proof coverage");
+      valid = false;
+    }
+    bits = module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+  }
+  DenseI64ArrayAttr coverage;
+  IntegerAttr bits;
+  bool active = false;
+  bool valid = true;
+};
+
+struct NativeFunctionProofPublications {
+  NativeFunctionProofPublications(Operation *operation,
+                                  AnalysisManager &manager) {
+    auto function = cast<LLVM::LLVMFuncOp>(operation);
+    auto cached = manager.getCachedParentAnalysis<NativeProofPublicationInputs>(
+        function->getParentOfType<ModuleOp>());
+    if (!cached || !cached->get().valid) {
+      function.emitError("proof publication requires cached dependency inputs");
+      valid = false;
+      return;
+    }
+    const auto &inputs = cached->get();
+    function.walk([&](LLVM::StoreOp store) { allStores.push_back(store); });
+    if (!inputs.active)
+      return;
+    auto disjointRange = [&](uint64_t begin, uint64_t width) {
+      if (width > UINT64_MAX - begin)
+        return false;
+      auto ranges = inputs.coverage.asArrayRef();
+      // Ranges are sorted and disjoint; find the first end past the store
+      // start.
+      size_t low = 0, high = ranges.size() / 2;
+      while (low != high) {
+        size_t middle = low + (high - low) / 2;
+        if (static_cast<uint64_t>(ranges[middle * 2 + 1]) <= begin)
+          low = middle + 1;
+        else
+          high = middle;
+      }
+      return low == ranges.size() / 2 ||
+             static_cast<uint64_t>(ranges[low * 2]) >= begin + width;
+    };
+    auto bits = inputs.bits;
+    auto disjointStore = [&](LLVM::StoreOp store) {
+      if (auto range = ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::EvalUnknownWriteRange>(store)) {
+        // The generated dynamic commit's clipped mask proves containment.
+        // Missing or malformed evidence is conservative, never a guessed lane.
+        if (bits && range.size() == 2 && range[0] >= 0 && range[1] > 0 &&
+            static_cast<uint64_t>(range[0]) <= bits.getUInt() &&
+            static_cast<uint64_t>(range[1]) <= bits.getUInt() - range[0])
+          return disjointRange(range[0], range[1]);
+      }
+      auto type = dyn_cast<IntegerType>(store.getValue().getType());
+      if (!type)
+        return false;
+      Value address = store.getAddr();
+      uint64_t bytes = 0;
+      while (auto gep = address.getDefiningOp<LLVM::GEPOp>()) {
+        if (!gep.getElemType().isInteger(8) || gep.getIndices().size() != 1)
+          return false;
+        auto index = gep.getIndices()[0];
+        APInt constant;
+        if (auto integer = dyn_cast<IntegerAttr>(index))
+          constant = integer.getValue();
+        else if (!matchPattern(cast<Value>(index), m_ConstantInt(&constant)))
+          return false;
+        if (constant.isNegative() || constant.getActiveBits() > 64 ||
+            constant.getZExtValue() > UINT64_MAX - bytes)
+          return false;
+        bytes += constant.getZExtValue();
+        address = gep.getBase();
+      }
+      if (bytes > UINT64_MAX / 8)
+        return false;
+      uint64_t begin = bytes * 8;
+      uint64_t width = ((uint64_t{type.getWidth()} + 7) / 8) * 8;
+      return disjointRange(begin, width);
+    };
+    for (auto store : allStores) {
+      Value address = store.getAddr();
+      while (auto gep = address.getDefiningOp<LLVM::GEPOp>())
+        address = gep.getBase();
+      auto global = address.getDefiningOp<LLVM::AddressOfOp>();
+      if (!global || global.getGlobalName() != "__obelisk_state_unknown" ||
+          disjointStore(store))
+        continue;
+      if (!isa<IntegerType>(store.getValue().getType())) {
+        store.emitError(
+            "canonical proof publication requires packed integer storage");
+        valid = false;
+      }
+      stores.push_back(store);
+    }
+  }
+  SmallVector<LLVM::StoreOp> allStores;
+  SmallVector<LLVM::StoreOp> stores;
+  bool valid = true;
+};
+
+class PublishNativeFunctionProofsPass final
+    : public PassWrapper<PublishNativeFunctionProofsPass,
+                         OperationPass<LLVM::LLVMFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PublishNativeFunctionProofsPass)
+  StringRef getArgument() const final {
+    return "publish-native-function-proofs";
+  }
+  void runOnOperation() override {
+    if (getOperation().isExternal()) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    const auto &work = getAnalysis<NativeFunctionProofPublications>();
+    if (!work.valid)
+      return signalPassFailure();
+    bool changed = !work.stores.empty();
+    for (auto store : work.allStores) {
+      changed |= schedule::has<schedule::Field::EvalUnknownWriteRange>(store);
+      schedule::remove<schedule::Field::EvalUnknownWriteRange>(store);
+    }
+    if (!changed) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    MLIRContext *context = &getContext();
+    // Run after value-domain cloning: proven two-state stores have disappeared.
+    // Diff the actual canonical bytes, including masked and dynamically
+    // selected NBA stores. Preserved neighbors produce no delta; a known NBA
+    // payload must still clear an unknown destination before publication (IEEE
+    // 1800 10.4.2). Neither staging a future update nor a known-to-known store
+    // invalidates a certificate. No actor or observer executes between the
+    // store and this proof publication, which precedes all dependent
+    // computation/fanout.
+    OpBuilder builder(context);
+    Type pointer = LLVM::LLVMPointerType::get(context);
+    Type i64 = builder.getI64Type();
+    for (auto store : work.stores) {
+      Location location = store.getLoc();
+      auto type = cast<IntegerType>(store.getValue().getType());
+      builder.setInsertionPoint(store);
+      Value old =
+          LLVM::LoadOp::create(builder, location, type, store.getAddr(), 1);
+      Value delta =
+          LLVM::XOrOp::create(builder, location, old, store.getValue());
+      Value base = LLVM::AddressOfOp::create(builder, location, pointer,
+                                             "__obelisk_state_unknown");
+      Value bytes = LLVM::SubOp::create(
+          builder, location,
+          LLVM::PtrToIntOp::create(builder, location, i64, store.getAddr()),
+          LLVM::PtrToIntOp::create(builder, location, i64, base));
+      Value bitOffset = LLVM::ShlOp::create(
+          builder, location, bytes, llvmConstant(builder, location, i64, 3));
+      builder.setInsertionPointAfter(store);
+      for (uint64_t bit = 0; bit < type.getWidth(); bit += 64) {
+        Value chunk = delta;
+        if (bit)
+          chunk =
+              LLVM::LShrOp::create(builder, location, chunk,
+                                   llvmConstant(builder, location, type, bit));
+        if (type.getWidth() > 64)
+          chunk = LLVM::TruncOp::create(builder, location, i64, chunk);
+        else if (type.getWidth() < 64)
+          chunk = LLVM::ZExtOp::create(builder, location, i64, chunk);
+        Value offset =
+            bit ? LLVM::AddOp::create(builder, location, bitOffset,
+                                      llvmConstant(builder, location, i64, bit))
+                      .getResult()
+                : bitOffset;
+        // Keep the empty-mask check in this body. An alwaysinline wrapper can
+        // land in a different native partition, leaving an ordinary call on
+        // every unchanged store despite its attribute.
+        Value hasChange = LLVM::ICmpOp::create(
+            builder, location, LLVM::ICmpPredicate::ne, chunk,
+            llvmConstant(builder, location, i64, 0));
+        Block *head = builder.getInsertionBlock();
+        Block *continuation = head->splitBlock(builder.getInsertionPoint());
+        Block *changed = new Block;
+        head->getParent()->getBlocks().insert(continuation->getIterator(),
+                                              changed);
+        builder.setInsertionPointToEnd(head);
+        LLVM::CondBrOp::create(builder, location, hasChange, changed,
+                               continuation);
+        builder.setInsertionPointToStart(changed);
+        Value nextChunk = store.getValue();
+        if (bit)
+          nextChunk =
+              LLVM::LShrOp::create(builder, location, nextChunk,
+                                   llvmConstant(builder, location, type, bit));
+        if (type.getWidth() > 64)
+          nextChunk = LLVM::TruncOp::create(builder, location, i64, nextChunk);
+        else if (type.getWidth() < 64)
+          nextChunk = LLVM::ZExtOp::create(builder, location, i64, nextChunk);
+        LLVM::CallOp::create(
+            builder, location, TypeRange{},
+            SymbolRefAttr::get(context,
+                               "__obelisk_eval_promotion_publish_unknown_v1"),
+            ValueRange{offset, chunk, nextChunk});
+        LLVM::BrOp::create(builder, location, ValueRange{}, continuation);
+        builder.setInsertionPointToStart(continuation);
+      }
+    }
+  }
+};
+} // namespace
+
 LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   auto hook = module.lookupSymbol<LLVM::LLVMFuncOp>(
       "__obelisk_eval_promotion_invalidate_range_v1");
   auto dependencies = module.lookupSymbol<LLVM::GlobalOp>(
       "__obelisk_eval_proof_dependencies_v1");
-  // Every publication rewrite stays within one function. Freeze the module
-  // facts before dispatch, and materialize shared helpers between inventory
-  // and rewriting so no worker changes the module symbol list.
-  struct FunctionStores {
-    LLVM::LLVMFuncOp function;
-    SmallVector<LLVM::StoreOp> stores;
-  };
-  SmallVector<FunctionStores> functions;
-  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
-    if (!function.isExternal())
-      functions.push_back({function, {}});
-  if (!hook || !dependencies) {
-    parallelForEach(module.getContext(), functions, [](FunctionStores &work) {
-      work.function.walk([](LLVM::StoreOp store) {
-        ::obelisk::schedule::remove<
-            ::obelisk::schedule::Field::EvalUnknownWriteRange>(store);
-      });
-    });
+  if (!hook || !dependencies)
     return success();
-  }
   auto coverage =
       ::obelisk::schedule::get<::obelisk::schedule::Field::EvalProofCoverage>(
           dependencies);
@@ -348,93 +550,10 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
     return dependencies.emitError("missing verified proof coverage");
   ::obelisk::schedule::remove<::obelisk::schedule::Field::EvalProofCoverage>(
       dependencies);
-  auto disjointRange = [&](uint64_t begin, uint64_t width) {
-    if (width > UINT64_MAX - begin)
-      return false;
-    auto ranges = coverage.asArrayRef();
-    // Ranges are sorted and disjoint; find the first end past the store start.
-    size_t low = 0, high = ranges.size() / 2;
-    while (low != high) {
-      size_t middle = low + (high - low) / 2;
-      if (static_cast<uint64_t>(ranges[middle * 2 + 1]) <= begin)
-        low = middle + 1;
-      else
-        high = middle;
-    }
-    return low == ranges.size() / 2 ||
-           static_cast<uint64_t>(ranges[low * 2]) >= begin + width;
-  };
-  auto bits =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
-  auto disjointStore = [&](LLVM::StoreOp store) {
-    if (auto range = ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::EvalUnknownWriteRange>(store)) {
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalUnknownWriteRange>(store);
-      // The generated dynamic commit's clipped mask proves containment.
-      // Missing or malformed evidence is conservative, never a guessed lane.
-      if (bits && range.size() == 2 && range[0] >= 0 && range[1] > 0 &&
-          static_cast<uint64_t>(range[0]) <= bits.getUInt() &&
-          static_cast<uint64_t>(range[1]) <= bits.getUInt() - range[0])
-        return disjointRange(range[0], range[1]);
-    }
-    auto type = dyn_cast<IntegerType>(store.getValue().getType());
-    if (!type)
-      return false;
-    Value address = store.getAddr();
-    uint64_t bytes = 0;
-    while (auto gep = address.getDefiningOp<LLVM::GEPOp>()) {
-      if (!gep.getElemType().isInteger(8) || gep.getIndices().size() != 1)
-        return false;
-      auto index = gep.getIndices()[0];
-      APInt constant;
-      if (auto integer = dyn_cast<IntegerAttr>(index))
-        constant = integer.getValue();
-      else if (!matchPattern(cast<Value>(index), m_ConstantInt(&constant)))
-        return false;
-      if (constant.isNegative() || constant.getActiveBits() > 64 ||
-          constant.getZExtValue() > UINT64_MAX - bytes)
-        return false;
-      bytes += constant.getZExtValue();
-      address = gep.getBase();
-    }
-    if (bytes > UINT64_MAX / 8)
-      return false;
-    uint64_t begin = bytes * 8;
-    uint64_t width = ((uint64_t{type.getWidth()} + 7) / 8) * 8;
-    return disjointRange(begin, width);
-  };
-  if (failed(failableParallelForEach(
-          module.getContext(), functions,
-          [&](FunctionStores &work) -> LogicalResult {
-            work.function.walk([&](LLVM::StoreOp store) {
-              Value address = store.getAddr();
-              while (auto gep = address.getDefiningOp<LLVM::GEPOp>())
-                address = gep.getBase();
-              auto global = address.getDefiningOp<LLVM::AddressOfOp>();
-              if (global &&
-                  global.getGlobalName() == "__obelisk_state_unknown" &&
-                  !disjointStore(store))
-                work.stores.push_back(store);
-            });
-            for (auto store : work.stores)
-              if (!isa<IntegerType>(store.getValue().getType()))
-                return store.emitError("canonical proof publication requires "
-                                       "packed integer storage");
-            return success();
-          })))
-    return failure();
-  llvm::erase_if(functions, [](const FunctionStores &work) {
-    return work.stores.empty();
-  });
-  if (functions.empty())
-    return success();
-
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   Location location = hook.getLoc();
   Type i64 = builder.getI64Type();
-  Type pointer = LLVM::LLVMPointerType::get(context);
   Type voidType = LLVM::LLVMVoidType::get(context);
   auto maskHook = getOrDeclareLLVMFunction(
       module, "__obelisk_eval_promotion_invalidate_mask_v1", voidType,
@@ -504,79 +623,19 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
                        ValueRange{publication->getArgument(0), gained});
   LLVM::ReturnOp::create(builder, location, ValueRange{});
 
-  // Run after value-domain cloning: proven two-state stores have disappeared.
-  // Diff the actual canonical bytes, including masked and dynamically selected
-  // NBA stores. Preserved neighbors produce no delta; a known NBA payload must
-  // still clear an unknown destination before publication (IEEE 1800 10.4.2).
-  // Neither staging a future update nor a known-to-known store invalidates a
-  // certificate. No actor or observer executes between the store and this
-  // proof publication, which precedes all dependent computation/fanout.
-  parallelForEach(context, functions, [&](FunctionStores &work) {
-    OpBuilder builder(context);
-    for (auto store : work.stores) {
-      Location location = store.getLoc();
-      auto type = cast<IntegerType>(store.getValue().getType());
-      builder.setInsertionPoint(store);
-      Value old =
-          LLVM::LoadOp::create(builder, location, type, store.getAddr(), 1);
-      Value delta =
-          LLVM::XOrOp::create(builder, location, old, store.getValue());
-      Value base = LLVM::AddressOfOp::create(builder, location, pointer,
-                                             "__obelisk_state_unknown");
-      Value bytes = LLVM::SubOp::create(
-          builder, location,
-          LLVM::PtrToIntOp::create(builder, location, i64, store.getAddr()),
-          LLVM::PtrToIntOp::create(builder, location, i64, base));
-      Value bitOffset = LLVM::ShlOp::create(
-          builder, location, bytes, llvmConstant(builder, location, i64, 3));
-      builder.setInsertionPointAfter(store);
-      for (uint64_t bit = 0; bit < type.getWidth(); bit += 64) {
-        Value chunk = delta;
-        if (bit)
-          chunk =
-              LLVM::LShrOp::create(builder, location, chunk,
-                                   llvmConstant(builder, location, type, bit));
-        if (type.getWidth() > 64)
-          chunk = LLVM::TruncOp::create(builder, location, i64, chunk);
-        else if (type.getWidth() < 64)
-          chunk = LLVM::ZExtOp::create(builder, location, i64, chunk);
-        Value offset =
-            bit ? LLVM::AddOp::create(builder, location, bitOffset,
-                                      llvmConstant(builder, location, i64, bit))
-                      .getResult()
-                : bitOffset;
-        // Keep the empty-mask check in this body. An alwaysinline wrapper can
-        // land in a different native partition, leaving an ordinary call on
-        // every unchanged store despite its attribute.
-        Value hasChange = LLVM::ICmpOp::create(
-            builder, location, LLVM::ICmpPredicate::ne, chunk,
-            llvmConstant(builder, location, i64, 0));
-        Block *head = builder.getInsertionBlock();
-        Block *continuation = head->splitBlock(builder.getInsertionPoint());
-        Block *changed = new Block;
-        head->getParent()->getBlocks().insert(continuation->getIterator(),
-                                              changed);
-        builder.setInsertionPointToEnd(head);
-        LLVM::CondBrOp::create(builder, location, hasChange, changed,
-                               continuation);
-        builder.setInsertionPointToStart(changed);
-        Value nextChunk = store.getValue();
-        if (bit)
-          nextChunk =
-              LLVM::LShrOp::create(builder, location, nextChunk,
-                                   llvmConstant(builder, location, type, bit));
-        if (type.getWidth() > 64)
-          nextChunk = LLVM::TruncOp::create(builder, location, i64, nextChunk);
-        else if (type.getWidth() < 64)
-          nextChunk = LLVM::ZExtOp::create(builder, location, i64, nextChunk);
-        LLVM::CallOp::create(builder, location, publish,
-                             ValueRange{offset, chunk, nextChunk});
-        LLVM::BrOp::create(builder, location, ValueRange{}, continuation);
-        builder.setInsertionPointToStart(continuation);
-      }
-    }
-  });
   return success();
+}
+
+LogicalResult prepareNativeProofPublicationInputs(ModuleOp module,
+                                                  AnalysisManager manager) {
+  const auto &inputs = manager.getAnalysis<NativeProofPublicationInputs>();
+  if (!inputs.valid)
+    return failure();
+  return materializeNativePromotionWrites(module);
+}
+
+std::unique_ptr<Pass> createPublishNativeFunctionProofsPass() {
+  return std::make_unique<PublishNativeFunctionProofsPass>();
 }
 
 } // namespace obelisk::detail

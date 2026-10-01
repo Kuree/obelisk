@@ -30,6 +30,8 @@ class DataLayout;
 }
 
 namespace mlir {
+class AnalysisManager;
+class Pass;
 class ConversionPatternRewriter;
 class RewritePatternSet;
 class TypeConverter;

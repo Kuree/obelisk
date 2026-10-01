@@ -15,6 +15,10 @@ namespace obelisk::detail {
 std::unique_ptr<mlir::Pass>
 createNativeFunctionFinalizationPass(const llvm::DataLayout &dataLayout,
                                      uint64_t inlineOperationLimit);
+std::unique_ptr<mlir::Pass> createPublishNativeFunctionProofsPass();
+mlir::LogicalResult
+prepareNativeProofPublicationInputs(mlir::ModuleOp module,
+                                    mlir::AnalysisManager manager);
 
 mlir::LogicalResult lowerPackedSimulationOperations(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
