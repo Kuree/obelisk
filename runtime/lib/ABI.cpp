@@ -683,7 +683,11 @@ ABI_OFFSET(obelisk_rt_native_promotion_certificate, mask, ABI_PTR(16, 8));
 ABI_OFFSET(obelisk_rt_native_promotion_certificate, route_slot,
            ABI_PTR(24, 16));
 ABI_OFFSET(obelisk_rt_native_promotion_certificate, fallback, ABI_PTR(32, 20));
-ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, ABI_PTR(272, 208), 8);
+ABI_SIZE_ALIGN(obelisk_rt_native_ordered_nba_bridge, ABI_PTR(16, 8),
+               ABI_PTR(8, 4));
+ABI_OFFSET(obelisk_rt_native_ordered_nba_bridge, queue, 0);
+ABI_OFFSET(obelisk_rt_native_ordered_nba_bridge, roots, ABI_PTR(8, 4));
+ABI_SIZE_ALIGN(obelisk_rt_native_schedule_plan, ABI_PTR(288, 216), 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, size, 0);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, graph_layout_checksum, 8);
 ABI_OFFSET(obelisk_rt_native_schedule_plan, mutable_state, 16);
@@ -739,6 +743,10 @@ ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_invalidate_range,
            ABI_PTR(256, 196));
 ABI_OFFSET(obelisk_rt_native_schedule_plan, promotion_recheck_range,
            ABI_PTR(264, 200));
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_ordered_count,
+           ABI_PTR(272, 204));
+ABI_OFFSET(obelisk_rt_native_schedule_plan, nba_ordered_bridge,
+           ABI_PTR(280, 208));
 
 static_assert(OBELISK_RT_VERSION == 1);
 static_assert(OBELISK_RT_BYTECODE_INSTRUCTION_SIZE == 16);
@@ -960,8 +968,7 @@ ABI_FUNCTION(obelisk_rt_v1_context_configure_argv,
                                    const char *const *));
 ABI_FUNCTION(obelisk_rt_v1_coverage_finalize,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
-                                   const uint8_t *, const uint8_t *,
-                                   uint32_t));
+                                   const uint8_t *, const uint8_t *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_coverage_point_hit,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_coverage_toggle_transition,
@@ -1674,6 +1681,9 @@ ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_root,
 ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_roots,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_ordered,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, int64_t,
+                                   uint64_t, uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_string_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint64_t,
                                    uint64_t, uint64_t, obelisk_rt_string_v1));

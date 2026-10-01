@@ -133,6 +133,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
             enqueue);
     plan.siteSemanticOrigins.try_emplace(
         site.getId(), origin ? origin.getValue().getZExtValue() : site.getId());
+    if (auto width = nativeStateWidth(enqueue.getValue().getType()))
+      plan.siteWidths.try_emplace(site.getId(), *width);
   });
 
   sim::SimDesignOp design;

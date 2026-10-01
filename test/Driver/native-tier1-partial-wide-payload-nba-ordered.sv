@@ -1,6 +1,7 @@
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
+// RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
@@ -13,8 +14,8 @@
 // activation. IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order,
 // so bit 0 and bit 100 each see a 0 -> 1 -> 0 pulse that the edge watchers
 // count (9.4.2). A suspension-live string keeps a runtime continuation.
-// The runtime calendar keeps this partial design's NBA queue
-// and complete payloads at checkpoints; the independent combinational chain
+// The generated queue retains this partial design's complete NBA payloads
+// at the shared barrier; the independent combinational chain
 // still executes through the generated evaluator.
 module native_tier1_partial_wide_payload_nba_ordered;
   logic clk = 0;
@@ -48,7 +49,8 @@ module native_tier1_partial_wide_payload_nba_ordered;
 endmodule
 
 // TIER-NOT: partial eval disabled
-// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM: @__obelisk_eval_ordered_nba_queue_v1
 // LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
 // TRACE: eval_dispatches={{[1-9][0-9]*}}
 // OUTPUT: ordered top=4 low_edges=4 high_edges=4 mix=

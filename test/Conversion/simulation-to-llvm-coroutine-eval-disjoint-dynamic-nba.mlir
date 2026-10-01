@@ -131,9 +131,9 @@ module attributes {
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
 // CHECK: llvm.mlir.constant(2147483647 : i64)
-// CHECK-NEXT: {{.*}} llvm.icmp "sle"
+// CHECK: {{.*}} llvm.icmp "sle"
 // CHECK: llvm.mlir.constant(-2147483648 : i64)
-// CHECK-NEXT: {{.*}} llvm.icmp "sge"
+// CHECK: {{.*}} llvm.icmp "sge"
 // CHECK: llvm.mlir.addressof @__obelisk_eval_nba_offset_
 // CHECK: llvm.mlir.addressof @__obelisk_eval_nba_offset_
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba

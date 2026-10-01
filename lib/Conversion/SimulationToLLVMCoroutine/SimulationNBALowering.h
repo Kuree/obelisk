@@ -32,6 +32,8 @@ struct NativeStaticNBAPlan {
   // source semantic site so mutually exclusive compiler clones do not look
   // like independently ordered NBA statements.
   llvm::DenseMap<uint64_t, uint64_t> siteSemanticOrigins;
+  llvm::DenseMap<uint64_t, uint64_t> siteWidths;
+  llvm::SmallVector<uint8_t> runtimeQueueRoots;
   // Distinct semantic sites select disjoint fixed root slices / array lanes,
   // or lie on mutually exclusive paths of the same outlined activation.
   // Independent indices cannot alias disjoint lanes. Each site still needs its

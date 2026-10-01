@@ -139,6 +139,10 @@ nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
     }
   };
   const auto *plan = context->nativeSchedulePlan;
+  if (includeGenerated && plan && plan->nba_ordered_count &&
+      *plan->nba_ordered_count != 0 &&
+      schedulerRegionEligible(context, OBELISK_RT_REGION_NBA))
+    region = std::min(region, uint32_t{OBELISK_RT_REGION_NBA});
   if (plan && plan->nba_dirty_roots && plan->nba_dirty_summary) {
     // Both runtime staging and generated staging maintain this hierarchy.
     // A consumed fixed-site payload may retain valid/mask fields; only its
@@ -345,6 +349,61 @@ static obelisk_rt_status schedulerNBA(
     if (context->nextSchedulerSequence == 0) {
       context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
       return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    // LRM 4.6(b), 10.4.2: capture runtime initializer/fallback writes in the
+    // generated batch at their execution point, preserving order even when
+    // they share a root with clocked work. The barrier still masks forces and
+    // publishes each update (10.6.2, 38.34); staging changes no state value.
+    const auto *plan = context->nativeSchedulePlan;
+    const auto *bridge = plan ? plan->nba_ordered_bridge : nullptr;
+    if (bridge && bridge->queue && bridge->roots && !driver && !stringValue &&
+        staticSite != UINT64_MAX && boundedStatic && delay == 0 &&
+        update.execRegion == OBELISK_RT_REGION_NBA) {
+      const auto *begin = context->nativeScheduleNBASites;
+      const auto *end = begin + context->nativeScheduleNBASiteCount;
+      const auto *site = std::lower_bound(
+          begin, end, staticSite,
+          [](const auto &entry, uint64_t id) { return entry.site < id; });
+      if (site != end && site->site == staticSite &&
+          site->root < context->nativeScheduleNBARootCount &&
+          bridge->roots[site->root]) {
+        const auto &root = context->nativeScheduleNBARoots[site->root];
+        if (root.static_state != staticID ||
+            root.bit_width != staticState->bitWidth ||
+            planeBitCount != plan->state_bit_count)
+          return fail(OBELISK_RT_LAYOUT_MISMATCH);
+        auto *queue = static_cast<EvalNBAQueue *>(bridge->queue);
+        uint64_t chunks = (bitWidth + 63) / 64;
+        if (chunks > 1 && (staticSite >= (uint64_t{1} << 48) ||
+                           chunks >= (uint64_t{1} << 15)))
+          return fail(OBELISK_RT_INVALID_ARGUMENT);
+        for (uint64_t chunk = 0; chunk != chunks; ++chunk) {
+          auto status = obelisk_rt_v1_eval_nba_reserve(context, queue);
+          if (status != OBELISK_RT_OK) {
+            queue->error = status;
+            return fail(status);
+          }
+          uint64_t width = std::min<uint64_t>(64, bitWidth - chunk * 64);
+          uint64_t recordSite =
+              chunks == 1 ? staticSite
+                          : (uint64_t{1} << 63) | (chunk << 48) | staticSite;
+          queue->data[queue->size++] = {
+              recordSite, static_cast<uint64_t>(offset + int64_t(chunk * 64)),
+              loadPackedBytes(value, sourceBitOffset + chunk * 64, width),
+              unknownPlane ? loadPackedBytes(
+                                 unknown, sourceBitOffset + chunk * 64, width)
+                           : 0};
+        }
+        ++context->nextSchedulerSequence;
+        uint32_t word = site->root / 64;
+        if (plan->nba_dirty_roots && word < plan->nba_dirty_word_count) {
+          plan->nba_dirty_roots[word] |= uint64_t{1} << (site->root % 64);
+          if (plan->nba_dirty_summary &&
+              word / 64 < plan->nba_dirty_summary_word_count)
+            plan->nba_dirty_summary[word / 64] |= uint64_t{1} << (word % 64);
+        }
+        return OBELISK_RT_OK;
+      }
     }
     if (!driver && staticSite != UINT64_MAX && boundedStatic && !stringValue &&
         delay == 0 && context->nativeSchedulePlan &&
@@ -3524,13 +3583,18 @@ commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
   if (!context->nativeSchedulePlan)
     return OBELISK_RT_OK;
   obelisk_rt_status status = OBELISK_RT_OK;
+  bool orderedPending = context->nativeSchedulePlan->nba_ordered_count &&
+                        *context->nativeSchedulePlan->nba_ordered_count != 0 &&
+                        barrierRegion == OBELISK_RT_REGION_NBA;
   // A compiled barrier publishes through its Tier-1 state/fanout contract.
   // After whole-plan fallback, native fragments can still stage generated
   // accumulators, but their commits must use canonical runtime publication.
   // Re-entering the compiled barrier here can clear the dirty index without
   // consuming an accumulator and leave the fine scheduler spinning forever.
   if (context->nativeSchedulePlan->nba_commit &&
-      !context->nativeScheduleDeoptimized) {
+      (!context->nativeScheduleDeoptimized ||
+       (context->nativeSchedulePlan->nba_ordered_count &&
+        *context->nativeSchedulePlan->nba_ordered_count != 0))) {
     uint32_t callbackChanged = changed ? 1u : 0u;
     status = context->nativeSchedulePlan->nba_commit(
         context->nativeSchedulePlan->mutable_state, context, barrierRegion,
@@ -3543,7 +3607,67 @@ commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
   }
   if (status == OBELISK_RT_OK)
     refreshStaticNBAAccumulatorsPending(context);
+  // Generated queue publication sets owner bits directly. Re-enter Active
+  // after the barrier before advancing time or running testbench observers
+  // (LRM 4.5), just as canonical static fanout does for fixed slots.
+  if (status == OBELISK_RT_OK && orderedPending &&
+      !context->nativeScheduleDeoptimized &&
+      (context->nativeSchedulePlan->flags &
+       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL))
+    context->nativeScheduleClockIngressPending = true;
   return status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_ordered(
+    obelisk_rt_context *context, uint32_t rootIndex, int64_t offset,
+    uint64_t width, uint64_t value, uint64_t unknown) {
+  if (!context || !context->nativeSchedulePlan || width == 0 || width > 64 ||
+      rootIndex >= context->nativeScheduleNBARootCount)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const auto &root = context->nativeScheduleNBARoots[rootIndex];
+  const auto *plan = context->nativeSchedulePlan;
+  const auto *state = findNativeStaticState(context, root.static_state);
+  if (!state || state->bitWidth != root.bit_width ||
+      state->bitOffset > plan->state_bit_count ||
+      root.bit_width > plan->state_bit_count - state->bitOffset)
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  if (offset <= -int64_t(width) || offset >= int64_t(root.bit_width))
+    return OBELISK_RT_OK;
+  uint64_t source = offset < 0 ? uint64_t(-offset) : 0;
+  uint64_t destination = offset < 0 ? 0 : uint64_t(offset);
+  width = std::min(width - source, root.bit_width - destination);
+  value >>= source;
+  unknown >>= source;
+  uint64_t planeBit = state->bitOffset + destination;
+  auto overrideMask = [&](const std::vector<uint64_t> &plane) {
+    return plane.empty() ? uint64_t{0}
+                         : loadPackedBytes(
+                               reinterpret_cast<const uint8_t *>(plane.data()),
+                               planeBit, width);
+  };
+  uint64_t mask = packedWidthMask(width) & ~(overrideMask(context->forceMask) |
+                                             overrideMask(context->assignMask));
+  uint64_t oldValue = loadPackedBytes(plan->state_value, planeBit, width);
+  uint64_t oldUnknown = loadPackedBytes(plan->state_unknown, planeBit, width);
+  uint64_t newValue = (oldValue & ~mask) | (value & mask);
+  uint64_t newUnknown = (oldUnknown & ~mask) | (unknown & mask);
+  if (context->execution &&
+      context->execution->state_bit_count == plan->state_bit_count) {
+    storePackedBytes(reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                     planeBit, width, newValue);
+    storePackedBytes(reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+                     planeBit, width, newUnknown);
+  }
+  if (!storeNativeScheduleStateUnlocked(context, planeBit, width, newValue,
+                                        newUnknown, oldUnknown))
+    return OBELISK_RT_LAYOUT_MISMATCH;
+  ++context->signalDiagnostics.aotNBAStages;
+  ++context->signalDiagnostics.aotNBACommits;
+  if (((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0)
+    obelisk_rt_v1_scheduler_static_transition(context, root.static_state,
+                                              destination, width, oldValue,
+                                              oldUnknown, newValue, newUnknown);
+  return context->schedulerStatus;
 }
 
 extern "C" obelisk_rt_status

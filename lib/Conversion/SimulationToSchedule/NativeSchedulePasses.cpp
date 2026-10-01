@@ -440,9 +440,10 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                 (requireStaticAccess && found->second.dynamic &&
                  !(allowDirectDynamicStore && directDynamicStore(destination))))
               return true;
-            // Runtime-owned waiters need publication while the original
-            // actor identity is active (IEEE 1800-2023 9.4.2). Generated
-            // ingress alone cannot wake that part of the fanout.
+            // LRM 9.4.2: blocking writes must preserve the executing actor's
+            // identity when publishing to runtime waits. NBA staging does
+            // not publish: the common ordered NBA barrier already delivers
+            // those transitions after the actor returns (LRM 4.5, 10.4.2).
             // Driver provenance is normalized to its net descriptor;
             // include aliases whose resolved transition wakes a waiter.
             if (found->second.resource == schedule::ComputeResourceKind::Net)
@@ -453,8 +454,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             return handle != handles.end() &&
                    obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
                    decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
-                   (staticFanoutPlan.runtimeTransitionStates.contains(
-                        decoded.id) ||
+                   ((!requireStaticNBA &&
+                     staticFanoutPlan.runtimeTransitionStates.contains(
+                         decoded.id)) ||
                     (requireStaticNBA &&
                      !stateLayout->nbaHandles.contains(decoded.id)));
           };
@@ -645,6 +647,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     SmallVector<llvm::SmallDenseSet<uint32_t, 4>> bodyWideRoots(
         admittedBodies.size());
     SmallVector<bool> bodyNeedsOrderedNBA(admittedBodies.size(), false);
+    SmallVector<bool> bodyUsesOrderedQueue(admittedBodies.size(), false);
     for (auto [index, function] : llvm::enumerate(admittedBodies)) {
       SmallVector<sim::SimFuncOp> pending{function};
       llvm::SmallPtrSet<Operation *, 8> visited;
@@ -663,6 +666,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           // An activation with observable intermediate writes needs a closed
           // ordered queue or a runtime checkpoint throughout.
           bodyNeedsOrderedNBA[index] |=
+              !staticNBAPlan.mergeSafeRoots[root->second] &&
+              !staticNBAPlan.changeWatchedRoots[root->second];
+          bodyUsesOrderedQueue[index] |=
               !staticNBAPlan.mergeSafeRoots[root->second];
           if (staticNBAPlan.roots[root->second].bit_width > 64)
             bodyWideRoots[index].insert(root->second);
@@ -746,18 +752,49 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       if (site.root < orderedRootClosed.size() &&
           !generatedOrigins[site.root].contains(semanticOrigin(site.site)))
         orderedRootClosed[site.root] = 0;
+    // LRM 4.6(b), 10.4.2: the common calendar can preserve source execution
+    // order across runtime and generated owners by sharing the actual queue.
+    // Include initializer writes rather than mistaking them for asynchronous
+    // clock writers or requiring a checkpoint on every later clock edge.
+    staticNBAPlan.runtimeQueueRoots.assign(staticNBAPlan.roots.size(), 0);
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module))
+      for (uint32_t root = 0; root != orderedRootClosed.size(); ++root)
+        if (queuePayloadSupported[root]) {
+          staticNBAPlan.runtimeQueueRoots[root] = 1;
+          orderedRootClosed[root] = 1;
+        }
+    if (detailedTiming)
+      module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+        auto site = enqueue.getSiteAttr();
+        auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
+                         : staticNBAPlan.siteRoots.end();
+        if (root == staticNBAPlan.siteRoots.end() ||
+            orderedRootClosed[root->second] ||
+            generatedOrigins[root->second].contains(
+                semanticOrigin(site.getId())))
+          return;
+        // LRM 4.6(b), 10.4.2: name the physical origin whose writes would
+        // otherwise interleave with the generated ordered batch.
+        llvm::errs() << "obelisk NBA missing generated origin: root="
+                     << root->second << " site=" << site.getId()
+                     << " origin=" << semanticOrigin(site.getId())
+                     << " function="
+                     << enqueue->getParentOfType<sim::SimFuncOp>().getSymName()
+                     << " source=" << enqueue.getLoc() << '\n';
+      });
     // IEEE 1800-2023 4.6(b), 10.4.2: the ordered queue must hold every
     // update whose order is observable.
     // A merge-safe root keeps its accumulator and cannot reveal that order.
-    bool everySiteGenerated = !::obelisk::schedule::has<
-        ::obelisk::schedule::Field::EvalRuntimeCalendar>(module);
+    bool everySiteGenerated = true;
     module.walk([&](sim::SimNBAEnqueueOp enqueue) {
       schedule::NBASiteAttr site = enqueue.getSiteAttr();
       auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
                        : staticNBAPlan.siteRoots.end();
       if (root != staticNBAPlan.siteRoots.end() &&
           root->second < staticNBAPlan.mergeSafeRoots.size() &&
-          staticNBAPlan.mergeSafeRoots[root->second])
+          (staticNBAPlan.mergeSafeRoots[root->second] ||
+           staticNBAPlan.changeWatchedRoots[root->second]))
         return;
       bool supported = root != staticNBAPlan.siteRoots.end() &&
                        root->second < orderedRootClosed.size() &&
@@ -804,14 +841,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
               ::obelisk::schedule::Field::EvalCheckpointOnly>(function) ||
           (bodyNeedsOrderedNBA[index] && !everySiteGenerated) ||
           llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
-            bool sharedCalendar = ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalRuntimeCalendar>(module);
-            bool fixedSlots = clockedBodies[index] &&
-                              staticNBAPlan.mergeSafeRoots[root] &&
-                              (generatedOrigins[root].size() == 1 ||
-                               staticNBAPlan.independentSiteWrites[root]);
-            return !orderedRootClosed[root] || !queuePayloadSupported[root] ||
-                   (sharedCalendar && !fixedSlots);
+            return !orderedRootClosed[root] || !queuePayloadSupported[root];
           });
       if (!runtimeOwner)
         continue;
@@ -846,14 +876,14 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             enqueueOwner(dependent);
       }
       for (uint32_t root : bodyWideRoots[index])
-        if (orderedRootClosed[root]) {
+        if (orderedRootClosed[root] && !staticNBAPlan.runtimeQueueRoots[root]) {
           orderedRootClosed[root] = 0;
           for (unsigned dependent : ownersByRoot.lookup(root))
             enqueueOwner(dependent);
         }
     }
     for (auto [index, function] : llvm::enumerate(admittedBodies))
-      if (bodyNeedsOrderedNBA[index] &&
+      if (bodyUsesOrderedQueue[index] &&
           !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function))
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalOrderedNbaQueue>(
@@ -1145,14 +1175,11 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
                 "direct eval body crosses multiple fusion groups");
           direct.fusionGroup = group->second;
         }
-    // Only the outlined instance coordinator executes the complete fusion
-    // group. ExecutableNodes referenced by that coordinator may retain the same
-    // group provenance, but expanding each helper to all physical source owners
-    // would make several distinct bodies claim every fused fragment.
-    if (direct.instanceCoordinator && direct.fusionGroup != UINT32_MAX)
-      for (const auto &[sourceOwner, group] : aotFusionGroups)
-        if (group == direct.fusionGroup)
-          direct.sourceOwners.push_back(sourceOwner);
+    // IEEE 1800-2023 4.5, 9.4.2: consume readiness only for activations
+    // actually executed by this body. The collected source-owner/call-closure
+    // certificate provides that coverage; a fusion group ID is provenance.
+    // Rebuilt graph groups can contain other preserved physical activations,
+    // including consumers made ready by a VPI deposit (38.34).
     llvm::sort(direct.sourceOwners);
     direct.sourceOwners.erase(
         std::unique(direct.sourceOwners.begin(), direct.sourceOwners.end()),

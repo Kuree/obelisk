@@ -2,6 +2,7 @@
 // RUN:   -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=GENERATED < %t.auto.ll
+// RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.auto.ll
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
@@ -10,13 +11,21 @@
 
 // Two NBA statements each write all 128 bits of one root per activation.
 // IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order. The
-// runtime calendar retains the complete payloads in its ordered queue. Auto
-// keeps the generated evaluator with exact actor checkpoints and must match
+// generated queue retains the complete payloads at the shared NBA barrier.
+// Auto keeps the generated evaluator and must match
 // the generic scheduler, including the pre-NBA read at the final edge.
 module native_tier1_partial_wide_nba_whole_root;
   logic clk = 0;
   logic [7:0] q[0:31];
   logic [127:0] wide = 0;
+
+  // LRM 4.6(b), 10.4.2: the runtime initializer shares the generated queue.
+  // Its two whole-root updates must not force every clock activation through
+  // a checkpoint or replace the source-ordered clocked updates below.
+  initial begin
+    wide <= 128'hffffffffffffffffffffffffffffffff;
+    wide <= 128'd7;
+  end
 
   always #5 clk = ~clk;
   genvar i;
@@ -43,5 +52,6 @@ endmodule
 
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 // ADMISSION-NOT: partial eval disabled
-// GENERATED: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// GENERATED: @__obelisk_eval_ordered_nba_queue_v1
 // GENERATED: define {{.*}}i32 @__obelisk_eval_dispatch_v1

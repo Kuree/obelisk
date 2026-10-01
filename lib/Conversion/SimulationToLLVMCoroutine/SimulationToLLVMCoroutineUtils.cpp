@@ -29,12 +29,13 @@ LLVM::LLVMStructType getNativeSchedulePlanLLVMType(MLIRContext *context) {
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  SmallVector<Type> fields{
-      i32,     i64,     pointer, i64,     i32,     i32,     pointer, pointer,
-      i64,     pointer, pointer, pointer, pointer, i32,     i32,     pointer,
-      i64,     pointer, i64,     pointer, i64,     pointer, pointer, pointer,
-      i32,     i32,     pointer, i32,     i32,     pointer, i32,     i32,
-      pointer, i64,     pointer, pointer, pointer, pointer, pointer};
+  SmallVector<Type> fields{i32,     i64,     pointer, i64,     i32,     i32,
+                           pointer, pointer, i64,     pointer, pointer, pointer,
+                           pointer, i32,     i32,     pointer, i64,     pointer,
+                           i64,     pointer, i64,     pointer, pointer, pointer,
+                           i32,     i32,     pointer, i32,     i32,     pointer,
+                           i32,     i32,     pointer, i64,     pointer, pointer,
+                           pointer, pointer, pointer, pointer, pointer};
   assert(fields.size() == static_cast<size_t>(NativeSchedulePlanField::Count));
   return LLVM::LLVMStructType::getLiteral(context, fields);
 }
@@ -45,11 +46,12 @@ uint64_t getNativeSchedulePlanSize(const llvm::DataLayout &dataLayout) {
   llvm::Type *i32 = llvm::Type::getInt32Ty(context);
   llvm::Type *i64 = llvm::Type::getInt64Ty(context);
   SmallVector<llvm::Type *> fields{
-      i32,     i64,     pointer, i64,     i32,     i32,     pointer, pointer,
-      i64,     pointer, pointer, pointer, pointer, i32,     i32,     pointer,
-      i64,     pointer, i64,     pointer, i64,     pointer, pointer, pointer,
-      i32,     i32,     pointer, i32,     i32,     pointer, i32,     i32,
-      pointer, i64,     pointer, pointer, pointer, pointer, pointer};
+      i32,     i64,     pointer, i64,     i32,     i32,     pointer,
+      pointer, i64,     pointer, pointer, pointer, pointer, i32,
+      i32,     pointer, i64,     pointer, i64,     pointer, i64,
+      pointer, pointer, pointer, i32,     i32,     pointer, i32,
+      i32,     pointer, i32,     i32,     pointer, i64,     pointer,
+      pointer, pointer, pointer, pointer, pointer, pointer};
   auto *type = llvm::StructType::get(context, fields);
   return dataLayout.getTypeAllocSize(type).getFixedValue();
 }

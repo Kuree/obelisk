@@ -17,6 +17,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
@@ -610,9 +611,6 @@ proveDynamicEvalNBA(LLVM::CallOp call,
   // NBA scheduler when the root and commit region are otherwise certified.
   proof.orderedWide =
       (commonDynamicRoot || chunkedPayload) &&
-      !::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalRuntimeCalendar>(
-          call->getParentOfType<ModuleOp>()) &&
       root->second < proofContext.orderedRootClosed.size() &&
       proofContext.orderedRootClosed[root->second] &&
       proof.commitRegion == OBELISK_RT_REGION_NBA &&
@@ -840,6 +838,12 @@ FailureOr<bool> makeNativeEvalPlan(
         if (site.root < orderedRootClosed.size())
           orderedRootClosed[site.root] = 0;
       }
+    // The shared queue also captures the original runtime implementations,
+    // including initializers and VPI fallback (LRM 4.6(b), 10.4.2, 38.34).
+    for (uint32_t root = 0; root != orderedRootClosed.size(); ++root)
+      if (root < staticNBAPlan.runtimeQueueRoots.size() &&
+          staticNBAPlan.runtimeQueueRoots[root])
+        orderedRootClosed[root] = 1;
     DenseMap<std::pair<Operation *, uint64_t>, uint32_t> sourceRegions;
     module.walk([&](sim::SimFuncOp function) {
       auto design = function->getParentOfType<sim::SimDesignOp>();
@@ -2344,6 +2348,32 @@ FailureOr<bool> makeNativeEvalPlan(
                     nbaBuilder, call.getLoc(), size,
                     llvmConstant(nbaBuilder, call.getLoc(), i32, 1)),
                 evalNBAQueueField(nbaBuilder, call.getLoc(), 1), 4);
+            // The common calendar must see this generated batch before
+            // advancing past NBA (LRM 4.4.2.4, 4.5).
+            if (::obelisk::schedule::has<
+                    ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
+              uint32_t word = root->second / 64;
+              for (auto [name, index, mask] :
+                   {std::tuple<StringRef, uint32_t, uint64_t>{
+                        nbaDirtyRootsName, word,
+                        uint64_t{1} << (root->second % 64)},
+                    {nbaDirtySummaryName, word / 64,
+                     uint64_t{1} << (word % 64)}}) {
+                Value address =
+                    byteGEP(nbaBuilder, call.getLoc(),
+                            LLVM::AddressOfOp::create(nbaBuilder, call.getLoc(),
+                                                      pointer, name),
+                            uint64_t{index} * 8);
+                Value prior = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
+                                                   i64, address, 8);
+                LLVM::StoreOp::create(
+                    nbaBuilder, call.getLoc(),
+                    arith::OrIOp::create(
+                        nbaBuilder, call.getLoc(), prior,
+                        llvmConstant(nbaBuilder, call.getLoc(), i64, mask)),
+                    address, 8);
+              }
+            }
             cf::BranchOp::create(nbaBuilder, call.getLoc(), next);
           }
         } else if (periodicWideLatch) {
@@ -3064,6 +3094,39 @@ FailureOr<bool> makeNativeEvalPlan(
                failure();
   }
   SmallVector<SmallVector<const DynamicEvalNBA *>> rootSlots(nbaRoots.size());
+  // Every runtime site on a generated ordered root uses this same record
+  // decoder, so initializer/cold writes retain their exact captured payload
+  // and relative order with hot writes (LRM 4.6(b), 10.4.2).
+  if (hasOrderedNBA &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module)) {
+    for (const auto &site : staticNBAPlan.sites) {
+      if (!orderedNBARoots.contains(site.root))
+        continue;
+      auto width = staticNBAPlan.siteWidths.find(site.site);
+      // The graph may retain IDs for eliminated clones. No enqueue remains
+      // to capture a payload for those sites (LRM 10.4.2).
+      if (width == staticNBAPlan.siteWidths.end())
+        continue;
+      uint64_t chunks = (width->second + 63) / 64;
+      for (uint64_t index = 0; index != chunks; ++index) {
+        uint64_t recordSite =
+            chunks == 1 ? site.site : evalNBAChunkSite(site.site, index);
+        if (llvm::any_of(dynamicEvalNBAs, [&](const auto &entry) {
+              return entry.site == recordSite;
+            }))
+          continue;
+        DynamicEvalNBA entry{
+            site.root, recordSite,
+            std::min<uint64_t>(64, width->second - index * 64)};
+        entry.queued = true;
+        entry.offsetName = "offset";
+        entry.valueName = "value";
+        entry.unknownName = "unknown";
+        dynamicEvalNBAs.push_back(std::move(entry));
+      }
+    }
+  }
   SmallVector<std::string> rootSlotNames(nbaRoots.size());
   if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module)) {
@@ -5055,8 +5118,22 @@ FailureOr<bool> makeNativeEvalPlan(
   // so the allocation and payload stay stable until the drain is complete.
   Block *queueAdvance = nullptr;
   Value queueOffset, queueValue, queueUnknown;
+  Value orderedDirectGuard;
   llvm::DenseMap<uint64_t, Block *> queueCases;
   if (hasOrderedNBA) {
+    if (::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
+      Value guard =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(
+                  context, "obelisk_rt_v1_static_nba_direct_commit_guard"),
+              ValueRange{nbaCommitEntry->getArgument(1)})
+              .getResult();
+      orderedDirectGuard =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                guard, llvmConstant(builder, location, i32, 0));
+    }
     auto block = [&]() {
       auto *result = new Block;
       nbaCommit.getBody().getBlocks().insert(Region::iterator(genericNBACommit),
@@ -5134,11 +5211,57 @@ FailureOr<bool> makeNativeEvalPlan(
                           evalNBAQueueField(builder, location, 1), 4);
   }
   for (const DynamicEvalNBA &entry : dynamicEvalNBAs) {
+    // Fixed latches belong to the canonical barrier in a shared calendar.
+    // Only the ordered queue is drained by this generated callback.
+    if (!entry.queued &&
+        ::obelisk::schedule::has<
+            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module))
+      continue;
     auto legacyIP = builder.saveInsertionPoint();
     Value validAddress, active;
     Block *nextDynamic;
     if (entry.queued) {
       builder.setInsertionPointToStart(queueCases.lookup(entry.site));
+      if (orderedDirectGuard) {
+        Block *direct = new Block, *canonical = new Block, *failed = new Block;
+        nbaCommit.getBody().getBlocks().insert(
+            Region::iterator(genericNBACommit), direct);
+        nbaCommit.getBody().getBlocks().insert(
+            Region::iterator(genericNBACommit), canonical);
+        nbaCommit.getBody().getBlocks().insert(
+            Region::iterator(genericNBACommit), failed);
+        // LRM 4.5, 9.4.2, 10.4.2: ordered commits to a runtime-watched root
+        // must notify its live waits at this barrier. Generated ingress alone
+        // does not deliver a testbench task's clock event.
+        Value directCommit =
+            staticFanoutPlan.runtimeTransitionStates.contains(
+                staticNBAPlan.roots[entry.rootIndex].static_state)
+                ? llvmConstant(builder, location, builder.getI1Type(), 0)
+                : orderedDirectGuard;
+        cf::CondBranchOp::create(builder, location, directCommit, direct,
+                                 ValueRange{}, canonical, ValueRange{});
+        builder.setInsertionPointToStart(canonical);
+        Value status =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(context,
+                                   "obelisk_rt_v1_static_nba_commit_ordered"),
+                ValueRange{
+                    nbaCommitEntry->getArgument(1),
+                    llvmConstant(builder, location, i32, entry.rootIndex),
+                    queueOffset,
+                    llvmConstant(builder, location, i64, entry.width),
+                    queueValue, queueUnknown})
+                .getResult();
+        Value ok = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, status,
+            llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        cf::CondBranchOp::create(builder, location, ok, queueAdvance,
+                                 ValueRange{}, failed, ValueRange{});
+        builder.setInsertionPointToStart(failed);
+        LLVM::ReturnOp::create(builder, location, status);
+        builder.setInsertionPointToStart(direct);
+      }
       active = llvmConstant(builder, location, builder.getI1Type(), 1);
       nextDynamic = queueAdvance;
     } else {
@@ -6146,6 +6269,29 @@ FailureOr<bool> makeNativeEvalPlan(
   LLVM::ReturnOp::create(builder, location,
                          llvmConstant(builder, location, i32, OBELISK_RT_OK));
 
+  constexpr StringLiteral orderedCommitName =
+      "__obelisk_eval_ordered_nba_commit_v1";
+  if (hasOrderedNBA &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module)) {
+    // The shared calendar commits scalar accumulators and fixed slots through
+    // the canonical barrier. Give it only the generated ordered drain, while
+    // retaining scalar publication/proof metadata for the private eval path.
+    IRMapping mapping;
+    builder.setInsertionPointAfter(nbaCommit);
+    auto ordered = cast<LLVM::LLVMFuncOp>(builder.clone(*nbaCommit, mapping));
+    ordered.setSymName(orderedCommitName);
+    ordered.setLinkage(LLVM::Linkage::Internal);
+    Block *entry = mapping.lookup(scalarEntry);
+    entry->getTerminator()->erase();
+    for (Block *block : scalarBlocks)
+      mapping.lookup(block)->dropAllReferences();
+    for (Block *block : scalarBlocks)
+      mapping.lookup(block)->erase();
+    builder.setInsertionPointToEnd(entry);
+    cf::BranchOp::create(builder, location, mapping.lookup(genericNBACommit));
+  }
+
   if (scalarCount >= 32) {
     // IEEE 1800-2023 6.3.1, 10.4.2: retain separate canonicalizing and
     // value-only commits. The latter already has a destination proof.
@@ -6179,6 +6325,47 @@ FailureOr<bool> makeNativeEvalPlan(
                                   false));
   Block *runtimeCommitEntry = runtimeNBACommit.addEntryBlock(builder);
   builder.setInsertionPointToStart(runtimeCommitEntry);
+  if (hasOrderedNBA &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module)) {
+    Block *ordered = new Block, *canonical = new Block, *failed = new Block;
+    runtimeNBACommit.getBody().push_back(ordered);
+    runtimeNBACommit.getBody().push_back(canonical);
+    runtimeNBACommit.getBody().push_back(failed);
+    Value isNBA = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq,
+        runtimeCommitEntry->getArgument(2),
+        llvmConstant(builder, location, i32, OBELISK_RT_REGION_NBA));
+    cf::CondBranchOp::create(builder, location, isNBA, ordered, ValueRange{},
+                             canonical, ValueRange{});
+    builder.setInsertionPointToStart(ordered);
+    Value count = evalNBAQueueSize(builder, location);
+    Value changedAddress = runtimeCommitEntry->getArgument(3);
+    Value prior =
+        LLVM::LoadOp::create(builder, location, i32, changedAddress, 4);
+    Value pending =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                              count, llvmConstant(builder, location, i32, 0));
+    LLVM::StoreOp::create(
+        builder, location,
+        arith::OrIOp::create(
+            builder, location, prior,
+            LLVM::ZExtOp::create(builder, location, i32, pending)),
+        changedAddress, 4);
+    Value status =
+        LLVM::CallOp::create(builder, location, TypeRange{i32},
+                             SymbolRefAttr::get(context, orderedCommitName),
+                             runtimeCommitEntry->getArguments())
+            .getResult();
+    Value ok = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, status,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, ok, canonical, ValueRange{},
+                             failed, ValueRange{});
+    builder.setInsertionPointToStart(failed);
+    LLVM::ReturnOp::create(builder, location, status);
+    builder.setInsertionPointToStart(canonical);
+  }
   Value runtimeCommitStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
@@ -6410,6 +6597,39 @@ FailureOr<bool> makeNativeEvalPlan(
       "__obelisk_eval_promotion_recheck_range_v1";
   getOrDeclareLLVMFunction(module, recheckRangeName,
                            LLVM::LLVMVoidType::get(context), {i64, i64});
+  if (hasOrderedNBA &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module)) {
+    Type i8 = builder.getI8Type();
+    Type rootsType = LLVM::LLVMArrayType::get(i8, nbaRoots.size());
+    makeConstantGlobal(
+        module, location, rootsType, "__obelisk_eval_nba_runtime_roots_v1",
+        LLVM::Linkage::Internal, 1, [&](OpBuilder &init) {
+          Value flags = LLVM::ZeroOp::create(init, location, rootsType);
+          for (uint32_t root : orderedNBARoots)
+            flags = LLVM::InsertValueOp::create(
+                init, location, flags, llvmConstant(init, location, i8, 1),
+                ArrayRef<int64_t>{root});
+          return flags;
+        });
+    Type bridgeType =
+        LLVM::LLVMStructType::getLiteral(context, {pointer, pointer});
+    makeConstantGlobal(
+        module, location, bridgeType, "__obelisk_eval_nba_runtime_bridge_v1",
+        LLVM::Linkage::Internal, dataLayout.getPointerSize(),
+        [&](OpBuilder &init) {
+          Value bridge = LLVM::ZeroOp::create(init, location, bridgeType);
+          bridge = insertValue(init, location, bridge,
+                               LLVM::AddressOfOp::create(
+                                   init, location, pointer, evalNBAQueueName),
+                               0);
+          return insertValue(
+              init, location, bridge,
+              LLVM::AddressOfOp::create(init, location, pointer,
+                                        "__obelisk_eval_nba_runtime_roots_v1"),
+              1);
+        });
+  }
   auto planType = getNativeSchedulePlanLLVMType(context);
   makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
@@ -6668,11 +6888,30 @@ FailureOr<bool> makeNativeEvalPlan(
                         LLVM::AddressOfOp::create(initializerBuilder, location,
                                                   pointer, invalidateRangeName),
                         NativeSchedulePlanField::PromotionInvalidateRange);
-        return insertValue(initializerBuilder, location, value,
-                           LLVM::AddressOfOp::create(initializerBuilder,
-                                                     location, pointer,
-                                                     recheckRangeName),
-                           NativeSchedulePlanField::PromotionRecheckRange);
+        value =
+            insertValue(initializerBuilder, location, value,
+                        LLVM::AddressOfOp::create(initializerBuilder, location,
+                                                  pointer, recheckRangeName),
+                        NativeSchedulePlanField::PromotionRecheckRange);
+        Value orderedCount =
+            hasOrderedNBA &&
+                    ::obelisk::schedule::has<
+                        ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)
+                ? evalNBAQueueField(initializerBuilder, location, 1)
+                : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
+                      .getResult();
+        value = insertValue(initializerBuilder, location, value, orderedCount,
+                            NativeSchedulePlanField::NBAOrderedCount);
+        Value bridge =
+            LLVM::ZeroOp::create(initializerBuilder, location, pointer);
+        if (hasOrderedNBA &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalRuntimeCalendar>(module))
+          bridge =
+              LLVM::AddressOfOp::create(initializerBuilder, location, pointer,
+                                        "__obelisk_eval_nba_runtime_bridge_v1");
+        return insertValue(initializerBuilder, location, value, bridge,
+                           NativeSchedulePlanField::NBAOrderedBridge);
       });
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
                            {pointer, pointer});
@@ -6688,6 +6927,8 @@ FailureOr<bool> makeNativeEvalPlan(
                            {pointer, i32, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_roots", i32,
                            {pointer, i32, i32, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_ordered",
+                           i32, {pointer, i32, i64, i64, i64, i64});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_static_nba_direct_commit_guard", i32, {pointer});
   getOrDeclareLLVMFunction(module,

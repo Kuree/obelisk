@@ -1313,16 +1313,13 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER =
       UINT32_C(0x00010474),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE = UINT32_C(0x00010475),
-  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION =
-      UINT32_C(0x00010476),
-  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION =
-      UINT32_C(0x00010477),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION = UINT32_C(0x00010476),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION = UINT32_C(0x00010477),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION =
       UINT32_C(0x00010478),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION =
       UINT32_C(0x00010479),
-  OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION =
-      UINT32_C(0x0001047a),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION = UINT32_C(0x0001047a),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -3355,6 +3352,13 @@ typedef struct obelisk_rt_static_nba_site {
   obelisk_rt_static_nba_storage storage;
 } obelisk_rt_static_nba_site;
 
+// LRM 4.6(b), 10.4.2: runtime initializers and generated clock activations
+// append to the same ordered batch for each marked root.
+typedef struct obelisk_rt_native_ordered_nba_bridge {
+  void *queue;
+  const uint8_t *roots;
+} obelisk_rt_native_ordered_nba_bridge;
+
 // Internal routing and orthogonal behavior flags encoded in
 // static_fanout_entry::reserved. Generic plans require the RUNTIME route. The
 // names keep the revision-coupled compiler and runtime ABI from assigning
@@ -3546,6 +3550,10 @@ typedef struct obelisk_rt_native_schedule_plan {
   // for a safe-boundary recheck without revoking positive certificates.
   // Like invalidation, this hook cannot execute actors or observers.
   obelisk_rt_native_promotion_invalidate_range promotion_recheck_range;
+  // Generated ordered updates share the ordinary NBA barrier. This count
+  // makes their pending work visible without allocating scheduler events.
+  const uint32_t *nba_ordered_count;
+  const obelisk_rt_native_ordered_nba_bridge *nba_ordered_bridge;
 } obelisk_rt_native_schedule_plan;
 
 // Serial generated-simulator scheduler. The scheduler owns an instance after
@@ -3943,6 +3951,12 @@ obelisk_rt_v1_static_nba_commit_root(obelisk_rt_context *context, uint32_t root,
 obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
     obelisk_rt_context *context, uint32_t root_count, uint32_t barrier_region,
     uint32_t *out_changed);
+
+// Cold commit of one generated ordered record after external mutation. It
+// honors force/assign masks and publishes through canonical runtime fanout.
+obelisk_rt_status obelisk_rt_v1_static_nba_commit_ordered(
+    obelisk_rt_context *context, uint32_t root, int64_t offset, uint64_t width,
+    uint64_t value, uint64_t unknown);
 // Generated clean-superstep NBA commit code checks this once per barrier.
 // A false result retains the validating generic commit path for VPI,
 // force/release, bytecode mutation, and transactional handoff.
@@ -4596,10 +4610,9 @@ enum {
   OBELISK_RT_COVERAGE_PERSIST_LINE = 1u << 0,
   OBELISK_RT_COVERAGE_PERSIST_TOGGLE = 1u << 1,
   OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL = 1u << 2,
-  OBELISK_RT_COVERAGE_PERSIST_ALL =
-      OBELISK_RT_COVERAGE_PERSIST_LINE |
-      OBELISK_RT_COVERAGE_PERSIST_TOGGLE |
-      OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL
+  OBELISK_RT_COVERAGE_PERSIST_ALL = OBELISK_RT_COVERAGE_PERSIST_LINE |
+                                    OBELISK_RT_COVERAGE_PERSIST_TOGGLE |
+                                    OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL
 };
 obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     obelisk_rt_context *context, uint64_t line_count, uint64_t toggle_bit_count,
