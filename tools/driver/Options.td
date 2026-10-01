@@ -58,6 +58,9 @@ def mlir_print_debuginfo : Flag<["--"], "mlir-print-debuginfo">,
 def mlir_timing : Flag<["--"], "mlir-timing">, Group<Output_Group>,
   Flags<[HelpHidden]>,
   HelpText<"Report per-pass execution times for the MLIR pipeline">;
+def mlir_verify_each : Flag<["--"], "mlir-verify-each">,
+  Group<Diagnostic_Group>, Flags<[HelpHidden]>,
+  HelpText<"Verify the MLIR after every internal pass instead of at pipeline boundaries">;
 def debug_native_execution_counts : Flag<["--"], "debug-native-execution-counts">,
   Group<Diagnostic_Group>, Flags<[HelpHidden]>,
   HelpText<"Instrument generated native function entries and print counts at exit">;

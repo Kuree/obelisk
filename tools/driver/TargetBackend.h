@@ -80,6 +80,7 @@ struct NativeOutputOptions {
   // whole-program optimization across generated native partitions.
   bool noLTO = true;
   bool timing = false;
+  bool verifyEach = false;
   bool debugNativeExecutionCounts = false;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;

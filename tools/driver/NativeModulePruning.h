@@ -69,7 +69,7 @@ inline void reportNativePrunedSymbols(const llvm::StringSet<> &removed,
 inline mlir::FailureOr<llvm::StringSet<>>
 pruneNativeExecutableSymbols(mlir::ModuleOp module,
                              const llvm::StringSet<> &exports,
-                             bool requiresLifecycle) {
+                             bool requiresLifecycle, bool verifyEach = true) {
   llvm::StringSet<> candidates;
   for (mlir::Operation &operation : module.getBody()->getOperations()) {
     auto symbol = mlir::dyn_cast<mlir::SymbolOpInterface>(&operation);
@@ -93,6 +93,7 @@ pruneNativeExecutableSymbols(mlir::ModuleOp module,
     symbol.setPrivate();
   }
   mlir::PassManager passes(module.getContext());
+  passes.enableVerifier(verifyEach);
   passes.addPass(mlir::createSymbolDCEPass());
   if (mlir::failed(passes.run(module)))
     return mlir::failure();

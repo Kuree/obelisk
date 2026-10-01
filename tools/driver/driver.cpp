@@ -37,6 +37,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -1425,6 +1426,10 @@ static int executeCompilation(
 
   if (!emitSlang && !emitBindings) {
     PassManager passManager(&context);
+    // The driver validates pipeline boundaries. Rechecking the complete IR
+    // after every internal pass repeatedly walks large elaborated designs;
+    // obelisk-opt still verifies each pass when testing the transformations.
+    passManager.enableVerifier(args.hasArg(OPT_mlir_verify_each));
     if (args.hasArg(OPT_mlir_timing)) {
       passManager.enableTiming();
       // Cohort fusion runs here, long before native lowering sets the same
@@ -1444,7 +1449,7 @@ static int executeCompilation(
                   executionTier != "bytecode"
               ? "on"
               : staticSpecialization);
-    if (failed(passManager.run(*module)))
+    if (failed(passManager.run(*module)) || failed(verify(*module)))
       return 1;
   }
 
@@ -1487,6 +1492,7 @@ static int executeCompilation(
     nativeOptions.optLevel = optLevel;
     nativeOptions.noLTO = args.hasFlag(OPT_fno_lto, OPT_flto, true);
     nativeOptions.timing = args.hasArg(OPT_mlir_timing);
+    nativeOptions.verifyEach = args.hasArg(OPT_mlir_verify_each);
     nativeOptions.debugNativeExecutionCounts =
         args.hasArg(OPT_debug_native_execution_counts);
     nativeOptions.compileThreads = resolvedCompilerThreads;

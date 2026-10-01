@@ -521,7 +521,8 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
             bool bytecode, StringRef vpi, StringRef bytecodeScope,
             obelisk::schedule::NativeSchedulerMode nativeScheduler,
             uint32_t optLevel, bool planSemanticPartitions, bool timing,
-            bool &requiresStateSync, bool &resolveInitialDrivers) {
+            bool verifyEach, bool &requiresStateSync,
+            bool &resolveInitialDrivers) {
   if (bytecode &&
       nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto)
     nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
@@ -537,6 +538,9 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
       IntegerAttr::get(mlir::IntegerType::get(module.getContext(), 32),
                        optLevel));
   mlir::PassManager manager(module.getContext());
+  // Coroutine lowering verifies its final module explicitly. Avoid repeating
+  // whole-module verification at every intermediate preparation stage.
+  manager.enableVerifier(verifyEach);
   if (timing)
     manager.enableTiming();
   if (timing)
@@ -1119,7 +1123,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
                          useBytecode, options.vpi, options.bytecodeScope,
                          *nativeScheduler, options.optLevel,
                          backend->supportsSemanticPartitions() && !useBytecode,
-                         options.timing, requiresStateSync,
+                         options.timing, options.verifyEach, requiresStateSync,
                          resolveInitialDrivers)))
     return failure();
   auto lastBackendTiming = std::chrono::steady_clock::now();
@@ -1166,7 +1170,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
     // It has been read above; retain only surviving members in the C++ plan.
     module->removeAttr(obelisk::sim::metadata::nativePhysicalPartitionManifest);
     auto removed = detail::pruneNativeExecutableSymbols(
-        module, nativeExports, options.vpi != "off" || requiresStateSync);
+        module, nativeExports, options.vpi != "off" || requiresStateSync,
+        options.verifyEach);
     if (failed(removed))
       return failure();
     prunePartitionInventory(*removed);
