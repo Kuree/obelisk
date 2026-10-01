@@ -21,6 +21,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
 #include <functional>
@@ -155,6 +156,7 @@ struct DynamicEvalNBAProofContext {
   ArrayRef<GeneratedTransitionRange> generatedTransitionRanges;
   schedule::ComputeGraphAttr computeGraph;
   ArrayRef<uint8_t> orderedRootClosed;
+  const DenseMap<std::pair<Operation *, uint64_t>, uint32_t> &sourceRegions;
 };
 
 struct DynamicEvalNBAProof {
@@ -173,6 +175,191 @@ struct DynamicEvalNBAProof {
   uint64_t firstRootSite = UINT64_MAX;
   uint64_t lastRootSite = UINT64_MAX;
   bool siteExecutesAtMostOnce = false;
+};
+
+// The native pipeline owns one immutable proof inventory after fanout and
+// generated transitions are frozen. Compute record, root and semantic-site
+// summaries once, before any NBA call is rewritten. This preserves the ingress
+// checks and source order required by IEEE 1800-2023 4.6 and 10.4.2 without
+// rescanning the whole design for each enqueue.
+struct DynamicEvalNBAProofAnalysis {
+  struct RootSites {
+    size_t count = 0, semanticCount = 0;
+    uint64_t first = UINT64_MAX, last = UINT64_MAX;
+  };
+  DynamicEvalNBAProofAnalysis(const DynamicEvalNBAProofContext &proofContext,
+                              ArrayRef<sim::SimFuncOp> functions) {
+    const auto &stateLayout = proofContext.stateLayout;
+    const auto &plan = proofContext.staticNBAPlan;
+    auto semanticOrigin = [&](uint64_t site) {
+      auto origin = plan.siteSemanticOrigins.find(site);
+      return origin == plan.siteSemanticOrigins.end() ? site : origin->second;
+    };
+    for (auto [record, name] : llvm::enumerate(proofContext.mergedExecutors))
+      executorRecords.try_emplace(name, record);
+    DenseMap<uint32_t, llvm::SmallDenseSet<uint64_t, 4>> rootOrigins;
+    for (const auto &site : plan.sites) {
+      auto &summary = rootSites[site.root];
+      ++summary.count;
+      if (summary.first == UINT64_MAX)
+        summary.first = site.site;
+      summary.last = site.site;
+      rootOrigins[site.root].insert(semanticOrigin(site.site));
+    }
+    for (const auto &[root, origins] : rootOrigins)
+      rootSites[root].semanticCount = origins.size();
+    for (auto function : functions)
+      function.walk([&](LLVM::CallOp call) {
+        if (call.getCallee() != "obelisk_rt_v1_scheduler_static_nba" ||
+            call.getArgOperands().size() != 9)
+          return;
+        if (auto site = constantU64(call.getArgOperands()[1]))
+          ++semanticSiteCalls[{function.getOperation(), semanticOrigin(*site)}];
+      });
+
+    // A route can enter its ordinary merged record and its periodic owner.
+    // Keep each bucket in table order, including early rejection diagnostics.
+    DenseMap<uint32_t, SmallVector<size_t>> recordFanouts;
+    for (auto [index, fanout] : llvm::enumerate(proofContext.fanoutEntries)) {
+      uint32_t periodicOwner =
+          index < proofContext.periodicOwnerBits.size() &&
+                  proofContext.periodicOwnerBits[index] != UINT32_MAX
+              ? proofContext.periodicOwnerBits[index]
+              : fanout.merged_bit;
+      bool generic = fanoutRoute(fanout) != OBELISK_RT_FANOUT_RUNTIME;
+      if (generic)
+        recordFanouts[fanout.merged_bit].push_back(index);
+      if (!generic || periodicOwner != fanout.merged_bit)
+        recordFanouts[periodicOwner].push_back(index);
+    }
+    auto periodicLocalBit =
+        [&](uint32_t staticState,
+            uint64_t physicalBit) -> std::optional<uint64_t> {
+      auto bound =
+          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+            return candidate.handleID == staticState;
+          });
+      if (bound == stateLayout.bounds.end() || physicalBit < bound->offset ||
+          physicalBit - bound->offset >= bound->width)
+        return std::nullopt;
+      return physicalBit - bound->offset;
+    };
+    auto isExactPeriodicIngress = [&](const auto &fanout) {
+      if (fanout.bit_width == 0 ||
+          fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
+          fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
+        return false;
+      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &b) {
+        return b.handleID == fanout.static_state;
+      });
+      if (bound != stateLayout.bounds.end() && fanout.bit_width == 1 &&
+          stateLayout.hasClockTickBound(fanout.static_state,
+                                        bound->offset + fanout.low_bit))
+        return true;
+      auto periodicBitTouches = [&](uint64_t bit) {
+        if (fanout.low_bit > bit || bit - fanout.low_bit >= fanout.bit_width)
+          return false;
+        return fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
+               fanout.low_bit == bit;
+      };
+      bool clockIngress = llvm::any_of(
+          proofContext.periodicClocks, [&](const NativePeriodicClock &clock) {
+            std::optional<uint64_t> bit =
+                periodicLocalBit(clock.getStaticState(), clock.getBitOffset());
+            return bit && fanout.static_state == clock.getStaticState() &&
+                   periodicBitTouches(*bit);
+          });
+      bool aliasIngress = llvm::any_of(
+          proofContext.periodicAliases, [&](const NativePeriodicAlias &alias) {
+            std::optional<uint64_t> bit = periodicLocalBit(
+                alias.getTargetStaticState(), alias.getTargetBitOffset());
+            return bit && fanout.static_state == alias.getTargetStaticState() &&
+                   periodicBitTouches(*bit);
+          });
+      return clockIngress || aliasIngress;
+    };
+    for (const auto &[record, fanouts] : recordFanouts) {
+      auto &proof = periodicIngress[record];
+      bool sawIngress = false;
+      proof.exclusivePeriodicIngress =
+          llvm::all_of(fanouts, [&](size_t fanoutIndex) {
+            const auto &fanout = proofContext.fanoutEntries[fanoutIndex];
+            uint32_t periodicOwner =
+                fanoutIndex < proofContext.periodicOwnerBits.size() &&
+                        proofContext.periodicOwnerBits[fanoutIndex] !=
+                            UINT32_MAX
+                    ? proofContext.periodicOwnerBits[fanoutIndex]
+                    : fanout.merged_bit;
+            bool exactPeriodic = isExactPeriodicIngress(fanout);
+            // Runtime routes do not own a merged model bit. Their default bit
+            // field can equal this record (especially record zero), but a
+            // separate procedural clock waiter is not ingress to this writer.
+            bool genericIngress =
+                fanoutRoute(fanout) != OBELISK_RT_FANOUT_RUNTIME &&
+                fanout.merged_bit == record;
+            bool periodicIngress = exactPeriodic && periodicOwner == record;
+            if (!genericIngress && !periodicIngress)
+              return true;
+            sawIngress = true;
+            if (genericIngress && !exactPeriodic) {
+              ++proof.nonPeriodicIngressCount;
+              return false;
+            }
+            ++proof.periodicIngressCount;
+            uint64_t end = fanout.low_bit + fanout.bit_width;
+            auto inferredBound =
+                llvm::find_if(stateLayout.bounds, [&](const auto &b) {
+                  return b.handleID == fanout.static_state;
+                });
+            bool inferredTickBound =
+                inferredBound != stateLayout.bounds.end() &&
+                fanout.bit_width == 1 &&
+                stateLayout.hasClockTickBound(fanout.static_state,
+                                              inferredBound->offset +
+                                                  fanout.low_bit);
+            bool conflict = llvm::any_of(
+                proofContext.generatedTransitionRanges, [&](const auto &range) {
+                  // The inference result already covers every physical writer,
+                  // including generated port forwarding and NBA clock outputs.
+                  // Those writers implement the proved cadence; their presence
+                  // is not an additional asynchronous disturbance.
+                  if (inferredTickBound)
+                    return false;
+                  auto [state, low, rangeWidth, sourceIndex] = range;
+                  bool periodicKernelSource = false;
+                  if (sourceIndex < proofContext.directFragments.size()) {
+                    const NativeDirectFragment &source =
+                        proofContext.directFragments[sourceIndex];
+                    periodicKernelSource = llvm::any_of(
+                        proofContext.periodicClocks,
+                        [&](const NativePeriodicClock &clock) {
+                          return source.actorSlot == clock.getActorSlot() &&
+                                 source.continuation == clock.getContinuation();
+                        });
+                    periodicKernelSource |= llvm::any_of(
+                        proofContext.periodicAliases,
+                        [&](const NativePeriodicAlias &alias) {
+                          return source.actorSlot ==
+                                     alias.getForwardingActorSlot() &&
+                                 source.continuation ==
+                                     alias.getForwardingContinuation();
+                        });
+                  }
+                  if (periodicKernelSource)
+                    return false;
+                  return state == fanout.static_state && low < end &&
+                         fanout.low_bit < low + rangeWidth;
+                });
+            proof.periodicIngressTransitionConflicts += conflict;
+            return !conflict;
+          });
+      proof.exclusivePeriodicIngress &= sawIngress;
+    }
+  }
+  llvm::StringMap<unsigned> executorRecords;
+  DenseMap<uint32_t, DynamicEvalNBAProof> periodicIngress;
+  DenseMap<uint32_t, RootSites> rootSites;
+  DenseMap<std::pair<Operation *, uint64_t>, unsigned> semanticSiteCalls;
 };
 
 static uint32_t
@@ -226,14 +413,10 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
     auto codeUnit = owner ? owner.getCodeUnit() : IntegerAttr{};
     if (!codeUnit || codeUnit.getInt() < 0)
       return UINT32_MAX;
-    sim::SimFuncOp source;
-    design.walk([&](sim::SimFuncOp candidate) {
-      if (!source && candidate.getCodeUnitIdAttr() &&
-          candidate.getCodeUnitIdAttr().getUInt() == codeUnit.getUInt())
-        source = candidate;
-    });
-    uint32_t sourceRegion =
-        source ? getRuntimeEventRegion(source.getHomeRegion()) : UINT32_MAX;
+    auto source = proofContext.sourceRegions.find({design, codeUnit.getUInt()});
+    uint32_t sourceRegion = source == proofContext.sourceRegions.end()
+                                ? UINT32_MAX
+                                : source->second;
     if (sourceRegion != OBELISK_RT_REGION_ACTIVE &&
         sourceRegion != OBELISK_RT_REGION_REACTIVE)
       return UINT32_MAX;
@@ -248,14 +431,13 @@ getDynamicNBACommitRegion(sim::SimFuncOp function,
 static FailureOr<DynamicEvalNBAProof>
 proveDynamicEvalNBA(LLVM::CallOp call,
                     const DynamicEvalNBAProofContext &proofContext,
+                    const DynamicEvalNBAProofAnalysis &proofAnalysis,
                     bool enclosingExecutesAtMostOnce,
                     const analysis::WriteExecutionBounds &execution) {
   ValueRange arguments = call.getArgOperands();
   if (arguments.size() != 9)
     return call.emitError("malformed static NBA ABI"), failure();
-  const NativeStateLayout &stateLayout = proofContext.stateLayout;
   const NativeStaticNBAPlan &staticNBAPlan = proofContext.staticNBAPlan;
-  ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
   std::optional<uint64_t> site = constantU64(arguments[1]);
   std::optional<uint64_t> width = constantU64(arguments[6]);
   auto root = site ? staticNBAPlan.siteRoots.find(*site)
@@ -293,150 +475,29 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       // Resolve that exact identity too. The fanout proof below still requires
       // every ingress to be an unmodified periodic clock; being nested in a
       // periodic coordinator alone is not an at-most-once certificate.
-      auto record = llvm::find(proofContext.mergedExecutors, direct.wrapper);
-      if (record != proofContext.mergedExecutors.end())
-        proof.periodicRecord = record - proofContext.mergedExecutors.begin();
+      auto record = proofAnalysis.executorRecords.find(direct.wrapper);
+      if (record != proofAnalysis.executorRecords.end())
+        proof.periodicRecord = record->second;
     }
 
-  auto periodicLocalBit = [&](uint32_t staticState,
-                              uint64_t physicalBit) -> std::optional<uint64_t> {
-    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-      return candidate.handleID == staticState;
-    });
-    if (bound == stateLayout.bounds.end() || physicalBit < bound->offset ||
-        physicalBit - bound->offset >= bound->width)
-      return std::nullopt;
-    return physicalBit - bound->offset;
-  };
-  auto isExactPeriodicIngress = [&](const auto &fanout) {
-    if (fanout.bit_width == 0 ||
-        fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
-        fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
-      return false;
-    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &b) {
-      return b.handleID == fanout.static_state;
-    });
-    if (bound != stateLayout.bounds.end() && fanout.bit_width == 1 &&
-        stateLayout.hasClockTickBound(fanout.static_state,
-                                      bound->offset + fanout.low_bit))
-      return true;
-    auto periodicBitTouches = [&](uint64_t bit) {
-      if (fanout.low_bit > bit || bit - fanout.low_bit >= fanout.bit_width)
-        return false;
-      return fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
-             fanout.low_bit == bit;
-    };
-    bool clockIngress = llvm::any_of(
-        proofContext.periodicClocks, [&](const NativePeriodicClock &clock) {
-          std::optional<uint64_t> bit =
-              periodicLocalBit(clock.getStaticState(), clock.getBitOffset());
-          return bit && fanout.static_state == clock.getStaticState() &&
-                 periodicBitTouches(*bit);
-        });
-    bool aliasIngress = llvm::any_of(
-        proofContext.periodicAliases, [&](const NativePeriodicAlias &alias) {
-          std::optional<uint64_t> bit = periodicLocalBit(
-              alias.getTargetStaticState(), alias.getTargetBitOffset());
-          return bit && fanout.static_state == alias.getTargetStaticState() &&
-                 periodicBitTouches(*bit);
-        });
-    return clockIngress || aliasIngress;
-  };
   if (proof.periodicRecord) {
-    bool sawIngress = false;
-    proof.exclusivePeriodicIngress =
-        llvm::all_of(proofContext.fanoutEntries, [&](const auto &fanout) {
-          size_t fanoutIndex =
-              static_cast<size_t>(&fanout - proofContext.fanoutEntries.data());
-          uint32_t periodicOwner =
-              fanoutIndex < proofContext.periodicOwnerBits.size() &&
-                      proofContext.periodicOwnerBits[fanoutIndex] != UINT32_MAX
-                  ? proofContext.periodicOwnerBits[fanoutIndex]
-                  : fanout.merged_bit;
-          bool exactPeriodic = isExactPeriodicIngress(fanout);
-          // Runtime routes do not own a merged model bit. Their default bit
-          // field can equal this record (especially record zero), but a
-          // separate procedural clock waiter is not ingress to this writer.
-          bool genericIngress =
-              fanoutRoute(fanout) != OBELISK_RT_FANOUT_RUNTIME &&
-              fanout.merged_bit == *proof.periodicRecord;
-          bool periodicIngress =
-              exactPeriodic && periodicOwner == *proof.periodicRecord;
-          if (!genericIngress && !periodicIngress)
-            return true;
-          sawIngress = true;
-          if (genericIngress && !exactPeriodic) {
-            ++proof.nonPeriodicIngressCount;
-            return false;
-          }
-          ++proof.periodicIngressCount;
-          uint64_t end = fanout.low_bit + fanout.bit_width;
-          auto inferredBound =
-              llvm::find_if(stateLayout.bounds, [&](const auto &b) {
-                return b.handleID == fanout.static_state;
-              });
-          bool inferredTickBound =
-              inferredBound != stateLayout.bounds.end() &&
-              fanout.bit_width == 1 &&
-              stateLayout.hasClockTickBound(
-                  fanout.static_state, inferredBound->offset + fanout.low_bit);
-          bool conflict = llvm::any_of(
-              proofContext.generatedTransitionRanges, [&](const auto &range) {
-                // The inference result already covers every physical writer,
-                // including generated port forwarding and NBA clock outputs.
-                // Those writers implement the proved cadence; their presence
-                // is not an additional asynchronous disturbance.
-                if (inferredTickBound)
-                  return false;
-                auto [state, low, rangeWidth, sourceIndex] = range;
-                bool periodicKernelSource = false;
-                if (sourceIndex < proofContext.directFragments.size()) {
-                  const NativeDirectFragment &source =
-                      proofContext.directFragments[sourceIndex];
-                  periodicKernelSource = llvm::any_of(
-                      proofContext.periodicClocks,
-                      [&](const NativePeriodicClock &clock) {
-                        return source.actorSlot == clock.getActorSlot() &&
-                               source.continuation == clock.getContinuation();
-                      });
-                  periodicKernelSource |= llvm::any_of(
-                      proofContext.periodicAliases,
-                      [&](const NativePeriodicAlias &alias) {
-                        return source.actorSlot ==
-                                   alias.getForwardingActorSlot() &&
-                               source.continuation ==
-                                   alias.getForwardingContinuation();
-                      });
-                }
-                if (periodicKernelSource)
-                  return false;
-                return state == fanout.static_state && low < end &&
-                       fanout.low_bit < low + rangeWidth;
-              });
-          proof.periodicIngressTransitionConflicts += conflict;
-          return !conflict;
-        });
-    proof.exclusivePeriodicIngress &= sawIngress;
+    const auto &ingress =
+        proofAnalysis.periodicIngress.lookup(*proof.periodicRecord);
+    proof.exclusivePeriodicIngress = ingress.exclusivePeriodicIngress;
+    proof.periodicIngressCount = ingress.periodicIngressCount;
+    proof.nonPeriodicIngressCount = ingress.nonPeriodicIngressCount;
+    proof.periodicIngressTransitionConflicts =
+        ingress.periodicIngressTransitionConflicts;
   }
 
   unsigned matchingSiteCalls = 0;
-  auto semanticOriginFor = [&](uint64_t siteID) {
-    auto origin = staticNBAPlan.siteSemanticOrigins.find(siteID);
-    return origin == staticNBAPlan.siteSemanticOrigins.end() ? siteID
-                                                             : origin->second;
-  };
   if (site && enclosing) {
-    uint64_t semanticSite = semanticOriginFor(*site);
-    enclosing.walk([&](LLVM::CallOp other) {
-      if (!other.getCallee() ||
-          *other.getCallee() != "obelisk_rt_v1_scheduler_static_nba" ||
-          other.getArgOperands().size() != 9)
-        return;
-      std::optional<uint64_t> otherSite =
-          constantU64(other.getArgOperands()[1]);
-      matchingSiteCalls +=
-          otherSite && semanticOriginFor(*otherSite) == semanticSite;
-    });
+    auto origin = staticNBAPlan.siteSemanticOrigins.find(*site);
+    uint64_t semanticSite = origin == staticNBAPlan.siteSemanticOrigins.end()
+                                ? *site
+                                : origin->second;
+    matchingSiteCalls = proofAnalysis.semanticSiteCalls.lookup(
+        {enclosing.getOperation(), semanticSite});
   }
   proof.siteExecutesAtMostOnce =
       matchingSiteCalls == 1 && enclosingExecutesAtMostOnce &&
@@ -490,18 +551,14 @@ proveDynamicEvalNBA(LLVM::CallOp call,
       root->second < staticNBAPlan.generatedAccumulators.size() &&
       !staticNBAPlan.generatedAccumulators[root->second].empty() &&
       staticNBAPlan.roots[root->second].bit_width <= 64;
-  llvm::SmallDenseSet<uint64_t, 4> semanticRootSites;
-  if (root != staticNBAPlan.siteRoots.end())
-    for (const auto &candidate : nbaSites)
-      if (candidate.root == root->second) {
-        ++proof.rootSiteCount;
-        if (proof.firstRootSite == UINT64_MAX)
-          proof.firstRootSite = candidate.site;
-        proof.lastRootSite = candidate.site;
-        semanticRootSites.insert(semanticOriginFor(candidate.site));
-      }
-  proof.semanticRootSiteCount = semanticRootSites.size();
-  proof.uniqueSemanticRootSite = site && semanticRootSites.size() == 1;
+  if (root != staticNBAPlan.siteRoots.end()) {
+    const auto &sites = proofAnalysis.rootSites.lookup(root->second);
+    proof.rootSiteCount = sites.count;
+    proof.firstRootSite = sites.first;
+    proof.lastRootSite = sites.last;
+    proof.semanticRootSiteCount = sites.semanticCount;
+    proof.uniqueSemanticRootSite = site && sites.semanticCount == 1;
+  }
   // A root accumulator stores only the final value and publishes one
   // old-to-final transition at the NBA barrier. Each staged write merges into
   // it under its bit mask in execution order, so the final value is the one
@@ -771,6 +828,14 @@ FailureOr<bool> makeNativeEvalPlan(
         if (site.root < orderedRootClosed.size())
           orderedRootClosed[site.root] = 0;
       }
+    DenseMap<std::pair<Operation *, uint64_t>, uint32_t> sourceRegions;
+    module.walk([&](sim::SimFuncOp function) {
+      auto design = function->getParentOfType<sim::SimDesignOp>();
+      if (design && function.getCodeUnitIdAttr())
+        sourceRegions.try_emplace(
+            {design, function.getCodeUnitIdAttr().getUInt()},
+            getRuntimeEventRegion(function.getHomeRegion()));
+    });
     DynamicEvalNBAProofContext proofContext{stateLayout,
                                             staticNBAPlan,
                                             resolved->fanoutEntries,
@@ -782,7 +847,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                             periodicAliases,
                                             generatedTransitionRanges,
                                             computeGraph,
-                                            orderedRootClosed};
+                                            orderedRootClosed,
+                                            sourceRegions};
+    const DynamicEvalNBAProofAnalysis proofAnalysis(proofContext, evalClosure);
     llvm::SmallPtrSet<Operation *, 16> evalClosureSet;
     for (sim::SimFuncOp function : evalClosure)
       evalClosureSet.insert(function.getOperation());
@@ -887,8 +954,8 @@ FailureOr<bool> makeNativeEvalPlan(
           return;
         }
         FailureOr<DynamicEvalNBAProof> proof = proveDynamicEvalNBA(
-            call, proofContext, closureExecutesAtMostOnce(function),
-            boundsFor(function));
+            call, proofContext, proofAnalysis,
+            closureExecutesAtMostOnce(function), boundsFor(function));
         if (failed(proof)) {
           valid = failure();
           return;
