@@ -51,12 +51,12 @@ module attributes {
         values(%handle, %receiver : !simulation.covergroup_handle<@cg>,
                !simulation.class_handle<@Object>) captures 2 :
         !simulation.observer<i1>
-      "simulation.covergroup.block_event.register"(
-          %ctx, %handle, %receiver, %sampler) {
+      simulation.covergroup.block_event.register
+          %ctx, %handle, %receiver, %sampler {
         target_ids = array<i64: 101, 102>, event_kinds = array<i32: 0, 1>
       } : (!simulation.context, !simulation.covergroup_handle<@cg>,
            !simulation.class_handle<@Object>, !simulation.observer<i1>) -> ()
-      "simulation.covergroup.block_event.fire"(%ctx, %receiver) {
+      simulation.covergroup.block_event.fire %ctx, %receiver {
         target_id = 101 : i64, event_kind = #simulation.block_event_kind<begin>
       } : (!simulation.context, !simulation.class_handle<@Object>) -> ()
       simulation.return
@@ -66,7 +66,7 @@ module attributes {
         %ctx: !simulation.context
           {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 3 : i64, entry_kind = 1 : i32} {
-      "simulation.covergroup.block_event.fire"(%ctx) {
+      simulation.covergroup.block_event.fire %ctx {
         target_id = 102 : i64, event_kind = #simulation.block_event_kind<end>
       } : (!simulation.context) -> ()
       simulation.return

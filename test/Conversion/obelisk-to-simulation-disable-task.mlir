@@ -1,32 +1,28 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.disable_task attributes {
     definition_kind = 0 : i32,
     hierarchical_name = "disable_task",
     name = "disable_task",
-    node_id = 0 : i64,
-    sym_name = "s0.disable_task"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
+  obelisk.sv.symbol.root @s1.$root attributes {
     hierarchical_name = "\\$root ",
     name = "$root",
-    node_id = 1 : i64,
-    sym_name = "s1.$root"
+    node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
       hierarchical_name = "$unit",
-      node_id = 2 : i64,
-      sym_name = "s2"
+      node_id = 2 : i64
     } {
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s3.worker attributes {
         hierarchical_name = "worker",
         name = "worker",
         node_id = 3 : i64,
         semantic_type = !obelisk.subroutine<() -> (), true>,
         subroutine_kind = 1 : i32,
-        sym_name = "s3.worker",
         time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64
       } {
@@ -50,26 +46,23 @@ module {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s4.disable_task attributes {
       hierarchical_name = "disable_task",
       is_uninstantiated = false,
       name = "disable_task",
       node_id = 8 : i64,
       referenced_path = "disable_task",
-      referenced_symbol = @s0.disable_task,
-      sym_name = "s4.disable_task"
+      referenced_symbol = @s0.disable_task
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s5.disable_task attributes {
         hierarchical_name = "disable_task",
         name = "disable_task",
-        node_id = 9 : i64,
-        sym_name = "s5.disable_task"
+        node_id = 9 : i64
       } {
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s6 attributes {
           hierarchical_name = "disable_task",
           node_id = 10 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s6",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {

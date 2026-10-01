@@ -6,20 +6,20 @@
 // output covers an external uwire with a variable formal. A third input uses
 // that uwire only as a binary operand and must not produce another warning.
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "uwire_nonmerged", name = "uwire_nonmerged", node_id = 0 : i64, sym_name = "s0.uwire_nonmerged"} {
+  obelisk.sv.symbol.definition @s0.uwire_nonmerged attributes {definition_kind = 0 : i32, hierarchical_name = "uwire_nonmerged", name = "uwire_nonmerged", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "uwire_nonmerged_child", name = "uwire_nonmerged_child", node_id = 1 : i64, sym_name = "s1.uwire_nonmerged_child"} {
+  obelisk.sv.symbol.definition @s1.uwire_nonmerged_child attributes {definition_kind = 0 : i32, hierarchical_name = "uwire_nonmerged_child", name = "uwire_nonmerged_child", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "uwire_nonmerged", is_uninstantiated = false, name = "uwire_nonmerged", node_id = 4 : i64, referenced_path = "uwire_nonmerged", referenced_symbol = @s0.uwire_nonmerged, sym_name = "s4.uwire_nonmerged"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "uwire_nonmerged", name = "uwire_nonmerged", node_id = 5 : i64, sym_name = "s5.uwire_nonmerged"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "uwire_nonmerged.source", lifetime = 1 : i32, name = "source", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.source"} {
+    obelisk.sv.symbol.instance @s4.uwire_nonmerged attributes {hierarchical_name = "uwire_nonmerged", is_uninstantiated = false, name = "uwire_nonmerged", node_id = 4 : i64, referenced_path = "uwire_nonmerged", referenced_symbol = @s0.uwire_nonmerged} {
+      obelisk.sv.symbol.instance_body @s5.uwire_nonmerged attributes {hierarchical_name = "uwire_nonmerged", name = "uwire_nonmerged", node_id = 5 : i64} {
+        obelisk.sv.symbol.variable @s6.source attributes {hierarchical_name = "uwire_nonmerged.source", lifetime = 1 : i32, name = "source", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.net attributes {hierarchical_name = "uwire_nonmerged.destination", is_implicit = false, name = "destination", net_kind = 12 : i32, node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.destination"} {
+        obelisk.sv.symbol.net @s7.destination attributes {hierarchical_name = "uwire_nonmerged.destination", is_implicit = false, name = "destination", net_kind = 12 : i32, node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "uwire_nonmerged.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "uwire_nonmerged_child", referenced_symbol = @s1.uwire_nonmerged_child, sym_name = "s8.child"} {
+        obelisk.sv.symbol.instance @s8.child attributes {hierarchical_name = "uwire_nonmerged.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "uwire_nonmerged_child", referenced_symbol = @s1.uwire_nonmerged_child} {
           obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "internal_uwire", formal_ordinal = 0 : i64, formal_path = "uwire_nonmerged.child.internal_uwire", formal_symbol = @s2.$root::@s4.uwire_nonmerged::@s5.uwire_nonmerged::@s8.child::@s9.uwire_nonmerged_child::@s10.internal_uwire, formal_type = !obelisk.integral<1, false, true, 0 : 0, logic>, internal_path = "uwire_nonmerged.child.internal_uwire", internal_symbol = @s2.$root::@s4.uwire_nonmerged::@s5.uwire_nonmerged::@s8.child::@s9.uwire_nonmerged_child::@s11.internal_uwire, is_ansi = true, is_net = true, node_id = 9 : i64, provenance = 0 : i32} {
           } {
             obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "uwire_nonmerged.source", referenced_symbol = @s2.$root::@s4.uwire_nonmerged::@s5.uwire_nonmerged::@s6.source, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -43,18 +43,18 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "uwire_nonmerged.child", name = "uwire_nonmerged_child", node_id = 15 : i64, sym_name = "s9.uwire_nonmerged_child"} {
-            obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "uwire_nonmerged.child.internal_uwire", name = "internal_uwire", node_id = 16 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.internal_uwire"} {
+          obelisk.sv.symbol.instance_body @s9.uwire_nonmerged_child attributes {hierarchical_name = "uwire_nonmerged.child", name = "uwire_nonmerged_child", node_id = 15 : i64} {
+            obelisk.sv.symbol.port @s10.internal_uwire attributes {direction = 0 : i32, hierarchical_name = "uwire_nonmerged.child.internal_uwire", name = "internal_uwire", node_id = 16 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.net attributes {hierarchical_name = "uwire_nonmerged.child.internal_uwire", is_implicit = false, name = "internal_uwire", net_kind = 12 : i32, node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.internal_uwire"} {
+            obelisk.sv.symbol.net @s11.internal_uwire attributes {hierarchical_name = "uwire_nonmerged.child.internal_uwire", is_implicit = false, name = "internal_uwire", net_kind = 12 : i32, node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.port attributes {direction = 1 : i32, hierarchical_name = "uwire_nonmerged.child.internal_variable", name = "internal_variable", node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.internal_variable"} {
+            obelisk.sv.symbol.port @s12.internal_variable attributes {direction = 1 : i32, hierarchical_name = "uwire_nonmerged.child.internal_variable", name = "internal_variable", node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "uwire_nonmerged.child.internal_variable", lifetime = 1 : i32, name = "internal_variable", node_id = 19 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.internal_variable"} {
+            obelisk.sv.symbol.variable @s13.internal_variable attributes {hierarchical_name = "uwire_nonmerged.child.internal_variable", lifetime = 1 : i32, name = "internal_variable", node_id = 19 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "uwire_nonmerged.child.compound_variable", name = "compound_variable", node_id = 24 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.compound_variable"} {
+            obelisk.sv.symbol.port @s14.compound_variable attributes {direction = 0 : i32, hierarchical_name = "uwire_nonmerged.child.compound_variable", name = "compound_variable", node_id = 24 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "uwire_nonmerged.child.compound_variable", lifetime = 1 : i32, name = "compound_variable", node_id = 25 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s15.compound_variable"} {
+            obelisk.sv.symbol.variable @s15.compound_variable attributes {hierarchical_name = "uwire_nonmerged.child.compound_variable", lifetime = 1 : i32, name = "compound_variable", node_id = 25 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
         }

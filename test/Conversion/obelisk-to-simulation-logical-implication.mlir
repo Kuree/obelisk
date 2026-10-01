@@ -6,60 +6,54 @@
 // while 11.4.7 evaluates each operand of `<->` exactly once.
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.t attributes {
     definition_kind = 0 : i32, hierarchical_name = "t", name = "t",
-    node_id = 0 : i64, sym_name = "s0.t"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.t attributes {
       hierarchical_name = "t", is_uninstantiated = false, name = "t",
-      node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t,
-      sym_name = "s3.t"
+      node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.t attributes {
         hierarchical_name = "t", name = "t", node_id = 4 : i64,
-        sym_name = "s4.t", time_precision_fs = 1000000 : i64,
+        time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s5.a attributes {
           hierarchical_name = "t.a", lifetime = 1 : i32, name = "a",
           node_id = 5 : i64,
-          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-          sym_name = "s5.a"
+          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s6.b attributes {
           hierarchical_name = "t.b", lifetime = 1 : i32, name = "b",
           node_id = 6 : i64,
-          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-          sym_name = "s6.b"
+          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s7.imp attributes {
           hierarchical_name = "t.imp", lifetime = 1 : i32, name = "imp",
           node_id = 7 : i64,
-          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-          sym_name = "s7.imp"
+          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s8.eqv attributes {
           hierarchical_name = "t.eqv", lifetime = 1 : i32, name = "eqv",
           node_id = 8 : i64,
-          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-          sym_name = "s8.eqv"
+          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s9 attributes {
           hierarchical_name = "t", node_id = 9 : i64, procedure_kind = 0 : i32,
-          sym_name = "s9", time_precision_fs = 1000000 : i64,
+          time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {

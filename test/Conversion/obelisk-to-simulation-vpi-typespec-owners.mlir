@@ -4,184 +4,182 @@
 !state = !obelisk.enum<"state_t", !obelisk.integral<2, false, false, 1 : 0, bit>>
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32,
-      hierarchical_name = "iface_t", name = "iface_t", node_id = 0 : i64,
-      sym_name = "iface_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
+  obelisk.sv.symbol.definition @iface_def attributes {definition_kind = 1 : i32,
+      hierarchical_name = "iface_t", name = "iface_t", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.definition @wrapper_def attributes {definition_kind = 0 : i32,
       hierarchical_name = "wrapper_t", name = "wrapper_t",
-      node_id = 21 : i64, sym_name = "wrapper_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 1 : i64, sym_name = "root"} {
+      node_id = 21 : i64} {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 1 : i64} {
     // The two compilation units deliberately have the same VPI display name.
-    obelisk.sv.symbol.compilation_unit attributes {
-        hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "cu_a"} {
-      obelisk.sv.type.type_alias attributes {
+    obelisk.sv.symbol.compilation_unit @cu_a attributes {
+        hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.type_alias @same attributes {
           hierarchical_name = "$unit::same_t", name = "same_t",
-          node_id = 3 : i64, semantic_type = !state, sym_name = "same",
+          node_id = 3 : i64, semantic_type = !state,
           vpi_source_type_identity = 10 : i64,
           vpi_typedef_layers = [{aliases = [@root::@cu_a::@same], path = array<i64>}]} {}
-      obelisk.sv.symbol.enum_value attributes {constant_value = "2'b00",
+      obelisk.sv.symbol.enum_value @idle_a attributes {constant_value = "2'b00",
           hierarchical_name = "$unit::state_t.IDLE", name = "IDLE",
-          node_id = 10 : i64, semantic_type = !state, sym_name = "idle_a",
+          node_id = 10 : i64, semantic_type = !state,
           vpi_source_type_identity = 10 : i64} {}
     }
-    obelisk.sv.symbol.compilation_unit attributes {
-        hierarchical_name = "$unit", node_id = 4 : i64, sym_name = "cu_b"} {
-      obelisk.sv.type.type_alias attributes {
+    obelisk.sv.symbol.compilation_unit @cu_b attributes {
+        hierarchical_name = "$unit", node_id = 4 : i64} {
+      obelisk.sv.type.type_alias @same attributes {
           hierarchical_name = "$unit::same_t", name = "same_t",
-          node_id = 5 : i64, semantic_type = !state, sym_name = "same",
+          node_id = 5 : i64, semantic_type = !state,
           vpi_source_type_identity = 11 : i64,
           vpi_typedef_layers = [{aliases = [@root::@cu_b::@same], path = array<i64>}]} {}
-      obelisk.sv.symbol.enum_value attributes {constant_value = "2'b01",
+      obelisk.sv.symbol.enum_value @run_b attributes {constant_value = "2'b01",
           hierarchical_name = "$unit::state_t.RUN", name = "RUN",
-          node_id = 11 : i64, semantic_type = !state, sym_name = "run_b",
+          node_id = 11 : i64, semantic_type = !state,
           vpi_source_type_identity = 11 : i64} {}
-      obelisk.sv.symbol.sequence attributes {has_default_instance = false,
+      obelisk.sv.symbol.sequence @seq attributes {has_default_instance = false,
           hierarchical_name = "$unit::seq", name = "seq", node_id = 12 : i64,
           port_count = 1 : i64, port_paths = ["$unit::seq.arg"],
-          port_symbols = [@root::@cu_b::@seq::@seq_arg], sym_name = "seq"} {
-        obelisk.sv.symbol.assertion_port attributes {
+          port_symbols = [@root::@cu_b::@seq::@seq_arg]} {
+        obelisk.sv.symbol.assertion_port @seq_arg attributes {
             has_default_value = false, hierarchical_name = "$unit::seq.arg",
             is_local_variable = false, name = "arg", node_id = 13 : i64,
-            semantic_type = !obelisk.sequence, sym_name = "seq_arg"} {}
+            semantic_type = !obelisk.sequence} {}
       }
-      obelisk.sv.symbol.property attributes {has_default_instance = false,
+      obelisk.sv.symbol.property @prop attributes {has_default_instance = false,
           hierarchical_name = "$unit::prop", name = "prop",
           node_id = 14 : i64, port_count = 1 : i64,
           port_paths = ["$unit::prop.arg"],
-          port_symbols = [@root::@cu_b::@prop::@prop_arg], sym_name = "prop"} {
-        obelisk.sv.symbol.assertion_port attributes {
+          port_symbols = [@root::@cu_b::@prop::@prop_arg]} {
+        obelisk.sv.symbol.assertion_port @prop_arg attributes {
             has_default_value = false, hierarchical_name = "$unit::prop.arg",
             is_local_variable = false, name = "arg", node_id = 15 : i64,
-            semantic_type = !obelisk.property, sym_name = "prop_arg"} {}
+            semantic_type = !obelisk.property} {}
         }
       // Statement-backed ownership is deliberately deferred as a unit: this
       // local enum must neither escape to the compilation unit nor make the
       // otherwise valid lowering fail.
-      obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32,
+      obelisk.sv.symbol.statement_block @local attributes {block_kind = 0 : i32,
           hierarchical_name = "$unit::local", name = "local",
-          node_id = 16 : i64, sym_name = "local"} {
-        obelisk.sv.type.type_alias attributes {
+          node_id = 16 : i64} {
+        obelisk.sv.type.type_alias @same attributes {
             hierarchical_name = "$unit::local::local_t", name = "local_t",
-            node_id = 17 : i64, semantic_type = !state, sym_name = "same",
+            node_id = 17 : i64, semantic_type = !state,
             vpi_source_type_identity = 12 : i64,
             vpi_typedef_layers = [{aliases = [@root::@cu_b::@local::@same], path = array<i64>}]} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "2'b10",
+        obelisk.sv.symbol.enum_value @local_value attributes {constant_value = "2'b10",
             hierarchical_name = "$unit::local::state_t.LOCAL", name = "LOCAL",
-            node_id = 18 : i64, semantic_type = !state, sym_name = "local_value",
+            node_id = 18 : i64, semantic_type = !state,
             vpi_source_type_identity = 12 : i64} {}
-        obelisk.sv.symbol.instance attributes {
+        obelisk.sv.symbol.instance @vif_type attributes {
             hierarchical_name = "$unit::local::iface_t",
             is_uninstantiated = false, is_virtual_interface_type_instance = true,
             name = "iface_t", node_id = 19 : i64,
-            referenced_path = "iface_t", referenced_symbol = @iface_def,
-            sym_name = "vif_type"} {
-          obelisk.sv.symbol.instance_body attributes {
+            referenced_path = "iface_t", referenced_symbol = @iface_def
+        } {
+          obelisk.sv.symbol.instance_body @vif_body attributes {
               hierarchical_name = "$unit::local::iface_t",
               is_virtual_interface_type_instance = true, name = "iface_t",
-              node_id = 20 : i64, sym_name = "vif_body",
+              node_id = 20 : i64,
               virtual_interface_identity = @root::@cu_b::@local::@vif_type} {}
         }
         // Static storage survives lowering, but its VPI type relation must be
         // deferred together with its statement-owned typespec.
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @local_storage attributes {
             hierarchical_name = "$unit::local::local_value", lifetime = 1 : i32,
             name = "local_value", node_id = 22 : i64, semantic_type = !state,
-            sym_name = "local_storage",
             vpi_typedef_layers = [{aliases = [@root::@cu_b::@local::@same], path = array<i64>}]} {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @local_vif attributes {
             hierarchical_name = "$unit::local::local_vif", lifetime = 1 : i32,
             name = "local_vif", node_id = 23 : i64,
-            semantic_type = !obelisk.virtual_interface<@root::@cu_b::@local::@vif_type, "">,
-            sym_name = "local_vif"} {}
+            semantic_type = !obelisk.virtual_interface<@root::@cu_b::@local::@vif_type, "">
+        } {}
       }
     }
     // Exercise fallback lookup for both authored raw wrapper paths and the
     // frontend's collapsed instance-body paths. These bodies intentionally do
     // not carry virtual_interface_identity, so the primary body map cannot
     // satisfy either reference.
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "raw_top",
+    obelisk.sv.symbol.instance @raw_wrapper attributes {hierarchical_name = "raw_top",
         is_uninstantiated = false, name = "raw_top", node_id = 24 : i64,
-        referenced_path = "wrapper_t", referenced_symbol = @wrapper_def,
-        sym_name = "raw_wrapper"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "raw_top",
-          name = "wrapper_t", node_id = 25 : i64, sym_name = "raw_body"} {
-        obelisk.sv.symbol.instance attributes {
+        referenced_path = "wrapper_t", referenced_symbol = @wrapper_def
+    } {
+      obelisk.sv.symbol.instance_body @raw_body attributes {hierarchical_name = "raw_top",
+          name = "wrapper_t", node_id = 25 : i64} {
+        obelisk.sv.symbol.instance @raw_iface attributes {
             hierarchical_name = "raw_top.iface_t", is_uninstantiated = false,
             is_virtual_interface_type_instance = true, name = "iface_t",
             node_id = 26 : i64, referenced_path = "iface_t",
-            referenced_symbol = @iface_def, sym_name = "raw_iface"} {
-          obelisk.sv.symbol.instance_body attributes {
+            referenced_symbol = @iface_def} {
+          obelisk.sv.symbol.instance_body @raw_iface_body attributes {
               hierarchical_name = "raw_top.iface_t", name = "iface_t",
-              node_id = 27 : i64, sym_name = "raw_iface_body"} {}
+              node_id = 27 : i64} {}
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @raw_vif attributes {
             hierarchical_name = "raw_top.raw_vif", lifetime = 1 : i32,
             name = "raw_vif", node_id = 28 : i64,
-            semantic_type = !obelisk.virtual_interface<@root::@raw_wrapper::@raw_body::@raw_iface, "">,
-            sym_name = "raw_vif"} {}
+            semantic_type = !obelisk.virtual_interface<@root::@raw_wrapper::@raw_body::@raw_iface, "">
+        } {}
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "collapsed_top",
+    obelisk.sv.symbol.instance @collapsed_wrapper attributes {hierarchical_name = "collapsed_top",
         is_uninstantiated = false, name = "collapsed_top", node_id = 29 : i64,
-        referenced_path = "wrapper_t", referenced_symbol = @wrapper_def,
-        sym_name = "collapsed_wrapper"} {
-      obelisk.sv.symbol.instance_body attributes {
+        referenced_path = "wrapper_t", referenced_symbol = @wrapper_def
+    } {
+      obelisk.sv.symbol.instance_body @collapsed_body attributes {
           hierarchical_name = "collapsed_top", name = "wrapper_t",
-          node_id = 30 : i64, sym_name = "collapsed_body"} {
-        obelisk.sv.symbol.instance attributes {
+          node_id = 30 : i64} {
+        obelisk.sv.symbol.instance @collapsed_iface attributes {
             hierarchical_name = "collapsed_top.iface_t",
             is_uninstantiated = false,
             is_virtual_interface_type_instance = true, name = "iface_t",
             node_id = 31 : i64, referenced_path = "iface_t",
-            referenced_symbol = @iface_def, sym_name = "collapsed_iface"} {
-          obelisk.sv.symbol.instance_body attributes {
+            referenced_symbol = @iface_def} {
+          obelisk.sv.symbol.instance_body @collapsed_iface_body attributes {
               hierarchical_name = "collapsed_top.iface_t", name = "iface_t",
-              node_id = 32 : i64, sym_name = "collapsed_iface_body"} {}
+              node_id = 32 : i64} {}
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @collapsed_vif attributes {
             hierarchical_name = "collapsed_top.collapsed_vif",
             lifetime = 1 : i32, name = "collapsed_vif", node_id = 33 : i64,
-            semantic_type = !obelisk.virtual_interface<@root::@collapsed_body::@collapsed_iface, "">,
-            sym_name = "collapsed_vif"} {}
+            semantic_type = !obelisk.virtual_interface<@root::@collapsed_body::@collapsed_iface, "">
+        } {}
       }
     }
   }
-  obelisk.sv.symbol.package attributes {hierarchical_name = "pkg",
-      name = "pkg", node_id = 6 : i64, sym_name = "pkg"} {
-    obelisk.sv.type.type_alias attributes {hierarchical_name = "pkg::unused_t",
-        name = "unused_t", node_id = 7 : i64, semantic_type = !bit,
-        sym_name = "pkg_unused"} {}
-    obelisk.sv.type.class_type attributes {bitstream_width = 0 : i64,
+  obelisk.sv.symbol.package @pkg attributes {hierarchical_name = "pkg",
+      name = "pkg", node_id = 6 : i64} {
+    obelisk.sv.type.type_alias @pkg_unused attributes {hierarchical_name = "pkg::unused_t",
+        name = "unused_t", node_id = 7 : i64, semantic_type = !bit
+    } {}
+    obelisk.sv.type.class_type @class_c attributes {bitstream_width = 0 : i64,
         declared_interfaces = [], generic_parameter_paths = [],
         generic_parameter_symbols = [], has_base_constructor_call = false,
         has_cycles = false, hierarchical_name = "pkg::C",
         implemented_interfaces = [], is_abstract = false, is_final = false,
         is_interface = false, is_uninstantiated = false, name = "C",
         node_id = 8 : i64,
-        semantic_type = !obelisk.class_handle<@pkg::@class_c>,
-        sym_name = "class_c"} {
-      obelisk.sv.type.type_alias attributes {
+        semantic_type = !obelisk.class_handle<@pkg::@class_c>
+    } {
+      obelisk.sv.type.type_alias @class_local attributes {
           hierarchical_name = "pkg::C::local_t", name = "local_t",
-          node_id = 9 : i64, semantic_type = !bit, sym_name = "class_local"} {}
+          node_id = 9 : i64, semantic_type = !bit} {}
     }
-    obelisk.sv.symbol.generic_class_def attributes {
+    obelisk.sv.symbol.generic_class_def @generic_def attributes {
         hierarchical_name = "pkg::G", is_interface = false, name = "G",
-        node_id = 34 : i64, specialization_count = 1 : i64,
-        sym_name = "generic_def"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 0 : i64,
+        node_id = 34 : i64, specialization_count = 1 : i64
+    } {
+      obelisk.sv.type.class_type @generic_spec attributes {bitstream_width = 0 : i64,
           declared_interfaces = [], generic_parameter_paths = [],
           generic_parameter_symbols = [], has_base_constructor_call = false,
           has_cycles = false, hierarchical_name = "pkg::G#(bit)",
           implemented_interfaces = [], is_abstract = false, is_final = false,
           is_interface = false, is_uninstantiated = false, name = "G",
           node_id = 35 : i64,
-          semantic_type = !obelisk.class_handle<@pkg::@generic_spec>,
-          sym_name = "generic_spec"} {
-        obelisk.sv.type.type_alias attributes {
+          semantic_type = !obelisk.class_handle<@pkg::@generic_spec>
+      } {
+        obelisk.sv.type.type_alias @generic_alias attributes {
             hierarchical_name = "pkg::G#(bit)::item_t", name = "item_t",
             node_id = 36 : i64, semantic_type = !bit,
-            sym_name = "generic_alias",
             vpi_typedef_layers = [{aliases = [@pkg::@generic_spec::@generic_alias], path = array<i64>}]} {}
       }
     }

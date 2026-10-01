@@ -3,20 +3,20 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "s4.top"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.clk attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.a"} {
+        obelisk.sv.symbol.variable @s6.a attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.b"} {
+        obelisk.sv.symbol.variable @s14.b attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 2 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 8 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 9 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 10 : i64} {
@@ -30,7 +30,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 15 : i64, procedure_kind = 2 : i32, sym_name = "s15", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s15 attributes {hierarchical_name = "top", node_id = 15 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 16 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 17 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 18 : i64} {
@@ -50,7 +50,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 25 : i64, procedure_kind = 2 : i32, sym_name = "s25", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s25 attributes {hierarchical_name = "top", node_id = 25 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 26 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 27 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 28 : i64} {
@@ -72,7 +72,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 36 : i64, procedure_kind = 2 : i32, sym_name = "s36", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s36 attributes {hierarchical_name = "top", node_id = 36 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 37 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 38 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 39 : i64} {
@@ -100,7 +100,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 50 : i64, procedure_kind = 2 : i32, sym_name = "s50", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s50 attributes {hierarchical_name = "top", node_id = 50 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 51 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 52 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 53 : i64} {
@@ -136,7 +136,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 66 : i64, procedure_kind = 2 : i32, sym_name = "s66", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s66 attributes {hierarchical_name = "top", node_id = 66 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 67 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 68 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 69 : i64} {
@@ -166,7 +166,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 100 : i64, procedure_kind = 2 : i32, sym_name = "s100", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s100 attributes {hierarchical_name = "top", node_id = 100 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 101 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 102 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 103 : i64} {
@@ -200,7 +200,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 120 : i64, procedure_kind = 2 : i32, sym_name = "s120", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s120 attributes {hierarchical_name = "top", node_id = 120 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 121 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 122 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 123 : i64} {
@@ -236,7 +236,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 140 : i64, procedure_kind = 2 : i32, sym_name = "s140", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s140 attributes {hierarchical_name = "top", node_id = 140 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 141 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 142 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 143 : i64} {
@@ -272,7 +272,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 160 : i64, procedure_kind = 2 : i32, sym_name = "s160", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s160 attributes {hierarchical_name = "top", node_id = 160 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 161 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 162 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 163 : i64} {
@@ -296,7 +296,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 180 : i64, procedure_kind = 2 : i32, sym_name = "s180", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s180 attributes {hierarchical_name = "top", node_id = 180 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 181 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 182 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 183 : i64} {
@@ -320,7 +320,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 200 : i64, procedure_kind = 2 : i32, sym_name = "s200", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s200 attributes {hierarchical_name = "top", node_id = 200 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 201 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 202 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 203 : i64} {
@@ -358,7 +358,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         }
         // (a or b) #-# a. Same-endpoint antecedent matches are distinct
         // existential obligations of one followed-by property attempt.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 220 : i64, procedure_kind = 2 : i32, sym_name = "s220", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s220 attributes {hierarchical_name = "top", node_id = 220 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 221 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 222 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 223 : i64} {
@@ -391,7 +391,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         // cover property ((a ##[1:2] b) |-> a). If simulation ends while an
         // antecedent endpoint is still possible, that path can no longer
         // match; the implication succeeds vacuously once per source attempt.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 240 : i64, procedure_kind = 2 : i32, sym_name = "s240", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s240 attributes {hierarchical_name = "top", node_id = 240 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 241 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 242 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 243 : i64} {
@@ -424,7 +424,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         // assert property ((a ##[1:2] b) #=# a). At EOS, an already matched
         // source with its weak nonoverlapped consequent pending succeeds;
         // a source with only an unfinished antecedent fails existentially.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 260 : i64, procedure_kind = 2 : i32, sym_name = "s260", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s260 attributes {hierarchical_name = "top", node_id = 260 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 261 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 262 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 263 : i64} {
@@ -456,7 +456,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         }
         // Intrinsically strong s_nexttime overrides assert's default weak
         // sequence completion for a pending implication consequent.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 280 : i64, procedure_kind = 2 : i32, sym_name = "s280", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s280 attributes {hierarchical_name = "top", node_id = 280 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 281 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 282 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 283 : i64} {
@@ -490,7 +490,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         }
         // Intrinsically weak nexttime overrides cover property's default
         // strong sequence completion for a pending implication consequent.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 300 : i64, procedure_kind = 2 : i32, sym_name = "s300", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s300 attributes {hierarchical_name = "top", node_id = 300 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 301 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 302 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 303 : i64} {

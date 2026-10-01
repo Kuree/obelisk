@@ -6,100 +6,88 @@
 // methods for every unpacked array.  A fixed array is traversed from its
 // left bound, so find_index on [4:0] reports 4, 3, ..., 0.
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.fixed_array_methods attributes {
     definition_kind = 0 : i32,
     hierarchical_name = "fixed_array_methods",
     name = "fixed_array_methods",
-    node_id = 0 : i64,
-    sym_name = "s0.fixed_array_methods"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
+  obelisk.sv.symbol.root @s1.$root attributes {
     hierarchical_name = "\\$root ",
     name = "$root",
-    node_id = 1 : i64,
-    sym_name = "s1.$root"
+    node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
       hierarchical_name = "$unit",
-      node_id = 2 : i64,
-      sym_name = "s2"
+      node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.fixed_array_methods attributes {
       hierarchical_name = "fixed_array_methods",
       is_uninstantiated = false,
       name = "fixed_array_methods",
       node_id = 3 : i64,
       referenced_path = "fixed_array_methods",
-      referenced_symbol = @s0.fixed_array_methods,
-      sym_name = "s3.fixed_array_methods"
+      referenced_symbol = @s0.fixed_array_methods
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.fixed_array_methods attributes {
         hierarchical_name = "fixed_array_methods",
         name = "fixed_array_methods",
-        node_id = 4 : i64,
-        sym_name = "s4.fixed_array_methods"
+        node_id = 4 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s5.runtime attributes {
           hierarchical_name = "fixed_array_methods.runtime",
           lifetime = 1 : i32,
           name = "runtime",
           node_id = 5 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<4 : 0 x !obelisk.integral<32, true, false, 31 : 0, int>>,
-          sym_name = "s5.runtime"
+          semantic_type = !obelisk.ranged_unpacked_array<4 : 0 x !obelisk.integral<32, true, false, 31 : 0, int>>
         } {
         }
-        obelisk.sv.symbol.parameter attributes {
+        obelisk.sv.symbol.parameter @s6.CONSTANTS attributes {
           constant_value = "[3,9,-1,9,2]",
           hierarchical_name = "fixed_array_methods.CONSTANTS",
           name = "CONSTANTS",
           node_id = 6 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<4 : 0 x !obelisk.integral<32, true, false, 31 : 0, int>>,
-          sym_name = "s6.CONSTANTS"
+          semantic_type = !obelisk.ranged_unpacked_array<4 : 0 x !obelisk.integral<32, true, false, 31 : 0, int>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s7.runtime_max attributes {
           hierarchical_name = "fixed_array_methods.runtime_max",
           lifetime = 1 : i32,
           name = "runtime_max",
           node_id = 7 : i64,
-          semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>,
-          sym_name = "s7.runtime_max"
+          semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s8.indices attributes {
           hierarchical_name = "fixed_array_methods.indices",
           lifetime = 1 : i32,
           name = "indices",
           node_id = 8 : i64,
-          semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>,
-          sym_name = "s8.indices"
+          semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s9.constant_max attributes {
           hierarchical_name = "fixed_array_methods.constant_max",
           lifetime = 1 : i32,
           name = "constant_max",
           node_id = 9 : i64,
-          semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>,
-          sym_name = "s9.constant_max"
+          semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s10.constant_sum attributes {
           hierarchical_name = "fixed_array_methods.constant_sum",
           lifetime = 1 : i32,
           name = "constant_sum",
           node_id = 10 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s10.constant_sum"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s11 attributes {
           hierarchical_name = "fixed_array_methods",
           node_id = 11 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s11",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {
@@ -293,15 +281,14 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.iterator attributes {
+        obelisk.sv.symbol.iterator @s29.item attributes {
           array_type = !obelisk.ranged_unpacked_array<4 : 0 x !obelisk.integral<32, true, false, 31 : 0, int>>,
           hierarchical_name = "fixed_array_methods.item",
           index_method_name = "index",
           is_const,
           name = "item",
           node_id = 29 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s29.item"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {
         }
       }

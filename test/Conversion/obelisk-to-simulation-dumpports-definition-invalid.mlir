@@ -2,32 +2,30 @@
 // RUN:   | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.leaf attributes {
     definition_kind = 0 : i32, hierarchical_name = "leaf", name = "leaf",
-    node_id = 0 : i64, sym_name = "s0.leaf"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s1.top attributes {
     definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
-    node_id = 1 : i64, sym_name = "s1.top"
+    node_id = 1 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64,
-    sym_name = "s2.$root"
+  obelisk.sv.symbol.root @s2.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64
   } {
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.top attributes {
       hierarchical_name = "top", is_uninstantiated = false, name = "top",
       node_id = 3 : i64, referenced_path = "top",
-      referenced_symbol = @s1.top, sym_name = "s3.top"
+      referenced_symbol = @s1.top
     } {
-      obelisk.sv.symbol.instance_body attributes {
-        hierarchical_name = "top", name = "top", node_id = 4 : i64,
-        sym_name = "s4.top"
+      obelisk.sv.symbol.instance_body @s4.top attributes {
+        hierarchical_name = "top", name = "top", node_id = 4 : i64
       } {
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s5 attributes {
           hierarchical_name = "top", node_id = 5 : i64,
-          procedure_kind = 0 : i32, sym_name = "s5",
+          procedure_kind = 0 : i32,
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {

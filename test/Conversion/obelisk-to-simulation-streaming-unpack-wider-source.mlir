@@ -6,18 +6,18 @@
 // six-bit bulk export must consume the stream's leading six bits and leave the
 // two trailing source bits unused.
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "top"} {
+  obelisk.sv.symbol.definition @top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "unit"} {
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @unit attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @top, sym_name = "instance"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "body"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.src", lifetime = 1 : i32, name = "src", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "src"} {
+    obelisk.sv.symbol.instance @instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @top} {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @src attributes {hierarchical_name = "top.src", lifetime = 1 : i32, name = "src", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.dst", lifetime = 1 : i32, name = "dst", node_id = 6 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 2 x !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>, sym_name = "dst"} {
+        obelisk.sv.symbol.variable @dst attributes {hierarchical_name = "top.dst", lifetime = 1 : i32, name = "dst", node_id = 6 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 2 x !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "initial", time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
+        obelisk.sv.symbol.procedural_block @initial attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 9 : i64, semantic_type = !obelisk.void} {
               obelisk.sv.expression.streaming attributes {bitstream_width = 6 : i64, is_fixed_size = true, is_signed = false, node_id = 10 : i64, semantic_type = !obelisk.void, slice_size = 0 : i64, stream_count = 1 : i64, stream_with_flags = array<i64: 0>} {

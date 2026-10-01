@@ -5,34 +5,34 @@
 // CHECK: error: combined branching implication/followed-by currently requires bounded consequent alternatives without retained nested first_match boundaries, vacuous alternatives, or match items and at most 256 antecedent/consequent alternative pairs
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "combined_temporal_invalid", name = "combined_temporal_invalid", node_id = 0 : i64, sym_name = "s0.combined_temporal_invalid"} {
+  obelisk.sv.symbol.definition @s0.combined_temporal_invalid attributes {definition_kind = 0 : i32, hierarchical_name = "combined_temporal_invalid", name = "combined_temporal_invalid", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "combined_temporal_invalid", is_uninstantiated = false, name = "combined_temporal_invalid", node_id = 3 : i64, referenced_path = "combined_temporal_invalid", referenced_symbol = @s0.combined_temporal_invalid, sym_name = "s3.combined_temporal_invalid"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "combined_temporal_invalid", name = "combined_temporal_invalid", node_id = 4 : i64, sym_name = "s4.combined_temporal_invalid", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.combined_temporal_invalid attributes {hierarchical_name = "combined_temporal_invalid", is_uninstantiated = false, name = "combined_temporal_invalid", node_id = 3 : i64, referenced_path = "combined_temporal_invalid", referenced_symbol = @s0.combined_temporal_invalid} {
+      obelisk.sv.symbol.instance_body @s4.combined_temporal_invalid attributes {hierarchical_name = "combined_temporal_invalid", name = "combined_temporal_invalid", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.port @s5.clk attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "combined_temporal_invalid.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.clk"} {
+        obelisk.sv.symbol.variable @s6.clk attributes {hierarchical_name = "combined_temporal_invalid.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.a", name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.a"} {
+        obelisk.sv.symbol.port @s7.a attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.a", name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "combined_temporal_invalid.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.a"} {
+        obelisk.sv.symbol.variable @s8.a attributes {hierarchical_name = "combined_temporal_invalid.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.b", name = "b", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.b"} {
+        obelisk.sv.symbol.port @s9.b attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.b", name = "b", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "combined_temporal_invalid.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.b"} {
+        obelisk.sv.symbol.variable @s10.b attributes {hierarchical_name = "combined_temporal_invalid.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.c", name = "c", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.c"} {
+        obelisk.sv.symbol.port @s11.c attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.c", name = "c", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "combined_temporal_invalid.c", lifetime = 1 : i32, name = "c", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.c"} {
+        obelisk.sv.symbol.variable @s12.c attributes {hierarchical_name = "combined_temporal_invalid.c", lifetime = 1 : i32, name = "c", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.d", name = "d", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.d"} {
+        obelisk.sv.symbol.port @s13.d attributes {direction = 0 : i32, hierarchical_name = "combined_temporal_invalid.d", name = "d", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "combined_temporal_invalid.d", lifetime = 1 : i32, name = "d", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.d"} {
+        obelisk.sv.symbol.variable @s14.d attributes {hierarchical_name = "combined_temporal_invalid.d", lifetime = 1 : i32, name = "d", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "combined_temporal_invalid", node_id = 15 : i64, procedure_kind = 2 : i32, sym_name = "s15", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s15 attributes {hierarchical_name = "combined_temporal_invalid", node_id = 15 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 16 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 17 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 18 : i64} {

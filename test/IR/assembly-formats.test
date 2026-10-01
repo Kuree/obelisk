@@ -1,0 +1,1 @@
+# RUN: %python %source_root/test/Support/CheckAssemblyFormats.py %llvm_dist %source_root %obj_root

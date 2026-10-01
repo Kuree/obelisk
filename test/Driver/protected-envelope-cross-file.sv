@@ -5,5 +5,5 @@
 `pragma protect data_method="x-caesar", data_keyname="rot13"
 `include "Inputs/protected-envelope-cross-file.svh"
 
-// IR: obelisk.sv.symbol.definition attributes {{.*}}name = "protected_cross_file"
+// IR: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_cross_file"
 // OUTPUT: PROTECT_CROSS_FILE_OK

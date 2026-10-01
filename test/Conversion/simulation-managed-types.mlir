@@ -46,9 +46,9 @@ module attributes {
       %live = simulation.aggregate.construct %text :
         (!simulation.string) ->
         !simulation.unpacked_array<0 : 0 x !simulation.string>
-      %size = "simulation.container.size"(%empty) :
+      %size = simulation.container.size %empty :
         (!simulation.dynamic_array<!simulation.logic<4>>) -> i64
-      %merged = "simulation.container.create_like"(%empty, %fallback, %size) :
+      %merged = simulation.container.create_like %empty, %fallback, %size :
         (!simulation.dynamic_array<!simulation.logic<4>>,
          !simulation.dynamic_array<!simulation.logic<4>>, i64) ->
         !simulation.dynamic_array<!simulation.logic<4>>
@@ -58,10 +58,10 @@ module attributes {
       %length = simulation.string.length %kept :
         (!simulation.string) -> i64
       %index = arith.constant 0 : i64
-      %element = "simulation.container.read"(%merged, %index) :
+      %element = simulation.container.read %merged, %index :
         (!simulation.dynamic_array<!simulation.logic<4>>, i64) ->
         !simulation.logic<4>
-      "simulation.container.write"(%merged, %index, %element) :
+      simulation.container.write %merged, %index, %element :
         (!simulation.dynamic_array<!simulation.logic<4>>, i64,
          !simulation.logic<4>) -> ()
       %node = simulation.class.alloc %ctx :
@@ -77,7 +77,7 @@ module attributes {
         trace_kinds = array<i32: -2147483647>,
         container_kind = #simulation.container_kind<dynamic_array>, bound = 0 : i64
       } : (i64) -> !simulation.dynamic_array<!candidate>
-      "simulation.container.write"(%candidates, %index, %candidate) :
+      simulation.container.write %candidates, %index, %candidate :
         (!simulation.dynamic_array<!candidate>, i64, !candidate) -> ()
       %paths = simulation.container.create %one {
         type_id = 100 : i64, element_kind = #simulation.element_kind<aggregate>,

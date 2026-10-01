@@ -2,20 +2,20 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 2 : i32, hierarchical_name = "expect_test", name = "expect_test", node_id = 0 : i64, sym_name = "s0.expect_test"} {
+  obelisk.sv.symbol.definition @s0.expect_test attributes {definition_kind = 2 : i32, hierarchical_name = "expect_test", name = "expect_test", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "expect_test", is_uninstantiated = false, name = "expect_test", node_id = 3 : i64, referenced_path = "expect_test", referenced_symbol = @s0.expect_test, sym_name = "s3.expect_test"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "expect_test", name = "expect_test", node_id = 4 : i64, sym_name = "s4.expect_test"} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "expect_test.enable", name = "enable", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.enable"} {
+    obelisk.sv.symbol.instance @s3.expect_test attributes {hierarchical_name = "expect_test", is_uninstantiated = false, name = "expect_test", node_id = 3 : i64, referenced_path = "expect_test", referenced_symbol = @s0.expect_test} {
+      obelisk.sv.symbol.instance_body @s4.expect_test attributes {hierarchical_name = "expect_test", name = "expect_test", node_id = 4 : i64} {
+        obelisk.sv.symbol.port @s5.enable attributes {direction = 0 : i32, hierarchical_name = "expect_test.enable", name = "enable", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "expect_test.enable", lifetime = 1 : i32, name = "enable", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.enable"} {
+        obelisk.sv.symbol.variable @s6.enable attributes {hierarchical_name = "expect_test.enable", lifetime = 1 : i32, name = "enable", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.property attributes {has_default_instance = true, hierarchical_name = "expect_test.named_property", name = "named_property", node_id = 7 : i64, port_count = 0 : i64, port_paths = [], port_symbols = [], sym_name = "s7.named_property"} {
+        obelisk.sv.symbol.property @s7.named_property attributes {has_default_instance = true, hierarchical_name = "expect_test.named_property", name = "named_property", node_id = 7 : i64, port_count = 0 : i64, port_paths = [], port_symbols = []} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "expect_test", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "expect_test", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 5 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 9 : i64} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 10 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, local_variable_count = 0 : i64, local_variable_has_initializer = array<i64>, local_variable_paths = [], local_variable_symbols = [], node_id = 11 : i64, referenced_path = "expect_test.named_property", referenced_symbol = @s1.$root::@s3.expect_test::@s4.expect_test::@s7.named_property, semantic_type = !obelisk.property} {

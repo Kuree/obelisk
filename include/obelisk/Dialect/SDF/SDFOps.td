@@ -22,7 +22,7 @@ def SDFDelayFileOp : SDFOp<"delay_file", [
       OptionalAttr<SDFDelayValueAttr>:$temperature,
       OptionalAttr<SDFTimeScaleAttr>:$timescale);
   let regions = (region AnyRegion:$body);
-  let assemblyFormat = "attr-dict-with-keyword $body";
+  let assemblyFormat = "$source `version` $sdf_version attr-dict-with-keyword $body";
   let hasVerifier = 1;
 }
 
@@ -32,7 +32,10 @@ def SDFCellOp : SDFOp<"cell", [SingleBlock, NoTerminator,
   let arguments = (ins StrAttr:$cell_type, OptionalAttr<StrAttr>:$instance,
       OptionalAttr<UnitAttr>:$wildcard);
   let regions = (region AnyRegion:$body);
-  let assemblyFormat = "attr-dict-with-keyword $body";
+  let assemblyFormat = [{
+    $cell_type (`instance` $instance^)? (`wildcard` $wildcard^)?
+    attr-dict-with-keyword $body
+  }];
   let hasVerifier = 1;
 }
 
@@ -41,21 +44,24 @@ def SDFPathDelayOp : SDFOp<"path_delay", [HasParent<"SDFCellOp">]> {
       SDFPortAttr:$input, SDFPortAttr:$output,
       OptionalAttr<SDFConditionAttr>:$condition,
       SDFDelayValueArrayAttr:$delays);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = [{
+    $mode $kind qualified($input) `to` qualified($output)
+    (`when` qualified($condition)^)? `delays` $delays attr-dict
+  }];
   let hasVerifier = 1;
 }
 
 def SDFTimingCheckOp : SDFOp<"timing_check", [HasParent<"SDFCellOp">]> {
   let arguments = (ins SDFTimingCheckKind:$kind,
       SDFTimingEventArrayAttr:$events, SDFDelayValueArrayAttr:$limits);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = "$kind $events `limits` $limits attr-dict";
   let hasVerifier = 1;
 }
 
 def SDFLabelOp : SDFOp<"label", [HasParent<"SDFCellOp">]> {
   let arguments = (ins SDFDelayMode:$mode, StrAttr:$name,
       SDFDelayValueAttr:$value);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = "$mode $name `=` qualified($value) attr-dict";
   let hasVerifier = 1;
 }
 
@@ -63,7 +69,10 @@ def SDFInterconnectDelayOp
     : SDFOp<"interconnect_delay", [HasParent<"SDFCellOp">]> {
   let arguments = (ins SDFDelayMode:$mode, SDFPortAttr:$source_port,
       SDFPortAttr:$destination_port, SDFDelayValueArrayAttr:$delays);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = [{
+    $mode qualified($source_port) `to` qualified($destination_port)
+    `delays` $delays attr-dict
+  }];
   let hasVerifier = 1;
 }
 
@@ -72,7 +81,9 @@ def SDFTerminalDelayOp
   let arguments = (ins SDFDelayMode:$mode, SDFTerminalDelayKind:$kind,
       OptionalAttr<SDFPortAttr>:$terminal,
       SDFDelayValueArrayAttr:$delays);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = [{
+    $mode $kind (qualified($terminal)^)? `delays` $delays attr-dict
+  }];
   let hasVerifier = 1;
 }
 
@@ -80,7 +91,10 @@ def SDFPulseOp : SDFOp<"pulse", [HasParent<"SDFCellOp">]> {
   let arguments = (ins SDFPulseKind:$kind,
       OptionalAttr<SDFPortAttr>:$input, OptionalAttr<SDFPortAttr>:$output,
       SDFDelayValueAttr:$reject, SDFDelayValueAttr:$error);
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = [{
+    $kind (`from` qualified($input)^)? (`to` qualified($output)^)?
+    `reject` qualified($reject) `error` qualified($error) attr-dict
+  }];
   let hasVerifier = 1;
 }
 

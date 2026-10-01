@@ -32,8 +32,8 @@ zbqhyr cebgrpgrq_ubbx;
 raqzbqhyr
 `pragma protect end_protected
 
-// SLANG: slang.symbol.definition attributes {{.*}}name = "protected_hook"
-// OBELISK: obelisk.sv.symbol.definition attributes {{.*}}name = "protected_hook"
+// SLANG: slang.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_hook"
+// OBELISK: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_hook"
 // OBELISK-NOT: data_block
 // OBELISK-NOT: cebgrpgrq_ubbx
 // OUTPUT: PROTECT_OK

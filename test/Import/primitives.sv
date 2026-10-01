@@ -11,13 +11,13 @@ module primitive_import(input wire a, b, control,
   bufif0 (strong1, pull0) (strength_out, a, control);
 endmodule
 
-// SLANG-DAG: slang.symbol.primitive_instance attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// SLANG-DAG: slang.symbol.primitive_instance attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// SLANG-DAG: slang.symbol.primitive_instance attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
-// SLANG-DAG: slang.symbol.primitive_instance attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
-// SLANG-DAG: slang.symbol.instance_body attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// OBELISK-DAG: obelisk.sv.symbol.instance_body attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
+// SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
+// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
+// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
+// SLANG-DAG: slang.symbol.instance_body @{{[^ ]+}} attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// OBELISK-DAG: obelisk.sv.symbol.instance_body @{{[^ ]+}} attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64

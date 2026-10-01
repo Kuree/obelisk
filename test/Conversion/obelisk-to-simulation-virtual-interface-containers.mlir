@@ -3,36 +3,36 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, sym_name = "s0.bus_if"} {
+  obelisk.sv.symbol.definition @s0.bus_if attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64, sym_name = "s1.top"} {
+  obelisk.sv.symbol.definition @s1.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top, sym_name = "s4.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, sym_name = "s5.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.a", is_uninstantiated = false, name = "a", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s6.a"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.a", name = "bus_if", node_id = 7 : i64, sym_name = "s7.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a.x", lifetime = 1 : i32, name = "x", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s8.x"} {
+    obelisk.sv.symbol.instance @s4.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top} {
+      obelisk.sv.symbol.instance_body @s5.top attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.instance @s6.a attributes {hierarchical_name = "top.a", is_uninstantiated = false, name = "a", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s7.bus_if attributes {hierarchical_name = "top.a", name = "bus_if", node_id = 7 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+            obelisk.sv.symbol.variable @s8.x attributes {hierarchical_name = "top.a.x", lifetime = 1 : i32, name = "x", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
           }
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.b", is_uninstantiated = false, name = "b", node_id = 9 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s9.b"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.b", name = "bus_if", node_id = 10 : i64, sym_name = "s10.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b.x", lifetime = 1 : i32, name = "x", node_id = 11 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s11.x"} {
+        obelisk.sv.symbol.instance @s9.b attributes {hierarchical_name = "top.b", is_uninstantiated = false, name = "b", node_id = 9 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s10.bus_if attributes {hierarchical_name = "top.b", name = "bus_if", node_id = 10 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+            obelisk.sv.symbol.variable @s11.x attributes {hierarchical_name = "top.b.x", lifetime = 1 : i32, name = "x", node_id = 11 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.fixed", lifetime = 1 : i32, name = "fixed", node_id = 12 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>, sym_name = "s12.fixed"} {
+        obelisk.sv.symbol.variable @s12.fixed attributes {hierarchical_name = "top.fixed", lifetime = 1 : i32, name = "fixed", node_id = 12 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.dyn", lifetime = 1 : i32, name = "dyn", node_id = 13 : i64, semantic_type = !obelisk.dynarray<!obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>, sym_name = "s13.dyn"} {
+        obelisk.sv.symbol.variable @s13.dyn attributes {hierarchical_name = "top.dyn", lifetime = 1 : i32, name = "dyn", node_id = 13 : i64, semantic_type = !obelisk.dynarray<!obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.queue", lifetime = 1 : i32, name = "queue", node_id = 14 : i64, semantic_type = !obelisk.queue<!obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, 0>, sym_name = "s14.queue"} {
+        obelisk.sv.symbol.variable @s14.queue attributes {hierarchical_name = "top.queue", lifetime = 1 : i32, name = "queue", node_id = 14 : i64, semantic_type = !obelisk.queue<!obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, 0>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.assoc", lifetime = 1 : i32, name = "assoc", node_id = 15 : i64, semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, false>, sym_name = "s15.assoc"} {
+        obelisk.sv.symbol.variable @s15.assoc attributes {hierarchical_name = "top.assoc", lifetime = 1 : i32, name = "assoc", node_id = 15 : i64, semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, false>} {
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.exchange", name = "exchange", node_id = 16 : i64, semantic_type = !obelisk.subroutine<(!obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s16.exchange", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s16.exchange attributes {hierarchical_name = "top.exchange", name = "exchange", node_id = 16 : i64, semantic_type = !obelisk.subroutine<(!obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 17 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 18 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 19 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
@@ -59,16 +59,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
               }
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.exchange.i", name = "i", node_id = 30 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, sym_name = "s17.i"} {
+          obelisk.sv.symbol.formal_argument @s17.i attributes {direction = 0 : i32, hierarchical_name = "top.exchange.i", name = "i", node_id = 30 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.exchange.o", name = "o", node_id = 31 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, sym_name = "s18.o"} {
+          obelisk.sv.symbol.formal_argument @s18.o attributes {direction = 1 : i32, hierarchical_name = "top.exchange.o", name = "o", node_id = 31 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 2 : i32, hierarchical_name = "top.exchange.io", name = "io", node_id = 32 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, sym_name = "s19.io"} {
+          obelisk.sv.symbol.formal_argument @s19.io attributes {direction = 2 : i32, hierarchical_name = "top.exchange.io", name = "io", node_id = 32 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 3 : i32, hierarchical_name = "top.exchange.r", name = "r", node_id = 33 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, sym_name = "s20.r"} {
+          obelisk.sv.symbol.formal_argument @s20.r attributes {direction = 3 : i32, hierarchical_name = "top.exchange.r", name = "r", node_id = 33 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 34 : i64, procedure_kind = 0 : i32, sym_name = "s21", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s21 attributes {hierarchical_name = "top", node_id = 34 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 35 : i64} {
             obelisk.sv.statement.list attributes {node_id = 36 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 37 : i64} {

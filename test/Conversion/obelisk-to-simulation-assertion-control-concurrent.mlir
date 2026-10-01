@@ -13,38 +13,38 @@
 // rejected for detached multi-clock attempts.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent", name = "assertion_control_concurrent", node_id = 0 : i64, sym_name = "s0.assertion_control_concurrent"} {
+  obelisk.sv.symbol.definition @s0.assertion_control_concurrent attributes {definition_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent", name = "assertion_control_concurrent", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "assertion_control_concurrent", is_uninstantiated = false, name = "assertion_control_concurrent", node_id = 3 : i64, referenced_path = "assertion_control_concurrent", referenced_symbol = @s0.assertion_control_concurrent, sym_name = "s3.assertion_control_concurrent"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "assertion_control_concurrent", name = "assertion_control_concurrent", node_id = 4 : i64, sym_name = "s4.assertion_control_concurrent", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.assertion_control_concurrent attributes {hierarchical_name = "assertion_control_concurrent", is_uninstantiated = false, name = "assertion_control_concurrent", node_id = 3 : i64, referenced_path = "assertion_control_concurrent", referenced_symbol = @s0.assertion_control_concurrent} {
+      obelisk.sv.symbol.instance_body @s4.assertion_control_concurrent attributes {hierarchical_name = "assertion_control_concurrent", name = "assertion_control_concurrent", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.port @s5.clk attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_control_concurrent.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.clk"} {
+        obelisk.sv.symbol.variable @s6.clk attributes {hierarchical_name = "assertion_control_concurrent.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.clk2", name = "clk2", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.clk2"} {
+        obelisk.sv.symbol.port @s7.clk2 attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.clk2", name = "clk2", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_control_concurrent.clk2", lifetime = 1 : i32, name = "clk2", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.clk2"} {
+        obelisk.sv.symbol.variable @s8.clk2 attributes {hierarchical_name = "assertion_control_concurrent.clk2", lifetime = 1 : i32, name = "clk2", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.a", name = "a", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.a"} {
+        obelisk.sv.symbol.port @s9.a attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.a", name = "a", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_control_concurrent.a", lifetime = 1 : i32, name = "a", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.a"} {
+        obelisk.sv.symbol.variable @s10.a attributes {hierarchical_name = "assertion_control_concurrent.a", lifetime = 1 : i32, name = "a", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.b", name = "b", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.b"} {
+        obelisk.sv.symbol.port @s11.b attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.b", name = "b", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_control_concurrent.b", lifetime = 1 : i32, name = "b", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.b"} {
+        obelisk.sv.symbol.variable @s12.b attributes {hierarchical_name = "assertion_control_concurrent.b", lifetime = 1 : i32, name = "b", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.c", name = "c", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.c"} {
+        obelisk.sv.symbol.port @s13.c attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.c", name = "c", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_control_concurrent.c", lifetime = 1 : i32, name = "c", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.c"} {
+        obelisk.sv.symbol.variable @s14.c attributes {hierarchical_name = "assertion_control_concurrent.c", lifetime = 1 : i32, name = "c", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.d", name = "d", node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s15.d"} {
+        obelisk.sv.symbol.port @s15.d attributes {direction = 0 : i32, hierarchical_name = "assertion_control_concurrent.d", name = "d", node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_control_concurrent.d", lifetime = 1 : i32, name = "d", node_id = 16 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s16.d"} {
+        obelisk.sv.symbol.variable @s16.d attributes {hierarchical_name = "assertion_control_concurrent.d", lifetime = 1 : i32, name = "d", node_id = 16 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 17 : i64, procedure_kind = 0 : i32, sym_name = "s17", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s17 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 17 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 18 : i64} {
             obelisk.sv.statement.list attributes {node_id = 19 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 20 : i64} {
@@ -86,9 +86,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.det", name = "det", node_id = 38 : i64, sym_name = "s18.det"} {
+        obelisk.sv.symbol.statement_block @s18.det attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.det", name = "det", node_id = 38 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 39 : i64, procedure_kind = 2 : i32, sym_name = "s19", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s19 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 39 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.det", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s18.det, node_id = 40 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 41 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 42 : i64} {
@@ -112,9 +112,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.delay", name = "delay", node_id = 51 : i64, sym_name = "s20.delay"} {
+        obelisk.sv.symbol.statement_block @s20.delay attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.delay", name = "delay", node_id = 51 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 52 : i64, procedure_kind = 2 : i32, sym_name = "s21", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s21 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 52 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.delay", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s20.delay, node_id = 53 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 54 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 55 : i64} {
@@ -138,9 +138,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.unary", name = "unary", node_id = 64 : i64, sym_name = "s22.unary"} {
+        obelisk.sv.symbol.statement_block @s22.unary attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.unary", name = "unary", node_id = 64 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 65 : i64, procedure_kind = 2 : i32, sym_name = "s23", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s23 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 65 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.unary", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s22.unary, node_id = 66 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 67 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 68 : i64} {
@@ -160,9 +160,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.until_p", name = "until_p", node_id = 75 : i64, sym_name = "s24.until_p"} {
+        obelisk.sv.symbol.statement_block @s24.until_p attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.until_p", name = "until_p", node_id = 75 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 76 : i64, procedure_kind = 2 : i32, sym_name = "s25", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s25 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 76 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.until_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s24.until_p, node_id = 77 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 78 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 79 : i64} {
@@ -186,9 +186,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.repeat_p", name = "repeat_p", node_id = 88 : i64, sym_name = "s26.repeat_p"} {
+        obelisk.sv.symbol.statement_block @s26.repeat_p attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.repeat_p", name = "repeat_p", node_id = 88 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 89 : i64, procedure_kind = 2 : i32, sym_name = "s27", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s27 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 89 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.repeat_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s26.repeat_p, node_id = 90 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 91 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 92 : i64} {
@@ -206,9 +206,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.branch", name = "branch", node_id = 98 : i64, sym_name = "s28.branch"} {
+        obelisk.sv.symbol.statement_block @s28.branch attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.branch", name = "branch", node_id = 98 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 99 : i64, procedure_kind = 2 : i32, sym_name = "s29", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s29 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 99 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.branch", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s28.branch, node_id = 100 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 101 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 102 : i64} {
@@ -244,9 +244,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.impl", name = "impl", node_id = 117 : i64, sym_name = "s30.impl"} {
+        obelisk.sv.symbol.statement_block @s30.impl attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.impl", name = "impl", node_id = 117 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 118 : i64, procedure_kind = 2 : i32, sym_name = "s31", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s31 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 118 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.impl", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s30.impl, node_id = 119 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 120 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 121 : i64} {
@@ -288,9 +288,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.bante", name = "bante", node_id = 139 : i64, sym_name = "s32.bante"} {
+        obelisk.sv.symbol.statement_block @s32.bante attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.bante", name = "bante", node_id = 139 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 140 : i64, procedure_kind = 2 : i32, sym_name = "s33", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s33 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 140 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.bante", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s32.bante, node_id = 141 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 142 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 143 : i64} {
@@ -326,9 +326,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.abort_p", name = "abort_p", node_id = 161 : i64, sym_name = "s34.abort_p"} {
+        obelisk.sv.symbol.statement_block @s34.abort_p attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.abort_p", name = "abort_p", node_id = 161 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 162 : i64, procedure_kind = 2 : i32, sym_name = "s35", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s35 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 162 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.abort_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s34.abort_p, node_id = 163 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = true, has_pass_action = true, node_id = 164 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 165 : i64} {
@@ -366,9 +366,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.disable_p", name = "disable_p", node_id = 181 : i64, sym_name = "s36.disable_p"} {
+        obelisk.sv.symbol.statement_block @s36.disable_p attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.disable_p", name = "disable_p", node_id = 181 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 182 : i64, procedure_kind = 2 : i32, sym_name = "s37", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s37 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 182 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.disable_p", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s36.disable_p, node_id = 183 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {simulation.assertion_kill_controlled, assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 184 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 185 : i64} {
@@ -396,9 +396,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.multi", name = "multi", node_id = 196 : i64, sym_name = "s38.multi"} {
+        obelisk.sv.symbol.statement_block @s38.multi attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_concurrent.multi", name = "multi", node_id = 196 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_control_concurrent", node_id = 197 : i64, procedure_kind = 2 : i32, sym_name = "s39", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s39 attributes {hierarchical_name = "assertion_control_concurrent", node_id = 197 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "assertion_control_concurrent.multi", block_symbol = @s1.$root::@s3.assertion_control_concurrent::@s4.assertion_control_concurrent::@s38.multi, node_id = 198 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 199 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 200 : i64} {

@@ -14,54 +14,47 @@
 // CHECK: simulation.control.disable [[ID]] {hierarchical = true}
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.external_block_disable attributes {
     definition_kind = 0 : i32,
     hierarchical_name = "external_block_disable",
     name = "external_block_disable",
-    node_id = 0 : i64,
-    sym_name = "s0.external_block_disable"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
+  obelisk.sv.symbol.root @s1.$root attributes {
     hierarchical_name = "\\$root ",
     name = "$root",
-    node_id = 1 : i64,
-    sym_name = "s1.$root"
+    node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
       hierarchical_name = "$unit",
-      node_id = 2 : i64,
-      sym_name = "s2"
+      node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.external_block_disable attributes {
       hierarchical_name = "external_block_disable",
       is_uninstantiated = false,
       name = "external_block_disable",
       node_id = 3 : i64,
       referenced_path = "external_block_disable",
-      referenced_symbol = @s0.external_block_disable,
-      sym_name = "s3.external_block_disable"
+      referenced_symbol = @s0.external_block_disable
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.external_block_disable attributes {
         hierarchical_name = "external_block_disable",
         name = "external_block_disable",
-        node_id = 4 : i64,
-        sym_name = "s4.external_block_disable"
+        node_id = 4 : i64
       } {
-        obelisk.sv.symbol.statement_block attributes {
+        obelisk.sv.symbol.statement_block @s5.target attributes {
           block_kind = 0 : i32,
           hierarchical_name = "external_block_disable.target",
           name = "target",
-          node_id = 5 : i64,
-          sym_name = "s5.target"
+          node_id = 5 : i64
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s6 attributes {
           hierarchical_name = "external_block_disable",
           node_id = 6 : i64,
           procedure_kind = 2 : i32,
-          sym_name = "s6",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {
@@ -74,11 +67,10 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s7 attributes {
           hierarchical_name = "external_block_disable",
           node_id = 9 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s7",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {

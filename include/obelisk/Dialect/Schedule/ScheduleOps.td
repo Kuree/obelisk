@@ -513,18 +513,25 @@ def NativeObserverOp : ScheduleNativeOp<"observer", [Pure]> {
   let summary = "computed observer descriptor with physical captures";
   let arguments = (ins Variadic<AnyType>:$values, I64Attr:$capture_count);
   let results = (outs I64:$token);
+  let assemblyFormat = [{
+    `(` ($values^ `:` type($values))? `)` `captures` $capture_count attr-dict
+  }];
   let hasVerifier = 1;
 }
 def NativeScratchOp : ScheduleNativeOp<"scratch", [MemoryEffects<[MemAlloc]>]> {
   let summary = "native activation scratch storage that survives status branches";
   let arguments = (ins I64Attr:$size);
   let results = (outs RTMutableByteSpanType:$result);
+  let assemblyFormat = "$size attr-dict";
   let hasVerifier = 1;
 }
 def NativeByteAddressOp : ScheduleNativeOp<"bytes.address", [Pure]> {
   let summary = "immutable bytes awaiting executable reachability";
   let arguments = (ins StrAttr:$name, StrAttr:$value, I64Attr:$alignment);
   let results = (outs LLVM_AnyPointer:$result);
+  let assemblyFormat = [{
+    $name `=` $value `alignment` $alignment attr-dict `:` qualified(type($result))
+  }];
 }
 // Activation-local root records are lowered only after simulation design
 // symbol tables have been flattened into the native module.
@@ -534,11 +541,16 @@ def NativeManagedRootPushOp : ScheduleNativeOp<"gc.root_range.push", [
   ]> {
   let arguments = (ins LLVM_AnyPointer:$record, LLVM_AnyPointer:$slots, I64:$count);
   let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $record `slots` $slots `count` $count attr-dict `:`
+    qualified(type($record)) `,` qualified(type($slots))
+  }];
 }
 def NativeManagedRootPopOp : ScheduleNativeOp<"gc.root_range.pop", [
     MemoryEffects<[MemRead, MemWrite, MemRead<SimProcessResource>,
                    MemWrite<SimHeapResource>]>
   ]> {
   let arguments = (ins LLVM_AnyPointer:$record);
+  let assemblyFormat = "$record attr-dict `:` qualified(type($record))";
 }
 #endif

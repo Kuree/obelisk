@@ -9,25 +9,25 @@
 // CHECK: %[[FIELD:.*]], %[[OK:.*]], %[[EOF:.*]] = simulation.file.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[EOF]]
 // CHECK: %[[MATCHED:.*]] = arith.cmpi ne, %[[OK]]
-// CHECK: simulation.string.parse_logic %[[FIELD]] radix = <decimal> : <32>
+// CHECK: simulation.string.parse_logic %[[FIELD]] radix = <decimal> : !simulation.logic<32>
 // CHECK: %[[ASSIGNED:.*]] = arith.extui %[[MATCHED]] : i1 to i32
 // CHECK: %[[NONE:.*]] = arith.cmpi eq, %[[ASSIGNED]]
 // CHECK: %[[INPUT_FAILURE:.*]] = arith.andi %[[NONE]], {{.*}} : i1
 // CHECK: arith.select %[[INPUT_FAILURE]], {{.*}}, %[[ASSIGNED]] : i32
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {
+  obelisk.sv.symbol.definition @s0.t attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t, sym_name = "s3.t"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "t", name = "t", node_id = 4 : i64, sym_name = "s4.t", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "t.fd", lifetime = 1 : i32, name = "fd", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s5.fd"} {
+    obelisk.sv.symbol.instance @s3.t attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t} {
+      obelisk.sv.symbol.instance_body @s4.t attributes {hierarchical_name = "t", name = "t", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.fd attributes {hierarchical_name = "t.fd", lifetime = 1 : i32, name = "fd", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "t.value", lifetime = 1 : i32, name = "value", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s6.value"} {
+        obelisk.sv.symbol.variable @s6.value attributes {hierarchical_name = "t.value", lifetime = 1 : i32, name = "value", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "t", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "t", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 9 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 10 : i64, referenced_path = "t.value", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.value, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {

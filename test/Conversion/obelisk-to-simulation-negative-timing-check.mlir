@@ -30,34 +30,34 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.instance_body attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.instance_body @body attributes {
         hierarchical_name = "top", name = "top", node_id = 2 : i64,
-        sym_name = "body", time_unit_fs = 1000000 : i64,
+        time_unit_fs = 1000000 : i64,
         time_precision_fs = 10000 : i64} {
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.cp",
+      obelisk.sv.symbol.variable @cp attributes {hierarchical_name = "top.cp",
           lifetime = 1 : i32, name = "cp", node_id = 3 : i64,
-          semantic_type = !logic1, sym_name = "cp"} {}
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.d",
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.variable @d attributes {hierarchical_name = "top.d",
           lifetime = 1 : i32, name = "d", node_id = 4 : i64,
-          semantic_type = !logic1, sym_name = "d"} {}
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.ti",
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.variable @ti attributes {hierarchical_name = "top.ti",
           lifetime = 1 : i32, name = "ti", node_id = 5 : i64,
-          semantic_type = !logic1, sym_name = "ti"} {}
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.te",
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.variable @te attributes {hierarchical_name = "top.te",
           lifetime = 1 : i32, name = "te", node_id = 6 : i64,
-          semantic_type = !logic1, sym_name = "te"} {}
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.enable",
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.variable @enable attributes {hierarchical_name = "top.enable",
           lifetime = 1 : i32, name = "enable", node_id = 50 : i64,
-          semantic_type = !logic1, sym_name = "enable"} {}
-      obelisk.sv.symbol.specify_block attributes {
-          hierarchical_name = "top", node_id = 7 : i64,
-          sym_name = "specify"} {
-        obelisk.sv.symbol.system_timing_check attributes {
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.specify_block @specify attributes {
+          hierarchical_name = "top", node_id = 7 : i64
+      } {
+        obelisk.sv.symbol.system_timing_check @check0 attributes {
             hierarchical_name = "top", node_id = 10 : i64,
-            sym_name = "check0", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             obelisk.negative_timing_check, time_unit_fs = 1000000 : i64,
             time_precision_fs = 10000 : i64, timing_check_kind = 3 : i32,
             timing_check_arg_count = 4 : i64,
@@ -79,9 +79,9 @@ module attributes {
               constant_value = "20",
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
         }
-        obelisk.sv.symbol.system_timing_check attributes {
+        obelisk.sv.symbol.system_timing_check @check1 attributes {
             hierarchical_name = "top", node_id = 20 : i64,
-            sym_name = "check1", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             obelisk.negative_timing_check, time_unit_fs = 1000000 : i64,
             time_precision_fs = 10000 : i64, timing_check_kind = 3 : i32,
             timing_check_arg_count = 4 : i64,
@@ -103,9 +103,9 @@ module attributes {
               constant_value = "-10",
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
         }
-        obelisk.sv.symbol.system_timing_check attributes {
+        obelisk.sv.symbol.system_timing_check @check2 attributes {
             hierarchical_name = "top", node_id = 30 : i64,
-            sym_name = "check2", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             obelisk.negative_timing_check, time_unit_fs = 1000000 : i64,
             time_precision_fs = 10000 : i64, timing_check_kind = 3 : i32,
             timing_check_arg_count = 4 : i64,
@@ -129,9 +129,9 @@ module attributes {
         }
         // The same physical CP/TE component is also legal for $recrem.  Its
         // strict bounds select the already-shared CP-TE difference of 7.99.
-        obelisk.sv.symbol.system_timing_check attributes {
+        obelisk.sv.symbol.system_timing_check @check3 attributes {
             hierarchical_name = "top", node_id = 40 : i64,
-            sym_name = "check3", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             obelisk.negative_timing_check, time_unit_fs = 1000000 : i64,
             time_precision_fs = 10000 : i64, timing_check_kind = 6 : i32,
             timing_check_arg_count = 4 : i64,

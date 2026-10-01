@@ -1,24 +1,24 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_procedural_controls", name = "simulation_procedural_controls", node_id = 0 : i64, sym_name = "s0.simulation_procedural_controls"} {
+  obelisk.sv.symbol.definition @s0.simulation_procedural_controls attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_procedural_controls", name = "simulation_procedural_controls", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_procedural_controls", is_uninstantiated = false, name = "simulation_procedural_controls", node_id = 3 : i64, referenced_path = "simulation_procedural_controls", referenced_symbol = @s0.simulation_procedural_controls, sym_name = "s3.simulation_procedural_controls"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_procedural_controls", name = "simulation_procedural_controls", node_id = 4 : i64, sym_name = "s4.simulation_procedural_controls"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_procedural_controls.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.simulation_procedural_controls attributes {hierarchical_name = "simulation_procedural_controls", is_uninstantiated = false, name = "simulation_procedural_controls", node_id = 3 : i64, referenced_path = "simulation_procedural_controls", referenced_symbol = @s0.simulation_procedural_controls} {
+      obelisk.sv.symbol.instance_body @s4.simulation_procedural_controls attributes {hierarchical_name = "simulation_procedural_controls", name = "simulation_procedural_controls", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.clk attributes {hierarchical_name = "simulation_procedural_controls.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_procedural_controls.enable", lifetime = 1 : i32, name = "enable", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.enable"} {
+        obelisk.sv.symbol.variable @s6.enable attributes {hierarchical_name = "simulation_procedural_controls.enable", lifetime = 1 : i32, name = "enable", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_procedural_controls.lhs", lifetime = 1 : i32, name = "lhs", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.lhs"} {
+        obelisk.sv.symbol.variable @s7.lhs attributes {hierarchical_name = "simulation_procedural_controls.lhs", lifetime = 1 : i32, name = "lhs", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_procedural_controls.rhs", lifetime = 1 : i32, name = "rhs", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.rhs"} {
+        obelisk.sv.symbol.variable @s8.rhs attributes {hierarchical_name = "simulation_procedural_controls.rhs", lifetime = 1 : i32, name = "rhs", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_procedural_controls.count", lifetime = 1 : i32, name = "count", node_id = 9 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s9.count"} {
+        obelisk.sv.symbol.variable @s9.count attributes {hierarchical_name = "simulation_procedural_controls.count", lifetime = 1 : i32, name = "count", node_id = 9 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_procedural_controls", node_id = 10 : i64, procedure_kind = 0 : i32, sym_name = "s10", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "simulation_procedural_controls", node_id = 10 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 11 : i64} {
             obelisk.sv.statement.list attributes {node_id = 12 : i64} {
               obelisk.sv.statement.timed attributes {node_id = 13 : i64} {

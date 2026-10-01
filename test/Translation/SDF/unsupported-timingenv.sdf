@@ -18,7 +18,6 @@
 // CHECK-NOT: PATHCONSTRAINT
 // CHECK-NOT: timing_env
 // CHECK: obelisk_sdf.cell
-// CHECK-SAME: cell_type = "dut"
-// CHECK-SAME: instance = "top/dut"
-// CHECK: obelisk_sdf.timing_check
-// CHECK-SAME: kind = 0 : i32
+// CHECK-SAME: "dut"
+// CHECK-SAME: instance "top/dut"
+// CHECK: obelisk_sdf.timing_check setup

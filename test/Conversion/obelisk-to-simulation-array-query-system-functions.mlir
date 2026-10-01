@@ -5,24 +5,24 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=TO-BITS
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_array_query_system_functions", name = "simulation_array_query_system_functions", node_id = 0 : i64, sym_name = "s0.simulation_array_query_system_functions"} {
+  obelisk.sv.symbol.definition @s0.simulation_array_query_system_functions attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_array_query_system_functions", name = "simulation_array_query_system_functions", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_array_query_system_functions", is_uninstantiated = false, name = "simulation_array_query_system_functions", node_id = 3 : i64, referenced_path = "simulation_array_query_system_functions", referenced_symbol = @s0.simulation_array_query_system_functions, sym_name = "s3.simulation_array_query_system_functions"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_array_query_system_functions", name = "simulation_array_query_system_functions", node_id = 4 : i64, sym_name = "s4.simulation_array_query_system_functions"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.matrix", lifetime = 1 : i32, name = "matrix", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<7 : 5 x !obelisk.ranged_packed_array<3 : 1 x !obelisk.ranged_packed_array<2 : 4 x !obelisk.integral<1, false, true, 0 : 0, logic>>>>, sym_name = "s5.matrix"} {
+    obelisk.sv.symbol.instance @s3.simulation_array_query_system_functions attributes {hierarchical_name = "simulation_array_query_system_functions", is_uninstantiated = false, name = "simulation_array_query_system_functions", node_id = 3 : i64, referenced_path = "simulation_array_query_system_functions", referenced_symbol = @s0.simulation_array_query_system_functions} {
+      obelisk.sv.symbol.instance_body @s4.simulation_array_query_system_functions attributes {hierarchical_name = "simulation_array_query_system_functions", name = "simulation_array_query_system_functions", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.matrix attributes {hierarchical_name = "simulation_array_query_system_functions.matrix", lifetime = 1 : i32, name = "matrix", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<7 : 5 x !obelisk.ranged_packed_array<3 : 1 x !obelisk.ranged_packed_array<2 : 4 x !obelisk.integral<1, false, true, 0 : 0, logic>>>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.dimension", lifetime = 1 : i32, name = "dimension", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s6.dimension"} {
+        obelisk.sv.symbol.variable @s6.dimension attributes {hierarchical_name = "simulation_array_query_system_functions.dimension", lifetime = 1 : i32, name = "dimension", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s7.result"} {
+        obelisk.sv.symbol.variable @s7.result attributes {hierarchical_name = "simulation_array_query_system_functions.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.text", lifetime = 1 : i32, name = "text", node_id = 64 : i64, semantic_type = !obelisk.string, sym_name = "s64.text"} {
+        obelisk.sv.symbol.variable @s64.text attributes {hierarchical_name = "simulation_array_query_system_functions.text", lifetime = 1 : i32, name = "text", node_id = 64 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_array_query_system_functions.texts", lifetime = 1 : i32, name = "texts", node_id = 71 : i64, semantic_type = !obelisk.queue<!obelisk.string, 0>, sym_name = "s71.texts"} {
+        obelisk.sv.symbol.variable @s71.texts attributes {hierarchical_name = "simulation_array_query_system_functions.texts", lifetime = 1 : i32, name = "texts", node_id = 71 : i64, semantic_type = !obelisk.queue<!obelisk.string, 0>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_array_query_system_functions", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "simulation_array_query_system_functions", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 9 : i64} {
             obelisk.sv.statement.list attributes {node_id = 10 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 11 : i64} {

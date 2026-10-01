@@ -7,34 +7,34 @@
 // values before an overlapped consequent or nonoverlapped handoff begins.
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent", name = "sva_local_multicycle_antecedent", node_id = 0 : i64, sym_name = "s0.sva_local_multicycle_antecedent"} {
+  obelisk.sv.symbol.definition @s0.sva_local_multicycle_antecedent attributes {definition_kind = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent", name = "sva_local_multicycle_antecedent", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "sva_local_multicycle_antecedent", is_uninstantiated = false, name = "sva_local_multicycle_antecedent", node_id = 3 : i64, referenced_path = "sva_local_multicycle_antecedent", referenced_symbol = @s0.sva_local_multicycle_antecedent, sym_name = "s3.sva_local_multicycle_antecedent"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sva_local_multicycle_antecedent", name = "sva_local_multicycle_antecedent", node_id = 4 : i64, sym_name = "s4.sva_local_multicycle_antecedent", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.sva_local_multicycle_antecedent attributes {hierarchical_name = "sva_local_multicycle_antecedent", is_uninstantiated = false, name = "sva_local_multicycle_antecedent", node_id = 3 : i64, referenced_path = "sva_local_multicycle_antecedent", referenced_symbol = @s0.sva_local_multicycle_antecedent} {
+      obelisk.sv.symbol.instance_body @s4.sva_local_multicycle_antecedent attributes {hierarchical_name = "sva_local_multicycle_antecedent", name = "sva_local_multicycle_antecedent", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.port @s5.clk attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sva_local_multicycle_antecedent.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.clk"} {
+        obelisk.sv.symbol.variable @s6.clk attributes {hierarchical_name = "sva_local_multicycle_antecedent.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.a", name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.a"} {
+        obelisk.sv.symbol.port @s7.a attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.a", name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sva_local_multicycle_antecedent.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.a"} {
+        obelisk.sv.symbol.variable @s8.a attributes {hierarchical_name = "sva_local_multicycle_antecedent.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.b", name = "b", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.b"} {
+        obelisk.sv.symbol.port @s9.b attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.b", name = "b", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sva_local_multicycle_antecedent.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.b"} {
+        obelisk.sv.symbol.variable @s10.b attributes {hierarchical_name = "sva_local_multicycle_antecedent.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.c", name = "c", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.c"} {
+        obelisk.sv.symbol.port @s11.c attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.c", name = "c", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sva_local_multicycle_antecedent.c", lifetime = 1 : i32, name = "c", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.c"} {
+        obelisk.sv.symbol.variable @s12.c attributes {hierarchical_name = "sva_local_multicycle_antecedent.c", lifetime = 1 : i32, name = "c", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.d", name = "d", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.d"} {
+        obelisk.sv.symbol.port @s13.d attributes {direction = 0 : i32, hierarchical_name = "sva_local_multicycle_antecedent.d", name = "d", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sva_local_multicycle_antecedent.d", lifetime = 1 : i32, name = "d", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.d"} {
+        obelisk.sv.symbol.variable @s14.d attributes {hierarchical_name = "sva_local_multicycle_antecedent.d", lifetime = 1 : i32, name = "d", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.property attributes {has_default_instance = true, hierarchical_name = "sva_local_multicycle_antecedent.p_overlap", name = "p_overlap", node_id = 15 : i64, port_count = 0 : i64, port_paths = [], port_symbols = [], sym_name = "s15.p_overlap"} {
+        obelisk.sv.symbol.property @s15.p_overlap attributes {has_default_instance = true, hierarchical_name = "sva_local_multicycle_antecedent.p_overlap", name = "p_overlap", node_id = 15 : i64, port_count = 0 : i64, port_paths = [], port_symbols = []} {
           obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 1 : i64, local_variable_has_initializer = array<i64: 1>, local_variable_paths = ["sva_local_multicycle_antecedent.p_overlap.x"], local_variable_symbols = [@s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s15.p_overlap::@s16.x], node_id = 16 : i64, referenced_path = "sva_local_multicycle_antecedent.p_overlap", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s15.p_overlap, semantic_type = !obelisk.property} {
             obelisk.sv.assertion.clocking attributes {node_id = 17 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 18 : i64} {
@@ -95,16 +95,16 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 45 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
-          obelisk.sv.symbol.local_assertion_var attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_overlap.x", name = "x", node_id = 180 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s16.x"} {
+          obelisk.sv.symbol.local_assertion_var @s16.x attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_overlap.x", name = "x", node_id = 180 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 181 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
-          obelisk.sv.symbol.local_assertion_var attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_overlap.x", name = "x", node_id = 182 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s20.x"} {
+          obelisk.sv.symbol.local_assertion_var @s20.x attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_overlap.x", name = "x", node_id = 182 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 183 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
         }
-        obelisk.sv.symbol.property attributes {has_default_instance = true, hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap", name = "p_nonoverlap", node_id = 46 : i64, port_count = 0 : i64, port_paths = [], port_symbols = [], sym_name = "s17.p_nonoverlap"} {
+        obelisk.sv.symbol.property @s17.p_nonoverlap attributes {has_default_instance = true, hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap", name = "p_nonoverlap", node_id = 46 : i64, port_count = 0 : i64, port_paths = [], port_symbols = []} {
           obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 1 : i64, local_variable_has_initializer = array<i64: 1>, local_variable_paths = ["sva_local_multicycle_antecedent.p_nonoverlap.x"], local_variable_symbols = [@s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s17.p_nonoverlap::@s18.x], node_id = 47 : i64, referenced_path = "sva_local_multicycle_antecedent.p_nonoverlap", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s17.p_nonoverlap, semantic_type = !obelisk.property} {
             obelisk.sv.assertion.clocking attributes {node_id = 48 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 49 : i64} {
@@ -159,20 +159,20 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 73 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
-          obelisk.sv.symbol.local_assertion_var attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap.x", name = "x", node_id = 174 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s18.x"} {
+          obelisk.sv.symbol.local_assertion_var @s18.x attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap.x", name = "x", node_id = 174 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 175 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
-          obelisk.sv.symbol.local_assertion_var attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap.x", name = "x", node_id = 176 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s22.x"} {
+          obelisk.sv.symbol.local_assertion_var @s22.x attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap.x", name = "x", node_id = 176 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 177 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
-          obelisk.sv.symbol.local_assertion_var attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap.x", name = "x", node_id = 178 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s24.x"} {
+          obelisk.sv.symbol.local_assertion_var @s24.x attributes {hierarchical_name = "sva_local_multicycle_antecedent.p_nonoverlap.x", name = "x", node_id = 178 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 179 : i64, referenced_path = "sva_local_multicycle_antecedent.a", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s8.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sva_local_multicycle_antecedent", node_id = 74 : i64, procedure_kind = 2 : i32, sym_name = "s19", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s19 attributes {hierarchical_name = "sva_local_multicycle_antecedent", node_id = 74 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 75 : i64} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 76 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 1 : i64, local_variable_has_initializer = array<i64: 1>, local_variable_paths = ["sva_local_multicycle_antecedent.p_overlap.x"], local_variable_symbols = [@s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s15.p_overlap::@s20.x], node_id = 77 : i64, referenced_path = "sva_local_multicycle_antecedent.p_overlap", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s15.p_overlap, semantic_type = !obelisk.property} {
@@ -244,7 +244,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sva_local_multicycle_antecedent", node_id = 110 : i64, procedure_kind = 2 : i32, sym_name = "s21", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s21 attributes {hierarchical_name = "sva_local_multicycle_antecedent", node_id = 110 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 111 : i64} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 112 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 1 : i64, local_variable_has_initializer = array<i64: 1>, local_variable_paths = ["sva_local_multicycle_antecedent.p_nonoverlap.x"], local_variable_symbols = [@s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s17.p_nonoverlap::@s22.x], node_id = 113 : i64, referenced_path = "sva_local_multicycle_antecedent.p_nonoverlap", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s17.p_nonoverlap, semantic_type = !obelisk.property} {
@@ -310,7 +310,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sva_local_multicycle_antecedent", node_id = 143 : i64, procedure_kind = 2 : i32, sym_name = "s23", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s23 attributes {hierarchical_name = "sva_local_multicycle_antecedent", node_id = 143 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 144 : i64} {
             obelisk.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 145 : i64, repetition_is_unbounded = false} {
               obelisk.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 1 : i64, local_variable_has_initializer = array<i64: 1>, local_variable_paths = ["sva_local_multicycle_antecedent.p_nonoverlap.x"], local_variable_symbols = [@s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s17.p_nonoverlap::@s24.x], node_id = 146 : i64, referenced_path = "sva_local_multicycle_antecedent.p_nonoverlap", referenced_symbol = @s1.$root::@s3.sva_local_multicycle_antecedent::@s4.sva_local_multicycle_antecedent::@s17.p_nonoverlap, semantic_type = !obelisk.property} {

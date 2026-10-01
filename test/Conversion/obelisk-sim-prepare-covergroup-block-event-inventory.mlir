@@ -7,24 +7,24 @@
 // expressions and target definitions before code units are lowered.
 
 module attributes {obelisk.coverage.metrics = ["functional"]} {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @definition attributes {
       definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
-      node_id = 0 : i64, sym_name = "definition"} {
+      node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.instance @instance attributes {
         hierarchical_name = "top", is_uninstantiated = false, name = "top",
         node_id = 2 : i64, referenced_path = "top",
-        referenced_symbol = @definition, sym_name = "instance"} {
-      obelisk.sv.symbol.instance_body attributes {
-          hierarchical_name = "top", name = "top", node_id = 3 : i64,
-          sym_name = "body"} {
-        obelisk.sv.symbol.subroutine attributes {
+        referenced_symbol = @definition} {
+      obelisk.sv.symbol.instance_body @body attributes {
+          hierarchical_name = "top", name = "top", node_id = 3 : i64
+      } {
+        obelisk.sv.symbol.subroutine @work attributes {
             hierarchical_name = "top.work", name = "work", node_id = 4 : i64,
             semantic_type = !obelisk.subroutine<() -> (), true>,
-            subroutine_kind = 1 : i32, sym_name = "work"} {
+            subroutine_kind = 1 : i32} {
           obelisk.sv.statement.block attributes {
               block_path = "top.work.inner",
               block_symbol = @root::@instance::@body::@work::@inner_symbol,
@@ -32,10 +32,10 @@ module attributes {obelisk.coverage.metrics = ["functional"]} {
             obelisk.sv.statement.list attributes {node_id = 6 : i64} {
             }
           }
-          obelisk.sv.symbol.statement_block attributes {
+          obelisk.sv.symbol.statement_block @inner_symbol attributes {
               block_kind = 0 : i32, hierarchical_name = "top.work.inner",
-              name = "inner", node_id = 7 : i64,
-              sym_name = "inner_symbol"} {
+              name = "inner", node_id = 7 : i64
+          } {
           }
           obelisk.sv.statement.disable attributes {
               is_hierarchical = false, node_id = 16 : i64,
@@ -43,21 +43,21 @@ module attributes {obelisk.coverage.metrics = ["functional"]} {
               target_symbol = @root::@instance::@body::@work} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @value attributes {
             hierarchical_name = "top.value", name = "value",
             node_id = 8 : i64,
             semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-            subroutine_kind = 0 : i32, sym_name = "value"} {
+            subroutine_kind = 0 : i32} {
           obelisk.sv.statement.list attributes {node_id = 9 : i64} {
           }
         }
-        obelisk.sv.type.covergroup_type attributes {
+        obelisk.sv.type.covergroup_type @cg attributes {
             constructor_argument_count = 0 : i64, constructor_formals = [],
             coverage_event_kind = 3 : i32, has_coverage_event = true,
             hierarchical_name = "top.cg", name = "cg", node_id = 10 : i64,
             sample_formal_count = 0 : i64, sample_formals = [],
-            semantic_type = !obelisk.covergroup_handle<@root::@instance::@body::@cg>,
-            sym_name = "cg"} {
+            semantic_type = !obelisk.covergroup_handle<@root::@instance::@body::@cg>
+        } {
           obelisk.sv.timing.block_event_list attributes {
               event_kinds = [0 : i32, 1 : i32, 0 : i32, 1 : i32],
               node_id = 11 : i64} {
@@ -93,17 +93,17 @@ module attributes {obelisk.coverage.metrics = ["functional"]} {
 }
 
 // The task's begin and end clauses share one ID.
-// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "top.work"{{.*}}simulation.control_target_id = [[CONTROL:[1-9][0-9]*]] : i64{{.*}}simulation.coverage_block_event_target_id = [[WORK:[4-9][0-9]{18}]] : i64
+// CHECK-DAG: obelisk.sv.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "top.work"{{.*}}simulation.control_target_id = [[CONTROL:[1-9][0-9]*]] : i64{{.*}}simulation.coverage_block_event_target_id = [[WORK:[4-9][0-9]{18}]] : i64
 // CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 12{{.*}}simulation.coverage_block_event_target_id = [[WORK]] : i64
 // CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 13{{.*}}simulation.coverage_block_event_target_id = [[WORK]] : i64
 
 // A named block's semantic symbol and executable statement share one ID.
 // CHECK-DAG: obelisk.sv.statement.block attributes {{.*}}simulation.coverage_block_event_target_id = [[BLOCK:[4-9][0-9]{18}]] : i64
-// CHECK-DAG: obelisk.sv.symbol.statement_block attributes {{.*}}simulation.coverage_block_event_target_id = [[BLOCK]] : i64
+// CHECK-DAG: obelisk.sv.symbol.statement_block @{{[^ ]+}} attributes {{.*}}simulation.coverage_block_event_target_id = [[BLOCK]] : i64
 // CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 14{{.*}}simulation.coverage_block_event_target_id = [[BLOCK]] : i64
 
 // Functions receive their own stable target identity.
-// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "top.value"{{.*}}simulation.coverage_block_event_target_id = [[VALUE:[4-9][0-9]{18}]] : i64
+// CHECK-DAG: obelisk.sv.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "top.value"{{.*}}simulation.coverage_block_event_target_id = [[VALUE:[4-9][0-9]{18}]] : i64
 // CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}node_id = 15{{.*}}simulation.coverage_block_event_target_id = [[VALUE]] : i64
 
 // Subroutine IDs cross the semantic/simulation boundary.  Named blocks remain

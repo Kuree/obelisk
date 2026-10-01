@@ -18,18 +18,18 @@ module attributes {
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %zero = arith.constant 0 : i32
       %one = arith.constant 1 : i32
-      %validated = "simulation.scan_dynamic_validate"(%format, %zero)
+      %validated = simulation.scan_dynamic_validate %format, %zero
           {allowed_specifiers = 262144 : i64, file = false,
            finalize = false} : (!simulation.string, i32) -> i32
       %field, %cursor, %plan, %kind, %ok =
-          "simulation.string.scan_dynamic"(%input, %zero, %format, %zero, %one)
+          simulation.string.scan_dynamic %input, %zero, %format, %zero, %one
           {allowed_specifiers = 262144 : i64, finalize = false,
            raw_four_state_bytes = 0 : i64, raw_two_state_bytes = 0 : i64} :
           (!simulation.string, i32, !simulation.string, i32, i32) ->
           (!simulation.string, i32, i32, i32, i32)
       %fileField, %filePlan, %fileKind, %fileOk, %eof =
-          "simulation.file.scan_dynamic"(%ctx, %descriptor, %format, %zero,
-                                            %one)
+          simulation.file.scan_dynamic %ctx, %descriptor, %format, %zero,
+                                            %one
           {allowed_specifiers = 262144 : i64, finalize = false,
            raw_four_state_bytes = 0 : i64, raw_two_state_bytes = 0 : i64} :
           (!simulation.context, i32, !simulation.string, i32, i32) ->

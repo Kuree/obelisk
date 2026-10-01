@@ -14,24 +14,24 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.instance_body attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.instance_body @body attributes {
         hierarchical_name = "top", name = "top", node_id = 2 : i64,
-        sym_name = "body", time_unit_fs = 1000 : i64,
+        time_unit_fs = 1000 : i64,
         time_precision_fs = 1000 : i64} {
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.x",
+      obelisk.sv.symbol.variable @x attributes {hierarchical_name = "top.x",
           lifetime = 1 : i32, name = "x", node_id = 3 : i64,
-          semantic_type = !logic1, sym_name = "x"} {}
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.y",
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.variable @y attributes {hierarchical_name = "top.y",
           lifetime = 1 : i32, name = "y", node_id = 4 : i64,
-          semantic_type = !logic1, sym_name = "y"} {}
-      obelisk.sv.symbol.variable attributes {hierarchical_name = "top.z",
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.variable @z attributes {hierarchical_name = "top.z",
           lifetime = 1 : i32, name = "z", node_id = 5 : i64,
-          semantic_type = !logic1, sym_name = "z"} {}
-      obelisk.sv.symbol.net_alias attributes {
-          hierarchical_name = "top", node_id = 6 : i64, sym_name = "xy"} {
+          semantic_type = !logic1} {}
+      obelisk.sv.symbol.net_alias @xy attributes {
+          hierarchical_name = "top", node_id = 6 : i64} {
         obelisk.sv.expression.named_value attributes {node_id = 7 : i64,
             referenced_path = "top.x", referenced_symbol = @root::@body::@x,
             semantic_type = !logic1} {}
@@ -39,12 +39,12 @@ module attributes {
             referenced_path = "top.y", referenced_symbol = @root::@body::@y,
             semantic_type = !logic1} {}
       }
-      obelisk.sv.symbol.specify_block attributes {
-          hierarchical_name = "top", node_id = 9 : i64,
-          sym_name = "specify"} {
-        obelisk.sv.symbol.system_timing_check attributes {
+      obelisk.sv.symbol.specify_block @specify attributes {
+          hierarchical_name = "top", node_id = 9 : i64
+      } {
+        obelisk.sv.symbol.system_timing_check @via_x attributes {
             hierarchical_name = "top", node_id = 10 : i64,
-            sym_name = "via_x", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             obelisk.negative_timing_check, time_unit_fs = 1000 : i64,
             time_precision_fs = 1000 : i64, timing_check_kind = 3 : i32,
             timing_check_arg_count = 4 : i64,
@@ -64,9 +64,9 @@ module attributes {
           obelisk.sv.expression.integer_literal attributes {node_id = 14 : i64,
               constant_value = "5", semantic_type = !int} {}
         }
-        obelisk.sv.symbol.system_timing_check attributes {
+        obelisk.sv.symbol.system_timing_check @via_y attributes {
             hierarchical_name = "top", node_id = 20 : i64,
-            sym_name = "via_y", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             obelisk.negative_timing_check, time_unit_fs = 1000 : i64,
             time_precision_fs = 1000 : i64, timing_check_kind = 3 : i32,
             timing_check_arg_count = 4 : i64,

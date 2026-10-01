@@ -29,7 +29,7 @@ endmodule
 // CHECK: slang.symbol.primitive_instance
 // CHECK-SAME: primitive_name = "tranif1"
 // CHECK: slang.expression.element_select
-// CHECK: slang.symbol.primitive_instance attributes {delay_fs = array<i64: 3000000>
+// CHECK: slang.symbol.primitive_instance @{{[^ ]+}} attributes {delay_fs = array<i64: 3000000>
 // CHECK-SAME: primitive_name = "tranif1"
-// CHECK: slang.symbol.primitive_instance attributes {delay_fs = array<i64: 5000000, 7000000>
+// CHECK: slang.symbol.primitive_instance @{{[^ ]+}} attributes {delay_fs = array<i64: 5000000, 7000000>
 // CHECK-SAME: primitive_name = "rtranif0"

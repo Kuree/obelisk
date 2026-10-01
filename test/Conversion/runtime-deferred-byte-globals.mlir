@@ -18,17 +18,17 @@ module attributes {obelisk.native.closed_executable,
   }
   // Native inlining can copy one prepared address into multiple live bodies.
   func.func @copy_one() -> !llvm.ptr {
-    %p = schedule.bytes.address {name = "shared", value = "same", alignment = 1 : i64} : () -> !llvm.ptr
+    %p = schedule.bytes.address "shared" = "same" alignment 1 : !llvm.ptr
     return %p : !llvm.ptr
   }
   func.func @copy_two() -> !llvm.ptr {
-    %p = schedule.bytes.address {name = "shared", value = "same", alignment = 1 : i64} : () -> !llvm.ptr
+    %p = schedule.bytes.address "shared" = "same" alignment 1 : !llvm.ptr
     return %p : !llvm.ptr
   }
 }
 
-// PENDING: value = "A\00B"
-// PENDING: value = "dead literal"
+// PENDING: schedule.bytes.address {{.*}} = "A\00B" alignment 1 : !llvm.ptr
+// PENDING: schedule.bytes.address {{.*}} = "dead literal" alignment 1 : !llvm.ptr
 // LIVE-COUNT-1: llvm.mlir.global internal constant @shared("same")
 // LIVE: llvm.mlir.global internal constant @__obelisk_rt_bytes.0("A\00B")
 // LIVE: llvm.mlir.addressof @__obelisk_rt_bytes.0

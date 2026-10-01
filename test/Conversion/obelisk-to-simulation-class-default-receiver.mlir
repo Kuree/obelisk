@@ -8,14 +8,13 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64,
-    sym_name = "s0.$root"
+  obelisk.sv.symbol.root @s0.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 1 : i64, sym_name = "s1"
+    obelisk.sv.symbol.compilation_unit @s1 attributes {
+      hierarchical_name = "$unit", node_id = 1 : i64
     } {
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s2.callee attributes {
         bitstream_width = 32 : i64, constructor_path = "callee::new",
         constructor_symbol = @s0.$root::@s1::@s2.callee::@s18.new,
         declared_interfaces = [],
@@ -25,22 +24,21 @@ module attributes {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "callee", node_id = 2 : i64,
         semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-        sym_name = "s2.callee", this_variable_path = "callee::this",
+        this_variable_path = "callee::this",
         this_variable_symbol = @s0.$root::@s1::@s2.callee::@s11.this
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s3.value attributes {
           hierarchical_name = "callee::value", name = "value",
           node_id = 3 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s3.value"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s4.default_value attributes {
           hierarchical_name = "callee::default_value", name = "default_value",
           node_id = 4 : i64,
           return_variable_path = "callee::default_value.default_value",
           return_variable_symbol = @s0.$root::@s1::@s2.callee::@s4.default_value::@s5.default_value,
           semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>,
-          subroutine_kind = 0 : i32, sym_name = "s4.default_value",
+          subroutine_kind = 0 : i32,
           this_variable_path = "callee::default_value.this",
           this_variable_symbol = @s0.$root::@s1::@s2.callee::@s4.default_value::@s6.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -53,25 +51,23 @@ module attributes {
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
             } {}
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s5.default_value attributes {
             hierarchical_name = "callee::default_value.default_value",
             is_compiler_generated, name = "default_value", node_id = 7 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s5.default_value"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {}
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s6.this attributes {
             hierarchical_name = "callee::default_value.this",
             is_compiler_generated, is_const, name = "this", node_id = 8 : i64,
-            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-            sym_name = "s6.this"
+            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>
           } {}
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s7.read attributes {
           hierarchical_name = "callee::read", name = "read", node_id = 9 : i64,
           return_variable_path = "callee::read.read",
           return_variable_symbol = @s0.$root::@s1::@s2.callee::@s7.read::@s9.read,
           semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>,
-          subroutine_kind = 0 : i32, sym_name = "s7.read",
+          subroutine_kind = 0 : i32,
           this_variable_path = "callee::read.this",
           this_variable_symbol = @s0.$root::@s1::@s2.callee::@s7.read::@s10.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -84,11 +80,10 @@ module attributes {
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
             } {}
           }
-          obelisk.sv.symbol.formal_argument attributes {
+          obelisk.sv.symbol.formal_argument @s8.argument attributes {
             direction = 0 : i32, hierarchical_name = "callee::read.argument",
             name = "argument", node_id = 12 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s8.argument"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {
             obelisk.sv.expression.call attributes {
               argument_count = 0 : i64, callee_name = "default_value",
@@ -103,33 +98,30 @@ module attributes {
               subroutine_kind = 0 : i32
             } {}
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s9.read attributes {
             hierarchical_name = "callee::read.read", is_compiler_generated,
             name = "read", node_id = 14 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s9.read"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {}
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s10.this attributes {
             hierarchical_name = "callee::read.this", is_compiler_generated,
             is_const, name = "this", node_id = 15 : i64,
-            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-            sym_name = "s10.this"
+            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>
           } {}
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s18.new attributes {
           hierarchical_name = "callee::new", is_constructor, name = "new",
           node_id = 27 : i64,
           semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s18.new",
+          subroutine_kind = 0 : i32,
           this_variable_path = "callee::new.this",
           this_variable_symbol = @s0.$root::@s1::@s2.callee::@s18.new::@s20.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
-          obelisk.sv.symbol.formal_argument attributes {
+          obelisk.sv.symbol.formal_argument @s19.argument attributes {
             direction = 0 : i32, hierarchical_name = "callee::new.argument",
             name = "argument", node_id = 28 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s19.argument"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {
             obelisk.sv.expression.call attributes {
               argument_count = 0 : i64, callee_name = "default_value",
@@ -144,21 +136,19 @@ module attributes {
               subroutine_kind = 0 : i32
             } {}
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s20.this attributes {
             hierarchical_name = "callee::new.this", is_compiler_generated,
             is_const, name = "this", node_id = 30 : i64,
-            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-            sym_name = "s20.this"
+            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>
           } {}
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s11.this attributes {
           hierarchical_name = "callee::this", is_compiler_generated,
           is_const, name = "this", node_id = 16 : i64,
-          semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-          sym_name = "s11.this"
+          semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>
         } {}
       }
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s12.caller attributes {
         bitstream_width = 64 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
@@ -166,21 +156,20 @@ module attributes {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "caller", node_id = 17 : i64,
         semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>,
-        sym_name = "s12.caller", this_variable_path = "caller::this",
+        this_variable_path = "caller::this",
         this_variable_symbol = @s0.$root::@s1::@s12.caller::@s17.this
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s13.target attributes {
           hierarchical_name = "caller::target", name = "target",
           node_id = 18 : i64,
-          semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-          sym_name = "s13.target"
+          semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>
         } {}
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s14.invoke attributes {
           hierarchical_name = "caller::invoke", name = "invoke",
           node_id = 19 : i64, return_variable_path = "caller::invoke.invoke",
           return_variable_symbol = @s0.$root::@s1::@s12.caller::@s14.invoke::@s15.invoke,
           semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>,
-          subroutine_kind = 0 : i32, sym_name = "s14.invoke",
+          subroutine_kind = 0 : i32,
           this_variable_path = "caller::invoke.this",
           this_variable_symbol = @s0.$root::@s1::@s12.caller::@s14.invoke::@s16.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -219,25 +208,23 @@ module attributes {
               } {}
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s15.invoke attributes {
             hierarchical_name = "caller::invoke.invoke", is_compiler_generated,
             name = "invoke", node_id = 24 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s15.invoke"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {}
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s16.this attributes {
             hierarchical_name = "caller::invoke.this", is_compiler_generated,
             is_const, name = "this", node_id = 25 : i64,
-            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>,
-            sym_name = "s16.this"
+            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>
           } {}
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s21.make attributes {
           hierarchical_name = "caller::make", name = "make", node_id = 31 : i64,
           return_variable_path = "caller::make.make",
           return_variable_symbol = @s0.$root::@s1::@s12.caller::@s21.make::@s22.make,
           semantic_type = !obelisk.subroutine<() -> !obelisk.class_handle<@s0.$root::@s1::@s2.callee>, false>,
-          subroutine_kind = 0 : i32, sym_name = "s21.make",
+          subroutine_kind = 0 : i32,
           this_variable_path = "caller::make.this",
           this_variable_symbol = @s0.$root::@s1::@s12.caller::@s21.make::@s23.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -277,24 +264,21 @@ module attributes {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s22.make attributes {
             hierarchical_name = "caller::make.make", is_compiler_generated,
             name = "make", node_id = 36 : i64,
-            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>,
-            sym_name = "s22.make"
+            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s2.callee>
           } {}
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s23.this attributes {
             hierarchical_name = "caller::make.this", is_compiler_generated,
             is_const, name = "this", node_id = 37 : i64,
-            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>,
-            sym_name = "s23.this"
+            semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>
           } {}
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s17.this attributes {
           hierarchical_name = "caller::this", is_compiler_generated,
           is_const, name = "this", node_id = 26 : i64,
-          semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>,
-          sym_name = "s17.this"
+          semantic_type = !obelisk.class_handle<@s0.$root::@s1::@s12.caller>
         } {}
       }
     }

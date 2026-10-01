@@ -9,19 +9,18 @@
 // interior reference to write through.
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.t attributes {
     definition_kind = 0 : i32, hierarchical_name = "t", name = "t",
-    node_id = 0 : i64, sym_name = "s0.t"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s3.C attributes {
         bitstream_width = 128 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
@@ -29,19 +28,18 @@ module {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "C", node_id = 3 : i64,
         semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-        sym_name = "s3.C", this_variable_path = "C::this",
+        this_variable_path = "C::this",
         this_variable_symbol = @s1.$root::@s2::@s3.C::@s23.this
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s4.q attributes {
           hierarchical_name = "C::q", name = "q", node_id = 4 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<0 : 3 x !obelisk.integral<32, true, false, 31 : 0, int>>,
-          sym_name = "s4.q"
+          semantic_type = !obelisk.ranged_unpacked_array<0 : 3 x !obelisk.integral<32, true, false, 31 : 0, int>>
         } {
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s5.setit attributes {
           hierarchical_name = "C::setit", name = "setit", node_id = 5 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s5.setit",
+          subroutine_kind = 0 : i32,
           this_variable_path = "C::setit.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.setit::@s6.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -79,151 +77,144 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s6.this attributes {
             hierarchical_name = "C::setit.this", is_compiler_generated,
             is_const, name = "this", node_id = 12 : i64,
-            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-            sym_name = "s6.this"
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
           } {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s7.randomize attributes {
           hierarchical_name = "C::randomize", is_builtin, is_declared_virtual,
           is_randomize, is_virtual, name = "randomize", node_id = 13 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>,
-          subroutine_kind = 0 : i32, sym_name = "s7.randomize",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 14 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s8.pre_randomize attributes {
           hierarchical_name = "C::pre_randomize", is_builtin,
           name = "pre_randomize", node_id = 15 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s8.pre_randomize",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 16 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s9.post_randomize attributes {
           hierarchical_name = "C::post_randomize", is_builtin,
           name = "post_randomize", node_id = 17 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s9.post_randomize",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 18 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s10.get_randstate attributes {
           hierarchical_name = "C::get_randstate", is_builtin,
           name = "get_randstate", node_id = 19 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>,
-          subroutine_kind = 0 : i32, sym_name = "s10.get_randstate",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 20 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s11.set_randstate attributes {
           hierarchical_name = "C::set_randstate", is_builtin,
           name = "set_randstate", node_id = 21 : i64,
           semantic_type = !obelisk.subroutine<(!obelisk.string) -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s11.set_randstate",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 22 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {
+          obelisk.sv.symbol.formal_argument @s12.state attributes {
             direction = 0 : i32, hierarchical_name = "C::set_randstate.state",
             name = "state", node_id = 23 : i64,
-            semantic_type = !obelisk.string, sym_name = "s12.state"
+            semantic_type = !obelisk.string
           } {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s13.srandom attributes {
           hierarchical_name = "C::srandom", is_builtin, name = "srandom",
           node_id = 24 : i64,
           semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s13.srandom",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 25 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {
+          obelisk.sv.symbol.formal_argument @s14.seed attributes {
             direction = 0 : i32, hierarchical_name = "C::srandom.seed",
             name = "seed", node_id = 26 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s14.seed"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s15.rand_mode attributes {
           hierarchical_name = "C::rand_mode", is_builtin, name = "rand_mode",
           node_id = 27 : i64,
           semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s15.rand_mode",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 28 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {
+          obelisk.sv.symbol.formal_argument @s16.on_ff attributes {
             direction = 0 : i32, hierarchical_name = "C::rand_mode.on_ff",
             name = "on_ff", node_id = 29 : i64,
-            semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>,
-            sym_name = "s16.on_ff"
+            semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
           } {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s17.constraint_mode attributes {
           hierarchical_name = "C::constraint_mode", is_builtin,
           name = "constraint_mode", node_id = 30 : i64,
           semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s17.constraint_mode",
+          subroutine_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.list attributes {node_id = 31 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {
+          obelisk.sv.symbol.formal_argument @s18.on_ff attributes {
             direction = 0 : i32,
             hierarchical_name = "C::constraint_mode.on_ff", name = "on_ff",
             node_id = 32 : i64,
-            semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>,
-            sym_name = "s18.on_ff"
+            semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
           } {
           }
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s23.this attributes {
           hierarchical_name = "C::this", is_compiler_generated, is_const,
           name = "this", node_id = 40 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-          sym_name = "s23.this"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
         } {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s19.t attributes {
       hierarchical_name = "t", is_uninstantiated = false, name = "t",
-      node_id = 33 : i64, referenced_path = "t", referenced_symbol = @s0.t,
-      sym_name = "s19.t"
+      node_id = 33 : i64, referenced_path = "t", referenced_symbol = @s0.t
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s20.t attributes {
         hierarchical_name = "t", name = "t", node_id = 34 : i64,
-        sym_name = "s20.t", time_precision_fs = 1000000 : i64,
+        time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s21.c attributes {
           hierarchical_name = "t.c", lifetime = 1 : i32, name = "c",
           node_id = 35 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-          sym_name = "s21.c"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s22 attributes {
           hierarchical_name = "t", node_id = 36 : i64,
-          procedure_kind = 0 : i32, sym_name = "s22",
+          procedure_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.expression_statement attributes {

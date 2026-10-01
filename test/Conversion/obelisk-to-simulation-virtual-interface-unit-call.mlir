@@ -5,24 +5,24 @@
 // elaborated interface instance.
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @if_def attributes {
       definition_kind = 1 : i32, hierarchical_name = "bus_if",
-      name = "bus_if", node_id = 0 : i64, sym_name = "if_def"} {
+      name = "bus_if", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @top_def attributes {
       definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
-      node_id = 1 : i64, sym_name = "top_def"} {
+      node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.compilation_unit attributes {
-        hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "unit"} {
-      obelisk.sv.symbol.subroutine attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64
+  } {
+    obelisk.sv.symbol.compilation_unit @unit attributes {
+        hierarchical_name = "$unit", node_id = 3 : i64} {
+      obelisk.sv.symbol.subroutine @invoke attributes {
           hierarchical_name = "$unit.invoke", name = "invoke",
           node_id = 4 : i64,
           semantic_type = !obelisk.subroutine<(!obelisk.virtual_interface<@root::@top::@top_body::@bus, "">) -> (), true>,
-          subroutine_kind = 1 : i32, sym_name = "invoke"} {
+          subroutine_kind = 1 : i32} {
         obelisk.sv.statement.list attributes {node_id = 5 : i64} {
           obelisk.sv.statement.expression_statement attributes {
               node_id = 6 : i64} {
@@ -44,42 +44,42 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.formal_argument attributes {
+        obelisk.sv.symbol.formal_argument @vif attributes {
             direction = 0 : i32, hierarchical_name = "$unit.invoke.vif",
             name = "vif", node_id = 9 : i64,
-            semantic_type = !obelisk.virtual_interface<@root::@top::@top_body::@bus, "">,
-            sym_name = "vif"} {
+            semantic_type = !obelisk.virtual_interface<@root::@top::@top_body::@bus, "">
+        } {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @top attributes {
         hierarchical_name = "top", is_uninstantiated = false, name = "top",
         node_id = 10 : i64, referenced_path = "top",
-        referenced_symbol = @top_def, sym_name = "top"} {
-      obelisk.sv.symbol.instance_body attributes {
-          hierarchical_name = "top", name = "top", node_id = 11 : i64,
-          sym_name = "top_body"} {
-        obelisk.sv.symbol.instance attributes {
+        referenced_symbol = @top_def} {
+      obelisk.sv.symbol.instance_body @top_body attributes {
+          hierarchical_name = "top", name = "top", node_id = 11 : i64
+      } {
+        obelisk.sv.symbol.instance @bus attributes {
             hierarchical_name = "top.bus", is_uninstantiated = false,
             name = "bus", node_id = 12 : i64, referenced_path = "bus_if",
-            referenced_symbol = @if_def, sym_name = "bus"} {
-          obelisk.sv.symbol.instance_body attributes {
+            referenced_symbol = @if_def} {
+          obelisk.sv.symbol.instance_body @bus_body attributes {
               hierarchical_name = "top.bus", name = "bus_if",
-              node_id = 13 : i64, sym_name = "bus_body",
+              node_id = 13 : i64,
               virtual_interface_identity = @root::@top::@top_body::@bus} {
-            obelisk.sv.symbol.subroutine attributes {
+            obelisk.sv.symbol.subroutine @ping attributes {
                 hierarchical_name = "top.bus.ping", name = "ping",
                 node_id = 14 : i64,
                 semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-                subroutine_kind = 0 : i32, sym_name = "ping"} {
+                subroutine_kind = 0 : i32} {
               obelisk.sv.statement.list attributes {node_id = 15 : i64} {
               }
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @initial attributes {
             hierarchical_name = "top", node_id = 16 : i64,
-            procedure_kind = 0 : i32, sym_name = "initial"} {
+            procedure_kind = 0 : i32} {
           obelisk.sv.statement.expression_statement attributes {
               node_id = 17 : i64} {
             obelisk.sv.expression.call attributes {

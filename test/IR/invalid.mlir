@@ -9,8 +9,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_enum",
+  obelisk.sv.symbol.variable @bad_enum attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{enum base must be an integral type}}
     semantic_type = !obelisk.enum<"bad_enum", !obelisk.string>
   } {
@@ -214,7 +214,7 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
     obelisk.sv.pattern.variable attributes {
       node_id = 1 : i64, referenced_path = "missing", referenced_symbol = @missing
@@ -226,11 +226,10 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.variable attributes {
+  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
+    obelisk.sv.symbol.variable @ordinary attributes {
       lifetime = 0 : i32, node_id = 1 : i64, rand_mode = 0 : i32,
-      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
-      sym_name = "ordinary"
+      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>
     } {
     }
     // expected-error @+1 {{referenced pattern variable does not resolve to a pattern binding}}
@@ -245,7 +244,7 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
     obelisk.sv.pattern.tagged attributes {
       field_ordinal = 0 : i64, node_id = 1 : i64, packed_offset = 0 : i64,
@@ -258,12 +257,11 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.field attributes {
+  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
+    obelisk.sv.symbol.field @member attributes {
       bit_offset = 0 : i64, field_index = 1 : i64, lifetime = 0 : i32,
       node_id = 1 : i64, rand_mode = 0 : i32,
-      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
-      sym_name = "member"
+      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>
     } {
     }
     // expected-error @+1 {{tagged pattern field metadata does not match its referenced member}}
@@ -278,8 +276,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_error",
+  obelisk.sv.symbol.variable @bad_error attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{error recovery type cannot appear in valid Obelisk IR}}
     semantic_type = !obelisk.error<true>
   } {
@@ -290,8 +288,8 @@ module {
 
 module {
   // expected-error @+1 {{attribute 'subroutine_kind' failed to satisfy constraint}}
-  obelisk.sv.symbol.subroutine attributes {
-    node_id = 0 : i64, sym_name = "bad_subroutine", subroutine_kind = 2 : i32
+  obelisk.sv.symbol.subroutine @bad_subroutine attributes {
+    node_id = 0 : i64, subroutine_kind = 2 : i32
   } {
   }
 }
@@ -299,8 +297,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_range",
+  obelisk.sv.symbol.variable @bad_range attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{source range files must not be empty}}
     semantic_type = !obelisk.source_range<"", 10, 2, "source.sv", 9, 1, "">
   } {
@@ -310,8 +308,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_index",
+  obelisk.sv.symbol.variable @bad_index attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{wildcard associative index must use !obelisk.untyped}}
     semantic_type = !obelisk.assoc<!obelisk.string, !obelisk.real, true>
   } {
@@ -489,8 +487,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_task",
+  obelisk.sv.symbol.variable @bad_task attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{task signature must not have a result}}
     semantic_type = !obelisk.subroutine<() -> !obelisk.string, true>
   } {
@@ -500,8 +498,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_function",
+  obelisk.sv.symbol.variable @bad_function attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{function signature must have exactly one result}}
     semantic_type = !obelisk.subroutine<() -> (), false>
   } {
@@ -511,8 +509,8 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_integral_range",
+  obelisk.sv.symbol.variable @bad_integral_range attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{declared range width 4 does not match integral width 8}}
     semantic_type = !obelisk.integral<8, false, true, 3 : 0, generic>
   } {
@@ -523,7 +521,7 @@ module {
 
 module {
   // expected-error @+1 {{only a packed union can be soft}}
-  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_soft", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0, []>} {
+  obelisk.sv.symbol.variable @bad_soft attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0, []>} {
   }
 }
 
@@ -531,7 +529,7 @@ module {
 
 module {
   // expected-error @+1 {{aggregate field ordinals must be dense and ordered}}
-  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_field_ordinal", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  obelisk.sv.symbol.variable @bad_field_ordinal attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 
@@ -539,7 +537,7 @@ module {
 
 module {
   // expected-error @+1 {{aggregate field has invalid packed offset}}
-  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_field_offset", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  obelisk.sv.symbol.variable @bad_field_offset attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 
@@ -547,7 +545,7 @@ module {
 
 module {
   // expected-error @+1 {{aggregate field has invalid randomization mode}}
-  obelisk.sv.symbol.variable attributes {node_id = 0 : i64, sym_name = "bad_field_rand_mode", semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  obelisk.sv.symbol.variable @bad_field_rand_mode attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 

@@ -8,32 +8,32 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s7.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::s", lifetime = 1 : i32, name = "s", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.s"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.C attributes {bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s7.this} {
+        obelisk.sv.symbol.class_property @s4.s attributes {hierarchical_name = "C::s", lifetime = 1 : i32, name = "s", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::cycle", lifetime = 1 : i32, name = "cycle", node_id = 5 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s5.cycle"} {
+        obelisk.sv.symbol.class_property @s5.cycle attributes {hierarchical_name = "C::cycle", lifetime = 1 : i32, name = "cycle", node_id = 5 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
         }
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::x", name = "x", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s6.x"} {
+        obelisk.sv.symbol.class_property @s6.x attributes {hierarchical_name = "C::x", name = "x", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 7 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s7.this"} {
+        obelisk.sv.symbol.variable @s7.this attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 7 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
         }
       }
-      obelisk.sv.type.class_type attributes {base_class = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "D", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "D", node_id = 24 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s24.D>, sym_name = "s24.D", this_variable_path = "D::this", this_variable_symbol = @s1.$root::@s2::@s24.D::@s25.this} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "D::this", is_compiler_generated, is_const, name = "this", node_id = 25 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s24.D>, sym_name = "s25.this"} {
+      obelisk.sv.type.class_type @s24.D attributes {base_class = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "D", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "D", node_id = 24 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s24.D>, this_variable_path = "D::this", this_variable_symbol = @s1.$root::@s2::@s24.D::@s25.this} {
+        obelisk.sv.symbol.variable @s25.this attributes {hierarchical_name = "D::this", is_compiler_generated, is_const, name = "this", node_id = 25 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s24.D>} {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 8 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s8.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 9 : i64, sym_name = "s9.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 10 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s10.object"} {
+    obelisk.sv.symbol.instance @s8.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 8 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s9.top attributes {hierarchical_name = "top", name = "top", node_id = 9 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s10.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 10 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
           obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 11 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, sym_name = "s11", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s11 attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 13 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s8.top::@s9.top} {
               obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 15 : i64} {

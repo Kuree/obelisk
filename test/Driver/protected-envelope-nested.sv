@@ -53,7 +53,7 @@ endmodule
 
 `pragma protect end_protected
 
-// IR: obelisk.sv.symbol.definition attributes {{.*}}name = "protected_nested"
+// IR: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_nested"
 // IR-NOT: qngn_oybpx
 // OUTPUT: PROTECT_NESTED_OK
 // LIMIT: error: diagnostic in protected source (details suppressed)

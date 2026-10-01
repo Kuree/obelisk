@@ -102,11 +102,13 @@ class ObeliskSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
                              dag symbolArgs = (ins)>
     : ObeliskASTNodeOp<mnemonic, !listconcat([Symbol], traits),
         !con((ins
-          StrAttr:$sym_name,
+          SymbolNameAttr:$sym_name,
           OptionalAttr<StrAttr>:$name,
           OptionalAttr<StrAttr>:$hierarchical_name,
           OptionalAttr<TypeAttr>:$semantic_type
-        ), symbolArgs)>;
+        ), symbolArgs)> {
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+}
 
 // Every semantic scope is a symbol table and is isolated from above. The AST is
 // a pure attribute-and-region tree with no SSA values, so isolation is always
@@ -447,11 +449,13 @@ class ObeliskTypeASTNodeOp<string mnemonic, list<Trait> traits = [],
                            dag typeArgs = (ins)>
     : ObeliskASTNodeOp<mnemonic, !listconcat([Symbol], traits),
         !con((ins
-          StrAttr:$sym_name,
+          SymbolNameAttr:$sym_name,
           OptionalAttr<StrAttr>:$name,
           OptionalAttr<StrAttr>:$hierarchical_name,
           TypeAttr:$semantic_type
-        ), typeArgs)>;
+        ), typeArgs)> {
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+}
 
 class ObeliskScopeTypeASTNodeOp<string mnemonic, dag typeArgs = (ins),
                                list<Trait> traits = []>

@@ -59,7 +59,7 @@ module {
       %delay = simulation.time.constant 1
       simulation.suspend.delay %delay to ^resume(%text : !simulation.string)
     ^resume(%saved: !simulation.string):
-      %length = "simulation.string.length"(%saved) : (!simulation.string) -> i64
+      %length = simulation.string.length %saved : (!simulation.string) -> i64
       cf.br ^wait
     }
   }

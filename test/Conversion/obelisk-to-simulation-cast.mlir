@@ -8,18 +8,17 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.cast_fixture attributes {
     definition_kind = 0 : i32, hierarchical_name = "cast_fixture",
-    name = "cast_fixture", node_id = 0 : i64, sym_name = "s0.cast_fixture"
+    name = "cast_fixture", node_id = 0 : i64
   } {}
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s100.A attributes {
         bitstream_width = 0 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
@@ -27,17 +26,16 @@ module attributes {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "A", node_id = 100 : i64,
         semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s100.A>,
-        sym_name = "s100.A", this_variable_path = "A::this",
+        this_variable_path = "A::this",
         this_variable_symbol = @s1.$root::@s2::@s100.A::@s101.this
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s101.this attributes {
           hierarchical_name = "A::this", is_compiler_generated, is_const,
           name = "this", node_id = 101 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s100.A>,
-          sym_name = "s101.this"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s100.A>
         } {}
       }
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s102.B attributes {
         bitstream_width = 0 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
@@ -45,17 +43,16 @@ module attributes {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "B", node_id = 102 : i64,
         semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s102.B>,
-        sym_name = "s102.B", this_variable_path = "B::this",
+        this_variable_path = "B::this",
         this_variable_symbol = @s1.$root::@s2::@s102.B::@s103.this
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s103.this attributes {
           hierarchical_name = "B::this", is_compiler_generated, is_const,
           name = "this", node_id = 103 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s102.B>,
-          sym_name = "s103.this"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s102.B>
         } {}
       }
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s130.D attributes {
         base_class = !obelisk.class_handle<@s1.$root::@s2::@s100.A>,
         bitstream_width = 0 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
@@ -64,123 +61,107 @@ module attributes {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "D", node_id = 130 : i64,
         semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s130.D>,
-        sym_name = "s130.D", this_variable_path = "D::this",
+        this_variable_path = "D::this",
         this_variable_symbol = @s1.$root::@s2::@s130.D::@s131.this
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s131.this attributes {
           hierarchical_name = "D::this", is_compiler_generated, is_const,
           name = "this", node_id = 131 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s130.D>,
-          sym_name = "s131.this"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s130.D>
         } {}
       }
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.cast_fixture attributes {
       hierarchical_name = "cast_fixture", is_uninstantiated = false,
       name = "cast_fixture", node_id = 3 : i64,
-      referenced_path = "cast_fixture", referenced_symbol = @s0.cast_fixture,
-      sym_name = "s3.cast_fixture"
+      referenced_path = "cast_fixture", referenced_symbol = @s0.cast_fixture
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.cast_fixture attributes {
         hierarchical_name = "cast_fixture", name = "cast_fixture",
-        node_id = 4 : i64, sym_name = "s4.cast_fixture",
+        node_id = 4 : i64,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s5.enum_destination attributes {
           hierarchical_name = "cast_fixture.enum_destination",
           lifetime = 1 : i32, name = "enum_destination", node_id = 5 : i64,
-          semantic_type = !obelisk.enum<"E", !obelisk.integral<32, true, false, 31 : 0, int>>,
-          sym_name = "s5.enum_destination"
+          semantic_type = !obelisk.enum<"E", !obelisk.integral<32, true, false, 31 : 0, int>>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s6.integer_source attributes {
           hierarchical_name = "cast_fixture.integer_source",
           lifetime = 1 : i32, name = "integer_source", node_id = 6 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s6.integer_source"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s7.enum_result attributes {
           hierarchical_name = "cast_fixture.enum_result",
           lifetime = 1 : i32, name = "enum_result", node_id = 7 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s7.enum_result"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s8.integer_destination attributes {
           hierarchical_name = "cast_fixture.integer_destination",
           lifetime = 1 : i32, name = "integer_destination", node_id = 8 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s8.integer_destination"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s9.real_source attributes {
           hierarchical_name = "cast_fixture.real_source",
           lifetime = 1 : i32, name = "real_source", node_id = 9 : i64,
-          semantic_type = !obelisk.real, sym_name = "s9.real_source"
+          semantic_type = !obelisk.real
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s10.value_result attributes {
           hierarchical_name = "cast_fixture.value_result",
           lifetime = 1 : i32, name = "value_result", node_id = 10 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s10.value_result"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s11.logic_destination attributes {
           hierarchical_name = "cast_fixture.logic_destination",
           lifetime = 1 : i32, name = "logic_destination", node_id = 11 : i64,
-          semantic_type = !obelisk.enum<"L", !obelisk.integral<4, false, true, 3 : 0, logic>>,
-          sym_name = "s11.logic_destination"
+          semantic_type = !obelisk.enum<"L", !obelisk.integral<4, false, true, 3 : 0, logic>>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s12.logic_source attributes {
           hierarchical_name = "cast_fixture.logic_source",
           lifetime = 1 : i32, name = "logic_source", node_id = 12 : i64,
-          semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>,
-          sym_name = "s12.logic_source"
+          semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s13.logic_result attributes {
           hierarchical_name = "cast_fixture.logic_result",
           lifetime = 1 : i32, name = "logic_result", node_id = 13 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s13.logic_result"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s120.narrow_destination attributes {
           hierarchical_name = "cast_fixture.narrow_destination",
           lifetime = 1 : i32, name = "narrow_destination",
           node_id = 120 : i64,
-          semantic_type = !obelisk.enum<"N", !obelisk.integral<4, false, false, 3 : 0, bit>>,
-          sym_name = "s120.narrow_destination"
+          semantic_type = !obelisk.enum<"N", !obelisk.integral<4, false, false, 3 : 0, bit>>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s121.narrow_result attributes {
           hierarchical_name = "cast_fixture.narrow_result",
           lifetime = 1 : i32, name = "narrow_result", node_id = 121 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s121.narrow_result"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s104.class_destination attributes {
           hierarchical_name = "cast_fixture.class_destination",
           lifetime = 1 : i32, name = "class_destination",
           node_id = 104 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s100.A>,
-          sym_name = "s104.class_destination"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s100.A>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s105.class_source attributes {
           hierarchical_name = "cast_fixture.class_source",
           lifetime = 1 : i32, name = "class_source", node_id = 105 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s102.B>,
-          sym_name = "s105.class_source"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s102.B>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s106.class_result attributes {
           hierarchical_name = "cast_fixture.class_result",
           lifetime = 1 : i32, name = "class_result", node_id = 106 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s106.class_result"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s132.derived_destination attributes {
           hierarchical_name = "cast_fixture.derived_destination",
           lifetime = 1 : i32, name = "derived_destination",
           node_id = 132 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s130.D>,
-          sym_name = "s132.derived_destination"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s130.D>
         } {}
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s14 attributes {
           hierarchical_name = "cast_fixture", node_id = 14 : i64,
-          procedure_kind = 0 : i32, sym_name = "s14",
+          procedure_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.block attributes {node_id = 15 : i64} {

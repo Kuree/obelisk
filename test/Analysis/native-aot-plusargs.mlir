@@ -20,8 +20,8 @@ module {
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %prefix = simulation.string.literal "n="
-      %test = "simulation.plusarg.test"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> i32
-      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %test = simulation.plusarg.test %ctx, %prefix : (!simulation.context, !simulation.string) -> i32
+      %tail, %found = simulation.plusarg.value %ctx, %prefix : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
       %parsed = simulation.plusarg.parse_logic %tail {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
       simulation.return
     }
@@ -36,7 +36,7 @@ module {
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %prefix = simulation.string.literal "n="
-      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %tail, %found = simulation.plusarg.value %ctx, %prefix : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
       %saved = simulation.ref.alloc %tail : !simulation.string -> !simulation.ref<!simulation.string>
       simulation.return
     }
@@ -55,7 +55,7 @@ module {
       simulation.suspend.delay %delay to ^resume(%prefix : !simulation.string)
           {site = #schedule.continuation<id = 1>, timing = #schedule.timing_site<id = 0, kind = calendar>}
     ^resume(%text: !simulation.string):
-      %found = "simulation.plusarg.test"(%ctx, %text) : (!simulation.context, !simulation.string) -> i32
+      %found = simulation.plusarg.test %ctx, %text : (!simulation.context, !simulation.string) -> i32
       simulation.return
     }
   }

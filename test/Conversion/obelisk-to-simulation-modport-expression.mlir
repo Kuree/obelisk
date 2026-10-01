@@ -5,37 +5,37 @@
 // modport name, identifies the descriptor that the member aliases.
 
 module {
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64
+  } {
+    obelisk.sv.symbol.instance @instance attributes {
         hierarchical_name = "top", is_uninstantiated = false, name = "top",
         node_id = 1 : i64, referenced_path = "top",
-        referenced_symbol = @definition, sym_name = "instance"} {
-      obelisk.sv.symbol.instance_body attributes {
-          hierarchical_name = "top", name = "top", node_id = 2 : i64,
-          sym_name = "body"} {
-        obelisk.sv.symbol.variable attributes {
+        referenced_symbol = @definition} {
+      obelisk.sv.symbol.instance_body @body attributes {
+          hierarchical_name = "top", name = "top", node_id = 2 : i64
+      } {
+        obelisk.sv.symbol.variable @signal attributes {
             hierarchical_name = "top.signal", lifetime = 1 : i32,
             name = "signal", node_id = 3 : i64,
-            semantic_type = !obelisk.integral<16, false, true, 15 : 0, logic>,
-            sym_name = "signal"} {
+            semantic_type = !obelisk.integral<16, false, true, 15 : 0, logic>
+        } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @sink attributes {
             hierarchical_name = "top.sink", lifetime = 1 : i32,
             name = "sink", node_id = 20 : i64,
-            semantic_type = !obelisk.integral<8, false, true, 7 : 0, logic>,
-            sym_name = "sink"} {
+            semantic_type = !obelisk.integral<8, false, true, 7 : 0, logic>
+        } {
         }
-        obelisk.sv.symbol.modport attributes {
+        obelisk.sv.symbol.modport @consumer attributes {
             hierarchical_name = "top.consumer", name = "consumer",
-            node_id = 4 : i64, sym_name = "consumer"} {
-          obelisk.sv.symbol.modport_port attributes {
+            node_id = 4 : i64} {
+          obelisk.sv.symbol.modport_port @renamed attributes {
               direction = 0 : i32,
               hierarchical_name = "top.consumer.renamed",
               name = "renamed", node_id = 5 : i64,
-              semantic_type = !obelisk.integral<16, false, true, 15 : 0, logic>,
-              sym_name = "renamed"} {
+              semantic_type = !obelisk.integral<16, false, true, 15 : 0, logic>
+          } {
             obelisk.sv.expression.named_value attributes {
                 is_signed = false, node_id = 6 : i64,
                 referenced_path = "top.signal",
@@ -43,12 +43,12 @@ module {
                 semantic_type = !obelisk.integral<16, false, true, 15 : 0, logic>} {
             }
           }
-          obelisk.sv.symbol.modport_port attributes {
+          obelisk.sv.symbol.modport_port @high attributes {
               direction = 0 : i32,
               hierarchical_name = "top.consumer.high",
               name = "high", node_id = 7 : i64,
-              semantic_type = !obelisk.integral<8, false, true, 15 : 8, logic>,
-              sym_name = "high"} {
+              semantic_type = !obelisk.integral<8, false, true, 15 : 8, logic>
+          } {
             obelisk.sv.expression.range_select attributes {
                 is_signed = false, node_id = 8 : i64, selection_kind = 0 : i32,
                 semantic_type = !obelisk.integral<8, false, true, 15 : 8, logic>} {
@@ -71,9 +71,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.continuous_assign attributes {
-            hierarchical_name = "top", node_id = 21 : i64,
-            sym_name = "assign"} {
+        obelisk.sv.symbol.continuous_assign @assign attributes {
+            hierarchical_name = "top", node_id = 21 : i64
+        } {
           obelisk.sv.expression.assignment attributes {
               assignment_kind = 0 : i32, is_signed = false,
               node_id = 22 : i64,
@@ -95,9 +95,9 @@ module {
       }
     }
   }
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @definition attributes {
       definition_kind = 1 : i32, hierarchical_name = "top", name = "top",
-      node_id = 12 : i64, sym_name = "definition"} {
+      node_id = 12 : i64} {
   }
 }
 

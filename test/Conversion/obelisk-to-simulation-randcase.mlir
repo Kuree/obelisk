@@ -6,20 +6,20 @@
 // selection arithmetic survives constant folding.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "randcase_weights", name = "randcase_weights", node_id = 0 : i64, sym_name = "s0.randcase_weights"} {
+  obelisk.sv.symbol.definition @s0.randcase_weights attributes {definition_kind = 0 : i32, hierarchical_name = "randcase_weights", name = "randcase_weights", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "randcase_weights", is_uninstantiated = false, name = "randcase_weights", node_id = 3 : i64, referenced_path = "randcase_weights", referenced_symbol = @s0.randcase_weights, sym_name = "s3.randcase_weights"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "randcase_weights", name = "randcase_weights", node_id = 4 : i64, sym_name = "s4.randcase_weights", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "randcase_weights.wa", lifetime = 1 : i32, name = "wa", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s5.wa"} {
+    obelisk.sv.symbol.instance @s3.randcase_weights attributes {hierarchical_name = "randcase_weights", is_uninstantiated = false, name = "randcase_weights", node_id = 3 : i64, referenced_path = "randcase_weights", referenced_symbol = @s0.randcase_weights} {
+      obelisk.sv.symbol.instance_body @s4.randcase_weights attributes {hierarchical_name = "randcase_weights", name = "randcase_weights", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.wa attributes {hierarchical_name = "randcase_weights.wa", lifetime = 1 : i32, name = "wa", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "randcase_weights.wb", lifetime = 1 : i32, name = "wb", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s6.wb"} {
+        obelisk.sv.symbol.variable @s6.wb attributes {hierarchical_name = "randcase_weights.wb", lifetime = 1 : i32, name = "wb", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "randcase_weights.chosen", lifetime = 1 : i32, name = "chosen", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s7.chosen"} {
+        obelisk.sv.symbol.variable @s7.chosen attributes {hierarchical_name = "randcase_weights.chosen", lifetime = 1 : i32, name = "chosen", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "randcase_weights", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "randcase_weights", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.rand_case attributes {item_count = 2 : i64, node_id = 10 : i64} {
             obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 11 : i64, referenced_path = "randcase_weights.wa", referenced_symbol = @s1.$root::@s3.randcase_weights::@s4.randcase_weights::@s5.wa, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }

@@ -1,28 +1,28 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "DUT", name = "DUT", node_id = 0 : i64, sym_name = "s0.DUT"} {
+  obelisk.sv.symbol.definition @s0.DUT attributes {definition_kind = 0 : i32, hierarchical_name = "DUT", name = "DUT", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64, sym_name = "s1.top"} {
+  obelisk.sv.symbol.definition @s1.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top, sym_name = "s4.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, sym_name = "s5.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.i", lifetime = 1 : i32, name = "i", node_id = 6 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>, sym_name = "s6.i"} {
+    obelisk.sv.symbol.instance @s4.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top} {
+      obelisk.sv.symbol.instance_body @s5.top attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s6.i attributes {hierarchical_name = "top.i", lifetime = 1 : i32, name = "i", node_id = 6 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.r", lifetime = 1 : i32, name = "r", node_id = 7 : i64, semantic_type = !obelisk.real, sym_name = "s7.r"} {
+        obelisk.sv.symbol.variable @s7.r attributes {hierarchical_name = "top.r", lifetime = 1 : i32, name = "r", node_id = 7 : i64, semantic_type = !obelisk.real} {
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.unit1", is_uninstantiated = false, name = "unit1", node_id = 8 : i64, referenced_path = "DUT", referenced_symbol = @s0.DUT, sym_name = "s8.unit1"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.unit1", name = "DUT", node_id = 9 : i64, sym_name = "s9.DUT", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.instance @s8.unit1 attributes {hierarchical_name = "top.unit1", is_uninstantiated = false, name = "unit1", node_id = 8 : i64, referenced_path = "DUT", referenced_symbol = @s0.DUT} {
+          obelisk.sv.symbol.instance_body @s9.DUT attributes {hierarchical_name = "top.unit1", name = "DUT", node_id = 9 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           }
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.unit2", is_uninstantiated = false, name = "unit2", node_id = 10 : i64, referenced_path = "DUT", referenced_symbol = @s0.DUT, sym_name = "s10.unit2"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.unit2", name = "DUT", node_id = 11 : i64, sym_name = "s11.DUT", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.instance @s10.unit2 attributes {hierarchical_name = "top.unit2", is_uninstantiated = false, name = "unit2", node_id = 10 : i64, referenced_path = "DUT", referenced_symbol = @s0.DUT} {
+          obelisk.sv.symbol.instance_body @s11.DUT attributes {hierarchical_name = "top.unit2", name = "DUT", node_id = 11 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, sym_name = "s12", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s12 attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 13 : i64} {
             obelisk.sv.statement.list attributes {node_id = 14 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 15 : i64} {

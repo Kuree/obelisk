@@ -10,9 +10,9 @@
 // IEEE 1800-2017 19.5.1 distinguishes a per-value unsized array from a
 // fixed-cardinality array.  The latter count belongs to the constructor batch
 // because it may depend on covergroup constructor formals.
-// OBELISK-DAG: obelisk.sv.symbol.coverage_bin attributes {{.*}}has_number_of_bins = true{{.*}}is_array = true{{.*}}name = "fixed"
-// OBELISK-DAG: obelisk.sv.symbol.coverage_bin attributes {{.*}}has_number_of_bins = false{{.*}}is_array = true{{.*}}name = "per_value"
-// OBELISK-DAG: obelisk.sv.symbol.coverage_bin attributes {{.*}}has_number_of_bins = false{{.*}}is_array = true{{.*}}is_default = true{{.*}}name = "others"
+// OBELISK-DAG: obelisk.sv.symbol.coverage_bin @{{[^ ]+}} attributes {{.*}}has_number_of_bins = true{{.*}}is_array = true{{.*}}name = "fixed"
+// OBELISK-DAG: obelisk.sv.symbol.coverage_bin @{{[^ ]+}} attributes {{.*}}has_number_of_bins = false{{.*}}is_array = true{{.*}}name = "per_value"
+// OBELISK-DAG: obelisk.sv.symbol.coverage_bin @{{[^ ]+}} attributes {{.*}}has_number_of_bins = false{{.*}}is_array = true{{.*}}is_default = true{{.*}}name = "others"
 // SIM: simulation.covergroup.create {{.*}} payloads[{{.*}}] argument_count 0 formal_ids [] expression_ids [{{[1-9][0-9]*}}
 // SCHEMA-DAG: functional_bin id=[[FIXED:[1-9][0-9]*]] {{.*}} name=fixed
 // SCHEMA-DAG: functional_bin id=[[UNSIZED:[1-9][0-9]*]] {{.*}} name=per_value

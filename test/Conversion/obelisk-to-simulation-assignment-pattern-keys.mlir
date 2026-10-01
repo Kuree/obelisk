@@ -5,18 +5,18 @@
 // array's declared range, so `[3:0]` puts index 2 at element ordinal 1.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "assignment_pattern_keys", name = "assignment_pattern_keys", node_id = 0 : i64, sym_name = "s0.assignment_pattern_keys"} {
+  obelisk.sv.symbol.definition @s0.assignment_pattern_keys attributes {definition_kind = 0 : i32, hierarchical_name = "assignment_pattern_keys", name = "assignment_pattern_keys", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "assignment_pattern_keys", is_uninstantiated = false, name = "assignment_pattern_keys", node_id = 3 : i64, referenced_path = "assignment_pattern_keys", referenced_symbol = @s0.assignment_pattern_keys, sym_name = "s3.assignment_pattern_keys"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "assignment_pattern_keys", name = "assignment_pattern_keys", node_id = 4 : i64, sym_name = "s4.assignment_pattern_keys", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assignment_pattern_keys.named", lifetime = 1 : i32, name = "named", node_id = 5 : i64, semantic_type = !obelisk.source_aggregate<"assignment_pattern_keys", false, false, false, false, false, false, 0, 96, 96, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "b", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "c", ordinal = 2 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>, sym_name = "s5.named"} {
+    obelisk.sv.symbol.instance @s3.assignment_pattern_keys attributes {hierarchical_name = "assignment_pattern_keys", is_uninstantiated = false, name = "assignment_pattern_keys", node_id = 3 : i64, referenced_path = "assignment_pattern_keys", referenced_symbol = @s0.assignment_pattern_keys} {
+      obelisk.sv.symbol.instance_body @s4.assignment_pattern_keys attributes {hierarchical_name = "assignment_pattern_keys", name = "assignment_pattern_keys", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.named attributes {hierarchical_name = "assignment_pattern_keys.named", lifetime = 1 : i32, name = "named", node_id = 5 : i64, semantic_type = !obelisk.source_aggregate<"assignment_pattern_keys", false, false, false, false, false, false, 0, 96, 96, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "b", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "c", ordinal = 2 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assignment_pattern_keys.indexed", lifetime = 1 : i32, name = "indexed", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.indexed"} {
+        obelisk.sv.symbol.variable @s6.indexed attributes {hierarchical_name = "assignment_pattern_keys.indexed", lifetime = 1 : i32, name = "indexed", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assignment_pattern_keys", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "assignment_pattern_keys", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 8 : i64} {
             obelisk.sv.statement.list attributes {node_id = 9 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {

@@ -76,7 +76,7 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
       %bits = arith.constant 0 : i32
-      %status = runtime.status.from_bits %bits : (i32) -> !runtime.status
+      %status = runtime.status.from_bits %bits
       simulation.status.check %status
       simulation.return %bits : i32
     }

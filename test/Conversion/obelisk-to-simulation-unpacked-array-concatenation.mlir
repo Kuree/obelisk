@@ -6,26 +6,26 @@
 // element count is known and the result is built directly.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "unpacked_concatenation", name = "unpacked_concatenation", node_id = 0 : i64, sym_name = "s0.unpacked_concatenation"} {
+  obelisk.sv.symbol.definition @s0.unpacked_concatenation attributes {definition_kind = 0 : i32, hierarchical_name = "unpacked_concatenation", name = "unpacked_concatenation", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "unpacked_concatenation", is_uninstantiated = false, name = "unpacked_concatenation", node_id = 3 : i64, referenced_path = "unpacked_concatenation", referenced_symbol = @s0.unpacked_concatenation, sym_name = "s3.unpacked_concatenation"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "unpacked_concatenation", name = "unpacked_concatenation", node_id = 4 : i64, sym_name = "s4.unpacked_concatenation", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.type.type_alias attributes {hierarchical_name = "unpacked_concatenation.ai3_t", name = "ai3_t", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 3 x !obelisk.integral<32, true, false, 31 : 0, int>>, sym_name = "s5.ai3_t"} {
+    obelisk.sv.symbol.instance @s3.unpacked_concatenation attributes {hierarchical_name = "unpacked_concatenation", is_uninstantiated = false, name = "unpacked_concatenation", node_id = 3 : i64, referenced_path = "unpacked_concatenation", referenced_symbol = @s0.unpacked_concatenation} {
+      obelisk.sv.symbol.instance_body @s4.unpacked_concatenation attributes {hierarchical_name = "unpacked_concatenation", name = "unpacked_concatenation", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.type.type_alias @s5.ai3_t attributes {hierarchical_name = "unpacked_concatenation.ai3_t", name = "ai3_t", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 3 x !obelisk.integral<32, true, false, 31 : 0, int>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_concatenation.a3", lifetime = 1 : i32, name = "a3", node_id = 6 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 3 x !obelisk.integral<32, true, false, 31 : 0, int>>, sym_name = "s6.a3"} {
+        obelisk.sv.symbol.variable @s6.a3 attributes {hierarchical_name = "unpacked_concatenation.a3", lifetime = 1 : i32, name = "a3", node_id = 6 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 3 x !obelisk.integral<32, true, false, 31 : 0, int>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_concatenation.a9", lifetime = 1 : i32, name = "a9", node_id = 7 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 9 x !obelisk.integral<32, true, false, 31 : 0, int>>, sym_name = "s7.a9"} {
+        obelisk.sv.symbol.variable @s7.a9 attributes {hierarchical_name = "unpacked_concatenation.a9", lifetime = 1 : i32, name = "a9", node_id = 7 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 9 x !obelisk.integral<32, true, false, 31 : 0, int>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_concatenation.s0", lifetime = 1 : i32, name = "s0", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<2 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s8.s0"} {
+        obelisk.sv.symbol.variable @s8.s0 attributes {hierarchical_name = "unpacked_concatenation.s0", lifetime = 1 : i32, name = "s0", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<2 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_concatenation.descending", lifetime = 1 : i32, name = "descending", node_id = 9 : i64, semantic_type = !obelisk.ranged_unpacked_array<3 : 1 x !obelisk.ranged_packed_array<2 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>, sym_name = "s9.descending"} {
+        obelisk.sv.symbol.variable @s9.descending attributes {hierarchical_name = "unpacked_concatenation.descending", lifetime = 1 : i32, name = "descending", node_id = 9 : i64, semantic_type = !obelisk.ranged_unpacked_array<3 : 1 x !obelisk.ranged_packed_array<2 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_concatenation.s4", lifetime = 1 : i32, name = "s4", node_id = 10 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 4 x !obelisk.ranged_packed_array<2 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>, sym_name = "s10.s4"} {
+        obelisk.sv.symbol.variable @s10.s4 attributes {hierarchical_name = "unpacked_concatenation.s4", lifetime = 1 : i32, name = "s4", node_id = 10 : i64, semantic_type = !obelisk.ranged_unpacked_array<1 : 4 x !obelisk.ranged_packed_array<2 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "unpacked_concatenation", node_id = 11 : i64, procedure_kind = 0 : i32, sym_name = "s11", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s11 attributes {hierarchical_name = "unpacked_concatenation", node_id = 11 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 12 : i64} {
             obelisk.sv.statement.list attributes {node_id = 13 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 14 : i64} {

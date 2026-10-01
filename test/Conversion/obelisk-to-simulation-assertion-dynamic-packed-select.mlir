@@ -11,30 +11,30 @@
 !index = !obelisk.ranged_packed_array<2 : 0 x !logic1>
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "top", name = "top", node_id = 0 : i64,
-      sym_name = "top_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top",
+  obelisk.sv.symbol.definition @top_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "top", name = "top", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.instance @top attributes {hierarchical_name = "top",
         is_uninstantiated = false, name = "top", node_id = 2 : i64,
-        referenced_path = "top", referenced_symbol = @top_def,
-        sym_name = "top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
-          name = "top", node_id = 3 : i64, sym_name = "body",
+        referenced_path = "top", referenced_symbol = @top_def
+    } {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "top",
+          name = "top", node_id = 3 : i64,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk",
+        obelisk.sv.symbol.variable @clk attributes {hierarchical_name = "top.clk",
             lifetime = 1 : i32, name = "clk", node_id = 4 : i64,
-            semantic_type = !logic1, sym_name = "clk"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.data",
+            semantic_type = !logic1} {}
+        obelisk.sv.symbol.variable @data attributes {hierarchical_name = "top.data",
             lifetime = 1 : i32, name = "data", node_id = 5 : i64,
-            semantic_type = !data, sym_name = "data"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.index",
+            semantic_type = !data} {}
+        obelisk.sv.symbol.variable @index attributes {hierarchical_name = "top.index",
             lifetime = 1 : i32, name = "index", node_id = 6 : i64,
-            semantic_type = !index, sym_name = "index"} {}
-        obelisk.sv.symbol.procedural_block attributes {
+            semantic_type = !index} {}
+        obelisk.sv.symbol.procedural_block @assertion attributes {
             hierarchical_name = "top", node_id = 7 : i64,
-            procedure_kind = 2 : i32, sym_name = "assertion",
+            procedure_kind = 2 : i32,
             time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {
               assertion_kind = 0 : i32, has_default_disable = false,

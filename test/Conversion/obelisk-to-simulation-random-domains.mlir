@@ -66,23 +66,23 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 4 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::e", name = "e", node_id = 4 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s4.e"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s5.this"} {}
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.C attributes {bitstream_width = 4 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
+        obelisk.sv.symbol.class_property @s4.e attributes {hierarchical_name = "C::e", name = "e", node_id = 4 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.variable @s5.this attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
       }
-      obelisk.sv.type.enum_type attributes {hierarchical_name = "E", name = "E", node_id = 6 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s6.E"} {
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b1", hierarchical_name = "E.A", name = "A", node_id = 7 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s7.A"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b100", hierarchical_name = "E.B", name = "B", node_id = 8 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s8.B"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b1001", hierarchical_name = "E.C", name = "C", node_id = 9 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s9.C"} {}
+      obelisk.sv.type.enum_type @s6.E attributes {hierarchical_name = "E", name = "E", node_id = 6 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {
+        obelisk.sv.symbol.enum_value @s7.A attributes {constant_value = "4'b1", hierarchical_name = "E.A", name = "A", node_id = 7 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s8.B attributes {constant_value = "4'b100", hierarchical_name = "E.B", name = "B", node_id = 8 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s9.C attributes {constant_value = "4'b1001", hierarchical_name = "E.C", name = "C", node_id = 9 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s10.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, sym_name = "s11.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s12.object"} {}
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, sym_name = "s13", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+    obelisk.sv.symbol.instance @s10.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s11.top attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s12.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
+        obelisk.sv.symbol.procedural_block @s13 attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 14 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s10.top::@s11.top} {
               obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s10.top::@s11.top::@s12.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
@@ -100,23 +100,23 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 67 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Wide", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Wide", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>, sym_name = "s3.Wide", this_variable_path = "Wide::this", this_variable_symbol = @s1.$root::@s2::@s3.Wide::@s6.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "Wide::bits", name = "bits", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<64 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s4.bits"} {}
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "Wide::e", name = "e", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s5.e"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "Wide::this", is_compiler_generated, is_const, name = "this", node_id = 6 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>, sym_name = "s6.this"} {}
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.Wide attributes {bitstream_width = 67 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Wide", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Wide", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>, this_variable_path = "Wide::this", this_variable_symbol = @s1.$root::@s2::@s3.Wide::@s6.this} {
+        obelisk.sv.symbol.class_property @s4.bits attributes {hierarchical_name = "Wide::bits", name = "bits", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<64 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {}
+        obelisk.sv.symbol.class_property @s5.e attributes {hierarchical_name = "Wide::e", name = "e", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.variable @s6.this attributes {hierarchical_name = "Wide::this", is_compiler_generated, is_const, name = "this", node_id = 6 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>} {}
       }
-      obelisk.sv.type.enum_type attributes {hierarchical_name = "WideE", name = "WideE", node_id = 7 : i64, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s7.WideE"} {
-        obelisk.sv.symbol.enum_value attributes {constant_value = "2'b1", hierarchical_name = "WideE.A", name = "A", node_id = 8 : i64, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s8.A"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "2'b10", hierarchical_name = "WideE.B", name = "B", node_id = 9 : i64, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s9.B"} {}
+      obelisk.sv.type.enum_type @s7.WideE attributes {hierarchical_name = "WideE", name = "WideE", node_id = 7 : i64, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {
+        obelisk.sv.symbol.enum_value @s8.A attributes {constant_value = "2'b1", hierarchical_name = "WideE.A", name = "A", node_id = 8 : i64, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s9.B attributes {constant_value = "2'b10", hierarchical_name = "WideE.B", name = "B", node_id = 9 : i64, semantic_type = !obelisk.enum<"WideE", !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s10.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, sym_name = "s11.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>, sym_name = "s12.object"} {}
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, sym_name = "s13", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+    obelisk.sv.symbol.instance @s10.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s11.top attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s12.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>} {}
+        obelisk.sv.symbol.procedural_block @s13 attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 14 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s10.top::@s11.top} {
               obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s10.top::@s11.top::@s12.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.Wide>} {}
@@ -134,10 +134,10 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64, sym_name = "s0.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 1 : i64, sym_name = "s1"} {
-      obelisk.sv.type.enum_type attributes {hierarchical_name = "Unused", name = "Unused", node_id = 2 : i64, semantic_type = !obelisk.enum<"Unused", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s2.Unused"} {
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'bx", hierarchical_name = "Unused.X", name = "X", node_id = 3 : i64, semantic_type = !obelisk.enum<"Unused", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s3.X"} {}
+  obelisk.sv.symbol.root @s0.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64} {
+    obelisk.sv.symbol.compilation_unit @s1 attributes {hierarchical_name = "$unit", node_id = 1 : i64} {
+      obelisk.sv.type.enum_type @s2.Unused attributes {hierarchical_name = "Unused", name = "Unused", node_id = 2 : i64, semantic_type = !obelisk.enum<"Unused", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {
+        obelisk.sv.symbol.enum_value @s3.X attributes {constant_value = "4'bx", hierarchical_name = "Unused.X", name = "X", node_id = 3 : i64, semantic_type = !obelisk.enum<"Unused", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
       }
     }
   }
@@ -148,18 +148,18 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 6 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "T", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "T", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>, sym_name = "s3.T", this_variable_path = "T::this", this_variable_symbol = @s1.$root::@s2::@s3.T::@s5.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "T::u", name = "u", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.source_aggregate<"U", true, true, true, false, false, false, 6, 6, 6, 2, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>}, {name = "b", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>}, {name = "none", ordinal = 2 : i32, packed_offset = 0 : i64, type = !obelisk.void}]>, sym_name = "s4.u"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "T::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>, sym_name = "s5.this"} {}
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.T attributes {bitstream_width = 6 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "T", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "T", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>, this_variable_path = "T::this", this_variable_symbol = @s1.$root::@s2::@s3.T::@s5.this} {
+        obelisk.sv.symbol.class_property @s4.u attributes {hierarchical_name = "T::u", name = "u", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.source_aggregate<"U", true, true, true, false, false, false, 6, 6, 6, 2, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>}, {name = "b", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>}, {name = "none", ordinal = 2 : i32, packed_offset = 0 : i64, type = !obelisk.void}]>} {}
+        obelisk.sv.symbol.variable @s5.this attributes {hierarchical_name = "T::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>} {}
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 6 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s6.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 7 : i64, sym_name = "s7.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 8 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>, sym_name = "s8.object"} {}
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+    obelisk.sv.symbol.instance @s6.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 6 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s7.top attributes {hierarchical_name = "top", name = "top", node_id = 7 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s8.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 8 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>} {}
+        obelisk.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 11 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s6.top::@s7.top} {
               obelisk.sv.expression.named_value attributes {node_id = 12 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s6.top::@s7.top::@s8.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.T>} {}
@@ -176,12 +176,12 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 4 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::e", name = "e", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s4.e"} {}
-        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::weighted", name = "weighted", node_id = 17 : i64, sym_name = "s17.weighted", this_variable_path = "C::weighted.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s17.weighted::@s29.this} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.C attributes {bitstream_width = 4 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
+        obelisk.sv.symbol.class_property @s4.e attributes {hierarchical_name = "C::e", name = "e", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.constraint_block @s17.weighted attributes {hierarchical_name = "C::weighted", name = "weighted", node_id = 17 : i64, this_variable_path = "C::weighted.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s17.weighted::@s29.this} {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 18 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 19 : i64} {
               obelisk.sv.expression.dist attributes {default_weight_kind = 0 : i64, has_default_weight = false, item_count = 2 : i64, item_has_weight = array<i64: 1, 1>, item_weight_kinds = array<i64: 1, 0>, node_id = 20 : i64, semantic_type = !obelisk.void} {
@@ -204,20 +204,20 @@ module attributes {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "C::weighted.this", is_compiler_generated, is_const, name = "this", node_id = 29 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s29.this"} {}
+          obelisk.sv.symbol.variable @s29.this attributes {hierarchical_name = "C::weighted.this", is_compiler_generated, is_const, name = "this", node_id = 29 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s5.this"} {}
+        obelisk.sv.symbol.variable @s5.this attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
       }
-      obelisk.sv.type.enum_type attributes {hierarchical_name = "E", name = "E", node_id = 6 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s6.E"} {
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b1", hierarchical_name = "E.A", name = "A", node_id = 7 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s7.A"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b100", hierarchical_name = "E.B", name = "B", node_id = 8 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s8.B"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b1001", hierarchical_name = "E.C", name = "C", node_id = 9 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s9.C"} {}
+      obelisk.sv.type.enum_type @s6.E attributes {hierarchical_name = "E", name = "E", node_id = 6 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {
+        obelisk.sv.symbol.enum_value @s7.A attributes {constant_value = "4'b1", hierarchical_name = "E.A", name = "A", node_id = 7 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s8.B attributes {constant_value = "4'b100", hierarchical_name = "E.B", name = "B", node_id = 8 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s9.C attributes {constant_value = "4'b1001", hierarchical_name = "E.C", name = "C", node_id = 9 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s10.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, sym_name = "s11.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s12.object"} {}
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, sym_name = "s13", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+    obelisk.sv.symbol.instance @s10.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s11.top attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s12.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
+        obelisk.sv.symbol.procedural_block @s13 attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 14 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s10.top::@s11.top} {
               obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s10.top::@s11.top::@s12.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
@@ -234,12 +234,12 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 4 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s3.C", this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "C::e", name = "e", node_id = 4 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s4.e"} {}
-        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "C::bad", name = "bad", node_id = 17 : i64, sym_name = "s17.bad", this_variable_path = "C::bad.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s17.bad::@s22.this} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.C attributes {bitstream_width = 4 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.this} {
+        obelisk.sv.symbol.class_property @s4.e attributes {hierarchical_name = "C::e", name = "e", node_id = 4 : i64, rand_mode = 2 : i32, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.constraint_block @s17.bad attributes {hierarchical_name = "C::bad", name = "bad", node_id = 17 : i64, this_variable_path = "C::bad.this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s17.bad::@s22.this} {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 18 : i64} {
             obelisk.sv.constraint.expression attributes {is_soft = false, node_id = 19 : i64} {
               obelisk.sv.expression.binary_op attributes {node_id = 20 : i64, operator_kind = 9 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
@@ -248,20 +248,20 @@ module attributes {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "C::bad.this", is_compiler_generated, is_const, name = "this", node_id = 23 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s22.this"} {}
+          obelisk.sv.symbol.variable @s22.this attributes {hierarchical_name = "C::bad.this", is_compiler_generated, is_const, name = "this", node_id = 23 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s5.this"} {}
+        obelisk.sv.symbol.variable @s5.this attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 5 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
       }
-      obelisk.sv.type.enum_type attributes {hierarchical_name = "E", name = "E", node_id = 6 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s6.E"} {
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b1", hierarchical_name = "E.A", name = "A", node_id = 7 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s7.A"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b100", hierarchical_name = "E.B", name = "B", node_id = 8 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s8.B"} {}
-        obelisk.sv.symbol.enum_value attributes {constant_value = "4'b1001", hierarchical_name = "E.C", name = "C", node_id = 9 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, sym_name = "s9.C"} {}
+      obelisk.sv.type.enum_type @s6.E attributes {hierarchical_name = "E", name = "E", node_id = 6 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {
+        obelisk.sv.symbol.enum_value @s7.A attributes {constant_value = "4'b1", hierarchical_name = "E.A", name = "A", node_id = 7 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s8.B attributes {constant_value = "4'b100", hierarchical_name = "E.B", name = "B", node_id = 8 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
+        obelisk.sv.symbol.enum_value @s9.C attributes {constant_value = "4'b1001", hierarchical_name = "E.C", name = "C", node_id = 9 : i64, semantic_type = !obelisk.enum<"E", !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>} {}
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s10.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, sym_name = "s11.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>, sym_name = "s12.object"} {}
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, sym_name = "s13", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+    obelisk.sv.symbol.instance @s10.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 10 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s11.top attributes {hierarchical_name = "top", name = "top", node_id = 11 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s12.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 12 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}
+        obelisk.sv.symbol.procedural_block @s13 attributes {hierarchical_name = "top", node_id = 13 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 14 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s10.top::@s11.top} {
               obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s10.top::@s11.top::@s12.object, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>} {}

@@ -3,20 +3,20 @@
 // RUN: sed 's/virtual_interface_call_import, //g' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MODPORT
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, sym_name = "s0.bus_if"} {
+  obelisk.sv.symbol.definition @s0.bus_if attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64, sym_name = "s1.top"} {
+  obelisk.sv.symbol.definition @s1.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top, sym_name = "s4.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, sym_name = "s5.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.a", is_uninstantiated = false, name = "a", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s6.a"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.a", name = "bus_if", node_id = 7 : i64, sym_name = "s7.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a.x", lifetime = 1 : i32, name = "x", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s8.x"} {
+    obelisk.sv.symbol.instance @s4.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top} {
+      obelisk.sv.symbol.instance_body @s5.top attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.instance @s6.a attributes {hierarchical_name = "top.a", is_uninstantiated = false, name = "a", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s7.bus_if attributes {hierarchical_name = "top.a", name = "bus_if", node_id = 7 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+            obelisk.sv.symbol.variable @s8.x attributes {hierarchical_name = "top.a.x", lifetime = 1 : i32, name = "x", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
-            obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "top.a.get", name = "get", node_id = 9 : i64, return_variable_path = "top.a.get.get", return_variable_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s9.get::@s11.get, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s9.get", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.subroutine @s9.get attributes {default_lifetime = 1 : i32, hierarchical_name = "top.a.get", name = "get", node_id = 9 : i64, return_variable_path = "top.a.get.get", return_variable_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s9.get::@s11.get, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
               obelisk.sv.statement.return attributes {node_id = 10 : i64} {
                 obelisk.sv.expression.binary_op attributes {is_signed = true, node_id = 11 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 12 : i64, referenced_path = "top.a.x", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s8.x, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -25,12 +25,12 @@ module {
                   }
                 }
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.a.get.add", lifetime = 1 : i32, name = "add", node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s10.add"} {
+              obelisk.sv.symbol.formal_argument @s10.add attributes {direction = 0 : i32, hierarchical_name = "top.a.get.add", lifetime = 1 : i32, name = "add", node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
-              obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a.get.get", is_compiler_generated, name = "get", node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s11.get"} {
+              obelisk.sv.symbol.variable @s11.get attributes {hierarchical_name = "top.a.get.get", is_compiler_generated, name = "get", node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
             }
-            obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "top.a.put", name = "put", node_id = 16 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s12.put", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.subroutine @s12.put attributes {default_lifetime = 1 : i32, hierarchical_name = "top.a.put", name = "put", node_id = 16 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
               obelisk.sv.statement.list attributes {node_id = 17 : i64} {
                 obelisk.sv.statement.expression_statement attributes {node_id = 18 : i64} {
                   obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 19 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -49,30 +49,30 @@ module {
                   }
                 }
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.a.put.v", lifetime = 1 : i32, name = "v", node_id = 26 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s13.v"} {
+              obelisk.sv.symbol.formal_argument @s13.v attributes {direction = 0 : i32, hierarchical_name = "top.a.put.v", lifetime = 1 : i32, name = "v", node_id = 26 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.a.put.old", lifetime = 1 : i32, name = "old", node_id = 27 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s14.old"} {
+              obelisk.sv.symbol.formal_argument @s14.old attributes {direction = 1 : i32, hierarchical_name = "top.a.put.old", lifetime = 1 : i32, name = "old", node_id = 27 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
             }
-            obelisk.sv.symbol.modport attributes {hierarchical_name = "top.a.master", name = "master", node_id = 28 : i64, sym_name = "s15.master"} {
-              obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.a.master.get", is_modport_import, name = "get", node_id = 29 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, subroutine_path = "top.a.get", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s9.get, sym_name = "s16.get"} {
-                obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.a.master.get.add", lifetime = 1 : i32, name = "add", node_id = 30 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s17.add"} {
+            obelisk.sv.symbol.modport @s15.master attributes {hierarchical_name = "top.a.master", name = "master", node_id = 28 : i64} {
+              obelisk.sv.symbol.method_prototype @s16.get attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.a.master.get", is_modport_import, name = "get", node_id = 29 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, subroutine_path = "top.a.get", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s9.get} {
+                obelisk.sv.symbol.formal_argument @s17.add attributes {direction = 0 : i32, hierarchical_name = "top.a.master.get.add", lifetime = 1 : i32, name = "add", node_id = 30 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
               }
-              obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.a.master.put", is_modport_import, name = "put", node_id = 31 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.a.put", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s12.put, sym_name = "s18.put"} {
-                obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.a.master.put.v", lifetime = 1 : i32, name = "v", node_id = 32 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s19.v"} {
+              obelisk.sv.symbol.method_prototype @s18.put attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.a.master.put", is_modport_import, name = "put", node_id = 31 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.a.put", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s6.a::@s7.bus_if::@s12.put} {
+                obelisk.sv.symbol.formal_argument @s19.v attributes {direction = 0 : i32, hierarchical_name = "top.a.master.put.v", lifetime = 1 : i32, name = "v", node_id = 32 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
-                obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.a.master.put.old", lifetime = 1 : i32, name = "old", node_id = 33 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s20.old"} {
+                obelisk.sv.symbol.formal_argument @s20.old attributes {direction = 1 : i32, hierarchical_name = "top.a.master.put.old", lifetime = 1 : i32, name = "old", node_id = 33 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
               }
             }
           }
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.b", is_uninstantiated = false, name = "b", node_id = 34 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s21.b"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.b", name = "bus_if", node_id = 35 : i64, sym_name = "s22.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b.x", lifetime = 1 : i32, name = "x", node_id = 36 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s23.x"} {
+        obelisk.sv.symbol.instance @s21.b attributes {hierarchical_name = "top.b", is_uninstantiated = false, name = "b", node_id = 34 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s22.bus_if attributes {hierarchical_name = "top.b", name = "bus_if", node_id = 35 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+            obelisk.sv.symbol.variable @s23.x attributes {hierarchical_name = "top.b.x", lifetime = 1 : i32, name = "x", node_id = 36 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
-            obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "top.b.get", name = "get", node_id = 37 : i64, return_variable_path = "top.b.get.get", return_variable_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s24.get::@s26.get, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s24.get", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.subroutine @s24.get attributes {default_lifetime = 1 : i32, hierarchical_name = "top.b.get", name = "get", node_id = 37 : i64, return_variable_path = "top.b.get.get", return_variable_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s24.get::@s26.get, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
               obelisk.sv.statement.return attributes {node_id = 38 : i64} {
                 obelisk.sv.expression.binary_op attributes {is_signed = true, node_id = 39 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                   obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 40 : i64, referenced_path = "top.b.x", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s23.x, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -81,12 +81,12 @@ module {
                   }
                 }
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.b.get.add", lifetime = 1 : i32, name = "add", node_id = 42 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s25.add"} {
+              obelisk.sv.symbol.formal_argument @s25.add attributes {direction = 0 : i32, hierarchical_name = "top.b.get.add", lifetime = 1 : i32, name = "add", node_id = 42 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
-              obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b.get.get", is_compiler_generated, name = "get", node_id = 43 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s26.get"} {
+              obelisk.sv.symbol.variable @s26.get attributes {hierarchical_name = "top.b.get.get", is_compiler_generated, name = "get", node_id = 43 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
             }
-            obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "top.b.put", name = "put", node_id = 44 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s27.put", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.subroutine @s27.put attributes {default_lifetime = 1 : i32, hierarchical_name = "top.b.put", name = "put", node_id = 44 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
               obelisk.sv.statement.list attributes {node_id = 45 : i64} {
                 obelisk.sv.statement.expression_statement attributes {node_id = 46 : i64} {
                   obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 47 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -105,30 +105,30 @@ module {
                   }
                 }
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.b.put.v", lifetime = 1 : i32, name = "v", node_id = 54 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s28.v"} {
+              obelisk.sv.symbol.formal_argument @s28.v attributes {direction = 0 : i32, hierarchical_name = "top.b.put.v", lifetime = 1 : i32, name = "v", node_id = 54 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.b.put.old", lifetime = 1 : i32, name = "old", node_id = 55 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s29.old"} {
+              obelisk.sv.symbol.formal_argument @s29.old attributes {direction = 1 : i32, hierarchical_name = "top.b.put.old", lifetime = 1 : i32, name = "old", node_id = 55 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
             }
-            obelisk.sv.symbol.modport attributes {hierarchical_name = "top.b.master", name = "master", node_id = 56 : i64, sym_name = "s30.master"} {
-              obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.b.master.get", is_modport_import, name = "get", node_id = 57 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, subroutine_path = "top.b.get", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s24.get, sym_name = "s31.get"} {
-                obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.b.master.get.add", lifetime = 1 : i32, name = "add", node_id = 58 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s32.add"} {
+            obelisk.sv.symbol.modport @s30.master attributes {hierarchical_name = "top.b.master", name = "master", node_id = 56 : i64} {
+              obelisk.sv.symbol.method_prototype @s31.get attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.b.master.get", is_modport_import, name = "get", node_id = 57 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, subroutine_path = "top.b.get", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s24.get} {
+                obelisk.sv.symbol.formal_argument @s32.add attributes {direction = 0 : i32, hierarchical_name = "top.b.master.get.add", lifetime = 1 : i32, name = "add", node_id = 58 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
               }
-              obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.b.master.put", is_modport_import, name = "put", node_id = 59 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.b.put", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s27.put, sym_name = "s33.put"} {
-                obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.b.master.put.v", lifetime = 1 : i32, name = "v", node_id = 60 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s34.v"} {
+              obelisk.sv.symbol.method_prototype @s33.put attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.b.master.put", is_modport_import, name = "put", node_id = 59 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.b.put", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s21.b::@s22.bus_if::@s27.put} {
+                obelisk.sv.symbol.formal_argument @s34.v attributes {direction = 0 : i32, hierarchical_name = "top.b.master.put.v", lifetime = 1 : i32, name = "v", node_id = 60 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
-                obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.b.master.put.old", lifetime = 1 : i32, name = "old", node_id = 61 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s35.old"} {
+                obelisk.sv.symbol.formal_argument @s35.old attributes {direction = 1 : i32, hierarchical_name = "top.b.master.put.old", lifetime = 1 : i32, name = "old", node_id = 61 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 }
               }
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vif", lifetime = 1 : i32, name = "vif", node_id = 62 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "master">, sym_name = "s36.vif"} {
+        obelisk.sv.symbol.variable @s36.vif attributes {hierarchical_name = "top.vif", lifetime = 1 : i32, name = "vif", node_id = 62 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.a, "master">} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.y", lifetime = 1 : i32, name = "y", node_id = 63 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s37.y"} {
+        obelisk.sv.symbol.variable @s37.y attributes {hierarchical_name = "top.y", lifetime = 1 : i32, name = "y", node_id = 63 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 64 : i64, procedure_kind = 0 : i32, sym_name = "s38", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s38 attributes {hierarchical_name = "top", node_id = 64 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 65 : i64} {
             obelisk.sv.statement.list attributes {node_id = 66 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 67 : i64} {
@@ -170,10 +170,10 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", is_virtual_interface_type_instance = true, name = "bus_if", node_id = 85 : i64, sym_name = "s39.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bus_if.x", lifetime = 1 : i32, name = "x", node_id = 86 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s40.x"} {
+        obelisk.sv.symbol.instance_body @s39.bus_if attributes {hierarchical_name = "top.bus_if", is_virtual_interface_type_instance = true, name = "bus_if", node_id = 85 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+          obelisk.sv.symbol.variable @s40.x attributes {hierarchical_name = "top.bus_if.x", lifetime = 1 : i32, name = "x", node_id = 86 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
-          obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "top.bus_if.get", name = "get", node_id = 87 : i64, return_variable_path = "top.bus_if.get.get", return_variable_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s41.get::@s43.get, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s41.get", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.symbol.subroutine @s41.get attributes {default_lifetime = 1 : i32, hierarchical_name = "top.bus_if.get", name = "get", node_id = 87 : i64, return_variable_path = "top.bus_if.get.get", return_variable_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s41.get::@s43.get, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
             obelisk.sv.statement.return attributes {node_id = 88 : i64} {
               obelisk.sv.expression.binary_op attributes {is_signed = true, node_id = 89 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
                 obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 90 : i64, referenced_path = "top.bus_if.x", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s40.x, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -182,12 +182,12 @@ module {
                 }
               }
             }
-            obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.get.add", lifetime = 1 : i32, name = "add", node_id = 92 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s42.add"} {
+            obelisk.sv.symbol.formal_argument @s42.add attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.get.add", lifetime = 1 : i32, name = "add", node_id = 92 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.bus_if.get.get", is_compiler_generated, name = "get", node_id = 93 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s43.get"} {
+            obelisk.sv.symbol.variable @s43.get attributes {hierarchical_name = "top.bus_if.get.get", is_compiler_generated, name = "get", node_id = 93 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
           }
-          obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "top.bus_if.put", name = "put", node_id = 94 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s44.put", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          obelisk.sv.symbol.subroutine @s44.put attributes {default_lifetime = 1 : i32, hierarchical_name = "top.bus_if.put", name = "put", node_id = 94 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
             obelisk.sv.statement.list attributes {node_id = 95 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 96 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 97 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -206,20 +206,20 @@ module {
                 }
               }
             }
-            obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.put.v", lifetime = 1 : i32, name = "v", node_id = 104 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s45.v"} {
+            obelisk.sv.symbol.formal_argument @s45.v attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.put.v", lifetime = 1 : i32, name = "v", node_id = 104 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
-            obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.bus_if.put.old", lifetime = 1 : i32, name = "old", node_id = 105 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s46.old"} {
+            obelisk.sv.symbol.formal_argument @s46.old attributes {direction = 1 : i32, hierarchical_name = "top.bus_if.put.old", lifetime = 1 : i32, name = "old", node_id = 105 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
           }
-          obelisk.sv.symbol.modport attributes {hierarchical_name = "top.bus_if.master", name = "master", node_id = 106 : i64, sym_name = "s47.master"} {
-            obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.bus_if.master.get", is_modport_import, name = "get", node_id = 107 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, subroutine_path = "top.bus_if.get", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s41.get, sym_name = "s48.get"} {
-              obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.master.get.add", lifetime = 1 : i32, name = "add", node_id = 108 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s49.add"} {
+          obelisk.sv.symbol.modport @s47.master attributes {hierarchical_name = "top.bus_if.master", name = "master", node_id = 106 : i64} {
+            obelisk.sv.symbol.method_prototype @s48.get attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.bus_if.master.get", is_modport_import, name = "get", node_id = 107 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, subroutine_path = "top.bus_if.get", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s41.get} {
+              obelisk.sv.symbol.formal_argument @s49.add attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.master.get.add", lifetime = 1 : i32, name = "add", node_id = 108 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
             }
-            obelisk.sv.symbol.method_prototype attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.bus_if.master.put", is_modport_import, name = "put", node_id = 109 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.bus_if.put", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s44.put, sym_name = "s50.put"} {
-              obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.master.put.v", lifetime = 1 : i32, name = "v", node_id = 110 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s51.v"} {
+            obelisk.sv.symbol.method_prototype @s50.put attributes {extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = [], hierarchical_name = "top.bus_if.master.put", is_modport_import, name = "put", node_id = 109 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>) -> (), true>, subroutine_kind = 1 : i32, subroutine_path = "top.bus_if.put", subroutine_symbol = @s2.$root::@s4.top::@s5.top::@s39.bus_if::@s44.put} {
+              obelisk.sv.symbol.formal_argument @s51.v attributes {direction = 0 : i32, hierarchical_name = "top.bus_if.master.put.v", lifetime = 1 : i32, name = "v", node_id = 110 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
-              obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "top.bus_if.master.put.old", lifetime = 1 : i32, name = "old", node_id = 111 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s52.old"} {
+              obelisk.sv.symbol.formal_argument @s52.old attributes {direction = 1 : i32, hierarchical_name = "top.bus_if.master.put.old", lifetime = 1 : i32, name = "old", node_id = 111 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
               }
             }
           }

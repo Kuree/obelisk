@@ -63,20 +63,20 @@ class derived_group_owner extends base_group_owner;
 endclass
 
 // A derived embedded group preserves its base handle and its inherited event.
-// SLANG-DAG: slang.type.covergroup_type attributes {base_group = !slang.covergroup_handle<@{{[^>]+}}>{{.*}}coverage_event_kind = 4 : i32, has_coverage_event = true
+// SLANG-DAG: slang.type.covergroup_type @{{[^ ]+}} attributes {base_group = !slang.covergroup_handle<@{{[^>]+}}>{{.*}}coverage_event_kind = 4 : i32, has_coverage_event = true
 
 // An empty custom sample signature is distinct from an omitted event.
-// SLANG-DAG: slang.type.covergroup_type attributes {constructor_argument_count = 0 : i64, constructor_formals = [], coverage_event_kind = 2 : i32, has_coverage_event = false, hierarchical_name = "functional_coverage_semantics.empty_sample"{{.*}}sample_formal_count = 0 : i64, sample_formals = []
+// SLANG-DAG: slang.type.covergroup_type @{{[^ ]+}} attributes {constructor_argument_count = 0 : i64, constructor_formals = [], coverage_event_kind = 2 : i32, has_coverage_event = false, hierarchical_name = "functional_coverage_semantics.empty_sample"{{.*}}sample_formal_count = 0 : i64, sample_formals = []
 
 // Constructor and custom-sample formals retain exact symbol identities.
-// SLANG-DAG: slang.type.covergroup_type attributes {constructor_argument_count = 2 : i64, constructor_formals = [@{{[^,]+}}, @{{[^]]+}}], coverage_event_kind = 2 : i32{{.*}}hierarchical_name = "functional_coverage_semantics.cg"{{.*}}sample_formal_count = 1 : i64, sample_formals = [@{{[^]]+}}]
+// SLANG-DAG: slang.type.covergroup_type @{{[^ ]+}} attributes {constructor_argument_count = 2 : i64, constructor_formals = [@{{[^,]+}}, @{{[^]]+}}], coverage_event_kind = 2 : i32{{.*}}hierarchical_name = "functional_coverage_semantics.cg"{{.*}}sample_formal_count = 1 : i64, sample_formals = [@{{[^]]+}}]
 
 // Definition-time setters are typed wrappers around one RHS expression.
 // SLANG-DAG: slang.coverage.option attributes {{.*}}option_kind = 12 : i32{{.*}}owner_kind = 0 : i32, owner_symbol = @{{[^,}]+}}, scope_kind = 1 : i32
 // SLANG-DAG: slang.coverage.option attributes {{.*}}option_kind = 9 : i32{{.*}}owner_kind = 0 : i32, owner_symbol = @{{[^,}]+}}, scope_kind = 0 : i32
 // SLANG-DAG: slang.expression.member_access attributes {{.*}}member_name = "comment"{{.*}}referenced_path = "functional_coverage_semantics.cg.comment"
-// SLANG-DAG: slang.symbol.coverpoint attributes {expression_roles = [0 : i32, 1 : i32], has_iff = true{{.*}}hierarchical_name = "functional_coverage_semantics.cg.cp"
-// SLANG-DAG: slang.symbol.cover_cross attributes {expression_roles = [1 : i32], has_iff = true{{.*}}target_count = 2 : i64, target_symbols = [@{{[^,]+}}, @{{[^]]+}}]
+// SLANG-DAG: slang.symbol.coverpoint @{{[^ ]+}} attributes {expression_roles = [0 : i32, 1 : i32], has_iff = true{{.*}}hierarchical_name = "functional_coverage_semantics.cg.cp"
+// SLANG-DAG: slang.symbol.cover_cross @{{[^ ]+}} attributes {expression_roles = [1 : i32], has_iff = true{{.*}}target_count = 2 : i64, target_symbols = [@{{[^,]+}}, @{{[^]]+}}]
 
 // The selector remains a typed tree with resolved cross and bin identities.
 // SLANG-DAG: slang.bins.binary attributes {enclosing_cross_symbol = @{{[^,}]+}}{{.*}}operator_kind = 1 : i32
@@ -91,26 +91,26 @@ endclass
 // The built-in call retains the exact selected method symbol.
 // SLANG-DAG: slang.expression.call attributes {{.*}}callee_name = "get_coverage"{{.*}}referenced_symbol = @{{.*get_coverage[^,}]*}}
 
-// OBELISK-DAG: obelisk.sv.type.covergroup_type attributes {base_group = !obelisk.covergroup_handle<@{{[^>]+}}>{{.*}}coverage_event_kind = 4 : i32, has_coverage_event = true
+// OBELISK-DAG: obelisk.sv.type.covergroup_type @{{[^ ]+}} attributes {base_group = !obelisk.covergroup_handle<@{{[^>]+}}>{{.*}}coverage_event_kind = 4 : i32, has_coverage_event = true
 // OBELISK-DAG: obelisk.sv.coverage.option attributes {{.*}}option_kind = 12 : i32{{.*}}owner_kind = 0 : i32
-// OBELISK-DAG: obelisk.sv.symbol.cover_cross attributes {expression_roles = [1 : i32]{{.*}}target_count = 2
+// OBELISK-DAG: obelisk.sv.symbol.cover_cross @{{[^ ]+}} attributes {expression_roles = [1 : i32]{{.*}}target_count = 2
 // OBELISK-DAG: obelisk.sv.bins.with_filter attributes {enclosing_cross_symbol = @{{[^,}]+}}, has_matches = true
 // OBELISK-DAG: obelisk.sv.expression.call attributes {{.*}}callee_name = "get_coverage"{{.*}}referenced_symbol = @{{.*get_coverage[^,}]*}}
 
 // Exact SymbolRefs preserve formal and cross ordering, selector target kind,
 // option ownership, inherited base identity, and built-in method identity.
-// EXACT: slang.type.covergroup_type attributes {constructor_argument_count = 2 : i64, constructor_formals = [@{{[^,]*}}::@[[LOWER:s[0-9]+\.lower]], @{{[^]]*}}::@[[UPPER:s[0-9]+\.upper]]], coverage_event_kind = 2 : i32{{.*}}sample_formals = [@{{[^]]*}}::@[[VALUE:s[0-9]+\.value]]]{{.*}}sym_name = "[[CG:s[0-9]+\.cg]]"
-// EXACT: slang.symbol.formal_argument attributes {{.*}}sym_name = "[[LOWER]]"
-// EXACT: slang.symbol.formal_argument attributes {{.*}}sym_name = "[[UPPER]]"
-// EXACT: slang.symbol.formal_argument attributes {{.*}}is_coverage_sample_formal{{.*}}sym_name = "[[VALUE]]"
+// EXACT: slang.type.covergroup_type @[[CG:s[0-9]+\.cg]] attributes {constructor_argument_count = 2 : i64, constructor_formals = [@{{[^,]*}}::@[[LOWER:s[0-9]+\.lower]], @{{[^]]*}}::@[[UPPER:s[0-9]+\.upper]]], coverage_event_kind = 2 : i32{{.*}}sample_formals = [@{{[^]]*}}::@[[VALUE:s[0-9]+\.value]]]
+// EXACT: slang.symbol.formal_argument @[[LOWER]] attributes
+// EXACT: slang.symbol.formal_argument @[[UPPER]] attributes
+// EXACT: slang.symbol.formal_argument @[[VALUE]] attributes {{.*}}is_coverage_sample_formal
 // EXACT: slang.coverage.option attributes {{.*}}option_kind = 12 : i32{{.*}}owner_symbol = @{{[^,]*}}::@[[CG]], scope_kind = 1 : i32
 // EXACT-NEXT: {{ *}}slang.expression.conversion
 // EXACT: slang.coverage.option attributes {{.*}}option_kind = 14 : i32{{.*}}owner_symbol = @{{[^,]*}}::@[[CG]], scope_kind = 1 : i32
-// EXACT: slang.symbol.coverpoint attributes {{.*}}hierarchical_name = "functional_coverage_semantics.cg.cp"{{.*}}sym_name = "[[CP:s[0-9]+\.cp]]"
-// EXACT: slang.symbol.subroutine attributes {hierarchical_name = "functional_coverage_semantics.cg.cp.get_coverage"{{.*}}sym_name = "[[CP_GET:s[0-9]+\.get_coverage]]"
-// EXACT: slang.symbol.coverage_bin attributes {{.*}}hierarchical_name = "functional_coverage_semantics.cg.cp.low"{{.*}}sym_name = "[[LOW_BIN:s[0-9]+\.low]]"
-// EXACT: slang.symbol.coverpoint attributes {{.*}}hierarchical_name = "functional_coverage_semantics.cg.bp"{{.*}}sym_name = "[[BP:s[0-9]+\.bp]]"
-// EXACT: slang.symbol.cover_cross attributes {{.*}}sym_name = "[[CROSS:s[0-9]+\.x]]"{{.*}}target_symbols = [@{{[^,]*}}::@[[CP]], @{{[^]]*}}::@[[BP]]]
+// EXACT: slang.symbol.coverpoint @[[CP:s[0-9]+\.cp]] attributes {{.*}}hierarchical_name = "functional_coverage_semantics.cg.cp"
+// EXACT: slang.symbol.subroutine @[[CP_GET:s[0-9]+\.get_coverage]] attributes {hierarchical_name = "functional_coverage_semantics.cg.cp.get_coverage"
+// EXACT: slang.symbol.coverage_bin @[[LOW_BIN:s[0-9]+\.low]] attributes {{.*}}hierarchical_name = "functional_coverage_semantics.cg.cp.low"
+// EXACT: slang.symbol.coverpoint @[[BP:s[0-9]+\.bp]] attributes {{.*}}hierarchical_name = "functional_coverage_semantics.cg.bp"
+// EXACT: slang.symbol.cover_cross @[[CROSS:s[0-9]+\.x]] attributes {{.*}}target_symbols = [@{{[^,]*}}::@[[CP]], @{{[^]]*}}::@[[BP]]]
 // EXACT: slang.bins.condition attributes {{.*}}target_symbol = @{{[^,]*}}::@[[CP]]::@[[LOW_BIN]]
 // EXACT: slang.bins.condition attributes {{.*}}target_symbol = @{{[^,}]*}}::@[[BP]]
 // EXACT: slang.bins.cross_id attributes {enclosing_cross_symbol = @{{[^,}]*}}::@[[CROSS]]

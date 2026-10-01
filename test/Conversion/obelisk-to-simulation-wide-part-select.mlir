@@ -8,18 +8,18 @@
 // padding bit at each end, and `x[7:2]` writes only bits 3 and 2.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "wide_part_select", name = "wide_part_select", node_id = 0 : i64, sym_name = "s0.wide_part_select"} {
+  obelisk.sv.symbol.definition @s0.wide_part_select attributes {definition_kind = 0 : i32, hierarchical_name = "wide_part_select", name = "wide_part_select", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "wide_part_select", is_uninstantiated = false, name = "wide_part_select", node_id = 3 : i64, referenced_path = "wide_part_select", referenced_symbol = @s0.wide_part_select, sym_name = "s3.wide_part_select"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "wide_part_select", name = "wide_part_select", node_id = 4 : i64, sym_name = "s4.wide_part_select", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "wide_part_select.x", lifetime = 1 : i32, name = "x", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s5.x"} {
+    obelisk.sv.symbol.instance @s3.wide_part_select attributes {hierarchical_name = "wide_part_select", is_uninstantiated = false, name = "wide_part_select", node_id = 3 : i64, referenced_path = "wide_part_select", referenced_symbol = @s0.wide_part_select} {
+      obelisk.sv.symbol.instance_body @s4.wide_part_select attributes {hierarchical_name = "wide_part_select", name = "wide_part_select", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.x attributes {hierarchical_name = "wide_part_select.x", lifetime = 1 : i32, name = "x", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "wide_part_select.r", lifetime = 1 : i32, name = "r", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<5 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.r"} {
+        obelisk.sv.symbol.variable @s6.r attributes {hierarchical_name = "wide_part_select.r", lifetime = 1 : i32, name = "r", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<5 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "wide_part_select", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "wide_part_select", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 8 : i64} {
             obelisk.sv.statement.list attributes {node_id = 9 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {

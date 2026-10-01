@@ -3,44 +3,44 @@
 !logic = !obelisk.integral<1, false, true, 0 : 0, logic>
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.path_extra_input attributes {
       definition_kind = 0 : i32, hierarchical_name = "path_extra_input",
-      name = "path_extra_input", node_id = 0 : i64,
-      sym_name = "s0.path_extra_input"} {}
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {
-        hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {}
-    obelisk.sv.symbol.instance attributes {
+      name = "path_extra_input", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.root @s1.$root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+        hierarchical_name = "$unit", node_id = 2 : i64} {}
+    obelisk.sv.symbol.instance @s3.path_extra_input attributes {
         hierarchical_name = "path_extra_input", is_uninstantiated = false,
         name = "path_extra_input", node_id = 3 : i64,
         referenced_path = "path_extra_input",
-        referenced_symbol = @s0.path_extra_input,
-        sym_name = "s3.path_extra_input"} {
-      obelisk.sv.symbol.instance_body attributes {
+        referenced_symbol = @s0.path_extra_input
+    } {
+      obelisk.sv.symbol.instance_body @s4.path_extra_input attributes {
           hierarchical_name = "path_extra_input", name = "path_extra_input",
-          node_id = 4 : i64, sym_name = "s4.path_extra_input",
+          node_id = 4 : i64,
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.net attributes {
+        obelisk.sv.symbol.net @s5.source attributes {
             hierarchical_name = "path_extra_input.source", is_implicit = false,
             name = "source",
             net_kind = 1 : i32, node_id = 5 : i64,
-            semantic_type = !logic, sym_name = "s5.source"} {}
-        obelisk.sv.symbol.net attributes {
+            semantic_type = !logic} {}
+        obelisk.sv.symbol.net @s6.control attributes {
             hierarchical_name = "path_extra_input.control", is_implicit = false,
             name = "control",
             net_kind = 1 : i32, node_id = 6 : i64,
-            semantic_type = !logic, sym_name = "s6.control"} {}
-        obelisk.sv.symbol.net attributes {
+            semantic_type = !logic} {}
+        obelisk.sv.symbol.net @s7.output attributes {
             hierarchical_name = "path_extra_input.output", is_implicit = false,
             name = "output",
             net_kind = 1 : i32, node_id = 7 : i64,
-            semantic_type = !logic, sym_name = "s7.output"} {}
-        obelisk.sv.symbol.continuous_assign attributes {
+            semantic_type = !logic} {}
+        obelisk.sv.symbol.continuous_assign @s8 attributes {
             hierarchical_name = "path_extra_input", node_id = 8 : i64,
-            sym_name = "s8", time_precision_fs = 1000000 : i64,
+            time_precision_fs = 1000000 : i64,
             time_unit_fs = 1000000 : i64} {
           obelisk.sv.expression.assignment attributes {
               assignment_kind = 0 : i32, node_id = 9 : i64,
@@ -66,12 +66,12 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.specify_block attributes {
-            hierarchical_name = "path_extra_input", node_id = 14 : i64,
-            sym_name = "s9"} {
-          obelisk.sv.symbol.timing_path attributes {
+        obelisk.sv.symbol.specify_block @s9 attributes {
+            hierarchical_name = "path_extra_input", node_id = 14 : i64
+        } {
+          obelisk.sv.symbol.timing_path @s10 attributes {
               hierarchical_name = "path_extra_input", node_id = 15 : i64,
-              obelisk.simple_timing_path, sym_name = "s10",
+              obelisk.simple_timing_path,
               timing_connection_full = false,
               timing_delay_fs = array<i64: 2000000>,
               timing_input_terminals = [{low = 0 : i64,

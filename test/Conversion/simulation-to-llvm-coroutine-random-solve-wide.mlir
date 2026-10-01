@@ -38,9 +38,9 @@ module attributes {
       %state = arith.constant 17 : i64
       %increment = arith.constant 3 : i64
       %assignment, %success, %next_state =
-          "simulation.random.solve_wide"(
+          simulation.random.solve_wide
               %ctx, %start, %mask, %constraint_mask, %limit, %state,
-              %increment, %capture)
+              %increment, %capture
           {program = "v2"} :
           (!simulation.context, i8, i8, i64, i64, i64, i64, i64) ->
           (i8, i1, i64)
@@ -71,9 +71,9 @@ module attributes {
       %state = arith.constant 17 : i64
       %increment = arith.constant 3 : i64
       %assignment, %success, %next_state =
-          "simulation.random.solve_wide"(
+          simulation.random.solve_wide
               %ctx, %start, %mask, %constraint_mask, %limit, %state,
-              %increment, %capture)
+              %increment, %capture
           {program = "v2"} :
           (!simulation.context, i128, i128, i64, i64, i64, i64, i128) ->
           (i128, i1, i64)

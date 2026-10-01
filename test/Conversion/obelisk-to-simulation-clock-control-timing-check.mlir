@@ -8,35 +8,35 @@
 !logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
 
 module {
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.instance_body attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.instance_body @body attributes {
         hierarchical_name = "top", name = "top", node_id = 2 : i64,
-        sym_name = "body", time_unit_fs = 1000000 : i64,
+        time_unit_fs = 1000000 : i64,
         time_precision_fs = 1000 : i64} {
-      obelisk.sv.symbol.variable attributes {
+      obelisk.sv.symbol.variable @reference attributes {
           hierarchical_name = "top.reference", lifetime = 1 : i32,
-          name = "reference", node_id = 3 : i64, semantic_type = !logic1,
-          sym_name = "reference"} {}
-      obelisk.sv.symbol.variable attributes {
+          name = "reference", node_id = 3 : i64, semantic_type = !logic1
+      } {}
+      obelisk.sv.symbol.variable @data attributes {
           hierarchical_name = "top.data", lifetime = 1 : i32,
-          name = "data", node_id = 4 : i64, semantic_type = !logic1,
-          sym_name = "data"} {}
-      obelisk.sv.symbol.variable attributes {
+          name = "data", node_id = 4 : i64, semantic_type = !logic1
+      } {}
+      obelisk.sv.symbol.variable @period attributes {
           hierarchical_name = "top.period", lifetime = 1 : i32,
-          name = "period", node_id = 5 : i64, semantic_type = !logic1,
-          sym_name = "period"} {}
-      obelisk.sv.symbol.variable attributes {
+          name = "period", node_id = 5 : i64, semantic_type = !logic1
+      } {}
+      obelisk.sv.symbol.variable @width attributes {
           hierarchical_name = "top.width", lifetime = 1 : i32,
-          name = "width", node_id = 6 : i64, semantic_type = !logic1,
-          sym_name = "width"} {}
-      obelisk.sv.symbol.specify_block attributes {
-          hierarchical_name = "top", node_id = 7 : i64,
-          sym_name = "specify"} {
-        obelisk.sv.symbol.system_timing_check attributes {
+          name = "width", node_id = 6 : i64, semantic_type = !logic1
+      } {}
+      obelisk.sv.symbol.specify_block @specify attributes {
+          hierarchical_name = "top", node_id = 7 : i64
+      } {
+        obelisk.sv.symbol.system_timing_check @skew attributes {
             hierarchical_name = "top", node_id = 8 : i64,
-            sym_name = "skew", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             time_unit_fs = 1000000 : i64,
             time_precision_fs = 1000 : i64,
             timing_check_kind = 7 : i32,
@@ -62,9 +62,9 @@ module {
               node_id = 11 : i64, constant_value = "3",
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
         }
-        obelisk.sv.symbol.system_timing_check attributes {
+        obelisk.sv.symbol.system_timing_check @period_check attributes {
             hierarchical_name = "top", node_id = 12 : i64,
-            sym_name = "period_check", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             time_unit_fs = 1000000 : i64,
             time_precision_fs = 1000 : i64,
             timing_check_kind = 10 : i32,
@@ -86,9 +86,9 @@ module {
               node_id = 14 : i64, constant_value = "4",
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
         }
-        obelisk.sv.symbol.system_timing_check attributes {
+        obelisk.sv.symbol.system_timing_check @width_check attributes {
             hierarchical_name = "top", node_id = 15 : i64,
-            sym_name = "width_check", obelisk.basic_timing_check,
+            obelisk.basic_timing_check,
             time_unit_fs = 1000000 : i64,
             time_precision_fs = 1000 : i64,
             timing_check_kind = 11 : i32,

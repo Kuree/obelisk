@@ -35,6 +35,7 @@ def RTScratchOp : RTOp<"bytes.scratch", [MemoryEffects<[MemAlloc]>]> {
 def RTBytesSizeOp : RTOp<"bytes.size", [Pure]> {
   let arguments = (ins AnyType:$bytes);
   let results = (outs I64:$size);
+  let assemblyFormat = "$bytes attr-dict `:` type($bytes)";
   let hasVerifier = 1;
 }
 
@@ -49,6 +50,7 @@ def RTPackedFromBytesOp : RTOp<"bytes.to_packed", [MemoryEffects<[MemRead]>]> {
 
 def RTArgumentEmptyOp : RTOp<"argument.empty", [Pure]> {
   let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "attr-dict";
   let hasVerifier = 1;
 }
 
@@ -77,6 +79,7 @@ def RTArgumentRawAggregateOp
     : RTOp<"argument.raw_aggregate", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins I64:$pattern, I64:$two_state, I64:$four_state);
   let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$pattern `,` $two_state `,` $four_state attr-dict";
   let hasVerifier = 1;
 }
 
@@ -107,29 +110,34 @@ def RTArgumentManagedContainerOp
     : RTOp<"argument.managed_container", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins I64:$value);
   let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTArgumentManagedObjectOp
     : RTOp<"argument.managed_object", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins I64:$value);
   let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTArgumentVirtualInterfaceOp
     : RTOp<"argument.virtual_interface", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins I64:$value);
   let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTArgumentProcessOp
     : RTOp<"argument.process", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins I64:$value);
   let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTArgumentArrayOp : RTOp<"argument.array", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins Variadic<RTArgumentType>:$arguments);
   let results = (outs RTArgumentArrayType:$result);
+  let assemblyFormat = "`(` $arguments `)` attr-dict";
   let hasVerifier = 1;
 }
 
@@ -150,11 +158,13 @@ def RTFormatEnvironmentOp : RTOp<"format.environment", [
 def RTFileDescriptorFromBitsOp : RTOp<"file_descriptor.from_bits", [Pure]> {
   let arguments = (ins I32:$value);
   let results = (outs RTFileDescriptorType:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTFileDescriptorToBitsOp : RTOp<"file_descriptor.to_bits", [Pure]> {
   let arguments = (ins RTFileDescriptorType:$value);
   let results = (outs I32:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTStatusIsOp : RTOp<"status.is", [Pure]> {
@@ -166,11 +176,13 @@ def RTStatusIsOp : RTOp<"status.is", [Pure]> {
 def RTStatusFromBitsOp : RTOp<"status.from_bits", [Pure]> {
   let arguments = (ins I32:$value);
   let results = (outs RTStatusType:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 def RTStatusToBitsOp : RTOp<"status.to_bits", [Pure]> {
   let arguments = (ins RTStatusType:$value);
   let results = (outs I32:$result);
+  let assemblyFormat = "$value attr-dict";
 }
 
 // Context, errors, and owned buffers.

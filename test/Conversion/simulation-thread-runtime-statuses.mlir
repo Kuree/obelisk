@@ -22,8 +22,8 @@ module {
             {simulation.capture_kind = 0 : i32},
         %value: i32 {simulation.capture_kind = 2 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %status = runtime.status.from_bits %value :
-          (i32) -> !runtime.status
+      %status = runtime.status.from_bits %value
+
       simulation.status.check %status
       simulation.return %value : i32
     }
@@ -52,8 +52,8 @@ module {
         %status_bits: i32 {simulation.capture_kind = 2 : i32},
         %value: f64 {simulation.capture_kind = 2 : i32}) -> f64
         attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
-      %status = runtime.status.from_bits %status_bits :
-          (i32) -> !runtime.status
+      %status = runtime.status.from_bits %status_bits
+
       simulation.status.check %status
       simulation.return %value : f64
     }
@@ -63,8 +63,8 @@ module {
         %this: !simulation.class_handle<@Box> {simulation.capture_kind = 1 : i32},
         %bits: i32 {simulation.capture_kind = 2 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
-      %status = runtime.status.from_bits %bits :
-          (i32) -> !runtime.status
+      %status = runtime.status.from_bits %bits
+
       simulation.status.check %status
       simulation.return %bits : i32
     }
@@ -90,8 +90,8 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %bits: i32 {simulation.capture_kind = 2 : i32}) -> i32
         attributes {entry_kind = 8 : i32, code_unit_id = 10 : i64} {
-      %status = runtime.status.from_bits %bits :
-          (i32) -> !runtime.status
+      %status = runtime.status.from_bits %bits
+
       simulation.status.check %status
       simulation.return %bits : i32
     }

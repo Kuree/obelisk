@@ -24,17 +24,17 @@ module attributes {
       %zero = arith.constant 0 : i32
       %one = arith.constant 1 : i32
       %field, %cursor, %plan, %kind, %ok =
-          "simulation.string.scan_dynamic"(%input, %zero, %format, %zero, %one)
+          simulation.string.scan_dynamic %input, %zero, %format, %zero, %one
           {allowed_specifiers = 34603008 : i64, finalize = false,
            raw_four_state_bytes = 16 : i64, raw_two_state_bytes = 8 : i64} :
           (!simulation.string, i32, !simulation.string, i32, i32) ->
           (!simulation.string, i32, i32, i32, i32)
-      %first, %after_first, %first_ok = "simulation.string.scan_raw"(
-          %field, %zero) {four_state = false, max_width = 0 : i64,
+      %first, %after_first, %first_ok = simulation.string.scan_raw
+          %field, %zero {four_state = false, max_width = 0 : i64,
                           prefix = ""} :
           (!simulation.string, i32) -> (!simulation.logic<8>, i32, i32)
-      %second, %after_second, %second_ok = "simulation.string.scan_raw"(
-          %field, %after_first) {four_state = false, max_width = 0 : i64,
+      %second, %after_second, %second_ok = simulation.string.scan_raw
+          %field, %after_first {four_state = false, max_width = 0 : i64,
                                  prefix = ""} :
           (!simulation.string, i32) -> (!simulation.logic<4>, i32, i32)
       %pair = simulation.aggregate.construct %first, %second :

@@ -8,18 +8,18 @@
 // not the unsigned spelling of its two's-complement pattern.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "string_radix_toa", name = "string_radix_toa", node_id = 0 : i64, sym_name = "s0.string_radix_toa"} {
+  obelisk.sv.symbol.definition @s0.string_radix_toa attributes {definition_kind = 0 : i32, hierarchical_name = "string_radix_toa", name = "string_radix_toa", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "string_radix_toa", is_uninstantiated = false, name = "string_radix_toa", node_id = 3 : i64, referenced_path = "string_radix_toa", referenced_symbol = @s0.string_radix_toa, sym_name = "s3.string_radix_toa"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "string_radix_toa", name = "string_radix_toa", node_id = 4 : i64, sym_name = "s4.string_radix_toa", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "string_radix_toa.s", lifetime = 1 : i32, name = "s", node_id = 5 : i64, semantic_type = !obelisk.string, sym_name = "s5.s"} {
+    obelisk.sv.symbol.instance @s3.string_radix_toa attributes {hierarchical_name = "string_radix_toa", is_uninstantiated = false, name = "string_radix_toa", node_id = 3 : i64, referenced_path = "string_radix_toa", referenced_symbol = @s0.string_radix_toa} {
+      obelisk.sv.symbol.instance_body @s4.string_radix_toa attributes {hierarchical_name = "string_radix_toa", name = "string_radix_toa", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.s attributes {hierarchical_name = "string_radix_toa.s", lifetime = 1 : i32, name = "s", node_id = 5 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "string_radix_toa.v", lifetime = 1 : i32, name = "v", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s6.v"} {
+        obelisk.sv.symbol.variable @s6.v attributes {hierarchical_name = "string_radix_toa.v", lifetime = 1 : i32, name = "v", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "string_radix_toa", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "string_radix_toa", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 8 : i64} {
             obelisk.sv.statement.list attributes {node_id = 9 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {

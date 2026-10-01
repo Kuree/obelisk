@@ -8,19 +8,18 @@
 // the object under construction.
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.t attributes {
     definition_kind = 0 : i32, hierarchical_name = "t", name = "t",
-    node_id = 0 : i64, sym_name = "s0.t"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s3.C attributes {
         bitstream_width = 8 : i64, constructor_path = "C::new",
         constructor_symbol = @s1.$root::@s2::@s3.C::@s9.new,
         declared_interfaces = [], generic_parameter_paths = [],
@@ -30,19 +29,18 @@ module {
         is_interface = false, is_uninstantiated = false, name = "C",
         node_id = 3 : i64,
         semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-        sym_name = "s3.C", this_variable_path = "C::this",
+        this_variable_path = "C::this",
         this_variable_symbol = @s1.$root::@s2::@s3.C::@s27.this
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s4.v attributes {
           hierarchical_name = "C::v", name = "v", node_id = 4 : i64,
           rand_mode = 1 : i32,
-          semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s4.v"
+          semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.constraint_block attributes {
+        obelisk.sv.symbol.constraint_block @s5.lo attributes {
           hierarchical_name = "C::lo", name = "lo", node_id = 5 : i64,
-          sym_name = "s5.lo", this_variable_path = "C::lo.this",
+          this_variable_path = "C::lo.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.lo::@s6.this
         } {
           obelisk.sv.constraint.list attributes {
@@ -82,17 +80,16 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s6.this attributes {
             hierarchical_name = "C::lo.this", is_compiler_generated, is_const,
             name = "this", node_id = 13 : i64,
-            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-            sym_name = "s6.this"
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
           } {
           }
         }
-        obelisk.sv.symbol.constraint_block attributes {
+        obelisk.sv.symbol.constraint_block @s7.hi attributes {
           hierarchical_name = "C::hi", name = "hi", node_id = 14 : i64,
-          sym_name = "s7.hi", this_variable_path = "C::hi.this",
+          this_variable_path = "C::hi.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s7.hi::@s8.this
         } {
           obelisk.sv.constraint.list attributes {
@@ -133,19 +130,18 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s8.this attributes {
             hierarchical_name = "C::hi.this", is_compiler_generated, is_const,
             name = "this", node_id = 22 : i64,
-            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-            sym_name = "s8.this"
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
           } {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s9.new attributes {
           hierarchical_name = "C::new", is_constructor, name = "new",
           node_id = 23 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s9.new",
+          subroutine_kind = 0 : i32,
           this_variable_path = "C::new.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s9.new::@s10.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -180,43 +176,39 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s10.this attributes {
             hierarchical_name = "C::new.this", is_compiler_generated, is_const,
             name = "this", node_id = 28 : i64,
-            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-            sym_name = "s10.this"
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
           } {
           }
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s27.this attributes {
           hierarchical_name = "C::this", is_compiler_generated, is_const,
           name = "this", node_id = 58 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-          sym_name = "s27.this"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
         } {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s23.t attributes {
       hierarchical_name = "t", is_uninstantiated = false, name = "t",
-      node_id = 49 : i64, referenced_path = "t", referenced_symbol = @s0.t,
-      sym_name = "s23.t"
+      node_id = 49 : i64, referenced_path = "t", referenced_symbol = @s0.t
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s24.t attributes {
         hierarchical_name = "t", name = "t", node_id = 50 : i64,
-        sym_name = "s24.t", time_precision_fs = 1000000 : i64,
+        time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s25.o attributes {
           hierarchical_name = "t.o", lifetime = 1 : i32, name = "o",
           node_id = 51 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-          sym_name = "s25.o"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s26 attributes {
           hierarchical_name = "t", node_id = 52 : i64,
-          procedure_kind = 0 : i32, sym_name = "s26",
+          procedure_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.expression_statement attributes {

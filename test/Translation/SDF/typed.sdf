@@ -44,22 +44,20 @@
       (INCREMENT (LATENCY (4))))))
 
 // CHECK: obelisk_sdf.delay_file
-// CHECK-SAME: sdf_version = "4.0"
+// CHECK-SAME: version "4.0"
 // CHECK-SAME: timescale = #obelisk_sdf.timescale
 // CHECK-SAME: voltage = #obelisk_sdf.delay_value<form = triple, min = <"0.9">, typ = <"1.0">, max = <"1.1">>
 // CHECK: obelisk_sdf.cell
 // CHECK: obelisk_sdf.path_delay
-// CHECK-SAME: delays = [#obelisk_sdf.delay_value
+// CHECK-SAME: delays [#obelisk_sdf.delay_value
 // CHECK: #obelisk_sdf.condition_token
 // CHECK: obelisk_sdf.interconnect_delay
 // CHECK: obelisk_sdf.terminal_delay
 // CHECK: obelisk_sdf.pulse
 // CHECK: obelisk_sdf.timing_check
-// CHECK: kind = 7 : i32
-// CHECK: obelisk_sdf.label
-// CHECK-SAME: mode = 0 : i32
-// CHECK: obelisk_sdf.label
-// CHECK-SAME: mode = 1 : i32
+// CHECK: obelisk_sdf.timing_check bidirectskew
+// CHECK: obelisk_sdf.label absolute "LATENCY" = #obelisk_sdf.delay_value
+// CHECK: obelisk_sdf.label increment "LATENCY" = #obelisk_sdf.delay_value
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime
 

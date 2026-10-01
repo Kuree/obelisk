@@ -13,20 +13,20 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "unpacked_element_event", name = "unpacked_element_event", node_id = 0 : i64, sym_name = "s0.unpacked_element_event"} {
+  obelisk.sv.symbol.definition @s0.unpacked_element_event attributes {definition_kind = 0 : i32, hierarchical_name = "unpacked_element_event", name = "unpacked_element_event", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "unpacked_element_event", is_uninstantiated = false, name = "unpacked_element_event", node_id = 3 : i64, referenced_path = "unpacked_element_event", referenced_symbol = @s0.unpacked_element_event, sym_name = "s3.unpacked_element_event"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "unpacked_element_event", name = "unpacked_element_event", node_id = 4 : i64, sym_name = "s4.unpacked_element_event", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_element_event.mem", lifetime = 1 : i32, name = "mem", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<3 : 0 x !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>>, sym_name = "s5.mem"} {
+    obelisk.sv.symbol.instance @s3.unpacked_element_event attributes {hierarchical_name = "unpacked_element_event", is_uninstantiated = false, name = "unpacked_element_event", node_id = 3 : i64, referenced_path = "unpacked_element_event", referenced_symbol = @s0.unpacked_element_event} {
+      obelisk.sv.symbol.instance_body @s4.unpacked_element_event attributes {hierarchical_name = "unpacked_element_event", name = "unpacked_element_event", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.mem attributes {hierarchical_name = "unpacked_element_event.mem", lifetime = 1 : i32, name = "mem", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<3 : 0 x !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_element_event.idx", lifetime = 1 : i32, name = "idx", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>, sym_name = "s6.idx"} {
+        obelisk.sv.symbol.variable @s6.idx attributes {hierarchical_name = "unpacked_element_event.idx", lifetime = 1 : i32, name = "idx", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "unpacked_element_event.out", lifetime = 1 : i32, name = "out", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>, sym_name = "s7.out"} {
+        obelisk.sv.symbol.variable @s7.out attributes {hierarchical_name = "unpacked_element_event.out", lifetime = 1 : i32, name = "out", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "unpacked_element_event", node_id = 8 : i64, procedure_kind = 2 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "unpacked_element_event", node_id = 8 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 9 : i64} {
             obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 10 : i64} {
               obelisk.sv.expression.element_select attributes {is_signed = false, node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>} {
@@ -61,7 +61,7 @@ module attributes {
 // CHECK-SAME: %[[IDX:[^:]*]]: !simulation.ref<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>
 // CHECK: %[[OBSERVER:.*]] = simulation.observer.bind @observer_
 // CHECK-SAME: values(%[[MEM]], %[[IDX]], %[[MEM]], %[[IDX]]
-// CHECK-SAME: captures 2 : <!simulation.logic<8>>
+// CHECK-SAME: captures 2 : !simulation.observer<!simulation.logic<8>>
 // CHECK: simulation.suspend.observe %[[OBSERVER]],
 
 // CHECK: simulation.func private @observer_

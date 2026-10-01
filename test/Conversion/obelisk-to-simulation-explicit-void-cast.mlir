@@ -9,16 +9,16 @@
 // CHECK-NOT: simulation.class_bitstream_source_feature
 
 module {
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "root"} {
-    obelisk.sv.symbol.instance_body attributes {
+  obelisk.sv.symbol.root @root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.instance_body @body attributes {
         hierarchical_name = "top", name = "top", node_id = 2 : i64,
-        sym_name = "body", time_precision_fs = 1000000 : i64,
+        time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64} {
-      obelisk.sv.symbol.procedural_block attributes {
+      obelisk.sv.symbol.procedural_block @initial attributes {
           hierarchical_name = "top", node_id = 3 : i64,
-          procedure_kind = 0 : i32, sym_name = "initial",
+          procedure_kind = 0 : i32,
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64} {
         obelisk.sv.statement.block attributes {node_id = 4 : i64} {

@@ -37,8 +37,8 @@ module attributes {
         (!simulation.context, !simulation.string, i64,
          !simulation.argument_ref<!simulation.string>) ->
         !simulation.reference_path<i8>
-      %aggregate_path = "simulation.reference_path.aggregate_element"(
-          %ctx, %fixed_owner, %index) {
+      %aggregate_path = simulation.reference_path.aggregate_element
+          %ctx, %fixed_owner, %index {
             alignment = 1 : i64,
             bit_width = 32 : i64,
             element_flags = #simulation.element_flags<none>,
@@ -53,11 +53,11 @@ module attributes {
           } : (!simulation.context,
                !simulation.argument_ref<!simulation.unpacked_array<1 : 4 x i32>>,
                i64) -> !simulation.reference_path<i32>
-      "simulation.container.import_fixed"(%dynamic, %fixed) {
+      simulation.container.import_fixed %dynamic, %fixed {
         element_span = 32 : i64
       } : (!simulation.dynamic_array<i32>,
            !simulation.unpacked_array<1 : 4 x i32>) -> ()
-      %updated = "simulation.container.export_fixed"(%dynamic) {
+      %updated = simulation.container.export_fixed %dynamic {
         element_span = 32 : i64
       } : (!simulation.dynamic_array<i32>) ->
           !simulation.unpacked_array<1 : 4 x i32>

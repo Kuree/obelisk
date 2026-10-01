@@ -8,18 +8,17 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.top attributes {
     definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
-    node_id = 0 : i64, sym_name = "s0.top"
+    node_id = 0 : i64
   } {}
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s3.C attributes {
         bitstream_width = 32 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
@@ -27,18 +26,17 @@ module attributes {
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "C", node_id = 3 : i64,
         semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-        sym_name = "s3.C", this_variable_path = "C::this",
+        this_variable_path = "C::this",
         this_variable_symbol = @s1.$root::@s2::@s3.C::@s7.this
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s4.value attributes {
           hierarchical_name = "C::value", name = "value", node_id = 4 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s4.value"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s5.spawn attributes {
           hierarchical_name = "C::spawn", name = "spawn", node_id = 5 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-          subroutine_kind = 0 : i32, sym_name = "s5.spawn",
+          subroutine_kind = 0 : i32,
           this_variable_path = "C::spawn.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s5.spawn::@s6.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -79,18 +77,17 @@ module attributes {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s6.this attributes {
             hierarchical_name = "C::spawn.this", is_compiler_generated,
             is_const, name = "this", node_id = 15 : i64,
-            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-            sym_name = "s6.this"
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
           } {}
         }
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s10.wait_value attributes {
           hierarchical_name = "C::wait_value", name = "wait_value",
           node_id = 100 : i64,
           semantic_type = !obelisk.subroutine<() -> (), true>,
-          subroutine_kind = 1 : i32, sym_name = "s10.wait_value",
+          subroutine_kind = 1 : i32,
           this_variable_path = "C::wait_value.this",
           this_variable_symbol = @s1.$root::@s2::@s3.C::@s10.wait_value::@s11.this,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
@@ -121,29 +118,26 @@ module attributes {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {
+          obelisk.sv.symbol.variable @s11.this attributes {
             hierarchical_name = "C::wait_value.this", is_compiler_generated,
             is_const, name = "this", node_id = 108 : i64,
-            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-            sym_name = "s11.this"
+            semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
           } {}
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s7.this attributes {
           hierarchical_name = "C::this", is_compiler_generated, is_const,
           name = "this", node_id = 16 : i64,
-          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>,
-          sym_name = "s7.this"
+          semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.C>
         } {}
       }
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s8.top attributes {
       hierarchical_name = "top", is_uninstantiated = false, name = "top",
-      node_id = 17 : i64, referenced_path = "top", referenced_symbol = @s0.top,
-      sym_name = "s8.top"
+      node_id = 17 : i64, referenced_path = "top", referenced_symbol = @s0.top
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s9.top attributes {
         hierarchical_name = "top", name = "top", node_id = 18 : i64,
-        sym_name = "s9.top", time_precision_fs = 1000000 : i64,
+        time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64
       } {}
     }

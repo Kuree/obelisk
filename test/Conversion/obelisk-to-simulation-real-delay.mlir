@@ -2,24 +2,23 @@
 // RUN:   FileCheck %s --implicit-check-not=simulation.time.from_real
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 0 : i64, sym_name = "s0.simulation_real_delay"} {
+  obelisk.sv.symbol.definition @s0.simulation_real_delay attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_real_delay", is_uninstantiated = false, name = "simulation_real_delay", node_id = 3 : i64, referenced_path = "simulation_real_delay", referenced_symbol = @s0.simulation_real_delay, sym_name = "s3.simulation_real_delay"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 4 : i64, sym_name = "s4.simulation_real_delay"} {
-        obelisk.sv.symbol.parameter attributes {
+    obelisk.sv.symbol.instance @s3.simulation_real_delay attributes {hierarchical_name = "simulation_real_delay", is_uninstantiated = false, name = "simulation_real_delay", node_id = 3 : i64, referenced_path = "simulation_real_delay", referenced_symbol = @s0.simulation_real_delay} {
+      obelisk.sv.symbol.instance_body @s4.simulation_real_delay attributes {hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 4 : i64} {
+        obelisk.sv.symbol.parameter @s25.D attributes {
           constant_value = "1.55", hierarchical_name = "simulation_real_delay.D",
-          name = "D", node_id = 25 : i64, semantic_type = !obelisk.real,
-          sym_name = "s25.D"
+          name = "D", node_id = 25 : i64, semantic_type = !obelisk.real
         } {
           obelisk.sv.expression.real_literal attributes {
             constant_value = "1.55", node_id = 26 : i64,
             semantic_type = !obelisk.real
           } {}
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_real_delay", node_id = 5 : i64, procedure_kind = 0 : i32, sym_name = "s5", time_precision_fs = 100000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s5 attributes {hierarchical_name = "simulation_real_delay", node_id = 5 : i64, procedure_kind = 0 : i32, time_precision_fs = 100000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 6 : i64} {
             obelisk.sv.statement.list attributes {node_id = 7 : i64} {
               obelisk.sv.statement.timed attributes {node_id = 8 : i64} {

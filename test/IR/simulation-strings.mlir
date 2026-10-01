@@ -26,11 +26,11 @@ module {
       case_insensitive = true
     %lower = simulation.string.case_convert %substring to_upper = false
     %parsed = simulation.string.parse_integer %input radix = <hex>
-    %real = "simulation.string.parse_real"(%input) :
+    %real = simulation.string.parse_real %input :
       (!simulation.string) -> f64
     %formatted = simulation.string.format_integer %length
       radix = <decimal> signed = false
-    %formatted_real = "simulation.string.format_real"(%real) :
+    %formatted_real = simulation.string.format_real %real :
       (f64) -> !simulation.string
     return %comparison : i32
   }

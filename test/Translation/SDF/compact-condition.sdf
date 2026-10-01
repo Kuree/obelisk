@@ -16,11 +16,11 @@
 
 // IEEE 1800-2017 32.4 conditions are normalized into typed postfix tokens;
 // compact operators must never disappear into a port spelling.
-// CHECK: condition = #obelisk_sdf.condition
+// CHECK: when #obelisk_sdf.condition
 // CHECK-SAME: opcode = port, port = <name = "a"
 // CHECK-SAME: opcode = port, port = <name = "b"
 // CHECK-SAME: opcode = and
-// CHECK: condition = #obelisk_sdf.condition
+// CHECK: when #obelisk_sdf.condition
 // CHECK-SAME: opcode = port, port = <name = "a"
 // CHECK-SAME: opcode = constant, constant = 1
 // CHECK-SAME: opcode = eq

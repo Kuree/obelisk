@@ -6,44 +6,44 @@
 // RUN: diff %t.threaded %t.serial
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "s4.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "top.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.port @s5.clk attributes {direction = 0 : i32, hierarchical_name = "top.clk", name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.clk"} {
+        obelisk.sv.symbol.variable @s6.clk attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "top.a", name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.a"} {
+        obelisk.sv.symbol.port @s7.a attributes {direction = 0 : i32, hierarchical_name = "top.a", name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.a"} {
+        obelisk.sv.symbol.variable @s8.a attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "top.b", name = "b", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.b"} {
+        obelisk.sv.symbol.port @s9.b attributes {direction = 0 : i32, hierarchical_name = "top.b", name = "b", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.b"} {
+        obelisk.sv.symbol.variable @s10.b attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "top.c", name = "c", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.c"} {
+        obelisk.sv.symbol.port @s11.c attributes {direction = 0 : i32, hierarchical_name = "top.c", name = "c", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.c", lifetime = 1 : i32, name = "c", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.c"} {
+        obelisk.sv.symbol.variable @s12.c attributes {hierarchical_name = "top.c", lifetime = 1 : i32, name = "c", node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.sequence attributes {has_default_instance = false, hierarchical_name = "top.s", name = "s", node_id = 13 : i64, port_count = 2 : i64, port_paths = ["top.s.x", "top.s.y"], port_symbols = [@s1.$root::@s3.top::@s4.top::@s13.s::@s14.x, @s1.$root::@s3.top::@s4.top::@s13.s::@s15.y], sym_name = "s13.s"} {
-          obelisk.sv.symbol.assertion_port attributes {has_default_value = false, hierarchical_name = "top.s.x", is_local_variable = false, name = "x", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s14.x"} {
+        obelisk.sv.symbol.sequence @s13.s attributes {has_default_instance = false, hierarchical_name = "top.s", name = "s", node_id = 13 : i64, port_count = 2 : i64, port_paths = ["top.s.x", "top.s.y"], port_symbols = [@s1.$root::@s3.top::@s4.top::@s13.s::@s14.x, @s1.$root::@s3.top::@s4.top::@s13.s::@s15.y]} {
+          obelisk.sv.symbol.assertion_port @s14.x attributes {has_default_value = false, hierarchical_name = "top.s.x", is_local_variable = false, name = "x", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
-          obelisk.sv.symbol.assertion_port attributes {has_default_value = true, hierarchical_name = "top.s.y", is_local_variable = false, name = "y", node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s15.y"} {
-          }
-        }
-        obelisk.sv.symbol.property attributes {has_default_instance = false, hierarchical_name = "top.p", name = "p", node_id = 16 : i64, port_count = 2 : i64, port_paths = ["top.p.x", "top.p.y"], port_symbols = [@s1.$root::@s3.top::@s4.top::@s16.p::@s17.x, @s1.$root::@s3.top::@s4.top::@s16.p::@s18.y], sym_name = "s16.p"} {
-          obelisk.sv.symbol.assertion_port attributes {has_default_value = false, hierarchical_name = "top.p.x", is_local_variable = false, name = "x", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s17.x"} {
-          }
-          obelisk.sv.symbol.assertion_port attributes {has_default_value = true, hierarchical_name = "top.p.y", is_local_variable = false, name = "y", node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s18.y"} {
+          obelisk.sv.symbol.assertion_port @s15.y attributes {has_default_value = true, hierarchical_name = "top.s.y", is_local_variable = false, name = "y", node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "top.ap", name = "ap", node_id = 19 : i64, sym_name = "s19.ap"} {
+        obelisk.sv.symbol.property @s16.p attributes {has_default_instance = false, hierarchical_name = "top.p", name = "p", node_id = 16 : i64, port_count = 2 : i64, port_paths = ["top.p.x", "top.p.y"], port_symbols = [@s1.$root::@s3.top::@s4.top::@s16.p::@s17.x, @s1.$root::@s3.top::@s4.top::@s16.p::@s18.y]} {
+          obelisk.sv.symbol.assertion_port @s17.x attributes {has_default_value = false, hierarchical_name = "top.p.x", is_local_variable = false, name = "x", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+          }
+          obelisk.sv.symbol.assertion_port @s18.y attributes {has_default_value = true, hierarchical_name = "top.p.y", is_local_variable = false, name = "y", node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+          }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 20 : i64, procedure_kind = 2 : i32, sym_name = "s20", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.statement_block @s19.ap attributes {block_kind = 0 : i32, hierarchical_name = "top.ap", name = "ap", node_id = 19 : i64} {
+        }
+        obelisk.sv.symbol.procedural_block @s20 attributes {hierarchical_name = "top", node_id = 20 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "top.ap", block_symbol = @s1.$root::@s3.top::@s4.top::@s19.ap, node_id = 21 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 22 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 23 : i64} {

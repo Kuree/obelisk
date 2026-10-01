@@ -31,18 +31,18 @@
 // CHECK-NOT: obelisk.sv.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "event_formal", name = "event_formal", node_id = 0 : i64, sym_name = "s0.event_formal"} {
+  obelisk.sv.symbol.definition @s0.event_formal attributes {definition_kind = 0 : i32, hierarchical_name = "event_formal", name = "event_formal", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "event_formal", is_uninstantiated = false, name = "event_formal", node_id = 3 : i64, referenced_path = "event_formal", referenced_symbol = @s0.event_formal, sym_name = "s3.event_formal"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "event_formal", name = "event_formal", node_id = 4 : i64, sym_name = "s4.event_formal", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "event_formal.source", lifetime = 1 : i32, name = "source", node_id = 5 : i64, semantic_type = !obelisk.event, sym_name = "s5.source"} {
+    obelisk.sv.symbol.instance @s3.event_formal attributes {hierarchical_name = "event_formal", is_uninstantiated = false, name = "event_formal", node_id = 3 : i64, referenced_path = "event_formal", referenced_symbol = @s0.event_formal} {
+      obelisk.sv.symbol.instance_body @s4.event_formal attributes {hierarchical_name = "event_formal", name = "event_formal", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.source attributes {hierarchical_name = "event_formal.source", lifetime = 1 : i32, name = "source", node_id = 5 : i64, semantic_type = !obelisk.event} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "event_formal.destination", lifetime = 1 : i32, name = "destination", node_id = 6 : i64, semantic_type = !obelisk.event, sym_name = "s6.destination"} {
+        obelisk.sv.symbol.variable @s6.destination attributes {hierarchical_name = "event_formal.destination", lifetime = 1 : i32, name = "destination", node_id = 6 : i64, semantic_type = !obelisk.event} {
         }
-        obelisk.sv.symbol.subroutine attributes {default_lifetime = 1 : i32, hierarchical_name = "event_formal.copy_event", name = "copy_event", node_id = 7 : i64, semantic_type = !obelisk.subroutine<(!obelisk.event, !obelisk.event) -> (), true>, subroutine_kind = 1 : i32, sym_name = "s7.copy_event", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s7.copy_event attributes {default_lifetime = 1 : i32, hierarchical_name = "event_formal.copy_event", name = "copy_event", node_id = 7 : i64, semantic_type = !obelisk.subroutine<(!obelisk.event, !obelisk.event) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 9 : i64, semantic_type = !obelisk.event} {
               obelisk.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "event_formal.copy_event.outgoing", referenced_symbol = @s1.$root::@s3.event_formal::@s4.event_formal::@s7.copy_event::@s9.outgoing, semantic_type = !obelisk.event} {
@@ -51,14 +51,14 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "event_formal.copy_event.incoming", lifetime = 1 : i32, name = "incoming", node_id = 12 : i64, semantic_type = !obelisk.event, sym_name = "s8.incoming"} {
+          obelisk.sv.symbol.formal_argument @s8.incoming attributes {direction = 0 : i32, hierarchical_name = "event_formal.copy_event.incoming", lifetime = 1 : i32, name = "incoming", node_id = 12 : i64, semantic_type = !obelisk.event} {
             obelisk.sv.expression.named_value attributes {node_id = 21 : i64, referenced_path = "event_formal.source", referenced_symbol = @s1.$root::@s3.event_formal::@s4.event_formal::@s5.source, semantic_type = !obelisk.event} {
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "event_formal.copy_event.outgoing", lifetime = 1 : i32, name = "outgoing", node_id = 13 : i64, semantic_type = !obelisk.event, sym_name = "s9.outgoing"} {
+          obelisk.sv.symbol.formal_argument @s9.outgoing attributes {direction = 1 : i32, hierarchical_name = "event_formal.copy_event.outgoing", lifetime = 1 : i32, name = "outgoing", node_id = 13 : i64, semantic_type = !obelisk.event} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "event_formal", node_id = 14 : i64, procedure_kind = 0 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "event_formal", node_id = 14 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 15 : i64} {
             obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "copy_event", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_super_class = false, is_system_call = false, node_id = 16 : i64, referenced_path = "event_formal.copy_event", referenced_symbol = @s1.$root::@s3.event_formal::@s4.event_formal::@s7.copy_event, semantic_type = !obelisk.void, subroutine_kind = 1 : i32} {
               obelisk.sv.expression.named_value attributes {node_id = 17 : i64, referenced_path = "event_formal.source", referenced_symbol = @s1.$root::@s3.event_formal::@s4.event_formal::@s5.source, semantic_type = !obelisk.event} {

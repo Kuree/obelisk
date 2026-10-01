@@ -13,7 +13,7 @@ module {
 
 // CHECK-LABEL: func.func @display_realtime
 // CHECK: %[[ARG:.*]] = runtime.argument.real %arg1 {is_time = true}
-// CHECK: runtime.argument.array %[[ARG]]
+// CHECK: runtime.argument.array(%[[ARG]])
 // CHECK: runtime.format.environment
 // CHECK-SAME: time_multiplier = 1000 : i64
 // CHECK-SAME: time_precision = -12 : i32

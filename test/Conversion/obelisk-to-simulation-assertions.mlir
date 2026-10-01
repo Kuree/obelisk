@@ -1,22 +1,22 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "assertion_lowering", name = "assertion_lowering", node_id = 0 : i64, sym_name = "s0.assertion_lowering"} {
+  obelisk.sv.symbol.definition @s0.assertion_lowering attributes {definition_kind = 0 : i32, hierarchical_name = "assertion_lowering", name = "assertion_lowering", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 2 : i32, hierarchical_name = "assertion_program", name = "assertion_program", node_id = 1 : i64, sym_name = "s1.assertion_program"} {
+  obelisk.sv.symbol.definition @s1.assertion_program attributes {definition_kind = 2 : i32, hierarchical_name = "assertion_program", name = "assertion_program", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "assertion_lowering", is_uninstantiated = false, name = "assertion_lowering", node_id = 4 : i64, referenced_path = "assertion_lowering", referenced_symbol = @s0.assertion_lowering, sym_name = "s4.assertion_lowering"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "assertion_lowering", name = "assertion_lowering", node_id = 5 : i64, sym_name = "s5.assertion_lowering"} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_lowering.a", name = "a", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.a"} {
+    obelisk.sv.symbol.instance @s4.assertion_lowering attributes {hierarchical_name = "assertion_lowering", is_uninstantiated = false, name = "assertion_lowering", node_id = 4 : i64, referenced_path = "assertion_lowering", referenced_symbol = @s0.assertion_lowering} {
+      obelisk.sv.symbol.instance_body @s5.assertion_lowering attributes {hierarchical_name = "assertion_lowering", name = "assertion_lowering", node_id = 5 : i64} {
+        obelisk.sv.symbol.port @s6.a attributes {direction = 0 : i32, hierarchical_name = "assertion_lowering.a", name = "a", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_lowering.a", lifetime = 1 : i32, name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.a"} {
+        obelisk.sv.symbol.variable @s7.a attributes {hierarchical_name = "assertion_lowering.a", lifetime = 1 : i32, name = "a", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_lowering.b", lifetime = 1 : i32, name = "b", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.b"} {
+        obelisk.sv.symbol.variable @s8.b attributes {hierarchical_name = "assertion_lowering.b", lifetime = 1 : i32, name = "b", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_lowering", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "assertion_lowering", node_id = 9 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {
             obelisk.sv.statement.list attributes {node_id = 11 : i64} {
               obelisk.sv.statement.immediate_assertion attributes {assertion_kind = 0 : i32, has_fail_action = true, has_pass_action = true, is_deferred = false, is_final = false, node_id = 12 : i64} {
@@ -124,13 +124,13 @@ module {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "assertion_program", is_uninstantiated = false, name = "assertion_program", node_id = 62 : i64, referenced_path = "assertion_program", referenced_symbol = @s1.assertion_program, sym_name = "s10.assertion_program"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "assertion_program", name = "assertion_program", node_id = 63 : i64, sym_name = "s11.assertion_program"} {
-        obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "assertion_program.a", name = "a", node_id = 64 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s12.a"} {
+    obelisk.sv.symbol.instance @s10.assertion_program attributes {hierarchical_name = "assertion_program", is_uninstantiated = false, name = "assertion_program", node_id = 62 : i64, referenced_path = "assertion_program", referenced_symbol = @s1.assertion_program} {
+      obelisk.sv.symbol.instance_body @s11.assertion_program attributes {hierarchical_name = "assertion_program", name = "assertion_program", node_id = 63 : i64} {
+        obelisk.sv.symbol.port @s12.a attributes {direction = 0 : i32, hierarchical_name = "assertion_program.a", name = "a", node_id = 64 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assertion_program.a", lifetime = 1 : i32, name = "a", node_id = 65 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s13.a"} {
+        obelisk.sv.symbol.variable @s13.a attributes {hierarchical_name = "assertion_program.a", lifetime = 1 : i32, name = "a", node_id = 65 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assertion_program", node_id = 66 : i64, procedure_kind = 0 : i32, sym_name = "s14", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s14 attributes {hierarchical_name = "assertion_program", node_id = 66 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.immediate_assertion attributes {assertion_kind = 0 : i32, has_fail_action = false, has_pass_action = true, is_deferred = true, is_final = false, node_id = 67 : i64} {
             obelisk.sv.expression.named_value attributes {node_id = 68 : i64, referenced_path = "assertion_program.a", referenced_symbol = @s2.$root::@s10.assertion_program::@s11.assertion_program::@s13.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }

@@ -104,11 +104,13 @@ class SlangSymbolASTNodeOp<string mnemonic, list<Trait> traits = [],
                            dag symbolArgs = (ins)>
     : SlangASTNodeOp<mnemonic, !listconcat([Symbol], traits),
         !con((ins
-          StrAttr:$sym_name,
+          SymbolNameAttr:$sym_name,
           OptionalAttr<StrAttr>:$name,
           OptionalAttr<StrAttr>:$hierarchical_name,
           OptionalAttr<TypeAttr>:$semantic_type
-        ), symbolArgs)>;
+        ), symbolArgs)> {
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+}
 
 // Every semantic scope is a symbol table and is isolated from above. The AST is
 // a pure attribute-and-region tree with no SSA values, so isolation is always
@@ -472,11 +474,13 @@ class SlangTypeASTNodeOp<string mnemonic, list<Trait> traits = [],
                          dag typeArgs = (ins)>
     : SlangASTNodeOp<mnemonic, !listconcat([Symbol], traits),
         !con((ins
-          StrAttr:$sym_name,
+          SymbolNameAttr:$sym_name,
           OptionalAttr<StrAttr>:$name,
           OptionalAttr<StrAttr>:$hierarchical_name,
           TypeAttr:$semantic_type
-        ), typeArgs)>;
+        ), typeArgs)> {
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+}
 
 class SlangScopeTypeASTNodeOp<string mnemonic, dag typeArgs = (ins),
                                list<Trait> traits = []>

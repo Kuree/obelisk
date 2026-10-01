@@ -8,20 +8,20 @@
 // condition is true at that moment.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "event_control_iff", name = "event_control_iff", node_id = 0 : i64, sym_name = "s0.event_control_iff"} {
+  obelisk.sv.symbol.definition @s0.event_control_iff attributes {definition_kind = 0 : i32, hierarchical_name = "event_control_iff", name = "event_control_iff", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "event_control_iff", is_uninstantiated = false, name = "event_control_iff", node_id = 3 : i64, referenced_path = "event_control_iff", referenced_symbol = @s0.event_control_iff, sym_name = "s3.event_control_iff"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "event_control_iff", name = "event_control_iff", node_id = 4 : i64, sym_name = "s4.event_control_iff", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "event_control_iff.d", lifetime = 1 : i32, name = "d", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s5.d"} {
+    obelisk.sv.symbol.instance @s3.event_control_iff attributes {hierarchical_name = "event_control_iff", is_uninstantiated = false, name = "event_control_iff", node_id = 3 : i64, referenced_path = "event_control_iff", referenced_symbol = @s0.event_control_iff} {
+      obelisk.sv.symbol.instance_body @s4.event_control_iff attributes {hierarchical_name = "event_control_iff", name = "event_control_iff", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.d attributes {hierarchical_name = "event_control_iff.d", lifetime = 1 : i32, name = "d", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "event_control_iff.enable", lifetime = 1 : i32, name = "enable", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.enable"} {
+        obelisk.sv.symbol.variable @s6.enable attributes {hierarchical_name = "event_control_iff.enable", lifetime = 1 : i32, name = "enable", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "event_control_iff.captured", lifetime = 1 : i32, name = "captured", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s7.captured"} {
+        obelisk.sv.symbol.variable @s7.captured attributes {hierarchical_name = "event_control_iff.captured", lifetime = 1 : i32, name = "captured", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "event_control_iff", node_id = 8 : i64, procedure_kind = 2 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "event_control_iff", node_id = 8 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 9 : i64} {
             obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = true, node_id = 10 : i64} {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 11 : i64, referenced_path = "event_control_iff.d", referenced_symbol = @s1.$root::@s3.event_control_iff::@s4.event_control_iff::@s5.d, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {

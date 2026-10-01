@@ -3,22 +3,22 @@
 // IEEE 1800-2017 20.6.2: $bits of a dynamic array, queue, or string is a
 // runtime inquiry over the live size, multiplied by the fixed element width.
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "s4.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.dynamic_value", lifetime = 1 : i32, name = "dynamic_value", node_id = 5 : i64, semantic_type = !obelisk.dynarray<!obelisk.integral<5, false, false, 4 : 0, bit>>, sym_name = "s5.dynamic_value"} {
+    obelisk.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.dynamic_value attributes {hierarchical_name = "top.dynamic_value", lifetime = 1 : i32, name = "dynamic_value", node_id = 5 : i64, semantic_type = !obelisk.dynarray<!obelisk.integral<5, false, false, 4 : 0, bit>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.queue_value", lifetime = 1 : i32, name = "queue_value", node_id = 6 : i64, semantic_type = !obelisk.queue<!obelisk.integral<8, false, false, 7 : 0, byte>, 0>, sym_name = "s6.queue_value"} {
+        obelisk.sv.symbol.variable @s6.queue_value attributes {hierarchical_name = "top.queue_value", lifetime = 1 : i32, name = "queue_value", node_id = 6 : i64, semantic_type = !obelisk.queue<!obelisk.integral<8, false, false, 7 : 0, byte>, 0>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.string_value", lifetime = 1 : i32, name = "string_value", node_id = 7 : i64, semantic_type = !obelisk.string, sym_name = "s7.string_value"} {
+        obelisk.sv.symbol.variable @s7.string_value attributes {hierarchical_name = "top.string_value", lifetime = 1 : i32, name = "string_value", node_id = 7 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.result", lifetime = 1 : i32, name = "result", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s8.result"} {
+        obelisk.sv.symbol.variable @s8.result attributes {hierarchical_name = "top.result", lifetime = 1 : i32, name = "result", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {
             obelisk.sv.statement.list attributes {node_id = 11 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 12 : i64} {

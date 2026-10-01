@@ -10,180 +10,169 @@ module {
   // A foreign operation with no Slang type must be preserved verbatim.
   %zero = arith.constant 0 : i32
 
-  slang.symbol.root attributes {
-    hierarchical_name = "$root", node_id = 0 : i64, sym_name = "root"
+  slang.symbol.root @root attributes {
+    hierarchical_name = "$root", node_id = 0 : i64
   } {
-    slang.symbol.definition attributes {
-      definition_kind = 1 : i32, node_id = 1 : i64, sym_name = "bus"
+    slang.symbol.definition @bus attributes {
+      definition_kind = 1 : i32, node_id = 1 : i64
     } {
     }
 
     // Integral, enum, and alias types.
-    slang.symbol.variable attributes {
+    slang.symbol.variable @word attributes {
       lifetime = 0 : i32, node_id = 2 : i64, rand_mode = 0 : i32,
-      sym_name = "word",
       semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
     } {
     }
-    slang.type.enum_type attributes {
-      node_id = 3 : i64, sym_name = "state_t",
+    slang.type.enum_type @state_t attributes {
+      node_id = 3 : i64,
       semantic_type = !slang.enum<"state_t", !slang.integral<2, false, false, 1 : 0, generic>>
     } {
     }
-    slang.type.type_alias attributes {
-      name = "byte_t", node_id = 4 : i64, sym_name = "byte_t",
+    slang.type.type_alias @byte_t attributes {
+      name = "byte_t", node_id = 4 : i64,
       semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
     } {
     }
 
     // Every scalar semantic type.
-    slang.symbol.variable attributes {
+    slang.symbol.variable @str attributes {
       lifetime = 0 : i32, node_id = 5 : i64, rand_mode = 0 : i32,
-      sym_name = "str", semantic_type = !slang.string
+      semantic_type = !slang.string
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @r attributes {
       lifetime = 0 : i32, node_id = 6 : i64, rand_mode = 0 : i32,
-      sym_name = "r", semantic_type = !slang.real
+      semantic_type = !slang.real
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @rt attributes {
       lifetime = 0 : i32, node_id = 7 : i64, rand_mode = 0 : i32,
-      sym_name = "rt", semantic_type = !slang.realtime
+      semantic_type = !slang.realtime
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @sr attributes {
       lifetime = 0 : i32, node_id = 8 : i64, rand_mode = 0 : i32,
-      sym_name = "sr", semantic_type = !slang.shortreal
+      semantic_type = !slang.shortreal
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @tm attributes {
       lifetime = 0 : i32, node_id = 9 : i64, rand_mode = 0 : i32,
-      sym_name = "tm", semantic_type = !slang.time
+      semantic_type = !slang.time
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @ch attributes {
       lifetime = 0 : i32, node_id = 10 : i64, rand_mode = 0 : i32,
-      sym_name = "ch", semantic_type = !slang.chandle
+      semantic_type = !slang.chandle
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @ev attributes {
       lifetime = 0 : i32, node_id = 11 : i64, rand_mode = 0 : i32,
-      sym_name = "ev", semantic_type = !slang.event
+      semantic_type = !slang.event
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @vd attributes {
       lifetime = 0 : i32, node_id = 12 : i64, rand_mode = 0 : i32,
-      sym_name = "vd", semantic_type = !slang.void
+      semantic_type = !slang.void
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @nl attributes {
       lifetime = 0 : i32, node_id = 13 : i64, rand_mode = 0 : i32,
-      sym_name = "nl", semantic_type = !slang.null
+      semantic_type = !slang.null
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @ub attributes {
       lifetime = 0 : i32, node_id = 14 : i64, rand_mode = 0 : i32,
-      sym_name = "ub", semantic_type = !slang.unbounded
+      semantic_type = !slang.unbounded
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @ut attributes {
       lifetime = 0 : i32, node_id = 15 : i64, rand_mode = 0 : i32,
-      sym_name = "ut", semantic_type = !slang.untyped
+      semantic_type = !slang.untyped
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @tr attributes {
       lifetime = 0 : i32, node_id = 16 : i64, rand_mode = 0 : i32,
-      sym_name = "tr", semantic_type = !slang.type_reference
+      semantic_type = !slang.type_reference
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @prop attributes {
       lifetime = 0 : i32, node_id = 17 : i64, rand_mode = 0 : i32,
-      sym_name = "prop", semantic_type = !slang.property
+      semantic_type = !slang.property
     } {
     }
 
     // Every aggregate and container semantic type.
-    slang.symbol.variable attributes {
+    slang.symbol.variable @packed_word attributes {
       lifetime = 0 : i32, node_id = 18 : i64, rand_mode = 0 : i32,
-      sym_name = "packed_word",
       semantic_type = !slang.packed_array<15 : 0 x !slang.integral<1, false, true, 0 : 0, logic>>
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @unpacked_word attributes {
       lifetime = 0 : i32, node_id = 19 : i64, rand_mode = 0 : i32,
-      sym_name = "unpacked_word",
       semantic_type = !slang.unpacked_array<3 : 0 x !slang.integral<8, false, true, 7 : 0, generic>>
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @dyn_word attributes {
       lifetime = 0 : i32, node_id = 20 : i64, rand_mode = 0 : i32,
-      sym_name = "dyn_word",
       semantic_type = !slang.dynamic_array<!slang.integral<8, false, true, 7 : 0, generic>>
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @open_word attributes {
       lifetime = 0 : i32, node_id = 21 : i64, rand_mode = 0 : i32,
-      sym_name = "open_word",
       semantic_type = !slang.open_array<!slang.integral<8, false, true, 7 : 0, generic>, true>
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @queue_word attributes {
       lifetime = 0 : i32, node_id = 22 : i64, rand_mode = 0 : i32,
-      sym_name = "queue_word",
       semantic_type = !slang.queue<!slang.integral<8, false, true, 7 : 0, generic>, 0>
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @assoc_word attributes {
       lifetime = 0 : i32, node_id = 23 : i64, rand_mode = 0 : i32,
-      sym_name = "assoc_word",
       semantic_type = !slang.associative_array<!slang.string, !slang.real, false>
     } {
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @record attributes {
       lifetime = 0 : i32, node_id = 24 : i64, rand_mode = 0 : i32,
-      sym_name = "record",
       semantic_type = !slang.aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0, [{name = "high", ordinal = 0 : i32, packed_offset = 8 : i64, type = !slang.packed_array<7 : 0 x !slang.integral<1, false, true, 0 : 0, logic>>}, {name = "low", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
     } {
     }
 
     // Symbol-referencing handle types.
-    slang.symbol.variable attributes {
+    slang.symbol.variable @virtual_bus attributes {
       lifetime = 0 : i32, node_id = 25 : i64, rand_mode = 0 : i32,
-      sym_name = "virtual_bus",
       semantic_type = !slang.virtual_interface<@bus, "master">
     } {
     }
-    slang.type.covergroup_type attributes {
+    slang.type.covergroup_type @cg_t attributes {
       constructor_argument_count = 0 : i64,
       constructor_formals = [],
       coverage_event_kind = 0 : i32,
       has_coverage_event = false,
       node_id = 26 : i64,
       sample_formal_count = 0 : i64, sample_formals = [],
-      sym_name = "cg_t",
       semantic_type = !slang.covergroup_handle<@cg_t>
     } {
-      slang.symbol.covergroup_body attributes {
-        node_id = 260 : i64, option_count = 0 : i64, sym_name = "cg_body"
+      slang.symbol.covergroup_body @cg_body attributes {
+        node_id = 260 : i64, option_count = 0 : i64
       } {
-        slang.symbol.coverpoint attributes {
+        slang.symbol.coverpoint @cp attributes {
           expression_roles = [0 : i32], has_iff = false,
           node_id = 261 : i64, option_count = 0 : i64,
-          semantic_type = !slang.integral<8, false, true, 7 : 0, generic>,
-          sym_name = "cp"
+          semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
         } {
           slang.expression.integer_literal attributes {
             constant_value = "1", node_id = 262 : i64,
             semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
           } {
           }
-          slang.symbol.coverage_bin attributes {
+          slang.symbol.coverage_bin @named_bin attributes {
             bins_kind = 0 : i32, child_roles = array<i64: 5>, has_iff = false,
             has_number_of_bins = false, has_set_coverage = false,
             has_with = false, is_array = false, is_default = false,
             is_default_sequence = false, is_wildcard = false,
-            node_id = 263 : i64, sym_name = "named_bin",
+            node_id = 263 : i64,
             transition_range_has_repeat_from = array<i64>,
             transition_range_has_repeat_to = array<i64>,
             transition_range_item_counts = array<i64>,
@@ -200,9 +189,8 @@ module {
         }
       }
     }
-    slang.symbol.variable attributes {
+    slang.symbol.variable @cg_handle attributes {
       lifetime = 0 : i32, node_id = 27 : i64, rand_mode = 0 : i32,
-      sym_name = "cg_handle",
       semantic_type = !slang.covergroup_handle<@cg_t>
     } {
     }
@@ -230,9 +218,9 @@ module {
       } {
       }
     }
-    slang.symbol.subroutine attributes {
+    slang.symbol.subroutine @convert attributes {
       default_lifetime = 0 : i32, is_virtual, node_id = 28 : i64,
-      member_visibility = 0 : i32, sym_name = "convert",
+      member_visibility = 0 : i32,
       subroutine_kind = 0 : i32,
       semantic_type = !slang.subroutine<(!slang.string) -> !slang.shortreal, false>
     } {
@@ -318,28 +306,25 @@ module {
 
     // A nested aggregate value in a builtin container attribute must also be
     // rewritten, proving attribute walking is recursive.
-    slang.symbol.variable attributes {
+    slang.symbol.variable @nested attributes {
       lifetime = 0 : i32, node_id = 39 : i64, rand_mode = 0 : i32,
-      sym_name = "nested",
       semantic_type = tensor<1x!slang.integral<1, false, true, 0 : 0, logic>>
     } {
     }
-    slang.symbol.generate_block attributes {
-      is_uninstantiated = false, node_id = 40 : i64, sym_name = "active_generate"
+    slang.symbol.generate_block @active_generate attributes {
+      is_uninstantiated = false, node_id = 40 : i64
     } {
-      slang.symbol.variable attributes {
+      slang.symbol.variable @active_marker attributes {
         lifetime = 0 : i32, node_id = 41 : i64, rand_mode = 0 : i32,
-        sym_name = "active_marker",
         semantic_type = !slang.integral<1, false, false, 0 : 0, bit>
       } {
       }
     }
-    slang.symbol.generate_block attributes {
-      is_uninstantiated = true, node_id = 42 : i64, sym_name = "inactive_generate"
+    slang.symbol.generate_block @inactive_generate attributes {
+      is_uninstantiated = true, node_id = 42 : i64
     } {
-      slang.symbol.variable attributes {
+      slang.symbol.variable @inactive_marker attributes {
         lifetime = 0 : i32, node_id = 43 : i64, rand_mode = 0 : i32,
-        sym_name = "inactive_marker",
         semantic_type = !slang.integral<1, false, false, 0 : 0, bit>
       } {
       }
@@ -424,9 +409,8 @@ module {
 // CHECK: obelisk.sv.pattern.constant
 // CHECK: obelisk.sv.rand_seq.item
 // CHECK: tensor<1x!obelisk.integral<1, false, true, 0 : 0, logic>>
-// CHECK: obelisk.sv.symbol.generate_block
-// CHECK-SAME: sym_name = "active_generate"
-// CHECK: sym_name = "active_marker"
+// CHECK: obelisk.sv.symbol.generate_block @active_generate attributes
+// CHECK: obelisk.sv.symbol.variable @active_marker attributes
 // CHECK-NOT: inactive_generate
 // CHECK-NOT: inactive_marker
 // CHECK-NOT: slang.

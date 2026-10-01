@@ -9,7 +9,7 @@
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: %[[FIELD0:.*]], %[[CURSOR0:.*]], %[[OK0:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 100 : i32, width = 0 : i64}
 // CHECK: arith.cmpi ne, %[[OK0]]
-// CHECK: simulation.string.parse_logic %[[FIELD0]] radix = <decimal> : <32>
+// CHECK: simulation.string.parse_logic %[[FIELD0]] radix = <decimal> : !simulation.logic<32>
 // CHECK: cf.cond_br
 // CHECK: %[[FIELD1:.*]], %[[CURSOR1:.*]], %[[OK1:.*]] = simulation.string.scan_field {{.*}} {prefix = " ", specifier = 102 : i32, width = 0 : i64}
 // CHECK: simulation.string.parse_real %[[FIELD1]]
@@ -28,32 +28,32 @@
 // CHECK: %[[SCALED_TIME:.*]] = simulation.time.scan_scale {{.*}}, %[[TIME_REAL]] time_multiplier = 1 time_precision = -9
 // CHECK: simulation.ref.store %[[SCALED_TIME]]
 // CHECK: %[[STRENGTH_FIELD:.*]], %[[STRENGTH_CURSOR:.*]], %[[STRENGTH_OK:.*]] = simulation.string.scan_field {{.*}} {prefix = "", specifier = 86 : i32, width = 0 : i64}
-// CHECK: %[[STRENGTH:.*]] = simulation.string.parse_logic %[[STRENGTH_FIELD]] radix = <binary> : <1>
+// CHECK: %[[STRENGTH:.*]] = simulation.string.parse_logic %[[STRENGTH_FIELD]] radix = <binary> : !simulation.logic<1>
 // CHECK: simulation.ref.store %[[STRENGTH]]
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "s0.top"} {
+  obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top, sym_name = "s3.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "s4.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.count", lifetime = 1 : i32, name = "count", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s5.count"} {
+    obelisk.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      obelisk.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.count attributes {hierarchical_name = "top.count", lifetime = 1 : i32, name = "count", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.first", lifetime = 1 : i32, name = "first", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s6.first"} {
+        obelisk.sv.symbol.variable @s6.first attributes {hierarchical_name = "top.first", lifetime = 1 : i32, name = "first", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.second", lifetime = 1 : i32, name = "second", node_id = 7 : i64, semantic_type = !obelisk.real, sym_name = "s7.second"} {
+        obelisk.sv.symbol.variable @s7.second attributes {hierarchical_name = "top.second", lifetime = 1 : i32, name = "second", node_id = 7 : i64, semantic_type = !obelisk.real} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.word", lifetime = 1 : i32, name = "word", node_id = 8 : i64, semantic_type = !obelisk.string, sym_name = "s8.word"} {
+        obelisk.sv.symbol.variable @s8.word attributes {hierarchical_name = "top.word", lifetime = 1 : i32, name = "word", node_id = 8 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.hierarchy", lifetime = 1 : i32, name = "hierarchy", node_id = 26 : i64, semantic_type = !obelisk.string, sym_name = "s26.hierarchy"} {
+        obelisk.sv.symbol.variable @s26.hierarchy attributes {hierarchical_name = "top.hierarchy", lifetime = 1 : i32, name = "hierarchy", node_id = 26 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.scanned_time", lifetime = 1 : i32, name = "scanned_time", node_id = 30 : i64, semantic_type = !obelisk.real, sym_name = "s30.scanned_time"} {
+        obelisk.sv.symbol.variable @s30.scanned_time attributes {hierarchical_name = "top.scanned_time", lifetime = 1 : i32, name = "scanned_time", node_id = 30 : i64, semantic_type = !obelisk.real} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.scanned_strength", lifetime = 1 : i32, name = "scanned_strength", node_id = 34 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s34.scanned_strength"} {
+        obelisk.sv.symbol.variable @s34.scanned_strength attributes {hierarchical_name = "top.scanned_strength", lifetime = 1 : i32, name = "scanned_strength", node_id = 34 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 11 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {

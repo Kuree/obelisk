@@ -14,6 +14,6 @@
 // IEEE 1800-2017 32.9: the transient import boundary preserves all three
 // exact members; per-call MTM selection belongs to production consumption.
 // CHECK: obelisk_sdf.path_delay
-// CHECK-SAME: delays = [#obelisk_sdf.delay_value<form = triple, min = <"1.25">, typ = <"2.5">, max = <"3.75">>, #obelisk_sdf.delay_value<form = triple, max = <"6">>]
+// CHECK-SAME: delays [#obelisk_sdf.delay_value<form = triple, min = <"1.25">, typ = <"2.5">, max = <"3.75">>, #obelisk_sdf.delay_value<form = triple, max = <"6">>]
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime

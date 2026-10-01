@@ -24,15 +24,15 @@ module driver_top;
   initial value = `DRIVER_VALUE;
 endmodule
 
-// SLANG-DAG: slang.symbol.instance attributes {{.*}}hierarchical_name = "driver_top.helper"
-// SLANG-DAG: slang.symbol.instance attributes {{.*}}hierarchical_name = "driver_top"
-// SLANG-DAG: slang.symbol.variable attributes {{.*}}semantic_type = !slang.packed_array<7 : 0 x
+// SLANG-DAG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "driver_top.helper"
+// SLANG-DAG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "driver_top"
+// SLANG-DAG: slang.symbol.variable @{{[^ ]+}} attributes {{.*}}semantic_type = !slang.packed_array<7 : 0 x
 // SLANG: macro_expansion_stack = [{{.*}}name = "DRIVER_VALUE"
 // SLANG-SAME: original_source_range = !slang.source_range<"<command-line>"
 // SLANG-SAME: source_range = !slang.source_range<"{{.*}}basic.sv"
 
-// OBELISK-DAG: obelisk.sv.symbol.instance attributes {{.*}}hierarchical_name = "driver_top.helper"
-// OBELISK-DAG: obelisk.sv.symbol.instance attributes {{.*}}hierarchical_name = "driver_top"
+// OBELISK-DAG: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "driver_top.helper"
+// OBELISK-DAG: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "driver_top"
 // OBELISK-DAG: !obelisk.ranged_packed_array<7 : 0 x
 // OBELISK-NOT: slang.
 
@@ -53,8 +53,8 @@ endmodule
 // VERSION: obelisk version
 // VERSION: slang version {{[0-9]+\.[0-9]+\.0\+0$}}
 
-// FILELIST-DAG: slang.symbol.instance attributes {{.*}}hierarchical_name = "driver_top.helper"
-// FILELIST-DAG: slang.symbol.instance attributes {{.*}}hierarchical_name = "driver_top"
+// FILELIST-DAG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "driver_top.helper"
+// FILELIST-DAG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "driver_top"
 
 // BAD-STD: obelisk: error: unsupported SystemVerilog revision 'invalid'
 // NO-INPUT: obelisk: error: no input files

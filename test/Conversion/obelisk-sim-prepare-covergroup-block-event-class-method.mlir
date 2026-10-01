@@ -10,7 +10,7 @@
 
 // The unqualified class-method references resolve to the exact executable
 // subroutine and begin/end retain one common v1 target identity.
-// CHECK-DAG: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "C::observed"{{.*}}simulation.coverage_block_event_target_id = [[METHOD:[4-9][0-9]{18}]] : i64
+// CHECK-DAG: obelisk.sv.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "C::observed"{{.*}}simulation.coverage_block_event_target_id = [[METHOD:[4-9][0-9]{18}]] : i64
 // CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}referenced_path = "C::observed"{{.*}}simulation.coverage_block_event_target_id = [[METHOD]] : i64
 // CHECK-DAG: obelisk.sv.expression.arbitrary_symbol attributes {{.*}}referenced_path = "C::observed"{{.*}}simulation.coverage_block_event_target_id = [[METHOD]] : i64
 // CHECK-DAG: simulation.func private @{{[^ ]+}}{{.*}}simulation.coverage_block_event_target_id = [[METHOD]] : i64{{.*}}simulation.hierarchical_name = "C::observed"

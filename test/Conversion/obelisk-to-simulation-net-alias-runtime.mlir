@@ -9,16 +9,16 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "definition"} {
+  obelisk.sv.symbol.definition @definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 2 : i64, referenced_path = "t", referenced_symbol = @definition, sym_name = "instance"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "t", name = "t", node_id = 3 : i64, sym_name = "body", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.net attributes {hierarchical_name = "t.source", is_implicit = false, name = "source", net_kind = 1 : i32, node_id = 4 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "source"} {
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.instance @instance attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 2 : i64, referenced_path = "t", referenced_symbol = @definition} {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "t", name = "t", node_id = 3 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.net @source attributes {hierarchical_name = "t.source", is_implicit = false, name = "source", net_kind = 1 : i32, node_id = 4 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.net attributes {hierarchical_name = "t.alias_name", is_implicit = false, name = "alias_name", net_kind = 1 : i32, node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "alias_name"} {
+        obelisk.sv.symbol.net @alias_name attributes {hierarchical_name = "t.alias_name", is_implicit = false, name = "alias_name", net_kind = 1 : i32, node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.continuous_assign attributes {hierarchical_name = "t", node_id = 6 : i64, sym_name = "driver", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.continuous_assign @driver attributes {hierarchical_name = "t", node_id = 6 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 8 : i64, referenced_path = "t.source", referenced_symbol = @root::@instance::@body::@source, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
@@ -26,13 +26,13 @@ module attributes {
             }
           }
         }
-        obelisk.sv.symbol.net_alias attributes {hierarchical_name = "t", node_id = 10 : i64, sym_name = "alias"} {
+        obelisk.sv.symbol.net_alias @alias attributes {hierarchical_name = "t", node_id = 10 : i64} {
           obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 11 : i64, referenced_path = "t.source", referenced_symbol = @root::@instance::@body::@source, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
           obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 12 : i64, referenced_path = "t.alias_name", referenced_symbol = @root::@instance::@body::@alias_name, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "t", node_id = 13 : i64, procedure_kind = 0 : i32, sym_name = "initial", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @initial attributes {hierarchical_name = "t", node_id = 13 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 14 : i64} {
             obelisk.sv.statement.timed attributes {node_id = 15 : i64} {
               obelisk.sv.timing.delay attributes {node_id = 16 : i64} {

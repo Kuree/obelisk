@@ -13,11 +13,11 @@ endinterface
 module top;
 endmodule
 
-// CHECK: slang.symbol.instance attributes {hierarchical_name = "$unit"
+// CHECK: slang.symbol.instance @{{[^ ]+}} attributes {hierarchical_name = "$unit"
 // CHECK-SAME: is_uninstantiated = true
-// CHECK: slang.symbol.subroutine attributes
+// CHECK: slang.symbol.subroutine @{{[^ ]+}} attributes
 // CHECK-SAME: name = "pass"
 // CHECK-SAME: semantic_type = !slang.subroutine<(!slang.error<false>) -> !slang.error<false>, false>
-// CHECK: slang.symbol.formal_argument attributes
+// CHECK: slang.symbol.formal_argument @{{[^ ]+}} attributes
 // CHECK-SAME: name = "value"
 // CHECK-SAME: semantic_type = !slang.error<false>

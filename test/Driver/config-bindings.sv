@@ -80,11 +80,11 @@ config outer;
 endconfig
 
 // Instance selection overrides the inner cell rule.
-// SLANG: slang.symbol.instance attributes {{.*}}configuration = "work.inner"{{.*}}configuration_root = "top.nested"{{.*}}configuration_rule_kind = "instance"{{.*}}hierarchical_name = "top.nested.exact"{{.*}}selected_cell = "liba.leaf"
+// SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}configuration = "work.inner"{{.*}}configuration_root = "top.nested"{{.*}}configuration_rule_kind = "instance"{{.*}}hierarchical_name = "top.nested.exact"{{.*}}selected_cell = "liba.leaf"
 // The cell rule governs the sibling and the bound descendant.
-// SLANG: slang.symbol.instance attributes {{.*}}configuration = "work.inner"{{.*}}configuration_rule_kind = "cell"{{.*}}hierarchical_name = "top.nested.by_cell"{{.*}}selected_cell = "libb.leaf"
-// SLANG: slang.symbol.instance attributes {{.*}}configuration = "work.inner"{{.*}}is_from_bind = true{{.*}}selected_cell = "liba.bound_probe"
-// SLANG: slang.symbol.instance attributes {{.*}}configuration = "work.inner"{{.*}}is_below_bind = true{{.*}}selected_cell = "libb.leaf"
+// SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}configuration = "work.inner"{{.*}}configuration_rule_kind = "cell"{{.*}}hierarchical_name = "top.nested.by_cell"{{.*}}selected_cell = "libb.leaf"
+// SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}configuration = "work.inner"{{.*}}is_from_bind = true{{.*}}selected_cell = "liba.bound_probe"
+// SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}configuration = "work.inner"{{.*}}is_below_bind = true{{.*}}selected_cell = "libb.leaf"
 // SLANG: configuration_liblist = ["libb", "liba"]{{.*}}hierarchical_name = "top.outer_cell_liblist"{{.*}}selected_cell = "libb.pick"
 
 // Reports are lexical by hierarchy, independent of AST allocator order. Rule

@@ -1,100 +1,88 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.indexed_unpacked_slice attributes {
     definition_kind = 0 : i32,
     hierarchical_name = "indexed_unpacked_slice",
     name = "indexed_unpacked_slice",
-    node_id = 0 : i64,
-    sym_name = "s0.indexed_unpacked_slice"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
+  obelisk.sv.symbol.root @s1.$root attributes {
     hierarchical_name = "\\$root ",
     name = "$root",
-    node_id = 1 : i64,
-    sym_name = "s1.$root"
+    node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
       hierarchical_name = "$unit",
-      node_id = 2 : i64,
-      sym_name = "s2"
+      node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.indexed_unpacked_slice attributes {
       hierarchical_name = "indexed_unpacked_slice",
       is_uninstantiated = false,
       name = "indexed_unpacked_slice",
       node_id = 3 : i64,
       referenced_path = "indexed_unpacked_slice",
-      referenced_symbol = @s0.indexed_unpacked_slice,
-      sym_name = "s3.indexed_unpacked_slice"
+      referenced_symbol = @s0.indexed_unpacked_slice
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.indexed_unpacked_slice attributes {
         hierarchical_name = "indexed_unpacked_slice",
         name = "indexed_unpacked_slice",
-        node_id = 4 : i64,
-        sym_name = "s4.indexed_unpacked_slice"
+        node_id = 4 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s5.descending attributes {
           hierarchical_name = "indexed_unpacked_slice.descending",
           lifetime = 1 : i32,
           name = "descending",
           node_id = 5 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s5.descending"
+          semantic_type = !obelisk.ranged_unpacked_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s6.ascending attributes {
           hierarchical_name = "indexed_unpacked_slice.ascending",
           lifetime = 1 : i32,
           name = "ascending",
           node_id = 6 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<0 : 7 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s6.ascending"
+          semantic_type = !obelisk.ranged_unpacked_array<0 : 7 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s7.falling attributes {
           hierarchical_name = "indexed_unpacked_slice.falling",
           lifetime = 1 : i32,
           name = "falling",
           node_id = 7 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s7.falling"
+          semantic_type = !obelisk.ranged_unpacked_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s8.rising attributes {
           hierarchical_name = "indexed_unpacked_slice.rising",
           lifetime = 1 : i32,
           name = "rising",
           node_id = 8 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<0 : 3 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s8.rising"
+          semantic_type = !obelisk.ranged_unpacked_array<0 : 3 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s25.target attributes {
           hierarchical_name = "indexed_unpacked_slice.target",
           lifetime = 1 : i32,
           name = "target",
           node_id = 25 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s25.target"
+          semantic_type = !obelisk.ranged_unpacked_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s26.patch attributes {
           hierarchical_name = "indexed_unpacked_slice.patch",
           lifetime = 1 : i32,
           name = "patch",
           node_id = 26 : i64,
-          semantic_type = !obelisk.ranged_unpacked_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>,
-          sym_name = "s26.patch"
+          semantic_type = !obelisk.ranged_unpacked_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s9 attributes {
           hierarchical_name = "indexed_unpacked_slice",
           node_id = 9 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s9",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {

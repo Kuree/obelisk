@@ -22,14 +22,14 @@
 // PLAN: simulation.assert.sampled_history {{.*}} from %[[PAST]]
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.coverage.language_version = 2023 : i32} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 0 : i64, sym_name = "s0.sampled_expression"} {
+  obelisk.sv.symbol.definition @s0.sampled_expression attributes {definition_kind = 0 : i32, hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, simulation.vpi_definition_name = "$unit", sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64, simulation.vpi_definition_name = "$unit"} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "sampled_expression", is_uninstantiated = false, name = "sampled_expression", node_id = 3 : i64, referenced_path = "sampled_expression", referenced_symbol = @s0.sampled_expression, sym_name = "s3.sampled_expression"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 4 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "sampled_expression", simulation.vpi_top = true, sym_name = "s4.sampled_expression", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sampled_expression.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.sampled_expression attributes {hierarchical_name = "sampled_expression", is_uninstantiated = false, name = "sampled_expression", node_id = 3 : i64, referenced_path = "sampled_expression", referenced_symbol = @s0.sampled_expression} {
+      obelisk.sv.symbol.instance_body @s4.sampled_expression attributes {hierarchical_name = "sampled_expression", name = "sampled_expression", node_id = 4 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "sampled_expression", simulation.vpi_top = true, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
+        obelisk.sv.symbol.variable @s5.clk attributes {hierarchical_name = "sampled_expression.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b0", is_implicit = true, is_signed = false, node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 15, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 16, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "0", is_implicit = true, is_signed = true, node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 15, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 16, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 15, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 2, 16, "">} {
@@ -37,11 +37,11 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sampled_expression.data", lifetime = 1 : i32, name = "data", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.data"} {
+        obelisk.sv.symbol.variable @s6.data attributes {hierarchical_name = "sampled_expression.data", lifetime = 1 : i32, name = "data", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sampled_expression.flag", lifetime = 1 : i32, name = "flag", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.flag"} {
+        obelisk.sv.symbol.variable @s7.flag attributes {hierarchical_name = "sampled_expression.flag", lifetime = 1 : i32, name = "flag", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sampled_expression.index", lifetime = 1 : i32, name = "index", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s8.index"} {
+        obelisk.sv.symbol.variable @s8.index attributes {hierarchical_name = "sampled_expression.index", lifetime = 1 : i32, name = "index", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "2'b0", is_implicit = true, is_signed = false, node_id = 12 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 5, 23, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 5, 24, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "0", is_implicit = true, is_signed = true, node_id = 13 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 5, 23, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 5, 24, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 14 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 5, 23, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 5, 24, "">} {
@@ -49,7 +49,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sampled_expression", node_id = 15 : i64, procedure_kind = 2 : i32, sym_name = "s9", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "sampled_expression", node_id = 15 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 16 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 6, 10, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 6, 24, "">} {
             obelisk.sv.timing.delay attributes {node_id = 17 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 6, 10, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 6, 12, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 18 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 6, 11, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 6, 12, "">} {
@@ -67,7 +67,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sampled_expression", node_id = 24 : i64, procedure_kind = 2 : i32, sym_name = "s10", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "sampled_expression", node_id = 24 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 25 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 7, 10, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 13, 6, "">} {
             obelisk.sv.timing.signal_event attributes {edge_kind = 2 : i32, has_iff = false, node_id = 26 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 7, 12, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 7, 23, "">} {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 27 : i64, referenced_path = "sampled_expression.clk", referenced_symbol = @s1.$root::@s3.sampled_expression::@s4.sampled_expression::@s5.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 7, 20, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 7, 23, "">} {
@@ -151,7 +151,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sampled_expression", node_id = 66 : i64, procedure_kind = 0 : i32, sym_name = "s11", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s11 attributes {hierarchical_name = "sampled_expression", node_id = 66 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 67 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 14, 11, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 20, 6, "">} {
             obelisk.sv.statement.list attributes {node_id = 68 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 14, 11, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 20, 6, "">} {
               obelisk.sv.statement.timed attributes {node_id = 69 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 15, 5, "tmp/bench/unified-loop/cores/scr1/sampled-expression.sv", 15, 17, "">} {

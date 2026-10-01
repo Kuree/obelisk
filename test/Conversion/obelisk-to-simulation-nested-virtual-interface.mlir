@@ -1,33 +1,33 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "child_if", name = "child_if", node_id = 0 : i64, sym_name = "child_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "parent_if", name = "parent_if", node_id = 1 : i64, sym_name = "parent_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 2 : i64, sym_name = "top_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 3 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @top_def, sym_name = "top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, sym_name = "top_body", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent", is_uninstantiated = false, name = "parent", node_id = 6 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def, sym_name = "parent"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent", name = "parent_if", node_id = 7 : i64, sym_name = "parent_body", virtual_interface_identity = @root::@top_body::@parent} {
-            obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "child_if", referenced_symbol = @child_def, sym_name = "child"} {
-              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent.child", name = "child_if", node_id = 9 : i64, sym_name = "child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {
-                obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.parent.child.bump", name = "bump", node_id = 23 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "parent_bump"} {}
+  obelisk.sv.symbol.definition @child_def attributes {definition_kind = 1 : i32, hierarchical_name = "child_if", name = "child_if", node_id = 0 : i64} {}
+  obelisk.sv.symbol.definition @parent_def attributes {definition_kind = 1 : i32, hierarchical_name = "parent_if", name = "parent_if", node_id = 1 : i64} {}
+  obelisk.sv.symbol.definition @top_def attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 2 : i64} {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 3 : i64} {
+    obelisk.sv.symbol.instance @top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @top_def} {
+      obelisk.sv.symbol.instance_body @top_body attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.instance @parent attributes {hierarchical_name = "top.parent", is_uninstantiated = false, name = "parent", node_id = 6 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def} {
+          obelisk.sv.symbol.instance_body @parent_body attributes {hierarchical_name = "top.parent", name = "parent_if", node_id = 7 : i64, virtual_interface_identity = @root::@top_body::@parent} {
+            obelisk.sv.symbol.instance @child attributes {hierarchical_name = "top.parent.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "child_if", referenced_symbol = @child_def} {
+              obelisk.sv.symbol.instance_body @child_body attributes {hierarchical_name = "top.parent.child", name = "child_if", node_id = 9 : i64, virtual_interface_identity = @root::@top_body::@parent_body::@child} {
+                obelisk.sv.symbol.subroutine @parent_bump attributes {hierarchical_name = "top.parent.child.bump", name = "bump", node_id = 23 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32} {}
               }
             }
           }
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.other", is_uninstantiated = false, name = "other", node_id = 19 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def, sym_name = "other"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.other", name = "parent_if", node_id = 20 : i64, sym_name = "other_body", virtual_interface_identity = @root::@top_body::@parent} {
-            obelisk.sv.symbol.instance attributes {hierarchical_name = "top.other.child", is_uninstantiated = false, name = "child", node_id = 21 : i64, referenced_path = "child_if", referenced_symbol = @child_def, sym_name = "other_child"} {
-              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.other.child", name = "child_if", node_id = 22 : i64, sym_name = "other_child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {
-                obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.other.child.bump", name = "bump", node_id = 24 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "other_bump"} {}
+        obelisk.sv.symbol.instance @other attributes {hierarchical_name = "top.other", is_uninstantiated = false, name = "other", node_id = 19 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def} {
+          obelisk.sv.symbol.instance_body @other_body attributes {hierarchical_name = "top.other", name = "parent_if", node_id = 20 : i64, virtual_interface_identity = @root::@top_body::@parent} {
+            obelisk.sv.symbol.instance @other_child attributes {hierarchical_name = "top.other.child", is_uninstantiated = false, name = "child", node_id = 21 : i64, referenced_path = "child_if", referenced_symbol = @child_def} {
+              obelisk.sv.symbol.instance_body @other_child_body attributes {hierarchical_name = "top.other.child", name = "child_if", node_id = 22 : i64, virtual_interface_identity = @root::@top_body::@parent_body::@child} {
+                obelisk.sv.symbol.subroutine @other_bump attributes {hierarchical_name = "top.other.child.bump", name = "bump", node_id = 24 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32} {}
               }
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.parent_handle", lifetime = 1 : i32, name = "parent_handle", node_id = 10 : i64, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent, "">, sym_name = "parent_handle"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.child_handle", lifetime = 1 : i32, name = "child_handle", node_id = 11 : i64, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent_body::@child, "">, sym_name = "child_handle"} {}
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, sym_name = "initial", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @parent_handle attributes {hierarchical_name = "top.parent_handle", lifetime = 1 : i32, name = "parent_handle", node_id = 10 : i64, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent, "">} {}
+        obelisk.sv.symbol.variable @child_handle attributes {hierarchical_name = "top.child_handle", lifetime = 1 : i32, name = "child_handle", node_id = 11 : i64, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent_body::@child, "">} {}
+        obelisk.sv.symbol.procedural_block @initial attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 13 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 14 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 15 : i64, semantic_type = !obelisk.virtual_interface<@root::@top_body::@parent_body::@child, "">} {
@@ -44,11 +44,11 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "parent_if", node_id = 25 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def, sym_name = "type_parent"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent_if", is_virtual_interface_type_instance = true, name = "parent_if", node_id = 26 : i64, sym_name = "type_parent_body", virtual_interface_identity = @root::@top_body::@parent} {
-            obelisk.sv.symbol.instance attributes {hierarchical_name = "top.parent_if.child", is_uninstantiated = false, name = "child", node_id = 27 : i64, referenced_path = "child_if", referenced_symbol = @child_def, sym_name = "type_child"} {
-              obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.parent_if.child", name = "child_if", node_id = 28 : i64, sym_name = "type_child_body", virtual_interface_identity = @root::@top_body::@parent_body::@child} {
-                obelisk.sv.symbol.subroutine attributes {hierarchical_name = "top.parent_if.child.bump", name = "bump", node_id = 29 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "type_bump"} {}
+        obelisk.sv.symbol.instance @type_parent attributes {hierarchical_name = "top.parent_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "parent_if", node_id = 25 : i64, referenced_path = "parent_if", referenced_symbol = @parent_def} {
+          obelisk.sv.symbol.instance_body @type_parent_body attributes {hierarchical_name = "top.parent_if", is_virtual_interface_type_instance = true, name = "parent_if", node_id = 26 : i64, virtual_interface_identity = @root::@top_body::@parent} {
+            obelisk.sv.symbol.instance @type_child attributes {hierarchical_name = "top.parent_if.child", is_uninstantiated = false, name = "child", node_id = 27 : i64, referenced_path = "child_if", referenced_symbol = @child_def} {
+              obelisk.sv.symbol.instance_body @type_child_body attributes {hierarchical_name = "top.parent_if.child", name = "child_if", node_id = 28 : i64, virtual_interface_identity = @root::@top_body::@parent_body::@child} {
+                obelisk.sv.symbol.subroutine @type_bump attributes {hierarchical_name = "top.parent_if.child.bump", name = "bump", node_id = 29 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32} {}
               }
             }
           }

@@ -2,20 +2,20 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=COUNT
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_pure_system_functions", name = "simulation_pure_system_functions", node_id = 0 : i64, sym_name = "s0.simulation_pure_system_functions"} {
+  obelisk.sv.symbol.definition @s0.simulation_pure_system_functions attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_pure_system_functions", name = "simulation_pure_system_functions", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_pure_system_functions", is_uninstantiated = false, name = "simulation_pure_system_functions", node_id = 3 : i64, referenced_path = "simulation_pure_system_functions", referenced_symbol = @s0.simulation_pure_system_functions, sym_name = "s3.simulation_pure_system_functions"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_pure_system_functions", name = "simulation_pure_system_functions", node_id = 4 : i64, sym_name = "s4.simulation_pure_system_functions"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_pure_system_functions.value", lifetime = 1 : i32, name = "value", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<11 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s5.value"} {
+    obelisk.sv.symbol.instance @s3.simulation_pure_system_functions attributes {hierarchical_name = "simulation_pure_system_functions", is_uninstantiated = false, name = "simulation_pure_system_functions", node_id = 3 : i64, referenced_path = "simulation_pure_system_functions", referenced_symbol = @s0.simulation_pure_system_functions} {
+      obelisk.sv.symbol.instance_body @s4.simulation_pure_system_functions attributes {hierarchical_name = "simulation_pure_system_functions", name = "simulation_pure_system_functions", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.value attributes {hierarchical_name = "simulation_pure_system_functions.value", lifetime = 1 : i32, name = "value", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<11 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_pure_system_functions.control", lifetime = 1 : i32, name = "control", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.control"} {
+        obelisk.sv.symbol.variable @s6.control attributes {hierarchical_name = "simulation_pure_system_functions.control", lifetime = 1 : i32, name = "control", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_pure_system_functions.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s7.result"} {
+        obelisk.sv.symbol.variable @s7.result attributes {hierarchical_name = "simulation_pure_system_functions.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "simulation_pure_system_functions.side_effect", name = "side_effect", node_id = 8 : i64, return_variable_path = "simulation_pure_system_functions.side_effect.side_effect", return_variable_symbol = @s1.$root::@s3.simulation_pure_system_functions::@s4.simulation_pure_system_functions::@s8.side_effect::@s9.side_effect, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s8.side_effect", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s8.side_effect attributes {hierarchical_name = "simulation_pure_system_functions.side_effect", name = "side_effect", node_id = 8 : i64, return_variable_path = "simulation_pure_system_functions.side_effect.side_effect", return_variable_symbol = @s1.$root::@s3.simulation_pure_system_functions::@s4.simulation_pure_system_functions::@s8.side_effect::@s9.side_effect, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 9 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {
               obelisk.sv.expression.unary_op attributes {node_id = 11 : i64, operator_kind = 12 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -28,10 +28,10 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_pure_system_functions.side_effect.side_effect", is_compiler_generated, name = "side_effect", node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s9.side_effect"} {
+          obelisk.sv.symbol.variable @s9.side_effect attributes {hierarchical_name = "simulation_pure_system_functions.side_effect.side_effect", is_compiler_generated, name = "side_effect", node_id = 15 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_pure_system_functions", node_id = 16 : i64, procedure_kind = 0 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "simulation_pure_system_functions", node_id = 16 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 17 : i64} {
             obelisk.sv.statement.list attributes {node_id = 18 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 19 : i64} {

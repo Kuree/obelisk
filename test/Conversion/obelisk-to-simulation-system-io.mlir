@@ -1,28 +1,28 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "system_io", name = "system_io", node_id = 0 : i64, sym_name = "s0.system_io"} {
+  obelisk.sv.symbol.definition @s0.system_io attributes {definition_kind = 0 : i32, hierarchical_name = "system_io", name = "system_io", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "system_io", is_uninstantiated = false, name = "system_io", node_id = 3 : i64, referenced_path = "system_io", referenced_symbol = @s0.system_io, sym_name = "s3.system_io"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "system_io", name = "system_io", node_id = 4 : i64, sym_name = "s4.system_io"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "system_io.fd", lifetime = 1 : i32, name = "fd", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s5.fd"} {
+    obelisk.sv.symbol.instance @s3.system_io attributes {hierarchical_name = "system_io", is_uninstantiated = false, name = "system_io", node_id = 3 : i64, referenced_path = "system_io", referenced_symbol = @s0.system_io} {
+      obelisk.sv.symbol.instance_body @s4.system_io attributes {hierarchical_name = "system_io", name = "system_io", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.fd attributes {hierarchical_name = "system_io.fd", lifetime = 1 : i32, name = "fd", node_id = 5 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "system_io.mcd", lifetime = 1 : i32, name = "mcd", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s6.mcd"} {
+        obelisk.sv.symbol.variable @s6.mcd attributes {hierarchical_name = "system_io.mcd", lifetime = 1 : i32, name = "mcd", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "system_io.code", lifetime = 1 : i32, name = "code", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s7.code"} {
+        obelisk.sv.symbol.variable @s7.code attributes {hierarchical_name = "system_io.code", lifetime = 1 : i32, name = "code", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "system_io.c", lifetime = 1 : i32, name = "c", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>, sym_name = "s8.c"} {
+        obelisk.sv.symbol.variable @s8.c attributes {hierarchical_name = "system_io.c", lifetime = 1 : i32, name = "c", node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, true, 31 : 0, integer>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "system_io.line", lifetime = 1 : i32, name = "line", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<79 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>, sym_name = "s9.line"} {
+        obelisk.sv.symbol.variable @s9.line attributes {hierarchical_name = "system_io.line", lifetime = 1 : i32, name = "line", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<79 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "system_io.data", lifetime = 1 : i32, name = "data", node_id = 10 : i64, semantic_type = !obelisk.ranged_packed_array<79 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>, sym_name = "s10.data"} {
+        obelisk.sv.symbol.variable @s10.data attributes {hierarchical_name = "system_io.data", lifetime = 1 : i32, name = "data", node_id = 10 : i64, semantic_type = !obelisk.ranged_packed_array<79 : 0 x !obelisk.integral<1, false, true, 0 : 0, reg>>} {
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "system_io.named", name = "named", node_id = 11 : i64, sym_name = "s11.named"} {
+        obelisk.sv.symbol.statement_block @s11.named attributes {block_kind = 0 : i32, hierarchical_name = "system_io.named", name = "named", node_id = 11 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "system_io", node_id = 12 : i64, procedure_kind = 0 : i32, sym_name = "s12", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s12 attributes {hierarchical_name = "system_io", node_id = 12 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 13 : i64} {
             obelisk.sv.statement.list attributes {node_id = 14 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 15 : i64} {

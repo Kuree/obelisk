@@ -66,7 +66,7 @@ module attributes {
     simulation.func @initial(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
       %prefix = simulation.string.literal "n="
-      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %tail, %found = simulation.plusarg.value %ctx, %prefix : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
       %parsed = simulation.plusarg.parse_logic %tail {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
       %zero = arith.constant 0 : i32
       %matched = arith.cmpi ne, %found, %zero : i32
@@ -83,7 +83,7 @@ module attributes {
       simulation.suspend.delay %delay to ^resume
     ^resume:
       %prefix = simulation.string.literal "n="
-      %tail, %found = "simulation.plusarg.value"(%ctx, %prefix) : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
+      %tail, %found = simulation.plusarg.value %ctx, %prefix : (!simulation.context, !simulation.string) -> (!simulation.string, i32)
       %parsed = simulation.plusarg.parse_logic %tail {radix = #simulation.radix<decimal>} : (!simulation.string) -> !simulation.logic<32>
       %zero = arith.constant 0 : i32
       %matched = arith.cmpi ne, %found, %zero : i32

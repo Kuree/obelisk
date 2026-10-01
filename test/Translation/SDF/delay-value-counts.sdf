@@ -27,16 +27,12 @@
 // CHECK-SAME: temperature = #obelisk_sdf.delay_value<form = scalar, typ = <"25">>
 // CHECK-SAME: voltage = #obelisk_sdf.delay_value<form = scalar, typ = <"1.0">>
 // CHECK: obelisk_sdf.cell
-// CHECK-SAME: instance = "top/u"
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"1.25">>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = scalar, typ = <"3">>]
-// CHECK-SAME: input = #obelisk_sdf.port<name = "source", hasIndex = false, index = 0, edge = posedge>
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = scalar, typ = <"5">>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"7">>, #obelisk_sdf.delay_value<form = scalar, typ = <"8">>, #obelisk_sdf.delay_value<form = scalar, typ = <"9">>, #obelisk_sdf.delay_value<form = scalar, typ = <"10">>, #obelisk_sdf.delay_value<form = scalar, typ = <"11">>, #obelisk_sdf.delay_value<form = scalar, typ = <"12">>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"13">>, #obelisk_sdf.delay_value<form = scalar, typ = <"14">>, #obelisk_sdf.delay_value<form = scalar, typ = <"15">>, #obelisk_sdf.delay_value<form = scalar, typ = <"16">>, #obelisk_sdf.delay_value<form = scalar, typ = <"17">>, #obelisk_sdf.delay_value<form = scalar, typ = <"18">>, #obelisk_sdf.delay_value<form = scalar, typ = <"19">>, #obelisk_sdf.delay_value<form = scalar, typ = <"20">>, #obelisk_sdf.delay_value<form = scalar, typ = <"21">>, #obelisk_sdf.delay_value<form = scalar, typ = <"22">>, #obelisk_sdf.delay_value<form = scalar, typ = <"23">>, #obelisk_sdf.delay_value<form = scalar, typ = <"24">>]
-// CHECK-SAME: input = #obelisk_sdf.port<name = "source", hasIndex = true, index = 2, edge = none>
-// CHECK-SAME: output = #obelisk_sdf.port<name = "destination", hasIndex = true, index = 1, edge = none>
-// CHECK-SAME: }
+// CHECK-SAME: instance "top/u"
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"1.25">>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath #obelisk_sdf.port<name = "source", hasIndex = false, index = 0, edge = posedge> to {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = scalar, typ = <"3">>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = scalar, typ = <"5">>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"7">>, #obelisk_sdf.delay_value<form = scalar, typ = <"8">>, #obelisk_sdf.delay_value<form = scalar, typ = <"9">>, #obelisk_sdf.delay_value<form = scalar, typ = <"10">>, #obelisk_sdf.delay_value<form = scalar, typ = <"11">>, #obelisk_sdf.delay_value<form = scalar, typ = <"12">>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath #obelisk_sdf.port<name = "source", hasIndex = true, index = 2, edge = none> to #obelisk_sdf.port<name = "destination", hasIndex = true, index = 1, edge = none> delays [#obelisk_sdf.delay_value<form = scalar, typ = <"13">>, #obelisk_sdf.delay_value<form = scalar, typ = <"14">>, #obelisk_sdf.delay_value<form = scalar, typ = <"15">>, #obelisk_sdf.delay_value<form = scalar, typ = <"16">>, #obelisk_sdf.delay_value<form = scalar, typ = <"17">>, #obelisk_sdf.delay_value<form = scalar, typ = <"18">>, #obelisk_sdf.delay_value<form = scalar, typ = <"19">>, #obelisk_sdf.delay_value<form = scalar, typ = <"20">>, #obelisk_sdf.delay_value<form = scalar, typ = <"21">>, #obelisk_sdf.delay_value<form = scalar, typ = <"22">>, #obelisk_sdf.delay_value<form = scalar, typ = <"23">>, #obelisk_sdf.delay_value<form = scalar, typ = <"24">>]
 // CHECK-NEXT: }
 
 // CHECK-NOT: simulation

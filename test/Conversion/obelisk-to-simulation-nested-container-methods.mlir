@@ -1,82 +1,73 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.nested_container_methods attributes {
     definition_kind = 0 : i32,
     hierarchical_name = "nested_container_methods",
     name = "nested_container_methods",
-    node_id = 0 : i64,
-    sym_name = "s0.nested_container_methods"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.nested_container_methods attributes {
       hierarchical_name = "nested_container_methods",
       is_uninstantiated = false,
       name = "nested_container_methods",
       node_id = 3 : i64,
       referenced_path = "nested_container_methods",
-      referenced_symbol = @s0.nested_container_methods,
-      sym_name = "s3.nested_container_methods"
+      referenced_symbol = @s0.nested_container_methods
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.nested_container_methods attributes {
         hierarchical_name = "nested_container_methods",
         name = "nested_container_methods",
-        node_id = 4 : i64,
-        sym_name = "s4.nested_container_methods"
+        node_id = 4 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s5.all attributes {
           hierarchical_name = "nested_container_methods.all",
           lifetime = 1 : i32,
           name = "all",
           node_id = 5 : i64,
-          semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>, false>,
-          sym_name = "s5.all"
+          semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>, false>
         } {
         }
-        obelisk.sv.symbol.statement_block attributes {
+        obelisk.sv.symbol.statement_block @s20 attributes {
           block_kind = 0 : i32,
           hierarchical_name = "nested_container_methods",
-          node_id = 20 : i64,
-          sym_name = "s20"
+          node_id = 20 : i64
         } {
-          obelisk.sv.symbol.iterator attributes {
+          obelisk.sv.symbol.iterator @s21.assoc_index attributes {
             array_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>, false>,
             hierarchical_name = "nested_container_methods.assoc_index",
             index_method_name = "",
             is_const,
             name = "assoc_index",
             node_id = 21 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s21.assoc_index"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {
           }
-          obelisk.sv.symbol.iterator attributes {
+          obelisk.sv.symbol.iterator @s22.queue_index attributes {
             array_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>,
             hierarchical_name = "nested_container_methods.queue_index",
             index_method_name = "",
             is_const,
             name = "queue_index",
             node_id = 22 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s22.queue_index"
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
           } {
           }
         }
 
         // UVM's resource pool uses all[precedence].push_front(resource).
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s6 attributes {
           hierarchical_name = "nested_container_methods",
           node_id = 6 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s6",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {
@@ -128,11 +119,10 @@ module {
         }
 
         // The companion UVM path uses all[precedence].push_back(resource).
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s13 attributes {
           hierarchical_name = "nested_container_methods",
           node_id = 13 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s13",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {
@@ -185,11 +175,10 @@ module {
 
         // When the inner queue traversal finishes, its exit edge must carry
         // the current associative key to the outer traversal step.
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s23 attributes {
           hierarchical_name = "nested_container_methods",
           node_id = 23 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s23",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {

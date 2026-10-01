@@ -37,7 +37,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     ^wait:
       %scratch = simulation.context.storage %ctx[2] : !ref
       %initial = simulation.ref.load %data : !ref -> !logic
-      %watch = simulation.observer.bind @monitor values(%data, %scratch, %data : !ref, !ref, !ref) captures 2 : <!logic>
+      %watch = simulation.observer.bind @monitor values(%data, %scratch, %data : !ref, !ref, !ref) captures 2 : !simulation.observer<!logic>
       simulation.suspend.observe %watch, %initial conditions 0 edges [0] indices [-1] to ^change : !simulation.observer<!logic>, !logic
     ^change:
       %old = simulation.ref.load %count : !count -> i32

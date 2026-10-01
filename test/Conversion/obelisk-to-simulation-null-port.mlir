@@ -15,41 +15,39 @@
 // CHECK-NOT: obelisk.sv.
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.leaf attributes {
     definition_kind = 0 : i32, hierarchical_name = "leaf", name = "leaf",
-    node_id = 0 : i64, sym_name = "s0.leaf"
+    node_id = 0 : i64
   } {}
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s1.top attributes {
     definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
-    node_id = 1 : i64, sym_name = "s1.top"
+    node_id = 1 : i64
   } {}
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64,
-    sym_name = "s2.$root"
+  obelisk.sv.symbol.root @s2.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"
+    obelisk.sv.symbol.compilation_unit @s3 attributes {
+      hierarchical_name = "$unit", node_id = 3 : i64
     } {}
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s4.top attributes {
       hierarchical_name = "top", is_uninstantiated = false, name = "top",
       node_id = 4 : i64, referenced_path = "top",
-      referenced_symbol = @s1.top, sym_name = "s4.top"
+      referenced_symbol = @s1.top
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s5.top attributes {
         hierarchical_name = "top", name = "top", node_id = 5 : i64,
-        sym_name = "s5.top", time_precision_fs = 1000000 : i64,
+        time_precision_fs = 1000000 : i64,
         time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.net attributes {
+        obelisk.sv.symbol.net @s6.a attributes {
           hierarchical_name = "top.a", is_implicit = false, name = "a",
           net_kind = 1 : i32, node_id = 6 : i64,
-          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-          sym_name = "s6.a"
+          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
         } {}
-        obelisk.sv.symbol.instance attributes {
+        obelisk.sv.symbol.instance @s7.i attributes {
           hierarchical_name = "top.i", is_uninstantiated = false, name = "i",
           node_id = 7 : i64, referenced_path = "leaf",
-          referenced_symbol = @s0.leaf, sym_name = "s7.i"
+          referenced_symbol = @s0.leaf
         } {
           obelisk.sv.port.connection attributes {
             actual_is_constant = false, direction = 2 : i32,
@@ -80,27 +78,24 @@ module {
             formal_type = !obelisk.void, is_ansi = false, is_net = false,
             node_id = 11 : i64, provenance = 4 : i32
           } {} {}
-          obelisk.sv.symbol.instance_body attributes {
+          obelisk.sv.symbol.instance_body @s8.leaf attributes {
             hierarchical_name = "top.i", name = "leaf", node_id = 12 : i64,
-            sym_name = "s8.leaf", time_precision_fs = 1000000 : i64,
+            time_precision_fs = 1000000 : i64,
             time_unit_fs = 1000000 : i64
           } {
-            obelisk.sv.symbol.port attributes {
+            obelisk.sv.symbol.port @s9.value attributes {
               direction = 0 : i32, hierarchical_name = "top.i.value",
               name = "value", node_id = 13 : i64,
-              semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
-              sym_name = "s9.value"
+              semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
             } {}
-            obelisk.sv.symbol.net attributes {
+            obelisk.sv.symbol.net @s10.value attributes {
               hierarchical_name = "top.i.value", is_implicit = false,
               name = "value", net_kind = 1 : i32, node_id = 14 : i64,
-              semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
-              sym_name = "s10.value"
+              semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
             } {}
-            obelisk.sv.symbol.port attributes {
+            obelisk.sv.symbol.port @s11 attributes {
               direction = 0 : i32, hierarchical_name = "top.i",
-              node_id = 15 : i64, semantic_type = !obelisk.void,
-              sym_name = "s11"
+              node_id = 15 : i64, semantic_type = !obelisk.void
             } {}
           }
         }

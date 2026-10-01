@@ -1,57 +1,50 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.void_function attributes {
     definition_kind = 0 : i32,
     hierarchical_name = "void_function",
     name = "void_function",
-    node_id = 0 : i64,
-    sym_name = "s0.void_function"
+    node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
+  obelisk.sv.symbol.root @s1.$root attributes {
     hierarchical_name = "\\$root ",
     name = "$root",
-    node_id = 1 : i64,
-    sym_name = "s1.$root"
+    node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
       hierarchical_name = "$unit",
-      node_id = 2 : i64,
-      sym_name = "s2"
+      node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.void_function attributes {
       hierarchical_name = "void_function",
       is_uninstantiated = false,
       name = "void_function",
       node_id = 3 : i64,
       referenced_path = "void_function",
-      referenced_symbol = @s0.void_function,
-      sym_name = "s3.void_function"
+      referenced_symbol = @s0.void_function
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.void_function attributes {
         hierarchical_name = "void_function",
         name = "void_function",
-        node_id = 4 : i64,
-        sym_name = "s4.void_function"
+        node_id = 4 : i64
       } {
-        obelisk.sv.symbol.subroutine attributes {
+        obelisk.sv.symbol.subroutine @s5.run attributes {
           hierarchical_name = "void_function.run",
           name = "run",
           node_id = 5 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
           subroutine_kind = 0 : i32,
-          sym_name = "s5.run",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s6 attributes {
           hierarchical_name = "void_function",
           node_id = 6 : i64,
           procedure_kind = 0 : i32,
-          sym_name = "s6",
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64
         } {

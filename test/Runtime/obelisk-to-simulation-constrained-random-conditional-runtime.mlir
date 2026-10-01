@@ -18,18 +18,18 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "conditional_runtime", name = "conditional_runtime", node_id = 0 : i64, sym_name = "s0.conditional_runtime"} {
+  obelisk.sv.symbol.definition @s0.conditional_runtime attributes {definition_kind = 0 : i32, hierarchical_name = "conditional_runtime", name = "conditional_runtime", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.type.class_type attributes {bitstream_width = 65 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "conditional_object", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "conditional_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>, sym_name = "s3.conditional_object", this_variable_path = "conditional_object::this", this_variable_symbol = @s1.$root::@s2::@s3.conditional_object::@s27.this} {
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "conditional_object::d", name = "d", node_id = 4 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s4.d"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.class_type @s3.conditional_object attributes {bitstream_width = 65 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "conditional_object", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "conditional_object", node_id = 3 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>, this_variable_path = "conditional_object::this", this_variable_symbol = @s1.$root::@s2::@s3.conditional_object::@s27.this} {
+        obelisk.sv.symbol.class_property @s4.d attributes {hierarchical_name = "conditional_object::d", name = "d", node_id = 4 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "conditional_object::y", name = "y", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s5.y"} {
+        obelisk.sv.symbol.class_property @s5.y attributes {hierarchical_name = "conditional_object::y", name = "y", node_id = 5 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.class_property attributes {hierarchical_name = "conditional_object::i", name = "i", node_id = 6 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s6.i"} {
+        obelisk.sv.symbol.class_property @s6.i attributes {hierarchical_name = "conditional_object::i", name = "i", node_id = 6 : i64, rand_mode = 1 : i32, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
         }
-        obelisk.sv.symbol.constraint_block attributes {hierarchical_name = "conditional_object::rule", name = "rule", node_id = 7 : i64, sym_name = "s7.rule", this_variable_path = "conditional_object::rule.this", this_variable_symbol = @s1.$root::@s2::@s3.conditional_object::@s7.rule::@s8.this} {
+        obelisk.sv.symbol.constraint_block @s7.rule attributes {hierarchical_name = "conditional_object::rule", name = "rule", node_id = 7 : i64, this_variable_path = "conditional_object::rule.this", this_variable_symbol = @s1.$root::@s2::@s3.conditional_object::@s7.rule::@s8.this} {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 8 : i64} {
             obelisk.sv.constraint.conditional attributes {has_else = false, node_id = 9 : i64} {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 10 : i64, referenced_path = "conditional_object::i", referenced_symbol = @s1.$root::@s2::@s3.conditional_object::@s6.i, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
@@ -54,68 +54,68 @@ module attributes {
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "conditional_object::rule.this", is_compiler_generated, is_const, name = "this", node_id = 20 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>, sym_name = "s8.this"} {
+          obelisk.sv.symbol.variable @s8.this attributes {hierarchical_name = "conditional_object::rule.this", is_compiler_generated, is_const, name = "this", node_id = 20 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 21 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s9.randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s9.randomize attributes {hierarchical_name = "conditional_object::randomize", is_builtin, is_declared_virtual, is_randomize, is_virtual, name = "randomize", node_id = 21 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 22 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::pre_randomize", is_builtin, name = "pre_randomize", node_id = 23 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s10.pre_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s10.pre_randomize attributes {hierarchical_name = "conditional_object::pre_randomize", is_builtin, name = "pre_randomize", node_id = 23 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 24 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::post_randomize", is_builtin, name = "post_randomize", node_id = 25 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s11.post_randomize", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s11.post_randomize attributes {hierarchical_name = "conditional_object::post_randomize", is_builtin, name = "post_randomize", node_id = 25 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 26 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::get_randstate", is_builtin, name = "get_randstate", node_id = 27 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>, subroutine_kind = 0 : i32, sym_name = "s12.get_randstate", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s12.get_randstate attributes {hierarchical_name = "conditional_object::get_randstate", is_builtin, name = "get_randstate", node_id = 27 : i64, semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 28 : i64} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::set_randstate", is_builtin, name = "set_randstate", node_id = 29 : i64, semantic_type = !obelisk.subroutine<(!obelisk.string) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s13.set_randstate", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s13.set_randstate attributes {hierarchical_name = "conditional_object::set_randstate", is_builtin, name = "set_randstate", node_id = 29 : i64, semantic_type = !obelisk.subroutine<(!obelisk.string) -> !obelisk.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 30 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "conditional_object::set_randstate.state", name = "state", node_id = 31 : i64, semantic_type = !obelisk.string, sym_name = "s14.state"} {
+          obelisk.sv.symbol.formal_argument @s14.state attributes {direction = 0 : i32, hierarchical_name = "conditional_object::set_randstate.state", name = "state", node_id = 31 : i64, semantic_type = !obelisk.string} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::srandom", is_builtin, name = "srandom", node_id = 32 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s15.srandom", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s15.srandom attributes {hierarchical_name = "conditional_object::srandom", is_builtin, name = "srandom", node_id = 32 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 33 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "conditional_object::srandom.seed", name = "seed", node_id = 34 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s16.seed"} {
+          obelisk.sv.symbol.formal_argument @s16.seed attributes {direction = 0 : i32, hierarchical_name = "conditional_object::srandom.seed", name = "seed", node_id = 34 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::rand_mode", is_builtin, name = "rand_mode", node_id = 35 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s17.rand_mode", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s17.rand_mode attributes {hierarchical_name = "conditional_object::rand_mode", is_builtin, name = "rand_mode", node_id = 35 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 36 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "conditional_object::rand_mode.on_ff", name = "on_ff", node_id = 37 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s18.on_ff"} {
+          obelisk.sv.symbol.formal_argument @s18.on_ff attributes {direction = 0 : i32, hierarchical_name = "conditional_object::rand_mode.on_ff", name = "on_ff", node_id = 37 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "conditional_object::constraint_mode", is_builtin, name = "constraint_mode", node_id = 38 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, sym_name = "s19.constraint_mode", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s19.constraint_mode attributes {hierarchical_name = "conditional_object::constraint_mode", is_builtin, name = "constraint_mode", node_id = 38 : i64, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 39 : i64} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "conditional_object::constraint_mode.on_ff", name = "on_ff", node_id = 40 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s20.on_ff"} {
+          obelisk.sv.symbol.formal_argument @s20.on_ff attributes {direction = 0 : i32, hierarchical_name = "conditional_object::constraint_mode.on_ff", name = "on_ff", node_id = 40 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "conditional_object::this", is_compiler_generated, is_const, name = "this", node_id = 96 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>, sym_name = "s27.this"} {
+        obelisk.sv.symbol.variable @s27.this attributes {hierarchical_name = "conditional_object::this", is_compiler_generated, is_const, name = "this", node_id = 96 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>} {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "conditional_runtime", is_uninstantiated = false, name = "conditional_runtime", node_id = 41 : i64, referenced_path = "conditional_runtime", referenced_symbol = @s0.conditional_runtime, sym_name = "s21.conditional_runtime"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "conditional_runtime", name = "conditional_runtime", node_id = 42 : i64, sym_name = "s22.conditional_runtime", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "conditional_runtime.object", lifetime = 1 : i32, name = "object", node_id = 43 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>, sym_name = "s23.object"} {
+    obelisk.sv.symbol.instance @s21.conditional_runtime attributes {hierarchical_name = "conditional_runtime", is_uninstantiated = false, name = "conditional_runtime", node_id = 41 : i64, referenced_path = "conditional_runtime", referenced_symbol = @s0.conditional_runtime} {
+      obelisk.sv.symbol.instance_body @s22.conditional_runtime attributes {hierarchical_name = "conditional_runtime", name = "conditional_runtime", node_id = 42 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s23.object attributes {hierarchical_name = "conditional_runtime.object", lifetime = 1 : i32, name = "object", node_id = 43 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>} {
           obelisk.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 44 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.conditional_object>} {
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "conditional_runtime.ok", lifetime = 1 : i32, name = "ok", node_id = 45 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s24.ok"} {
+        obelisk.sv.symbol.variable @s24.ok attributes {hierarchical_name = "conditional_runtime.ok", lifetime = 1 : i32, name = "ok", node_id = 45 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 46 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "conditional_runtime.varied", lifetime = 1 : i32, name = "varied", node_id = 47 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s25.varied"} {
+        obelisk.sv.symbol.variable @s25.varied attributes {hierarchical_name = "conditional_runtime.varied", lifetime = 1 : i32, name = "varied", node_id = 47 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 48 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "conditional_runtime", node_id = 49 : i64, procedure_kind = 0 : i32, sym_name = "s26", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s26 attributes {hierarchical_name = "conditional_runtime", node_id = 49 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 50 : i64} {
             obelisk.sv.statement.list attributes {node_id = 51 : i64} {
               obelisk.sv.statement.repeat_loop attributes {node_id = 52 : i64} {

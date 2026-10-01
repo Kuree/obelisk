@@ -16,7 +16,7 @@ module attributes {
         %message: !simulation.string {simulation.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
       // CHECK: %[[MAILBOX:.*]] = simulation.mailbox.create
-      %mailbox = "simulation.mailbox.create"(%bound) {
+      %mailbox = simulation.mailbox.create %bound {
         alignment = 8 : i64,
         bit_width = 0 : i64,
         element_flags = #simulation.element_flags<none>,
@@ -27,7 +27,7 @@ module attributes {
         value_size = 8 : i64
       } :
         (i64) -> !simulation.mailbox<!simulation.string>
-      %array = "simulation.container.create"(%bound) {
+      %array = simulation.container.create %bound {
         alignment = 4 : i64,
         bit_width = 32 : i64,
         bound = 0 : i64,
@@ -48,17 +48,17 @@ module attributes {
       %unboxed = simulation.box.cast %box :
         (!simulation.box) -> !simulation.dynamic_array<i32>
       // CHECK: simulation.mailbox.try_put
-      %put = "simulation.mailbox.try_put"(%mailbox, %message) :
+      %put = simulation.mailbox.try_put %mailbox, %message :
         (!simulation.mailbox<!simulation.string>, !simulation.string) -> i1
       // CHECK: simulation.mailbox.try_peek
-      %peek_ok, %peek = "simulation.mailbox.try_peek"(%mailbox) :
+      %peek_ok, %peek = simulation.mailbox.try_peek %mailbox :
         (!simulation.mailbox<!simulation.string>) ->
         (i1, !simulation.string)
       // CHECK: simulation.mailbox.num
-      %count = "simulation.mailbox.num"(%mailbox) :
+      %count = simulation.mailbox.num %mailbox :
         (!simulation.mailbox<!simulation.string>) -> i32
       // CHECK: simulation.mailbox.try_get
-      %get_ok, %get = "simulation.mailbox.try_get"(%mailbox) :
+      %get_ok, %get = simulation.mailbox.try_get %mailbox :
         (!simulation.mailbox<!simulation.string>) ->
         (i1, !simulation.string)
       // CHECK: simulation.suspend.mailbox %[[MAILBOX]] not_empty

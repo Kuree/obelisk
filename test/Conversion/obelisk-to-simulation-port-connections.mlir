@@ -1,20 +1,20 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sim_port_child", name = "sim_port_child", node_id = 0 : i64, sym_name = "s0.sim_port_child"} {
+  obelisk.sv.symbol.definition @s0.sim_port_child attributes {definition_kind = 0 : i32, hierarchical_name = "sim_port_child", name = "sim_port_child", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "supported_port_connections", name = "supported_port_connections", node_id = 1 : i64, sym_name = "s1.supported_port_connections"} {
+  obelisk.sv.symbol.definition @s1.supported_port_connections attributes {definition_kind = 0 : i32, hierarchical_name = "supported_port_connections", name = "supported_port_connections", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "supported_port_connections", is_uninstantiated = false, name = "supported_port_connections", node_id = 4 : i64, referenced_path = "supported_port_connections", referenced_symbol = @s1.supported_port_connections, sym_name = "s4.supported_port_connections"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "supported_port_connections", name = "supported_port_connections", node_id = 5 : i64, sym_name = "s5.supported_port_connections"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_port_connections.source_value", lifetime = 1 : i32, name = "source_value", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.source_value"} {
+    obelisk.sv.symbol.instance @s4.supported_port_connections attributes {hierarchical_name = "supported_port_connections", is_uninstantiated = false, name = "supported_port_connections", node_id = 4 : i64, referenced_path = "supported_port_connections", referenced_symbol = @s1.supported_port_connections} {
+      obelisk.sv.symbol.instance_body @s5.supported_port_connections attributes {hierarchical_name = "supported_port_connections", name = "supported_port_connections", node_id = 5 : i64} {
+        obelisk.sv.symbol.variable @s6.source_value attributes {hierarchical_name = "supported_port_connections.source_value", lifetime = 1 : i32, name = "source_value", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_port_connections.destination", lifetime = 1 : i32, name = "destination", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s7.destination"} {
+        obelisk.sv.symbol.variable @s7.destination attributes {hierarchical_name = "supported_port_connections.destination", lifetime = 1 : i32, name = "destination", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "supported_port_connections.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "sim_port_child", referenced_symbol = @s0.sim_port_child, sym_name = "s8.child"} {
+        obelisk.sv.symbol.instance @s8.child attributes {hierarchical_name = "supported_port_connections.child", is_uninstantiated = false, name = "child", node_id = 8 : i64, referenced_path = "sim_port_child", referenced_symbol = @s0.sim_port_child} {
           obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "value", formal_ordinal = 0 : i64, formal_path = "supported_port_connections.child.value", formal_symbol = @s2.$root::@s4.supported_port_connections::@s5.supported_port_connections::@s8.child::@s9.sim_port_child::@s10.value, formal_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, internal_path = "supported_port_connections.child.value", internal_symbol = @s2.$root::@s4.supported_port_connections::@s5.supported_port_connections::@s8.child::@s9.sim_port_child::@s11.value, is_ansi = true, is_net = false, node_id = 9 : i64, provenance = 0 : i32} {
           } {
             obelisk.sv.expression.binary_op attributes {node_id = 10 : i64, operator_kind = 0 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
@@ -57,16 +57,16 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "supported_port_connections.child", name = "sim_port_child", node_id = 29 : i64, sym_name = "s9.sim_port_child"} {
-            obelisk.sv.symbol.port attributes {direction = 0 : i32, hierarchical_name = "supported_port_connections.child.value", name = "value", node_id = 30 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s10.value"} {
+          obelisk.sv.symbol.instance_body @s9.sim_port_child attributes {hierarchical_name = "supported_port_connections.child", name = "sim_port_child", node_id = 29 : i64} {
+            obelisk.sv.symbol.port @s10.value attributes {direction = 0 : i32, hierarchical_name = "supported_port_connections.child.value", name = "value", node_id = 30 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_port_connections.child.value", lifetime = 1 : i32, name = "value", node_id = 31 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s11.value"} {
+            obelisk.sv.symbol.variable @s11.value attributes {hierarchical_name = "supported_port_connections.child.value", lifetime = 1 : i32, name = "value", node_id = 31 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
-            obelisk.sv.symbol.port attributes {direction = 1 : i32, hierarchical_name = "supported_port_connections.child.copied", name = "copied", node_id = 32 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s12.copied"} {
+            obelisk.sv.symbol.port @s12.copied attributes {direction = 1 : i32, hierarchical_name = "supported_port_connections.child.copied", name = "copied", node_id = 32 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "supported_port_connections.child.copied", lifetime = 1 : i32, name = "copied", node_id = 33 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s13.copied"} {
+            obelisk.sv.symbol.variable @s13.copied attributes {hierarchical_name = "supported_port_connections.child.copied", lifetime = 1 : i32, name = "copied", node_id = 33 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
-            obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "supported_port_connections.child", node_id = 34 : i64, procedure_kind = 3 : i32, sym_name = "s14", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.procedural_block @s14 attributes {hierarchical_name = "supported_port_connections.child", node_id = 34 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 35 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 36 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
                   obelisk.sv.expression.named_value attributes {node_id = 37 : i64, referenced_path = "supported_port_connections.child.copied", referenced_symbol = @s2.$root::@s4.supported_port_connections::@s5.supported_port_connections::@s8.child::@s9.sim_port_child::@s13.copied, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {

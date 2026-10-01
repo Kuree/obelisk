@@ -4,24 +4,24 @@
 // the same event-expression list and iff qualifiers as a procedural wait.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "nba_event_list_iff", name = "nba_event_list_iff", node_id = 0 : i64, sym_name = "s0.nba_event_list_iff"} {
+  obelisk.sv.symbol.definition @s0.nba_event_list_iff attributes {definition_kind = 0 : i32, hierarchical_name = "nba_event_list_iff", name = "nba_event_list_iff", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "nba_event_list_iff", is_uninstantiated = false, name = "nba_event_list_iff", node_id = 3 : i64, referenced_path = "nba_event_list_iff", referenced_symbol = @s0.nba_event_list_iff, sym_name = "s3.nba_event_list_iff"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "nba_event_list_iff", name = "nba_event_list_iff", node_id = 4 : i64, sym_name = "s4.nba_event_list_iff"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "nba_event_list_iff.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.nba_event_list_iff attributes {hierarchical_name = "nba_event_list_iff", is_uninstantiated = false, name = "nba_event_list_iff", node_id = 3 : i64, referenced_path = "nba_event_list_iff", referenced_symbol = @s0.nba_event_list_iff} {
+      obelisk.sv.symbol.instance_body @s4.nba_event_list_iff attributes {hierarchical_name = "nba_event_list_iff", name = "nba_event_list_iff", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.clk attributes {hierarchical_name = "nba_event_list_iff.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "nba_event_list_iff.reset", lifetime = 1 : i32, name = "reset", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.reset"} {
+        obelisk.sv.symbol.variable @s6.reset attributes {hierarchical_name = "nba_event_list_iff.reset", lifetime = 1 : i32, name = "reset", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "nba_event_list_iff.enable", lifetime = 1 : i32, name = "enable", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.enable"} {
+        obelisk.sv.symbol.variable @s7.enable attributes {hierarchical_name = "nba_event_list_iff.enable", lifetime = 1 : i32, name = "enable", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "nba_event_list_iff.lhs", lifetime = 1 : i32, name = "lhs", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.lhs"} {
+        obelisk.sv.symbol.variable @s8.lhs attributes {hierarchical_name = "nba_event_list_iff.lhs", lifetime = 1 : i32, name = "lhs", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "nba_event_list_iff.rhs", lifetime = 1 : i32, name = "rhs", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.rhs"} {
+        obelisk.sv.symbol.variable @s9.rhs attributes {hierarchical_name = "nba_event_list_iff.rhs", lifetime = 1 : i32, name = "rhs", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "nba_event_list_iff", node_id = 10 : i64, procedure_kind = 0 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "nba_event_list_iff", node_id = 10 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 11 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 1 : i32, has_timing_control = true, node_id = 12 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
               obelisk.sv.timing.event_list attributes {event_count = 2 : i64, node_id = 13 : i64} {

@@ -14,22 +14,22 @@
 // SNAPSHOT-NOT: debug "__obelisk_sample_default"
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.coverage.language_version = 2023 : i32} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "history_default_matrix", name = "history_default_matrix", node_id = 0 : i64, sym_name = "s0.history_default_matrix"} {
+  obelisk.sv.symbol.definition @s0.history_default_matrix attributes {definition_kind = 0 : i32, hierarchical_name = "history_default_matrix", name = "history_default_matrix", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, simulation.vpi_definition_name = "$unit", sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64, simulation.vpi_definition_name = "$unit"} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "history_default_matrix", is_uninstantiated = false, name = "history_default_matrix", node_id = 3 : i64, referenced_path = "history_default_matrix", referenced_symbol = @s0.history_default_matrix, sym_name = "s3.history_default_matrix"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "history_default_matrix", name = "history_default_matrix", node_id = 4 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "history_default_matrix", simulation.vpi_top = true, sym_name = "s4.history_default_matrix", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s5.clk"} {
+    obelisk.sv.symbol.instance @s3.history_default_matrix attributes {hierarchical_name = "history_default_matrix", is_uninstantiated = false, name = "history_default_matrix", node_id = 3 : i64, referenced_path = "history_default_matrix", referenced_symbol = @s0.history_default_matrix} {
+      obelisk.sv.symbol.instance_body @s4.history_default_matrix attributes {hierarchical_name = "history_default_matrix", name = "history_default_matrix", node_id = 4 : i64, simulation.vpi_automatic = false, simulation.vpi_cell_instance = false, simulation.vpi_definition_name = "history_default_matrix", simulation.vpi_top = true, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
+        obelisk.sv.symbol.variable @s5.clk attributes {hierarchical_name = "history_default_matrix.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b0", is_implicit = true, is_signed = false, node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 2, 13, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 2, 14, "">} {
             obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 2, 13, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 2, 14, "">} {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.zero", lifetime = 1 : i32, name = "zero", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s6.zero"} {
+        obelisk.sv.symbol.variable @s6.zero attributes {hierarchical_name = "history_default_matrix.zero", lifetime = 1 : i32, name = "zero", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.initialized", lifetime = 1 : i32, name = "initialized", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s7.initialized"} {
+        obelisk.sv.symbol.variable @s7.initialized attributes {hierarchical_name = "history_default_matrix.initialized", lifetime = 1 : i32, name = "initialized", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "4'b101", is_implicit = true, is_signed = false, node_id = 10 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 4, 29, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 4, 30, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "5", is_implicit = true, is_signed = true, node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 4, 29, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 4, 30, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "5", is_declared_unsized = true, is_signed = true, node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 4, 29, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 4, 30, "">} {
@@ -37,7 +37,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.flag", lifetime = 1 : i32, name = "flag", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.flag"} {
+        obelisk.sv.symbol.variable @s8.flag attributes {hierarchical_name = "history_default_matrix.flag", lifetime = 1 : i32, name = "flag", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b1", is_implicit = true, is_signed = false, node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 5, 16, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 5, 17, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "1", is_implicit = true, is_signed = true, node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 5, 16, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 5, 17, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 16 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 5, 16, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 5, 17, "">} {
@@ -45,17 +45,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.gate", lifetime = 1 : i32, name = "gate", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s9.gate"} {
+        obelisk.sv.symbol.variable @s9.gate attributes {hierarchical_name = "history_default_matrix.gate", lifetime = 1 : i32, name = "gate", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b1", is_implicit = true, is_signed = false, node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 6, 14, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 6, 15, "">} {
             obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 19 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 6, 14, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 6, 15, "">} {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.calls", lifetime = 1 : i32, name = "calls", node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s10.calls"} {
+        obelisk.sv.symbol.variable @s10.calls attributes {hierarchical_name = "history_default_matrix.calls", lifetime = 1 : i32, name = "calls", node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 21 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 7, 15, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 7, 16, "">} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "history_default_matrix.initialize", name = "initialize", node_id = 22 : i64, return_variable_path = "history_default_matrix.initialize.initialize", return_variable_symbol = @s1.$root::@s3.history_default_matrix::@s4.history_default_matrix::@s11.initialize::@s12.initialize, semantic_type = !obelisk.subroutine<() -> !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, false>, subroutine_kind = 0 : i32, sym_name = "s11.initialize", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s11.initialize attributes {hierarchical_name = "history_default_matrix.initialize", name = "initialize", node_id = 22 : i64, return_variable_path = "history_default_matrix.initialize.initialize", return_variable_symbol = @s1.$root::@s3.history_default_matrix::@s4.history_default_matrix::@s11.initialize::@s12.initialize, semantic_type = !obelisk.subroutine<() -> !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 23 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 24 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 9, 5, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 9, 13, "">} {
               obelisk.sv.expression.unary_op attributes {is_signed = true, node_id = 25 : i64, operator_kind = 12 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 9, 5, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 9, 12, "">} {
@@ -72,18 +72,18 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
               }
             }
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.initialize.initialize", is_compiler_generated, name = "initialize", node_id = 31 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s12.initialize"} {
+          obelisk.sv.symbol.variable @s12.initialize attributes {hierarchical_name = "history_default_matrix.initialize.initialize", is_compiler_generated, name = "initialize", node_id = 31 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.dynamic_value", lifetime = 1 : i32, name = "dynamic_value", node_id = 32 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s13.dynamic_value"} {
+        obelisk.sv.symbol.variable @s13.dynamic_value attributes {hierarchical_name = "history_default_matrix.dynamic_value", lifetime = 1 : i32, name = "dynamic_value", node_id = 32 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "initialize", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = false, node_id = 33 : i64, referenced_path = "history_default_matrix.initialize", referenced_symbol = @s1.$root::@s3.history_default_matrix::@s4.history_default_matrix::@s11.initialize, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, subroutine_kind = 0 : i32} {
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.unused_value", lifetime = 1 : i32, name = "unused_value", node_id = 34 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s14.unused_value"} {
+        obelisk.sv.symbol.variable @s14.unused_value attributes {hierarchical_name = "history_default_matrix.unused_value", lifetime = 1 : i32, name = "unused_value", node_id = 34 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           obelisk.sv.expression.call attributes {argument_count = 0 : i64, callee_name = "initialize", constraint_restrictions = [], defaulted_arguments = array<i64>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = false, node_id = 35 : i64, referenced_path = "history_default_matrix.initialize", referenced_symbol = @s1.$root::@s3.history_default_matrix::@s4.history_default_matrix::@s11.initialize, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, subroutine_kind = 0 : i32} {
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.expected", lifetime = 1 : i32, name = "expected", node_id = 36 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s15.expected"} {
+        obelisk.sv.symbol.variable @s15.expected attributes {hierarchical_name = "history_default_matrix.expected", lifetime = 1 : i32, name = "expected", node_id = 36 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "4'b101", is_implicit = true, is_signed = false, node_id = 37 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 14, 26, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 14, 27, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "5", is_implicit = true, is_signed = true, node_id = 38 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 14, 26, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 14, 27, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "5", is_declared_unsized = true, is_signed = true, node_id = 39 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 14, 26, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 14, 27, "">} {
@@ -91,7 +91,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "history_default_matrix.lanes", lifetime = 1 : i32, name = "lanes", node_id = 40 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>, sym_name = "s16.lanes"} {
+        obelisk.sv.symbol.variable @s16.lanes attributes {hierarchical_name = "history_default_matrix.lanes", lifetime = 1 : i32, name = "lanes", node_id = 40 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>} {
           obelisk.sv.expression.simple_assignment_pattern attributes {is_signed = false, node_id = 41 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 15, 26, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 15, 39, "">} {
             obelisk.sv.expression.conversion attributes {folded_constant = "4'b1001", is_implicit = true, is_signed = false, node_id = 42 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 15, 28, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 15, 32, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "4'b1001", is_signed = false, node_id = 43 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 15, 28, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 15, 32, "">} {
@@ -101,7 +101,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "history_default_matrix", node_id = 45 : i64, procedure_kind = 2 : i32, sym_name = "s17", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s17 attributes {hierarchical_name = "history_default_matrix", node_id = 45 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 46 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 16, 10, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 16, 24, "">} {
             obelisk.sv.timing.delay attributes {node_id = 47 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 16, 10, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 16, 12, "">} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 48 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 16, 11, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 16, 12, "">} {
@@ -119,7 +119,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "history_default_matrix", node_id = 54 : i64, procedure_kind = 2 : i32, sym_name = "s18", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s18 attributes {hierarchical_name = "history_default_matrix", node_id = 54 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 55 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 17, 10, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 21, 71, "">} {
             obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 56 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 17, 12, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 17, 23, "">} {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 57 : i64, referenced_path = "history_default_matrix.clk", referenced_symbol = @s1.$root::@s3.history_default_matrix::@s4.history_default_matrix::@s5.clk, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 17, 20, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 17, 23, "">} {
@@ -183,7 +183,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "history_default_matrix", node_id = 86 : i64, procedure_kind = 2 : i32, sym_name = "s19", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s19 attributes {hierarchical_name = "history_default_matrix", node_id = 86 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = true, has_pass_action = true, node_id = 87 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 22, 3, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 25, 48, "">} {
             obelisk.sv.assertion.clocking attributes {node_id = 88 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 22, 20, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 23, 59, "">} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 89 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 22, 22, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 22, 33, "">} {
@@ -231,7 +231,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "history_default_matrix", node_id = 110 : i64, procedure_kind = 0 : i32, sym_name = "s20", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s20 attributes {hierarchical_name = "history_default_matrix", node_id = 110 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 111 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 26, 11, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 33, 6, "">} {
             obelisk.sv.statement.list attributes {node_id = 112 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 26, 11, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 33, 6, "">} {
               obelisk.sv.statement.expression_statement attributes {node_id = 113 : i64, source_range = !obelisk.source_range<"tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 27, 5, "tmp/bench/unified-loop/cores/scr1/history-default-matrix.sv", 27, 21, "">} {

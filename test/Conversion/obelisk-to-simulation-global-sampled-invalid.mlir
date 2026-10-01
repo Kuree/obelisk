@@ -8,18 +8,18 @@
 //--- missing-clock.mlir
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "bad", name = "bad", node_id = 0 : i64, sym_name = "s0.bad"} {
+  obelisk.sv.symbol.definition @s0.bad attributes {definition_kind = 0 : i32, hierarchical_name = "bad", name = "bad", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "bad", is_uninstantiated = false, name = "bad", node_id = 3 : i64, referenced_path = "bad", referenced_symbol = @s0.bad, sym_name = "s3.bad"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "bad", name = "bad", node_id = 4 : i64, sym_name = "s4.bad", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "bad.a", lifetime = 1 : i32, name = "a", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.a"} {
+    obelisk.sv.symbol.instance @s3.bad attributes {hierarchical_name = "bad", is_uninstantiated = false, name = "bad", node_id = 3 : i64, referenced_path = "bad", referenced_symbol = @s0.bad} {
+      obelisk.sv.symbol.instance_body @s4.bad attributes {hierarchical_name = "bad", name = "bad", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.a attributes {hierarchical_name = "bad.a", lifetime = 1 : i32, name = "a", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "bad.b", lifetime = 1 : i32, name = "b", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.b"} {
+        obelisk.sv.symbol.variable @s6.b attributes {hierarchical_name = "bad.b", lifetime = 1 : i32, name = "b", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "bad", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "bad", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 10 : i64, referenced_path = "bad.b", referenced_symbol = @s1.$root::@s3.bad::@s4.bad::@s6.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -39,20 +39,20 @@ module {
 //--- future-procedural.mlir
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "bad", name = "bad", node_id = 0 : i64, sym_name = "s0.bad"} {
+  obelisk.sv.symbol.definition @s0.bad attributes {definition_kind = 0 : i32, hierarchical_name = "bad", name = "bad", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "bad", is_uninstantiated = false, name = "bad", node_id = 3 : i64, referenced_path = "bad", referenced_symbol = @s0.bad, sym_name = "s3.bad"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "bad", name = "bad", node_id = 4 : i64, sym_name = "s4.bad", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "bad.gclk", lifetime = 1 : i32, name = "gclk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.gclk"} {
+    obelisk.sv.symbol.instance @s3.bad attributes {hierarchical_name = "bad", is_uninstantiated = false, name = "bad", node_id = 3 : i64, referenced_path = "bad", referenced_symbol = @s0.bad} {
+      obelisk.sv.symbol.instance_body @s4.bad attributes {hierarchical_name = "bad", name = "bad", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.gclk attributes {hierarchical_name = "bad.gclk", lifetime = 1 : i32, name = "gclk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "bad.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.a"} {
+        obelisk.sv.symbol.variable @s6.a attributes {hierarchical_name = "bad.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "bad.b", lifetime = 1 : i32, name = "b", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.b"} {
+        obelisk.sv.symbol.variable @s7.b attributes {hierarchical_name = "bad.b", lifetime = 1 : i32, name = "b", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "bad", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "bad", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
               obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 11 : i64, referenced_path = "bad.b", referenced_symbol = @s1.$root::@s3.bad::@s4.bad::@s7.b, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {

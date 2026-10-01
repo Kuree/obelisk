@@ -13,5 +13,5 @@ endmodule
 
 // CHECK-COUNT-1: simulation.string.scan_field
 // CHECK-COUNT-1: simulation.string.parse_logic
-// CHECK-SAME: radix = <hex> : <4096>
+// CHECK-SAME: radix = <hex> : !simulation.logic<4096>
 // CHECK-NOT: simulation.string.parse_logic

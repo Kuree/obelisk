@@ -1,20 +1,20 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "dynamic_slice_lvalue", name = "dynamic_slice_lvalue", node_id = 0 : i64, sym_name = "s0.dynamic_slice_lvalue"} {
+  obelisk.sv.symbol.definition @s0.dynamic_slice_lvalue attributes {definition_kind = 0 : i32, hierarchical_name = "dynamic_slice_lvalue", name = "dynamic_slice_lvalue", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "dynamic_slice_lvalue", is_uninstantiated = false, name = "dynamic_slice_lvalue", node_id = 3 : i64, referenced_path = "dynamic_slice_lvalue", referenced_symbol = @s0.dynamic_slice_lvalue, sym_name = "s3.dynamic_slice_lvalue"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "dynamic_slice_lvalue", name = "dynamic_slice_lvalue", node_id = 4 : i64, sym_name = "s4.dynamic_slice_lvalue"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_slice_lvalue.value", lifetime = 1 : i32, name = "value", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<11 : 4 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s5.value"} {
+    obelisk.sv.symbol.instance @s3.dynamic_slice_lvalue attributes {hierarchical_name = "dynamic_slice_lvalue", is_uninstantiated = false, name = "dynamic_slice_lvalue", node_id = 3 : i64, referenced_path = "dynamic_slice_lvalue", referenced_symbol = @s0.dynamic_slice_lvalue} {
+      obelisk.sv.symbol.instance_body @s4.dynamic_slice_lvalue attributes {hierarchical_name = "dynamic_slice_lvalue", name = "dynamic_slice_lvalue", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.value attributes {hierarchical_name = "dynamic_slice_lvalue.value", lifetime = 1 : i32, name = "value", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<11 : 4 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_slice_lvalue.index", lifetime = 1 : i32, name = "index", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<6 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.index"} {
+        obelisk.sv.symbol.variable @s6.index attributes {hierarchical_name = "dynamic_slice_lvalue.index", lifetime = 1 : i32, name = "index", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<6 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "dynamic_slice_lvalue.replacement", lifetime = 1 : i32, name = "replacement", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s7.replacement"} {
+        obelisk.sv.symbol.variable @s7.replacement attributes {hierarchical_name = "dynamic_slice_lvalue.replacement", lifetime = 1 : i32, name = "replacement", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "dynamic_slice_lvalue", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "dynamic_slice_lvalue", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 10 : i64, semantic_type = !obelisk.ranged_packed_array<11 : 8 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
               obelisk.sv.expression.range_select attributes {is_signed = false, node_id = 11 : i64, selection_kind = 2 : i32, semantic_type = !obelisk.ranged_packed_array<11 : 8 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {

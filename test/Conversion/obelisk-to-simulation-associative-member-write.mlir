@@ -6,18 +6,18 @@
 // writes it back, the same treatment a queue element gets.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "associative_member_write", name = "associative_member_write", node_id = 0 : i64, sym_name = "s0.associative_member_write"} {
+  obelisk.sv.symbol.definition @s0.associative_member_write attributes {definition_kind = 0 : i32, hierarchical_name = "associative_member_write", name = "associative_member_write", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "associative_member_write", is_uninstantiated = false, name = "associative_member_write", node_id = 3 : i64, referenced_path = "associative_member_write", referenced_symbol = @s0.associative_member_write, sym_name = "s3.associative_member_write"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "associative_member_write", name = "associative_member_write", node_id = 4 : i64, sym_name = "s4.associative_member_write", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.type.type_alias attributes {hierarchical_name = "associative_member_write.result_t", name = "result_t", node_id = 5 : i64, semantic_type = !obelisk.source_aggregate<"associative_member_write", false, false, false, false, false, false, 0, 64, 64, 0, [{name = "fails", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "passs", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>, sym_name = "s5.result_t"} {
+    obelisk.sv.symbol.instance @s3.associative_member_write attributes {hierarchical_name = "associative_member_write", is_uninstantiated = false, name = "associative_member_write", node_id = 3 : i64, referenced_path = "associative_member_write", referenced_symbol = @s0.associative_member_write} {
+      obelisk.sv.symbol.instance_body @s4.associative_member_write attributes {hierarchical_name = "associative_member_write", name = "associative_member_write", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.type.type_alias @s5.result_t attributes {hierarchical_name = "associative_member_write.result_t", name = "result_t", node_id = 5 : i64, semantic_type = !obelisk.source_aggregate<"associative_member_write", false, false, false, false, false, false, 0, 64, 64, 0, [{name = "fails", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "passs", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "associative_member_write.results", lifetime = 1 : i32, name = "results", node_id = 6 : i64, semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.source_aggregate<"associative_member_write", false, false, false, false, false, false, 0, 64, 64, 0, [{name = "fails", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "passs", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>, false>, sym_name = "s6.results"} {
+        obelisk.sv.symbol.variable @s6.results attributes {hierarchical_name = "associative_member_write.results", lifetime = 1 : i32, name = "results", node_id = 6 : i64, semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.source_aggregate<"associative_member_write", false, false, false, false, false, false, 0, 64, 64, 0, [{name = "fails", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "passs", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>, false>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "associative_member_write", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "s7", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "associative_member_write", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 8 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 10 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -35,10 +35,10 @@ module {
             }
           }
         }
-        obelisk.sv.type.unpacked_struct_type attributes {hierarchical_name = "associative_member_write", node_id = 16 : i64, semantic_type = !obelisk.source_aggregate<"associative_member_write", false, false, false, false, false, false, 0, 64, 64, 0, [{name = "fails", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "passs", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>, sym_name = "s8"} {
-          obelisk.sv.symbol.field attributes {bit_offset = 0 : i64, field_index = 0 : i64, hierarchical_name = "associative_member_write.fails", name = "fails", node_id = 17 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s9.fails"} {
+        obelisk.sv.type.unpacked_struct_type @s8 attributes {hierarchical_name = "associative_member_write", node_id = 16 : i64, semantic_type = !obelisk.source_aggregate<"associative_member_write", false, false, false, false, false, false, 0, 64, 64, 0, [{name = "fails", ordinal = 0 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}, {name = "passs", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<32, true, false, 31 : 0, int>}]>} {
+          obelisk.sv.symbol.field @s9.fails attributes {bit_offset = 0 : i64, field_index = 0 : i64, hierarchical_name = "associative_member_write.fails", name = "fails", node_id = 17 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
-          obelisk.sv.symbol.field attributes {bit_offset = 32 : i64, field_index = 1 : i64, hierarchical_name = "associative_member_write.passs", name = "passs", node_id = 18 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s10.passs"} {
+          obelisk.sv.symbol.field @s10.passs attributes {bit_offset = 32 : i64, field_index = 1 : i64, hierarchical_name = "associative_member_write.passs", name = "passs", node_id = 18 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
           }
         }
       }

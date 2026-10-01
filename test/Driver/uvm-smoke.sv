@@ -51,20 +51,20 @@ module uvm_smoke;
   end
 endmodule
 
-// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
-// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
-// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_component"
-// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_test"
-// SLANG: slang.type.class_type attributes {{.*}}hierarchical_name = "smoke_test"
-// SLANG: slang.symbol.subroutine attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
+// SLANG: slang.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
+// SLANG: slang.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
+// SLANG: slang.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_component"
+// SLANG: slang.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_test"
+// SLANG: slang.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test"
+// SLANG: slang.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
 // SLANG: slang.timing.delay
-// SLANG: slang.symbol.instance attributes {{.*}}hierarchical_name = "uvm_smoke"
+// SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_smoke"
 
-// OBELISK: obelisk.sv.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
-// OBELISK: obelisk.sv.type.class_type attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
-// OBELISK: obelisk.sv.type.class_type attributes {{.*}}hierarchical_name = "smoke_test"
-// OBELISK: obelisk.sv.symbol.subroutine attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
+// OBELISK: obelisk.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
+// OBELISK: obelisk.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
+// OBELISK: obelisk.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test"
+// OBELISK: obelisk.sv.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
 // OBELISK: obelisk.sv.timing.delay
-// OBELISK: obelisk.sv.symbol.instance attributes {{.*}}hierarchical_name = "uvm_smoke"
+// OBELISK: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_smoke"
 // OBELISK: !obelisk.class_handle<@{{.*}}smoke_test>
 // OBELISK-NOT: slang.

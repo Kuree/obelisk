@@ -5,18 +5,18 @@
 // when the formal and actual widths differ. The conversion-wrapped empty
 // argument is Slang's representation of a width-adjusted output lvalue.
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "inout_width_top", name = "inout_width_top", node_id = 0 : i64, sym_name = "s0.inout_width_top"} {
+  obelisk.sv.symbol.definition @s0.inout_width_top attributes {definition_kind = 0 : i32, hierarchical_name = "inout_width_top", name = "inout_width_top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "inout_width_child", name = "inout_width_child", node_id = 1 : i64, sym_name = "s1.inout_width_child"} {
+  obelisk.sv.symbol.definition @s1.inout_width_child attributes {definition_kind = 0 : i32, hierarchical_name = "inout_width_child", name = "inout_width_child", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "inout_width_top", is_uninstantiated = false, name = "inout_width_top", node_id = 4 : i64, referenced_path = "inout_width_top", referenced_symbol = @s0.inout_width_top, sym_name = "s4.inout_width_top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "inout_width_top", name = "inout_width_top", node_id = 5 : i64, sym_name = "s5.inout_width_top"} {
-        obelisk.sv.symbol.net attributes {hierarchical_name = "inout_width_top.actual", is_implicit = false, name = "actual", net_kind = 1 : i32, node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.actual"} {
+    obelisk.sv.symbol.instance @s4.inout_width_top attributes {hierarchical_name = "inout_width_top", is_uninstantiated = false, name = "inout_width_top", node_id = 4 : i64, referenced_path = "inout_width_top", referenced_symbol = @s0.inout_width_top} {
+      obelisk.sv.symbol.instance_body @s5.inout_width_top attributes {hierarchical_name = "inout_width_top", name = "inout_width_top", node_id = 5 : i64} {
+        obelisk.sv.symbol.net @s6.actual attributes {hierarchical_name = "inout_width_top.actual", is_implicit = false, name = "actual", net_kind = 1 : i32, node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "inout_width_top.child", is_uninstantiated = false, name = "child", node_id = 7 : i64, referenced_path = "inout_width_child", referenced_symbol = @s1.inout_width_child, sym_name = "s7.child"} {
+        obelisk.sv.symbol.instance @s7.child attributes {hierarchical_name = "inout_width_top.child", is_uninstantiated = false, name = "child", node_id = 7 : i64, referenced_path = "inout_width_child", referenced_symbol = @s1.inout_width_child} {
           obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 2 : i32, formal_name = "formal", formal_ordinal = 0 : i64, formal_path = "inout_width_top.child.formal", formal_symbol = @s2.$root::@s4.inout_width_top::@s5.inout_width_top::@s7.child::@s8.inout_width_child::@s9.formal, formal_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, internal_path = "inout_width_top.child.formal", internal_symbol = @s2.$root::@s4.inout_width_top::@s5.inout_width_top::@s7.child::@s8.inout_width_child::@s10.formal, is_ansi = true, is_net = true, node_id = 8 : i64, provenance = 0 : i32} {
           } {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
@@ -28,10 +28,10 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "inout_width_top.child", name = "inout_width_child", node_id = 13 : i64, sym_name = "s8.inout_width_child"} {
-            obelisk.sv.symbol.port attributes {direction = 1 : i32, hierarchical_name = "inout_width_top.child.formal", name = "formal", node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s9.formal"} {
+          obelisk.sv.symbol.instance_body @s8.inout_width_child attributes {hierarchical_name = "inout_width_top.child", name = "inout_width_child", node_id = 13 : i64} {
+            obelisk.sv.symbol.port @s9.formal attributes {direction = 1 : i32, hierarchical_name = "inout_width_top.child.formal", name = "formal", node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
-            obelisk.sv.symbol.net attributes {hierarchical_name = "inout_width_top.child.formal", is_implicit = false, name = "formal", net_kind = 12 : i32, node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s10.formal"} {
+            obelisk.sv.symbol.net @s10.formal attributes {hierarchical_name = "inout_width_top.child.formal", is_implicit = false, name = "formal", net_kind = 12 : i32, node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
           }
         }

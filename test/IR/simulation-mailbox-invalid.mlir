@@ -3,7 +3,7 @@
 module {
   func.func @wrong_put(%mailbox: !simulation.mailbox<i32>, %value: i64) {
     // expected-error @+1 {{message type must exactly match the mailbox element}}
-    %ok = "simulation.mailbox.try_put"(%mailbox, %value) :
+    %ok = simulation.mailbox.try_put %mailbox, %value :
       (!simulation.mailbox<i32>, i64) -> i1
     return
   }
@@ -29,7 +29,7 @@ module {
 module {
   func.func @wrong_element_metadata(%bound: i64) {
     // expected-error @+1 {{element metadata does not match the mailbox element type}}
-    %mailbox = "simulation.mailbox.create"(%bound) {
+    %mailbox = simulation.mailbox.create %bound {
       alignment = 8 : i64,
       bit_width = 64 : i64,
       element_flags = #simulation.element_flags<none>,
@@ -48,7 +48,7 @@ module {
 module {
   func.func @wrong_peek(%mailbox: !simulation.mailbox<i32>) {
     // expected-error @+1 {{message result must exactly match the mailbox element}}
-    %ok, %value = "simulation.mailbox.try_peek"(%mailbox) :
+    %ok, %value = simulation.mailbox.try_peek %mailbox :
       (!simulation.mailbox<i32>) -> (i1, i64)
     return
   }

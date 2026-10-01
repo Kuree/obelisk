@@ -7,24 +7,24 @@
 // own type is signed can reach that half of the table.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "power_negative_exponent", name = "power_negative_exponent", node_id = 0 : i64, sym_name = "s0.power_negative_exponent"} {
+  obelisk.sv.symbol.definition @s0.power_negative_exponent attributes {definition_kind = 0 : i32, hierarchical_name = "power_negative_exponent", name = "power_negative_exponent", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "power_negative_exponent", is_uninstantiated = false, name = "power_negative_exponent", node_id = 3 : i64, referenced_path = "power_negative_exponent", referenced_symbol = @s0.power_negative_exponent, sym_name = "s3.power_negative_exponent"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "power_negative_exponent", name = "power_negative_exponent", node_id = 4 : i64, sym_name = "s4.power_negative_exponent", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "power_negative_exponent.base", lifetime = 1 : i32, name = "base", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s5.base"} {
+    obelisk.sv.symbol.instance @s3.power_negative_exponent attributes {hierarchical_name = "power_negative_exponent", is_uninstantiated = false, name = "power_negative_exponent", node_id = 3 : i64, referenced_path = "power_negative_exponent", referenced_symbol = @s0.power_negative_exponent} {
+      obelisk.sv.symbol.instance_body @s4.power_negative_exponent attributes {hierarchical_name = "power_negative_exponent", name = "power_negative_exponent", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.base attributes {hierarchical_name = "power_negative_exponent.base", lifetime = 1 : i32, name = "base", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "power_negative_exponent.exponent", lifetime = 1 : i32, name = "exponent", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s6.exponent"} {
+        obelisk.sv.symbol.variable @s6.exponent attributes {hierarchical_name = "power_negative_exponent.exponent", lifetime = 1 : i32, name = "exponent", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "power_negative_exponent.signed_result", lifetime = 1 : i32, name = "signed_result", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s7.signed_result"} {
+        obelisk.sv.symbol.variable @s7.signed_result attributes {hierarchical_name = "power_negative_exponent.signed_result", lifetime = 1 : i32, name = "signed_result", node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "power_negative_exponent.unsigned_exponent", lifetime = 1 : i32, name = "unsigned_exponent", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s8.unsigned_exponent"} {
+        obelisk.sv.symbol.variable @s8.unsigned_exponent attributes {hierarchical_name = "power_negative_exponent.unsigned_exponent", lifetime = 1 : i32, name = "unsigned_exponent", node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "power_negative_exponent.unsigned_result", lifetime = 1 : i32, name = "unsigned_result", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s9.unsigned_result"} {
+        obelisk.sv.symbol.variable @s9.unsigned_result attributes {hierarchical_name = "power_negative_exponent.unsigned_result", lifetime = 1 : i32, name = "unsigned_result", node_id = 9 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "power_negative_exponent", node_id = 10 : i64, procedure_kind = 3 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "power_negative_exponent", node_id = 10 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 11 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 12 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
               obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 13 : i64, referenced_path = "power_negative_exponent.signed_result", referenced_symbol = @s1.$root::@s3.power_negative_exponent::@s4.power_negative_exponent::@s7.signed_result, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
@@ -38,7 +38,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "power_negative_exponent", node_id = 17 : i64, procedure_kind = 3 : i32, sym_name = "s11", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s11 attributes {hierarchical_name = "power_negative_exponent", node_id = 17 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 18 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 19 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
               obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 20 : i64, referenced_path = "power_negative_exponent.unsigned_result", referenced_symbol = @s1.$root::@s3.power_negative_exponent::@s4.power_negative_exponent::@s9.unsigned_result, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {

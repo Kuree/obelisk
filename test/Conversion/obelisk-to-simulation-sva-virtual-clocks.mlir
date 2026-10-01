@@ -8,35 +8,35 @@
 // members. In contrast, va.cb and va.clk denote the same selected clock and
 // remain on the compact single-clock monitor path.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64, sym_name = "s0.bus_if"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64, sym_name = "s1.top"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64, sym_name = "s2.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 3 : i64, sym_name = "s3"} {}
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top, sym_name = "s4.top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, sym_name = "s5.top", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.a_if", is_uninstantiated = false, name = "a_if", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s6.a_if"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.a_if", name = "bus_if", node_id = 7 : i64, sym_name = "s7.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s12.bus_if} {
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a_if.clk", lifetime = 1 : i32, name = "clk", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.clk"} {}
+  obelisk.sv.symbol.definition @s0.bus_if attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64} {}
+  obelisk.sv.symbol.definition @s1.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64} {}
+  obelisk.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    obelisk.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {}
+    obelisk.sv.symbol.instance @s4.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top} {
+      obelisk.sv.symbol.instance_body @s5.top attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.instance @s6.a_if attributes {hierarchical_name = "top.a_if", is_uninstantiated = false, name = "a_if", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s7.bus_if attributes {hierarchical_name = "top.a_if", name = "bus_if", node_id = 7 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s12.bus_if} {
+            obelisk.sv.symbol.variable @s8.clk attributes {hierarchical_name = "top.a_if.clk", lifetime = 1 : i32, name = "clk", node_id = 8 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           }
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.b_if", is_uninstantiated = false, name = "b_if", node_id = 9 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s9.b_if"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.b_if", name = "bus_if", node_id = 10 : i64, sym_name = "s10.bus_if", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s12.bus_if} {
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b_if.clk", lifetime = 1 : i32, name = "clk", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s11.clk"} {}
+        obelisk.sv.symbol.instance @s9.b_if attributes {hierarchical_name = "top.b_if", is_uninstantiated = false, name = "b_if", node_id = 9 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s10.bus_if attributes {hierarchical_name = "top.b_if", name = "bus_if", node_id = 10 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s12.bus_if} {
+            obelisk.sv.symbol.variable @s11.clk attributes {hierarchical_name = "top.b_if.clk", lifetime = 1 : i32, name = "clk", node_id = 11 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.va", lifetime = 1 : i32, name = "va", node_id = 12 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s12.bus_if, "">, sym_name = "s13.va"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.vb", lifetime = 1 : i32, name = "vb", node_id = 13 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s12.bus_if, "">, sym_name = "s14.vb"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s15.a"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s16.b"} {}
-        obelisk.sv.symbol.sequence attributes {has_default_instance = false, hierarchical_name = "top.inner", name = "inner", node_id = 16 : i64, port_count = 1 : i64, port_paths = ["top.inner.c"], port_symbols = [@s2.$root::@s4.top::@s5.top::@s17.inner::@s18.c], sym_name = "s17.inner"} {
-          obelisk.sv.symbol.assertion_port attributes {has_default_value = false, hierarchical_name = "top.inner.c", is_local_variable = false, name = "c", node_id = 17 : i64, semantic_type = !obelisk.event, sym_name = "s18.c"} {}
+        obelisk.sv.symbol.variable @s13.va attributes {hierarchical_name = "top.va", lifetime = 1 : i32, name = "va", node_id = 12 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s12.bus_if, "">} {}
+        obelisk.sv.symbol.variable @s14.vb attributes {hierarchical_name = "top.vb", lifetime = 1 : i32, name = "vb", node_id = 13 : i64, semantic_type = !obelisk.virtual_interface<@s2.$root::@s5.top::@s12.bus_if, "">} {}
+        obelisk.sv.symbol.variable @s15.a attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+        obelisk.sv.symbol.variable @s16.b attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
+        obelisk.sv.symbol.sequence @s17.inner attributes {has_default_instance = false, hierarchical_name = "top.inner", name = "inner", node_id = 16 : i64, port_count = 1 : i64, port_paths = ["top.inner.c"], port_symbols = [@s2.$root::@s4.top::@s5.top::@s17.inner::@s18.c]} {
+          obelisk.sv.symbol.assertion_port @s18.c attributes {has_default_value = false, hierarchical_name = "top.inner.c", is_local_variable = false, name = "c", node_id = 17 : i64, semantic_type = !obelisk.event} {}
         }
-        obelisk.sv.symbol.property attributes {has_default_instance = false, hierarchical_name = "top.outer", name = "outer", node_id = 18 : i64, port_count = 1 : i64, port_paths = ["top.outer.s"], port_symbols = [@s2.$root::@s4.top::@s5.top::@s19.outer::@s20.s], sym_name = "s19.outer"} {
-          obelisk.sv.symbol.assertion_port attributes {has_default_value = false, hierarchical_name = "top.outer.s", is_local_variable = false, name = "s", node_id = 19 : i64, semantic_type = !obelisk.sequence, sym_name = "s20.s"} {}
+        obelisk.sv.symbol.property @s19.outer attributes {has_default_instance = false, hierarchical_name = "top.outer", name = "outer", node_id = 18 : i64, port_count = 1 : i64, port_paths = ["top.outer.s"], port_symbols = [@s2.$root::@s4.top::@s5.top::@s19.outer::@s20.s]} {
+          obelisk.sv.symbol.assertion_port @s20.s attributes {has_default_value = false, hierarchical_name = "top.outer.s", is_local_variable = false, name = "s", node_id = 19 : i64, semantic_type = !obelisk.sequence} {}
         }
 
         // Different dynamic receivers: detached two-stage handoff.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 20 : i64, procedure_kind = 2 : i32, sym_name = "s20", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s20 attributes {hierarchical_name = "top", node_id = 20 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 21 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 22 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 23 : i64} {
@@ -67,7 +67,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         // clocking block are also distinct clocks. Deliberately retain the
         // same static clocking_event_symbol on both member descriptors to
         // guard against bypassing receiver-chain comparison.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 80 : i64, procedure_kind = 2 : i32, sym_name = "s80", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s80 attributes {hierarchical_name = "top", node_id = 80 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 81 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 82 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 83 : i64} {
@@ -99,7 +99,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
         // A clocking-block event passed through expanded property and sequence
         // formals has the same selected receiver and underlying clock as the
         // outer direct member event. It must stay a single-clock monitor.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 40 : i64, procedure_kind = 2 : i32, sym_name = "s40", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s40 attributes {hierarchical_name = "top", node_id = 40 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 41 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 42 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 43 : i64} {
@@ -139,7 +139,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
         // A declared iff on a dynamically selected clocking-block event uses
         // the existing virtual observer binding in an assertion monitor too.
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 70 : i64, procedure_kind = 2 : i32, sym_name = "s70", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s70 attributes {hierarchical_name = "top", node_id = 70 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 71 : i64} {
             obelisk.sv.assertion.clocking attributes {node_id = 72 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 73 : i64} {
@@ -156,9 +156,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
           }
         }
 
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "top.bus_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "bus_if", node_id = 60 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if, sym_name = "s12.bus_if"} {
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 61 : i64, sym_name = "s12.body", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-            obelisk.sv.symbol.clocking_block attributes {hierarchical_name = "top.bus_if.cb", is_default = false, is_global = false, name = "cb", node_id = 62 : i64, sym_name = "s13.cb"} {}
+        obelisk.sv.symbol.instance @s12.bus_if attributes {hierarchical_name = "top.bus_if", is_uninstantiated = false, is_virtual_interface_type_instance = true, name = "bus_if", node_id = 60 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          obelisk.sv.symbol.instance_body @s12.body attributes {hierarchical_name = "top.bus_if", name = "bus_if", node_id = 61 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.clocking_block @s13.cb attributes {hierarchical_name = "top.bus_if.cb", is_default = false, is_global = false, name = "cb", node_id = 62 : i64} {}
           }
         }
       }

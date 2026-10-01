@@ -5,23 +5,23 @@
 !packed = !obelisk.integral<24, false, true, 23 : 0, logic>
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "top", name = "top", node_id = 0 : i64,
-      sym_name = "top_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top",
+  obelisk.sv.symbol.definition @top_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "top", name = "top", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.instance @top attributes {hierarchical_name = "top",
         is_uninstantiated = false, name = "top", node_id = 2 : i64,
-        referenced_path = "top", referenced_symbol = @top_def,
-        sym_name = "top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
-          name = "top", node_id = 3 : i64, sym_name = "body"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.source",
+        referenced_path = "top", referenced_symbol = @top_def
+    } {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "top",
+          name = "top", node_id = 3 : i64} {
+        obelisk.sv.symbol.variable @source attributes {hierarchical_name = "top.source",
             lifetime = 1 : i32, name = "source", node_id = 4 : i64,
-            semantic_type = !values, sym_name = "source"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.result",
+            semantic_type = !values} {}
+        obelisk.sv.symbol.variable @result attributes {hierarchical_name = "top.result",
             lifetime = 1 : i32, name = "result", node_id = 5 : i64,
-            semantic_type = !packed, sym_name = "result"} {
+            semantic_type = !packed} {
           obelisk.sv.expression.conversion attributes {is_implicit = false,
               is_signed = false, node_id = 6 : i64,
               semantic_type = !packed} {
@@ -31,10 +31,10 @@ module {
                 semantic_type = !values} {}
           }
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @streamed attributes {
             hierarchical_name = "top.streamed", lifetime = 1 : i32,
             name = "streamed", node_id = 8 : i64,
-            semantic_type = !packed, sym_name = "streamed"} {
+            semantic_type = !packed} {
           obelisk.sv.expression.streaming attributes {
               bitstream_width = 0 : i64, is_fixed_size = false,
               is_signed = false, node_id = 18 : i64,
@@ -71,26 +71,26 @@ module {
 !packed = !obelisk.ranged_packed_array<15 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "wild", name = "wild", node_id = 20 : i64,
-      sym_name = "wild_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 21 : i64, sym_name = "wild_root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "wild",
+  obelisk.sv.symbol.definition @wild_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "wild", name = "wild", node_id = 20 : i64
+  } {}
+  obelisk.sv.symbol.root @wild_root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 21 : i64} {
+    obelisk.sv.symbol.instance @wild attributes {hierarchical_name = "wild",
         is_uninstantiated = false, name = "wild", node_id = 22 : i64,
-        referenced_path = "wild", referenced_symbol = @wild_def,
-        sym_name = "wild"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "wild",
-          name = "wild", node_id = 23 : i64, sym_name = "body"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "wild.source",
+        referenced_path = "wild", referenced_symbol = @wild_def
+    } {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "wild",
+          name = "wild", node_id = 23 : i64} {
+        obelisk.sv.symbol.variable @source attributes {hierarchical_name = "wild.source",
             lifetime = 1 : i32, name = "source", node_id = 24 : i64,
-            semantic_type = !wild, sym_name = "source"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "wild.result",
+            semantic_type = !wild} {}
+        obelisk.sv.symbol.variable @result attributes {hierarchical_name = "wild.result",
             lifetime = 1 : i32, name = "result", node_id = 25 : i64,
-            semantic_type = !packed, sym_name = "result"} {}
-        obelisk.sv.symbol.procedural_block attributes {
+            semantic_type = !packed} {}
+        obelisk.sv.symbol.procedural_block @initial attributes {
             hierarchical_name = "wild", node_id = 26 : i64,
-            procedure_kind = 0 : i32, sym_name = "initial",
+            procedure_kind = 0 : i32,
             time_precision_fs = 1000000 : i64,
             time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 27 : i64} {
@@ -164,23 +164,23 @@ module {
 !packed = !obelisk.integral<24, false, true, 23 : 0, logic>
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "top", name = "top", node_id = 10 : i64,
-      sym_name = "top_implicit_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 11 : i64, sym_name = "implicit_root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top",
+  obelisk.sv.symbol.definition @top_implicit_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "top", name = "top", node_id = 10 : i64
+  } {}
+  obelisk.sv.symbol.root @implicit_root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 11 : i64} {
+    obelisk.sv.symbol.instance @top attributes {hierarchical_name = "top",
         is_uninstantiated = false, name = "top", node_id = 12 : i64,
-        referenced_path = "top", referenced_symbol = @top_implicit_def,
-        sym_name = "top"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
-          name = "top", node_id = 13 : i64, sym_name = "body"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.source",
+        referenced_path = "top", referenced_symbol = @top_implicit_def
+    } {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "top",
+          name = "top", node_id = 13 : i64} {
+        obelisk.sv.symbol.variable @source attributes {hierarchical_name = "top.source",
             lifetime = 1 : i32, name = "source", node_id = 14 : i64,
-            semantic_type = !values, sym_name = "source"} {}
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.result",
+            semantic_type = !values} {}
+        obelisk.sv.symbol.variable @result attributes {hierarchical_name = "top.result",
             lifetime = 1 : i32, name = "result", node_id = 15 : i64,
-            semantic_type = !packed, sym_name = "result"} {
+            semantic_type = !packed} {
           // IEEE 1800-2023 6.24.3 requires an explicit bit-stream cast.
           // expected-error@+1 {{unsupported normalized conversion}}
           obelisk.sv.expression.conversion attributes {is_implicit = true,

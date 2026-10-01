@@ -116,10 +116,10 @@
 // Different receivers become distinct registrations while sharing the same
 // target identity and synchronous firing points.
 // QUALIFIED-COUNT-2: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
-// QUALIFIED: simulation.observer.bind @{{.*}} captures 2 : <i1>
+// QUALIFIED: simulation.observer.bind @{{.*}} captures 2 : !simulation.observer<i1>
 // QUALIFIED: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
 // QUALIFIED-SAME: event_kinds = array<i32: 0>
-// QUALIFIED: simulation.observer.bind @{{.*}} captures 2 : <i1>
+// QUALIFIED: simulation.observer.bind @{{.*}} captures 2 : !simulation.observer<i1>
 // QUALIFIED: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
 // QUALIFIED-SAME: event_kinds = array<i32: 1>
 

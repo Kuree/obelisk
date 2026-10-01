@@ -164,8 +164,8 @@ module attributes {
       %one_digit = arith.constant 1 : i32
       %empty_suffix = simulation.bytes.constant ""
       %width = arith.constant 0 : i32
-      "simulation.time.format"(%ctx, %units_ns, %one_digit, %empty_suffix,
-          %width) : (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
+      simulation.time.format %ctx, %units_ns, %one_digit, %empty_suffix,
+          %width : (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
       %positive_input = arith.constant 1.25 : f64
       %negative_input = arith.constant -1.25 : f64
       %positive_time = simulation.time.scan_scale %ctx, %positive_input
@@ -174,14 +174,14 @@ module attributes {
           time_multiplier = 10 time_precision = -10
       %units_ps = arith.constant -12 : i32
       %zero_digits = arith.constant 0 : i32
-      "simulation.time.format"(%ctx, %units_ps, %zero_digits, %empty_suffix,
-          %width) : (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
+      simulation.time.format %ctx, %units_ps, %zero_digits, %empty_suffix,
+          %width : (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
       %fine_input = arith.constant 1250.0 : f64
       %fine_time = simulation.time.scan_scale %ctx, %fine_input
           time_multiplier = 10 time_precision = -10
       %units_us = arith.constant -6 : i32
-      "simulation.time.format"(%ctx, %units_us, %one_digit, %empty_suffix,
-          %width) : (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
+      simulation.time.format %ctx, %units_us, %one_digit, %empty_suffix,
+          %width : (!simulation.context, i32, i32, !simulation.bytes, i32) -> ()
       %coarse_time = simulation.time.scan_scale %ctx, %positive_input
           time_multiplier = 10 time_precision = -10
       %time_format = simulation.bytes.constant

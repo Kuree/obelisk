@@ -4,22 +4,22 @@
 // The method spelling is decoded once into ArrayMethod. Cover associative-only
 // methods plus shared expression methods so both dispatch paths remain typed.
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "assoc_method_enum_dispatch", name = "assoc_method_enum_dispatch", node_id = 0 : i64, sym_name = "s0.assoc_method_enum_dispatch"} {
+  obelisk.sv.symbol.definition @s0.assoc_method_enum_dispatch attributes {definition_kind = 0 : i32, hierarchical_name = "assoc_method_enum_dispatch", name = "assoc_method_enum_dispatch", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "assoc_method_enum_dispatch", is_uninstantiated = false, name = "assoc_method_enum_dispatch", node_id = 3 : i64, referenced_path = "assoc_method_enum_dispatch", referenced_symbol = @s0.assoc_method_enum_dispatch, sym_name = "s3.assoc_method_enum_dispatch"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "assoc_method_enum_dispatch", name = "assoc_method_enum_dispatch", node_id = 4 : i64, sym_name = "s4.assoc_method_enum_dispatch", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assoc_method_enum_dispatch.values", lifetime = 1 : i32, name = "values", node_id = 5 : i64, semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, false>, sym_name = "s5.values"} {
+    obelisk.sv.symbol.instance @s3.assoc_method_enum_dispatch attributes {hierarchical_name = "assoc_method_enum_dispatch", is_uninstantiated = false, name = "assoc_method_enum_dispatch", node_id = 3 : i64, referenced_path = "assoc_method_enum_dispatch", referenced_symbol = @s0.assoc_method_enum_dispatch} {
+      obelisk.sv.symbol.instance_body @s4.assoc_method_enum_dispatch attributes {hierarchical_name = "assoc_method_enum_dispatch", name = "assoc_method_enum_dispatch", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.values attributes {hierarchical_name = "assoc_method_enum_dispatch.values", lifetime = 1 : i32, name = "values", node_id = 5 : i64, semantic_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, false>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assoc_method_enum_dispatch.key", lifetime = 1 : i32, name = "key", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s6.key"} {
+        obelisk.sv.symbol.variable @s6.key attributes {hierarchical_name = "assoc_method_enum_dispatch.key", lifetime = 1 : i32, name = "key", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assoc_method_enum_dispatch.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s7.result"} {
+        obelisk.sv.symbol.variable @s7.result attributes {hierarchical_name = "assoc_method_enum_dispatch.result", lifetime = 1 : i32, name = "result", node_id = 7 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "assoc_method_enum_dispatch.found", lifetime = 1 : i32, name = "found", node_id = 8 : i64, semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>, sym_name = "s8.found"} {
+        obelisk.sv.symbol.variable @s8.found attributes {hierarchical_name = "assoc_method_enum_dispatch.found", lifetime = 1 : i32, name = "found", node_id = 8 : i64, semantic_type = !obelisk.queue<!obelisk.integral<32, true, false, 31 : 0, int>, 0>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "assoc_method_enum_dispatch", node_id = 9 : i64, procedure_kind = 0 : i32, sym_name = "s9", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "assoc_method_enum_dispatch", node_id = 9 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 10 : i64} {
             obelisk.sv.statement.list attributes {node_id = 11 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 12 : i64} {
@@ -145,7 +145,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.iterator attributes {array_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, false>, hierarchical_name = "assoc_method_enum_dispatch.item", index_method_name = "index", is_const, name = "item", node_id = 72 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s10.item"} {
+        obelisk.sv.symbol.iterator @s10.item attributes {array_type = !obelisk.assoc<!obelisk.integral<32, true, false, 31 : 0, int>, !obelisk.integral<32, true, false, 31 : 0, int>, false>, hierarchical_name = "assoc_method_enum_dispatch.item", index_method_name = "index", is_const, name = "item", node_id = 72 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
       }
     }

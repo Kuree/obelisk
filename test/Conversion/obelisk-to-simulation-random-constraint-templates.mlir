@@ -6,36 +6,32 @@
 // the base body while retaining the effective block's stable mode identity.
 
 module {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.top attributes {
     definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
-    node_id = 0 : i64, sym_name = "s0.top"
+    node_id = 0 : i64
   } {}
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s3.B attributes {
         bitstream_width = 32 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
         hierarchical_name = "B", implemented_interfaces = [],
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "B", node_id = 3 : i64,
-        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.B>,
-        sym_name = "s3.B"
+        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.B>
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s4.x attributes {
           hierarchical_name = "B::x", name = "x", node_id = 4 : i64,
           rand_mode = 1 : i32,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s4.x"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.constraint_block attributes {
-          hierarchical_name = "B::a", name = "a", node_id = 5 : i64,
-          sym_name = "s5.a"
+        obelisk.sv.symbol.constraint_block @s5.a attributes {
+          hierarchical_name = "B::a", name = "a", node_id = 5 : i64
         } {
           obelisk.sv.constraint.list attributes {
             item_count = 1 : i64, node_id = 6 : i64
@@ -60,9 +56,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.constraint_block attributes {
+        obelisk.sv.symbol.constraint_block @s6.shared attributes {
           hierarchical_name = "B::shared", is_static, name = "shared",
-          node_id = 11 : i64, sym_name = "s6.shared"
+          node_id = 11 : i64
         } {
           obelisk.sv.constraint.list attributes {
             item_count = 1 : i64, node_id = 12 : i64
@@ -88,7 +84,7 @@ module {
           }
         }
       }
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s7.D attributes {
         base_class = !obelisk.class_handle<@s1.$root::@s2::@s3.B>,
         bitstream_width = 64 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
@@ -96,18 +92,15 @@ module {
         hierarchical_name = "D", implemented_interfaces = [],
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "D", node_id = 17 : i64,
-        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s7.D>,
-        sym_name = "s7.D"
+        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s7.D>
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s8.y attributes {
           hierarchical_name = "D::y", name = "y", node_id = 18 : i64,
           rand_mode = 1 : i32,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s8.y"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.constraint_block attributes {
-          hierarchical_name = "D::a", name = "a", node_id = 19 : i64,
-          sym_name = "s9.a"
+        obelisk.sv.symbol.constraint_block @s9.a attributes {
+          hierarchical_name = "D::a", name = "a", node_id = 19 : i64
         } {
           obelisk.sv.constraint.list attributes {
             item_count = 1 : i64, node_id = 20 : i64
@@ -132,9 +125,8 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.constraint_block attributes {
-          hierarchical_name = "D::z", name = "z", node_id = 25 : i64,
-          sym_name = "s10.z"
+        obelisk.sv.symbol.constraint_block @s10.z attributes {
+          hierarchical_name = "D::z", name = "z", node_id = 25 : i64
         } {
           obelisk.sv.constraint.list attributes {
             item_count = 1 : i64, node_id = 26 : i64
@@ -164,25 +156,22 @@ module {
       // Four-state symbolic values are deliberately not represented by the
       // current one-plane template IR.  The whole class must remain on the
       // legacy path without emitting a diagnostic or a partial template.
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s11.F attributes {
         bitstream_width = 1 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
         hierarchical_name = "F", implemented_interfaces = [],
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "F", node_id = 31 : i64,
-        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s11.F>,
-        sym_name = "s11.F"
+        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s11.F>
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s12.flag attributes {
           hierarchical_name = "F::flag", name = "flag", node_id = 32 : i64,
           rand_mode = 1 : i32,
-          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-          sym_name = "s12.flag"
+          semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
         } {}
-        obelisk.sv.symbol.constraint_block attributes {
-          hierarchical_name = "F::known", name = "known", node_id = 33 : i64,
-          sym_name = "s13.known"
+        obelisk.sv.symbol.constraint_block @s13.known attributes {
+          hierarchical_name = "F::known", name = "known", node_id = 33 : i64
         } {
           obelisk.sv.constraint.list attributes {
             item_count = 1 : i64, node_id = 34 : i64
@@ -201,31 +190,27 @@ module {
       }
       // IEEE 1800-2017 11.8.1/11.8.2: an unsigned operand makes the
       // relational common type unsigned, including extension of its peer.
-      obelisk.sv.type.class_type attributes {
+      obelisk.sv.type.class_type @s14.M attributes {
         bitstream_width = 40 : i64, declared_interfaces = [],
         generic_parameter_paths = [], generic_parameter_symbols = [],
         has_base_constructor_call = false, has_cycles = false,
         hierarchical_name = "M", implemented_interfaces = [],
         is_abstract = false, is_final = false, is_interface = false,
         is_uninstantiated = false, name = "M", node_id = 37 : i64,
-        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s14.M>,
-        sym_name = "s14.M"
+        semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s14.M>
       } {
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s15.a attributes {
           hierarchical_name = "M::a", name = "a", node_id = 38 : i64,
           rand_mode = 1 : i32,
-          semantic_type = !obelisk.integral<8, true, false, 7 : 0, byte>,
-          sym_name = "s15.a"
+          semantic_type = !obelisk.integral<8, true, false, 7 : 0, byte>
         } {}
-        obelisk.sv.symbol.class_property attributes {
+        obelisk.sv.symbol.class_property @s16.b attributes {
           hierarchical_name = "M::b", name = "b", node_id = 39 : i64,
           rand_mode = 1 : i32,
-          semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>,
-          sym_name = "s16.b"
+          semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>
         } {}
-        obelisk.sv.symbol.constraint_block attributes {
-          hierarchical_name = "M::mixed", name = "mixed", node_id = 40 : i64,
-          sym_name = "s17.mixed"
+        obelisk.sv.symbol.constraint_block @s17.mixed attributes {
+          hierarchical_name = "M::mixed", name = "mixed", node_id = 40 : i64
         } {
           obelisk.sv.constraint.list attributes {
             item_count = 1 : i64, node_id = 41 : i64

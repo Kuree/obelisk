@@ -2,9 +2,8 @@
 
 module {
   // expected-error @+1 {{is_from_bind must be true when present}}
-  slang.symbol.instance attributes {
-    is_from_bind = false, node_id = 0 : i64, selected_cell = "work.child",
-    sym_name = "child"
+  slang.symbol.instance @child attributes {
+    is_from_bind = false, node_id = 0 : i64, selected_cell = "work.child"
   } {
   }
 }
@@ -13,8 +12,8 @@ module {
 
 module {
   // expected-error @+1 {{requires selected_cell exactly for bind or configuration provenance}}
-  slang.symbol.instance attributes {
-    is_bind_target = true, node_id = 0 : i64, sym_name = "target"
+  slang.symbol.instance @target attributes {
+    is_bind_target = true, node_id = 0 : i64
   } {
   }
 }
@@ -23,9 +22,9 @@ module {
 
 module {
   // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     is_below_bind = true, is_from_bind = true, node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -34,9 +33,9 @@ module {
 
 module {
   // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     is_bind_target = true, is_from_bind = true, node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -45,9 +44,9 @@ module {
 
 module {
   // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     is_below_bind = true, is_bind_target = true, node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -56,8 +55,8 @@ module {
 
 module {
   // expected-error @+1 {{requires selected_cell exactly for bind or configuration provenance}}
-  slang.symbol.instance attributes {
-    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+  slang.symbol.instance @child attributes {
+    node_id = 0 : i64, selected_cell = "work.child"
   } {
   }
 }
@@ -66,9 +65,8 @@ module {
 
 module {
   // expected-error @+1 {{selected_cell must be nonempty}}
-  slang.symbol.instance attributes {
-    is_from_bind = true, node_id = 0 : i64, selected_cell = "",
-    sym_name = "child"
+  slang.symbol.instance @child attributes {
+    is_from_bind = true, node_id = 0 : i64, selected_cell = ""
   } {
   }
 }
@@ -77,9 +75,9 @@ module {
 
 module {
   // expected-error @+1 {{requires configuration, configuration_root, and configuration_liblist together}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -88,10 +86,10 @@ module {
 
 module {
   // expected-error @+1 {{configuration must be nonempty}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "", configuration_liblist = ["work"],
     configuration_root = "top", node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -100,10 +98,10 @@ module {
 
 module {
   // expected-error @+1 {{configuration_root must be nonempty}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", configuration_liblist = ["work"],
     configuration_root = "", node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -112,10 +110,10 @@ module {
 
 module {
   // expected-error @+1 {{configuration_liblist entries must be nonempty}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", configuration_liblist = [""],
     configuration_root = "top", node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -124,10 +122,10 @@ module {
 
 module {
   // expected-error @+1 {{requires configuration rule kind and source range together}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", configuration_liblist = ["work"],
     configuration_root = "top", configuration_rule_kind = "cell",
-    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+    node_id = 0 : i64, selected_cell = "work.child"
   } {
   }
 }
@@ -136,11 +134,11 @@ module {
 
 module {
   // expected-error @+1 {{requires configuration rule kind and source range together}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", configuration_liblist = ["work"],
     configuration_root = "top",
     configuration_rule_source_range = !slang.source_range<"config.sv", 1, 1, "config.sv", 1, 20, "">,
-    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+    node_id = 0 : i64, selected_cell = "work.child"
   } {
   }
 }
@@ -149,11 +147,11 @@ module {
 
 module {
   // expected-error @+1 {{configuration rule metadata requires a configuration}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration_rule_kind = "cell",
     configuration_rule_source_range = !slang.source_range<"config.sv", 1, 1, "config.sv", 1, 20, "">,
     is_from_bind = true, node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -162,11 +160,11 @@ module {
 
 module {
   // expected-error @+1 {{configuration rule source range must be !slang.source_range}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", configuration_liblist = ["work"],
     configuration_root = "top", configuration_rule_kind = "cell",
     configuration_rule_source_range = i32, node_id = 0 : i64,
-    selected_cell = "work.child", sym_name = "child"
+    selected_cell = "work.child"
   } {
   }
 }
@@ -175,11 +173,11 @@ module {
 
 module {
   // expected-error @+1 {{has invalid configuration rule kind 'other'}}
-  slang.symbol.instance attributes {
+  slang.symbol.instance @child attributes {
     configuration = "work.cfg", configuration_liblist = ["work"],
     configuration_root = "top", configuration_rule_kind = "other",
     configuration_rule_source_range = !slang.source_range<"config.sv", 1, 1, "config.sv", 1, 20, "">,
-    node_id = 0 : i64, selected_cell = "work.child", sym_name = "child"
+    node_id = 0 : i64, selected_cell = "work.child"
   } {
   }
 }
@@ -188,14 +186,14 @@ module {
 
 module {
   // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
-  slang.symbol.checker_instance attributes {
+  slang.symbol.checker_instance @instance attributes {
     connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
     connection_count = 0 : i64, connection_formal_paths = [],
     connection_formal_symbols = [], connection_has_actual = array<i64>,
     connection_has_output_initial = array<i64>, is_below_bind = true,
     is_from_bind = true, is_procedural = false, node_id = 0 : i64,
     referenced_checker_path = "checker", referenced_checker_symbol = @checker,
-    selected_cell = "work.checker", sym_name = "instance"
+    selected_cell = "work.checker"
   } {
   }
 }
@@ -204,14 +202,14 @@ module {
 
 module {
   // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
-  slang.symbol.checker_instance attributes {
+  slang.symbol.checker_instance @instance attributes {
     connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
     connection_count = 0 : i64, connection_formal_paths = [],
     connection_formal_symbols = [], connection_has_actual = array<i64>,
     connection_has_output_initial = array<i64>, is_bind_target = true,
     is_from_bind = true, is_procedural = false, node_id = 0 : i64,
     referenced_checker_path = "checker", referenced_checker_symbol = @checker,
-    selected_cell = "work.checker", sym_name = "instance"
+    selected_cell = "work.checker"
   } {
   }
 }
@@ -220,14 +218,14 @@ module {
 
 module {
   // expected-error @+1 {{bind provenance flags must be mutually exclusive}}
-  slang.symbol.checker_instance attributes {
+  slang.symbol.checker_instance @instance attributes {
     connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
     connection_count = 0 : i64, connection_formal_paths = [],
     connection_formal_symbols = [], connection_has_actual = array<i64>,
     connection_has_output_initial = array<i64>, is_below_bind = true,
     is_bind_target = true, is_procedural = false, node_id = 0 : i64,
     referenced_checker_path = "checker", referenced_checker_symbol = @checker,
-    selected_cell = "work.checker", sym_name = "instance"
+    selected_cell = "work.checker"
   } {
   }
 }
@@ -236,14 +234,13 @@ module {
 
 module {
   // expected-error @+1 {{requires selected_cell exactly for bind or configuration provenance}}
-  slang.symbol.checker_instance attributes {
+  slang.symbol.checker_instance @instance attributes {
     connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
     connection_count = 0 : i64, connection_formal_paths = [],
     connection_formal_symbols = [], connection_has_actual = array<i64>,
     connection_has_output_initial = array<i64>, is_procedural = false,
     node_id = 0 : i64, referenced_checker_path = "checker",
-    referenced_checker_symbol = @checker, selected_cell = "work.checker",
-    sym_name = "instance"
+    referenced_checker_symbol = @checker, selected_cell = "work.checker"
   } {
   }
 }
@@ -252,14 +249,14 @@ module {
 
 module {
   // expected-error @+1 {{selected_cell must be nonempty}}
-  slang.symbol.checker_instance attributes {
+  slang.symbol.checker_instance @instance attributes {
     connection_actual_kinds = array<i64>, connection_attribute_counts = array<i64>,
     connection_count = 0 : i64, connection_formal_paths = [],
     connection_formal_symbols = [], connection_has_actual = array<i64>,
     connection_has_output_initial = array<i64>, is_from_bind = true,
     is_procedural = false, node_id = 0 : i64,
     referenced_checker_path = "checker", referenced_checker_symbol = @checker,
-    selected_cell = "", sym_name = "instance"
+    selected_cell = ""
   } {
   }
 }
@@ -267,8 +264,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_width",
+  slang.symbol.variable @bad_width attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{integral width must be greater than zero}}
     semantic_type = !slang.integral<0, false, true, 0 : 0, generic>
   } {
@@ -279,7 +276,7 @@ module {
 
 module {
   // expected-error @+1 {{requires connection metadata arrays to match connection_count}}
-  slang.symbol.checker_instance attributes {
+  slang.symbol.checker_instance @instance attributes {
     connection_actual_kinds = array<i64: 0>,
     connection_attribute_counts = array<i64: 0>, connection_count = 2 : i64,
     connection_formal_paths = ["formal"],
@@ -287,7 +284,7 @@ module {
     connection_has_actual = array<i64: 1>,
     connection_has_output_initial = array<i64: 0>, is_procedural = false,
     node_id = 0 : i64, referenced_checker_path = "checker",
-    referenced_checker_symbol = @checker, sym_name = "instance"
+    referenced_checker_symbol = @checker
   } {
   }
 }
@@ -525,7 +522,7 @@ module {
 // -----
 
 module {
-  slang.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+  slang.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
     slang.pattern.variable attributes {
       node_id = 1 : i64, referenced_path = "missing", referenced_symbol = @missing
@@ -537,11 +534,10 @@ module {
 // -----
 
 module {
-  slang.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
-    slang.symbol.variable attributes {
+  slang.symbol.root @root attributes {node_id = 0 : i64} {
+    slang.symbol.variable @ordinary attributes {
       lifetime = 0 : i32, node_id = 1 : i64, rand_mode = 0 : i32,
-      semantic_type = !slang.integral<4, false, true, 3 : 0, logic>,
-      sym_name = "ordinary"
+      semantic_type = !slang.integral<4, false, true, 3 : 0, logic>
     } {
     }
     // expected-error @+1 {{referenced pattern variable does not resolve to a pattern binding}}
@@ -567,7 +563,7 @@ module {
 // -----
 
 module {
-  slang.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
+  slang.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
     slang.pattern.tagged attributes {
       field_ordinal = 0 : i64, node_id = 1 : i64, packed_offset = 0 : i64,
@@ -580,12 +576,11 @@ module {
 // -----
 
 module {
-  slang.symbol.root attributes {node_id = 0 : i64, sym_name = "root"} {
-    slang.symbol.field attributes {
+  slang.symbol.root @root attributes {node_id = 0 : i64} {
+    slang.symbol.field @member attributes {
       bit_offset = 0 : i64, field_index = 1 : i64, lifetime = 0 : i32,
       node_id = 1 : i64, rand_mode = 0 : i32,
-      semantic_type = !slang.integral<4, false, true, 3 : 0, logic>,
-      sym_name = "member"
+      semantic_type = !slang.integral<4, false, true, 3 : 0, logic>
     } {
     }
     // expected-error @+1 {{tagged pattern field metadata does not match its referenced member}}
@@ -600,11 +595,10 @@ module {
 // -----
 
 module {
+  // Generic syntax is needed to omit the required symbol name.
   // expected-error @+1 {{requires attribute 'sym_name'}}
-  slang.type.string_type attributes {
-    node_id = 0 : i64, semantic_type = !slang.string
-  } {
-  }
+  "slang.type.string_type"() ({
+  }) {node_id = 0 : i64, semantic_type = !slang.string} : () -> ()
 }
 
 // -----
@@ -618,8 +612,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_error",
+  slang.symbol.variable @bad_error attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{error recovery type cannot appear in valid Slang IR}}
     semantic_type = !slang.error<true>
   } {
@@ -640,8 +634,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_range",
+  slang.symbol.variable @bad_range attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{declared range width exceeds uint64_t}}
     semantic_type = !slang.integral<1, true, true, 9223372036854775807 : -9223372036854775808, generic>
   } {
@@ -651,8 +645,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_element",
+  slang.symbol.variable @bad_element attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{packed array element must be packed}}
     semantic_type = !slang.packed_array<3 : 0 x !slang.string>
   } {
@@ -662,8 +656,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_index",
+  slang.symbol.variable @bad_index attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{wildcard associative index must use !slang.untyped}}
     semantic_type = !slang.associative_array<!slang.string, !slang.real, true>
   } {
@@ -673,8 +667,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_aggregate",
+  slang.symbol.variable @bad_aggregate attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{only a union can be tagged}}
     semantic_type = !slang.aggregate<"record_t", false, false, true, false, false, false, 0, 0, 0, 0, []>
   } {
@@ -684,8 +678,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "missing_field_metadata",
+  slang.symbol.variable @missing_field_metadata attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{aggregate fields require name, type, ordinal, and packed_offset metadata}}
     semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a"}]>
   } {
@@ -695,8 +689,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_field_ordinal",
+  slang.symbol.variable @bad_field_ordinal attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{aggregate field ordinals must be dense and ordered}}
     semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
   } {
@@ -706,8 +700,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "duplicate_field_name",
+  slang.symbol.variable @duplicate_field_name attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{aggregate field names must be unique}}
     semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}, {name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
   } {
@@ -717,8 +711,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "negative_field_offset",
+  slang.symbol.variable @negative_field_offset attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{aggregate field has invalid packed offset}}
     semantic_type = !slang.aggregate<"record_t", true, false, false, false, false, false, 8, 8, 8, 0, [{name = "a", ordinal = 0 : i32, packed_offset = -1 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
   } {
@@ -728,8 +722,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "unpacked_field_offset",
+  slang.symbol.variable @unpacked_field_offset attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{aggregate field has invalid packed offset}}
     semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
   } {
@@ -739,8 +733,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_field_rand_mode",
+  slang.symbol.variable @bad_field_rand_mode attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{aggregate field has invalid randomization mode}}
     semantic_type = !slang.aggregate<"record_t", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
   } {
@@ -750,8 +744,8 @@ module {
 // -----
 
 module {
-  slang.symbol.subroutine attributes {
-    node_id = 0 : i64, sym_name = "bad_signature",
+  slang.symbol.subroutine @bad_signature attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{subroutine signature must be a function type}}
     semantic_type = !slang.subroutine<!slang.string, false>
   } {
@@ -761,8 +755,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_source_range",
+  slang.symbol.variable @bad_source_range attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{source range files must not be empty}}
     semantic_type = !slang.source_range<"", 10, 2, "source.sv", 9, 1, "">
   } {
@@ -782,8 +776,8 @@ module {
 // -----
 
 module {
-  slang.symbol.variable attributes {
-    node_id = 0 : i64, sym_name = "bad_declared_range",
+  slang.symbol.variable @bad_declared_range attributes {
+    node_id = 0 : i64,
     // expected-error @+1 {{declared range width 4 does not match integral width 8}}
     semantic_type = !slang.integral<8, false, true, 3 : 0, generic>
   } {

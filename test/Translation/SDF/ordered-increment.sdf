@@ -27,14 +27,14 @@
 // IEEE 1800-2017 32.5 and 32.6 preserve source order, sparse fields, and
 // signed decimal spellings in transient IR. Tuple expansion and arithmetic
 // happen only when the production frontend applies this IR to Clause 30 paths.
-// CHECK: obelisk_sdf.path_delay {{.*}}mode = 0 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}mode = 0 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}#obelisk_sdf.delay_value<form = scalar, typ = <"3">>{{.*}}mode = 0 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}mode = 0 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}mode = 0 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-9223372036854775808">{{.*}}mode = 1 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-2">{{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}mode = 1 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"-12">{{.*}}mode = 1 : i32
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"9">{{.*}}mode = 0 : i32
+// CHECK: obelisk_sdf.path_delay absolute
+// CHECK-NEXT: obelisk_sdf.path_delay absolute {{.*}}#obelisk_sdf.delay_value<form = empty>
+// CHECK-NEXT: obelisk_sdf.path_delay absolute {{.*}}#obelisk_sdf.delay_value<form = empty>{{.*}}#obelisk_sdf.delay_value<form = scalar, typ = <"3">>
+// CHECK-NEXT: obelisk_sdf.path_delay absolute
+// CHECK-NEXT: obelisk_sdf.path_delay absolute
+// CHECK-NEXT: obelisk_sdf.path_delay increment {{.*}}typ = <"-9223372036854775808">
+// CHECK-NEXT: obelisk_sdf.path_delay increment {{.*}}typ = <"-2">{{.*}}#obelisk_sdf.delay_value<form = empty>
+// CHECK-NEXT: obelisk_sdf.path_delay increment {{.*}}typ = <"-12">
+// CHECK-NEXT: obelisk_sdf.path_delay absolute {{.*}}typ = <"9">
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime

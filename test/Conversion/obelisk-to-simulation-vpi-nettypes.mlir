@@ -4,50 +4,50 @@
 !net_array = !obelisk.ranged_unpacked_array<3 : 0 x !logic>
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "top", name = "top", node_id = 0 : i64,
-      sym_name = "top_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.compilation_unit attributes {
+  obelisk.sv.symbol.definition @top_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "top", name = "top", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @unit attributes {
         hierarchical_name = "$unit", node_id = 2 : i64,
-        simulation.vpi_definition_name = "$unit", sym_name = "unit"} {
-      obelisk.sv.type.net_type attributes {data_type = !logic,
+        simulation.vpi_definition_name = "$unit"} {
+      obelisk.sv.type.net_type @base_nt attributes {data_type = !logic,
           hierarchical_name = "base_nt", is_builtin = false,
           name = "base_nt", net_kind = 14 : i32, node_id = 3 : i64,
-          semantic_type = !logic, sym_name = "base_nt"} {}
-      obelisk.sv.type.net_type attributes {
+          semantic_type = !logic} {}
+      obelisk.sv.type.net_type @alias_nt attributes {
           aliased_nettype_path = "base_nt",
           aliased_nettype_symbol = @root::@unit::@base_nt,
           data_type = !logic, hierarchical_name = "alias_nt",
           is_builtin = false, name = "alias_nt", net_kind = 14 : i32,
-          node_id = 4 : i64, semantic_type = !logic,
-          sym_name = "alias_nt"} {}
+          node_id = 4 : i64, semantic_type = !logic
+      } {}
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top",
+    obelisk.sv.symbol.instance @top_instance attributes {hierarchical_name = "top",
         is_uninstantiated = false, name = "top", node_id = 5 : i64,
-        referenced_path = "top", referenced_symbol = @top_def,
-        sym_name = "top_instance"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
+        referenced_path = "top", referenced_symbol = @top_def
+    } {
+      obelisk.sv.symbol.instance_body @top_body attributes {hierarchical_name = "top",
           name = "top", node_id = 6 : i64,
           simulation.vpi_automatic = false,
           simulation.vpi_cell_instance = false,
           simulation.vpi_definition_name = "top",
-          simulation.vpi_top = true, sym_name = "top_body",
+          simulation.vpi_top = true,
           time_precision_fs = 1000000 : i64,
           time_unit_fs = 1000000 : i64, vpi_scope_kind = 32 : i32} {
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.n",
+        obelisk.sv.symbol.net @n attributes {hierarchical_name = "top.n",
             is_implicit = false, name = "n", net_kind = 14 : i32,
             nettype_path = "alias_nt",
             nettype_symbol = @root::@unit::@alias_nt, node_id = 7 : i64,
-            semantic_type = !net_array, sym_name = "n"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.alias_n",
+            semantic_type = !net_array} {}
+        obelisk.sv.symbol.net @alias_n attributes {hierarchical_name = "top.alias_n",
             is_implicit = false, name = "alias_n", net_kind = 14 : i32,
             nettype_path = "alias_nt",
             nettype_symbol = @root::@unit::@alias_nt, node_id = 8 : i64,
-            semantic_type = !net_array, sym_name = "alias_n"} {}
-        obelisk.sv.symbol.net_alias attributes {hierarchical_name = "top",
-            node_id = 9 : i64, sym_name = "alias"} {
+            semantic_type = !net_array} {}
+        obelisk.sv.symbol.net_alias @alias attributes {hierarchical_name = "top",
+            node_id = 9 : i64} {
           obelisk.sv.expression.named_value attributes {is_signed = false,
               node_id = 10 : i64, referenced_path = "top.n",
               referenced_symbol = @root::@top_instance::@top_body::@n,

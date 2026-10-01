@@ -1,28 +1,28 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_narrow_index", name = "simulation_narrow_index", node_id = 0 : i64, sym_name = "s0.simulation_narrow_index"} {
+  obelisk.sv.symbol.definition @s0.simulation_narrow_index attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_narrow_index", name = "simulation_narrow_index", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "simulation_narrow_index", is_uninstantiated = false, name = "simulation_narrow_index", node_id = 3 : i64, referenced_path = "simulation_narrow_index", referenced_symbol = @s0.simulation_narrow_index, sym_name = "s3.simulation_narrow_index"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "simulation_narrow_index", name = "simulation_narrow_index", node_id = 4 : i64, sym_name = "s4.simulation_narrow_index"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.declared_range", lifetime = 1 : i32, name = "declared_range", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<15 : 8 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s5.declared_range"} {
+    obelisk.sv.symbol.instance @s3.simulation_narrow_index attributes {hierarchical_name = "simulation_narrow_index", is_uninstantiated = false, name = "simulation_narrow_index", node_id = 3 : i64, referenced_path = "simulation_narrow_index", referenced_symbol = @s0.simulation_narrow_index} {
+      obelisk.sv.symbol.instance_body @s4.simulation_narrow_index attributes {hierarchical_name = "simulation_narrow_index", name = "simulation_narrow_index", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @s5.declared_range attributes {hierarchical_name = "simulation_narrow_index.declared_range", lifetime = 1 : i32, name = "declared_range", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<15 : 8 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.zero_based", lifetime = 1 : i32, name = "zero_based", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.zero_based"} {
+        obelisk.sv.symbol.variable @s6.zero_based attributes {hierarchical_name = "simulation_narrow_index.zero_based", lifetime = 1 : i32, name = "zero_based", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.unsigned_index", lifetime = 1 : i32, name = "unsigned_index", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.unsigned_index"} {
+        obelisk.sv.symbol.variable @s7.unsigned_index attributes {hierarchical_name = "simulation_narrow_index.unsigned_index", lifetime = 1 : i32, name = "unsigned_index", node_id = 7 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.signed_index", lifetime = 1 : i32, name = "signed_index", node_id = 8 : i64, semantic_type = !obelisk.integral<1, true, true, 0 : 0, logic>, sym_name = "s8.signed_index"} {
+        obelisk.sv.symbol.variable @s8.signed_index attributes {hierarchical_name = "simulation_narrow_index.signed_index", lifetime = 1 : i32, name = "signed_index", node_id = 8 : i64, semantic_type = !obelisk.integral<1, true, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.bit_index", lifetime = 1 : i32, name = "bit_index", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s9.bit_index"} {
+        obelisk.sv.symbol.variable @s9.bit_index attributes {hierarchical_name = "simulation_narrow_index.bit_index", lifetime = 1 : i32, name = "bit_index", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.result", lifetime = 1 : i32, name = "result", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.result"} {
+        obelisk.sv.symbol.variable @s10.result attributes {hierarchical_name = "simulation_narrow_index.result", lifetime = 1 : i32, name = "result", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "simulation_narrow_index.part", lifetime = 1 : i32, name = "part", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s11.part"} {
+        obelisk.sv.symbol.variable @s11.part attributes {hierarchical_name = "simulation_narrow_index.part", lifetime = 1 : i32, name = "part", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "simulation_narrow_index", node_id = 12 : i64, procedure_kind = 0 : i32, sym_name = "s12", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s12 attributes {hierarchical_name = "simulation_narrow_index", node_id = 12 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 13 : i64} {
             obelisk.sv.statement.list attributes {node_id = 14 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 15 : i64} {

@@ -19,11 +19,10 @@
 // IEEE 1800-2017 32.3 gives both forms retention behavior, but normalization
 // and textual roundtrip must preserve whether a tuple was written.
 // CHECK: obelisk_sdf.cell
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = empty>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"4">>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>, #obelisk_sdf.delay_value<form = empty>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"8">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"10">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"12">>, #obelisk_sdf.delay_value<form = empty>]
-// CHECK-NEXT: obelisk_sdf.path_delay {delays = [#obelisk_sdf.delay_value<form = triple>]
-// CHECK-SAME: output = #obelisk_sdf.port<name = "z", hasIndex = false, index = 0, edge = none>}
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = empty>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"4">>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>, #obelisk_sdf.delay_value<form = empty>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}}delays [#obelisk_sdf.delay_value<form = scalar, typ = <"2">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"4">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"6">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"8">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"10">>, #obelisk_sdf.delay_value<form = empty>, #obelisk_sdf.delay_value<form = scalar, typ = <"12">>, #obelisk_sdf.delay_value<form = empty>]
+// CHECK-NEXT: obelisk_sdf.path_delay absolute iopath {{.*}} to #obelisk_sdf.port<name = "z", hasIndex = false, index = 0, edge = none> delays [#obelisk_sdf.delay_value<form = triple>]
 // CHECK-NEXT: }

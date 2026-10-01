@@ -67,19 +67,19 @@
 // VECTOR-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
 // VECTOR: simulation.ref.load {{%.*}} : !simulation.ref<!simulation.packed_array<3 : 0 x i1>> -> !simulation.packed_array<3 : 0 x i1>
 // VECTOR: simulation.packed.flatten {{%.*}} : (!simulation.packed_array<3 : 0 x i1>) -> i4
-// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <i4>
+// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : !simulation.observer<i4>
 // VECTOR: simulation.covergroup.clock_event.register
 // VECTOR-SAME: edges [1]
 // VECTOR-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
 // VECTOR: simulation.ref.load {{%.*}} : !simulation.ref<!simulation.packed_array<0 : 3 x !simulation.logic<1>>> -> !simulation.packed_array<0 : 3 x !simulation.logic<1>>
 // VECTOR: simulation.packed.flatten {{%.*}} : (!simulation.packed_array<0 : 3 x !simulation.logic<1>>) -> !simulation.logic<4>
-// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <!simulation.logic<4>>
+// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : !simulation.observer<!simulation.logic<4>>
 // VECTOR: simulation.covergroup.clock_event.register
 // VECTOR-SAME: edges [2]
 // VECTOR-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
 // VECTOR: simulation.net.read {{%.*}} : !simulation.net<!simulation.packed_array<7 : 0 x !simulation.logic<1>>> -> !simulation.packed_array<7 : 0 x !simulation.logic<1>>
 // VECTOR: simulation.packed.flatten {{%.*}} : (!simulation.packed_array<7 : 0 x !simulation.logic<1>>) -> !simulation.logic<8>
-// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : <!simulation.logic<8>>
+// VECTOR: simulation.observer.bind @{{[^ ]+}} values({{.*}}) captures 1 : !simulation.observer<!simulation.logic<8>>
 // VECTOR: simulation.covergroup.clock_event.register
 // VECTOR-SAME: edges [3]
 
@@ -89,8 +89,8 @@
 // COMPUTED: [[A:%.*]] = simulation.ref.load
 // COMPUTED: [[B:%.*]] = simulation.ref.load
 // COMPUTED: [[INITIAL:%.*]] = arith.xori [[A]], [[B]] : i1
-// COMPUTED: [[PRIMARY:%.*]] = simulation.observer.bind @[[PRIMARY_FN:[^ ]+]] values({{.*}}) captures 2 : <i1>
-// COMPUTED: [[IFF:%.*]] = simulation.observer.bind @[[IFF_FN:[^ ]+]] values({{.*}}) captures 1 : <i1>
+// COMPUTED: [[PRIMARY:%.*]] = simulation.observer.bind @[[PRIMARY_FN:[^ ]+]] values({{.*}}) captures 2 : !simulation.observer<i1>
+// COMPUTED: [[IFF:%.*]] = simulation.observer.bind @[[IFF_FN:[^ ]+]] values({{.*}}) captures 1 : !simulation.observer<i1>
 // COMPUTED: [[SAMPLER:%.*]] = simulation.observer.bind @{{[^ ]*}}.$covergroup_event_sample.{{[0-9]+}}
 // COMPUTED: simulation.covergroup.clock_event.register {{.*}} events{{\[}}[[PRIMARY]], [[INITIAL]], [[IFF]], [[SAMPLER]]] conditions 1 edges [1] indices [0]
 // COMPUTED: simulation.func private @[[PRIMARY_FN]](
@@ -103,7 +103,7 @@
 // REF-LABEL: simulation.func private @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}(
 // REF-SAME: %[[EVENT_REF:[^:]+]]: !simulation.argument_ref<i1>
 // REF: simulation.argument_ref.load %[[EVENT_REF]]
-// REF: simulation.observer.bind @[[REF_EVALUATOR:[^ ]+]] values(%[[EVENT_REF]], %[[EVENT_REF]] : !simulation.argument_ref<i1>, !simulation.argument_ref<i1>) captures 1 : <i1>
+// REF: simulation.observer.bind @[[REF_EVALUATOR:[^ ]+]] values(%[[EVENT_REF]], %[[EVENT_REF]] : !simulation.argument_ref<i1>, !simulation.argument_ref<i1>) captures 1 : !simulation.observer<i1>
 // REF: simulation.covergroup.clock_event.register
 // REF: simulation.argument_ref.from_ref
 // REF: simulation.argument_ref.from_managed
@@ -126,8 +126,8 @@
 // EMBEDDED-SAME: %[[THIS:[^:]+]]: !simulation.class_handle<@[[CLASS:[^>]+]]>
 // EMBEDDED: %[[CLOCK_REF:.*]] = simulation.class.field_ref %[[THIS]][@{{[^ ]+}}] : !simulation.class_handle<@[[CLASS]]> -> !simulation.managed_ref<i1, @[[CLASS]]>
 // EMBEDDED: %[[WATCH:.*]] = simulation.managed.watch field %[[CLOCK_REF]]
-// EMBEDDED: %[[PRIMARY:.*]] = simulation.observer.bind @{{[^ ]+}} values(%[[THIS]], %[[WATCH]] : !simulation.class_handle<@[[CLASS]]>, !simulation.managed_watch) captures 1 : <i1>
-// EMBEDDED: %[[SAMPLE:.*]] = simulation.observer.bind @{{[^ ]+}} values(%{{[^,]+}}, %[[THIS]] : !simulation.covergroup_handle<{{[^>]+}}>, !simulation.class_handle<@[[CLASS]]>) captures 2 : <i1>
+// EMBEDDED: %[[PRIMARY:.*]] = simulation.observer.bind @{{[^ ]+}} values(%[[THIS]], %[[WATCH]] : !simulation.class_handle<@[[CLASS]]>, !simulation.managed_watch) captures 1 : !simulation.observer<i1>
+// EMBEDDED: %[[SAMPLE:.*]] = simulation.observer.bind @{{[^ ]+}} values(%{{[^,]+}}, %[[THIS]] : !simulation.covergroup_handle<{{[^>]+}}>, !simulation.class_handle<@[[CLASS]]>) captures 2 : !simulation.observer<i1>
 // EMBEDDED: simulation.covergroup.clock_event.register {{.*}} events{{\[}}%[[PRIMARY]], {{%[^,]+}}, %[[SAMPLE]]]
 // EMBEDDED: simulation.spawn @{{[^ ]*}}.$covergroup_event.{{[0-9]+}}({{[^,]+}}, {{[^,]+}}, %{{[^)]+}})
 

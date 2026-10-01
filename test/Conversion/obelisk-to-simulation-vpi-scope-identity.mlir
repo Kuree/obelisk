@@ -13,73 +13,73 @@
 //--- topology.mlir
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "m", name = "m", node_id = 0 : i64,
-      sym_name = "m_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32,
-      hierarchical_name = "i", name = "i", node_id = 1 : i64,
-      sym_name = "i_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 2 : i32,
-      hierarchical_name = "p", name = "p", node_id = 2 : i64,
-      sym_name = "p_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "host", name = "host", node_id = 3 : i64,
-      sym_name = "host_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 4 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.compilation_unit attributes {
-        hierarchical_name = "$unit", node_id = 5 : i64, sym_name = "cu"} {}
+  obelisk.sv.symbol.definition @m_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "m", name = "m", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.definition @i_def attributes {definition_kind = 1 : i32,
+      hierarchical_name = "i", name = "i", node_id = 1 : i64
+  } {}
+  obelisk.sv.symbol.definition @p_def attributes {definition_kind = 2 : i32,
+      hierarchical_name = "p", name = "p", node_id = 2 : i64
+  } {}
+  obelisk.sv.symbol.definition @host_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "host", name = "host", node_id = 3 : i64
+  } {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 4 : i64} {
+    obelisk.sv.symbol.compilation_unit @cu attributes {
+        hierarchical_name = "$unit", node_id = 5 : i64} {}
         loc("unit.sv":1:1)
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "host",
+    obelisk.sv.symbol.instance @host_i attributes {hierarchical_name = "host",
         is_uninstantiated = false, name = "host", node_id = 16 : i64,
-        referenced_path = "host", referenced_symbol = @host_def,
-        sym_name = "host_i"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "host",
-          name = "host", node_id = 17 : i64, sym_name = "host_b"} {
-        obelisk.sv.symbol.instance_array attributes {
+        referenced_path = "host", referenced_symbol = @host_def
+    } {
+      obelisk.sv.symbol.instance_body @host_b attributes {hierarchical_name = "host",
+          name = "host", node_id = 17 : i64} {
+        obelisk.sv.symbol.instance_array @m_nested_a attributes {
             array_range = array<i64: 0, 0>, hierarchical_name = "host.m_nested",
-            name = "m_nested", node_id = 18 : i64, sym_name = "m_nested_a"} {
-          obelisk.sv.symbol.instance attributes {
+            name = "m_nested", node_id = 18 : i64} {
+          obelisk.sv.symbol.instance @m_nested_i attributes {
               hierarchical_name = "host.m_nested[0]",
               is_uninstantiated = false, node_id = 19 : i64,
-              referenced_path = "m", referenced_symbol = @m_def,
-              sym_name = "m_nested_i"} {
-            obelisk.sv.symbol.instance_body attributes {
+              referenced_path = "m", referenced_symbol = @m_def
+          } {
+            obelisk.sv.symbol.instance_body @m_nested_b attributes {
                 hierarchical_name = "host.m_nested[0]", name = "m",
-                node_id = 20 : i64, sym_name = "m_nested_b"} {}
+                node_id = 20 : i64} {}
           }
         }
-        obelisk.sv.symbol.instance_array attributes {
+        obelisk.sv.symbol.instance_array @i_nested_a attributes {
             array_range = array<i64: 0, 0>, hierarchical_name = "host.i_nested",
-            name = "i_nested", node_id = 21 : i64, sym_name = "i_nested_a"} {
-          obelisk.sv.symbol.instance attributes {
+            name = "i_nested", node_id = 21 : i64} {
+          obelisk.sv.symbol.instance @i_nested_i attributes {
               hierarchical_name = "host.i_nested[0]",
               is_uninstantiated = false, node_id = 22 : i64,
-              referenced_path = "i", referenced_symbol = @i_def,
-              sym_name = "i_nested_i"} {
-            obelisk.sv.symbol.instance_body attributes {
+              referenced_path = "i", referenced_symbol = @i_def
+          } {
+            obelisk.sv.symbol.instance_body @i_nested_b attributes {
                 hierarchical_name = "host.i_nested[0]", name = "i",
-                node_id = 23 : i64, sym_name = "i_nested_b"} {}
+                node_id = 23 : i64} {}
           }
         }
-        obelisk.sv.symbol.instance_array attributes {
+        obelisk.sv.symbol.instance_array @p_nested_a attributes {
             array_range = array<i64: 0, 0>, hierarchical_name = "host.p_nested",
-            name = "p_nested", node_id = 24 : i64, sym_name = "p_nested_a"} {
-          obelisk.sv.symbol.instance attributes {
+            name = "p_nested", node_id = 24 : i64} {
+          obelisk.sv.symbol.instance @p_nested_i attributes {
               hierarchical_name = "host.p_nested[0]",
               is_uninstantiated = false, node_id = 25 : i64,
-              referenced_path = "p", referenced_symbol = @p_def,
-              sym_name = "p_nested_i"} {
-            obelisk.sv.symbol.instance_body attributes {
+              referenced_path = "p", referenced_symbol = @p_def
+          } {
+            obelisk.sv.symbol.instance_body @p_nested_b attributes {
                 hierarchical_name = "host.p_nested[0]", name = "p",
-                node_id = 26 : i64, sym_name = "p_nested_b"} {}
+                node_id = 26 : i64} {}
           }
         }
       }
     }
   }
-  obelisk.sv.symbol.package attributes {hierarchical_name = "pkg",
-      name = "pkg", node_id = 27 : i64, sym_name = "pkg"} {}
+  obelisk.sv.symbol.package @pkg attributes {hierarchical_name = "pkg",
+      name = "pkg", node_id = 27 : i64} {}
       loc("pkg.sv":7:1)
 }
 

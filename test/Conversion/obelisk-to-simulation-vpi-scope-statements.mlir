@@ -9,77 +9,77 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32,
-      hierarchical_name = "top", name = "top", node_id = 0 : i64,
-      sym_name = "top_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 1 : i32,
-      hierarchical_name = "iface", name = "iface", node_id = 35 : i64,
-      sym_name = "iface_def"} {}
-  obelisk.sv.symbol.definition attributes {definition_kind = 2 : i32,
-      hierarchical_name = "prog", name = "prog", node_id = 36 : i64,
-      sym_name = "prog_def"} {}
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ",
-      name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top",
+  obelisk.sv.symbol.definition @top_def attributes {definition_kind = 0 : i32,
+      hierarchical_name = "top", name = "top", node_id = 0 : i64
+  } {}
+  obelisk.sv.symbol.definition @iface_def attributes {definition_kind = 1 : i32,
+      hierarchical_name = "iface", name = "iface", node_id = 35 : i64
+  } {}
+  obelisk.sv.symbol.definition @prog_def attributes {definition_kind = 2 : i32,
+      hierarchical_name = "prog", name = "prog", node_id = 36 : i64
+  } {}
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ",
+      name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.instance @top_i attributes {hierarchical_name = "top",
         is_uninstantiated = false, name = "top", node_id = 2 : i64,
-        referenced_path = "top", referenced_symbol = @top_def,
-        sym_name = "top_i"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top",
-          name = "top", node_id = 3 : i64, sym_name = "top_b",
+        referenced_path = "top", referenced_symbol = @top_def
+    } {
+      obelisk.sv.symbol.instance_body @top_b attributes {hierarchical_name = "top",
+          name = "top", node_id = 3 : i64,
           time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.a",
+        obelisk.sv.symbol.net @a attributes {hierarchical_name = "top.a",
             is_implicit = false, name = "a", net_kind = 1 : i32,
             node_id = 4 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "a"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.b",
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.net @b attributes {hierarchical_name = "top.b",
             is_implicit = false, name = "b", net_kind = 1 : i32,
             node_id = 5 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "b"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.c",
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.net @c attributes {hierarchical_name = "top.c",
             is_implicit = false, name = "c", net_kind = 1 : i32,
             node_id = 31 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "c"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.d",
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.net @d attributes {hierarchical_name = "top.d",
             is_implicit = false, name = "d", net_kind = 1 : i32,
             node_id = 32 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "d"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.source",
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.net @source attributes {hierarchical_name = "top.source",
             is_implicit = false, name = "source", net_kind = 1 : i32,
             node_id = 60 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "source"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.direct_lhs",
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.net @direct_lhs attributes {hierarchical_name = "top.direct_lhs",
             is_implicit = false, name = "direct_lhs", net_kind = 1 : i32,
             node_id = 68 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "direct_lhs"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.vector_lhs",
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.net @vector_lhs attributes {hierarchical_name = "top.vector_lhs",
             is_implicit = false, name = "vector_lhs", net_kind = 1 : i32,
             node_id = 62 : i64,
-            semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
-            sym_name = "vector_lhs"} {}
-        obelisk.sv.symbol.net attributes {hierarchical_name = "top.vector_rhs",
+            semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
+        } {}
+        obelisk.sv.symbol.net @vector_rhs attributes {hierarchical_name = "top.vector_rhs",
             is_implicit = false, name = "vector_rhs", net_kind = 1 : i32,
             node_id = 63 : i64,
-            semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>,
-            sym_name = "vector_rhs"} {}
-        obelisk.sv.symbol.variable attributes {
+            semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
+        } {}
+        obelisk.sv.symbol.variable @variable_lhs attributes {
             hierarchical_name = "top.variable_lhs", lifetime = 1 : i32,
             name = "variable_lhs", node_id = 69 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "variable_lhs"} {}
-        obelisk.sv.symbol.variable attributes {
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.variable @variable_rhs attributes {
             hierarchical_name = "top.variable_rhs", lifetime = 1 : i32,
             name = "variable_rhs", node_id = 70 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "variable_rhs"} {}
-        obelisk.sv.symbol.continuous_assign attributes {
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.continuous_assign @direct_assign attributes {
             hierarchical_name = "top", node_id = 6 : i64,
-            sym_name = "direct_assign", time_precision_fs = 1 : i64,
+            time_precision_fs = 1 : i64,
             time_unit_fs = 1 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
               is_signed = false, node_id = 7 : i64,
@@ -94,9 +94,9 @@ module attributes {
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           }
         } loc("scope_owned.sv":10:3)
-        obelisk.sv.symbol.continuous_assign attributes {
+        obelisk.sv.symbol.continuous_assign @vector_assign attributes {
             hierarchical_name = "top", node_id = 64 : i64,
-            sym_name = "vector_assign", time_precision_fs = 1 : i64,
+            time_precision_fs = 1 : i64,
             time_unit_fs = 1 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
               is_signed = false, node_id = 65 : i64,
@@ -111,8 +111,8 @@ module attributes {
                 semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {}
           }
         } loc("scope_owned.sv":12:3)
-        obelisk.sv.symbol.net_alias attributes {hierarchical_name = "top",
-            node_id = 10 : i64, sym_name = "direct_alias"} {
+        obelisk.sv.symbol.net_alias @direct_alias attributes {hierarchical_name = "top",
+            node_id = 10 : i64} {
           obelisk.sv.expression.named_value attributes {is_signed = false,
               node_id = 11 : i64, referenced_path = "top.a",
               referenced_symbol = @root::@top_i::@top_b::@a,
@@ -130,22 +130,22 @@ module attributes {
               referenced_symbol = @root::@top_i::@top_b::@d,
               semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
         } loc("scope_owned.sv":11:3)
-        obelisk.sv.symbol.generate_block attributes {
-            hierarchical_name = "top.g", node_id = 13 : i64,
-            sym_name = "generated"} {
-          obelisk.sv.symbol.net attributes {hierarchical_name = "top.g.a",
+        obelisk.sv.symbol.generate_block @generated attributes {
+            hierarchical_name = "top.g", node_id = 13 : i64
+        } {
+          obelisk.sv.symbol.net @ga attributes {hierarchical_name = "top.g.a",
               is_implicit = false, name = "a", net_kind = 1 : i32,
               node_id = 14 : i64,
-              semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-              sym_name = "ga"} {}
-          obelisk.sv.symbol.net attributes {hierarchical_name = "top.g.b",
+              semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+          } {}
+          obelisk.sv.symbol.net @gb attributes {hierarchical_name = "top.g.b",
               is_implicit = false, name = "b", net_kind = 1 : i32,
               node_id = 15 : i64,
-              semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-              sym_name = "gb"} {}
-          obelisk.sv.symbol.continuous_assign attributes {
+              semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+          } {}
+          obelisk.sv.symbol.continuous_assign @generated_assign attributes {
               hierarchical_name = "top.g", node_id = 16 : i64,
-              sym_name = "generated_assign", time_precision_fs = 1 : i64,
+              time_precision_fs = 1 : i64,
               time_unit_fs = 1 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
                 is_signed = false, node_id = 17 : i64,
@@ -160,8 +160,8 @@ module attributes {
                   semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
             }
           } loc("scope_owned.sv":20:5)
-          obelisk.sv.symbol.net_alias attributes {hierarchical_name = "top.g",
-              node_id = 20 : i64, sym_name = "generated_alias"} {
+          obelisk.sv.symbol.net_alias @generated_alias attributes {hierarchical_name = "top.g",
+              node_id = 20 : i64} {
             obelisk.sv.expression.named_value attributes {is_signed = false,
                 node_id = 21 : i64, referenced_path = "top.g.a",
                 referenced_symbol = @root::@top_i::@top_b::@generated::@ga,
@@ -172,9 +172,9 @@ module attributes {
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           } loc("scope_owned.sv":21:5)
         }
-        obelisk.sv.symbol.continuous_assign attributes {
+        obelisk.sv.symbol.continuous_assign @variable_assign attributes {
             hierarchical_name = "top", node_id = 71 : i64,
-            sym_name = "variable_assign", time_precision_fs = 1 : i64,
+            time_precision_fs = 1 : i64,
             time_unit_fs = 1 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
               is_signed = false, node_id = 72 : i64,
@@ -189,12 +189,12 @@ module attributes {
                 semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
           }
         } loc("scope_owned.sv":13:3)
-        obelisk.sv.symbol.generate_block attributes {
+        obelisk.sv.symbol.generate_block @uninstantiated attributes {
             hierarchical_name = "top.dead", is_uninstantiated = true,
-            node_id = 23 : i64, sym_name = "uninstantiated"} {
-          obelisk.sv.symbol.continuous_assign attributes {
+            node_id = 23 : i64} {
+          obelisk.sv.symbol.continuous_assign @dead_assign attributes {
               hierarchical_name = "top.dead", node_id = 24 : i64,
-              sym_name = "dead_assign", time_precision_fs = 1 : i64,
+              time_precision_fs = 1 : i64,
               time_unit_fs = 1 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
                 is_signed = false, node_id = 25 : i64,
@@ -209,9 +209,9 @@ module attributes {
                   semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
             }
           } loc("scope_owned.sv":30:5)
-          obelisk.sv.symbol.net_alias attributes {
-              hierarchical_name = "top.dead", node_id = 28 : i64,
-              sym_name = "dead_alias"} {
+          obelisk.sv.symbol.net_alias @dead_alias attributes {
+              hierarchical_name = "top.dead", node_id = 28 : i64
+          } {
             obelisk.sv.expression.named_value attributes {is_signed = false,
                 node_id = 29 : i64, referenced_path = "top.a",
                 referenced_symbol = @root::@top_i::@top_b::@a,
@@ -224,21 +224,21 @@ module attributes {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "iface",
+    obelisk.sv.symbol.instance @iface_i attributes {hierarchical_name = "iface",
         is_uninstantiated = false, name = "iface", node_id = 37 : i64,
-        referenced_path = "iface", referenced_symbol = @iface_def,
-        sym_name = "iface_i"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "iface",
-          name = "iface", node_id = 38 : i64, sym_name = "iface_b",
+        referenced_path = "iface", referenced_symbol = @iface_def
+    } {
+      obelisk.sv.symbol.instance_body @iface_b attributes {hierarchical_name = "iface",
+          name = "iface", node_id = 38 : i64,
           time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
-        obelisk.sv.symbol.net attributes {hierarchical_name = "iface.a",
+        obelisk.sv.symbol.net @iface_a attributes {hierarchical_name = "iface.a",
             is_implicit = false, name = "a", net_kind = 1 : i32,
             node_id = 39 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "iface_a"} {}
-        obelisk.sv.symbol.continuous_assign attributes {
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.continuous_assign @iface_assign attributes {
             hierarchical_name = "iface", node_id = 40 : i64,
-            sym_name = "iface_assign", time_precision_fs = 1 : i64,
+            time_precision_fs = 1 : i64,
             time_unit_fs = 1 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
               is_signed = false, node_id = 41 : i64,
@@ -254,21 +254,21 @@ module attributes {
         } loc("scope_owned.sv":40:3)
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "prog",
+    obelisk.sv.symbol.instance @prog_i attributes {hierarchical_name = "prog",
         is_uninstantiated = false, name = "prog", node_id = 44 : i64,
-        referenced_path = "prog", referenced_symbol = @prog_def,
-        sym_name = "prog_i"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "prog",
-          name = "prog", node_id = 45 : i64, sym_name = "prog_b",
+        referenced_path = "prog", referenced_symbol = @prog_def
+    } {
+      obelisk.sv.symbol.instance_body @prog_b attributes {hierarchical_name = "prog",
+          name = "prog", node_id = 45 : i64,
           time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
-        obelisk.sv.symbol.net attributes {hierarchical_name = "prog.a",
+        obelisk.sv.symbol.net @prog_a attributes {hierarchical_name = "prog.a",
             is_implicit = false, name = "a", net_kind = 1 : i32,
             node_id = 46 : i64,
-            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>,
-            sym_name = "prog_a"} {}
-        obelisk.sv.symbol.continuous_assign attributes {
+            semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+        } {}
+        obelisk.sv.symbol.continuous_assign @prog_assign attributes {
             hierarchical_name = "prog", node_id = 47 : i64,
-            sym_name = "prog_assign", time_precision_fs = 1 : i64,
+            time_precision_fs = 1 : i64,
             time_unit_fs = 1 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32,
               is_signed = false, node_id = 48 : i64,

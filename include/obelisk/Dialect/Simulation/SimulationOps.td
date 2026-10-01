@@ -838,7 +838,7 @@ def SimCovergroupClockEventRegisterOp
   let assemblyFormat = [{
     $context `,` $handle `events` `[` $values `]`
     `conditions` $condition_count `edges` $edges
-    `indices` $condition_indices attr-dict `:` type($handle) `,` type($values)
+    `indices` $condition_indices attr-dict `:` qualified(type($handle)) `,` type($values)
   }];
   let extraClassDeclaration = [{
     ::mlir::Operation::operand_range getPrimaries();
@@ -1620,7 +1620,7 @@ def SimQueueDeleteOp : SimOp<"queue.delete", [
   ]> {
   let summary = "delete one queue element by logical index";
   let arguments = (ins SimQueueType:$queue, I64:$index);
-  let assemblyFormat = "$queue `[` $index `]` attr-dict `:` type($queue)";
+  let assemblyFormat = "$queue `[` $index `]` attr-dict `:` qualified(type($queue))";
   let hasVerifier = 1;
 }
 
@@ -1630,7 +1630,7 @@ def SimQueueInsertOp : SimOp<"queue.insert", [
   let summary = "insert one queue element at a logical index";
   let arguments = (ins SimQueueType:$queue, I64:$index, AnyType:$value);
   let assemblyFormat = "$value `into` $queue `[` $index `]` attr-dict `:` "
-                       "type($queue) `,` type($value)";
+                       "qualified(type($queue)) `,` type($value)";
   let hasVerifier = 1;
 }
 
@@ -2144,7 +2144,7 @@ def SimStringParseLogicOp : SimOp<"string.parse_logic", [Pure]> {
   let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
   let results = (outs SimLogicType:$result);
   let assemblyFormat =
-      "$input `radix` `=` $radix attr-dict `:` type($result)";
+      "$input `radix` `=` $radix attr-dict `:` qualified(type($result))";
   let hasVerifier = 1;
 }
 
@@ -4970,7 +4970,7 @@ def SimObserverBindOp : SimOp<"observer.bind", [
   let assemblyFormat = [{
     $evaluator `values` `(` $values `:` type($values) `)`
     `captures` $capture_count
-    attr-dict `:` type($result)
+    attr-dict `:` qualified(type($result))
   }];
   let extraClassDeclaration = [{
     ::mlir::Operation::operand_range getCaptures();
@@ -5155,7 +5155,7 @@ def SimSuspendMailboxOp : SimSuspendOp<"suspend.mailbox", (
   }];
   let assemblyFormat = [{$mailbox $kind `to` $continuation
     (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
-    attr-dict `:` type($mailbox)}];
+    attr-dict `:` qualified(type($mailbox))}];
   let hasVerifier = 1;
 }
 

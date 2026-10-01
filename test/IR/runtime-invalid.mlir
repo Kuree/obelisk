@@ -73,7 +73,7 @@ func.func @bad_scratch() {
 
 func.func @bad_byte_container(%value: i32) {
   // expected-error @+1 {{requires a byte span, mutable byte span, or buffer}}
-  %size = runtime.bytes.size %value : (i32) -> i64
+  %size = runtime.bytes.size %value : i32
   return
 }
 
@@ -114,8 +114,8 @@ func.func @double_size(%ctx: !runtime.context, %fd: !runtime.fd,
   %status, %line = runtime.file.getline %ctx, %fd, %limit :
       (!runtime.context, !runtime.fd, i64) ->
       (!runtime.status, !runtime.buffer)
-  %first = runtime.bytes.size %line : (!runtime.buffer) -> i64
-  %second = runtime.bytes.size %line : (!runtime.buffer) -> i64
+  %first = runtime.bytes.size %line : !runtime.buffer
+  %second = runtime.bytes.size %line : !runtime.buffer
   runtime.buffer.release %line : (!runtime.buffer) -> ()
   return
 }
@@ -129,7 +129,7 @@ func.func @read_after_release(%ctx: !runtime.context, %fd: !runtime.fd,
       (!runtime.context, !runtime.fd, i64) ->
       (!runtime.status, !runtime.buffer)
   runtime.buffer.release %line : (!runtime.buffer) -> ()
-  %size = runtime.bytes.size %line : (!runtime.buffer) -> i64
+  %size = runtime.bytes.size %line : !runtime.buffer
   return
 }
 
@@ -152,6 +152,7 @@ func.func @bad_time_multiplier() {
 // -----
 
 func.func @raw_status(%status: !runtime.status) -> i1 {
+  // Generic syntax is needed to give the enum attribute a raw integer type.
   // expected-error @+1 {{attribute 'value' failed to satisfy constraint}}
   %ok = "runtime.status.is"(%status) {value = 0 : i32} : (!runtime.status) -> i1
   return %ok : i1
@@ -160,6 +161,7 @@ func.func @raw_status(%status: !runtime.status) -> i1 {
 // -----
 
 func.func @wrong_enum(%status: !runtime.status) -> i1 {
+  // Generic syntax is needed to use an attribute from the wrong enum.
   // expected-error @+1 {{attribute 'value' failed to satisfy constraint}}
   %ok = "runtime.status.is"(%status) {value = #runtime.radix<binary>} : (!runtime.status) -> i1
   return %ok : i1

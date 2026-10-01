@@ -4,18 +4,18 @@
 // dimensions. Storage selection still follows the flattened D,B,C,A nesting,
 // but the first query dimension is the typedef's A range.
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64, sym_name = "top"} {
+  obelisk.sv.symbol.definition @top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "unit"} {
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @unit attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @top, sym_name = "instance"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, sym_name = "body"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.x", lifetime = 1 : i32, name = "x", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 6 x !obelisk.ranged_unpacked_array<0 : 4 x !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.ranged_unpacked_array<0 : 2 x !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>>>>, sym_name = "x"} {
+    obelisk.sv.symbol.instance @instance attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @top} {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64} {
+        obelisk.sv.symbol.variable @x attributes {hierarchical_name = "top.x", lifetime = 1 : i32, name = "x", node_id = 5 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 6 x !obelisk.ranged_unpacked_array<0 : 4 x !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.ranged_unpacked_array<0 : 2 x !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>>>>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "top.result", lifetime = 1 : i32, name = "result", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "result"} {
+        obelisk.sv.symbol.variable @result attributes {hierarchical_name = "top.result", lifetime = 1 : i32, name = "result", node_id = 6 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 0 : i32, sym_name = "initial", time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
+        obelisk.sv.symbol.procedural_block @initial attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1 : i64, time_unit_fs = 1 : i64} {
           obelisk.sv.statement.conditional attributes {check_kind = 0 : i32, condition_count = 1 : i64, condition_pattern_flags = array<i64: 0>, has_else = false, node_id = 8 : i64} {
             // Slang folded this comparison using storage order. Preparation
             // must discard that stale zero after seeing the corrected query.

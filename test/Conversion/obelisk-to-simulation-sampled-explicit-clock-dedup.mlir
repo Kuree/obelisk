@@ -12,14 +12,14 @@
 //   endmodule
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "native_sampled_explicit_clock_dedup", name = "native_sampled_explicit_clock_dedup", node_id = 0 : i64, sym_name = "s0.native_sampled_explicit_clock_dedup"} {
+  obelisk.sv.symbol.definition @s0.native_sampled_explicit_clock_dedup attributes {definition_kind = 0 : i32, hierarchical_name = "native_sampled_explicit_clock_dedup", name = "native_sampled_explicit_clock_dedup", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", is_uninstantiated = false, name = "native_sampled_explicit_clock_dedup", node_id = 3 : i64, referenced_path = "native_sampled_explicit_clock_dedup", referenced_symbol = @s0.native_sampled_explicit_clock_dedup, sym_name = "s3.native_sampled_explicit_clock_dedup"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", name = "native_sampled_explicit_clock_dedup", node_id = 4 : i64, sym_name = "s4.native_sampled_explicit_clock_dedup", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.main_clk", lifetime = 1 : i32, name = "main_clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s5.main_clk"} {
+    obelisk.sv.symbol.instance @s3.native_sampled_explicit_clock_dedup attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", is_uninstantiated = false, name = "native_sampled_explicit_clock_dedup", node_id = 3 : i64, referenced_path = "native_sampled_explicit_clock_dedup", referenced_symbol = @s0.native_sampled_explicit_clock_dedup} {
+      obelisk.sv.symbol.instance_body @s4.native_sampled_explicit_clock_dedup attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", name = "native_sampled_explicit_clock_dedup", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.main_clk attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.main_clk", lifetime = 1 : i32, name = "main_clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b0", is_signed = false, node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.conversion attributes {folded_constant = "0", is_signed = true, node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 8 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -27,7 +27,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.alternate_clk", lifetime = 1 : i32, name = "alternate_clk", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s6.alternate_clk"} {
+        obelisk.sv.symbol.variable @s6.alternate_clk attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.alternate_clk", lifetime = 1 : i32, name = "alternate_clk", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b0", is_signed = false, node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.conversion attributes {folded_constant = "0", is_signed = true, node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 12 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -35,7 +35,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.data", lifetime = 1 : i32, name = "data", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s7.data"} {
+        obelisk.sv.symbol.variable @s7.data attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.data", lifetime = 1 : i32, name = "data", node_id = 13 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b0", is_signed = false, node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.conversion attributes {folded_constant = "0", is_signed = true, node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 16 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -43,7 +43,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.gate", lifetime = 1 : i32, name = "gate", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s8.gate"} {
+        obelisk.sv.symbol.variable @s8.gate attributes {hierarchical_name = "native_sampled_explicit_clock_dedup.gate", lifetime = 1 : i32, name = "gate", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           obelisk.sv.expression.conversion attributes {folded_constant = "1'b1", is_signed = false, node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             obelisk.sv.expression.conversion attributes {folded_constant = "1", is_signed = true, node_id = 19 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
               obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
@@ -51,9 +51,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "native_sampled_explicit_clock_dedup.first", name = "first", node_id = 21 : i64, sym_name = "s9.first"} {
+        obelisk.sv.symbol.statement_block @s9.first attributes {block_kind = 0 : i32, hierarchical_name = "native_sampled_explicit_clock_dedup.first", name = "first", node_id = 21 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", node_id = 22 : i64, procedure_kind = 2 : i32, sym_name = "s10", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", node_id = 22 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "native_sampled_explicit_clock_dedup.first", block_symbol = @s1.$root::@s3.native_sampled_explicit_clock_dedup::@s4.native_sampled_explicit_clock_dedup::@s9.first, node_id = 23 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 24 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 25 : i64} {
@@ -89,9 +89,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "native_sampled_explicit_clock_dedup.second", name = "second", node_id = 40 : i64, sym_name = "s11.second"} {
+        obelisk.sv.symbol.statement_block @s11.second attributes {block_kind = 0 : i32, hierarchical_name = "native_sampled_explicit_clock_dedup.second", name = "second", node_id = 40 : i64} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", node_id = 41 : i64, procedure_kind = 2 : i32, sym_name = "s12", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s12 attributes {hierarchical_name = "native_sampled_explicit_clock_dedup", node_id = 41 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {block_path = "native_sampled_explicit_clock_dedup.second", block_symbol = @s1.$root::@s3.native_sampled_explicit_clock_dedup::@s4.native_sampled_explicit_clock_dedup::@s11.second, node_id = 42 : i64} {
             obelisk.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 43 : i64} {
               obelisk.sv.assertion.clocking attributes {node_id = 44 : i64} {

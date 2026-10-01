@@ -14,4 +14,4 @@
 // CHECK: obelisk_sdf.delay_file
 // CHECK-NOT: divider =
 // CHECK: obelisk_sdf.cell
-// CHECK-SAME: instance = "top.middle.leaf"
+// CHECK-SAME: instance "top.middle.leaf"

@@ -134,7 +134,7 @@ module {
   func.func @bad_container_read(
       %array: !simulation.dynamic_array<i32>, %index: i64) {
     // expected-error @+1 {{result type must match the container element}}
-    %value = "simulation.container.read"(%array, %index) :
+    %value = simulation.container.read %array, %index :
       (!simulation.dynamic_array<i32>, i64) -> i64
     return
   }
@@ -176,7 +176,7 @@ module {
       %array: !simulation.dynamic_array<i32>,
       %queue: !simulation.queue<i32, 4>, %size: i64) {
     // expected-error @+1 {{source and result container types must match}}
-    %value = "simulation.container.create_like"(%array, %queue, %size) :
+    %value = simulation.container.create_like %array, %queue, %size :
       (!simulation.dynamic_array<i32>, !simulation.queue<i32, 4>, i64) ->
       !simulation.dynamic_array<i32>
     return
@@ -188,7 +188,7 @@ module {
 module {
   func.func @bad_assoc_create() {
     // expected-error @+1 {{element metadata does not match the associative element type}}
-    %array = "simulation.assoc.create"() {
+    %array = simulation.assoc.create {
       type_id = 42 : i64, element_kind = #simulation.element_kind<real>,
       element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
       alignment = 1 : i64, bit_width = 64 : i64,
@@ -206,7 +206,7 @@ module {
       %array: !simulation.assoc_array<i32, i64, true, false>,
       %key: i64) {
     // expected-error @+1 {{key type must match the associative array key}}
-    %value = "simulation.assoc.read"(%array, %key) :
+    %value = simulation.assoc.read %array, %key :
       (!simulation.assoc_array<i32, i64, true, false>, i64) -> i64
     return
   }
@@ -217,7 +217,7 @@ module {
 module {
   func.func @missing_assoc_aggregate_trace() {
     // expected-error @+1 {{trace inventory does not match the associative element type}}
-    %array = "simulation.assoc.create"() {
+    %array = simulation.assoc.create {
       type_id = 47 : i64, element_kind = #simulation.element_kind<aggregate>,
       element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
@@ -238,7 +238,7 @@ module {
       %array: !simulation.assoc_array<i32, i64, true, false>,
       %key: i32) {
     // expected-error @+1 {{attribute 'direction' failed to satisfy constraint}}
-    %next, %valid = "simulation.assoc.traverse"(%array, %key) {
+    %next, %valid = simulation.assoc.traverse %array, %key {
       direction = 0 : i32, endpoint = false
     } : (!simulation.assoc_array<i32, i64, true, false>, i32) -> (i32, i1)
     return
@@ -250,7 +250,7 @@ module {
 module {
   func.func @bad_typed_container_create(%size: i64) {
     // expected-error @+1 {{element metadata does not match the result container element type}}
-    %array = "simulation.container.create"(%size) {
+    %array = simulation.container.create %size {
       type_id = 42 : i64, element_kind = #simulation.element_kind<real>,
       element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
       alignment = 1 : i64, bit_width = 64 : i64,
@@ -266,7 +266,7 @@ module {
 module {
   func.func @bad_packed_aggregate_container_create(%size: i64) {
     // expected-error @+1 {{element metadata does not match the result container element type}}
-    %array = "simulation.container.create"(%size) {
+    %array = simulation.container.create %size {
       type_id = 43 : i64, element_kind = #simulation.element_kind<aggregate>,
       element_flags = #simulation.element_flags<none>, value_size = 1 : i64,
       alignment = 1 : i64, bit_width = 8 : i64,
@@ -283,7 +283,7 @@ module {
 module {
   func.func @missing_aggregate_trace(%size: i64) {
     // expected-error @+1 {{trace inventory does not match the result container element type}}
-    %array = "simulation.container.create"(%size) {
+    %array = simulation.container.create %size {
       type_id = 44 : i64, element_kind = #simulation.element_kind<aggregate>,
       element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
@@ -302,7 +302,7 @@ module {
 module {
   func.func @wrong_aggregate_trace_kind(%size: i64) {
     // expected-error @+1 {{trace inventory does not match the result container element type}}
-    %array = "simulation.container.create"(%size) {
+    %array = simulation.container.create %size {
       type_id = 45 : i64, element_kind = #simulation.element_kind<aggregate>,
       element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
@@ -321,7 +321,7 @@ module {
 module {
   func.func @wrong_aggregate_trace_offset(%size: i64) {
     // expected-error @+1 {{trace inventory does not match the result container element type}}
-    %array = "simulation.container.create"(%size) {
+    %array = simulation.container.create %size {
       type_id = 46 : i64, element_kind = #simulation.element_kind<aggregate>,
       element_flags = #simulation.element_flags<none>, value_size = 16 : i64,
       alignment = 1 : i64, bit_width = 128 : i64,
@@ -346,7 +346,7 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %size: i64 {simulation.capture_kind = 1 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      %array = "simulation.container.create"(%size) {
+      %array = simulation.container.create %size {
         type_id = 99 : i64, element_kind = #simulation.element_kind<bits>,
         element_flags = #simulation.element_flags<none>, value_size = 4 : i64,
         alignment = 1 : i64, bit_width = 32 : i64,
@@ -360,7 +360,7 @@ module {
         %size: i64 {simulation.capture_kind = 1 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
       // expected-error @+1 {{element type ID 99 conflicts with another container descriptor}}
-      %array = "simulation.container.create"(%size) {
+      %array = simulation.container.create %size {
         type_id = 99 : i64, element_kind = #simulation.element_kind<real>,
         element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
         alignment = 1 : i64, bit_width = 64 : i64,
@@ -963,6 +963,7 @@ module {
 // -----
 
 module {
+  // Generic syntax preserves an empty region; the custom parser adds a block.
   // expected-error @+1 {{Operations with a 'SymbolTable' must have exactly one block}}
   "simulation.design"() ({
   }) {sym_name = "empty"} : () -> ()
@@ -2320,6 +2321,7 @@ module {
           schedule.detached_controls,
           schedule.priority_signal_resume
         } {
+      // Generic syntax is needed for the empty variadic type list.
       // expected-error @+1 {{requires at least one primary observer}}
       "simulation.suspend.observe"()[^resume] {condition_count = 0 : i32, condition_indices = array<i32>, edges = array<i32>, schedule.concurrent_cancel_level_true} : () -> ()
     ^resume:

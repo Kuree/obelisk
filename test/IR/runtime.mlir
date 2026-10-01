@@ -49,40 +49,33 @@ func.func @loop_alloca(%ctx: !runtime.context, %fd: !runtime.fd,
 }
 
 func.func @materializer_roundtrip(%status: !runtime.status) -> i1 {
-  %empty = runtime.argument.empty : () -> !runtime.arg
-  %arguments = runtime.argument.array %empty :
-      (!runtime.arg) -> !runtime.args
-  %bits = runtime.status.to_bits %status : (!runtime.status) -> i32
-  %roundtrip = runtime.status.from_bits %bits :
-      (i32) -> !runtime.status
+  %empty = runtime.argument.empty
+  %arguments = runtime.argument.array(%empty)
+  %bits = runtime.status.to_bits %status
+  %roundtrip = runtime.status.from_bits %bits
   %same = runtime.status.is %roundtrip, <ok>
   return %same : i1
 }
 
 func.func @managed_object_argument(%object: i64) {
-  %argument = runtime.argument.managed_object %object :
-      (i64) -> !runtime.arg
-  %arguments = runtime.argument.array %argument :
-      (!runtime.arg) -> !runtime.args
+  %argument = runtime.argument.managed_object %object
+  %arguments = runtime.argument.array(%argument)
   return
 }
 
 func.func @virtual_interface_argument(%scope: i64) {
-  %argument = runtime.argument.virtual_interface %scope :
-      (i64) -> !runtime.arg
-  %arguments = runtime.argument.array %argument :
-      (!runtime.arg) -> !runtime.args
+  %argument = runtime.argument.virtual_interface %scope
+  %arguments = runtime.argument.array(%argument)
   return
 }
 
 func.func @cross_block_pure_arguments(%bytes: !runtime.bytes) {
-  %empty = runtime.argument.empty : () -> !runtime.arg
+  %empty = runtime.argument.empty
   %string = runtime.argument.bytes %bytes {is_format_string = true} :
       (!runtime.bytes) -> !runtime.arg
   cf.br ^consumer
 ^consumer:
-  %arguments = runtime.argument.array %empty, %string :
-      (!runtime.arg, !runtime.arg) -> !runtime.args
+  %arguments = runtime.argument.array(%empty, %string)
   return
 }
 

@@ -10,20 +10,20 @@
 // wrote, not a three-element one.
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64, sym_name = "s0.t"} {
+  obelisk.sv.symbol.definition @s0.t attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t, sym_name = "s3.t"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "t", name = "t", node_id = 4 : i64, sym_name = "s4.t", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.parameter attributes {constant_value = "  a  ", hierarchical_name = "t.PAD", name = "PAD", node_id = 5 : i64, semantic_type = !obelisk.string, sym_name = "s5.PAD"} {
+    obelisk.sv.symbol.instance @s3.t attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t} {
+      obelisk.sv.symbol.instance_body @s4.t attributes {hierarchical_name = "t", name = "t", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.parameter @s5.PAD attributes {constant_value = "  a  ", hierarchical_name = "t.PAD", name = "PAD", node_id = 5 : i64, semantic_type = !obelisk.string} {
           obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 6 : i64, semantic_type = !obelisk.string} {
             obelisk.sv.expression.string_literal attributes {constant_value = "  a  ", folded_constant = "40'h2020612020", is_signed = false, node_id = 7 : i64, semantic_type = !obelisk.ranged_packed_array<39 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
             }
           }
         }
-        obelisk.sv.symbol.parameter attributes {constant_value = "[\22x,y\22,\22z\22]", hierarchical_name = "t.REGS", name = "REGS", node_id = 8 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.string>, sym_name = "s6.REGS"} {
+        obelisk.sv.symbol.parameter @s6.REGS attributes {constant_value = "[\22x,y\22,\22z\22]", hierarchical_name = "t.REGS", name = "REGS", node_id = 8 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.string>} {
           obelisk.sv.expression.simple_assignment_pattern attributes {is_signed = false, node_id = 9 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.string>} {
             obelisk.sv.expression.conversion attributes {is_signed = false, node_id = 10 : i64, semantic_type = !obelisk.string} {
               obelisk.sv.expression.string_literal attributes {constant_value = "x,y", folded_constant = "24'd7875705", is_signed = false, node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<23 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
@@ -35,9 +35,9 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "t.s", lifetime = 1 : i32, name = "s", node_id = 14 : i64, semantic_type = !obelisk.string, sym_name = "s7.s"} {
+        obelisk.sv.symbol.variable @s7.s attributes {hierarchical_name = "t.s", lifetime = 1 : i32, name = "s", node_id = 14 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "t", node_id = 15 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "t", node_id = 15 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 16 : i64} {
             obelisk.sv.statement.list attributes {node_id = 17 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 18 : i64} {

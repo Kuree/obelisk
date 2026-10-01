@@ -5,27 +5,27 @@
 // beginning of simulation, even though its symbol is nested in the subroutine.
 
 module {
-  obelisk.sv.symbol.root attributes {
-      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-      sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {
-        hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
-      obelisk.sv.symbol.subroutine attributes {
+  obelisk.sv.symbol.root @s1.$root attributes {
+      hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+        hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.symbol.subroutine @s3.T attributes {
           default_lifetime = 1 : i32, hierarchical_name = "T", name = "T",
           node_id = 3 : i64,
           semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-          subroutine_kind = 1 : i32, sym_name = "s3.T"} {
+          subroutine_kind = 1 : i32} {
         obelisk.sv.statement.list attributes {node_id = 4 : i64} {
           obelisk.sv.statement.variable_declaration attributes {
               node_id = 5 : i64, referenced_path = "T.value",
               referenced_symbol = @s1.$root::@s2::@s3.T::@s4.value} {
           }
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s4.value attributes {
             hierarchical_name = "T.value", lifetime = 1 : i32, name = "value",
             node_id = 6 : i64,
-            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-            sym_name = "s4.value"} {
+            semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+        } {
           obelisk.sv.expression.integer_literal attributes {
               constant_value = "9", is_signed = true, node_id = 7 : i64,
               semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {

@@ -13,14 +13,14 @@ endmodule
 
 // The standalone definition retains identity, and slang's semantic checking
 // instance carries the elaborated body even though no design instance exists.
-// SOURCE: slang.symbol.definition attributes {{.*}}name = "requires_parameter"
-// SOURCE: slang.symbol.instance attributes {{.*}}is_uninstantiated = true
+// SOURCE: slang.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "requires_parameter"
+// SOURCE: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}is_uninstantiated = true
 // SOURCE-SAME: referenced_path = "requires_parameter"
 // SOURCE: slang.symbol.instance_body
-// SOURCE: slang.symbol.variable attributes {{.*}}name = "marker"
+// SOURCE: slang.symbol.variable @{{[^ ]+}} attributes {{.*}}name = "marker"
 
-// TARGET: obelisk.sv.symbol.definition attributes {{.*}}name = "requires_parameter"
-// TARGET: obelisk.sv.symbol.definition attributes {{.*}}name = "uninstantiated_test_top"
-// TARGET: obelisk.sv.symbol.instance attributes {{.*}}is_uninstantiated = false
+// TARGET: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "requires_parameter"
+// TARGET: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "uninstantiated_test_top"
+// TARGET: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}is_uninstantiated = false
 // TARGET-SAME: referenced_path = "uninstantiated_test_top"
 // TARGET-NOT: slang.

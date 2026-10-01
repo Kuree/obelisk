@@ -71,11 +71,11 @@
 // SHORT-HELP: -emit-slang
 // HIDDEN-HELP: -Xslang
 
-// OUTPUT: slang.symbol.instance attributes {{.*}}hierarchical_name = "macro_was_undefined"
-// DEBUG: slang.symbol.instance attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// OUTPUT: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// DEBUG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
 // DEBUG: loc(
 
-// INCLUDE: slang.symbol.instance attributes {{.*}}hierarchical_name = "include_user"
+// INCLUDE: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "include_user"
 // INCLUDE: !slang.packed_array<6 : 0 x
 // SYSTEM-INCLUDE: hierarchical_name = "macro_was_undefined"
 // MACRO-DEFINED: hierarchical_name = "macro_was_defined"
@@ -109,7 +109,7 @@
 // DASH-DASH: hierarchical_name = "dash_dash_input"
 // STDIN: hierarchical_name = "macro_was_undefined"
 
-// LAST-SLANG: slang.symbol.instance attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// LAST-SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
 // LAST-SLANG-NOT: obelisk.
-// LAST-OBELISK: obelisk.sv.symbol.instance attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// LAST-OBELISK: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
 // LAST-OBELISK-NOT: slang.

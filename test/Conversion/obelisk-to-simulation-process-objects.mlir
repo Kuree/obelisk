@@ -8,54 +8,49 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  obelisk.sv.symbol.definition attributes {
+  obelisk.sv.symbol.definition @s0.process_front attributes {
     definition_kind = 0 : i32, hierarchical_name = "process_front",
-    name = "process_front", node_id = 0 : i64, sym_name = "s0.process_front"
+    name = "process_front", node_id = 0 : i64
   } {
   }
-  obelisk.sv.symbol.root attributes {
-    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64,
-    sym_name = "s1.$root"
+  obelisk.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
   } {
-    obelisk.sv.symbol.compilation_unit attributes {
-      hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"
+    obelisk.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
     } {
     }
-    obelisk.sv.symbol.instance attributes {
+    obelisk.sv.symbol.instance @s3.process_front attributes {
       hierarchical_name = "process_front", is_uninstantiated = false,
       name = "process_front", node_id = 3 : i64,
-      referenced_path = "process_front", referenced_symbol = @s0.process_front,
-      sym_name = "s3.process_front"
+      referenced_path = "process_front", referenced_symbol = @s0.process_front
     } {
-      obelisk.sv.symbol.instance_body attributes {
+      obelisk.sv.symbol.instance_body @s4.process_front attributes {
         hierarchical_name = "process_front", name = "process_front",
-        node_id = 4 : i64, sym_name = "s4.process_front",
+        node_id = 4 : i64,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s5.p attributes {
           hierarchical_name = "process_front.p", lifetime = 1 : i32,
           name = "p", node_id = 5 : i64,
-          semantic_type = !obelisk.class_handle<@s7.std::@s6.process>,
-          sym_name = "s5.p"
+          semantic_type = !obelisk.class_handle<@s7.std::@s6.process>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s8.st attributes {
           hierarchical_name = "process_front.st", lifetime = 1 : i32,
           name = "st", node_id = 6 : i64,
-          semantic_type = !obelisk.enum<"std::process", !obelisk.integral<32, true, false, 31 : 0, int>>,
-          sym_name = "s8.st"
+          semantic_type = !obelisk.enum<"std::process", !obelisk.integral<32, true, false, 31 : 0, int>>
         } {
         }
-        obelisk.sv.symbol.variable attributes {
+        obelisk.sv.symbol.variable @s9.is_null attributes {
           hierarchical_name = "process_front.is_null", lifetime = 1 : i32,
           name = "is_null", node_id = 7 : i64,
-          semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>,
-          sym_name = "s9.is_null"
+          semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>
         } {
         }
-        obelisk.sv.symbol.procedural_block attributes {
+        obelisk.sv.symbol.procedural_block @s10 attributes {
           hierarchical_name = "process_front", node_id = 8 : i64,
-          procedure_kind = 0 : i32, sym_name = "s10",
+          procedure_kind = 0 : i32,
           time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
         } {
           obelisk.sv.statement.block attributes {node_id = 9 : i64} {
@@ -344,119 +339,116 @@ module attributes {
       }
     }
   }
-  obelisk.sv.symbol.package attributes {
-    hierarchical_name = "std", name = "std", node_id = 38 : i64,
-    sym_name = "s7.std"
+  obelisk.sv.symbol.package @s7.std attributes {
+    hierarchical_name = "std", name = "std", node_id = 38 : i64
   } {
-    obelisk.sv.type.class_type attributes {
+    obelisk.sv.type.class_type @s6.process attributes {
       bitstream_width = 0 : i64, declared_interfaces = [],
       generic_parameter_paths = [], generic_parameter_symbols = [],
       has_base_constructor_call = false, has_cycles = false,
       hierarchical_name = "std::process", implemented_interfaces = [],
       is_abstract = true, is_final = true, is_interface = false,
       is_uninstantiated = false, name = "process", node_id = 39 : i64,
-      semantic_type = !obelisk.class_handle<@s7.std::@s6.process>,
-      sym_name = "s6.process"
+      semantic_type = !obelisk.class_handle<@s7.std::@s6.process>
     } {
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s17.self attributes {
         hierarchical_name = "std::process::self", is_builtin, is_static,
         name = "self", node_id = 40 : i64,
         semantic_type = !obelisk.subroutine<() -> !obelisk.class_handle<@s7.std::@s6.process>, false>,
-        subroutine_kind = 0 : i32, sym_name = "s17.self",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 41 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s18.status attributes {
         hierarchical_name = "std::process::status", is_builtin,
         name = "status", node_id = 42 : i64,
         semantic_type = !obelisk.subroutine<() -> !obelisk.enum<"std::process", !obelisk.integral<32, true, false, 31 : 0, int>>, false>,
-        subroutine_kind = 0 : i32, sym_name = "s18.status",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 43 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s19.kill attributes {
         hierarchical_name = "std::process::kill", is_builtin, name = "kill",
         node_id = 44 : i64,
         semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-        subroutine_kind = 0 : i32, sym_name = "s19.kill",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 45 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s20.await attributes {
         hierarchical_name = "std::process::await", is_builtin,
         name = "await", node_id = 46 : i64,
         semantic_type = !obelisk.subroutine<() -> (), true>,
-        subroutine_kind = 1 : i32, sym_name = "s20.await",
+        subroutine_kind = 1 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 47 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s21.suspend attributes {
         hierarchical_name = "std::process::suspend", is_builtin,
         name = "suspend", node_id = 48 : i64,
         semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-        subroutine_kind = 0 : i32, sym_name = "s21.suspend",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 49 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s22.resume attributes {
         hierarchical_name = "std::process::resume", is_builtin,
         name = "resume", node_id = 50 : i64,
         semantic_type = !obelisk.subroutine<() -> !obelisk.void, false>,
-        subroutine_kind = 0 : i32, sym_name = "s22.resume",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 51 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s23.srandom attributes {
         hierarchical_name = "std::process::srandom", is_builtin,
         name = "srandom", node_id = 1009 : i64,
         semantic_type = !obelisk.subroutine<(!obelisk.integral<32, true, false, 31 : 0, int>) -> !obelisk.void, false>,
-        subroutine_kind = 0 : i32, sym_name = "s23.srandom",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.formal_argument attributes {
+        obelisk.sv.symbol.formal_argument @s26.seed attributes {
           direction = 0 : i32, hierarchical_name = "std::process::srandom.seed",
           name = "seed", node_id = 1010 : i64,
-          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
-          sym_name = "s26.seed"
+          semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
         } {
         }
         obelisk.sv.statement.list attributes {node_id = 1011 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s24.set_randstate attributes {
         hierarchical_name = "std::process::set_randstate", is_builtin,
         name = "set_randstate", node_id = 1012 : i64,
         semantic_type = !obelisk.subroutine<(!obelisk.string) -> !obelisk.void, false>,
-        subroutine_kind = 0 : i32, sym_name = "s24.set_randstate",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
-        obelisk.sv.symbol.formal_argument attributes {
+        obelisk.sv.symbol.formal_argument @s27.state attributes {
           direction = 0 : i32,
           hierarchical_name = "std::process::set_randstate.state",
           name = "state", node_id = 1013 : i64,
-          semantic_type = !obelisk.string, sym_name = "s27.state"
+          semantic_type = !obelisk.string
         } {
         }
         obelisk.sv.statement.list attributes {node_id = 1014 : i64} {
         }
       }
-      obelisk.sv.symbol.subroutine attributes {
+      obelisk.sv.symbol.subroutine @s25.get_randstate attributes {
         hierarchical_name = "std::process::get_randstate", is_builtin,
         name = "get_randstate", node_id = 1015 : i64,
         semantic_type = !obelisk.subroutine<() -> !obelisk.string, false>,
-        subroutine_kind = 0 : i32, sym_name = "s25.get_randstate",
+        subroutine_kind = 0 : i32,
         time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
       } {
         obelisk.sv.statement.list attributes {node_id = 1016 : i64} {

@@ -8,42 +8,42 @@
 // RUN: FileCheck %s --check-prefix=COPYBACK < %t.threaded.mlir
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sim_child", name = "sim_child", node_id = 0 : i64, sym_name = "s0.sim_child"} {
+  obelisk.sv.symbol.definition @s0.sim_child attributes {definition_kind = 0 : i32, hierarchical_name = "sim_child", name = "sim_child", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sim_e2e", name = "sim_e2e", node_id = 1 : i64, sym_name = "s1.sim_e2e"} {
+  obelisk.sv.symbol.definition @s1.sim_e2e attributes {definition_kind = 0 : i32, hierarchical_name = "sim_e2e", name = "sim_e2e", node_id = 1 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sim_expression_and_arguments", name = "sim_expression_and_arguments", node_id = 2 : i64, sym_name = "s2.sim_expression_and_arguments"} {
+  obelisk.sv.symbol.definition @s2.sim_expression_and_arguments attributes {definition_kind = 0 : i32, hierarchical_name = "sim_expression_and_arguments", name = "sim_expression_and_arguments", node_id = 2 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sim_fast_timescale", name = "sim_fast_timescale", node_id = 3 : i64, sym_name = "s3.sim_fast_timescale"} {
+  obelisk.sv.symbol.definition @s3.sim_fast_timescale attributes {definition_kind = 0 : i32, hierarchical_name = "sim_fast_timescale", name = "sim_fast_timescale", node_id = 3 : i64} {
   }
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "sim_sccp_pipeline", name = "sim_sccp_pipeline", node_id = 4 : i64, sym_name = "s4.sim_sccp_pipeline"} {
+  obelisk.sv.symbol.definition @s4.sim_sccp_pipeline attributes {definition_kind = 0 : i32, hierarchical_name = "sim_sccp_pipeline", name = "sim_sccp_pipeline", node_id = 4 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 5 : i64, sym_name = "s5.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 6 : i64, sym_name = "s6"} {
+  obelisk.sv.symbol.root @s5.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 5 : i64} {
+    obelisk.sv.symbol.compilation_unit @s6 attributes {hierarchical_name = "$unit", node_id = 6 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "sim_e2e", is_uninstantiated = false, name = "sim_e2e", node_id = 7 : i64, referenced_path = "sim_e2e", referenced_symbol = @s1.sim_e2e, sym_name = "s7.sim_e2e"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sim_e2e", name = "sim_e2e", node_id = 8 : i64, sym_name = "s8.sim_e2e"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.clk", lifetime = 1 : i32, name = "clk", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s9.clk"} {
+    obelisk.sv.symbol.instance @s7.sim_e2e attributes {hierarchical_name = "sim_e2e", is_uninstantiated = false, name = "sim_e2e", node_id = 7 : i64, referenced_path = "sim_e2e", referenced_symbol = @s1.sim_e2e} {
+      obelisk.sv.symbol.instance_body @s8.sim_e2e attributes {hierarchical_name = "sim_e2e", name = "sim_e2e", node_id = 8 : i64} {
+        obelisk.sv.symbol.variable @s9.clk attributes {hierarchical_name = "sim_e2e.clk", lifetime = 1 : i32, name = "clk", node_id = 9 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.ready", lifetime = 1 : i32, name = "ready", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s10.ready"} {
+        obelisk.sv.symbol.variable @s10.ready attributes {hierarchical_name = "sim_e2e.ready", lifetime = 1 : i32, name = "ready", node_id = 10 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.input_value", lifetime = 1 : i32, name = "input_value", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s11.input_value"} {
+        obelisk.sv.symbol.variable @s11.input_value attributes {hierarchical_name = "sim_e2e.input_value", lifetime = 1 : i32, name = "input_value", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.input_b", lifetime = 1 : i32, name = "input_b", node_id = 12 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s12.input_b"} {
+        obelisk.sv.symbol.variable @s12.input_b attributes {hierarchical_name = "sim_e2e.input_b", lifetime = 1 : i32, name = "input_b", node_id = 12 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.state", lifetime = 1 : i32, name = "state", node_id = 13 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s13.state"} {
+        obelisk.sv.symbol.variable @s13.state attributes {hierarchical_name = "sim_e2e.state", lifetime = 1 : i32, name = "state", node_id = 13 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.signed_a", lifetime = 1 : i32, name = "signed_a", node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s14.signed_a"} {
+        obelisk.sv.symbol.variable @s14.signed_a attributes {hierarchical_name = "sim_e2e.signed_a", lifetime = 1 : i32, name = "signed_a", node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.signed_b", lifetime = 1 : i32, name = "signed_b", node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>, sym_name = "s15.signed_b"} {
+        obelisk.sv.symbol.variable @s15.signed_b attributes {hierarchical_name = "sim_e2e.signed_b", lifetime = 1 : i32, name = "signed_b", node_id = 15 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.signed_lt", lifetime = 1 : i32, name = "signed_lt", node_id = 16 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s16.signed_lt"} {
+        obelisk.sv.symbol.variable @s16.signed_lt attributes {hierarchical_name = "sim_e2e.signed_lt", lifetime = 1 : i32, name = "signed_lt", node_id = 16 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.mirror", lifetime = 1 : i32, name = "mirror", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s17.mirror"} {
+        obelisk.sv.symbol.variable @s17.mirror attributes {hierarchical_name = "sim_e2e.mirror", lifetime = 1 : i32, name = "mirror", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.net attributes {hierarchical_name = "sim_e2e.driven", is_implicit = false, name = "driven", net_kind = 1 : i32, node_id = 18 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s18.driven"} {
+        obelisk.sv.symbol.net @s18.driven attributes {hierarchical_name = "sim_e2e.driven", is_implicit = false, name = "driven", net_kind = 1 : i32, node_id = 18 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.instance attributes {hierarchical_name = "sim_e2e.child", is_uninstantiated = false, name = "child", node_id = 19 : i64, referenced_path = "sim_child", referenced_symbol = @s0.sim_child, sym_name = "s19.child"} {
+        obelisk.sv.symbol.instance @s19.child attributes {hierarchical_name = "sim_e2e.child", is_uninstantiated = false, name = "child", node_id = 19 : i64, referenced_path = "sim_child", referenced_symbol = @s0.sim_child} {
           obelisk.sv.port.connection attributes {actual_is_constant = false, direction = 1 : i32, formal_name = "ready", formal_ordinal = 0 : i64, formal_path = "sim_e2e.child.ready", formal_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s19.child::@s20.sim_child::@s21.ready, formal_type = !obelisk.integral<1, false, true, 0 : 0, logic>, internal_path = "sim_e2e.child.ready", internal_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s19.child::@s20.sim_child::@s22.ready, is_ansi = true, is_net = false, node_id = 20 : i64, provenance = 0 : i32} {
           } {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 21 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -53,12 +53,12 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sim_e2e.child", name = "sim_child", node_id = 24 : i64, sym_name = "s20.sim_child"} {
-            obelisk.sv.symbol.port attributes {direction = 1 : i32, hierarchical_name = "sim_e2e.child.ready", name = "ready", node_id = 25 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s21.ready"} {
+          obelisk.sv.symbol.instance_body @s20.sim_child attributes {hierarchical_name = "sim_e2e.child", name = "sim_child", node_id = 24 : i64} {
+            obelisk.sv.symbol.port @s21.ready attributes {direction = 1 : i32, hierarchical_name = "sim_e2e.child.ready", name = "ready", node_id = 25 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.child.ready", lifetime = 1 : i32, name = "ready", node_id = 26 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s22.ready"} {
+            obelisk.sv.symbol.variable @s22.ready attributes {hierarchical_name = "sim_e2e.child.ready", lifetime = 1 : i32, name = "ready", node_id = 26 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
             }
-            obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e.child", node_id = 27 : i64, procedure_kind = 0 : i32, sym_name = "s23", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+            obelisk.sv.symbol.procedural_block @s23 attributes {hierarchical_name = "sim_e2e.child", node_id = 27 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 28 : i64} {
                 obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 29 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   obelisk.sv.expression.named_value attributes {node_id = 30 : i64, referenced_path = "sim_e2e.child.ready", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s19.child::@s20.sim_child::@s22.ready, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -72,7 +72,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.continuous_assign attributes {hierarchical_name = "sim_e2e", node_id = 33 : i64, sym_name = "s24", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.continuous_assign @s24 attributes {hierarchical_name = "sim_e2e", node_id = 33 : i64, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 34 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             obelisk.sv.expression.named_value attributes {node_id = 35 : i64, referenced_path = "sim_e2e.driven", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s18.driven, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
@@ -84,7 +84,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "sim_e2e.increment", name = "increment", node_id = 39 : i64, return_variable_path = "sim_e2e.increment.increment", return_variable_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s25.increment::@s28.increment, semantic_type = !obelisk.subroutine<(!obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, !obelisk.integral<1, false, true, 0 : 0, logic>) -> !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, false>, subroutine_kind = 0 : i32, sym_name = "s25.increment", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.subroutine @s25.increment attributes {hierarchical_name = "sim_e2e.increment", name = "increment", node_id = 39 : i64, return_variable_path = "sim_e2e.increment.increment", return_variable_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s25.increment::@s28.increment, semantic_type = !obelisk.subroutine<(!obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, !obelisk.integral<1, false, true, 0 : 0, logic>) -> !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 40 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 41 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 42 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -117,20 +117,20 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "sim_e2e.increment.value", name = "value", node_id = 56 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s26.value"} {
+          obelisk.sv.symbol.formal_argument @s26.value attributes {direction = 0 : i32, hierarchical_name = "sim_e2e.increment.value", name = "value", node_id = 56 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "sim_e2e.increment.echoed", name = "echoed", node_id = 57 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s27.echoed"} {
+          obelisk.sv.symbol.formal_argument @s27.echoed attributes {direction = 1 : i32, hierarchical_name = "sim_e2e.increment.echoed", name = "echoed", node_id = 57 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.increment.increment", is_compiler_generated, name = "increment", node_id = 58 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s28.increment"} {
+          obelisk.sv.symbol.variable @s28.increment attributes {hierarchical_name = "sim_e2e.increment.increment", is_compiler_generated, name = "increment", node_id = 58 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "sim_e2e", node_id = 59 : i64, sym_name = "s29"} {
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.local_value", name = "local_value", node_id = 60 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s30.local_value"} {
+        obelisk.sv.symbol.statement_block @s29 attributes {block_kind = 0 : i32, hierarchical_name = "sim_e2e", node_id = 59 : i64} {
+          obelisk.sv.symbol.variable @s30.local_value attributes {hierarchical_name = "sim_e2e.local_value", name = "local_value", node_id = 60 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             obelisk.sv.expression.named_value attributes {node_id = 61 : i64, referenced_path = "sim_e2e.driven", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s18.driven, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e", node_id = 62 : i64, procedure_kind = 3 : i32, sym_name = "s31", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s31 attributes {hierarchical_name = "sim_e2e", node_id = 62 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 63 : i64} {
             obelisk.sv.statement.list attributes {node_id = 64 : i64} {
               obelisk.sv.statement.variable_declaration attributes {node_id = 65 : i64, referenced_path = "sim_e2e.local_value", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s29::@s30.local_value} {
@@ -150,7 +150,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e", node_id = 72 : i64, procedure_kind = 3 : i32, sym_name = "s32", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s32 attributes {hierarchical_name = "sim_e2e", node_id = 72 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 73 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 74 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
               obelisk.sv.expression.named_value attributes {node_id = 75 : i64, referenced_path = "sim_e2e.signed_lt", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s16.signed_lt, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -164,7 +164,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e", node_id = 79 : i64, procedure_kind = 3 : i32, sym_name = "s33", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s33 attributes {hierarchical_name = "sim_e2e", node_id = 79 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 80 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 81 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
               obelisk.sv.expression.named_value attributes {node_id = 82 : i64, referenced_path = "sim_e2e.mirror", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s17.mirror, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -174,7 +174,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e", node_id = 84 : i64, procedure_kind = 5 : i32, sym_name = "s34", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s34 attributes {hierarchical_name = "sim_e2e", node_id = 84 : i64, procedure_kind = 5 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 85 : i64} {
             obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 86 : i64} {
               obelisk.sv.expression.named_value attributes {node_id = 87 : i64, referenced_path = "sim_e2e.clk", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s9.clk, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -216,17 +216,17 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.statement_block attributes {block_kind = 0 : i32, hierarchical_name = "sim_e2e", node_id = 105 : i64, sym_name = "s35"} {
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.delayed", name = "delayed", node_id = 106 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s36.delayed"} {
+        obelisk.sv.symbol.statement_block @s35 attributes {block_kind = 0 : i32, hierarchical_name = "sim_e2e", node_id = 105 : i64} {
+          obelisk.sv.symbol.variable @s36.delayed attributes {hierarchical_name = "sim_e2e.delayed", name = "delayed", node_id = 106 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             obelisk.sv.expression.named_value attributes {node_id = 107 : i64, referenced_path = "sim_e2e.input_value", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s11.input_value, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
             }
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_e2e.index", name = "index", node_id = 108 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, sym_name = "s37.index"} {
+          obelisk.sv.symbol.variable @s37.index attributes {hierarchical_name = "sim_e2e.index", name = "index", node_id = 108 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             obelisk.sv.expression.integer_literal attributes {constant_value = "3", node_id = 109 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e", node_id = 110 : i64, procedure_kind = 0 : i32, sym_name = "s38", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s38 attributes {hierarchical_name = "sim_e2e", node_id = 110 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 111 : i64} {
             obelisk.sv.statement.list attributes {node_id = 112 : i64} {
               obelisk.sv.statement.variable_declaration attributes {node_id = 113 : i64, referenced_path = "sim_e2e.delayed", referenced_symbol = @s5.$root::@s7.sim_e2e::@s8.sim_e2e::@s35::@s36.delayed} {
@@ -422,7 +422,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_e2e", node_id = 208 : i64, procedure_kind = 2 : i32, sym_name = "s39", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s39 attributes {hierarchical_name = "sim_e2e", node_id = 208 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.timed attributes {node_id = 209 : i64} {
             obelisk.sv.timing.event_list attributes {event_count = 2 : i64, node_id = 210 : i64} {
               obelisk.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 211 : i64} {
@@ -446,29 +446,29 @@ module {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "sim_expression_and_arguments", is_uninstantiated = false, name = "sim_expression_and_arguments", node_id = 219 : i64, referenced_path = "sim_expression_and_arguments", referenced_symbol = @s2.sim_expression_and_arguments, sym_name = "s40.sim_expression_and_arguments"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sim_expression_and_arguments", name = "sim_expression_and_arguments", node_id = 220 : i64, sym_name = "s41.sim_expression_and_arguments"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.lhs", lifetime = 1 : i32, name = "lhs", node_id = 221 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s42.lhs"} {
+    obelisk.sv.symbol.instance @s40.sim_expression_and_arguments attributes {hierarchical_name = "sim_expression_and_arguments", is_uninstantiated = false, name = "sim_expression_and_arguments", node_id = 219 : i64, referenced_path = "sim_expression_and_arguments", referenced_symbol = @s2.sim_expression_and_arguments} {
+      obelisk.sv.symbol.instance_body @s41.sim_expression_and_arguments attributes {hierarchical_name = "sim_expression_and_arguments", name = "sim_expression_and_arguments", node_id = 220 : i64} {
+        obelisk.sv.symbol.variable @s42.lhs attributes {hierarchical_name = "sim_expression_and_arguments.lhs", lifetime = 1 : i32, name = "lhs", node_id = 221 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.rhs", lifetime = 1 : i32, name = "rhs", node_id = 222 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s43.rhs"} {
+        obelisk.sv.symbol.variable @s43.rhs attributes {hierarchical_name = "sim_expression_and_arguments.rhs", lifetime = 1 : i32, name = "rhs", node_id = 222 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.logical_result", lifetime = 1 : i32, name = "logical_result", node_id = 223 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s44.logical_result"} {
+        obelisk.sv.symbol.variable @s44.logical_result attributes {hierarchical_name = "sim_expression_and_arguments.logical_result", lifetime = 1 : i32, name = "logical_result", node_id = 223 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.logical_not_result", lifetime = 1 : i32, name = "logical_not_result", node_id = 224 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s45.logical_not_result"} {
+        obelisk.sv.symbol.variable @s45.logical_not_result attributes {hierarchical_name = "sim_expression_and_arguments.logical_not_result", lifetime = 1 : i32, name = "logical_not_result", node_id = 224 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.two_state", lifetime = 1 : i32, name = "two_state", node_id = 225 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, sym_name = "s46.two_state"} {
+        obelisk.sv.symbol.variable @s46.two_state attributes {hierarchical_name = "sim_expression_and_arguments.two_state", lifetime = 1 : i32, name = "two_state", node_id = 225 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.two_state_not", lifetime = 1 : i32, name = "two_state_not", node_id = 226 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s47.two_state_not"} {
+        obelisk.sv.symbol.variable @s47.two_state_not attributes {hierarchical_name = "sim_expression_and_arguments.two_state_not", lifetime = 1 : i32, name = "two_state_not", node_id = 226 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.output_source", lifetime = 1 : i32, name = "output_source", node_id = 227 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s48.output_source"} {
+        obelisk.sv.symbol.variable @s48.output_source attributes {hierarchical_name = "sim_expression_and_arguments.output_source", lifetime = 1 : i32, name = "output_source", node_id = 227 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.inout_source", lifetime = 1 : i32, name = "inout_source", node_id = 228 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s49.inout_source"} {
+        obelisk.sv.symbol.variable @s49.inout_source attributes {hierarchical_name = "sim_expression_and_arguments.inout_source", lifetime = 1 : i32, name = "inout_source", node_id = 228 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.input_source", lifetime = 1 : i32, name = "input_source", node_id = 229 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s50.input_source"} {
+        obelisk.sv.symbol.variable @s50.input_source attributes {hierarchical_name = "sim_expression_and_arguments.input_source", lifetime = 1 : i32, name = "input_source", node_id = 229 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.function_result", lifetime = 1 : i32, name = "function_result", node_id = 230 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s51.function_result"} {
+        obelisk.sv.symbol.variable @s51.function_result attributes {hierarchical_name = "sim_expression_and_arguments.function_result", lifetime = 1 : i32, name = "function_result", node_id = 230 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "sim_expression_and_arguments.observe", name = "observe", node_id = 231 : i64, return_variable_path = "sim_expression_and_arguments.observe.observe", return_variable_symbol = @s5.$root::@s40.sim_expression_and_arguments::@s41.sim_expression_and_arguments::@s52.observe::@s56.observe, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, true, 0 : 0, logic>, !obelisk.integral<1, false, true, 0 : 0, logic>, !obelisk.integral<1, false, true, 0 : 0, logic>) -> !obelisk.integral<1, false, true, 0 : 0, logic>, false>, subroutine_kind = 0 : i32, sym_name = "s52.observe", time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
+        obelisk.sv.symbol.subroutine @s52.observe attributes {hierarchical_name = "sim_expression_and_arguments.observe", name = "observe", node_id = 231 : i64, return_variable_path = "sim_expression_and_arguments.observe.observe", return_variable_symbol = @s5.$root::@s40.sim_expression_and_arguments::@s41.sim_expression_and_arguments::@s52.observe::@s56.observe, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, true, 0 : 0, logic>, !obelisk.integral<1, false, true, 0 : 0, logic>, !obelisk.integral<1, false, true, 0 : 0, logic>) -> !obelisk.integral<1, false, true, 0 : 0, logic>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
           obelisk.sv.statement.list attributes {node_id = 232 : i64} {
             obelisk.sv.statement.expression_statement attributes {node_id = 233 : i64} {
               obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 234 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
@@ -509,16 +509,16 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "sim_expression_and_arguments.observe.scratch", name = "scratch", node_id = 252 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s53.scratch"} {
+          obelisk.sv.symbol.formal_argument @s53.scratch attributes {direction = 0 : i32, hierarchical_name = "sim_expression_and_arguments.observe.scratch", name = "scratch", node_id = 252 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 1 : i32, hierarchical_name = "sim_expression_and_arguments.observe.copied", name = "copied", node_id = 253 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s54.copied"} {
+          obelisk.sv.symbol.formal_argument @s54.copied attributes {direction = 1 : i32, hierarchical_name = "sim_expression_and_arguments.observe.copied", name = "copied", node_id = 253 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 2 : i32, hierarchical_name = "sim_expression_and_arguments.observe.exchanged", name = "exchanged", node_id = 254 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s55.exchanged"} {
+          obelisk.sv.symbol.formal_argument @s55.exchanged attributes {direction = 2 : i32, hierarchical_name = "sim_expression_and_arguments.observe.exchanged", name = "exchanged", node_id = 254 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_expression_and_arguments.observe.observe", is_compiler_generated, name = "observe", node_id = 255 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>, sym_name = "s56.observe"} {
+          obelisk.sv.symbol.variable @s56.observe attributes {hierarchical_name = "sim_expression_and_arguments.observe.observe", is_compiler_generated, name = "observe", node_id = 255 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_expression_and_arguments", node_id = 256 : i64, procedure_kind = 3 : i32, sym_name = "s57", time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s57 attributes {hierarchical_name = "sim_expression_and_arguments", node_id = 256 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 257 : i64} {
             obelisk.sv.statement.list attributes {node_id = 258 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 259 : i64} {
@@ -568,7 +568,7 @@ module {
             }
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_expression_and_arguments", node_id = 281 : i64, procedure_kind = 0 : i32, sym_name = "s58", time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s58 attributes {hierarchical_name = "sim_expression_and_arguments", node_id = 281 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 282 : i64} {
             obelisk.sv.statement.list attributes {node_id = 283 : i64} {
               obelisk.sv.statement.timed attributes {node_id = 284 : i64} {
@@ -606,11 +606,11 @@ module {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "sim_fast_timescale", is_uninstantiated = false, name = "sim_fast_timescale", node_id = 299 : i64, referenced_path = "sim_fast_timescale", referenced_symbol = @s3.sim_fast_timescale, sym_name = "s59.sim_fast_timescale"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sim_fast_timescale", name = "sim_fast_timescale", node_id = 300 : i64, sym_name = "s60.sim_fast_timescale"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_fast_timescale.value", lifetime = 1 : i32, name = "value", node_id = 301 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s61.value"} {
+    obelisk.sv.symbol.instance @s59.sim_fast_timescale attributes {hierarchical_name = "sim_fast_timescale", is_uninstantiated = false, name = "sim_fast_timescale", node_id = 299 : i64, referenced_path = "sim_fast_timescale", referenced_symbol = @s3.sim_fast_timescale} {
+      obelisk.sv.symbol.instance_body @s60.sim_fast_timescale attributes {hierarchical_name = "sim_fast_timescale", name = "sim_fast_timescale", node_id = 300 : i64} {
+        obelisk.sv.symbol.variable @s61.value attributes {hierarchical_name = "sim_fast_timescale.value", lifetime = 1 : i32, name = "value", node_id = 301 : i64, semantic_type = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_fast_timescale", node_id = 302 : i64, procedure_kind = 0 : i32, sym_name = "s62", time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s62 attributes {hierarchical_name = "sim_fast_timescale", node_id = 302 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 303 : i64} {
             obelisk.sv.statement.list attributes {node_id = 304 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 305 : i64} {
@@ -634,11 +634,11 @@ module {
         }
       }
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "sim_sccp_pipeline", is_uninstantiated = false, name = "sim_sccp_pipeline", node_id = 313 : i64, referenced_path = "sim_sccp_pipeline", referenced_symbol = @s4.sim_sccp_pipeline, sym_name = "s63.sim_sccp_pipeline"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "sim_sccp_pipeline", name = "sim_sccp_pipeline", node_id = 314 : i64, sym_name = "s64.sim_sccp_pipeline"} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_sccp_pipeline.folded_sink", lifetime = 1 : i32, name = "folded_sink", node_id = 315 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s65.folded_sink"} {
+    obelisk.sv.symbol.instance @s63.sim_sccp_pipeline attributes {hierarchical_name = "sim_sccp_pipeline", is_uninstantiated = false, name = "sim_sccp_pipeline", node_id = 313 : i64, referenced_path = "sim_sccp_pipeline", referenced_symbol = @s4.sim_sccp_pipeline} {
+      obelisk.sv.symbol.instance_body @s64.sim_sccp_pipeline attributes {hierarchical_name = "sim_sccp_pipeline", name = "sim_sccp_pipeline", node_id = 314 : i64} {
+        obelisk.sv.symbol.variable @s65.folded_sink attributes {hierarchical_name = "sim_sccp_pipeline.folded_sink", lifetime = 1 : i32, name = "folded_sink", node_id = 315 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "sim_sccp_pipeline.fold_identity", name = "fold_identity", node_id = 316 : i64, return_variable_path = "sim_sccp_pipeline.fold_identity.fold_identity", return_variable_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s66.fold_identity::@s68.fold_identity, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.integral<1, false, false, 0 : 0, bit>, false>, subroutine_kind = 0 : i32, sym_name = "s66.fold_identity", time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
+        obelisk.sv.symbol.subroutine @s66.fold_identity attributes {hierarchical_name = "sim_sccp_pipeline.fold_identity", name = "fold_identity", node_id = 316 : i64, return_variable_path = "sim_sccp_pipeline.fold_identity.fold_identity", return_variable_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s66.fold_identity::@s68.fold_identity, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.integral<1, false, false, 0 : 0, bit>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 317 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 318 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
               obelisk.sv.expression.named_value attributes {node_id = 319 : i64, referenced_path = "sim_sccp_pipeline.fold_identity.fold_identity", referenced_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s66.fold_identity::@s68.fold_identity, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
@@ -647,12 +647,12 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "sim_sccp_pipeline.fold_identity.value", name = "value", node_id = 321 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s67.value"} {
+          obelisk.sv.symbol.formal_argument @s67.value attributes {direction = 0 : i32, hierarchical_name = "sim_sccp_pipeline.fold_identity.value", name = "value", node_id = 321 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_sccp_pipeline.fold_identity.fold_identity", is_compiler_generated, name = "fold_identity", node_id = 322 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s68.fold_identity"} {
+          obelisk.sv.symbol.variable @s68.fold_identity attributes {hierarchical_name = "sim_sccp_pipeline.fold_identity.fold_identity", is_compiler_generated, name = "fold_identity", node_id = 322 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           }
         }
-        obelisk.sv.symbol.subroutine attributes {hierarchical_name = "sim_sccp_pipeline.unused_function", name = "unused_function", node_id = 323 : i64, return_variable_path = "sim_sccp_pipeline.unused_function.unused_function", return_variable_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s69.unused_function::@s71.unused_function, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.integral<32, false, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, sym_name = "s69.unused_function", time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
+        obelisk.sv.symbol.subroutine @s69.unused_function attributes {hierarchical_name = "sim_sccp_pipeline.unused_function", name = "unused_function", node_id = 323 : i64, return_variable_path = "sim_sccp_pipeline.unused_function.unused_function", return_variable_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s69.unused_function::@s71.unused_function, semantic_type = !obelisk.subroutine<(!obelisk.integral<1, false, false, 0 : 0, bit>) -> !obelisk.integral<32, false, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 324 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 325 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
               obelisk.sv.expression.named_value attributes {node_id = 326 : i64, referenced_path = "sim_sccp_pipeline.unused_function.unused_function", referenced_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s69.unused_function::@s71.unused_function, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
@@ -663,12 +663,12 @@ module {
               }
             }
           }
-          obelisk.sv.symbol.formal_argument attributes {direction = 0 : i32, hierarchical_name = "sim_sccp_pipeline.unused_function.value", name = "value", node_id = 329 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>, sym_name = "s70.value"} {
+          obelisk.sv.symbol.formal_argument @s70.value attributes {direction = 0 : i32, hierarchical_name = "sim_sccp_pipeline.unused_function.value", name = "value", node_id = 329 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
           }
-          obelisk.sv.symbol.variable attributes {hierarchical_name = "sim_sccp_pipeline.unused_function.unused_function", is_compiler_generated, name = "unused_function", node_id = 330 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>, sym_name = "s71.unused_function"} {
+          obelisk.sv.symbol.variable @s71.unused_function attributes {hierarchical_name = "sim_sccp_pipeline.unused_function.unused_function", is_compiler_generated, name = "unused_function", node_id = 330 : i64, semantic_type = !obelisk.integral<32, false, false, 31 : 0, int>} {
           }
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "sim_sccp_pipeline", node_id = 331 : i64, procedure_kind = 0 : i32, sym_name = "s72", time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s72 attributes {hierarchical_name = "sim_sccp_pipeline", node_id = 331 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 10000000 : i64} {
           obelisk.sv.statement.expression_statement attributes {node_id = 332 : i64} {
             obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 333 : i64, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {
               obelisk.sv.expression.named_value attributes {node_id = 334 : i64, referenced_path = "sim_sccp_pipeline.folded_sink", referenced_symbol = @s5.$root::@s63.sim_sccp_pipeline::@s64.sim_sccp_pipeline::@s65.folded_sink, semantic_type = !obelisk.integral<1, false, false, 0 : 0, bit>} {

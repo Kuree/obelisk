@@ -18,9 +18,9 @@ module attributes {
         -> (!simulation.logic<4096>, f64)
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %text = simulation.string.literal "1234"
-      %logic = "simulation.plusarg.parse_logic"(%text) {radix = #simulation.radix<hex>} :
+      %logic = simulation.plusarg.parse_logic %text {radix = #simulation.radix<hex>} :
           (!simulation.string) -> !simulation.logic<4096>
-      %real = "simulation.plusarg.parse_real"(%text) :
+      %real = simulation.plusarg.parse_real %text :
           (!simulation.string) -> f64
       simulation.return %logic, %real : !simulation.logic<4096>, f64
     }

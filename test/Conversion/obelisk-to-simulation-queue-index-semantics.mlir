@@ -26,20 +26,20 @@
 // CHECK: simulation.container.read {{.*}}, %[[READ_INDEX]]
 
 module {
-  obelisk.sv.symbol.definition attributes {definition_kind = 0 : i32, hierarchical_name = "queue_index_regression", name = "queue_index_regression", node_id = 0 : i64, sym_name = "s0.queue_index_regression"} {
+  obelisk.sv.symbol.definition @s0.queue_index_regression attributes {definition_kind = 0 : i32, hierarchical_name = "queue_index_regression", name = "queue_index_regression", node_id = 0 : i64} {
   }
-  obelisk.sv.symbol.root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64, sym_name = "s1.$root"} {
-    obelisk.sv.symbol.compilation_unit attributes {hierarchical_name = "$unit", node_id = 2 : i64, sym_name = "s2"} {
+  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
     }
-    obelisk.sv.symbol.instance attributes {hierarchical_name = "queue_index_regression", is_uninstantiated = false, name = "queue_index_regression", node_id = 3 : i64, referenced_path = "queue_index_regression", referenced_symbol = @s0.queue_index_regression, sym_name = "s3.queue_index_regression"} {
-      obelisk.sv.symbol.instance_body attributes {hierarchical_name = "queue_index_regression", name = "queue_index_regression", node_id = 4 : i64, sym_name = "s4.queue_index_regression", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "queue_index_regression.queue", lifetime = 1 : i32, name = "queue", node_id = 5 : i64, semantic_type = !obelisk.queue<!obelisk.string, 2>, sym_name = "s5.queue"} {
+    obelisk.sv.symbol.instance @s3.queue_index_regression attributes {hierarchical_name = "queue_index_regression", is_uninstantiated = false, name = "queue_index_regression", node_id = 3 : i64, referenced_path = "queue_index_regression", referenced_symbol = @s0.queue_index_regression} {
+      obelisk.sv.symbol.instance_body @s4.queue_index_regression attributes {hierarchical_name = "queue_index_regression", name = "queue_index_regression", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.variable @s5.queue attributes {hierarchical_name = "queue_index_regression.queue", lifetime = 1 : i32, name = "queue", node_id = 5 : i64, semantic_type = !obelisk.queue<!obelisk.string, 2>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "queue_index_regression.index", lifetime = 1 : i32, name = "index", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, sym_name = "s6.index"} {
+        obelisk.sv.symbol.variable @s6.index attributes {hierarchical_name = "queue_index_regression.index", lifetime = 1 : i32, name = "index", node_id = 6 : i64, semantic_type = !obelisk.ranged_packed_array<31 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
         }
-        obelisk.sv.symbol.variable attributes {hierarchical_name = "queue_index_regression.value", lifetime = 1 : i32, name = "value", node_id = 7 : i64, semantic_type = !obelisk.string, sym_name = "s7.value"} {
+        obelisk.sv.symbol.variable @s7.value attributes {hierarchical_name = "queue_index_regression.value", lifetime = 1 : i32, name = "value", node_id = 7 : i64, semantic_type = !obelisk.string} {
         }
-        obelisk.sv.symbol.procedural_block attributes {hierarchical_name = "queue_index_regression", node_id = 8 : i64, procedure_kind = 0 : i32, sym_name = "s8", time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        obelisk.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "queue_index_regression", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 9 : i64} {
             obelisk.sv.statement.list attributes {node_id = 10 : i64} {
               obelisk.sv.statement.expression_statement attributes {node_id = 11 : i64} {

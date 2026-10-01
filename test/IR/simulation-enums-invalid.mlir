@@ -3,7 +3,7 @@
 module {
   func.func @integer_is_not_an_enum(%ctx: !simulation.context, %seed: i32) {
     // expected-error @+1 {{attribute 'distribution' failed to satisfy constraint}}
-    %result:2 = "simulation.random.distribution"(%ctx, %seed, %seed, %seed) {
+    %result:2 = simulation.random.distribution %ctx, %seed, %seed, %seed {
       distribution = 0 : i32
     } : (!simulation.context, i32, i32, i32) -> (i32, i32)
     return
@@ -15,7 +15,7 @@ module {
 module {
   func.func @wrong_enum_type(%ctx: !simulation.context, %seed: i32) {
     // expected-error @+1 {{attribute 'distribution' failed to satisfy constraint}}
-    %result:2 = "simulation.random.distribution"(%ctx, %seed, %seed, %seed) {
+    %result:2 = simulation.random.distribution %ctx, %seed, %seed, %seed {
       distribution = #simulation.stochastic_queue_action<initialize>
     } : (!simulation.context, i32, i32, i32) -> (i32, i32)
     return

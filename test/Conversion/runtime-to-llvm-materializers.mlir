@@ -6,7 +6,7 @@ module attributes {
   func.func @materializers(%status: !runtime.status, %bits: i32,
       %value: i13, %unknown: i13, %count: i64) -> (i13, i13, i1, i32) {
     %bytes = runtime.bytes.constant "abc"
-    %size = runtime.bytes.size %bytes : (!runtime.bytes) -> i64
+    %size = runtime.bytes.size %bytes : !runtime.bytes
     %low = runtime.bytes.to_packed %bytes, %count
         {high_alignment = false} : (!runtime.bytes, i64) -> i13
     %scratch = runtime.bytes.scratch 2
@@ -14,24 +14,19 @@ module attributes {
         {high_alignment = true} : (!runtime.mut_bytes, i64) -> i13
     %packed_arg = runtime.argument.packed %value, %unknown
         {is_signed = true} : (i13, i13) -> !runtime.arg
-    %empty_arg = runtime.argument.empty : () -> !runtime.arg
+    %empty_arg = runtime.argument.empty
     %bytes_arg = runtime.argument.bytes %bytes
         {is_format_string = true} : (!runtime.bytes) -> !runtime.arg
-    %args = runtime.argument.array %packed_arg, %empty_arg, %bytes_arg :
-        (!runtime.arg, !runtime.arg, !runtime.arg) ->
-        !runtime.args
+    %args = runtime.argument.array(%packed_arg, %empty_arg, %bytes_arg)
+
     %env = runtime.format.environment {
       scope = "top", library_cell = "work.top", time_width = 4 : i32,
       time_suffix = "ns", time_multiplier = 1000 : i64
     }
-    %fd = runtime.file_descriptor.from_bits %bits :
-        (i32) -> !runtime.fd
-    %roundtrip = runtime.file_descriptor.to_bits %fd :
-        (!runtime.fd) -> i32
-    %status_bits = runtime.status.to_bits %status :
-        (!runtime.status) -> i32
-    %roundtrip_status = runtime.status.from_bits %status_bits :
-        (i32) -> !runtime.status
+    %fd = runtime.file_descriptor.from_bits %bits
+    %roundtrip = runtime.file_descriptor.to_bits %fd
+    %status_bits = runtime.status.to_bits %status
+    %roundtrip_status = runtime.status.from_bits %status_bits
     %ok = runtime.status.is %roundtrip_status, <ok>
     return %low, %high, %ok, %roundtrip : i13, i13, i1, i32
   }
@@ -58,9 +53,8 @@ module attributes {
         {is_format_string = false} : (!runtime.bytes) -> !runtime.arg
     %wide_arg = runtime.argument.packed %wide
         {is_signed = false} : (i80) -> !runtime.arg
-    %empty_args = runtime.argument.array : () -> !runtime.args
-    %args = runtime.argument.array %empty_bytes_arg, %wide_arg :
-        (!runtime.arg, !runtime.arg) -> !runtime.args
+    %empty_args = runtime.argument.array()
+    %args = runtime.argument.array(%empty_bytes_arg, %wide_arg)
     return %byte : i8
   }
 
