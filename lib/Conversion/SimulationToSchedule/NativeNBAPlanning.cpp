@@ -4,6 +4,7 @@
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
+#include "obelisk/Analysis/GraphAlgorithms.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
@@ -260,39 +261,45 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   // call while deriving every root's merge proof.
   SymbolTableCollection callSymbols;
   llvm::SmallPtrSet<Operation *, 8> callees;
-  module.walk([&](sim::SimCallOp call) {
-    if (auto design = call->getParentOfType<sim::SimDesignOp>())
-      if (sim::SimFuncOp callee = callSymbols.lookupSymbolIn<sim::SimFuncOp>(
-              design, call.getCalleeAttr()))
-        callees.insert(callee.getOperation());
+  struct FunctionSites {
+    SmallVector<sim::SimFuncOp> callees;
+    llvm::DenseMap<uint64_t, unsigned> sites;
+  };
+  llvm::DenseMap<Operation *, FunctionSites> functionSites;
+  module.walk([&](sim::SimFuncOp function) {
+    auto &facts = functionSites[function.getOperation()];
+    auto design = function->getParentOfType<sim::SimDesignOp>();
+    function.walk([&](Operation *operation) {
+      if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation))
+        if (schedule::NBASiteAttr site = enqueue.getSiteAttr()) {
+          auto origin = plan.siteSemanticOrigins.find(site.getId());
+          ++facts.sites[origin == plan.siteSemanticOrigins.end()
+                            ? site.getId()
+                            : origin->second];
+        }
+      if (auto call = dyn_cast<sim::SimCallOp>(operation); call && design)
+        if (auto callee = callSymbols.lookupSymbolIn<sim::SimFuncOp>(
+                design, call.getCalleeAttr())) {
+          facts.callees.push_back(callee);
+          callees.insert(callee.getOperation());
+        }
+    });
   });
   llvm::DenseMap<Operation *, llvm::DenseMap<uint64_t, unsigned>> closureOps;
   auto closureSiteOpsFor = [&](sim::SimFuncOp function) -> auto & {
     auto [entry, inserted] = closureOps.try_emplace(function.getOperation());
     if (!inserted)
       return entry->second;
-    sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
     SmallVector<sim::SimFuncOp> pending{function};
     llvm::SmallPtrSet<Operation *, 8> visited;
     while (!pending.empty()) {
       sim::SimFuncOp current = pending.pop_back_val();
       if (!visited.insert(current.getOperation()).second)
         continue;
-      current.walk([&](sim::SimNBAEnqueueOp nested) {
-        if (schedule::NBASiteAttr site = nested.getSiteAttr()) {
-          auto origin = plan.siteSemanticOrigins.find(site.getId());
-          ++entry->second[origin == plan.siteSemanticOrigins.end()
-                              ? site.getId()
-                              : origin->second];
-        }
-      });
-      if (design)
-        current.walk([&](sim::SimCallOp call) {
-          if (sim::SimFuncOp callee =
-                  callSymbols.lookupSymbolIn<sim::SimFuncOp>(
-                      design, call.getCalleeAttr()))
-            pending.push_back(callee);
-        });
+      const auto &facts = functionSites.at(current.getOperation());
+      for (auto [site, count] : facts.sites)
+        entry->second[site] += count;
+      llvm::append_range(pending, facts.callees);
     }
     return entry->second;
   };
@@ -306,6 +313,28 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
       plan.mergeSafeRoots[root] = false;
   llvm::DenseMap<StringRef, unsigned> spawnCounts;
   llvm::SmallDenseSet<StringRef, 8> potentiallyRepeatedSpawns;
+  // Every spawn in a region shares the same CFG cycle certificate. Include
+  // nested regions, since a spawn can sit in a CFG below the function body.
+  llvm::DenseMap<Region *, llvm::DenseSet<Block *>> cyclicBlocks;
+  auto isCyclic = [&](Block *origin) {
+    auto [entry, inserted] = cyclicBlocks.try_emplace(origin->getParent());
+    if (inserted) {
+      SmallVector<Block *> blocks;
+      llvm::DenseMap<Block *, SmallVector<Block *>> successors;
+      for (Block &block : *origin->getParent()) {
+        blocks.push_back(&block);
+        llvm::append_range(successors[&block], block.getSuccessors());
+      }
+      for (auto &component :
+           analysis::computeStronglyConnectedComponents<Block *>(blocks,
+                                                                 successors))
+        if (component.size() > 1 ||
+            llvm::is_contained(successors.lookup(component.front()),
+                               component.front()))
+          entry->second.insert(component.begin(), component.end());
+    }
+    return entry->second.contains(origin);
+  };
   module.walk([&](sim::SimSpawnOp spawn) {
     StringRef callee = spawn.getCallee();
     ++spawnCounts[callee];
@@ -317,22 +346,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
          ancestor && ancestor != ownerOp; ancestor = ancestor->getParentOp())
       if (isa<LoopLikeOpInterface>(ancestor))
         potentiallyRepeatedSpawns.insert(callee);
-    Block *origin = spawn->getBlock();
-    SmallVector<Block *, 8> pending;
-    for (Block *successor : origin->getTerminator()->getSuccessors())
-      pending.push_back(successor);
-    llvm::SmallPtrSet<Block *, 16> visited;
-    while (!pending.empty()) {
-      Block *block = pending.pop_back_val();
-      if (block == origin) {
-        potentiallyRepeatedSpawns.insert(callee);
-        break;
-      }
-      if (!visited.insert(block).second)
-        continue;
-      for (Block *successor : block->getTerminator()->getSuccessors())
-        pending.push_back(successor);
-    }
+    if (isCyclic(spawn->getBlock()))
+      potentiallyRepeatedSpawns.insert(callee);
   });
   module.walk([&](sim::SimNBAEnqueueOp enqueue) {
     schedule::NBASiteAttr site = enqueue.getSiteAttr();

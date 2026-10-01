@@ -1,3 +1,4 @@
+#include "obelisk/Analysis/GraphAlgorithms.h"
 //===- NativeAOTAnalysis.cpp - Native scheduler eligibility --------------===//
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
@@ -576,9 +577,19 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
            ::obelisk::schedule::has<schedule::metadata::boundedLoopLatch>(
                block->getTerminator());
   };
+  DenseMap<Operation *, bool> coldActors;
+  auto isColdActor = [&](sim::SimFuncOp function) {
+    auto [found, inserted] = coldActors.try_emplace(function);
+    if (inserted)
+      found->second = isConcurrentColdActor(function);
+    return found->second;
+  };
+  DenseMap<uint32_t, SmallVector<schedule::ComputeEdgeAttr>> edgesBySource;
   DenseMap<uint32_t, bool> coldDeferredCommits;
   for (Attribute edgeAttribute : graph.getEdges()) {
     auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
+    if (edge)
+      edgesBySource[edge.getSource()].push_back(edge);
     if (!edge || edge.getKind() != schedule::ComputeEdgeKind::DeferredStage ||
         edge.getSource() >= nodes.size())
       continue;
@@ -587,7 +598,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     sim::SimFuncOp function =
         source ? lookupFunction(source.getFunction().getValue())
                : sim::SimFuncOp{};
-    bool cold = function && isConcurrentColdActor(function);
+    bool cold = function && isColdActor(function);
     auto [found, inserted] =
         coldDeferredCommits.try_emplace(edge.getTarget(), cold);
     if (!inserted)
@@ -611,7 +622,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           continue;
         result.reasons.emplace_back(
             "compute graph contains a bytecode-only fragment");
-        if (!isConcurrentColdActor(function))
+        if (!isColdActor(function))
           onlyConcurrentColdBoundaries = false;
         auto &fragments = result.bytecodeFragments[function.getOperation()];
         if (!llvm::is_contained(fragments, block))
@@ -750,7 +761,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       sim::SimFuncOp function =
           fragment ? lookupFunction(fragment.getFunction().getValue())
                    : sim::SimFuncOp{};
-      if (function && isConcurrentColdActor(function))
+      if (function && isColdActor(function))
         hasConcurrentColdActor = true;
       else if (fragment)
         nonColdMembers.insert(static_cast<uint32_t>(member));
@@ -760,53 +771,22 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
 
     llvm::DenseMap<uint32_t, SmallVector<uint32_t>> successors;
     llvm::DenseMap<uint32_t, unsigned> indegree;
-    for (Attribute edgeAttribute : graph.getEdges()) {
-      auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
-      if (!edge || edge.getKind() == schedule::ComputeEdgeKind::Resume ||
-          edge.getKind() == schedule::ComputeEdgeKind::Spawn ||
-          !nonColdMembers.contains(edge.getSource()) ||
-          !nonColdMembers.contains(edge.getTarget()))
-        continue;
-      auto &targets = successors[edge.getSource()];
-      if (llvm::is_contained(targets, edge.getTarget()))
-        continue;
-      targets.push_back(edge.getTarget());
-    }
+    for (uint32_t source : nonColdMembers)
+      for (auto edge : edgesBySource.lookup(source)) {
+        if (!edge || edge.getKind() == schedule::ComputeEdgeKind::Resume ||
+            edge.getKind() == schedule::ComputeEdgeKind::Spawn ||
+            !nonColdMembers.contains(edge.getSource()) ||
+            !nonColdMembers.contains(edge.getTarget()))
+          continue;
+        auto &targets = successors[edge.getSource()];
+        if (llvm::is_contained(targets, edge.getTarget()))
+          continue;
+        targets.push_back(edge.getTarget());
+      }
 
-    llvm::DenseMap<uint32_t, unsigned> discovery;
-    llvm::DenseMap<uint32_t, unsigned> lowlink;
-    llvm::DenseSet<uint32_t> onStack;
-    SmallVector<uint32_t> stack;
-    SmallVector<SmallVector<uint32_t>> components;
-    unsigned nextIndex = 0;
-    std::function<void(uint32_t)> visit = [&](uint32_t member) {
-      discovery[member] = nextIndex;
-      lowlink[member] = nextIndex++;
-      stack.push_back(member);
-      onStack.insert(member);
-      for (uint32_t successor : successors[member]) {
-        if (!discovery.count(successor)) {
-          visit(successor);
-          lowlink[member] = std::min(lowlink[member], lowlink[successor]);
-        } else if (onStack.contains(successor)) {
-          lowlink[member] = std::min(lowlink[member], discovery[successor]);
-        }
-      }
-      if (lowlink[member] != discovery[member])
-        return;
-      SmallVector<uint32_t> component;
-      while (true) {
-        uint32_t node = stack.pop_back_val();
-        onStack.erase(node);
-        component.push_back(node);
-        if (node == member)
-          break;
-      }
-      components.push_back(std::move(component));
-    };
-    for (uint32_t member : nonColdMembers)
-      if (!discovery.count(member))
-        visit(member);
+    SmallVector<uint32_t> members(nonColdMembers.begin(), nonColdMembers.end());
+    auto components =
+        computeStronglyConnectedComponents<uint32_t>(members, successors);
 
     llvm::DenseMap<uint32_t, unsigned> componentOf;
     for (auto [index, component] : llvm::enumerate(components))
@@ -815,20 +795,21 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     llvm::DenseMap<uint32_t, SmallVector<uint32_t>> processSuccessors;
     for (uint32_t member : nonColdMembers)
       indegree.try_emplace(member, 0);
-    for (Attribute edgeAttribute : graph.getEdges()) {
-      auto edge = dyn_cast<schedule::ComputeEdgeAttr>(edgeAttribute);
-      if (!edge || edge.getKind() != schedule::ComputeEdgeKind::ProcessOrder ||
-          isBoundedLatchFragment(edge.getSource()) ||
-          !nonColdMembers.contains(edge.getSource()) ||
-          !nonColdMembers.contains(edge.getTarget()) ||
-          componentOf[edge.getSource()] != componentOf[edge.getTarget()])
-        continue;
-      auto &targets = processSuccessors[edge.getSource()];
-      if (llvm::is_contained(targets, edge.getTarget()))
-        continue;
-      targets.push_back(edge.getTarget());
-      ++indegree[edge.getTarget()];
-    }
+    for (uint32_t source : nonColdMembers)
+      for (auto edge : edgesBySource.lookup(source)) {
+        if (!edge ||
+            edge.getKind() != schedule::ComputeEdgeKind::ProcessOrder ||
+            isBoundedLatchFragment(edge.getSource()) ||
+            !nonColdMembers.contains(edge.getSource()) ||
+            !nonColdMembers.contains(edge.getTarget()) ||
+            componentOf[edge.getSource()] != componentOf[edge.getTarget()])
+          continue;
+        auto &targets = processSuccessors[edge.getSource()];
+        if (llvm::is_contained(targets, edge.getTarget()))
+          continue;
+        targets.push_back(edge.getTarget());
+        ++indegree[edge.getTarget()];
+      }
     SmallVector<uint32_t> ready;
     for (uint32_t member : nonColdMembers)
       if (indegree[member] == 0)
@@ -1010,7 +991,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           continue;
         sim::SimFuncOp function =
             lookupFunction(fragment.getFunction().getValue());
-        if (actorLocalColdLoop && !isConcurrentColdActor(function))
+        if (actorLocalColdLoop && !isColdActor(function))
           continue;
         Block *block =
             function ? lookupComputeGraphBlock(function, fragment.getBlock())
@@ -1093,7 +1074,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         (function.getEntryKind() == sim::EntryKind::Fork &&
          !llvm::is_contained(staticNestedActors, function))) {
       result.reasons.emplace_back("task, await, or join control is present");
-      onlyConcurrentColdBoundaries &= isConcurrentColdActor(function);
+      onlyConcurrentColdBoundaries &= isColdActor(function);
       excludeDynamicActor(function.getOperation(),
                           "task, await, or join control is present");
     }

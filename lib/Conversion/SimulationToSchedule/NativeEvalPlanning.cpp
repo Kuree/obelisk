@@ -689,27 +689,41 @@ resolveNativeEvalPlan(ModuleOp module,
       mask[rootIndex / 64] |= uint64_t{1} << (rootIndex % 64);
     }
   }
-  bool changed;
-  do {
-    changed = false;
-    for (Attribute attribute : computeGraph.getEdges()) {
-      auto edge = cast<schedule::ComputeEdgeAttr>(attribute);
-      if (edge.getKind() != schedule::ComputeEdgeKind::Sensitivity &&
-          edge.getKind() != schedule::ComputeEdgeKind::Resume &&
-          edge.getKind() != schedule::ComputeEdgeKind::Spawn)
-        continue;
-      auto target = fragmentNBARoots.find(edge.getTarget());
-      if (target == fragmentNBARoots.end())
-        continue;
-      auto &source = fragmentNBARoots[edge.getSource()];
+  // May-taint is a finite union lattice over NBA roots. Index reverse
+  // dependencies once and revisit only predecessors of a changed fact.
+  DenseMap<uint32_t, SmallVector<uint32_t>> predecessors;
+  for (Attribute attribute : computeGraph.getEdges()) {
+    auto edge = cast<schedule::ComputeEdgeAttr>(attribute);
+    if (edge.getKind() == schedule::ComputeEdgeKind::Sensitivity ||
+        edge.getKind() == schedule::ComputeEdgeKind::Resume ||
+        edge.getKind() == schedule::ComputeEdgeKind::Spawn)
+      predecessors[edge.getTarget()].push_back(edge.getSource());
+  }
+  SmallVector<uint32_t> pending;
+  DenseSet<uint32_t> queued;
+  for (const auto &entry : fragmentNBARoots)
+    if (llvm::any_of(entry.second, [](uint64_t word) { return word != 0; })) {
+      pending.push_back(entry.first);
+      queued.insert(entry.first);
+    }
+  while (!pending.empty()) {
+    uint32_t target = pending.pop_back_val();
+    queued.erase(target);
+    // Inserting a predecessor may rehash fragmentNBARoots.
+    auto roots = fragmentNBARoots.lookup(target);
+    for (uint32_t predecessor : predecessors.lookup(target)) {
+      auto &source = fragmentNBARoots[predecessor];
       source.resize(result.nbaTaintWordCount, 0);
+      bool changed = false;
       for (uint32_t word = 0; word != result.nbaTaintWordCount; ++word) {
-        uint64_t merged = source[word] | target->second[word];
+        uint64_t merged = source[word] | roots[word];
         changed |= merged != source[word];
         source[word] = merged;
       }
+      if (changed && queued.insert(predecessor).second)
+        pending.push_back(predecessor);
     }
-  } while (changed);
+  }
   for (auto [recordIndex, executor] : llvm::enumerate(result.mergedExecutors)) {
     auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
       return candidate.wrapper == executor &&
