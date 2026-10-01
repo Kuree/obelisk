@@ -1,6 +1,7 @@
 //===- SimulationProcessCFGThreading.cpp - Thread process CFG state -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -134,62 +135,15 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   // operands. Record those lanes before finding external uses so a value does
   // not acquire a second continuation argument when it is also live through a
   // later ordinary CFG edge.
-  // Resolve these roots to a fixed point. A loop header can receive the
-  // original value on its entry edge and a restored continuation argument on
-  // its backedge; the restored argument itself may be declared later in the
-  // region. Both lanes still represent the same semantic value.
-  bool discoveredRoot;
-  do {
-    discoveredRoot = false;
-    for (Block &block : llvm::drop_begin(function.getBody())) {
-      for (auto [argumentIndex, argument] :
-           llvm::enumerate(block.getArguments())) {
-        if (threadedRoots.count(argument))
-          continue;
-        Value commonRoot;
-        bool commonIncoming = true;
-        bool sawIncoming = false;
-        for (Block &predecessor : function.getBody()) {
-          auto branch =
-              dyn_cast<BranchOpInterface>(predecessor.getTerminator());
-          if (!branch)
-            continue;
-          for (auto [successorIndex, successor] :
-               llvm::enumerate(predecessor.getSuccessors())) {
-            if (successor != &block)
-              continue;
-            SuccessorOperands operands =
-                branch.getSuccessorOperands(successorIndex);
-            if (argumentIndex >= operands.size() ||
-                operands.isOperandProduced(argumentIndex)) {
-              commonIncoming = false;
-              break;
-            }
-            Value root = rootOf(operands[argumentIndex]);
-            // A loop-carried argument can feed itself on a backedge. That
-            // edge adds no root information; use the concrete entry or
-            // continuation edge to identify the semantic value instead.
-            if (root == argument)
-              continue;
-            if (!sawIncoming) {
-              commonRoot = root;
-              sawIncoming = true;
-            } else if (commonRoot != root) {
-              commonIncoming = false;
-              break;
-            }
-          }
-          if (!commonIncoming)
-            break;
-        }
-        if (!sawIncoming || !commonIncoming)
-          continue;
-        threadedRoots.try_emplace(argument, commonRoot);
-        threadedValues[&block].try_emplace(commonRoot, argument);
-        discoveredRoot = true;
+  analysis::SemanticValueRootAnalysis semanticRoots(function);
+  for (Block &block : llvm::drop_begin(function.getBody()))
+    for (BlockArgument argument : block.getArguments()) {
+      Value root = semanticRoots.lookup(argument);
+      if (root != argument) {
+        threadedRoots.try_emplace(argument, root);
+        threadedValues[&block].try_emplace(root, argument);
       }
     }
-  } while (discoveredRoot);
 
   // A continuation operand is restored from the canonical process frame and
   // therefore starts a second dynamic path for its semantic root. Ordinary

@@ -453,104 +453,70 @@ public:
     // bytecode dispatch starts with cleared scratch registers, while native
     // coroutine lowering must not leave an SSA definition on only one side of
     // a resume edge.
-    bool changed;
-    do {
-      changed = false;
-      for (Block &block : function.getBody()) {
-        if (&block == &entry)
-          continue;
-        llvm::SetVector<Value> externalRoots;
-        for (Operation &operation : block)
-          for (Value value : operation.getOperands()) {
-            if (value.getParentBlock() == &block)
-              continue;
-            if (auto argument = dyn_cast<BlockArgument>(value);
-                argument && argument.getOwner() == &entry)
-              continue;
-            Value root = threadedRoots.lookup(value);
-            if (!root)
-              root = value;
-            bool suspensionLive = suspensionReentryRoots[&block].contains(root);
-            for (Block *predecessor : block.getPredecessors())
-              suspensionLive |= threadedValues[predecessor].count(root) != 0;
-            if (suspensionLive)
-              externalRoots.insert(root);
-          }
-        for (Value root : externalRoots) {
-          auto &threaded = threadedValues[&block];
-          auto replaceExternalUses = [&](Value replacement) {
-            for (Operation &operation : block)
-              for (OpOperand &operand : operation.getOpOperands()) {
-                Value value = operand.get();
-                if (value.getParentBlock() == &block)
-                  continue;
-                Value operandRoot = threadedRoots.lookup(value);
-                if (!operandRoot)
-                  operandRoot = value;
-                if (operandRoot == root)
-                  operand.set(replacement);
-              }
-          };
-          // A control boundary's body edge is synchronous and intentionally
-          // has no successor operands. If the boundary itself is reached
-          // through a restored continuation, use the closest value available
-          // at the boundary in its body instead of trying to manufacture a
-          // block argument on the operand-less body edge.
-          auto predecessors = block.getPredecessors();
-          if (predecessors.begin() != predecessors.end() &&
-              std::next(predecessors.begin()) == predecessors.end()) {
-            Block *predecessor = *predecessors.begin();
-            auto boundary = dyn_cast<sim::SimControlBoundaryOp>(
-                predecessor->getTerminator());
-            if (boundary && boundary.getBody() == &block) {
-              Value incoming;
-              Block *incomingBlock = nullptr;
-              for (auto &[candidateBlock, candidates] : threadedValues) {
-                auto found = candidates.find(root);
-                if (found == candidates.end() ||
-                    !dominance.dominates(candidateBlock, predecessor))
-                  continue;
-                if (!incomingBlock ||
-                    dominance.dominates(incomingBlock, candidateBlock)) {
-                  incoming = found->second;
-                  incomingBlock = candidateBlock;
-                }
-              }
-              if (!incoming &&
-                  dominance.dominates(root, boundary.getOperation()))
-                incoming = root;
-              if (incoming) {
-                replaceExternalUses(incoming);
-                continue;
-              }
-            }
-          }
-          auto existing = threaded.find(root);
-          if (existing != threaded.end()) {
-            replaceExternalUses(existing->second);
+    DenseMap<Value, llvm::SetVector<Block *>> rootConsumers;
+    SmallVector<Block *> pendingBlocks;
+    DenseSet<Block *> queuedBlocks;
+    auto enqueueBlock = [&](Block *block) {
+      if (block != &entry && queuedBlocks.insert(block).second)
+        pendingBlocks.push_back(block);
+    };
+    for (Block &block : function.getBody()) {
+      enqueueBlock(&block);
+      for (Operation &operation : block)
+        for (Value value : operation.getOperands()) {
+          Value root = threadedRoots.lookup(value);
+          rootConsumers[root ? root : value].insert(&block);
+        }
+    }
+    size_t nextBlock = 0;
+    while (nextBlock != pendingBlocks.size()) {
+      Block *current = pendingBlocks[nextBlock++];
+      queuedBlocks.erase(current);
+      Block &block = *current;
+      llvm::SetVector<Value> externalRoots;
+      for (Operation &operation : block)
+        for (Value value : operation.getOperands()) {
+          if (value.getParentBlock() == &block)
             continue;
-          }
-
-          struct IncomingEdge {
-            BranchOpInterface branch;
-            unsigned successorIndex;
-            Value value;
-          };
-          SmallVector<IncomingEdge> incomingEdges;
-          bool unavailable = false;
-          llvm::SmallPtrSet<Block *, 8> visitedPredecessors;
-          for (Block *predecessor : block.getPredecessors()) {
-            if (!visitedPredecessors.insert(predecessor).second)
-              continue;
-            Operation *terminator = predecessor->getTerminator();
-            auto branch = dyn_cast<BranchOpInterface>(terminator);
-            if (!branch) {
-              terminator->emitError(
-                  "cannot thread suspension-live state through a non-branch "
-                  "terminator");
-              signalPassFailure();
-              return;
+          if (auto argument = dyn_cast<BlockArgument>(value);
+              argument && argument.getOwner() == &entry)
+            continue;
+          Value root = threadedRoots.lookup(value);
+          if (!root)
+            root = value;
+          bool suspensionLive = suspensionReentryRoots[&block].contains(root);
+          for (Block *predecessor : block.getPredecessors())
+            suspensionLive |= threadedValues[predecessor].count(root) != 0;
+          if (suspensionLive)
+            externalRoots.insert(root);
+        }
+      for (Value root : externalRoots) {
+        auto &threaded = threadedValues[&block];
+        auto replaceExternalUses = [&](Value replacement) {
+          for (Operation &operation : block)
+            for (OpOperand &operand : operation.getOpOperands()) {
+              Value value = operand.get();
+              if (value.getParentBlock() == &block)
+                continue;
+              Value operandRoot = threadedRoots.lookup(value);
+              if (!operandRoot)
+                operandRoot = value;
+              if (operandRoot == root)
+                operand.set(replacement);
             }
+        };
+        // A control boundary's body edge is synchronous and intentionally
+        // has no successor operands. If the boundary itself is reached
+        // through a restored continuation, use the closest value available
+        // at the boundary in its body instead of trying to manufacture a
+        // block argument on the operand-less body edge.
+        auto predecessors = block.getPredecessors();
+        if (predecessors.begin() != predecessors.end() &&
+            std::next(predecessors.begin()) == predecessors.end()) {
+          Block *predecessor = *predecessors.begin();
+          auto boundary =
+              dyn_cast<sim::SimControlBoundaryOp>(predecessor->getTerminator());
+          if (boundary && boundary.getBody() == &block) {
             Value incoming;
             Block *incomingBlock = nullptr;
             for (auto &[candidateBlock, candidates] : threadedValues) {
@@ -564,42 +530,93 @@ public:
                 incomingBlock = candidateBlock;
               }
             }
-            if (!incoming && dominance.dominates(root, terminator))
+            if (!incoming && dominance.dominates(root, boundary.getOperation()))
               incoming = root;
-            if (!incoming) {
-              unavailable = true;
-              break;
-            }
-            bool foundSuccessor = false;
-            for (auto [successorIndex, successor] :
-                 llvm::enumerate(predecessor->getSuccessors())) {
-              if (successor != &block)
-                continue;
-              incomingEdges.push_back(
-                  {branch, static_cast<unsigned>(successorIndex), incoming});
-              foundSuccessor = true;
-            }
-            if (!foundSuccessor) {
-              terminator->emitError("predecessor is missing its CFG successor");
-              signalPassFailure();
-              return;
+            if (incoming) {
+              replaceExternalUses(incoming);
+              continue;
             }
           }
-          if (unavailable || incomingEdges.empty())
-            continue;
-
-          BlockArgument argument =
-              block.addArgument(root.getType(), root.getLoc());
-          threaded.insert({root, argument});
-          threadedRoots.try_emplace(argument, root);
-          replaceExternalUses(argument);
-          for (IncomingEdge &incoming : incomingEdges)
-            incoming.branch.getSuccessorOperands(incoming.successorIndex)
-                .append(incoming.value);
-          changed = true;
         }
+        auto existing = threaded.find(root);
+        if (existing != threaded.end()) {
+          replaceExternalUses(existing->second);
+          continue;
+        }
+
+        struct IncomingEdge {
+          BranchOpInterface branch;
+          unsigned successorIndex;
+          Value value;
+        };
+        SmallVector<IncomingEdge> incomingEdges;
+        bool unavailable = false;
+        llvm::SmallPtrSet<Block *, 8> visitedPredecessors;
+        for (Block *predecessor : block.getPredecessors()) {
+          if (!visitedPredecessors.insert(predecessor).second)
+            continue;
+          Operation *terminator = predecessor->getTerminator();
+          auto branch = dyn_cast<BranchOpInterface>(terminator);
+          if (!branch) {
+            terminator->emitError(
+                "cannot thread suspension-live state through a non-branch "
+                "terminator");
+            signalPassFailure();
+            return;
+          }
+          Value incoming;
+          Block *incomingBlock = nullptr;
+          for (auto &[candidateBlock, candidates] : threadedValues) {
+            auto found = candidates.find(root);
+            if (found == candidates.end() ||
+                !dominance.dominates(candidateBlock, predecessor))
+              continue;
+            if (!incomingBlock ||
+                dominance.dominates(incomingBlock, candidateBlock)) {
+              incoming = found->second;
+              incomingBlock = candidateBlock;
+            }
+          }
+          if (!incoming && dominance.dominates(root, terminator))
+            incoming = root;
+          if (!incoming) {
+            unavailable = true;
+            break;
+          }
+          bool foundSuccessor = false;
+          for (auto [successorIndex, successor] :
+               llvm::enumerate(predecessor->getSuccessors())) {
+            if (successor != &block)
+              continue;
+            incomingEdges.push_back(
+                {branch, static_cast<unsigned>(successorIndex), incoming});
+            foundSuccessor = true;
+          }
+          if (!foundSuccessor) {
+            terminator->emitError("predecessor is missing its CFG successor");
+            signalPassFailure();
+            return;
+          }
+        }
+        if (unavailable || incomingEdges.empty())
+          continue;
+
+        BlockArgument argument =
+            block.addArgument(root.getType(), root.getLoc());
+        threaded.insert({root, argument});
+        threadedRoots.try_emplace(argument, root);
+        replaceExternalUses(argument);
+        for (IncomingEdge &incoming : incomingEdges)
+          incoming.branch.getSuccessorOperands(incoming.successorIndex)
+              .append(incoming.value);
+        for (IncomingEdge &incoming : incomingEdges)
+          rootConsumers[root].insert(incoming.branch->getBlock());
+        for (Block *consumer : rootConsumers[root])
+          enqueueBlock(consumer);
+        for (Block *successor : block.getSuccessors())
+          enqueueBlock(successor);
       }
-    } while (changed);
+    }
   }
 };
 
