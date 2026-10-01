@@ -1236,6 +1236,27 @@ LogicalResult emitTargetOutput(ModuleOp module,
     }
     markBackendTiming("generated model dead-code elimination");
   }
+  if (options.timing) {
+    SmallVector<std::pair<uint64_t, StringRef>> functions;
+    uint64_t instructions = 0;
+    for (const llvm::Function &function : *llvmModule) {
+      if (function.isDeclaration())
+        continue;
+      uint64_t count = function.getInstructionCount();
+      instructions += count;
+      functions.emplace_back(count, function.getName());
+    }
+    llvm::sort(functions, [](const auto &lhs, const auto &rhs) {
+      return lhs.first != rhs.first ? lhs.first > rhs.first
+                                    : lhs.second < rhs.second;
+    });
+    errs() << "obelisk native LLVM inventory: functions=" << functions.size()
+           << " instructions=" << instructions << '\n';
+    for (const auto &[count, name] : llvm::ArrayRef(functions).take_front(
+             std::min<size_t>(10, functions.size())))
+      errs() << "obelisk native LLVM body: instructions=" << count
+             << " name=" << name << '\n';
+  }
   bool splitModule = nativePartitionPlan &&
                      shouldSplitNativeModule(*llvmModule, *nativePartitionPlan);
   bool thinLTO = splitModule && options.optLevel != 0 && !options.noLTO;
