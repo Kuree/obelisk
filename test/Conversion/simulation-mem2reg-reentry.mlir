@@ -1,6 +1,7 @@
 // RUN: obelisk-opt %s --mem2reg | FileCheck %s --check-prefix=UNSAFE
 // RUN: obelisk-opt %s --mem2reg | FileCheck %s --check-prefix=RESET
 // RUN: obelisk-opt %s --canonicalize --mem2reg | FileCheck %s --check-prefix=INIT
+// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,cse,mem2reg,canonicalize,cse,sroa,canonicalize,cse,mem2reg,canonicalize,cse)))' | FileCheck %s --check-prefix=INIT
 
 // LRM 6.21: canonicalization exposes automatic initialization on every entry,
 // so promotion cannot accidentally retain a prior activation's value.

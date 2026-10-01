@@ -711,7 +711,8 @@ module {
 // SIM-DAG: {{%.*}}:3 = simulation.call
 // SIM-DAG: simulation.ref.store {{%.*}}#1
 // SIM-DAG: simulation.ref.store {{%.*}}#2
-// SIM-DAG: simulation.ref.subelement
+// Private aggregate reads become SSA value selections after promotion.
+// SIM-DAG: simulation.aggregate.extract
 // SIM-DAG: simulation.packed.flatten
 // SIM-DAG: cf.cond_br
 // SIM-DAG: simulation.nba.enqueue

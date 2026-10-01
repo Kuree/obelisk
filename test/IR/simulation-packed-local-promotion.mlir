@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,cse,mem2reg,canonicalize,cse,sroa,canonicalize,cse,mem2reg,canonicalize,cse)))' | FileCheck %s
 
 // Overlapping packed views must share one reaching definition. Preserve the
 // X bits that no statement writes; no independent-slot SROA is valid here.
