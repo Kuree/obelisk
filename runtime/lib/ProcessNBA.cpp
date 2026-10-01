@@ -105,8 +105,8 @@ static void recordStaticNBATransient(StaticNBAAccumulator &accumulator,
   if (word >= accumulator.transient.size())
     return;
   accumulator.transient[word] |= accumulator.writeMask[word] & mask &
-      ((accumulator.value[word] ^ value) |
-       (accumulator.unknown[word] ^ unknown));
+                                 ((accumulator.value[word] ^ value) |
+                                  (accumulator.unknown[word] ^ unknown));
 }
 
 uint32_t
@@ -418,7 +418,7 @@ static obelisk_rt_status schedulerNBA(
               loadPackedBytes(value, sourceBitOffset, bitWidth);
           uint64_t packedUnknown =
               unknownPlane ? loadPackedBytes(unknown, sourceBitOffset, bitWidth)
-                                       : 0;
+                           : 0;
           uint64_t sourceMask = packedWidthMask(bitWidth);
           packedValue &= sourceMask;
           packedUnknown &= sourceMask;
@@ -861,10 +861,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
         if (context->nextSchedulerSequence == 0 ||
             context->nextSchedulerSequence == UINT64_MAX)
           return OBELISK_RT_OUT_OF_RESOURCES;
-        uint64_t delay = realValue               ? riseDelay
-                         : newHighZ              ? turnoffDelay
-                         : newZero               ? fallDelay
-                                                 : riseDelay;
+        uint64_t delay = realValue  ? riseDelay
+                         : newHighZ ? turnoffDelay
+                         : newZero  ? fallDelay
+                                    : riseDelay;
         if (!enqueue(0, bitWidth, delay, oldHighZ && !hasInitialProjection))
           return OBELISK_RT_OUT_OF_RESOURCES;
         scheduled = 1;
@@ -2995,7 +2995,7 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   uint64_t newUnknown =
       (oldUnknown & ~writeMask) | (generated->unknown[0] & writeMask);
   if (!storeNativeScheduleStateUnlocked(context, stateOffset, root.bit_width,
-                                        newValue, newUnknown))
+                                        newValue, newUnknown, oldUnknown))
     return OBELISK_RT_LAYOUT_MISMATCH;
   bool rootChanged = ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
   changed |= rootChanged;
@@ -3029,6 +3029,18 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
       (context->stateValue.size() != (plan->state_bit_count + 63) / 64 ||
        context->stateUnknown.size() != context->stateValue.size()))
     return OBELISK_RT_LAYOUT_MISMATCH;
+  const bool sharedCanonical =
+      canonical &&
+      reinterpret_cast<const uint8_t *>(context->stateValue.data()) ==
+          plan->state_value &&
+      reinterpret_cast<const uint8_t *>(context->stateUnknown.data()) ==
+          plan->state_unknown;
+  const bool sharedNative =
+      (!context->nativeStateValue && !context->nativeStateUnknown &&
+       context->nativeStateBitCount == 0) ||
+      (context->nativeStateValue == plan->state_value &&
+       context->nativeStateUnknown == plan->state_unknown &&
+       context->nativeStateBitCount == plan->state_bit_count);
   auto status = consumeGeneratedNBASlots(
       root,
       [&](uint64_t offset, uint64_t width, uint64_t value, uint64_t unknown,
@@ -3049,26 +3061,33 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
             loadPackedBytes(plan->state_unknown, planeBit, width);
         uint64_t newValue = (oldValue & ~mask) | (value & mask);
         uint64_t newUnknown = (oldUnknown & ~mask) | (unknown & mask);
-        // Runtime actors can read the canonical planes after a handover even
-        // when they no longer share the generated storage. Commit both images,
-        // as the ordinary root accumulator does, before publishing any chunk.
-        if (canonical) {
-          storePackedBytes(
-              reinterpret_cast<uint8_t *>(context->stateValue.data()),
-              planeBit, width, newValue);
-          storePackedBytes(
-              reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
-              planeBit, width, newUnknown);
-        }
-        if (!storeNativeScheduleStateUnlocked(context, planeBit, width,
-                                              newValue, newUnknown))
-          return OBELISK_RT_LAYOUT_MISMATCH;
         slot.transition[0] = oldValue;
         slot.transition[1] = oldUnknown;
         slot.transition[2] = newValue;
         slot.transition[3] = newUnknown;
         ++context->signalDiagnostics.aotNBAStages;
         ++context->signalDiagnostics.aotNBACommits;
+        // LRM 10.4.2: consume the NBA even when its value is unchanged.
+        // LRM 9.4.2, 10.6.2, 38.34: compare both planes after applying
+        // force/assign masks; an unchanged shared image needs no rewrite or
+        // change event. Detached canonical/native mirrors still need a copy.
+        if (sharedCanonical && sharedNative && oldValue == newValue &&
+            oldUnknown == newUnknown)
+          return OBELISK_RT_OK;
+        // Runtime actors can read the canonical planes after a handover even
+        // when they no longer share the generated storage. Commit both images,
+        // as the ordinary root accumulator does, before publishing any chunk.
+        if (canonical && !sharedCanonical) {
+          storePackedBytes(
+              reinterpret_cast<uint8_t *>(context->stateValue.data()), planeBit,
+              width, newValue);
+          storePackedBytes(
+              reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
+              planeBit, width, newUnknown);
+        }
+        if (!storeNativeScheduleStateUnlocked(context, planeBit, width,
+                                              newValue, newUnknown, oldUnknown))
+          return OBELISK_RT_LAYOUT_MISMATCH;
         return OBELISK_RT_OK;
       },
       false);
@@ -3137,7 +3156,7 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
   // A round trip leaves old == new, so only per-bit publication reports it.
   trackTransitions |=
       std::any_of(accumulator.transient.begin(), accumulator.transient.end(),
-                                  [](uint64_t word) { return word != 0; });
+                  [](uint64_t word) { return word != 0; });
   const NativeStaticState *staticState =
       findNativeStaticState(context, root.static_state);
   if (!staticState || staticState->bitWidth != root.bit_width ||
@@ -3249,8 +3268,15 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
             reinterpret_cast<uint8_t *>(context->stateUnknown.data()), planeBit,
             width, newUnknown);
       }
+      // LRM 6.11.2, 10.4.2: preserve the native pre-commit unknown bits
+      // when this accumulator writes the shared image. A detached staging
+      // plane cannot supply that snapshot, so it retains the mirror recheck.
+      const auto *plan = context->nativeSchedulePlan;
+      std::optional<uint64_t> nativeOldUnknown;
+      if (plan && workingUnknown == plan->state_unknown)
+        nativeOldUnknown = oldUnknown;
       if (!storeNativeScheduleStateUnlocked(context, planeBit, width, newValue,
-                                            newUnknown))
+                                            newUnknown, nativeOldUnknown))
         return OBELISK_RT_LAYOUT_MISMATCH;
     }
   if (rootChanged) {

@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -129,9 +130,10 @@ void publishNativeKnownnessChangeUnlocked(
     const obelisk_rt_native_schedule_plan *plan, uint64_t bitOffset,
     uint64_t bitWidth, uint64_t oldUnknown, uint64_t newUnknown);
 void refreshNativeStaticSpecializationFastUnlocked(obelisk_rt_context *context);
-bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
-                                      uint64_t bitOffset, uint64_t bitWidth,
-                                      uint64_t value, uint64_t unknown);
+bool storeNativeScheduleStateUnlocked(
+    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
+    uint64_t value, uint64_t unknown,
+    std::optional<uint64_t> previousUnknown = std::nullopt);
 
 //===----------------------------------------------------------------------===//
 // Scheduler queue maintenance (Process.cpp)
@@ -161,7 +163,7 @@ inline uint32_t nativeNBABarrierLowerBound(const obelisk_rt_context *context) {
 }
 
 inline void setSchedulerDrainingReactive(obelisk_rt_context *context,
-                                        bool draining) {
+                                         bool draining) {
   if (context->schedulerDrainingReactive == draining)
     return;
   context->schedulerDrainingReactive = draining;
@@ -247,10 +249,11 @@ bool publishNativeSignalTransitionUnlocked(
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown, bool establishesOverride = false);
-void publishOverrideTransition(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
-    const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
-    const uint8_t *newUnknown);
+void publishOverrideTransition(obelisk_rt_context *context, uint64_t bitOffset,
+                               uint64_t bitWidth, const uint8_t *oldValue,
+                               const uint8_t *oldUnknown,
+                               const uint8_t *newValue,
+                               const uint8_t *newUnknown);
 void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
                                 uint64_t logicalToken);
 
@@ -288,8 +291,9 @@ bool nativeClockOccurrencePrimaryReadsGeneratedState(
 
 // Shared native pending-update selection for every execution policy. With an
 // installed dirty index, retained generated payloads are not pending work.
-uint32_t nextDueNativeNBABarrierRegionUnlocked(
-    const obelisk_rt_context *context, bool includeGenerated);
+uint32_t
+nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+                                      bool includeGenerated);
 
 bool hasGeneratedNBAStages(
     const obelisk_rt_generated_nba_accumulator_256 &generated);

@@ -5339,6 +5339,18 @@ TEST(Scheduler, SharedPlanesKeepInitializersTailAndKnownnessNotifications) {
   EXPECT_EQ(recovered, 7u);
   EXPECT_EQ(value[1], 4u);
   EXPECT_EQ(unknown[1], 0u);
+  // LRM 6.11.2, 38.34: a captured pre-commit plane identifies only the
+  // bits that lose or recover knownness, including a write of unchanged X.
+  lost = recovered = 0;
+  EXPECT_TRUE(storeNativeScheduleStateUnlocked(context, 64, 3, 4, 2, 0));
+  EXPECT_EQ(lost, 2u);
+  EXPECT_EQ(recovered, 0u);
+  lost = recovered = 0;
+  EXPECT_TRUE(storeNativeScheduleStateUnlocked(context, 64, 3, 4, 2, 2));
+  EXPECT_EQ(lost | recovered, 0u);
+  EXPECT_TRUE(storeNativeScheduleStateUnlocked(context, 64, 3, 4, 0, 2));
+  EXPECT_EQ(lost, 0u);
+  EXPECT_EQ(recovered, 2u);
   // IEEE 1800-2023 4.6(a): publishing an earlier source write must not
   // restore its value over a subsequent store already in the shared plane.
   uint8_t oldValue = 0, newValue = 1, known = 0;
@@ -7554,7 +7566,7 @@ TEST(Scheduler, GeneratedFixedNBASlotsShareBarrierAndSnapshotWithoutQueue) {
       {&offsets[0], &values[0], &unknowns[0], &valid[0], transitions[0].data(), 64},
       {&offsets[1], &values[1], &unknowns[1], &valid[1], transitions[1].data(), 64}};
   const obelisk_rt_static_nba_root roots[] = {{17, 1, 128, nullptr, slots, 2}};
-  std::array<uint8_t, 16> valuePlane{}, unknownPlane{};
+  alignas(uint64_t) std::array<uint8_t, 16> valuePlane{}, unknownPlane{};
   uint64_t dirtyRoots = 0, dirtySummary = 0;
   auto plan = makeAOTPlan(state, 1);
   plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
@@ -7574,8 +7586,35 @@ TEST(Scheduler, GeneratedFixedNBASlotsShareBarrierAndSnapshotWithoutQueue) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context), OBELISK_RT_OK);
   context->stateUnknown.assign(2, 0);
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_shared(
+                context, valuePlane.data(), unknownPlane.data(), 128),
+            OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 128), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+
+  // LRM 9.4.2, 10.6.2: a forced bit and unchanged X bits do not produce a
+  // transition, but the NBA still drains at its barrier (LRM 10.4.2).
+  ASSERT_TRUE(context->stateValue.shared());
+  ASSERT_TRUE(context->stateUnknown.shared());
+  context->stateValue[0] = 0x20;
+  context->stateUnknown[0] = 0x80;
+  context->forceMask.assign(2, 0);
+  context->forceMask[0] = 0x20;
+  values = {0, 0};
+  unknowns = {0x80, 0};
+  valid = {1, 1};
+  dirtyRoots = dirtySummary = 1;
+  uint32_t unchanged = 0;
+  ASSERT_EQ(obelisk_rt_v1_static_nba_commit_roots(
+                context, 1, OBELISK_RT_REGION_NBA, &unchanged),
+            OBELISK_RT_OK);
+  EXPECT_EQ(unchanged, 0u);
+  EXPECT_EQ(context->stateValue[0], 0x20u);
+  EXPECT_EQ(context->stateUnknown[0], 0x80u);
+  EXPECT_EQ(valid[0] | valid[1], 0u);
+  EXPECT_EQ(dirtyRoots | dirtySummary, 0u);
+  EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context), UINT32_MAX);
+  context->forceMask.clear();
 
   // A runtime handover can detach the canonical planes from generated storage.
   // Both images must receive the fixed-slot commit before its publication.

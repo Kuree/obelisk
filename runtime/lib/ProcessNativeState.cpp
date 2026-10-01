@@ -334,7 +334,8 @@ void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
   const auto *plan = context->nativeSchedulePlan;
   for (uint64_t bit = begin; bit != end;) {
     uint64_t count = std::min<uint64_t>(64, end - bit);
-    uint64_t oldUnknown = loadPackedBytes(context->nativeStateUnknown, bit, count);
+    uint64_t oldUnknown =
+        loadPackedBytes(context->nativeStateUnknown, bit, count);
     uint64_t newUnknown = loadPackedBits(context->stateUnknown, bit, count);
     if (context->stateUnknown.shared())
       oldUnknown = ~newUnknown;
@@ -353,11 +354,11 @@ void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
 
 bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,
-                                      uint64_t value, uint64_t unknown) {
+                                      uint64_t value, uint64_t unknown,
+                                      std::optional<uint64_t> previousUnknown) {
   if (!context || bitWidth == 0 || bitWidth > 64)
     return false;
-  const obelisk_rt_native_schedule_plan *plan =
-      context->nativeSchedulePlan;
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && plan->state_bit_count != 0) {
     if (!plan->state_value || !plan->state_unknown ||
         bitOffset > plan->state_bit_count ||
@@ -379,10 +380,15 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
   }
 
   if (plan && plan->state_bit_count != 0) {
+    // LRM 6.11.2, 38.34: invalidate/recover proofs for actual X/Z changes.
+    // NBA commits can supply the plane captured before writing canonical
+    // storage. Other shared-plane callers may already have overwritten it,
+    // so retain their conservative invalidation/recheck behavior.
     uint64_t oldUnknown =
-        loadPackedBytes(plan->state_unknown, bitOffset, bitWidth);
-    if (context->stateUnknown.shared())
-      oldUnknown = ~unknown;
+        previousUnknown ? *previousUnknown
+        : context->stateUnknown.shared()
+            ? ~unknown
+            : loadPackedBytes(plan->state_unknown, bitOffset, bitWidth);
     publishNativeKnownnessChangeUnlocked(plan, bitOffset, bitWidth, oldUnknown,
                                          unknown);
     storePackedBytes(plan->state_value, bitOffset, bitWidth, value);
@@ -927,16 +933,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         context->forceMask.empty() && context->assignMask.empty() &&
         !(context->observerForcesCanonicalPlane &&
           context->conditionPublication)) {
-      bool readGlobal = !canonical ||
-                        (!context->observerForcesCanonicalPlane &&
-                         isStaticControlAOT(context));
+      bool readGlobal = !canonical || (!context->observerForcesCanonicalPlane &&
+                                       isStaticControlAOT(context));
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
       for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
         uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
-        uint64_t value = readGlobal
-                             ? loadPackedBytes(globalPlane, source + bit, width)
-                             : loadPackedBits(*canonicalPlane, source + bit,
-                                              width);
+        uint64_t value =
+            readGlobal ? loadPackedBytes(globalPlane, source + bit, width)
+                       : loadPackedBits(*canonicalPlane, source + bit, width);
         storePackedBytes(outValue, bit, width, value);
       }
       maskPadding();
@@ -973,8 +977,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       return OBELISK_RT_OK;
     }
     bool readGlobalPlane =
-        !canonical || (!context->observerForcesCanonicalPlane &&
-                       isStaticControlAOT(context));
+        !canonical ||
+        (!context->observerForcesCanonicalPlane && isStaticControlAOT(context));
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       int64_t coordinate = 0;
       if (addHandleOffset(globalOffset, bit, coordinate) && coordinate >= 0 &&
@@ -1110,11 +1114,10 @@ static obelisk_rt_status nativeStateStorePlane(
       for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
         uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
         uint64_t next = loadPackedBytes(value, bit, width);
-        uint64_t old = canonical
-                           ? loadPackedBits(*canonicalPlane, destination + bit,
-                                            width)
-                           : loadPackedBytes(globalPlane, destination + bit,
-                                             width);
+        uint64_t old =
+            canonical
+                ? loadPackedBits(*canonicalPlane, destination + bit, width)
+                : loadPackedBytes(globalPlane, destination + bit, width);
         *outChanged |= old != next;
         if (canonical && continuous) {
           auto &retained = unknownPlane ? context->continuousUnknown
