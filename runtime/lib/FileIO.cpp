@@ -109,6 +109,33 @@ bool scanDigit(int character, uint32_t radix) {
 
 enum class ScanResult { Match, Mismatch, EndOfFile, Error };
 
+// LRM 21.4: tokenization consumes one uninterrupted stream of characters,
+// including comments and address records. Lock the host stream once per token
+// rather than once per character; pushback and error handling use that stream.
+class ReadMemStream {
+public:
+  explicit ReadMemStream(FILE *stream) : stream(stream) {
+#if defined(__linux__) || defined(__APPLE__)
+    ::flockfile(stream);
+#endif
+  }
+  ~ReadMemStream() {
+#if defined(__linux__) || defined(__APPLE__)
+    ::funlockfile(stream);
+#endif
+  }
+  int get() {
+#if defined(__linux__) || defined(__APPLE__)
+    return ::getc_unlocked(stream);
+#else
+    return std::fgetc(stream);
+#endif
+  }
+
+private:
+  FILE *stream;
+};
+
 // Keep ordinary formatted file input on a direct libc path while allowing the
 // one byte held by $ungetc for a non-readable descriptor to use the same scan
 // state machine. The template removes the synthetic checks from every hot
@@ -445,8 +472,7 @@ obelisk_rt_v1_file_open_mcd(obelisk_rt_context *context, const char *path,
     }
     uint32_t bit = context->freeMCDs.back();
     context->freeMCDs.pop_back();
-    context->mcd[bit] = {stream, 0, true, false, -1,
-                         std::move(*pathString)};
+    context->mcd[bit] = {stream, 0, true, false, -1, std::move(*pathString)};
     *outDescriptor = uint32_t{1} << bit;
     return OBELISK_RT_OK;
   });
@@ -489,16 +515,16 @@ obelisk_rt_v1_file_open(obelisk_rt_context *context, const char *path,
     if (!context->freeFiles.empty()) {
       index = context->freeFiles.back();
       context->freeFiles.pop_back();
-      context->files[index] = {stream.get(), 0, writable, readable, -1,
-                               std::move(*pathString)};
+      context->files[index] = {stream.get(), 0,  writable,
+                               readable,     -1, std::move(*pathString)};
     } else {
       if (context->files.size() > kFDIndexMask) {
         setLastErrorUnlocked(context, "file descriptor table is full");
         return OBELISK_RT_OUT_OF_RESOURCES;
       }
       index = static_cast<uint32_t>(context->files.size());
-      context->files.push_back({stream.get(), 0, writable, readable, -1,
-                                std::move(*pathString)});
+      context->files.push_back(
+          {stream.get(), 0, writable, readable, -1, std::move(*pathString)});
     }
     stream.release();
     *outDescriptor = kFDTag | index;
@@ -700,7 +726,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       setLastErrorUnlocked(context, "$readmem input is not readable");
       return OBELISK_RT_IO_ERROR;
     }
-    auto next = [&]() { return std::fgetc(entry->stream); };
+    ReadMemStream input(entry->stream);
+    auto next = [&]() { return input.get(); };
     auto malformed = [&](std::string message) {
       setLastErrorUnlocked(context, std::move(message));
       return OBELISK_RT_FORMAT_ERROR;
@@ -778,6 +805,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       *outAddress = address;
       return OBELISK_RT_OK;
     }
+    // LRM 21.4 permits arbitrarily long binary/hex words and X/Z digits.
+    // A machine-word destination retains the low bits as each digit arrives,
+    // avoiding a temporary string and a second per-bit parsing pass.
+    bool scalarWord = bitWidth <= 64;
+    uint64_t scalarValue = 0, scalarUnknown = 0;
+    unsigned bitsPerDigit = radix == 2 ? 1 : 4;
+    unsigned digitMask = (1u << bitsPerDigit) - 1;
+    bool haveCharacter = false;
+    std::array<char, 64> shortDigits;
+    size_t shortSize = 0;
     std::string digits;
     for (;;) {
       bool valid = character == '_' || character == 'x' || character == 'X' ||
@@ -788,10 +825,31 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
                                     (character >= 'A' && character <= 'F')));
       if (!valid)
         break;
-      digits.push_back(static_cast<char>(character));
+      haveCharacter = true;
+      if (scalarWord) {
+        if (character != '_') {
+          unsigned digit =
+              character >= '0' && character <= '9'   ? character - '0'
+              : character >= 'a' && character <= 'f' ? character - 'a' + 10
+              : character >= 'A' && character <= 'F' ? character - 'A' + 10
+                                                     : 0;
+          bool isX = character == 'x' || character == 'X';
+          bool isZ = character == 'z' || character == 'Z';
+          scalarValue =
+              (scalarValue << bitsPerDigit) | (isZ ? digitMask : digit);
+          scalarUnknown =
+              (scalarUnknown << bitsPerDigit) | (isX || isZ ? digitMask : 0);
+        }
+      } else {
+        if (shortSize == shortDigits.size()) {
+          digits.append(shortDigits.data(), shortSize);
+          shortSize = 0;
+        }
+        shortDigits[shortSize++] = static_cast<char>(character);
+      }
       character = next();
     }
-    if (digits.empty())
+    if (!haveCharacter)
       return malformed("invalid character in $readmem input");
     if (character != EOF && std::ungetc(character, entry->stream) == EOF) {
       recordIOError(context, *entry, "$readmem pushback failed");
@@ -801,9 +859,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       return finishIO();
     auto *valueBytes = static_cast<uint8_t *>(value);
     auto *unknownBytes = static_cast<uint8_t *>(unknown);
+    if (scalarWord) {
+      uint64_t mask =
+          bitWidth == 64 ? UINT64_MAX : (uint64_t{1} << bitWidth) - 1;
+      scalarValue &= mask;
+      scalarUnknown &= mask;
+      for (uint64_t byte = 0; byte != requiredBytes; ++byte) {
+        valueBytes[byte] = static_cast<uint8_t>(scalarValue >> (byte * 8));
+        unknownBytes[byte] = static_cast<uint8_t>(scalarUnknown >> (byte * 8));
+      }
+      *outKind = OBELISK_RT_READMEM_DATA;
+      return OBELISK_RT_OK;
+    }
+    // Most wide words fit in the local buffer; longer words remain unbounded
+    // as required by LRM 21.4. Append full chunks rather than individual bytes.
+    std::string_view wideDigits(shortDigits.data(), shortSize);
+    if (!digits.empty()) {
+      digits.append(shortDigits.data(), shortSize);
+      wideDigits = digits;
+    }
     uint64_t outputBit = 0;
-    unsigned bitsPerDigit = radix == 2 ? 1 : 4;
-    for (auto position = digits.rbegin(); position != digits.rend();
+    for (auto position = wideDigits.rbegin(); position != wideDigits.rend();
          ++position) {
       char digitCharacter = *position;
       if (digitCharacter == '_')
@@ -817,14 +893,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
                            : 0;
       bool isX = digitCharacter == 'x' || digitCharacter == 'X';
       bool isZ = digitCharacter == 'z' || digitCharacter == 'Z';
-      for (unsigned bit = 0; bit != bitsPerDigit && outputBit < bitWidth;
-           ++bit, ++outputBit) {
-        uint8_t mask = uint8_t{1} << (outputBit % 8);
-        if ((!isX && !isZ && ((digit >> bit) & 1)) || isZ)
-          valueBytes[outputBit / 8] |= mask;
-        if (isX || isZ)
-          unknownBytes[outputBit / 8] |= mask;
-      }
+      unsigned bits = std::min<uint64_t>(bitsPerDigit, bitWidth - outputBit);
+      uint8_t mask = (1u << bits) - 1;
+      unsigned shift = outputBit % 8;
+      valueBytes[outputBit / 8] |= (isZ ? mask : digit & mask) << shift;
+      if (isX || isZ)
+        unknownBytes[outputBit / 8] |= mask << shift;
+      outputBit += bits;
       if (outputBit == bitWidth)
         break;
     }
@@ -1112,8 +1187,7 @@ obelisk_rt_v1_file_scan_dynamic(
         return OBELISK_RT_SCAN_DYNAMIC_LOGIC16;
       }
     };
-    auto interpret = [&](auto synthetic)
-                         -> obelisk_rt_status {
+    auto interpret = [&](auto synthetic) -> obelisk_rt_status {
       constexpr bool Synthetic = decltype(synthetic)::value;
       for (size_t ordinal = planCursor; ordinal != plan->conversions.size();
            ++ordinal) {

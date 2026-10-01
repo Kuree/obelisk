@@ -2504,6 +2504,44 @@ TEST_F(RuntimeTest, ReadMemTokenizerPreservesFourStateWordsAndAddresses) {
   EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
 }
 
+TEST_F(RuntimeTest, ReadMemTokenizerTruncatesLongWordsAndMasksPartialBytes) {
+  // LRM 21.4: underscores do not consume bits, X/Z retain their planes, and
+  // oversized words retain the destination's least significant bits.
+  TempDirectory temporary;
+  std::filesystem::path path = temporary.file("long-memory.hex");
+  {
+    std::ofstream output(path);
+    std::string word = std::string(80, 'f') + "x_Z";
+    output << word << '\n' << word << '\n' << word << "\n10xz_1";
+  }
+  uint32_t descriptor = open(path, "r");
+  uint32_t kind = 0;
+  uint64_t address = 0;
+  for (uint64_t width : {5u, 64u, 65u}) {
+    std::vector<uint8_t> value((width + 7) / 8, 0xff);
+    std::vector<uint8_t> unknown(value.size(), 0xff);
+    ASSERT_EQ(obelisk_rt_v1_file_readmem_token(
+                  context, descriptor, 16, width, value.data(), value.size(),
+                  unknown.data(), unknown.size(), &kind, &address),
+              OBELISK_RT_OK);
+    EXPECT_EQ(kind, OBELISK_RT_READMEM_DATA);
+    EXPECT_EQ(value[0], 0x0f);
+    EXPECT_EQ(unknown[0], width == 5 ? 0x1f : 0xff);
+    for (size_t byte = 1; byte != value.size(); ++byte) {
+      EXPECT_EQ(value[byte], byte == 8 ? 0x01 : 0xff);
+      EXPECT_EQ(unknown[byte], 0x00);
+    }
+  }
+  uint8_t value = 0xff, unknown = 0xff;
+  ASSERT_EQ(obelisk_rt_v1_file_readmem_token(context, descriptor, 2, 3, &value,
+                                             1, &unknown, 1, &kind, &address),
+            OBELISK_RT_OK);
+  EXPECT_EQ(kind, OBELISK_RT_READMEM_DATA);
+  EXPECT_EQ(value, 0x03);
+  EXPECT_EQ(unknown, 0x06);
+  EXPECT_EQ(obelisk_rt_v1_file_close(context, descriptor), OBELISK_RT_OK);
+}
+
 TEST_F(RuntimeTest, ReadMemTokenizerRejectsMalformedInput) {
   TempDirectory temporary;
   std::filesystem::path path = temporary.file("bad.hex");
