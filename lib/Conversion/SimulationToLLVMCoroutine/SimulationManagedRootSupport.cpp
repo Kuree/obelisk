@@ -1,6 +1,9 @@
 //===- SimulationManagedRootSupport.cpp - Managed root range support ----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
@@ -25,6 +28,10 @@ void emitManagedRootRangePop(OpBuilder &builder, Location location,
   LLVM::AllocaOp record = findManagedRootRangeRecord(scope);
   if (!record)
     return;
+  if (isa<sim::SimFuncOp>(scope)) {
+    schedule::NativeManagedRootPopOp::create(builder, location, record);
+    return;
+  }
   MLIRContext *context = builder.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
   Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
@@ -46,6 +53,54 @@ void emitManagedRootRangePop(OpBuilder &builder, Location location,
       builder, location, TypeRange{},
       SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
       ValueRange{runtimeContext, status});
+}
+
+namespace {
+class NativeManagedRootPushLowering final
+    : public OpRewritePattern<schedule::NativeManagedRootPushOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(schedule::NativeManagedRootPushOp op,
+                                PatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_gc_managed_root_range_push"),
+            ValueRange{lane, op.getRecord(), op.getSlots(), op.getCount()})
+            .getResult();
+    rewriter.replaceOp(op, status);
+    return success();
+  }
+};
+class NativeManagedRootPopLowering final
+    : public OpRewritePattern<schedule::NativeManagedRootPopOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(schedule::NativeManagedRootPopOp op,
+                                PatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_gc_managed_root_range_pop"),
+            ValueRange{lane, op.getRecord()})
+            .getResult();
+    LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
+                         SymbolRefAttr::get(rewriter.getContext(),
+                                            "obelisk_rt_v1_scheduler_fail"),
+                         ValueRange{context, status});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+} // namespace
+void populateNativeManagedRootToLLVMConversionPatterns(
+    RewritePatternSet &patterns) {
+  patterns.add<NativeManagedRootPushLowering, NativeManagedRootPopLowering>(
+      patterns.getContext());
 }
 
 } // namespace obelisk::detail

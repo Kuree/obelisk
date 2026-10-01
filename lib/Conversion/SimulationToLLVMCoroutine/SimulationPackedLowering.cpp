@@ -234,7 +234,8 @@ LogicalResult lowerPackedSimulationOperations(
     ModuleOp module, const llvm::DataLayout &dataLayout,
     const NativeStateLayout &stateLayout, bool enableDirectStaticState,
     const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite,
-    bool experimentalTwoState) {
+    bool experimentalTwoState,
+    llvm::function_ref<LogicalResult()> threadStatuses) {
   MLIRContext *context = module.getContext();
   if (stateLayout.directContinuous) {
     OpBuilder builder = OpBuilder::atBlockBegin(module.getBody());
@@ -1166,7 +1167,7 @@ LogicalResult lowerPackedSimulationOperations(
     scratch.replaceAllUsesWith(native.getResult());
     scratch.erase();
   }
-  if (failed(threadRuntimeStatuses(module)))
+  if (failed(threadStatuses()))
     return failure();
   markTiming("runtime status threading");
   if (failed(releaseNativeAutomaticState(module, referenceArguments)))

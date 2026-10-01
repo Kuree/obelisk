@@ -1,0 +1,22 @@
+// RUN: obelisk-opt %S/simulation-dumpports.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.roots
+// RUN: obelisk-opt %t.roots -o /dev/null
+// RUN: obelisk-opt %S/simulation-to-llvm-coroutine.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.threaded
+// RUN: obelisk-opt %S/simulation-to-llvm-coroutine.mlir --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
+// RUN: diff %t.threaded %t.serial
+// RUN: obelisk-opt %S/simulation-to-llvm-coroutine-native-body-patterns.mlir --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s
+
+// Frame analysis and its cached consumer run consecutively on one function.
+// The publication pass diagnoses a missing cache instead of recomputing it.
+// CHECK: IR Dump After {{.*}}PrepareNativeFunctionFramePass (prepare-native-function-frame)
+// CHECK-NEXT: simulation.func private @identity
+// CHECK: IR Dump After {{.*}}PublishNativeFunctionFramePass (publish-native-function-frame)
+// CHECK-NEXT: simulation.func private @identity
+// CHECK: IR Dump After {{.*}}PrepareNativeProcessFramesPass (prepare-native-process-frames)
+// CHECK: IR Dump After ObeliskSimInstrumentManagedRootsPass (obelisk-sim-instrument-managed-roots)
+// CHECK-NEXT: simulation.func private @identity
+// CHECK: IR Dump After {{.*}}ConvertNativeFunctionBodyPass (convert-native-function-body-to-llvm)
+// CHECK-NEXT: llvm.func
+// CHECK: IR Dump After {{.*}}PublishNativeFunctionProofsPass (publish-native-function-proofs)
+// CHECK-NEXT: llvm.func
+// CHECK: IR Dump After {{.*}}NativeFunctionFinalizationPass (obelisk-native-finalize-function)
+// CHECK-NEXT: llvm.func

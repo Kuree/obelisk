@@ -118,12 +118,17 @@ def ObeliskSimPlanNativePartitionsPass
 }
 
 def ObeliskSimInstrumentManagedRootsPass
-    : Pass<"obelisk-sim-instrument-managed-roots", "mlir::ModuleOp"> {
+    : Pass<"obelisk-sim-instrument-managed-roots",
+           "obelisk::sim::SimFuncOp"> {
   let summary = "Bind live managed SSA values to precise GC roots";
   let description = [{
     Uses MLIR liveness to allocate and maintain precise managed-root slots
     around collection points and process activation boundaries.
   }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "obelisk::schedule::ScheduleDialect", "mlir::LLVM::LLVMDialect"
+  ];
 }
 
 def ObeliskSimInstrumentReferenceLifetimesPass

@@ -1,4 +1,7 @@
-// RUN: obelisk-opt %s --obelisk-sim-instrument-managed-roots | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-managed-roots)))' -o %t.threaded
+// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-managed-roots)))' -o %t.serial
+// RUN: diff %t.threaded %t.serial
+// RUN: FileCheck %s < %t.threaded
 
 !candidate = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Object>, ordinal = 0, packedOffset = 0>,
@@ -87,7 +90,7 @@ module attributes {
 // CHECK: llvm.alloca
 // CHECK: llvm.alloca
 // CHECK-SAME: obelisk.managed_root_range_record
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
+// CHECK: schedule.gc.root_range.push
 // Candidate classification is refreshed immediately before every collection;
 // it is not cached once at the SSA definition.
 // CHECK-NOT: simulation.class.root_bind
@@ -95,7 +98,7 @@ module attributes {
 // CHECK-NEXT: simulation.gc.safepoint
 // CHECK: simulation.class.root_bind %[[CANDIDATE]] to %[[SLOT]] at 0 candidate kinds 3
 // CHECK-NEXT: simulation.gc.safepoint
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
+// CHECK: schedule.gc.root_range.pop
 
 // A large aggregate uses compact bulk root refreshes instead of one scalar
 // dead-slot clear per root at every safepoint.

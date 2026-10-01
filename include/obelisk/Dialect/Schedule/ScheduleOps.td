@@ -526,4 +526,19 @@ def NativeByteAddressOp : ScheduleNativeOp<"bytes.address", [Pure]> {
   let arguments = (ins StrAttr:$name, StrAttr:$value, I64Attr:$alignment);
   let results = (outs LLVM_AnyPointer:$result);
 }
+// Activation-local root records are lowered only after simulation design
+// symbol tables have been flattened into the native module.
+def NativeManagedRootPushOp : ScheduleNativeOp<"gc.root_range.push", [
+    MemoryEffects<[MemRead, MemWrite, MemRead<SimProcessResource>,
+                   MemWrite<SimHeapResource>]>
+  ]> {
+  let arguments = (ins LLVM_AnyPointer:$record, LLVM_AnyPointer:$slots, I64:$count);
+  let results = (outs I32:$status);
+}
+def NativeManagedRootPopOp : ScheduleNativeOp<"gc.root_range.pop", [
+    MemoryEffects<[MemRead, MemWrite, MemRead<SimProcessResource>,
+                   MemWrite<SimHeapResource>]>
+  ]> {
+  let arguments = (ins LLVM_AnyPointer:$record);
+}
 #endif

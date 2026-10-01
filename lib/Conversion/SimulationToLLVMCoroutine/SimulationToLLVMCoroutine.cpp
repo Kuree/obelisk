@@ -146,7 +146,6 @@ using detail::evalRuntimeNBARequiredAttr;
 using detail::finishPreparedPlainNativeProcess;
 using detail::finishPreparedSuspendableProcess;
 using detail::insertAutomaticOwnerReleases;
-using detail::instrumentManagedRoots;
 using detail::lowerPackedSimulationOperations;
 using detail::lowerPreparedOrdinaryFunction;
 using detail::lowerPreparedPlainNativeProcess;
@@ -1266,57 +1265,69 @@ LogicalResult NativePipelineAnalysis::initialize() {
   return success();
 }
 
-LogicalResult NativePipelineAnalysis::prepareFrames() {
+// Each function owns its frame analysis until the module pass collects it in
+// source order. Workers only read the frozen target layout and source-shape
+// certificates; they never modify the parent pipeline analysis.
+struct PreparedNativeProcessFrame : NativeFunctionFrameResult {
+  PreparedNativeProcessFrame(Operation *operation, AnalysisManager &manager) {
+    auto function = cast<sim::SimFuncOp>(operation);
+    if (function.getEntryKind() == sim::EntryKind::Function ||
+        function.getEntryKind() == sim::EntryKind::Observer)
+      return;
+    auto module = function->getParentOfType<ModuleOp>();
+    auto cached =
+        manager.getCachedParentAnalysis<NativePipelineAnalysis>(module);
+    if (!cached) {
+      function.emitError(
+          "native frame analysis requires frozen pipeline inputs");
+      valid = false;
+      return;
+    }
+    const auto &state = cached->get();
+    auto result =
+        SimulationProcessFrameAnalysis::create(function, state.dataLayout);
+    if (failed(result)) {
+      valid = false;
+      return;
+    }
+    frame = std::move(*result);
+    // IEEE 1800-2023 4.9.1/4.9.6: retain copy activation and publication.
+    if (!state.copyActivations.contains(function))
+      table = analyzeTableProcess(function, *frame);
+  }
+  bool valid = true;
+};
+
+LogicalResult NativePipelineAnalysis::prepareFrameInputs() {
   if (bytecodeOnly)
     return success();
   materializeNativeStatePlanes(module, *stateLayout);
   materializeNativeSchedulerGlobals(module);
   declareNativeRuntimeABI(module);
   declareProcessSpawnRuntimeABI(module);
-  WalkResult analyzed = module.walk([&](sim::SimFuncOp function) {
+  // Freeze this source-shape proof before any function worker threads state.
+  module.walk([&](sim::SimFuncOp function) {
     if (analysis::isCaptureCopyProcess(function))
       copyActivations.insert(function);
-    bool suspendable = false;
-    function.walk([&](Operation *operation) {
-      suspendable |= sim::isSuspensionOp(operation);
-    });
-    bool process = function.getEntryKind() != sim::EntryKind::Function &&
-                   function.getEntryKind() != sim::EntryKind::Observer;
-    if (failed(insertAutomaticOwnerReleases(function)))
-      return WalkResult::interrupt();
-    if (suspendable && failed(threadProcessStateThroughCFG(function)))
-      return WalkResult::interrupt();
-    // Zero-time functions can contain process-control terminators (for
-    // example `process::kill`) without becoming suspendable actors. Runtime
-    // status threading propagates those control effects through their call
-    // chain. Frame-analyzing them here would retain a second owner for the
-    // function after ordinary lowering erases it.
-    if (!process)
-      return WalkResult::advance();
-    auto analysis =
-        SimulationProcessFrameAnalysis::create(function, dataLayout);
-    if (failed(analysis))
-      return WalkResult::interrupt();
-    // IEEE 1800-2023 4.9.1/4.9.6: retain port-copy activation and publication.
-    if (!copyActivations.contains(function))
-      if (auto plan = detail::analyzeTableProcess(function, **analysis))
-        tableProcesses.try_emplace(function, std::move(*plan));
-    for (const ProcessSuspension &suspension : (*analysis)->getSuspensions()) {
-      ::obelisk::schedule::set<::obelisk::schedule::Field::NativeContinuation>(
-          suspension.operation, IntegerAttr::get(IntegerType::get(context, 32),
-                                                 suspension.continuationID));
-      ::obelisk::schedule::set<::obelisk::schedule::Field::NativeWaitOffset>(
-          suspension.operation, IntegerAttr::get(IntegerType::get(context, 64),
-                                                 suspension.waitOffset));
-      ::obelisk::schedule::set<::obelisk::schedule::Field::NativeWaitSize>(
-          suspension.operation,
-          IntegerAttr::get(IntegerType::get(context, 64), suspension.waitSize));
-    }
-    analyses.insert({function.getOperation(), std::move(*analysis)});
-    return WalkResult::advance();
+    frameResults.insert(
+        {function, std::make_unique<NativeFunctionFrameResult>()});
   });
-  if (analyzed.wasInterrupted())
-    return failure();
+  return success();
+}
+
+LogicalResult NativePipelineAnalysis::collectFrames() {
+  // No analysis is recomputed at this barrier. The function pipeline has
+  // published canonical frame snapshots in preallocated source-order slots.
+  for (auto &[function, result] : frameResults) {
+    if (!result->published)
+      return function->emitError(
+          "native frame collection requires a published function analysis");
+    if (result->table)
+      tableProcesses.try_emplace(function, std::move(*result->table));
+    if (result->frame)
+      analyses.insert({function, std::move(result->frame)});
+  }
+  frameResults.clear();
   markTiming("frame analysis and state threading");
   if (detailedTiming)
     llvm::errs() << "obelisk native copy activations: "
@@ -1324,11 +1335,11 @@ LogicalResult NativePipelineAnalysis::prepareFrames() {
   if (detailedTiming)
     llvm::errs() << "obelisk native table candidates: " << tableProcesses.size()
                  << '\n';
-
   return success();
 }
 
-LogicalResult NativePipelineAnalysis::prepareRoots() {
+LogicalResult NativePipelineAnalysis::prepareRoots(
+    llvm::function_ref<LogicalResult()> instrumentFunctions) {
   if (bytecodeOnly)
     return success();
   if (materializeNBAAccumulators &&
@@ -1351,7 +1362,7 @@ LogicalResult NativePipelineAnalysis::prepareRoots() {
   // state. Insert them only after suspension-live semantic values have been
   // threaded and the shared native/bytecode frame has been analyzed. LLVM
   // coroutine lowering preserves these fixed entry allocas across resume.
-  if (failed(instrumentManagedRoots(module)))
+  if (failed(instrumentFunctions()))
     return failure();
   guardedAOTSpecialization =
       staticSpecialization && useAOT && aotEligibility.isFullyEligible() &&
@@ -1364,7 +1375,8 @@ LogicalResult NativePipelineAnalysis::prepareRoots() {
   return declareNativeImports(module);
 }
 
-LogicalResult NativePipelineAnalysis::prepareFragments() {
+LogicalResult NativePipelineAnalysis::prepareFragments(
+    llvm::function_ref<LogicalResult()> threadStatuses) {
   if (bytecodeOnly)
     return success();
   // Fragment specialization can remove a suspension while leaving its
@@ -1457,7 +1469,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments() {
   if (failed(lowerPackedSimulationOperations(
           module, dataLayout, *stateLayout, enableDirectStaticState,
           staticNBA ? &staticNBAPlan : nullptr, vpi.allowsWrite(),
-          /*experimentalTwoState=*/false)))
+          /*experimentalTwoState=*/false, threadStatuses)))
     return failure();
   // Constructor edges were consumed when class allocation was lowered.
   module.walk([](sim::SimClassDeclOp declaration) {
@@ -3365,6 +3377,113 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   return success();
 }
 
+struct NativeBodyConversionInputs {
+  NativeBodyConversionInputs(Operation *operation, AnalysisManager &manager)
+      : symbols(), lockedSymbols(symbols), layout("") {
+    auto cached = manager.getCachedAnalysis<detail::NativePipelineAnalysis>();
+    if (cached) {
+      layout = cached->get().dataLayout;
+      valid = true;
+    }
+    symbols.getSymbolTable(cast<ModuleOp>(operation));
+  }
+  SymbolTableCollection symbols;
+  LockedSymbolTableCollection lockedSymbols;
+  llvm::DataLayout layout;
+  bool valid = false;
+};
+
+class ConvertNativeFunctionBodyPass final
+    : public PassWrapper<ConvertNativeFunctionBodyPass,
+                         InterfacePass<FunctionOpInterface>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertNativeFunctionBodyPass)
+  ConvertNativeFunctionBodyPass() = default;
+  ConvertNativeFunctionBodyPass(const ConvertNativeFunctionBodyPass &other)
+      : PassWrapper(other) {}
+  StringRef getArgument() const final {
+    return "convert-native-function-body-to-llvm";
+  }
+  void runOnOperation() override {
+    auto function = getOperation();
+    if (function.isExternal()) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    SmallVector<Operation *> integerPowers;
+    function.walk([&](math::IPowIOp power) {
+      integerPowers.push_back(power.getOperation());
+    });
+    if (!integerPowers.empty()) {
+      RewritePatternSet powerPatterns(&getContext());
+      powerPatterns.add<ExpandIntegerPower>(&getContext());
+      GreedyRewriteConfig config;
+      config.setStrictness(GreedyRewriteStrictness::ExistingOps)
+          .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled)
+          .enableFolding(false)
+          .enableConstantCSE(false);
+      if (failed(applyOpPatternsGreedily(
+              integerPowers, FrozenRewritePatternSet(std::move(powerPatterns)),
+              config)))
+        return signalPassFailure();
+    }
+    Dialect *llvmDialect = getContext().getLoadedDialect<LLVM::LLVMDialect>();
+    auto inventory = function.walk([&](Operation *operation) {
+      if (operation != function.getOperation() &&
+          operation->getDialect() != llvmDialect)
+        return WalkResult::interrupt();
+      return WalkResult::advance();
+    });
+    if (!inventory.wasInterrupted()) {
+      if (integerPowers.empty())
+        markAllAnalysesPreserved();
+      return;
+    }
+    auto cached = getCachedParentAnalysis<NativeBodyConversionInputs>(
+        function->getParentOfType<ModuleOp>());
+    if (!cached || !cached->get().valid) {
+      function.emitError("native body conversion requires cached ABI inputs");
+      return signalPassFailure();
+    }
+    auto &inputs = cached->get();
+    // A pass clone belongs to one MLIR worker. Reuse its conversion caches
+    // between functions, without sharing mutable type caches across workers.
+    if (!converter) {
+      LowerToLLVMOptions options(&getContext());
+      options.dataLayout = inputs.layout;
+      converter = std::make_unique<LLVMTypeConverter>(&getContext(), options);
+      converter->addConversion([this](Type type) -> std::optional<Type> {
+        Type converted = convertProcessType(type, &getContext());
+        return converted != type ? std::optional<Type>(converted)
+                                 : std::nullopt;
+      });
+      addRuntimeToLLVMTypeConversions(*converter);
+      RewritePatternSet localPatterns(&getContext());
+      populateSimulationCoroutineBodyToLLVMPatterns(*converter, localPatterns,
+                                                    &inputs.lockedSymbols);
+      patterns.emplace(std::move(localPatterns));
+      target = std::make_unique<ConversionTarget>(getContext());
+      target->addLegalDialect<LLVM::LLVMDialect>();
+      target->addLegalOp<schedule::NativeByteAddressOp,
+                         UnrealizedConversionCastOp>();
+      target->markUnknownOpDynamicallyLegal([](Operation *operation) {
+        return isa<LLVM::LLVMFuncOp>(operation);
+      });
+    }
+    SmallVector<Operation *> roots;
+    for (Block &block : function.getFunctionBody())
+      for (Operation &operation : block)
+        roots.push_back(&operation);
+    if (failed(applyFullConversion(roots, *target, *patterns)))
+      signalPassFailure();
+  }
+
+private:
+  std::unique_ptr<LLVMTypeConverter> converter;
+  std::optional<FrozenRewritePatternSet> patterns;
+  std::unique_ptr<ConversionTarget> target;
+};
+
 class ConvertPreparedSimProcessesToLLVMCoroutinesPass final
     : public impl::ConvertPreparedSimProcessesToLLVMCoroutinesPassBase<
           ConvertPreparedSimProcessesToLLVMCoroutinesPass> {
@@ -3416,11 +3535,14 @@ public:
     {
       RewritePatternSet runtimePatterns(&getContext());
       populateRuntimeToLLVMPatterns(converter, runtimePatterns);
+      detail::populateNativeManagedRootToLLVMConversionPatterns(runtimePatterns);
       ConversionTarget runtimeTarget(getContext());
       runtimeTarget.addLegalDialect<LLVM::LLVMDialect>();
       runtimeTarget.addLegalOp<ModuleOp>();
       runtimeTarget.addIllegalDialect<runtime::ObeliskRuntimeDialect>();
-      runtimeTarget.addIllegalOp<schedule::NativeScratchOp>();
+      runtimeTarget.addIllegalOp<schedule::NativeScratchOp,
+                                schedule::NativeManagedRootPushOp,
+                                schedule::NativeManagedRootPopOp>();
       runtimeTarget.markUnknownOpDynamicallyLegal(
           [](Operation *) { return true; });
       if (failed(applyPartialConversion(module, runtimeTarget,
@@ -3430,30 +3552,6 @@ public:
       }
     }
     markTiming("serial runtime conversion");
-
-    // Integer power is intentionally kept compact through packed-value type
-    // conversion. Expand it only now, when its operands are ordinary integer
-    // planes and CFG construction no longer runs inside one-to-many dialect
-    // conversion.
-    SmallVector<Operation *> integerPowers;
-    module.walk([&](math::IPowIOp power) {
-      integerPowers.push_back(power.getOperation());
-    });
-    RewritePatternSet integerPowerPatterns(&getContext());
-    integerPowerPatterns.add<ExpandIntegerPower>(&getContext());
-    GreedyRewriteConfig integerPowerConfig;
-    integerPowerConfig.setStrictness(GreedyRewriteStrictness::ExistingOps)
-        .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled)
-        .enableFolding(false)
-        .enableConstantCSE(false);
-    if (failed(applyOpPatternsGreedily(
-            integerPowers,
-            FrozenRewritePatternSet(std::move(integerPowerPatterns)),
-            integerPowerConfig))) {
-      signalPassFailure();
-      return;
-    }
-    markTiming("integer power expansion");
 
     RewritePatternSet patterns(&getContext());
     populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
@@ -3474,82 +3572,26 @@ public:
         [](Operation *operation) { return isa<LLVM::LLVMFuncOp>(operation); });
     FrozenRewritePatternSet frozenPatterns(std::move(patterns));
 
-    // Native preparation leaves function signatures in their final physical
-    // ABI and all cross-function symbols frozen. Convert independent bodies
-    // concurrently before the inexpensive serial wrapper conversion. A
-    // module-wide conversion driver otherwise walks thousands of cold UVM
-    // methods serially and dominates -O3 compile time.
-    SmallVector<SmallVector<Operation *>> functionBodies;
-    Dialect *llvmDialect = getContext().getLoadedDialect<LLVM::LLVMDialect>();
-    module.walk([&](FunctionOpInterface function) {
-      if (function.isExternal())
-        return;
-      WalkResult inventory = function.walk([&](Operation *operation) {
-        if (operation != function.getOperation() &&
-            operation->getDialect() != llvmDialect)
-          return WalkResult::interrupt();
-        return WalkResult::advance();
-      });
-      if (!inventory.wasInterrupted())
-        return;
-      SmallVector<Operation *> roots;
-      for (Block &block : function.getFunctionBody())
-        for (Operation &operation : block)
-          roots.push_back(&operation);
-      if (!roots.empty())
-        functionBodies.push_back(std::move(roots));
-    });
-    markTiming("function-body inventory");
+    // Publish LLVM function shells before body workers run. Their physical
+    // signatures are already fixed; converted calls must resolve to LLVM
+    // symbols even while sibling bodies have not yet been converted.
+    ConversionTarget signatureTarget(getContext());
+    signatureTarget.addIllegalOp<func::FuncOp>();
+    signatureTarget.markUnknownOpDynamicallyLegal(
+        [](Operation *) { return true; });
+    if (failed(applyPartialConversion(module, signatureTarget, frozenPatterns)))
+      return signalPassFailure();
+    markTiming("function ABI conversion");
 
-    // Amortize converter and pattern construction without sharing their
-    // mutable type-conversion caches between threads. Keeping chunks bounded
-    // also distributes the uneven UVM method sizes across workers.
-    constexpr size_t functionsPerChunk = 64;
-    SmallVector<SmallVector<Operation *>> chunks;
-    chunks.reserve((functionBodies.size() + functionsPerChunk - 1) /
-                   functionsPerChunk);
-    for (auto [index, roots] : llvm::enumerate(functionBodies)) {
-      if (index % functionsPerChunk == 0)
-        chunks.emplace_back();
-      chunks.back().append(roots);
-    }
-    // Body conversion cannot add, replace, or rename module symbols. Share a
-    // lookup index only for this phase; the subsequent wrapper conversion may
-    // replace function operations and must use its own uncached patterns.
-    SymbolTableCollection bodySymbols;
-    bodySymbols.getSymbolTable(module);
-    LockedSymbolTableCollection lockedBodySymbols(bodySymbols);
-    if (failed(failableParallelForEach(
-            &getContext(), chunks, [&](ArrayRef<Operation *> roots) {
-              LowerToLLVMOptions workerOptions(&getContext());
-              workerOptions.dataLayout = *parsed;
-              LLVMTypeConverter workerConverter(&getContext(), workerOptions);
-              workerConverter.addConversion(
-                  [&](Type type) -> std::optional<Type> {
-                    Type converted = convertProcessType(type, &getContext());
-                    if (converted != type)
-                      return converted;
-                    return std::nullopt;
-                  });
-              addRuntimeToLLVMTypeConversions(workerConverter);
-              RewritePatternSet workerPatterns(&getContext());
-              populateSimulationCoroutineBodyToLLVMPatterns(
-                  workerConverter, workerPatterns, &lockedBodySymbols);
-              FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
-              ConversionTarget workerTarget(getContext());
-              workerTarget.addLegalDialect<LLVM::LLVMDialect>();
-              workerTarget.addLegalOp<schedule::NativeByteAddressOp>();
-              workerTarget.addLegalOp<UnrealizedConversionCastOp>();
-              workerTarget.markUnknownOpDynamicallyLegal(
-                  [](Operation *operation) {
-                    return isa<LLVM::LLVMFuncOp>(operation);
-                  });
-              return applyFullConversion(roots, workerTarget, workerFrozen);
-            }))) {
-      signalPassFailure();
-      return;
-    }
-    markTiming("parallel function-body conversion");
+    // Cache immutable ABI inputs and the frozen, locked symbol index once.
+    // Function workers obtain this analysis through their parent manager.
+    getAnalysis<NativeBodyConversionInputs>();
+    OpPassManager bodyPipeline(ModuleOp::getOperationName());
+    bodyPipeline.nestAny().addPass(
+        std::make_unique<ConvertNativeFunctionBodyPass>());
+    if (failed(runPipeline(bodyPipeline, module)))
+      return signalPassFailure();
+    markTiming("function-body conversion");
     if (failed(applyFullConversion(module, target, frozenPatterns))) {
       signalPassFailure();
       return;
@@ -3695,6 +3737,99 @@ class PrepareNativeScheduleInputsPass final
     markAnalysesPreserved<Analysis>();
   }
 };
+// This worker is an ordinary function pass. MLIR controls scheduling and
+// cloning, including --mlir-disable-threading and pass instrumentation.
+class ThreadNativeProcessCFGPass final
+    : public PassWrapper<ThreadNativeProcessCFGPass,
+                         OperationPass<sim::SimFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ThreadNativeProcessCFGPass)
+  StringRef getArgument() const final { return "thread-native-process-cfg"; }
+  void runOnOperation() override {
+    auto suspensions = getOperation().walk([](Operation *operation) {
+      return sim::isSuspensionOp(operation) ? WalkResult::interrupt()
+                                            : WalkResult::advance();
+    });
+    if (!suspensions.wasInterrupted()) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    if (failed(threadProcessStateThroughCFG(getOperation())))
+      signalPassFailure();
+  }
+};
+
+class PrepareNativeFunctionFramePass final
+    : public PassWrapper<PrepareNativeFunctionFramePass,
+                         OperationPass<sim::SimFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrepareNativeFunctionFramePass)
+  StringRef getArgument() const final {
+    return "prepare-native-function-frame";
+  }
+  void runOnOperation() override {
+    auto &prepared = getAnalysis<detail::PreparedNativeProcessFrame>();
+    if (!prepared.valid)
+      return signalPassFailure();
+    if (prepared.frame) {
+      Builder builder(&getContext());
+      for (const ProcessSuspension &suspension :
+           prepared.frame->getSuspensions()) {
+        schedule::set<schedule::Field::NativeContinuation>(
+            suspension.operation,
+            builder.getI32IntegerAttr(suspension.continuationID));
+        schedule::set<schedule::Field::NativeWaitOffset>(
+            suspension.operation,
+            builder.getI64IntegerAttr(suspension.waitOffset));
+        schedule::set<schedule::Field::NativeWaitSize>(
+            suspension.operation,
+            builder.getI64IntegerAttr(suspension.waitSize));
+      }
+    }
+    markAnalysesPreserved<detail::PreparedNativeProcessFrame>();
+  }
+};
+
+class PublishNativeFunctionFramePass final
+    : public PassWrapper<PublishNativeFunctionFramePass,
+                         OperationPass<sim::SimFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PublishNativeFunctionFramePass)
+  StringRef getArgument() const final {
+    return "publish-native-function-frame";
+  }
+  void runOnOperation() override {
+    auto prepared = getCachedAnalysis<detail::PreparedNativeProcessFrame>();
+    auto cached = getCachedParentAnalysis<detail::NativePipelineAnalysis>(
+        getOperation()->getParentOfType<ModuleOp>());
+    if (!prepared || !cached) {
+      getOperation().emitError(
+          "native frame publication requires the cached function analysis");
+      return signalPassFailure();
+    }
+    const auto &state = cached->get();
+    auto found = state.frameResults.find(getOperation());
+    if (found == state.frameResults.end()) {
+      getOperation().emitError("native frame publication has no result slot");
+      return signalPassFailure();
+    }
+    // Preserve the canonical snapshot beyond the function pipeline lifetime.
+    // Only this function's result object changes; the parent map is frozen.
+    auto &result = *found->second;
+    result.frame = std::move(prepared->get().frame);
+    result.table = std::move(prepared->get().table);
+    result.published = true;
+    markAllAnalysesPreserved();
+  }
+};
+
+void addNativeFunctionFramePasses(OpPassManager &functions) {
+  functions.addPass(createObeliskSimInstrumentReferenceLifetimesPass());
+  functions.addPass(std::make_unique<ThreadNativeProcessCFGPass>());
+  functions.addPass(std::make_unique<PrepareNativeFunctionFramePass>());
+  functions.addPass(std::make_unique<PublishNativeFunctionFramePass>());
+}
+
 class PrepareNativeProcessFramesPass final
     : public impl::PrepareNativeProcessFramesPassBase<
           PrepareNativeProcessFramesPass> {
@@ -3712,7 +3847,20 @@ class PrepareNativeProcessFramesPass final
           "prepare-native-process-frames requires native pipeline phase State");
       return signalPassFailure();
     }
-    if (failed(state.prepareFrames()))
+    if (failed(state.prepareFrameInputs()))
+      return signalPassFailure();
+    state.stage = Analysis::Stage::FrameInputs;
+    OpPassManager pipeline(sim::SimDesignOp::getOperationName());
+    addNativeFunctionFramePasses(pipeline.nest<sim::SimFuncOp>());
+    for (auto design : getOperation().getOps<sim::SimDesignOp>())
+      if (failed(runPipeline(pipeline, design)))
+        return signalPassFailure();
+    OpPassManager directFunctions(sim::SimFuncOp::getOperationName());
+    addNativeFunctionFramePasses(directFunctions);
+    for (auto function : getOperation().getOps<sim::SimFuncOp>())
+      if (failed(runPipeline(directFunctions, function)))
+        return signalPassFailure();
+    if (failed(state.collectFrames()))
       return signalPassFailure();
     state.stage = Analysis::Stage::Frames;
     markAnalysesPreserved<Analysis>();
@@ -3721,6 +3869,7 @@ class PrepareNativeProcessFramesPass final
 class PrepareNativeManagedRootsPass final
     : public impl::PrepareNativeManagedRootsPassBase<
           PrepareNativeManagedRootsPass> {
+public:
   void runOnOperation() override {
     using Analysis = detail::NativePipelineAnalysis;
     auto cached = getCachedAnalysis<Analysis>();
@@ -3735,7 +3884,21 @@ class PrepareNativeManagedRootsPass final
                                "pipeline phase Schedule");
       return signalPassFailure();
     }
-    if (failed(state.prepareRoots()))
+    auto instrumentFunctions = [&]() -> LogicalResult {
+      OpPassManager pipeline(sim::SimDesignOp::getOperationName());
+      pipeline.nest<sim::SimFuncOp>().addPass(
+          createObeliskSimInstrumentManagedRootsPass());
+      for (auto design : getOperation().getOps<sim::SimDesignOp>())
+        if (failed(runPipeline(pipeline, design)))
+          return failure();
+      OpPassManager directFunctions(sim::SimFuncOp::getOperationName());
+      directFunctions.addPass(createObeliskSimInstrumentManagedRootsPass());
+      for (auto function : getOperation().getOps<sim::SimFuncOp>())
+        if (failed(runPipeline(directFunctions, function)))
+          return failure();
+      return success();
+    };
+    if (failed(state.prepareRoots(instrumentFunctions)))
       return signalPassFailure();
     state.stage = Analysis::Stage::Roots;
     markAnalysesPreserved<Analysis>();
@@ -3757,7 +3920,11 @@ class PrepareNativeFragmentsPass final
                                "pipeline phase EvalVariants");
       return signalPassFailure();
     }
-    if (failed(state.prepareFragments()))
+    auto threadStatuses = [&]() -> LogicalResult {
+      return detail::threadRuntimeStatuses(getOperation(),
+                                           getAnalysisManager());
+    };
+    if (failed(state.prepareFragments(threadStatuses)))
       return signalPassFailure();
     state.stage = Analysis::Stage::Fragments;
     markAnalysesPreserved<Analysis>();
@@ -3787,4 +3954,5 @@ class MaterializeNativeProcessesPass final
   }
 };
 } // namespace
+
 } // namespace obelisk

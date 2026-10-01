@@ -12,6 +12,11 @@
 #include <chrono>
 
 namespace obelisk::detail {
+struct NativeFunctionFrameResult {
+  bool published = false;
+  std::unique_ptr<SimulationProcessFrameAnalysis> frame;
+  std::optional<NativeTableProcess> table;
+};
 /// Target frame facts are captured before specialization and intentionally
 /// survive the certified rewrites in this pipeline. Recomputing them from a
 /// specialized body would change the native/bytecode fallback ABI. Each pass
@@ -26,6 +31,7 @@ struct NativePipelineAnalysis {
     Empty,
     Inputs,
     State,
+    FrameInputs,
     Frames,
     Actors,
     Captures,
@@ -48,14 +54,17 @@ struct NativePipelineAnalysis {
   void markTiming(llvm::StringRef name);
   mlir::LogicalResult initialize();
   mlir::LogicalResult planState();
-  mlir::LogicalResult prepareFrames();
+  mlir::LogicalResult prepareFrameInputs();
+  mlir::LogicalResult collectFrames();
   mlir::LogicalResult planActors();
   mlir::LogicalResult specializeCaptures();
   mlir::LogicalResult planSchedule();
-  mlir::LogicalResult prepareRoots();
+  mlir::LogicalResult
+  prepareRoots(llvm::function_ref<mlir::LogicalResult()> instrumentFunctions);
   mlir::LogicalResult markCleanNBA();
   mlir::LogicalResult specializeEval();
-  mlir::LogicalResult prepareFragments();
+  mlir::LogicalResult
+  prepareFragments(llvm::function_ref<mlir::LogicalResult()> threadStatuses);
   mlir::LogicalResult planOwnership();
   mlir::LogicalResult planExecutableNodes();
   mlir::LogicalResult resolveEval();
@@ -84,6 +93,10 @@ struct NativePipelineAnalysis {
   llvm::MapVector<mlir::Operation *,
                   std::unique_ptr<SimulationProcessFrameAnalysis>>
       analyses;
+  // Allocated serially in source order. A function worker owns its result
+  // object; the immutable map is shared only for lookup during this phase.
+  llvm::MapVector<mlir::Operation *, std::unique_ptr<NativeFunctionFrameResult>>
+      frameResults;
   // Source-shape certificates captured before state threading/packed lowering.
   // Actor identity and the canonical frame remain owned by analyses above.
   llvm::DenseSet<mlir::Operation *> copyActivations;

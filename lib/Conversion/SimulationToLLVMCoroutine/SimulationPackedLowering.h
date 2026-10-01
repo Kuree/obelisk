@@ -26,7 +26,8 @@ mlir::LogicalResult lowerPackedSimulationOperations(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     const NativeStateLayout &stateLayout, bool enableDirectStaticState,
     const NativeStaticNBAPlan *staticNBAPlan, bool vpiAllowsWrite,
-    bool experimentalTwoState);
+    bool experimentalTwoState,
+    llvm::function_ref<mlir::LogicalResult()> threadStatuses);
 
 } // namespace obelisk::detail
 

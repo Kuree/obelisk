@@ -1,4 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-thread-runtime-statuses)' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-thread-runtime-statuses)' -o %t.threaded
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-thread-runtime-statuses)' --mlir-disable-threading -o %t.serial
+// RUN: diff %t.threaded %t.serial
+
 
 module {
   simulation.design @thread_runtime_statuses {

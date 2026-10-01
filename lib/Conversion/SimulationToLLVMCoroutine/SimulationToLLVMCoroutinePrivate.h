@@ -3,8 +3,8 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "SimulationProcessRuntimeABI.h"
+#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
 
@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -320,8 +321,10 @@ lowerNativeFunctionBody(mlir::Operation *root,
                         NativeCallResultLowering callResultLowering);
 mlir::LogicalResult
 threadProcessStateThroughCFG(obelisk::sim::SimFuncOp function);
-mlir::LogicalResult threadRuntimeStatuses(mlir::ModuleOp module);
-mlir::LogicalResult instrumentManagedRoots(mlir::ModuleOp module);
+mlir::LogicalResult threadRuntimeStatuses(mlir::ModuleOp module,
+                                          mlir::AnalysisManager manager);
+void populateNativeManagedRootToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns);
 void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Operation *scope);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
