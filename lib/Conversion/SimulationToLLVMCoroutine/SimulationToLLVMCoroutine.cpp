@@ -3147,54 +3147,12 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     call.erase();
   }
 
-  // Consume the inductive two-state proof all the way through the canonical
-  // state ABI. Earlier packed lowering normally folds these accesses, but
-  // module-instance wrappers and late inlining can retain raw LLVM plane
-  // operations. The compatibility value/unknown layout remains canonical at
-  // handoffs; proven two-state generated bodies neither read nor write its
-  // unknown plane.
-  auto isUnknownPlaneAddress = [](Value address) {
-    while (address) {
-      if (auto global = address.getDefiningOp<LLVM::AddressOfOp>())
-        return global.getGlobalName() == "__obelisk_state_unknown";
-      if (auto gep = address.getDefiningOp<LLVM::GEPOp>()) {
-        address = gep.getBase();
-        continue;
-      }
-      return false;
-    }
-    return false;
-  };
-  SmallVector<LLVM::LoadOp> unknownLoads;
-  SmallVector<LLVM::StoreOp> unknownStores;
-  module.walk([&](LLVM::LLVMFuncOp function) {
-    bool twoState =
-        ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalFourStateSource>(function) ||
-        ::obelisk::schedule::has<schedule::Field::EvalTwoStateWrapper>(
-            function) ||
-        ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
-    if (!twoState)
-      return;
-    function.walk([&](Operation *operation) {
-      if (auto load = dyn_cast<LLVM::LoadOp>(operation);
-          load && isUnknownPlaneAddress(load.getAddr()))
-        unknownLoads.push_back(load);
-      else if (auto store = dyn_cast<LLVM::StoreOp>(operation);
-               store && isUnknownPlaneAddress(store.getAddr()))
-        unknownStores.push_back(store);
-    });
-  });
-  for (LLVM::LoadOp load : unknownLoads) {
-    builder.setInsertionPoint(load);
-    load.replaceAllUsesWith(
-        LLVM::ZeroOp::create(builder, load.getLoc(), load.getType())
-            .getResult());
-    load.erase();
-  }
-  for (LLVM::StoreOp store : unknownStores)
-    store.erase();
+  // IEEE 1800-2023 6.8, 6.11.2, 9.4.2, 38.34: access-level inductive proofs
+  // were consumed during packed/state lowering.
+  // A selected two-state RHS does not prove that its destination is already
+  // known: the first activation can replace X, and VPI can restore X later.
+  // Retain remaining canonical unknown-plane accesses, including the old
+  // destination used to publish X-to-known transitions and partial writes.
 
   return success();
 }

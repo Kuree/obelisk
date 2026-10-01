@@ -386,11 +386,14 @@ public:
           rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
           "__obelisk_state_value", stateBitCount, directLayout,
           guardedPermission, assumeClean, /*trackChange=*/false, continuous);
-      if (adaptor.getValue().size() == 2 && !twoState)
+      if (containsLogic(valueType) && !twoState)
         (void)storeStatePlane(
             rewriter, op.getLoc(), adaptor.getReference().front(),
-            adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
-            directLayout, guardedPermission, assumeClean,
+            adaptor.getValue().size() == 2
+                ? adaptor.getValue()[1]
+                : llvmConstant(rewriter, op.getLoc(), plane, 0),
+            "__obelisk_state_unknown", stateBitCount, directLayout,
+            guardedPermission, assumeClean,
             /*trackChange=*/false, continuous);
       rewriter.eraseOp(op);
       return success();
@@ -437,15 +440,17 @@ public:
     // value, so the same selects cover both cases without another plane load.
     notificationValue = arith::SelectOp::create(
         rewriter, op.getLoc(), valueChanged, notificationValue, oldValue);
-    if (adaptor.getValue().size() == 2 && !twoState) {
+    if (containsLogic(valueType) && !twoState) {
+      Value storedUnknown = adaptor.getValue().size() == 2
+                                ? adaptor.getValue()[1]
+                                : llvmConstant(rewriter, op.getLoc(), plane, 0);
       Value unknownChanged = storeStatePlane(
-          rewriter, op.getLoc(), adaptor.getReference().front(),
-          adaptor.getValue()[1], "__obelisk_state_unknown", stateBitCount,
-          directLayout, guardedPermission, assumeClean,
+          rewriter, op.getLoc(), adaptor.getReference().front(), storedUnknown,
+          "__obelisk_state_unknown", stateBitCount, directLayout,
+          guardedPermission, assumeClean,
           /*trackChange=*/true, continuous);
-      notificationUnknown =
-          arith::SelectOp::create(rewriter, op.getLoc(), unknownChanged,
-                                  adaptor.getValue()[1], oldUnknown);
+      notificationUnknown = arith::SelectOp::create(
+          rewriter, op.getLoc(), unknownChanged, storedUnknown, oldUnknown);
     }
     // A generic packed store can update only the currently unmasked bits.
     // Reload its canonical result so partial external forces cannot leak the
