@@ -1,6 +1,9 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | \
 // RUN:   mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.threaded
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
+// RUN: diff %t.threaded %t.serial
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

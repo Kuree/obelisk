@@ -3621,19 +3621,12 @@ public:
     // The remaining rewrites only inspect and mutate one function. Run them
     // as a nested pass so MLIR owns scheduling and the single-threaded path
     // uses precisely the same transformation.
-    auto optimizationLevel =
-        module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
-    auto limitAttr =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::MaxInlineOps>(
-            module);
-    uint64_t inlineOperationLimit =
-        limitAttr ? limitAttr.getValue().getZExtValue() : UINT64_C(5000);
-    if (!optimizationLevel || optimizationLevel.getInt() < 2)
-      inlineOperationLimit = 0;
+    if (failed(detail::prepareNativeFunctionFinalizationInputs(
+            module, getAnalysisManager())))
+      return signalPassFailure();
     OpPassManager finalization(ModuleOp::getOperationName());
     finalization.nest<LLVM::LLVMFuncOp>().addPass(
-        detail::createNativeFunctionFinalizationPass(*parsed,
-                                                     inlineOperationLimit));
+        detail::createNativeFunctionFinalizationPass());
     if (failed(runPipeline(finalization, module))) {
       signalPassFailure();
       return;

@@ -4,10 +4,12 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Pass/AnalysisManager.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/Support/Error.h"
 
 using namespace mlir;
 
@@ -21,10 +23,10 @@ namespace {
 // directly. The storage footprint and publication boundaries are unchanged.
 // This preserves the independent per-bit truth tables of IEEE 1800-2023
 // 11.4.8 and full-width equality of 11.4.5, after sizing and X/Z lowering.
-void lowerWideNativeBitwiseIntegers(LLVM::LLVMFuncOp function,
+bool lowerWideNativeBitwiseIntegers(LLVM::LLVMFuncOp function,
                                     const llvm::DataLayout &dataLayout) {
   if (!dataLayout.isLittleEndian())
-    return;
+    return false;
   auto wideType = [](Type type) -> IntegerType {
     auto integer = dyn_cast<IntegerType>(type);
     return integer && integer.getWidth() >= 4096 && integer.getWidth() % 64 == 0
@@ -55,6 +57,7 @@ void lowerWideNativeBitwiseIntegers(LLVM::LLVMFuncOp function,
         seeds.push_back(result);
   });
   DenseSet<Value> visited;
+  bool changed = false;
   for (Value seed : seeds) {
     IntegerType integer = wideType(seed.getType());
     if (!integer || visited.contains(seed))
@@ -88,6 +91,7 @@ void lowerWideNativeBitwiseIntegers(LLVM::LLVMFuncOp function,
     // intact; in particular this transformation cannot change a function ABI.
     if (!eligible)
       continue;
+    changed = true;
     int64_t words = integer.getWidth() / 64;
     auto word = IntegerType::get(function.getContext(), 64);
     auto vector = VectorType::get({words}, word);
@@ -134,16 +138,38 @@ void lowerWideNativeBitwiseIntegers(LLVM::LLVMFuncOp function,
       compare.erase();
     }
   }
+  return changed;
 }
+
+struct NativeFunctionFinalizationInputs {
+  explicit NativeFunctionFinalizationInputs(Operation *operation)
+      : dataLayout("") {
+    auto module = cast<ModuleOp>(operation);
+    auto layout = module->getAttrOfType<StringAttr>("llvm.data_layout");
+    auto parsed = llvm::DataLayout::parse(layout ? layout.getValue() : "");
+    if (!parsed) {
+      module.emitError() << "invalid native finalization data layout: "
+                         << llvm::toString(parsed.takeError());
+      valid = false;
+      return;
+    }
+    dataLayout = std::move(*parsed);
+    auto optimization =
+        module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
+    if (optimization && optimization.getInt() >= 2) {
+      auto limit = schedule::get<schedule::Field::MaxInlineOps>(module);
+      inlineOperationLimit = limit ? limit.getUInt() : UINT64_C(5000);
+    }
+  }
+  llvm::DataLayout dataLayout;
+  uint64_t inlineOperationLimit = 0;
+  bool valid = true;
+};
 
 struct NativeFunctionFinalizationPass
     : PassWrapper<NativeFunctionFinalizationPass,
                   OperationPass<LLVM::LLVMFuncOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NativeFunctionFinalizationPass)
-
-  NativeFunctionFinalizationPass(const llvm::DataLayout &dataLayout,
-                                 uint64_t inlineOperationLimit)
-      : dataLayout(dataLayout), inlineOperationLimit(inlineOperationLimit) {}
 
   StringRef getArgument() const final {
     return "obelisk-native-finalize-function";
@@ -154,9 +180,20 @@ struct NativeFunctionFinalizationPass
 
   void runOnOperation() override {
     auto function = getOperation();
-    if (function.isExternal())
+    if (function.isExternal()) {
+      markAllAnalysesPreserved();
       return;
-    lowerWideNativeBitwiseIntegers(function, dataLayout);
+    }
+    auto inputs = getCachedParentAnalysis<NativeFunctionFinalizationInputs>(
+        function->getParentOfType<ModuleOp>());
+    if (!inputs || !inputs->get().valid) {
+      function.emitError("native finalization requires cached target inputs");
+      return signalPassFailure();
+    }
+    const auto &configuration = inputs->get();
+    uint64_t inlineOperationLimit = configuration.inlineOperationLimit;
+    bool changed =
+        lowerWideNativeBitwiseIntegers(function, configuration.dataLayout);
     // Keep the generated eval loop's hottest call boundaries on an I-cache
     // line regardless of unrelated runtime/string table growth. These bodies
     // are deliberately retained as calls by the large-function policy below;
@@ -174,9 +211,11 @@ struct NativeFunctionFinalizationPass
       else if (::obelisk::schedule::has<
                    ::obelisk::schedule::Field::EvalCallClosureRoot>(function))
         alignment = 64;
-      if (alignment)
-        function.setAlignmentAttr(
-            alignmentBuilder.getI64IntegerAttr(alignment));
+      if (alignment) {
+        auto desired = alignmentBuilder.getI64IntegerAttr(alignment);
+        changed |= function.getAlignmentAttr() != desired;
+        function.setAlignmentAttr(desired);
+      }
     }
 
     // ThinLTO may otherwise import a mechanically expanded helper into many
@@ -191,8 +230,13 @@ struct NativeFunctionFinalizationPass
         return operations > inlineOperationLimit ? WalkResult::interrupt()
                                                  : WalkResult::advance();
       });
-      if (operations <= inlineOperationLimit)
+      if (operations <= inlineOperationLimit) {
+        if (!changed)
+          markAllAnalysesPreserved();
         return;
+      }
+      changed |= function.getAlwaysInline() || function.getInlineHint() ||
+                 !function.getNoInline();
       function.setAlwaysInline(false);
       function.setInlineHint(false);
       function.setNoInline(true);
@@ -209,24 +253,28 @@ struct NativeFunctionFinalizationPass
           retained.push_back(attribute);
         }
       }
-      if (retained.empty())
+      auto passthrough = retained.empty()
+                             ? ArrayAttr{}
+                             : ArrayAttr::get(function.getContext(), retained);
+      changed |= function.getPassthroughAttr() != passthrough;
+      if (!passthrough)
         function->removeAttr("passthrough");
       else
-        function.setPassthroughAttr(
-            ArrayAttr::get(function.getContext(), retained));
+        function.setPassthroughAttr(passthrough);
     }
+    if (!changed)
+      markAllAnalysesPreserved();
   }
-
-  llvm::DataLayout dataLayout;
-  uint64_t inlineOperationLimit;
 };
 } // namespace
 
-std::unique_ptr<Pass>
-createNativeFunctionFinalizationPass(const llvm::DataLayout &dataLayout,
-                                     uint64_t inlineOperationLimit) {
-  return std::make_unique<NativeFunctionFinalizationPass>(dataLayout,
-                                                          inlineOperationLimit);
+LogicalResult prepareNativeFunctionFinalizationInputs(ModuleOp module,
+                                                      AnalysisManager manager) {
+  return success(manager.getAnalysis<NativeFunctionFinalizationInputs>().valid);
+}
+
+std::unique_ptr<Pass> createNativeFunctionFinalizationPass() {
+  return std::make_unique<NativeFunctionFinalizationPass>();
 }
 
 } // namespace obelisk::detail
