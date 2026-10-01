@@ -2,6 +2,7 @@
 
 // Overlapping packed views must share one reaching definition. Preserve the
 // X bits that no statement writes; no independent-slot SROA is valid here.
+!mixed = !simulation.packed_union<fields = [#simulation.field<name = "four", type = !simulation.logic<16>, ordinal = 0, packedOffset = 0>, #simulation.field<name = "two", type = i16, ordinal = 1, packedOffset = 0>], isTagged = false>
 module {
   simulation.design @locals {
     simulation.scope.decl 0
@@ -10,6 +11,7 @@ module {
     simulation.code_unit.decl 3 in 0 function hierarchy "escape"
     simulation.code_unit.decl 4 in 0 function hierarchy "packed"
     simulation.code_unit.decl 5 in 0 function hierarchy "reentry"
+    simulation.code_unit.decl 6 in 0 function hierarchy "nested_union"
     // CHECK-LABEL: simulation.func @overlap
     // CHECK-NOT: simulation.ref.
     // CHECK: %[[VALUE:.*]] = simulation.logic.constant 47 : i16, -4096 : i16
@@ -83,12 +85,13 @@ module {
       simulation.return %result : !simulation.logic<16>
     }
 
-    // A cyclic allocation's initializer belongs to EACH execution. A partial
-    // store does not replace a full initializer; retain the mem2reg guard.
+    // LRM 6.21: canonicalization makes each cyclic allocation's initializer
+    // explicit, so promotion preserves X in the bits outside the partial store.
     // CHECK-LABEL: simulation.func @reentry
-    // CHECK: simulation.ref.alloc
-    // CHECK: simulation.ref.extract
-    // CHECK: simulation.ref.store
+    // CHECK-NOT: simulation.ref.
+    // CHECK: %[[RESET:.*]] = simulation.logic.constant 0 : i16, -1 : i16
+    // CHECK: %[[RESET_VALUE:.*]] = simulation.logic.insert %arg2 into %[[RESET]] at 4
+    // CHECK: simulation.return %[[RESET_VALUE]]
     simulation.func @reentry(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %again: i1 {simulation.capture_kind = 2 : i32}, %part: !simulation.logic<8> {simulation.capture_kind = 2 : i32}) -> !simulation.logic<16> attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
       cf.br ^loop
     ^loop:
@@ -100,6 +103,27 @@ module {
       cf.cond_br %again, ^loop, ^done
     ^done:
       simulation.return %value : !simulation.logic<16>
+    }
+
+    // LRM 6.11.2, 7.3.1, 11.5.1: a union nested in a packed view still
+    // shares one backing value. Convert X/Z only for its two-state read;
+    // a partial write preserves every bit outside that selection.
+    // CHECK-LABEL: simulation.func @nested_union
+    // CHECK-NOT: simulation.ref.
+    // CHECK: simulation.logic.extract {{.*}} from 4
+    // CHECK: simulation.logic.to_bits
+    // CHECK: simulation.logic.from_bits
+    // CHECK: simulation.logic.insert {{.*}} at 8
+    // CHECK: simulation.return
+    simulation.func @nested_union(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %initial: !simulation.logic<24> {simulation.capture_kind = 2 : i32}, %part: i8 {simulation.capture_kind = 2 : i32}) -> (!simulation.logic<24>, i16) attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
+      %local = simulation.ref.alloc %initial : !simulation.logic<24> -> !simulation.ref<!simulation.logic<24>>
+      %union = simulation.ref.extract %local from 4 : !simulation.ref<!simulation.logic<24>> -> !simulation.ref<!mixed>
+      %two = simulation.ref.subelement %union[[1]] : !simulation.ref<!mixed> -> !simulation.ref<i16>
+      %previous = simulation.ref.load %two : !simulation.ref<i16> -> i16
+      %low = simulation.ref.extract %two from 4 : !simulation.ref<i16> -> !simulation.ref<i8>
+      simulation.ref.store %part to %low : i8, !simulation.ref<i8>
+      %result = simulation.ref.load %local : !simulation.ref<!simulation.logic<24>> -> !simulation.logic<24>
+      simulation.return %result, %previous : !simulation.logic<24>, i16
     }
   }
 }

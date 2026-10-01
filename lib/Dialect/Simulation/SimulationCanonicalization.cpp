@@ -1488,27 +1488,251 @@ struct ConstantDynamicInsert final : OpRewritePattern<DynamicOp> {
   }
 };
 
-// Expose fixed packed-local accesses to ordinary mem2reg. A sliced reference
-// otherwise keeps an entire automatic allocation alive even when no reference
-// escapes the function. Preserve whole-value dependencies for overlapping
-// slices; destructuring them into independent slots would be unsound.
-struct PromotePackedLocalView final : OpRewritePattern<SimRefExtractOp> {
+// An inlined automatic local can be allocated on a loop backedge. Mem2reg's
+// allocation definition alone does not reset it on each entry (LRM 6.21).
+// Make that initialization explicit before exposing its value selections.
+struct ExplicitReenteredLocalInitialization final
+    : OpRewritePattern<SimRefAllocOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(SimRefAllocOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!getProvenanceSpan(op.getResult().getType().getElementType()) ||
+        !op.getPromotableSlots().empty())
+      return failure();
+    Block *block = op->getBlock();
+    if (!llvm::any_of(block->getPredecessors(), [&](Block *predecessor) {
+          return block->isReachable(predecessor);
+        }))
+      return failure();
+    rewriter.setInsertionPointAfter(op);
+    SimRefStoreOp::create(rewriter, op.getLoc(), op.getInitialValue(),
+                          op.getResult());
+    return success();
+  }
+};
+
+struct PackedLocalSubelement final : OpRewritePattern<SimRefSubelementOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(SimRefExtractOp op,
+  LogicalResult matchAndRewrite(SimRefSubelementOp op,
                                 PatternRewriter &rewriter) const override {
-    auto allocation = op.getInput().getDefiningOp<SimRefAllocOp>();
+    // LRM 6.21, 7.3.1, 11.5.1: an enclosing packed slice can still belong
+    // to the same private automatic cell. Expose its nested member selection
+    // so the adjacent range-preserving view fold can compose the offsets.
+    Value root = op.getInput();
+    for (;;) {
+      if (auto view = root.getDefiningOp<SimRefExtractOp>())
+        root = view.getInput();
+      else
+        break;
+    }
+    auto allocation = root.getDefiningOp<SimRefAllocOp>();
+    if (!allocation || allocation.getPromotableSlots().empty())
+      return failure();
+    Type type = op.getInput().getType().getElementType();
+    if (!getPackedWidth(type))
+      return failure();
+    uint64_t low = 0;
+    for (int64_t index : op.getIndices()) {
+      // Tagged member access must retain its active-member check (LRM 7.3.2).
+      if (auto packed = dyn_cast<PackedUnionType>(type);
+          packed && packed.getIsTagged())
+        return failure();
+      if (index < 0 || uint64_t(index) > UINT_MAX)
+        return failure();
+      auto child = getAggregateProvenanceSubelement(type, index);
+      if (!child || child->first > UINT64_MAX - low)
+        return failure();
+      low += child->first;
+      type = getAggregateElementType(type, index);
+    }
+    rewriter.replaceOpWithNewOp<SimRefExtractOp>(op, op.getResult().getType(),
+                                                 op.getInput(), low);
+    return success();
+  }
+};
+
+// IEEE 1800-2023 6.21, 7.4.5, 11.5.1: a nonescaping automatic array can
+// use whole-value SSA updates. Preserve declared-range index validity and
+// rebuild enclosing selections so aliases and overlapping writes still agree.
+template <typename View>
+struct PromoteLocalArrayView final : OpRewritePattern<View> {
+  using OpRewritePattern<View>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(View op,
+                                PatternRewriter &rewriter) const override {
+    auto allocation = op.getInput().template getDefiningOp<SimRefAllocOp>();
+    if (!allocation || allocation.getPromotableSlots().empty())
+      return failure();
+    Type rootType = allocation.getResult().getType().getElementType();
+    if (!getProvenanceSpan(rootType))
+      return failure();
+    SmallVector<Value> pending{allocation.getResult()};
+    llvm::SmallDenseSet<Value, 8> visited;
+    while (!pending.empty()) {
+      Value reference = pending.pop_back_val();
+      if (!visited.insert(reference).second)
+        continue;
+      for (Operation *user : reference.getUsers()) {
+        if (user->getParentOp() != allocation->getParentOp())
+          return failure();
+        if (isa<SimRefArrayElementOp, SimRefSubelementOp>(user)) {
+          if (auto field = dyn_cast<SimRefSubelementOp>(user)) {
+            Type type = field.getInput().getType().getElementType();
+            for (int64_t index : field.getIndices()) {
+              Type child = getAggregateElementType(type, index);
+              // Hard packed union members cover the same bits (LRM 7.3.1).
+              // Other union layouts need their own preservation rules.
+              if (isa<UnpackedUnionType>(type))
+                return failure();
+              if (auto packed = dyn_cast<PackedUnionType>(type);
+                  packed && (packed.getIsTagged() ||
+                             getPackedWidth(type) != getPackedWidth(child)))
+                return failure();
+              type = child;
+            }
+          }
+          pending.push_back(user->getResult(0));
+          continue;
+        }
+        if (auto load = dyn_cast<SimRefLoadOp>(user);
+            load && load.getReference() == reference)
+          continue;
+        if (auto store = dyn_cast<SimRefStoreOp>(user);
+            store && store.getReference() == reference)
+          continue;
+        return failure();
+      }
+    }
+    SmallVector<Operation *> accesses;
+    SmallVector<Operation *> selectedViews;
+    // All views must become value selections together: keeping constant views
+    // beside whole-array updates prevents alias-safe promotion (LRM 7.4.5).
+    pending.assign(1, allocation.getResult());
+    visited.clear();
+    while (!pending.empty()) {
+      Value reference = pending.pop_back_val();
+      if (!visited.insert(reference).second)
+        continue;
+      for (Operation *user : reference.getUsers())
+        if (isa<SimRefArrayElementOp, SimRefSubelementOp>(user)) {
+          pending.push_back(user->getResult(0));
+          selectedViews.push_back(user);
+        } else
+          accesses.push_back(user);
+    }
+    if (accesses.empty())
+      return failure();
+    for (Operation *access : accesses) {
+      Value reference = access->getOperand(isa<SimRefStoreOp>(access) ? 1 : 0);
+      SmallVector<Operation *> path;
+      while (reference != allocation.getResult()) {
+        Operation *view = reference.getDefiningOp();
+        path.push_back(view);
+        reference = view->getOperand(0);
+      }
+      if (path.empty())
+        continue;
+      std::reverse(path.begin(), path.end());
+      rewriter.setInsertionPoint(access);
+      Value selected = SimRefLoadOp::create(rewriter, access->getLoc(),
+                                            rootType, allocation.getResult());
+      struct Selection {
+        Value parent;
+        Value index;
+        int64_t ordinal = -1;
+        bool unionMember = false;
+      };
+      SmallVector<Selection> selections;
+      for (Operation *view : path) {
+        if (auto array = dyn_cast<SimRefArrayElementOp>(view)) {
+          selections.push_back({selected, array.getIndex()});
+          selected = SimArrayDynExtractOp::create(
+              rewriter, access->getLoc(),
+              array.getResult().getType().getElementType(), selected,
+              array.getIndex());
+        } else {
+          auto field = cast<SimRefSubelementOp>(view);
+          for (int64_t index : field.getIndices()) {
+            bool unionMember = isa<PackedUnionType>(selected.getType());
+            selections.push_back({selected, {}, index, unionMember});
+            selected =
+                unionMember
+                    ? SimUnionExtractOp::create(
+                          rewriter, access->getLoc(),
+                          getAggregateElementType(selected.getType(), index),
+                          selected, index)
+                          .getResult()
+                    : SimAggregateExtractOp::create(
+                          rewriter, access->getLoc(),
+                          getAggregateElementType(selected.getType(), index),
+                          selected, index)
+                          .getResult();
+          }
+        }
+      }
+      if (auto load = dyn_cast<SimRefLoadOp>(access)) {
+        rewriter.replaceOp(load, selected);
+        continue;
+      }
+      auto store = cast<SimRefStoreOp>(access);
+      selected = store.getValue();
+      for (const Selection &selection : llvm::reverse(selections))
+        if (selection.index)
+          selected = SimArrayDynInsertOp::create(
+              rewriter, store.getLoc(), selection.parent.getType(),
+              selection.parent, selected, selection.index);
+        else if (selection.unionMember)
+          selected = SimUnionConstructOp::create(rewriter, store.getLoc(),
+                                                 selection.parent.getType(),
+                                                 selected, selection.ordinal);
+        else
+          selected = SimAggregateInsertOp::create(
+              rewriter, store.getLoc(), selection.parent.getType(),
+              selection.parent, selected, selection.ordinal);
+      auto replacement = SimRefStoreOp::create(
+          rewriter, store.getLoc(), selected, allocation.getResult());
+      replacement->setAttrs(store->getAttrs());
+      rewriter.eraseOp(store);
+    }
+    for (Operation *view : llvm::reverse(selectedViews))
+      if (view->use_empty())
+        rewriter.eraseOp(view);
+    return success();
+  }
+};
+
+// Expose packed-local accesses to ordinary mem2reg. A sliced reference
+// otherwise keeps an entire automatic allocation alive even when no reference
+// escapes the function (IEEE 1800-2023 6.21). Preserve whole-value dependencies
+// for overlapping slices and invalid indices (11.5.1); destructuring them into
+// independent slots would be unsound.
+template <typename View>
+struct PromotePackedLocalView final : OpRewritePattern<View> {
+  using OpRewritePattern<View>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(View op,
+                                PatternRewriter &rewriter) const override {
+    auto allocation = op.getInput().template getDefiningOp<SimRefAllocOp>();
     if (!allocation || allocation.getPromotableSlots().empty())
       return failure();
     Type rootType = allocation.getResult().getType().getElementType();
     Type partType = op.getResult().getType().getElementType();
-    auto rootScalar =
-        dyn_cast_or_null<LogicType>(getPackedScalarType(rootType));
-    auto partScalar =
-        dyn_cast_or_null<LogicType>(getPackedScalarType(partType));
-    if (!rootScalar || !partScalar || op.getLowBit() > rootScalar.getWidth() ||
-        partScalar.getWidth() > rootScalar.getWidth() - op.getLowBit())
+    Type rootScalar = getPackedScalarType(rootType);
+    Type partScalar = getPackedScalarType(partType);
+    auto rootWidth = getPackedWidth(rootType);
+    auto partWidth = getPackedWidth(partType);
+    if (!rootScalar || !partScalar || !rootWidth || !partWidth)
       return failure();
+    Type planePartScalar = partScalar;
+    if (isa<LogicType>(rootScalar) && isa<IntegerType>(partScalar))
+      planePartScalar = LogicType::get(op.getContext(), *partWidth);
+    else if (isa<LogicType>(rootScalar) != isa<LogicType>(partScalar))
+      return failure();
+    if constexpr (std::is_same_v<View, SimRefExtractOp>)
+      if (op.getLowBit() > *rootWidth ||
+          *partWidth > *rootWidth - op.getLowBit())
+        return failure();
     // No NBA, event control, ref argument, spawn, return, force or other
     // reference escape may observe these read/modify/write intermediates.
     SmallVector<Value> pending{allocation.getResult()};
@@ -1520,8 +1744,8 @@ struct PromotePackedLocalView final : OpRewritePattern<SimRefExtractOp> {
       for (Operation *user : reference.getUsers()) {
         if (user->getParentOp() != allocation->getParentOp())
           return failure();
-        if (auto view = dyn_cast<SimRefExtractOp>(user)) {
-          pending.push_back(view.getResult());
+        if (isa<SimRefExtractOp, SimRefDynExtractOp>(user)) {
+          pending.push_back(user->getResult(0));
           continue;
         }
         if (auto load = dyn_cast<SimRefLoadOp>(user)) {
@@ -1548,8 +1772,35 @@ struct PromotePackedLocalView final : OpRewritePattern<SimRefExtractOp> {
         current = SimPackedFlattenOp::create(rewriter, user->getLoc(),
                                              rootScalar, current);
       if (auto load = dyn_cast<SimRefLoadOp>(user)) {
-        Value part = SimLogicExtractOp::create(
-            rewriter, load.getLoc(), partScalar, current, op.getLowBitAttr());
+        Value part;
+        if constexpr (std::is_same_v<View, SimRefExtractOp>) {
+          // Fixed two-state views are canonicalized with bits.dyn_extract,
+          // whose normalized constant index folds to the equivalent slice.
+          if (isa<IntegerType>(rootScalar)) {
+            Value low = arith::ConstantIntOp::create(rewriter, load.getLoc(),
+                                                     op.getLowBit(), 64);
+            part = SimBitsDynExtractOp::create(rewriter, load.getLoc(),
+                                               planePartScalar, current, low);
+          } else
+            part = SimLogicExtractOp::create(rewriter, load.getLoc(),
+                                             planePartScalar, current,
+                                             op.getLowBitAttr());
+        } else {
+          if (isa<IntegerType>(rootScalar))
+            part = SimBitsDynExtractOp::create(rewriter, load.getLoc(),
+                                               planePartScalar, current,
+                                               op.getLowBit());
+          else
+            part = SimLogicDynExtractOp::create(rewriter, load.getLoc(),
+                                                planePartScalar, current,
+                                                op.getLowBit());
+        }
+        // LRM 6.11.2, 7.3.1: a mixed packed union stores four-state bits.
+        // Reading a two-state member converts X/Z to zero; writing that
+        // member inserts known bits while preserving the other union bits.
+        if (planePartScalar != partScalar)
+          part = SimLogicToBitsOp::create(rewriter, load.getLoc(), partScalar,
+                                          part);
         if (partType != partScalar)
           part = SimPackedUnflattenOp::create(rewriter, load.getLoc(), partType,
                                               part);
@@ -1560,9 +1811,29 @@ struct PromotePackedLocalView final : OpRewritePattern<SimRefExtractOp> {
         if (partType != partScalar)
           part = SimPackedFlattenOp::create(rewriter, store.getLoc(),
                                             partScalar, part);
-        Value merged =
-            SimLogicInsertOp::create(rewriter, store.getLoc(), rootScalar,
-                                     current, part, op.getLowBitAttr());
+        if (planePartScalar != partScalar)
+          part = SimLogicFromBitsOp::create(rewriter, store.getLoc(),
+                                            planePartScalar, part);
+        Value merged;
+        Value low;
+        if constexpr (std::is_same_v<View, SimRefExtractOp>) {
+          if (isa<LogicType>(rootScalar))
+            merged =
+                SimLogicInsertOp::create(rewriter, store.getLoc(), rootScalar,
+                                         current, part, op.getLowBitAttr());
+          else
+            low = arith::ConstantIntOp::create(rewriter, store.getLoc(),
+                                               op.getLowBit(), 64);
+        } else
+          low = op.getLowBit();
+        if (!merged) {
+          if (isa<IntegerType>(rootScalar))
+            merged = SimBitsDynInsertOp::create(rewriter, store.getLoc(),
+                                                rootScalar, current, part, low);
+          else
+            merged = SimLogicDynInsertOp::create(
+                rewriter, store.getLoc(), rootScalar, current, part, low);
+        }
         if (rootType != rootScalar)
           merged = SimPackedUnflattenOp::create(rewriter, store.getLoc(),
                                                 rootType, merged);
@@ -1647,6 +1918,10 @@ struct SimplifyAggregateExtract final
       return success();
     }
     if (auto load = op.getInput().getDefiningOp<SimRefLoadOp>()) {
+      // Preserve the whole automatic value for mem2reg (LRM 6.21, 7.4.5).
+      if (auto allocation = load.getReference().getDefiningOp<SimRefAllocOp>();
+          allocation && !allocation.getPromotableSlots().empty())
+        return failure();
       Value replacement;
       {
         OpBuilder::InsertionGuard guard(rewriter);
@@ -2022,6 +2297,11 @@ struct DynamicArrayExtractThroughReference final
     auto load = op.getInput().getDefiningOp<SimRefLoadOp>();
     if (!load)
       return failure();
+    // Keep automatic values exposed to mem2reg (LRM 6.21, 7.4.5).
+    // Reintroducing a reference here would undo PromoteLocalArrayView.
+    if (auto allocation = load.getReference().getDefiningOp<SimRefAllocOp>();
+        allocation && !allocation.getPromotableSlots().empty())
+      return failure();
     // The index is usually computed after the wide load, so the narrow read is
     // built here rather than in the load's place. Sinking a read past other
     // reads is fine; anything that may write could make it observe a newer
@@ -2228,13 +2508,21 @@ void SimUnionExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimRefSubelementOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                      MLIRContext *context) {
-  results.add<FlattenSubelementPath<SimRefSubelementOp>>(context);
+  results.add<FlattenSubelementPath<SimRefSubelementOp>, PackedLocalSubelement>(
+      context);
+  results.add<PromoteLocalArrayView<SimRefSubelementOp>>(context);
+}
+
+void SimRefAllocOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                MLIRContext *context) {
+  results.add<ExplicitReenteredLocalInitialization>(context);
 }
 
 void SimRefArrayElementOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<ConstantArrayView<SimRefArrayElementOp, SimRefSubelementOp>>(
       context);
+  results.add<PromoteLocalArrayView<SimRefArrayElementOp>>(context);
 }
 
 void SimDriverSubelementOp::getCanonicalizationPatterns(
@@ -2315,8 +2603,8 @@ void SimLogicInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimRefExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
-  results.add<SimplifyStaticExtract<SimRefExtractOp>, PromotePackedLocalView>(
-      context);
+  results.add<SimplifyStaticExtract<SimRefExtractOp>,
+              PromotePackedLocalView<SimRefExtractOp>>(context);
 }
 
 void SimNetExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -2328,6 +2616,7 @@ void SimRefDynExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                      MLIRContext *context) {
   results.add<ConstantDynamicExtract<SimRefDynExtractOp, SimRefExtractOp>>(
       context);
+  results.add<PromotePackedLocalView<SimRefDynExtractOp>>(context);
 }
 
 void SimDriverExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,

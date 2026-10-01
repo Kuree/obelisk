@@ -3918,6 +3918,7 @@ def SimRefAllocOp : SimOp<"ref.alloc", [
   let results = (outs Res<SimRefType, "", [MemAlloc<SimStorageResource>]>:$result);
   let assemblyFormat = "$initial_value attr-dict `:` type($initial_value) `->` qualified(type($result))";
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimRefReleaseOwnerOp : SimOp<"ref.release_owner"> {

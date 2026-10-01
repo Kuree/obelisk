@@ -361,6 +361,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   designManager.addPass(createObeliskSimInlinePass(std::move(inlineOptions)));
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
+    // IEEE 1800-2023 6.21: inlining removes local-reference escapes without
+    // changing automatic initialization or lifetime. Expose whole-value
+    // updates before promoting newly private cells (7.4.6, 11.5.1).
+    functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createSROA());
     functionManager.addPass(createMem2Reg());
     functionManager.addPass(createCanonicalizerPass());

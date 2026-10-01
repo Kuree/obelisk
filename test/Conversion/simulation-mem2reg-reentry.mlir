@@ -1,5 +1,19 @@
 // RUN: obelisk-opt %s --mem2reg | FileCheck %s --check-prefix=UNSAFE
 // RUN: obelisk-opt %s --mem2reg | FileCheck %s --check-prefix=RESET
+// RUN: obelisk-opt %s --canonicalize --mem2reg | FileCheck %s --check-prefix=INIT
+
+// LRM 6.21: canonicalization exposes automatic initialization on every entry,
+// so promotion cannot accidentally retain a prior activation's value.
+// INIT-LABEL: simulation.func @unsafe_reentry
+// INIT-NOT: simulation.ref.alloc
+// INIT-NOT: simulation.ref.load
+// INIT-NOT: simulation.ref.store
+// INIT: simulation.suspend.change %arg1
+// INIT-LABEL: simulation.func @reinitialized_loop
+// INIT-NOT: simulation.ref.alloc
+// INIT-NOT: simulation.ref.load
+// INIT-NOT: simulation.ref.store
+// INIT: simulation.suspend.change %arg1
 
 module {
   simulation.design @design {

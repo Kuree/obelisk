@@ -181,7 +181,7 @@ module {
 
     // CHECK-LABEL: simulation.func @array_65
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 64 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 64 x i8>>
-    // CHECK: simulation.ref.subelement
+    // CHECK: simulation.aggregate.extract
     simulation.func @array_65(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8
         attributes {entry_kind = 8 : i32, code_unit_id = 9000007 : i64} {
@@ -194,7 +194,7 @@ module {
 
     // CHECK-LABEL: simulation.func @dynamic_blocks_array
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 63 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 63 x i8>>
-    // CHECK: simulation.ref.array_element
+    // CHECK: simulation.array.extract_dynamic
     simulation.func @dynamic_blocks_array(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -207,12 +207,12 @@ module {
     }
 
     // A pure dynamic read of a loaded value also blocks that array's SROA.
-    // Canonicalization turns the read into the reference form, so this matches
-    // @dynamic_ref_blocks_array above; the array still must not be destructured.
+    // Canonicalization keeps the automatic value exposed to later mem2reg
+    // (LRM 6.21, 7.4.5); SROA cannot destructure the dynamic selection.
     // CHECK-LABEL: simulation.func @dynamic_value_blocks_array
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 63 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 63 x i8>>
-    // CHECK: %[[ELEMENT:.*]] = simulation.ref.array_element
-    // CHECK: simulation.ref.load %[[ELEMENT]]
+    // CHECK: %[[WHOLE:.*]] = simulation.ref.load
+    // CHECK: simulation.array.extract_dynamic %[[WHOLE]]
     simulation.func @dynamic_value_blocks_array(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -224,11 +224,12 @@ module {
       simulation.return %element : i8
     }
 
-    // The dynamic value read retains only the nested array, not its container.
+    // The whole value read allows the small container to scalarize while
+    // preserving the dynamic value selection (LRM 7.4.5).
     // CHECK-LABEL: simulation.func @dynamic_value_safe_enclosing
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
-    // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 63 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 63 x i8>>
-    // CHECK: simulation.ref.array_element
+    // CHECK: simulation.ref.alloc {{.*}} : i8 -> !simulation.ref<i8>
+    // CHECK: simulation.array.extract_dynamic
     simulation.func @dynamic_value_safe_enclosing(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -246,7 +247,7 @@ module {
     // CHECK-LABEL: simulation.func @safe_enclosing_dynamic
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 64 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 64 x i8>>
-    // CHECK: simulation.ref.array_element
+    // CHECK: simulation.array.extract_dynamic
     simulation.func @safe_enclosing_dynamic(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -264,7 +265,7 @@ module {
     // CHECK-LABEL: simulation.func @safe_enclosing_packed_extract
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.packed_array<3 : 0 x i8> -> !simulation.ref<!simulation.packed_array<3 : 0 x i8>>
-    // CHECK: simulation.ref.extract
+    // CHECK: simulation.bits.dyn_extract
     simulation.func @safe_enclosing_packed_extract(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8
         attributes {entry_kind = 8 : i32, code_unit_id = 9000012 : i64} {
@@ -279,7 +280,7 @@ module {
     // CHECK-LABEL: simulation.func @safe_enclosing_packed_dynamic
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.packed_array<3 : 0 x i8> -> !simulation.ref<!simulation.packed_array<3 : 0 x i8>>
-    // CHECK: simulation.ref.dyn_extract
+    // CHECK: simulation.bits.dyn_extract
     simulation.func @safe_enclosing_packed_dynamic(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -324,8 +325,10 @@ module {
 
     // Packed unions use the same guarded unique-field scalarization.
     // CHECK-LABEL: simulation.func @packed_union_unique
-    // CHECK-NOT: !simulation.ref<!simulation.packed_union
-    // CHECK: simulation.ref.alloc %arg1 : i8 -> !simulation.ref<i8>
+    // CHECK: simulation.ref.alloc {{.*}} : !simulation.packed_union
+    // CHECK: simulation.packed.unflatten %arg1
+    // CHECK: simulation.ref.store
+    // CHECK: simulation.packed.flatten
     simulation.func @packed_union_unique(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %value: i8 {simulation.capture_kind = 2 : i32}) -> i8
