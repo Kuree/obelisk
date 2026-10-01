@@ -1,6 +1,8 @@
 //===- MaterializeComputeFusion.cpp - Fuse static process bodies ----------===//
 
 #include "ComputeFusion.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -70,12 +72,21 @@ struct FusionInputIndex {
     for (Operation &operation : design.getBody().front()) {
       if (auto keepalive = dyn_cast<sim::SimCoverageKeepaliveOp>(operation))
         keepalives[keepalive.getFunctionAttr().getAttr()].push_back(keepalive);
-      if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+      if (auto function = dyn_cast<sim::SimFuncOp>(operation)) {
         if (auto body =
                 ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
                     function))
           sourceCodeUnits.try_emplace(body.getAttr(),
                                       function.getCodeUnitIdAttr());
+        if (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::OutlinedPrimitiveMember>(function))
+          if (auto fingerprint = ::obelisk::schedule::get<
+                  ::obelisk::schedule::Field::OutlinedPrimitiveFingerprint>(
+                  function))
+            primitiveHelpers.try_emplace(
+                std::make_pair(fingerprint, function.getFunctionType()),
+                function);
+      }
     }
   }
 
@@ -95,6 +106,8 @@ struct FusionInputIndex {
   DenseMap<StringAttr, SmallVector<uint32_t>> fragments;
   DenseMap<uint32_t, SmallVector<schedule::ComputeEdgeAttr>> outgoingEdges;
   DenseMap<StringAttr, IntegerAttr> sourceCodeUnits;
+  DenseMap<std::pair<StringAttr, FunctionType>, sim::SimFuncOp>
+      primitiveHelpers;
   DenseMap<StringAttr, SmallVector<sim::SimCoverageKeepaliveOp>> keepalives;
 };
 
@@ -732,52 +745,16 @@ bool hasOnlyPureEntryPreamble(sim::SimFuncOp function, Block *wait) {
 // predecessor) and require the same SSA root. Cycles of forwarding arguments
 // are harmless; arithmetic updates, reloads and unresolved operands are not.
 bool hasInvariantWaitArguments(BodyFusionCandidate &candidate) {
-  Block &entry = candidate.function.getBody().front();
   if (candidate.body->getNumArguments() != 0 &&
       llvm::any_of(candidate.body->getPredecessors(), [&](Block *predecessor) {
         return predecessor != candidate.wait;
       }))
     return false;
+  analysis::SemanticValueRootAnalysis roots(candidate.function);
   for (auto [argument, initial] : llvm::zip_equal(
-           candidate.wait->getArguments(), candidate.threadedEntryValues)) {
-    SmallVector<Value> pending{argument};
-    llvm::SmallDenseSet<Value, 16> visited;
-    bool reachedInitial = false;
-    while (!pending.empty()) {
-      Value value = pending.pop_back_val();
-      if (value == initial) {
-        reachedInitial = true;
-        continue;
-      }
-      if (!visited.insert(value).second)
-        continue;
-      auto forwarded = dyn_cast<BlockArgument>(value);
-      if (!forwarded || forwarded.getOwner() == &entry)
-        return false;
-      Block *block = forwarded.getOwner();
-      if (block->hasNoPredecessors())
-        return false;
-      llvm::SmallPtrSet<Block *, 8> predecessors;
-      for (Block *predecessor : block->getPredecessors()) {
-        if (!predecessors.insert(predecessor).second)
-          continue;
-        auto branch = dyn_cast<BranchOpInterface>(predecessor->getTerminator());
-        if (!branch)
-          return false;
-        for (unsigned index = 0; index < branch->getNumSuccessors(); ++index) {
-          if (branch->getSuccessor(index) != block)
-            continue;
-          SuccessorOperands operands = branch.getSuccessorOperands(index);
-          unsigned lane = forwarded.getArgNumber();
-          if (lane >= operands.size() || operands.isOperandProduced(lane))
-            return false;
-          pending.push_back(operands[lane]);
-        }
-      }
-    }
-    if (!reachedInitial)
+           candidate.wait->getArguments(), candidate.threadedEntryValues))
+    if (roots.lookup(argument) != roots.lookup(initial))
       return false;
-  }
   return true;
 }
 
@@ -1250,35 +1227,13 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
   });
 
   DominanceInfo dominance(function);
-  auto staysInActivation = [](sim::SimRefStoreOp store,
-                              sim::SimRefLoadOp load) {
-    // Follow every incoming path back to its defining store. Dominance alone
-    // permits a wait between store and load, during which another invocation
-    // of this same actor/task could overwrite the shared static root.
-    SmallVector<std::pair<Block *, Operation *>> worklist{
-        {load->getBlock(), load->getPrevNode()}};
-    llvm::SmallPtrSet<Block *, 8> visitedPredecessors;
-    while (!worklist.empty()) {
-      auto [block, cursor] = worklist.pop_back_val();
-      bool defined = false;
-      for (; cursor; cursor = cursor->getPrevNode()) {
-        if (cursor == store.getOperation()) {
-          defined = true;
-          break;
-        }
-        if (isTypedSuspend(cursor))
-          return false;
-      }
-      if (defined)
-        continue;
-      if (block->hasNoPredecessors())
-        return false;
-      for (Block *predecessor : block->getPredecessors())
-        if (visitedPredecessors.insert(predecessor).second)
-          worklist.emplace_back(predecessor, predecessor->getTerminator());
-    }
-    return true;
-  };
+  SmallVector<Operation *> definitions;
+  for (auto &[descriptor, rootStores] : stores)
+    if (rootStores.size() == 1)
+      definitions.push_back(rootStores.front().getOperation());
+  analysis::MustDefinitionAnalysis activationDefinitions(
+      function, definitions, [](Operation *op) { return isTypedSuspend(op); });
+
   uint64_t promoted = 0;
   for (auto &[descriptor, rootStores] : stores) {
     auto declaration = accessIndex.declarations.lookup(descriptor);
@@ -1326,7 +1281,7 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
           return dominance.dominates(store.getOperation(),
                                      load.getOperation()) &&
                  family.contains(load.getReference()) &&
-                 staysInActivation(store, load);
+                 activationDefinitions.containsBefore(store, load);
         }))
       continue;
 
@@ -1778,17 +1733,11 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       site = suspend.getSiteAttr();
     else if (auto suspend = dyn_cast<sim::SimSuspendAnyOp>(candidate.suspend))
       site = suspend.getSiteAttr();
-    sim::SimFuncOp sourceFunction = candidate.function;
-    for (sim::SimFuncOp function :
-         design.getBody().front().getOps<sim::SimFuncOp>())
-      if (auto evalBody =
-              ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
-                  function);
-          evalBody && evalBody.getValue() == candidate.function.getSymName()) {
-        sourceFunction = function;
-        break;
-      }
-    IntegerAttr codeUnit = sourceFunction.getCodeUnitIdAttr();
+    auto source =
+        inputIndex.sourceCodeUnits.find(candidate.function.getSymNameAttr());
+    IntegerAttr codeUnit = source == inputIndex.sourceCodeUnits.end()
+                               ? candidate.function.getCodeUnitIdAttr()
+                               : source->second;
     if (!site || !codeUnit) {
       symbols.erase(kernel);
       return failure();
@@ -2407,18 +2356,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   FunctionType helperType =
       FunctionType::get(design.getContext(), helperInputs, helperResults);
   StringAttr fingerprintAttr = helperBuilder.getStringAttr(memberFingerprint);
-  sim::SimFuncOp helper;
-  for (sim::SimFuncOp existing :
-       design.getBody().front().getOps<sim::SimFuncOp>())
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::OutlinedPrimitiveMember>(existing) &&
-        ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::OutlinedPrimitiveFingerprint>(
-            existing) == fingerprintAttr &&
-        existing.getFunctionType() == helperType) {
-      helper = existing;
-      break;
-    }
+  auto helperKey = std::make_pair(fingerprintAttr, helperType);
+  sim::SimFuncOp helper = inputIndex.primitiveHelpers.lookup(helperKey);
   if (!helper) {
     SmallString<48> helperName;
     (kernel.getSymName() + ".__member").toVector(helperName);
@@ -2804,6 +2743,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     inputIndex.retargetCoverageKeepalives(candidate.function, kernel);
     symbols.erase(candidate.function);
   }
+  // Publish only completed helpers; rejected cohorts erase their temporary
+  // helper without leaving a stale entry for the next cohort.
+  inputIndex.primitiveHelpers.try_emplace(helperKey, helper);
   return kernel;
 }
 

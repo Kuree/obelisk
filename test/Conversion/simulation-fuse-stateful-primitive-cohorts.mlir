@@ -1,4 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: sed 's/to \^body([%]previous :/to ^body(%value :/g' %s > %t.same.mlir
+// RUN: obelisk-opt %t.same.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=REUSE
 
 // Two primitive declarations with different previous-input widths must form
 // separate homogeneous kernels. Each kernel carries independent state lanes
@@ -211,3 +213,16 @@ module {
 // CHECK-COUNT-2: simulation.spawn @__obelisk_region_kernel_
 // CHECK-DAG: simulation.func private @__obelisk_region_kernel_{{.*}}.__member
 // CHECK-DAG: simulation.func private @__obelisk_region_kernel_{{.*}}.__member
+
+// With identical continuation returns, both cohorts share one helper. The
+// original checks above retain separate helpers for different return values.
+// REUSE-LABEL: simulation.design @return_mapping
+// REUSE-COUNT-2: simulation.spawn @__obelisk_region_kernel_
+// REUSE: simulation.call @[[MEMBER:__obelisk_region_kernel_[A-Za-z0-9_]+\.__member]](
+// REUSE: simulation.call @[[MEMBER]](
+// REUSE: simulation.func private @[[MEMBER]](
+// REUSE-NOT: simulation.func private @{{.*}}.__member
+// REUSE: simulation.call @[[MEMBER]](
+// REUSE-NOT: simulation.func private @{{.*}}.__member
+// REUSE: simulation.call @[[MEMBER]](
+// REUSE-NOT: simulation.func private @{{.*}}.__member

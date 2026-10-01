@@ -741,45 +741,60 @@ bool isIdempotentObserver(
   return true;
 }
 
-/// The most `counted` operations on any control-flow path that starts at
-/// `from` and ends at the end of `until` (or at a block without successors).
-/// std::nullopt when a cycle avoids `until` or a counted operation is nested
-/// in a region, since neither has a static bound.
+/// Dense finite execution bounds over the activation CFG. The lattice is
+/// unreachable < 0 < ... < cap < many. Saturation makes cyclic CFGs converge;
+/// a loop without writes does not invalidate an otherwise bounded proof.
+/// `until` ends this activation, not an NBA window (LRM 4.4, 10.4.2).
 std::optional<unsigned>
-maxCountOnPaths(Block *from, Block *until,
+maxCountOnPaths(Block *from, Block *until, unsigned cap,
                 llvm::function_ref<bool(Operation *)> counted) {
-  llvm::DenseMap<Block *, unsigned> memo;
-  llvm::SmallPtrSet<Block *, 16> active;
-  bool bounded = true;
-  std::function<unsigned(Block *)> visit = [&](Block *block) -> unsigned {
-    if (auto found = memo.find(block); found != memo.end())
-      return found->second;
-    if (!active.insert(block).second) {
-      bounded = false;
-      return 0;
-    }
-    unsigned here = 0;
+  const unsigned many = cap + 1;
+  DenseMap<Block *, unsigned> costs;
+  SmallVector<Block *> discover{from};
+  while (!discover.empty()) {
+    Block *block = discover.pop_back_val();
+    if (costs.contains(block))
+      continue;
+    unsigned cost = 0;
     for (Operation &op : *block) {
       if (counted(&op))
-        ++here;
+        cost = std::min(many, cost + 1);
       else if (op.getNumRegions() != 0 &&
                op.walk([&](Operation *nested) {
                    return counted(nested) ? WalkResult::interrupt()
                                           : WalkResult::advance();
                  }).wasInterrupted())
-        bounded = false;
+        return std::nullopt;
     }
-    unsigned best = 0;
+    costs[block] = cost;
     if (block != until)
-      for (Block *next : block->getSuccessors())
-        best = std::max(best, visit(next));
-    active.erase(block);
-    return memo[block] = here + best;
-  };
-  unsigned count = visit(from);
-  if (!bounded)
-    return std::nullopt;
-  return count;
+      llvm::append_range(discover, block->getSuccessors());
+  }
+  DenseMap<Block *, unsigned> incoming;
+  incoming[from] = 0;
+  SmallVector<Block *> pending{from};
+  DenseSet<Block *> queued{from};
+  unsigned best = 0;
+  while (!pending.empty()) {
+    Block *block = pending.pop_back_val();
+    queued.erase(block);
+    unsigned count =
+        std::min(many, incoming.lookup(block) + costs.lookup(block));
+    best = std::max(best, count);
+    if (best == many)
+      return many;
+    if (block == until)
+      continue;
+    for (Block *successor : block->getSuccessors()) {
+      auto [found, inserted] = incoming.try_emplace(successor, count);
+      if (!inserted && count <= found->second)
+        continue;
+      found->second = count;
+      if (queued.insert(successor).second)
+        pending.push_back(successor);
+    }
+  }
+  return best;
 }
 
 /// The single suspension of a looping process, or null.
@@ -1020,9 +1035,9 @@ computeNBATransientObservers(sim::SimDesignOp design) {
     };
     Block *wait = suspension->getBlock();
     std::optional<unsigned> activation =
-        maxCountOnPaths(suspension->getSuccessor(0), wait, counted);
+        maxCountOnPaths(suspension->getSuccessor(0), wait, limit, counted);
     std::optional<unsigned> start =
-        maxCountOnPaths(&function.getBody().front(), wait, counted);
+        maxCountOnPaths(&function.getBody().front(), wait, startLimit, counted);
     return activation && start && *activation <= limit && *start <= startLimit;
   };
   // The resource a copy process forwards to `written`, such as a port
