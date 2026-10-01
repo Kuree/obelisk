@@ -1,6 +1,7 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -57,7 +58,85 @@ public:
     markAllAnalysesPreserved();
   }
 };
+
+class StorageFlowTestPass
+    : public PassWrapper<StorageFlowTestPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(StorageFlowTestPass)
+  StringRef getArgument() const final { return "test-obelisk-storage-flow"; }
+  StringRef getDescription() const final {
+    return "print activation definitions and lifetime execution bounds";
+  }
+  void runOnOperation() final {
+    namespace sim = obelisk::sim;
+    getOperation().walk([&](sim::SimFuncOp function) {
+      SmallVector<Operation *> definitions;
+      function.walk([&](sim::SimRefStoreOp op) { definitions.push_back(op); });
+      auto isBarrier = [](Operation *op) {
+        return sim::isSuspensionOp(op) ||
+               isa<sim::SimCallOp, sim::SimSpawnOp>(op);
+      };
+      obelisk::analysis::MustDefinitionAnalysis must(function, definitions,
+                                                     isBarrier);
+      obelisk::analysis::NoBarrierAnalysis prefix(function, isBarrier);
+      obelisk::analysis::WriteExecutionBounds lifetime(function, definitions,
+                                                       true, false);
+      llvm::errs() << "function " << function.getSymName() << '\n';
+      for (auto [index, definition] : llvm::enumerate(definitions))
+        llvm::errs() << "definition " << index << " lifetime-once="
+                     << lifetime.executesAtMostOnce(definition) << '\n';
+      unsigned read = 0;
+      function.walk([&](sim::SimRefLoadOp load) {
+        llvm::errs() << "read " << read++
+                     << " prefix=" << prefix.isSafeBefore(load) << " must=";
+        for (auto [index, definition] : llvm::enumerate(definitions))
+          if (must.containsBefore(definition, load))
+            llvm::errs() << index << ',';
+        llvm::errs() << '\n';
+      });
+    });
+    markAllAnalysesPreserved();
+  }
+};
+
+class SemanticRootsTestPass
+    : public PassWrapper<SemanticRootsTestPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SemanticRootsTestPass)
+  StringRef getArgument() const final { return "test-obelisk-semantic-roots"; }
+  StringRef getDescription() const final {
+    return "print CFG semantic value roots";
+  }
+  void runOnOperation() final {
+    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+      obelisk::analysis::SemanticValueRootAnalysis roots(function);
+      DenseMap<Block *, unsigned> blocks;
+      for (auto [index, block] : llvm::enumerate(function.getBody()))
+        blocks[&block] = index;
+      function.walk([&](Operation *op) {
+        auto query = op->getAttrOfType<StringAttr>("test.root");
+        if (!query)
+          return;
+        Value root = roots.lookup(op->getOperand(0));
+        llvm::errs() << query.getValue() << ": ";
+        if (auto argument = dyn_cast<BlockArgument>(root))
+          llvm::errs() << "block " << blocks.lookup(argument.getOwner())
+                       << " argument " << argument.getArgNumber();
+        else if (Operation *definition = root.getDefiningOp()) {
+          if (auto name = definition->getAttrOfType<StringAttr>("test.value"))
+            llvm::errs() << name.getValue();
+          else
+            llvm::errs() << definition->getName();
+        }
+        llvm::errs() << '\n';
+      });
+    });
+    markAllAnalysesPreserved();
+  }
+};
 } // namespace
 void obelisk::registerStorageWriteAnalysisTestPass() {
   PassRegistration<StorageWriteAnalysisTestPass>();
+  PassRegistration<StorageFlowTestPass>();
+  PassRegistration<SemanticRootsTestPass>();
 }

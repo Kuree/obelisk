@@ -43,7 +43,8 @@ class WriteExecutionBounds {
 public:
   WriteExecutionBounds(mlir::Operation *scope,
                        mlir::ArrayRef<mlir::Operation *> tracked,
-                       bool unknownCallEffects = true);
+                       bool unknownCallEffects = true,
+                       bool resetAtPositiveDelay = true);
   bool executesAtMostOnce(mlir::Operation *write) const;
   bool mutuallyExclusive(mlir::Operation *lhs, mlir::Operation *rhs) const;
 
@@ -52,6 +53,32 @@ private:
   llvm::SmallVector<uint8_t> bounds;
   llvm::SmallVector<llvm::BitVector> preceding;
   bool valid = false;
+};
+
+/// Statements that must have executed since the most recent barrier on every
+/// incoming path. Joins intersect definitions; barriers clear them. This is
+/// distinct from NBA-window counts: even a #0 suspension ends an activation.
+class MustDefinitionAnalysis {
+public:
+  MustDefinitionAnalysis(sim::SimFuncOp function,
+                         mlir::ArrayRef<mlir::Operation *> definitions,
+                         llvm::function_ref<bool(mlir::Operation *)> isBarrier);
+  bool containsBefore(mlir::Operation *definition, mlir::Operation *use) const;
+
+private:
+  llvm::DenseMap<mlir::Operation *, unsigned> indices;
+  llvm::DenseMap<mlir::Operation *, llvm::BitVector> before;
+};
+
+/// Must remain before the first barrier on every incoming execution path.
+class NoBarrierAnalysis {
+public:
+  NoBarrierAnalysis(sim::SimFuncOp function,
+                    llvm::function_ref<bool(mlir::Operation *)> isBarrier);
+  bool isSafeBefore(mlir::Operation *op) const { return safe.contains(op); }
+
+private:
+  llvm::DenseSet<mlir::Operation *> safe;
 };
 
 /// Combined SSA storage-view and dense forward write-execution analysis.

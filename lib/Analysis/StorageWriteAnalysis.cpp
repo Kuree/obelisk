@@ -22,6 +22,72 @@ void StorageViewFact::print(raw_ostream &os) const {
 }
 
 namespace {
+class MustDefinitionLattice : public dataflow::AbstractDenseLattice {
+public:
+  using AbstractDenseLattice::AbstractDenseLattice;
+  bool reachable = false;
+  llvm::BitVector definitions;
+  ChangeResult joinDefinitions(const llvm::BitVector &incoming) {
+    if (!reachable) {
+      reachable = true;
+      definitions = incoming;
+      return ChangeResult::Change;
+    }
+    llvm::BitVector next = definitions;
+    next &= incoming;
+    if (next == definitions)
+      return ChangeResult::NoChange;
+    definitions = std::move(next);
+    return ChangeResult::Change;
+  }
+  ChangeResult join(const AbstractDenseLattice &rhs) override {
+    const auto &other = static_cast<const MustDefinitionLattice &>(rhs);
+    return other.reachable ? joinDefinitions(other.definitions)
+                           : ChangeResult::NoChange;
+  }
+  void print(raw_ostream &os) const override {
+    os << (reachable ? "must-defined" : "unreachable");
+  }
+};
+class MustDefinitionDataflow
+    : public dataflow::DenseForwardDataFlowAnalysis<MustDefinitionLattice> {
+public:
+  MustDefinitionDataflow(DataFlowSolver &solver,
+                         const DenseMap<Operation *, unsigned> &indices,
+                         const DenseSet<Operation *> &barriers,
+                         bool initiallyDefined = false)
+      : DenseForwardDataFlowAnalysis(solver), indices(indices),
+        barriers(barriers), initiallyDefined(initiallyDefined) {}
+  LogicalResult visitOperation(Operation *op,
+                               const MustDefinitionLattice &before,
+                               MustDefinitionLattice *after) override {
+    if (!before.reachable)
+      return success();
+    llvm::BitVector next = before.definitions;
+    if (barriers.contains(op))
+      next.reset();
+    if (auto found = indices.find(op); found != indices.end())
+      next.set(found->second);
+    propagateIfChanged(after, after->joinDefinitions(next));
+    return success();
+  }
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    dataflow::CallControlFlowAction,
+                                    const MustDefinitionLattice &before,
+                                    MustDefinitionLattice *after) override {
+    (void)visitOperation(call, before, after);
+  }
+
+private:
+  void setToEntryState(MustDefinitionLattice *state) override {
+    propagateIfChanged(state, state->joinDefinitions(llvm::BitVector(
+                                  indices.size(), initiallyDefined)));
+  }
+  const DenseMap<Operation *, unsigned> &indices;
+  const DenseSet<Operation *> &barriers;
+  bool initiallyDefined;
+};
+
 class HotPathLattice : public dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
@@ -97,9 +163,10 @@ class WriteExecutionAnalysis
 public:
   WriteExecutionAnalysis(DataFlowSolver &solver,
                          const DenseMap<Operation *, unsigned> &writes,
-                         bool unknownCallEffects)
+                         bool unknownCallEffects, bool resetAtPositiveDelay)
       : DenseForwardDataFlowAnalysis(solver), writes(writes),
-        unknownCallEffects(unknownCallEffects) {}
+        unknownCallEffects(unknownCallEffects),
+        resetAtPositiveDelay(resetAtPositiveDelay) {}
   LogicalResult visitOperation(Operation *op,
                                const WriteExecutionLattice &before,
                                WriteExecutionLattice *after) override {
@@ -108,7 +175,7 @@ public:
     SmallVector<uint8_t> next = before.counts;
     if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(op)) {
       auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
-      if (constant && constant.getValue() != 0)
+      if (resetAtPositiveDelay && constant && constant.getValue() != 0)
         std::fill(next.begin(), next.end(), 0);
     } else if (auto write = writes.find(op); write != writes.end()) {
       uint8_t &count = next[write->second];
@@ -137,8 +204,66 @@ private:
   }
   const DenseMap<Operation *, unsigned> &writes;
   bool unknownCallEffects;
+  bool resetAtPositiveDelay;
 };
 } // namespace
+
+MustDefinitionAnalysis::MustDefinitionAnalysis(
+    sim::SimFuncOp function, ArrayRef<Operation *> definitions,
+    llvm::function_ref<bool(Operation *)> isBarrier) {
+  for (Operation *definition : definitions)
+    indices.try_emplace(definition, indices.size());
+  if (indices.empty())
+    return;
+  DenseSet<Operation *> barriers;
+  function.walk([&](Operation *op) {
+    if (isBarrier(op))
+      barriers.insert(op);
+  });
+  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  solver.load<dataflow::DeadCodeAnalysis>();
+  solver.load<dataflow::SparseConstantPropagation>();
+  solver.load<MustDefinitionDataflow>(indices, barriers);
+  if (failed(solver.initializeAndRun(function)))
+    return;
+  function.walk([&](Operation *op) {
+    const auto *state = solver.lookupState<MustDefinitionLattice>(
+        solver.getProgramPointBefore(op));
+    if (state && state->reachable)
+      before.try_emplace(op, state->definitions);
+  });
+}
+bool MustDefinitionAnalysis::containsBefore(Operation *definition,
+                                            Operation *use) const {
+  auto index = indices.find(definition);
+  auto state = before.find(use);
+  return index != indices.end() && state != before.end() &&
+         state->second.test(index->second);
+}
+
+NoBarrierAnalysis::NoBarrierAnalysis(
+    sim::SimFuncOp function, llvm::function_ref<bool(Operation *)> isBarrier) {
+  // One must fact is seeded at entry, killed by barriers and never generated
+  // by an operation. Null is an internal index key, not an IR definition.
+  DenseMap<Operation *, unsigned> indices{{nullptr, 0}};
+  DenseSet<Operation *> barriers;
+  function.walk([&](Operation *op) {
+    if (isBarrier(op))
+      barriers.insert(op);
+  });
+  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  solver.load<dataflow::DeadCodeAnalysis>();
+  solver.load<dataflow::SparseConstantPropagation>();
+  solver.load<MustDefinitionDataflow>(indices, barriers, true);
+  if (failed(solver.initializeAndRun(function)))
+    return;
+  function.walk([&](Operation *op) {
+    const auto *state = solver.lookupState<MustDefinitionLattice>(
+        solver.getProgramPointBefore(op));
+    if (state && state->reachable && state->definitions.test(0))
+      safe.insert(op);
+  });
+}
 
 NativeHotPathReachability::NativeHotPathReachability(sim::SimFuncOp function) {
   DenseSet<Block *> cold;
@@ -191,13 +316,15 @@ StorageWriteAnalysis::StorageWriteAnalysis(sim::SimFuncOp function,
 
 WriteExecutionBounds::WriteExecutionBounds(Operation *scope,
                                            ArrayRef<Operation *> tracked,
-                                           bool unknownCallEffects) {
+                                           bool unknownCallEffects,
+                                           bool resetAtPositiveDelay) {
   for (Operation *op : tracked)
     indices.try_emplace(op, indices.size());
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
-  solver.load<WriteExecutionAnalysis>(indices, unknownCallEffects);
+  solver.load<WriteExecutionAnalysis>(indices, unknownCallEffects,
+                                      resetAtPositiveDelay);
   if (failed(solver.initializeAndRun(scope)))
     return;
   bounds.resize(indices.size(), 2);
