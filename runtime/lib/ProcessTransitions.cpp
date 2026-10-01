@@ -2209,6 +2209,37 @@ void publishOverrideTransition(obelisk_rt_context *context, uint64_t bitOffset,
                             newValue, newUnknown, true);
 }
 
+extern "C" void obelisk_rt_v1_scheduler_static_transition_owned(
+    obelisk_rt_context *context, uint32_t actorSlot, uint32_t staticState,
+    uint64_t lowBit, uint64_t bitWidth, uint64_t oldValue, uint64_t oldUnknown,
+    uint64_t newValue, uint64_t newUnknown) {
+  if (!context)
+    return;
+  ContextMutexLock lock(context);
+  if (actorSlot >= context->nativeScheduleActorIndices.size()) {
+    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    return;
+  }
+  size_t index = context->nativeScheduleActorIndices[actorSlot];
+  if (index >= context->scheduledProcesses.size()) {
+    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    return;
+  }
+  // LRM 4.6(a), 9.4.2: publish at the source store, under its original
+  // logical process identity. Other waiting processes receive the event;
+  // the executing process must not wake its own inactive event control.
+  struct PublicationScope {
+    obelisk_rt_context *context;
+    uint64_t previous;
+    ~PublicationScope() { context->activeLogicalProcessToken = previous; }
+  } scope{context, context->activeLogicalProcessToken};
+  context->activeLogicalProcessToken =
+      kNativeLogicalProcessTag | context->scheduledProcesses[index].token;
+  obelisk_rt_v1_scheduler_static_transition(context, staticState, lowBit,
+                                            bitWidth, oldValue, oldUnknown,
+                                            newValue, newUnknown);
+}
+
 extern "C" void obelisk_rt_v1_scheduler_static_transition(
     obelisk_rt_context *context, uint32_t staticState, uint64_t lowBit,
     uint64_t bitWidth, uint64_t oldValue, uint64_t oldUnknown,

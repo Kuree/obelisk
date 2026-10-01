@@ -4001,6 +4001,13 @@ void obelisk_rt_v1_scheduler_static_transition(
     obelisk_rt_context *context, uint32_t static_state, uint64_t low_bit,
     uint64_t bit_width, uint64_t old_value, uint64_t old_unknown,
     uint64_t new_value, uint64_t new_unknown);
+// LRM 9.4.2: a generated activation keeps its source event control inactive
+// while publishing a blocking write. This leaf delivers transitions under
+// that actor's identity without executing an actor or advancing time.
+void obelisk_rt_v1_scheduler_static_transition_owned(
+    obelisk_rt_context *context, uint32_t actor_slot, uint32_t static_state,
+    uint64_t low_bit, uint64_t bit_width, uint64_t old_value,
+    uint64_t old_unknown, uint64_t new_value, uint64_t new_unknown);
 // Activate a compiler-grouped set of exact static-fanout compute nodes. This
 // is an internal clean-transaction leaf; dynamic/VPI handoff continues to use
 // ordinary scalar transition publication.

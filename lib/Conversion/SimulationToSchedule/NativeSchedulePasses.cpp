@@ -451,10 +451,18 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             const auto &handles = stateLayout->storage;
             auto handle = handles.find(*found->second.descriptor);
             obelisk_rt_stable_handle_v1 decoded{};
+            Type element =
+                cast<sim::RefType>(destination.getType()).getElementType();
+            auto width = detail::nativeStateWidth(element);
+            // LRM 4.6(a), 9.4.2: a bounded, non-suspending activation can
+            // publish under its compiler-resolved actor identity. Shared
+            // helpers without that identity still retain their checkpoint.
+            bool ownedPublication = staticEvalIsland && current == function &&
+                                    width && *width <= 64;
             return handle != handles.end() &&
                    obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
                    decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
-                   ((!requireStaticNBA &&
+                   ((!requireStaticNBA && !ownedPublication &&
                      staticFanoutPlan.runtimeTransitionStates.contains(
                          decoded.id)) ||
                     (requireStaticNBA &&

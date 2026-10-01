@@ -38,6 +38,14 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_static_transition_owned",
+      LLVM::LLVMVoidType::get(context),
+      {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
+       IntegerType::get(context, 32), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64), IntegerType::get(context, 64),
+       IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_handoff_pending",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context)});
@@ -706,10 +714,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
                            managedI32, {managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_functional_coverage_load_db",
                            managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_coverage_finalize", managedI32,
-      {managedPointer, managedI64, managedI64, managedPointer, managedPointer,
-       managedI32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_finalize",
+                           managedI32,
+                           {managedPointer, managedI64, managedI64,
+                            managedPointer, managedPointer, managedI32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_snapshot",
                            managedI32,
                            {managedPointer, managedI32, managedI64});

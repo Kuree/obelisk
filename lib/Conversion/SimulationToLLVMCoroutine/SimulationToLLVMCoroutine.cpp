@@ -254,6 +254,18 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
               *callee == "obelisk_rt_v1_native_promotion_recheck_ranges")
             return WalkResult::advance();
+          // LRM 4.6(a), 9.4.2: the hybrid calendar's bounded publication
+          // bridge preserves the source actor identity and delivers waits
+          // without executing actors or advancing time. Its actor/root are
+          // fixed by the installed generated plan; scheduling stays outside
+          // this non-suspending activation.
+          if (*callee == "obelisk_rt_v1_scheduler_static_transition_owned" &&
+              ::obelisk::schedule::has<
+                  ::obelisk::schedule::Field::EvalRuntimeCalendar>(module) &&
+              call.getArgOperands().size() == 9 &&
+              call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>() &&
+              call.getArgOperands()[2].getDefiningOp<LLVM::ConstantOp>())
+            return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
           return WalkResult::interrupt();
@@ -3493,14 +3505,15 @@ public:
     {
       RewritePatternSet runtimePatterns(&getContext());
       populateRuntimeToLLVMPatterns(converter, runtimePatterns);
-      detail::populateNativeManagedRootToLLVMConversionPatterns(runtimePatterns);
+      detail::populateNativeManagedRootToLLVMConversionPatterns(
+          runtimePatterns);
       ConversionTarget runtimeTarget(getContext());
       runtimeTarget.addLegalDialect<LLVM::LLVMDialect>();
       runtimeTarget.addLegalOp<ModuleOp>();
       runtimeTarget.addIllegalDialect<runtime::ObeliskRuntimeDialect>();
       runtimeTarget.addIllegalOp<schedule::NativeScratchOp,
-                                schedule::NativeManagedRootPushOp,
-                                schedule::NativeManagedRootPopOp>();
+                                 schedule::NativeManagedRootPushOp,
+                                 schedule::NativeManagedRootPopOp>();
       runtimeTarget.markUnknownOpDynamicallyLegal(
           [](Operation *) { return true; });
       if (failed(applyPartialConversion(module, runtimeTarget,
@@ -3603,8 +3616,8 @@ public:
       return;
     }
     markTiming("promotion write materialization");
-    auto groupPromotions = detail::materializeNativeEvalGroupBodies(
-        module, getAnalysisManager());
+    auto groupPromotions =
+        detail::materializeNativeEvalGroupBodies(module, getAnalysisManager());
     if (failed(groupPromotions))
       return signalPassFailure();
     markTiming("native activation group materialization");
@@ -3613,8 +3626,8 @@ public:
       return;
     }
     markTiming("eval call closure verification");
-    auto partitionInventory = detail::prepareNativePartitionManifest(
-        module, getAnalysisManager());
+    auto partitionInventory =
+        detail::prepareNativePartitionManifest(module, getAnalysisManager());
     if (failed(partitionInventory))
       return signalPassFailure();
     markTiming("post-conversion materialization");
@@ -3639,9 +3652,8 @@ public:
     // pipeline lifetime. Workers only publish into their own stable slots.
     for (const auto &diagnostic : (*groupPromotions)->diagnostics)
       llvm::errs() << diagnostic;
-    if (*partitionInventory &&
-        failed(detail::publishNativePartitionManifest(
-            module, **partitionInventory)))
+    if (*partitionInventory && failed(detail::publishNativePartitionManifest(
+                                   module, **partitionInventory)))
       return signalPassFailure();
     module->removeAttr("obelisk.native.optimization_level");
     ::obelisk::schedule::remove<::obelisk::schedule::Field::MaxInlineOps>(

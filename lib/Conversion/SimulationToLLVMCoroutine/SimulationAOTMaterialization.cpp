@@ -1732,6 +1732,7 @@ FailureOr<bool> makeNativeEvalPlan(
         transitions.push_back({call, activeOwnerMask, physicalSourceOwner});
       });
     }
+    SmallVector<std::pair<LLVM::CallOp, uint32_t>> ownedPublications;
     auto packedMask = [](uint64_t width) {
       return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     };
@@ -1751,6 +1752,8 @@ FailureOr<bool> makeNativeEvalPlan(
                failure();
       bool hasRuntimeOwnedObserver =
           staticFanoutPlan.runtimeTransitionStates.contains(*staticState);
+      if (hasRuntimeOwnedObserver && physicalSourceOwner)
+        ownedPublications.emplace_back(call, physicalSourceOwner->first);
       OpBuilder transitionBuilder(call);
       Value oldValue = arguments[4];
       Value oldUnknown = arguments[5];
@@ -2023,6 +2026,23 @@ FailureOr<bool> makeNativeEvalPlan(
       }
       if (!hasRuntimeOwnedObserver)
         call.erase();
+    }
+
+    // LRM 4.6(a), 9.4.2: retain runtime waiter delivery at the exact source
+    // store, but resolve its inactive source process from the generated plan.
+    // This publishes an event without executing the actor at a checkpoint.
+    for (auto [call, actorSlot] : ownedPublications) {
+      OpBuilder publication(call);
+      SmallVector<Value> arguments(call.getArgOperands());
+      arguments.insert(
+          arguments.begin() + 1,
+          llvmConstant(publication, call.getLoc(), i32, actorSlot));
+      LLVM::CallOp::create(
+          publication, call.getLoc(), TypeRange{},
+          SymbolRefAttr::get(context,
+                             "obelisk_rt_v1_scheduler_static_transition_owned"),
+          arguments);
+      call.erase();
     }
 
     // Dynamic writes into a fixed packed root use a generated one-entry NBA
