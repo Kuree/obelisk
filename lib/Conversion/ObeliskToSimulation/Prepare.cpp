@@ -13104,27 +13104,29 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!internal.empty())
         eventProducerByPath[canonicalPath(internal)] = unit;
     }
-    bool changed;
-    do {
-      changed = false;
-      for (PreparedUnit *consumer : earlyEventInputs) {
-        if (featureEventInputs.contains(consumer) ||
-            isComputedEventInput(*consumer))
-          continue;
-        auto connection = cast<semantic::SVPortConnectionOp>(consumer->source);
-        Operation *actual = getSingleRegionRoot(connection.getActual());
-        auto path = actual
-                        ? actual->getAttrOfType<StringAttr>("referenced_path")
-                        : StringAttr{};
-        if (!path)
-          continue;
-        auto producer =
-            eventProducerByPath.find(canonicalPath(path.getValue()));
-        if (producer != eventProducerByPath.end() &&
-            featureEventInputs.contains(producer->second))
-          changed |= featureEventInputs.insert(consumer).second;
-      }
-    } while (changed);
+    llvm::DenseMap<PreparedUnit *, SmallVector<PreparedUnit *>>
+        featureDependents;
+    for (PreparedUnit *consumer : earlyEventInputs) {
+      if (isComputedEventInput(*consumer))
+        continue;
+      auto connection = cast<semantic::SVPortConnectionOp>(consumer->source);
+      Operation *actual = getSingleRegionRoot(connection.getActual());
+      auto path = actual ? actual->getAttrOfType<StringAttr>("referenced_path")
+                         : StringAttr{};
+      if (!path)
+        continue;
+      auto producer = eventProducerByPath.find(canonicalPath(path.getValue()));
+      if (producer != eventProducerByPath.end())
+        featureDependents[producer->second].push_back(consumer);
+    }
+    SmallVector<PreparedUnit *> featureWorklist(featureEventInputs.begin(),
+                                                featureEventInputs.end());
+    while (!featureWorklist.empty()) {
+      PreparedUnit *producer = featureWorklist.pop_back_val();
+      for (PreparedUnit *consumer : featureDependents.lookup(producer))
+        if (featureEventInputs.insert(consumer).second)
+          featureWorklist.push_back(consumer);
+    }
 
     llvm::SmallPtrSet<PreparedUnit *, 32> startupSet;
     startupSet.insert(featureEventInputs.begin(), featureEventInputs.end());

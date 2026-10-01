@@ -442,35 +442,36 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   // handle merely because its immediate source formal is itself aliased.
   if (!eventInputs.empty()) {
     llvm::StringSet<> liveEventPaths = result.eventCellPaths;
-    bool changed;
-    do {
-      changed = false;
-      // A whole-event ref port is the same cell under two elaborated paths.
-      // Propagate liveness in both directions so traversal order and which
-      // alias spelling an input uses cannot turn a live handle into
-      // PortInitialize.
-      for (const auto &[path, view] : result.refViews) {
-        bool wholeEvent = view.identity && view.offset == 0 &&
-                          view.packedOffset == 0 && view.indices.empty() &&
-                          isa<sim::EventType>(view.rootType) &&
-                          isa<sim::EventType>(view.viewType);
-        if (!wholeEvent)
-          continue;
-        bool live =
-            liveEventPaths.contains(path) || liveEventPaths.contains(view.path);
-        if (live) {
-          changed |= liveEventPaths.insert(path).second;
-          changed |= liveEventPaths.insert(view.path).second;
-        }
+    // LRM 15.5: aliases share event identity, including future triggers.
+    // Propagate the finite live-cell set over an indexed dependency graph.
+    llvm::StringMap<SmallVector<StringRef>> liveDependents;
+    for (const auto &[path, view] : result.refViews) {
+      bool wholeEvent = view.identity && view.offset == 0 &&
+                        view.packedOffset == 0 && view.indices.empty() &&
+                        isa<sim::EventType>(view.rootType) &&
+                        isa<sim::EventType>(view.viewType);
+      if (wholeEvent) {
+        liveDependents[path].push_back(view.path);
+        liveDependents[view.path].push_back(path);
       }
-      for (const EventInputCandidate &candidate : eventInputs) {
-        if (!isWholeEvent(candidate))
-          continue;
-        bool liveActual = liveEventPaths.contains(candidate.actual->path);
-        if (liveActual)
-          changed |= liveEventPaths.insert(candidate.internal).second;
+    }
+    for (const EventInputCandidate &candidate : eventInputs)
+      if (isWholeEvent(candidate))
+        liveDependents[candidate.actual->path].push_back(candidate.internal);
+    SmallVector<StringRef> pending;
+    for (const auto &path : liveEventPaths)
+      pending.push_back(path.getKey());
+    while (!pending.empty()) {
+      StringRef path = pending.pop_back_val();
+      auto found = liveDependents.find(path);
+      if (found == liveDependents.end())
+        continue;
+      for (StringRef dependent : found->second) {
+        auto [entry, inserted] = liveEventPaths.insert(dependent);
+        if (inserted)
+          pending.push_back(entry->getKey());
       }
-    } while (changed);
+    }
     std::function<bool(Operation *)> isDependencyFreeEventExpression =
         [&](Operation *expression) {
           if (expression->hasAttr("folded_constant"))
