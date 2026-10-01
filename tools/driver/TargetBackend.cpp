@@ -668,7 +668,8 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   // oracle and apply AOT-only next-state rewrites only when the hybrid image
   // provides the deoptimization implementation.
   if (needsHybridBytecode || evalScheduler)
-    manager.addPass(createObeliskSimOptimizeNativeRegionsPass());
+    manager.nest<sim::SimDesignOp>().addPass(
+        createObeliskSimOptimizeNativeRegionsPass());
   // Partition metadata is a native ELF object/ThinLTO contract. In
   // particular, wasm32 keeps its current single-module lowering and staged
   // wasm-object runtime even when the source design is large.

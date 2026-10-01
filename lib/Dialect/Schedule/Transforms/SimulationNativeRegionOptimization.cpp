@@ -10,6 +10,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Pass/PassManager.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -27,17 +28,18 @@ namespace obelisk {
 
 namespace {
 
-class ObeliskSimOptimizeNativeRegionsPass final
-    : public impl::ObeliskSimOptimizeNativeRegionsPassBase<
-          ObeliskSimOptimizeNativeRegionsPass> {
+class OptimizeNativeFunctionRegionPass final
+    : public PassWrapper<OptimizeNativeFunctionRegionPass,
+                         OperationPass<sim::SimFuncOp>> {
 public:
-  using Base = impl::ObeliskSimOptimizeNativeRegionsPassBase<
-      ObeliskSimOptimizeNativeRegionsPass>;
-  using Base::Base;
-  ObeliskSimOptimizeNativeRegionsPass(
-      const ObeliskSimOptimizeNativeRegionsPass &other)
-      : Base(other) {}
-
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OptimizeNativeFunctionRegionPass)
+  OptimizeNativeFunctionRegionPass() = default;
+  OptimizeNativeFunctionRegionPass(
+      const OptimizeNativeFunctionRegionPass &other)
+      : PassWrapper(other) {}
+  StringRef getArgument() const final {
+    return "obelisk-sim-optimize-native-function-region";
+  }
   void runOnOperation() override;
 
 private:
@@ -419,41 +421,52 @@ bool forwardRegionNextState(sim::SimFuncOp function,
   return true;
 }
 
-void ObeliskSimOptimizeNativeRegionsPass::runOnOperation() {
-  auto scheduler =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeScheduler>(
-          getOperation());
+void OptimizeNativeFunctionRegionPass::runOnOperation() {
+  sim::SimFuncOp function = getOperation();
+  if (!::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(function))
+    return;
+  auto cached = getCachedParentAnalysis<analysis::NBAMergeSafety>(
+      function->getParentOfType<sim::SimDesignOp>());
+  if (!cached) {
+    function.emitError(
+        "native region optimization requires a frozen NBA proof");
+    return signalPassFailure();
+  }
+  const auto &mergeSafety = cached->get();
+  auto module = function->getParentOfType<ModuleOp>();
+  auto scheduler = module
+                       ? schedule::get<schedule::Field::NativeScheduler>(module)
+                       : schedule::NativeSchedulerModeAttr{};
   bool retainDirectBody =
       scheduler &&
       scheduler.getValue() != schedule::NativeSchedulerMode::Generic;
-  SmallVector<sim::SimFuncOp> regions;
-  sim::SimDesignOp design;
-  getOperation().walk([&](sim::SimDesignOp candidate) {
-    design = candidate;
-    return WalkResult::interrupt();
-  });
-  analysis::NBAMergeSafety mergeSafety(design);
-  getOperation().walk([&](sim::SimFuncOp function) {
-    if (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
-            function))
-      regions.push_back(function);
-  });
-
-  for (sim::SimFuncOp function : regions) {
-    // Consume the marker here. No later lowering is permitted to infer a
-    // semantic property merely from the generated symbol name.
-    if (!retainDirectBody)
-      ::obelisk::schedule::remove<schedule::metadata::nativeRegionBody>(
-          function);
-    uint64_t roots = 0;
-    uint64_t stages = 0;
-    if (!forwardRegionNextState(function, mergeSafety, roots, stages))
-      continue;
+  // Each update remains observable according to its own design's proof
+  // (IEEE 1800-2023 4.6(b)), including when several designs share a module.
+  if (!retainDirectBody)
+    ::obelisk::schedule::remove<schedule::metadata::nativeRegionBody>(function);
+  uint64_t roots = 0;
+  uint64_t stages = 0;
+  if (forwardRegionNextState(function, mergeSafety, roots, stages)) {
     ++optimizedRegions;
     coalescedRoots += roots;
     eliminatedStages += stages;
   }
 }
+
+class ObeliskSimOptimizeNativeRegionsPass final
+    : public impl::ObeliskSimOptimizeNativeRegionsPassBase<
+          ObeliskSimOptimizeNativeRegionsPass> {
+public:
+  void runOnOperation() override {
+    auto design = getOperation();
+    getAnalysis<analysis::NBAMergeSafety>();
+    OpPassManager pipeline(sim::SimDesignOp::getOperationName());
+    pipeline.nest<sim::SimFuncOp>().addPass(
+        std::make_unique<OptimizeNativeFunctionRegionPass>());
+    if (failed(runPipeline(pipeline, design)))
+      signalPassFailure();
+  }
+};
 
 } // namespace
 } // namespace obelisk

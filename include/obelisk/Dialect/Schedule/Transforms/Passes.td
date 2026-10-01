@@ -127,7 +127,8 @@ def ObeliskSimMaterializeComputeFusionPass
 }
 
 def ObeliskSimOptimizeNativeRegionsPass
-    : Pass<"obelisk-sim-optimize-native-regions", "mlir::ModuleOp"> {
+    : Pass<"obelisk-sim-optimize-native-regions",
+           "obelisk::sim::SimDesignOp"> {
   let summary = "Forward generated native-region next state through SSA";
   let description = [{
     Runs after the hybrid bytecode image has been frozen and before native
@@ -138,7 +139,8 @@ def ObeliskSimOptimizeNativeRegionsPass
     convergence SCCs remain explicit.
   }];
   let dependentDialects = [
-    "obelisk::sim::ObeliskSimulationDialect"
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect"
   ];
 }
 
