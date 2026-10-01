@@ -1,6 +1,8 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-real-conversions)))' \
 // RUN:   | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-real-conversions)))' \
+// RUN:   | FileCheck %s --check-prefix=WIDE
 
 // This test exercises standard-typed real conversion normalization as its own
 // pass. Coroutine and bytecode lowering are intentionally absent.
@@ -64,11 +66,16 @@ module {
 // CHECK-NOT: simulation.time.to_real
 // CHECK-LABEL: simulation.func @real_function
 // CHECK: arith.sitofp
-// With no AArch64 target triple, retain LLVM's direct arbitrary-width
-// conversion path rather than expanding it for targets such as x86.
-// CHECK: arith.uitofp {{.*}} : i1025 to f64
-// CHECK-NOT: math.ctlz
+// LRM 6.12: wide conversions must round and overflow consistently even when
+// no target triple is supplied. The only float conversion uses a rounded i64.
+// CHECK: math.ctlz {{.*}} : i1025
+// CHECK: arith.uitofp {{.*}} : i64 to f64
 // CHECK: arith.bitcast
 // CHECK: arith.shrui
 // CHECK: simulation.return
 // CHECK-NOT: simulation.real.
+
+// WIDE-NOT: arith.uitofp {{.*}} : i1025
+// WIDE: math.ctlz
+// WIDE: arith.uitofp {{.*}} : i64 to f64
+// WIDE-NOT: arith.uitofp {{.*}} : i1025
