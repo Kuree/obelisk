@@ -417,8 +417,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           const auto &provenance = writeAnalysis.getHandles().facts;
           auto directDynamicStore = [&](Value destination) {
             auto target = writeAnalysis.lookup(destination);
-            if (!writeAnalysis.hasDirectDynamicSelection(destination) ||
-                target.rootWidth > 64 || target.width > 64)
+            if (!writeAnalysis.hasDirectDynamicSelection(destination))
               return false;
             Type element =
                 cast<sim::RefType>(destination.getType()).getElementType();

@@ -149,19 +149,36 @@ struct DirectDynamicStateRange {
 std::optional<DirectDynamicStateRange>
 resolveDirectDynamicStateRange(Value handle, unsigned width,
                                const NativeStateLayout *layout) {
-  if (!layout || width == 0 || width > 64)
+  if (!layout || width == 0)
     return std::nullopt;
-  auto selected = handle.getDefiningOp<arith::SelectOp>();
-  if (!selected || resolveCFGConstantInteger(selected.getFalseValue()) !=
-                       std::optional<uint64_t>{UINT64_MAX})
+  Operation *producer = handle.getDefiningOp();
+  if (!producer)
     return std::nullopt;
-  auto offset = selected.getTrueValue().getDefiningOp<LLVM::CallOp>();
-  if (!offset || !offset.getCallee() ||
-      *offset.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
-      offset.getArgOperands().size() != 2)
+  // IEEE 1800-2023 7.4.5, 11.5.1: any invalid enclosing index denotes no
+  // storage. Retain every guard and handle-offset validity check when
+  // resolving nested aggregate fields to one fixed physical root.
+  SmallVector<Value> guards, amounts;
+  Value root = handle;
+  while (true) {
+    if (auto selected = root.getDefiningOp<arith::SelectOp>()) {
+      if (resolveCFGConstantInteger(selected.getFalseValue()) !=
+          std::optional<uint64_t>{UINT64_MAX})
+        return std::nullopt;
+      guards.push_back(selected.getCondition());
+      root = selected.getTrueValue();
+      continue;
+    }
+    auto offset = root.getDefiningOp<LLVM::CallOp>();
+    if (!offset || !offset.getCallee() ||
+        *offset.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
+        offset.getArgOperands().size() != 2)
+      break;
+    amounts.push_back(offset.getArgOperands()[1]);
+    root = offset.getArgOperands()[0];
+  }
+  if (guards.empty() || amounts.empty())
     return std::nullopt;
-  std::optional<uint64_t> base =
-      resolveCFGConstantInteger(offset.getArgOperands()[0]);
+  std::optional<uint64_t> base = resolveCFGConstantInteger(root);
   obelisk_rt_stable_handle_v1 decoded{};
   if (!base || !obelisk_rt_stable_handle_decode(*base, &decoded) ||
       decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
@@ -174,16 +191,36 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
     return candidate.handleID == decoded.id;
   });
   uint64_t localOffset = static_cast<uint64_t>(decoded.offset);
-  if (bound == layout->bounds.end() || localOffset != 0 ||
-      localOffset > bound->width || width > bound->width - localOffset)
+  if (bound == layout->bounds.end() || localOffset > bound->width ||
+      width > bound->width - localOffset)
     return std::nullopt;
-  return DirectDynamicStateRange{selected.getCondition(),
-                                 offset.getArgOperands()[1],
-                                 bound->offset,
-                                 localOffset,
-                                 bound->width,
-                                 decoded.id,
-                                 guarded};
+  OpBuilder builder(producer);
+  Location location = producer->getLoc();
+  Value valid = guards.front();
+  for (Value next : ArrayRef<Value>(guards).drop_front())
+    valid = arith::AndIOp::create(builder, location, valid, next);
+  auto i64 = builder.getI64Type();
+  Value amount = llvmConstant(builder, location, i64, localOffset);
+  for (Value next : llvm::reverse(amounts)) {
+    Value representable = arith::AndIOp::create(
+        builder, location,
+        arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sge, next,
+            arith::SubIOp::create(
+                builder, location,
+                llvmConstant(builder, location, i64, INT32_MIN), amount)),
+        arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::sle, next,
+            arith::SubIOp::create(
+                builder, location,
+                llvmConstant(builder, location, i64, INT32_MAX), amount)));
+    valid = arith::AndIOp::create(builder, location, valid, representable);
+    next = arith::SelectOp::create(builder, location, representable, next,
+                                   llvmConstant(builder, location, i64, 0));
+    amount = arith::AddIOp::create(builder, location, amount, next);
+  }
+  return DirectDynamicStateRange{valid,        amount,     bound->offset, 0,
+                                 bound->width, decoded.id, guarded};
 }
 
 Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
@@ -307,8 +344,10 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
     loaded = joined;
   }
   Value resultShift =
-      resultType.getWidth() == 64
-          ? absoluteDelta
+      resultType.getWidth() == 64 ? absoluteDelta
+      : resultType.getWidth() > 64
+          ? LLVM::ZExtOp::create(rewriter, location, resultType, absoluteDelta)
+                .getResult()
           : LLVM::TruncOp::create(rewriter, location, resultType, absoluteDelta)
                 .getResult();
   Value alignedLeft =
@@ -659,9 +698,183 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     return false;
   auto range =
       resolveDirectDynamicStateRange(handle, inputType.getWidth(), layout);
-  if (!range || range->rootWidth > 64 ||
-      (range->guarded && (continuous || !assumeClean)))
+  if (!range || (range->guarded && (continuous || !assumeClean)))
     return false;
+  if (range->rootWidth > 64) {
+    // Touch only the selected byte window, independently of the aggregate
+    // root's size. Clip partial and invalid selects exactly as LRM 11.5.1
+    // requires, and publish after both planes have been stored (4.6(a)).
+    auto i64 = rewriter.getI64Type();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value zero = llvmConstant(rewriter, location, i64, 0);
+    Value offset = range->bitOffset;
+    Value valid = arith::AndIOp::create(
+        rewriter, location, range->valid,
+        arith::AndIOp::create(
+            rewriter, location,
+            arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sgt,
+                                  offset,
+                                  llvmConstant(rewriter, location, i64,
+                                               -int64_t(inputType.getWidth()))),
+            arith::CmpIOp::create(
+                rewriter, location, arith::CmpIPredicate::slt, offset,
+                llvmConstant(rewriter, location, i64, range->rootWidth))));
+    Value safe =
+        arith::SelectOp::create(rewriter, location, valid, offset, zero);
+    Value negative = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::slt, safe, zero);
+    Value last = llvmConstant(rewriter, location, i64,
+                              range->rootWidth - inputType.getWidth());
+    Value above = arith::CmpIOp::create(rewriter, location,
+                                        arith::CmpIPredicate::sgt, safe, last);
+    Value clamped = arith::SelectOp::create(
+        rewriter, location, above, last,
+        arith::SelectOp::create(rewriter, location, negative, zero, safe));
+    Value lowClip = arith::SelectOp::create(
+        rewriter, location, negative,
+        arith::SubIOp::create(rewriter, location, zero, safe), zero);
+    Value highClip = arith::SelectOp::create(
+        rewriter, location, above,
+        arith::SubIOp::create(rewriter, location, safe, last), zero);
+    Value absolute = arith::AddIOp::create(
+        rewriter, location, clamped,
+        llvmConstant(rewriter, location, i64, range->rootOffset));
+    Value byte = arith::ShRUIOp::create(
+        rewriter, location, absolute, llvmConstant(rewriter, location, i64, 3));
+    Value bit = arith::AndIOp::create(rewriter, location, absolute,
+                                      llvmConstant(rewriter, location, i64, 7));
+    auto windowType = rewriter.getIntegerType(
+        llvm::alignTo(inputType.getWidth() + 7, uint64_t{8}));
+    auto resize = [&](Value value, IntegerType type) -> Value {
+      if (value.getType() == type)
+        return value;
+      return cast<IntegerType>(value.getType()).getWidth() < type.getWidth()
+                 ? LLVM::ZExtOp::create(rewriter, location, type, value)
+                       .getResult()
+                 : LLVM::TruncOp::create(rewriter, location, type, value)
+                       .getResult();
+    };
+    Value left = resize(highClip, windowType);
+    Value right = resize(lowClip, windowType);
+    Value shift = resize(bit, windowType);
+    Value mask = arith::ConstantOp::create(
+        rewriter, location, windowType,
+        rewriter.getIntegerAttr(
+            windowType,
+            APInt::getLowBitsSet(windowType.getWidth(), inputType.getWidth())));
+    mask = arith::ShLIOp::create(
+        rewriter, location,
+        arith::ShRUIOp::create(rewriter, location, mask, right), left);
+    mask = arith::ShLIOp::create(rewriter, location, mask, shift);
+    mask = arith::SelectOp::create(
+        rewriter, location, valid, mask,
+        llvmConstant(rewriter, location, windowType, 0));
+    auto store = [&](StringRef plane, Value input) {
+      Value base =
+          LLVM::AddressOfOp::create(rewriter, location, pointer, plane);
+      Value address =
+          LLVM::GEPOp::create(rewriter, location, pointer, rewriter.getI8Type(),
+                              base, ValueRange{byte});
+      Value positioned = input
+                             ? resize(input, windowType)
+                             : llvmConstant(rewriter, location, windowType, 0);
+      positioned = arith::ShLIOp::create(
+          rewriter, location,
+          arith::ShLIOp::create(
+              rewriter, location,
+              arith::ShRUIOp::create(rewriter, location, positioned, right),
+              left),
+          shift);
+      auto writeWindow = [&](unsigned width) {
+        auto spanType = rewriter.getIntegerType(width);
+        Value old = resize(
+            LLVM::LoadOp::create(rewriter, location, spanType, address, 1),
+            windowType);
+        Value updated = arith::XOrIOp::create(
+            rewriter, location, old,
+            arith::AndIOp::create(
+                rewriter, location, mask,
+                arith::XOrIOp::create(rewriter, location, old, positioned)));
+        LLVM::StoreOp::create(rewriter, location, resize(updated, spanType),
+                              address, 1);
+        return std::pair<Value, Value>{
+            resize(arith::ShRUIOp::create(rewriter, location, old, shift),
+                   inputType),
+            resize(arith::ShRUIOp::create(rewriter, location, updated, shift),
+                   inputType)};
+      };
+      unsigned minimumWidth = llvm::alignTo(inputType.getWidth(), uint64_t{8});
+      if (minimumWidth == windowType.getWidth())
+        return writeWindow(minimumWidth);
+      // IEEE 1800-2023 11.5.1: touching the selected storage cannot access
+      // beyond the plane. Aligned windows need no speculative trailing byte.
+      Block *head = rewriter.getInsertionBlock();
+      Block *join = rewriter.splitBlock(head, rewriter.getInsertionPoint());
+      Value old = join->addArgument(inputType, location);
+      Value updated = join->addArgument(inputType, location);
+      Block *narrow =
+          rewriter.createBlock(head->getParent(), join->getIterator());
+      Block *wide =
+          rewriter.createBlock(head->getParent(), join->getIterator());
+      recordStaticSpecializationCFGBlocks(rewriter, head, 3);
+      rewriter.setInsertionPointToEnd(head);
+      Value needsWide = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::ugt, bit,
+          llvmConstant(rewriter, location, i64,
+                       minimumWidth - inputType.getWidth()));
+      cf::CondBranchOp::create(rewriter, location, needsWide, wide, narrow);
+      for (auto [block, width] : {std::pair{narrow, minimumWidth},
+                                  std::pair{wide, windowType.getWidth()}}) {
+        rewriter.setInsertionPointToEnd(block);
+        auto [previous, next] = writeWindow(width);
+        cf::BranchOp::create(rewriter, location, join,
+                             ValueRange{previous, next});
+      }
+      rewriter.setInsertionPointToStart(join);
+      return std::pair<Value, Value>{old, updated};
+    };
+    auto [oldValue, newValue] = store("__obelisk_state_value", value);
+    Value oldUnknown = llvmConstant(rewriter, location, inputType, 0);
+    Value newUnknown = oldUnknown;
+    if (!twoState)
+      std::tie(oldUnknown, newUnknown) =
+          store("__obelisk_state_unknown", unknown);
+    if (layout->transitionHandles.contains(range->staticID)) {
+      Value context = LLVM::LoadOp::create(
+          rewriter, location, pointer,
+          LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                    "__obelisk_current_context"),
+          8);
+      for (unsigned low = 0; low < inputType.getWidth(); low += 64) {
+        unsigned width = std::min(64u, inputType.getWidth() - low);
+        auto chunk = [&](Value value) -> Value {
+          if (low)
+            value = arith::ShRUIOp::create(
+                rewriter, location, value,
+                llvmConstant(rewriter, location, inputType, low));
+          value = resize(value, rewriter.getIntegerType(width));
+          return resize(value, i64);
+        };
+        auto transition = LLVM::CallOp::create(
+            rewriter, location, TypeRange{},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_scheduler_static_transition"),
+            ValueRange{context,
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    range->staticID),
+                       arith::AddIOp::create(
+                           rewriter, location, clamped,
+                           llvmConstant(rewriter, location, i64, low)),
+                       llvmConstant(rewriter, location, i64, width),
+                       chunk(oldValue), chunk(oldUnknown), chunk(newValue),
+                       chunk(newUnknown)});
+        if (sourceOwner)
+          ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
+              transition, sourceOwner);
+      }
+    }
+    return true;
+  }
   // One machine-word root permits an exact read/modify/write without a
   // runtime handle lookup. Invalid selects are no-ops; overhanging selects
   // update only their in-range bits (LRM 11.5.1).

@@ -104,6 +104,7 @@ static SmallVector<sim::SimFuncOp> collectGeneratedEvalCallClosure(
 static FailureOr<SmallVector<GeneratedTransitionRange>>
 collectGeneratedTransitionRanges(ModuleOp module,
                                  ArrayRef<NativeDirectFragment> fragments,
+                                 const NativeStateLayout &stateLayout,
                                  const llvm::StringSet<> *selectedRawBodies) {
   SmallVector<GeneratedTransitionRange> ranges;
   LogicalResult valid = success();
@@ -129,13 +130,24 @@ collectGeneratedTransitionRanges(ModuleOp module,
       std::optional<uint64_t> staticState = constantU64(arguments[1]);
       std::optional<uint64_t> lowBit = constantU64(arguments[2]);
       std::optional<uint64_t> bitWidth = constantU64(arguments[3]);
-      if (!staticState || !lowBit || !bitWidth || *bitWidth == 0 ||
-          *bitWidth > 64) {
+      if (!staticState || !bitWidth || *bitWidth == 0 || *bitWidth > 64) {
         valid = call.emitError("eval transition is not a fixed scalar range");
         return;
       }
-      ranges.emplace_back(static_cast<uint32_t>(*staticState), *lowBit,
-                          *bitWidth, directFragment);
+      if (lowBit)
+        ranges.emplace_back(static_cast<uint32_t>(*staticState), *lowBit,
+                            *bitWidth, directFragment);
+      else {
+        auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &bound) {
+          return bound.handleID == *staticState;
+        });
+        if (bound == stateLayout.bounds.end()) {
+          valid = call.emitError("eval dynamic transition has no root bounds");
+          return;
+        }
+        ranges.emplace_back(static_cast<uint32_t>(*staticState), 0,
+                            bound->width, directFragment);
+      }
     });
   }
   if (failed(valid))
@@ -763,7 +775,7 @@ FailureOr<bool> makeNativeEvalPlan(
     normalizeGeneratedWideTransitions(module, dataLayout, stateLayout,
                                       staticFanoutPlan, selectedRawBodies);
     FailureOr<SmallVector<GeneratedTransitionRange>> transitionRanges =
-        collectGeneratedTransitionRanges(module, directFragments,
+        collectGeneratedTransitionRanges(module, directFragments, stateLayout,
                                          selectedRawBodies);
     if (failed(transitionRanges))
       return failure();
@@ -1700,6 +1712,19 @@ FailureOr<bool> makeNativeEvalPlan(
                 physicalSourceOwner = unique->second;
           }
         }
+        // LRM 4.6(a), 9.4.2: an unfused generated body has one source
+        // process even when its store originated in the entry activation
+        // and carries continuation zero. Preserve that process's event-wait
+        // identity; do not infer one for shared helpers or coordinators.
+        if (!physicalSourceOwner)
+          for (const auto &direct : directFragments)
+            if (!direct.instanceCoordinator &&
+                (direct.body == function.getSymName() ||
+                 direct.twoStateBody == function.getSymName())) {
+              physicalSourceOwner =
+                  std::pair{direct.actorSlot, direct.continuation};
+              break;
+            }
         transitions.push_back({call, activeOwnerMask, physicalSourceOwner});
       });
     }
@@ -1717,8 +1742,7 @@ FailureOr<bool> makeNativeEvalPlan(
       std::optional<uint64_t> staticState = constantU64(arguments[1]);
       std::optional<uint64_t> lowBit = constantU64(arguments[2]);
       std::optional<uint64_t> bitWidth = constantU64(arguments[3]);
-      if (!staticState || !lowBit || !bitWidth || *bitWidth == 0 ||
-          *bitWidth > 64)
+      if (!staticState || !bitWidth || *bitWidth == 0 || *bitWidth > 64)
         return call.emitError("eval transition is not a fixed scalar range"),
                failure();
       bool hasRuntimeOwnedObserver =
@@ -1734,6 +1758,118 @@ FailureOr<bool> makeNativeEvalPlan(
                                 newValue),
           arith::XOrIOp::create(transitionBuilder, call.getLoc(), oldUnknown,
                                 newUnknown));
+      if (!lowBit) {
+        // An indexed store has a fixed root and a bounded variable lane.
+        // Match each observer's physical range without a runtime handle or
+        // ready-node lookup. Keep the source owner inactive during its store.
+        auto constant = [&](uint64_t value) {
+          return llvmConstant(transitionBuilder, call.getLoc(), i64, value);
+        };
+        auto invert = [&](Value value) {
+          return arith::XOrIOp::create(transitionBuilder, call.getLoc(), value,
+                                       constant(UINT64_MAX))
+              .getResult();
+        };
+        Value start = arguments[2];
+        Value end = arith::AddIOp::create(transitionBuilder, call.getLoc(),
+                                          start, constant(*bitWidth));
+        Value oldZero =
+            arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                  invert(oldUnknown), invert(oldValue));
+        Value oldOne = arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                             invert(oldUnknown), oldValue);
+        Value newZero =
+            arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                  invert(newUnknown), invert(newValue));
+        Value newOne = arith::AndIOp::create(transitionBuilder, call.getLoc(),
+                                             invert(newUnknown), newValue);
+        Value posedge = arith::OrIOp::create(
+            transitionBuilder, call.getLoc(),
+            arith::AndIOp::create(transitionBuilder, call.getLoc(), oldZero,
+                                  invert(newZero)),
+            arith::AndIOp::create(transitionBuilder, call.getLoc(), oldUnknown,
+                                  newOne));
+        Value negedge = arith::OrIOp::create(
+            transitionBuilder, call.getLoc(),
+            arith::AndIOp::create(transitionBuilder, call.getLoc(), oldOne,
+                                  invert(newOne)),
+            arith::AndIOp::create(transitionBuilder, call.getLoc(), oldUnknown,
+                                  newZero));
+        for (const auto &entry : fanoutEntries) {
+          if (entry.static_state != *staticState || entry.bit_width == 0 ||
+              fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
+              entry.kernel >= clockKernels.size())
+            continue;
+          if ((entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0) {
+            if (physicalSourceOwner &&
+                *physicalSourceOwner ==
+                    std::pair{entry.actor_slot, entry.continuation})
+              continue;
+            if (!physicalSourceOwner && activeOwnerMask != 0 &&
+                activeOwnerMask[entry.merged_bit])
+              continue;
+            if (!physicalSourceOwner && activeOwnerMask == 0)
+              return call.emitError("dynamic publication has no source owner"),
+                     failure();
+          }
+          Value low = arith::SelectOp::create(
+              transitionBuilder, call.getLoc(),
+              arith::CmpIOp::create(transitionBuilder, call.getLoc(),
+                                    arith::CmpIPredicate::ugt, start,
+                                    constant(entry.low_bit)),
+              start, constant(entry.low_bit));
+          Value high = arith::SelectOp::create(
+              transitionBuilder, call.getLoc(),
+              arith::CmpIOp::create(transitionBuilder, call.getLoc(),
+                                    arith::CmpIPredicate::ult, end,
+                                    constant(entry.low_bit + entry.bit_width)),
+              end, constant(entry.low_bit + entry.bit_width));
+          Value overlaps =
+              arith::CmpIOp::create(transitionBuilder, call.getLoc(),
+                                    arith::CmpIPredicate::ult, low, high);
+          Value shift = arith::SelectOp::create(
+              transitionBuilder, call.getLoc(), overlaps,
+              arith::SubIOp::create(transitionBuilder, call.getLoc(), low,
+                                    start),
+              constant(0));
+          Value width = arith::SelectOp::create(
+              transitionBuilder, call.getLoc(), overlaps,
+              arith::SubIOp::create(transitionBuilder, call.getLoc(), high,
+                                    low),
+              constant(1));
+          Value mask = arith::ShRUIOp::create(
+              transitionBuilder, call.getLoc(), constant(UINT64_MAX),
+              arith::SubIOp::create(transitionBuilder, call.getLoc(),
+                                    constant(64), width));
+          Value observed = changed;
+          if (entry.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
+            observed = posedge;
+          else if (entry.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
+            observed = negedge;
+          else if (entry.edge == OBELISK_RT_WAIT_EDGE_BOTH)
+            observed = arith::OrIOp::create(transitionBuilder, call.getLoc(),
+                                            posedge, negedge);
+          Value triggered = arith::AndIOp::create(
+              transitionBuilder, call.getLoc(), overlaps,
+              arith::CmpIOp::create(
+                  transitionBuilder, call.getLoc(), arith::CmpIPredicate::ne,
+                  arith::AndIOp::create(
+                      transitionBuilder, call.getLoc(), mask,
+                      arith::ShRUIOp::create(transitionBuilder, call.getLoc(),
+                                             observed, shift)),
+                  constant(0)));
+          Value selected = arith::SelectOp::create(
+              transitionBuilder, call.getLoc(), triggered,
+              constant(uint64_t{1} << (entry.merged_bit % 64)), constant(0));
+          Value ingress = LLVM::AddressOfOp::create(
+              transitionBuilder, call.getLoc(), pointer, evalModelIngressName);
+          updateEvalReadyWord(transitionBuilder, call.getLoc(), ingress,
+                              readyLayout, entry.merged_bit / 64, selected);
+        }
+        if (!hasRuntimeOwnedObserver)
+          call.erase();
+        continue;
+      }
       struct MergedPublication {
         uint32_t bit;
         uint64_t changeMask = 0;
@@ -2814,8 +2950,26 @@ FailureOr<bool> makeNativeEvalPlan(
             call.getArgOperands().size() == 2 && !call->use_empty())
           offsets.push_back(call);
       });
-      for (LLVM::CallOp call : offsets) {
-        auto root = constantU64(call.getArgOperands()[0]);
+      for (LLVM::CallOp call : llvm::reverse(offsets)) {
+        Value base = call.getArgOperands()[0];
+        Value physicalRoot = base;
+        while (true) {
+          if (auto selected = physicalRoot.getDefiningOp<arith::SelectOp>();
+              selected && constantU64(selected.getFalseValue()) ==
+                              std::optional<uint64_t>{UINT64_MAX}) {
+            physicalRoot = selected.getTrueValue();
+            continue;
+          }
+          if (auto inner = physicalRoot.getDefiningOp<LLVM::CallOp>();
+              inner && inner.getCallee() &&
+              *inner.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+              inner.getArgOperands().size() == 2) {
+            physicalRoot = inner.getArgOperands()[0];
+            continue;
+          }
+          break;
+        }
+        auto root = constantU64(physicalRoot);
         obelisk_rt_stable_handle_v1 decoded{};
         if (!root || !obelisk_rt_stable_handle_decode(*root, &decoded) ||
             decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
@@ -2826,15 +2980,25 @@ FailureOr<bool> makeNativeEvalPlan(
           return llvmConstant(offsetBuilder, loc, i64, value);
         };
         Value amount = call.getArgOperands()[1];
+        Value baseOffset = LLVM::SExtOp::create(
+            offsetBuilder, loc, i64,
+            LLVM::TruncOp::create(offsetBuilder, loc, i32, base));
         Value valid = arith::AndIOp::create(
             offsetBuilder, loc,
-            arith::CmpIOp::create(offsetBuilder, loc, arith::CmpIPredicate::sge,
-                                  amount, constant(INT32_MIN - decoded.offset)),
-            arith::CmpIOp::create(offsetBuilder, loc, arith::CmpIPredicate::sle,
-                                  amount,
-                                  constant(INT32_MAX - decoded.offset)));
-        Value offset = arith::AddIOp::create(offsetBuilder, loc, amount,
-                                             constant(decoded.offset));
+            arith::CmpIOp::create(
+                offsetBuilder, loc, arith::CmpIPredicate::sge, amount,
+                arith::SubIOp::create(offsetBuilder, loc, constant(INT32_MIN),
+                                      baseOffset)),
+            arith::CmpIOp::create(
+                offsetBuilder, loc, arith::CmpIPredicate::sle, amount,
+                arith::SubIOp::create(offsetBuilder, loc, constant(INT32_MAX),
+                                      baseOffset)));
+        valid = arith::AndIOp::create(
+            offsetBuilder, loc, valid,
+            arith::CmpIOp::create(offsetBuilder, loc, arith::CmpIPredicate::ne,
+                                  base, constant(-1)));
+        Value offset =
+            arith::AddIOp::create(offsetBuilder, loc, amount, baseOffset);
         offset = arith::AndIOp::create(offsetBuilder, loc, offset,
                                        constant(UINT32_MAX));
         Value encoded = arith::OrIOp::create(

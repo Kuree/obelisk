@@ -1,4 +1,5 @@
-//===- HandleDataflowAnalysis.cpp - SSA reference dataflow ------------------===//
+//===- HandleDataflowAnalysis.cpp - SSA reference dataflow
+//------------------===//
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -151,10 +152,21 @@ public:
           c.low = c.width = c.stride = 0;
           c.clipped = false;
         }
-        c.directDynamicSelection = {};
+        // LRM 7.4.5, 11.5.1: a fixed field of an indexed element retains the
+        // bounded dynamic selection certificate. Lowering combines its constant
+        // field offset with the selected element before accessing the canonical
+        // planes.
+        if (c.directDynamicSelection)
+          c.directDynamicSelection = result;
       } else {
         bool wholeRoot = !p.dynamic && p.low == 0 && p.width == p.rootWidth &&
                          c.constantAddress;
+        // Array selectors validate against their declared parent range before
+        // adding its fixed root offset (LRM 7.4.5). A bounded array field is
+        // therefore as direct as a whole-root array. Packed part-selects still
+        // require the whole-root proof because they can overlap a boundary.
+        bool boundedArray = array && !p.dynamic && c.constantAddress &&
+                            c.laneKnown && !c.clipped;
         bool lane = !p.dynamic && c.laneKnown && *width &&
                     (!array || c.width % *width == 0);
         c.constantAddress = false;
@@ -167,7 +179,9 @@ public:
           c.low = c.width = c.stride = 0;
           c.clipped = false;
         }
-        c.directDynamicSelection = !offset && wholeRoot ? result : Value{};
+        c.directDynamicSelection =
+            (wholeRoot || boundedArray || c.directDynamicSelection) ? result
+                                                                    : Value{};
         p.dynamic = true;
       }
       put(value);
