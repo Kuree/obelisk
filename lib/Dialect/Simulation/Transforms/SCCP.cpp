@@ -719,11 +719,20 @@ void ObeliskSimSCCPPass::runOnOperation() {
         }
         nets[net.getId()] = {net.getType(), *width, externallyWritable,
                              implicitlyHighImpedance};
+        // The resolver of a user-defined nettype need not return its sole
+        // driver's payload (LRM 6.6.7). This proof models built-in resolution.
+        if (net.getNettypeAttr())
+          invalid.insert(net.getId());
         connections[net.getId()];
         continue;
       }
       if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
         ++driverCounts[driver.getNetId()];
+        // LRM 6.3.2: a high-Z strength can resolve a known 0/1 payload to Z.
+        // Exact payload observations do not model that strength conversion.
+        if (driver.getStrength0() == sim::Strength::HighZ ||
+            driver.getStrength1() == sim::Strength::HighZ)
+          invalid.insert(driver.getNetId());
         auto net = nets.find(driver.getNetId());
         std::optional<uint64_t> width =
             sim::getProvenanceSpan(driver.getType());

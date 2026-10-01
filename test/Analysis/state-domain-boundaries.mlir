@@ -2,6 +2,8 @@
 // RUN: obelisk-opt %s -o /dev/null --mlir-disable-threading --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2> %t.single
 // RUN: diff %t.threaded %t.single
 // RUN: FileCheck %s < %t.threaded
+// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-state-domain{shared=true})' 2> %t.shared
+// RUN: diff %t.threaded %t.shared
 
 module {
   simulation.design @boundaries {

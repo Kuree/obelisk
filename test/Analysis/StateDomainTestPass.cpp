@@ -42,6 +42,8 @@ class StateDomainTestPass
     : public PassWrapper<StateDomainTestPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(StateDomainTestPass)
+  StateDomainTestPass() = default;
+  StateDomainTestPass(const StateDomainTestPass &other) : PassWrapper(other) {}
 
   StringRef getArgument() const final {
     return "test-obelisk-sim-state-domain";
@@ -57,8 +59,15 @@ public:
       return lhs.getSymName() < rhs.getSymName();
     });
     for (obelisk::sim::SimDesignOp design : designs) {
-      FailureOr<obelisk::StateDomainAnalysis> analysis =
-          obelisk::StateDomainAnalysis::compute(design);
+      FailureOr<obelisk::StateDomainAnalysis> analysis = failure();
+      if (shared) {
+        auto proofs =
+            obelisk::StateDomainAnalysis::computeForSpecialization(design);
+        if (succeeded(proofs))
+          analysis = std::move(proofs->first);
+      } else {
+        analysis = obelisk::StateDomainAnalysis::compute(design);
+      }
       if (failed(analysis)) {
         signalPassFailure();
         return;
@@ -67,6 +76,9 @@ public:
     }
     markAllAnalysesPreserved();
   }
+
+  Option<bool> shared{*this, "shared", llvm::cl::init(false),
+                      llvm::cl::desc("share specialization proof indexes")};
 
 private:
   static void printDesign(obelisk::sim::SimDesignOp design,

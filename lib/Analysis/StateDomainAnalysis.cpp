@@ -12,6 +12,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
@@ -333,6 +334,7 @@ struct FunctionSummary {
   SmallVector<Block *> blocks;
   SmallVector<BlockArgumentSummary> blockArguments;
   SmallVector<Operation *> operations;
+  DenseMap<Value, SmallVector<unsigned>> dependents;
   SmallVector<InvocationSummary> invocations;
   SmallVector<sim::SimReturnOp> returns;
 };
@@ -434,6 +436,16 @@ buildSummary(sim::SimFuncOp function,
         if (incoming.reason == StateDomainReason::Continuation)
           incoming.reason = StateDomainReason::CFGJoin;
   }
+  // The finite SSA lattice only needs to revisit users of a changed value.
+  // Preserve both successor lanes when one predecessor targets a join twice.
+  for (auto [node, argument] : llvm::enumerate(summary.blockArguments))
+    for (const IncomingSummary &incoming : argument.incoming)
+      if (incoming.value)
+        summary.dependents[incoming.value].push_back(node);
+  for (auto [index, operation] : llvm::enumerate(summary.operations))
+    for (Value operand : operation->getOperands())
+      summary.dependents[operand].push_back(summary.blockArguments.size() +
+                                            index);
   return summary;
 }
 
@@ -631,9 +643,30 @@ void propagateFunction(const FunctionSummary &summary,
       }
       local.reachable = reachable;
     }
-    while (true) {
-      bool changed = false;
-      for (const BlockArgumentSummary &argument : summary.blockArguments) {
+    unsigned nodeCount =
+        summary.blockArguments.size() + summary.operations.size();
+    std::deque<unsigned> pending;
+    DenseSet<unsigned> queued;
+    auto enqueue = [&](unsigned node) {
+      if (queued.insert(node).second)
+        pending.push_back(node);
+    };
+    for (unsigned node = 0; node != nodeCount; ++node)
+      enqueue(node);
+    auto update = [&](Value value, StateDomainFact fact) {
+      if (!updateFact(local.values, value, fact))
+        return;
+      auto found = summary.dependents.find(value);
+      if (found != summary.dependents.end())
+        for (unsigned dependent : found->second)
+          enqueue(dependent);
+    };
+    while (!pending.empty()) {
+      unsigned node = pending.front();
+      pending.pop_front();
+      queued.erase(node);
+      if (node < summary.blockArguments.size()) {
+        const BlockArgumentSummary &argument = summary.blockArguments[node];
         StateDomainFact joined = bottomFact();
         if (argument.incoming.empty()) {
           joined = mayFourState(StateDomainReason::UnsupportedProducer);
@@ -652,36 +685,34 @@ void propagateFunction(const FunctionSummary &summary,
             joined = joinAlternatives(joined, contribution, incoming.reason);
           }
         }
-        changed |= updateFact(local.values, argument.argument, joined);
+        update(argument.argument, joined);
+        continue;
       }
-
-      for (Operation *operation : summary.operations) {
-        if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-          auto callee = calleeIndex.find(operation);
-          for (auto [index, result] : llvm::enumerate(call.getResults())) {
-            if (!isLogic(result.getType()))
-              continue;
-            StateDomainFact next =
-                callee == calleeIndex.end() ||
-                        index >= resultBoundaries[callee->second].size()
-                    ? mayFourState(StateDomainReason::UnknownCall)
-                    : resultBoundaries[callee->second][index];
-            if (callee == calleeIndex.end())
-              next.reason = StateDomainReason::UnknownCall;
-            else if (next.reason != StateDomainReason::ExternalDeclaration)
-              next.reason = StateDomainReason::CallResult;
-            changed |= updateFact(local.values, result, next);
-          }
-          continue;
+      Operation *operation =
+          summary.operations[node - summary.blockArguments.size()];
+      if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
+        auto callee = calleeIndex.find(operation);
+        for (auto [index, result] : llvm::enumerate(call.getResults())) {
+          if (!isLogic(result.getType()))
+            continue;
+          StateDomainFact next =
+              callee == calleeIndex.end() ||
+                      index >= resultBoundaries[callee->second].size()
+                  ? mayFourState(StateDomainReason::UnknownCall)
+                  : resultBoundaries[callee->second][index];
+          if (callee == calleeIndex.end())
+            next.reason = StateDomainReason::UnknownCall;
+          else if (next.reason != StateDomainReason::ExternalDeclaration)
+            next.reason = StateDomainReason::CallResult;
+          update(result, next);
         }
-        StateDomainFact transferred = transferOperation(
-            operation, local.values, summary.provenance, assumedKnownRoots);
-        for (Value result : operation->getResults())
-          if (shouldTrackResult(operation, result))
-            changed |= updateFact(local.values, result, transferred);
+        continue;
       }
-      if (!changed)
-        break;
+      StateDomainFact transferred = transferOperation(
+          operation, local.values, summary.provenance, assumedKnownRoots);
+      for (Value result : operation->getResults())
+        if (shouldTrackResult(operation, result))
+          update(result, transferred);
     }
   };
 
@@ -1094,22 +1125,23 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
     design.emitOpError("cannot analyze a design with no body");
     return failure();
   }
+  ValueFactProgram program(design);
   if (!proveInductiveRoots) {
     FailureOr<DenseMap<Value, StateDomainFact>> facts =
-        computeValueFacts(design, RootSet{});
+        computeValueFacts(program, RootSet{});
     if (failed(facts))
       return failure();
     DenseMap<Value, StateDomainFact> guarded = *facts;
     return StateDomainAnalysis(std::move(*facts), std::move(guarded), {});
   }
-  FailureOr<StateDomainAnalysis> analysis = computeInductiveOnly(design);
+  FailureOr<StateDomainAnalysis> analysis = computeInductiveOnly(program);
   if (failed(analysis))
     return failure();
   // Keep the longstanding value facts unconditional. The inductive root set
   // is a separate guarded capability: consumers may assume it only after
   // checking the corresponding unknown planes at a kernel boundary.
   FailureOr<DenseMap<Value, StateDomainFact>> unconditional =
-      computeValueFacts(design, RootSet{});
+      computeValueFacts(program, RootSet{});
   if (failed(unconditional))
     return failure();
   analysis->facts = std::move(*unconditional);
@@ -1122,6 +1154,12 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
   }
+  return computeInductiveOnly(ValueFactProgram(design));
+}
+
+FailureOr<StateDomainAnalysis>
+StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
+  sim::SimDesignOp design = program.design;
   RootSet candidates;
   DenseMap<uint64_t, unsigned> netDriverCounts;
   DenseMap<uint64_t, uint64_t> netWidths;
@@ -1143,6 +1181,11 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
                 sim::getProvenanceSpan(net.getType()))
           netWidths[net.getId()] = *width;
         connectedNets[net.getId()];
+        // LRM 6.6.7 and 28.16.2: custom resolution and charge decay are
+        // additional value producers, absent from this driver-only proof.
+        if (net.getNettypeAttr() ||
+            net.getResolutionKind() == sim::NetResolutionKind::TriReg)
+          partialConnections.insert(net.getId());
       }
       continue;
     }
@@ -1157,14 +1200,18 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
               ? driver.getDrivenWidthAttr().getValue().getZExtValue()
               : width.value_or(0);
       netHasFullDriver[driver.getNetId()] =
-          width && low == 0 && drivenWidth == *width;
+          width && low == 0 && drivenWidth == *width &&
+          driver.getStrength0() != sim::Strength::HighZ &&
+          driver.getStrength1() != sim::Strength::HighZ;
     }
   }
   // Full-width net connections form one resolved value.  A component with
   // exactly one full-width driver cannot create X from resolution and is a
   // valid guarded two-state root.  Multiple drivers can conflict, and partial
   // connections can leave Z bits, so the whole-root proof rejects those
-  // components conservatively.  This retains ordinary one-driver port aliases
+  // components conservatively. High-Z drive strength can create Z from a
+  // known payload (LRM 6.3.2), so neither polarity may have high-Z strength.
+  // This retains ordinary one-driver port aliases
   // instead of poisoning the entire transitive state closure.
   for (sim::SimNetConnectDeclOp connection :
        design.getBody().front().getOps<sim::SimNetConnectDeclOp>()) {
@@ -1206,7 +1253,131 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
   }
 
   DenseMap<Value, StateDomainFact> facts;
-  ValueFactProgram program(design);
+  struct RootWrite {
+    Value destination;
+    Value value;
+    std::optional<RootKey> copiedRoot;
+    bool copyKnown = false;
+    std::optional<RootKey> root;
+    schedule::ComputeResourceKind resource =
+        schedule::ComputeResourceKind::Unknown;
+  };
+  SmallVector<RootWrite> writes;
+  llvm::SmallDenseSet<unsigned, 8> opaqueWriteResources;
+  // Writes and provenance do not change during root rejection. Inventory
+  // them once, including effects without an SSA payload, instead of walking
+  // every function again for each wave of the guarded fixed point.
+  for (const FunctionSummary &summary : program.summaries) {
+    size_t firstWrite = writes.size();
+    DenseSet<Operation *> closedInvocations, opaqueInvocations;
+    for (const InvocationSummary &invocation : summary.invocations) {
+      sim::SimFuncOp callee = invocation.callee
+                                  ? program.functions[*invocation.callee]
+                                  : sim::SimFuncOp{};
+      if (callee && !callee.isExternal())
+        closedInvocations.insert(invocation.operation);
+      else
+        opaqueInvocations.insert(invocation.operation);
+    }
+    sim::SimFuncOp function = summary.function;
+    function.walk([&](Operation *operation) {
+      if (auto copy = dyn_cast<sim::SimRefCopyOp>(operation)) {
+        writes.push_back(
+            {copy.getDestination(),
+             {},
+             getConcreteRoot(copy.getSource(), summary.provenance),
+             !isLogic(copy.getSource().getType().getElementType())});
+        return;
+      }
+      if (auto pair = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
+              operation)) {
+        writes.push_back({pair.getLowDriver(), pair.getLowValue()});
+        writes.push_back({pair.getHighDriver(), pair.getHighValue()});
+        return;
+      }
+      if (auto pair =
+              dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(operation)) {
+        writes.push_back({pair.getLowDriver(), pair.getLowValue()});
+        writes.push_back({pair.getHighDriver(), pair.getHighValue()});
+        return;
+      }
+      Value destination, value;
+      if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
+        destination = store.getReference();
+        value = store.getValue();
+      } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
+        destination = nba.getDestination();
+        value = nba.getValue();
+      } else if (auto store =
+                     dyn_cast<sim::SimRefStoreInertialPathOp>(operation)) {
+        destination = store.getReference();
+        value = store.getValue();
+      } else if (auto write = dyn_cast<sim::SimNetWriteOp>(operation)) {
+        destination = write.getNet();
+        value = write.getValue();
+      } else if (auto force = dyn_cast<sim::SimOverrideOp>(operation)) {
+        destination = force.getTarget();
+        value = force.getValue();
+      } else if (auto force = dyn_cast<sim::SimDynamicOverrideOp>(operation)) {
+        destination = force.getTarget();
+        value = force.getValue();
+      } else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+        destination = drive.getDriver();
+        value = drive.getValue();
+      } else if (auto drive =
+                     dyn_cast<sim::SimDriverDriveInertialOp>(operation)) {
+        destination = drive.getDriver();
+        value = drive.getValue();
+      } else if (auto drive =
+                     dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
+        destination = drive.getDriver();
+        value = drive.getValue();
+      } else if (auto drive =
+                     dyn_cast<sim::SimDriverDriveDelayedNetOp>(operation)) {
+        destination = drive.getDriver();
+        value = drive.getValue();
+      } else if (auto drive =
+                     dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
+        destination = drive.getDriver();
+        value = drive.getValue();
+      }
+      if (destination) {
+        writes.push_back({destination, value});
+        return;
+      }
+      // Closed-world callees are inventoried separately. Unknown invocations
+      // and unrecognized writers must not silently certify persistent state.
+      if (closedInvocations.contains(operation) &&
+          !opaqueInvocations.contains(operation))
+        return;
+      auto effects = dyn_cast<MemoryEffectOpInterface>(operation);
+      if (!effects)
+        return;
+      SmallVector<MemoryEffects::EffectInstance> instances;
+      effects.getEffects(instances);
+      for (const auto &effect : instances) {
+        if (!isa<MemoryEffects::Write>(effect.getEffect()))
+          continue;
+        auto resource = schedule::ComputeResourceKind::Unknown;
+        if (isa<sim::StorageResource>(effect.getResource()))
+          resource = schedule::ComputeResourceKind::Storage;
+        else if (isa<sim::NetResource>(effect.getResource()))
+          resource = schedule::ComputeResourceKind::Net;
+        else
+          continue;
+        if (Value target = effect.getValue())
+          writes.push_back({target, {}});
+        else
+          opaqueWriteResources.insert(static_cast<unsigned>(resource));
+      }
+    });
+    for (RootWrite &write : llvm::drop_begin(writes, firstWrite)) {
+      write.root = getConcreteRoot(write.destination, summary.provenance);
+      auto found = summary.provenance.find(write.destination);
+      if (found != summary.provenance.end())
+        write.resource = found->second.resource;
+    }
+  }
   while (true) {
     FailureOr<DenseMap<Value, StateDomainFact>> solved =
         computeValueFacts(program, candidates);
@@ -1216,80 +1387,22 @@ StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
     RootSet rejected;
     bool rejectAllResources = false;
     llvm::SmallDenseSet<unsigned, 8> rejectedResources;
-    for (const FunctionSummary &summary : program.summaries) {
-      sim::SimFuncOp function = summary.function;
-      const analysis::HandleFacts &provenance = summary.provenance;
-      function.walk([&](Operation *operation) {
-        auto rejectWrite = [&](Value destination, Value value) {
-          if (getValueFact(facts, value).domain == StateDomain::TwoState)
-            return;
-          if (std::optional<RootKey> root =
-                  getConcreteRoot(destination, provenance)) {
-            if (candidates.contains(*root))
-              rejected.insert(*root);
-            return;
-          }
-          auto found = provenance.find(destination);
-          schedule::ComputeResourceKind resource =
-              found == provenance.end() ? schedule::ComputeResourceKind::Unknown
-                                        : found->second.resource;
-          // Unknown destinations reject a resource class, not a different
-          // set for every write. Union those demands now and expand them once
-          // after the wave, avoiding O(unknown writes * candidate roots).
-          // No candidate is removed until every write used the same facts.
-          if (resource == schedule::ComputeResourceKind::Unknown)
-            rejectAllResources = true;
-          else
-            rejectedResources.insert(static_cast<unsigned>(resource));
-        };
-        if (auto pair = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
-                operation)) {
-          rejectWrite(pair.getLowDriver(), pair.getLowValue());
-          rejectWrite(pair.getHighDriver(), pair.getHighValue());
-          return;
-        }
-        if (auto pair = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
-                operation)) {
-          rejectWrite(pair.getLowDriver(), pair.getLowValue());
-          rejectWrite(pair.getHighDriver(), pair.getHighValue());
-          return;
-        }
-        Value destination;
-        Value value;
-        if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
-          destination = store.getReference();
-          value = store.getValue();
-        } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
-          destination = nba.getDestination();
-          value = nba.getValue();
-        } else if (auto store =
-                       dyn_cast<sim::SimRefStoreInertialPathOp>(operation)) {
-          destination = store.getReference();
-          value = store.getValue();
-        } else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-          destination = drive.getDriver();
-          value = drive.getValue();
-        } else if (auto drive =
-                       dyn_cast<sim::SimDriverDriveInertialOp>(operation)) {
-          destination = drive.getDriver();
-          value = drive.getValue();
-        } else if (auto drive =
-                       dyn_cast<sim::SimDriverDriveInertialPathOp>(operation)) {
-          destination = drive.getDriver();
-          value = drive.getValue();
-        } else if (auto drive =
-                       dyn_cast<sim::SimDriverDriveDelayedNetOp>(operation)) {
-          destination = drive.getDriver();
-          value = drive.getValue();
-        } else if (auto drive =
-                       dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
-          destination = drive.getDriver();
-          value = drive.getValue();
-        } else {
-          return;
-        }
-        rejectWrite(destination, value);
-      });
+    rejectedResources.insert(opaqueWriteResources.begin(),
+                             opaqueWriteResources.end());
+    for (const RootWrite &write : writes) {
+      if ((write.value &&
+           getValueFact(facts, write.value).domain == StateDomain::TwoState) ||
+          write.copyKnown ||
+          (write.copiedRoot && candidates.contains(*write.copiedRoot)))
+        continue;
+      if (write.root) {
+        if (candidates.contains(*write.root))
+          rejected.insert(*write.root);
+      } else if (write.resource == schedule::ComputeResourceKind::Unknown) {
+        rejectAllResources = true;
+      } else {
+        rejectedResources.insert(static_cast<unsigned>(write.resource));
+      }
     }
     if (rejectAllResources || !rejectedResources.empty())
       for (RootKey root : candidates)
@@ -1356,6 +1469,56 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
   });
   return StateDomainAnalysis(std::move(*unconditional), std::move(*guarded),
                              std::move(roots));
+}
+
+FailureOr<std::pair<StateDomainAnalysis, StateDomainAnalysis>>
+StateDomainAnalysis::computeForSpecialization(sim::SimDesignOp design,
+                                              bool proveInductiveRoots) {
+  if (design.getBody().empty()) {
+    design.emitOpError("cannot analyze a design with no body");
+    return failure();
+  }
+  ValueFactProgram program(design);
+  auto unconditional = computeValueFacts(program, RootSet{});
+  if (failed(unconditional))
+    return failure();
+  FailureOr<StateDomainAnalysis> inductive =
+      proveInductiveRoots
+          ? computeInductiveOnly(program)
+          : FailureOr<StateDomainAnalysis>(StateDomainAnalysis(
+                DenseMap<Value, StateDomainFact>{}, *unconditional, {}));
+  if (failed(inductive))
+    return failure();
+  inductive->facts = std::move(*unconditional);
+  RootSet assumedKnown;
+  for (Operation &operation : design.getBody().front()) {
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      if (isLogic(storage.getType()))
+        assumedKnown.insert(getRootKey(schedule::ComputeResourceKind::Storage,
+                                       storage.getId()));
+      continue;
+    }
+    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
+      if (isLogic(net.getType()))
+        assumedKnown.insert(
+            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
+  }
+  auto guarded = computeValueFacts(program, assumedKnown);
+  if (failed(guarded))
+    return failure();
+  SmallVector<InductiveStateRoot> roots;
+  roots.reserve(assumedKnown.size());
+  for (RootKey root : assumedKnown)
+    roots.push_back(
+        {static_cast<schedule::ComputeResourceKind>(root.first), root.second});
+  llvm::sort(roots, [](const auto &lhs, const auto &rhs) {
+    return std::tie(lhs.resource, lhs.descriptor) <
+           std::tie(rhs.resource, rhs.descriptor);
+  });
+  return std::make_pair(std::move(*inductive),
+                        StateDomainAnalysis(DenseMap<Value, StateDomainFact>{},
+                                            std::move(*guarded),
+                                            std::move(roots)));
 }
 
 StateDomainFact StateDomainAnalysis::get(Value value) const {

@@ -27,6 +27,8 @@ class SimDesignOp;
 
 namespace obelisk {
 
+struct ValueFactProgram;
+
 /// The lattice used while solving the design. Bottom is kept internal to the
 /// fixed point; unresolved facts are exposed conservatively as MayFourState.
 enum class StateDomain {
@@ -125,6 +127,13 @@ public:
   static mlir::FailureOr<StateDomainAnalysis>
   computeAssumingKnownState(sim::SimDesignOp design);
 
+  /// Share immutable CFG/call/provenance indexes and the unconditional solve
+  /// between kernel-versioning proofs. The second snapshot exposes only
+  /// guarded all-known-state facts; get() remains conservative on that one.
+  static mlir::FailureOr<std::pair<StateDomainAnalysis, StateDomainAnalysis>>
+  computeForSpecialization(sim::SimDesignOp design,
+                           bool proveInductiveRoots = true);
+
   StateDomainFact get(mlir::Value value) const;
   bool isTwoState(mlir::Value value) const;
   /// Query the guarded fact used by a versioned native kernel after it has
@@ -138,6 +147,8 @@ public:
   }
 
 private:
+  static mlir::FailureOr<StateDomainAnalysis>
+  computeInductiveOnly(const ValueFactProgram &program);
   explicit StateDomainAnalysis(
       llvm::DenseMap<mlir::Value, StateDomainFact> facts,
       llvm::DenseMap<mlir::Value, StateDomainFact> guardedFacts,
