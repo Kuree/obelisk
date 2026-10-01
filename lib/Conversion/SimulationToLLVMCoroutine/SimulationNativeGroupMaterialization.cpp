@@ -1,5 +1,6 @@
 //===- SimulationNativeGroupMaterialization.cpp - Native group bodies ----===//
 
+#include "NativeSymbolUses.h"
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
@@ -10,12 +11,14 @@
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
+#include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -446,6 +449,103 @@ public:
   }
 };
 
+struct InlinedGroupBody {
+  uint64_t remaining;
+  uint64_t materialized;
+};
+
+InlinedGroupBody
+inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
+                const DenseMap<Operation *, uint64_t> &stableCosts,
+                DenseMap<Operation *, uint64_t> &costs,
+                uint64_t operationLimit) {
+  InlinerInterface interface(function.getContext());
+  SmallVector<LLVM::CallOp> pending;
+  function.walk([&](LLVM::CallOp call) {
+    if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupMember>(
+            call))
+      pending.push_back(call);
+  });
+  std::reverse(pending.begin(), pending.end());
+  // The existing native helper-size budget also caps total additional IR
+  // per coordinator. Oversized computation stays in direct helpers; helper
+  // calls do not acquire time/region ownership or become scheduler exits.
+  uint64_t remaining = operationLimit;
+  uint64_t materialized = 0;
+  llvm::DenseSet<Operation *> expanded;
+  while (!pending.empty()) {
+    LLVM::CallOp call = pending.pop_back_val();
+    if (!call.getCallee())
+      continue;
+    auto callee = symbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
+    if (!callee || callee == function || callee.isExternal() ||
+        expanded.contains(callee) ||
+        !(::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalGroupDomainSelected>(call) ||
+          ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+              callee) ||
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalFourStateSource>(callee) ||
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalConditionallyTwoState>(callee)))
+      continue;
+    uint64_t cost;
+    if (auto frozen = stableCosts.find(callee); frozen != stableCosts.end()) {
+      cost = frozen->second;
+    } else {
+      auto [found, inserted] = costs.try_emplace(callee, 0);
+      if (inserted)
+        callee.walk([&](Operation *operation) {
+          found->second += operation != callee.getOperation();
+        });
+      cost = found->second;
+    }
+    if (!cost || cost > remaining)
+      continue;
+    SmallVector<LLVM::CallOp> nested;
+    auto owner =
+        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupMember>(
+            call);
+    auto clone = [&](OpBuilder &, Region *source, Block *inlineBlock,
+                     Block *postInsertBlock, IRMapping &mapping,
+                     bool shouldClone) {
+      assert(shouldClone && "canonical executor bodies must remain intact");
+      source->cloneInto(inlineBlock->getParent(),
+                        postInsertBlock->getIterator(), mapping);
+      for (Block &block : *source)
+        for (Operation &operation : *mapping.lookup(&block)) {
+          if (owner && isa<LLVM::LoadOp, LLVM::StoreOp>(operation))
+            schedule::set<schedule::Field::EvalGroupOwner>(&operation, owner);
+          if (auto child = dyn_cast<LLVM::CallOp>(operation)) {
+            if (owner)
+              ::obelisk::schedule::set<
+                  ::obelisk::schedule::Field::EvalGroupMember>(child, owner);
+            nested.push_back(child);
+          }
+        }
+    };
+    if (failed(inlineCall(interface, clone, cast<CallOpInterface>(*call),
+                          cast<CallableOpInterface>(*callee),
+                          &callee.getBody())))
+      continue;
+    call.erase();
+    // Shared computation remains a direct helper after one expansion.
+    // Besides avoiding Cartesian cloning, this cuts recursive call edges
+    // even when the user disables the operation-size budget.
+    expanded.insert(callee);
+    remaining -= cost;
+    ++materialized;
+    std::reverse(nested.begin(), nested.end());
+    llvm::append_range(pending, nested);
+  }
+  if (materialized)
+    ::obelisk::schedule::set<
+        ::obelisk::schedule::Field::EvalMaterializedGroupCalls>(
+        function, IntegerAttr::get(IntegerType::get(function.getContext(), 64),
+                                   materialized));
+  return {remaining, materialized};
+}
+
 } // namespace
 
 /// Materialize certified activation bodies before native partitioning. The
@@ -472,7 +572,6 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   DialectRegistry registry;
   LLVM::registerInlinerInterface(registry);
   module.getContext()->appendDialectRegistry(registry);
-  InlinerInterface interface(module.getContext());
   SymbolTable symbols(module);
   // Candidates are transient compiler-owned bodies. Preserve user-authored
   // candidates with existing callers rather than deleting or retargeting
@@ -482,13 +581,31 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         return ::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
       })) {
-    SymbolTableCollection tables;
-    SymbolUserMap users(tables, module);
-    for (auto function : groups)
-      if (::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalDataflowCandidate>(function) &&
-          !users.useEmpty(function))
-        externallyUsedCandidates.insert(function);
+    SmallVector<Region *> scopes;
+    module.walk([&](Operation *operation) {
+      if (operation->hasTrait<OpTrait::SymbolTable>())
+        for (Region &region : operation->getRegions())
+          scopes.push_back(&region);
+    });
+    auto uses = collectNativeSymbolUses(module.getContext(), scopes);
+    if (!uses) {
+      // An unknown symbol scope cannot prove a transient candidate unused.
+      for (auto function : groups)
+        if (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalDataflowCandidate>(function))
+          externallyUsedCandidates.insert(function);
+    } else {
+      SymbolTableCollection tables;
+      // Resolve in the scope containing the user, as SymbolUserMap does.
+      // A symbol-table operation's own attributes still use its outer scope.
+      for (const auto &use : *uses)
+        if (auto function = tables.lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
+                use.getUser()->getParentOp(), use.getSymbolRef());
+            function &&
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalDataflowCandidate>(function))
+          externallyUsedCandidates.insert(function);
+    }
   }
 
   auto limit =
@@ -513,6 +630,102 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   SmallVector<Refinement> refinements;
   DenseMap<Operation *, unsigned> refinementRoots;
   SmallVector<uint64_t> refinementBudgets;
+  // Establish body read/write dependencies with MLIR's call graph before
+  // mutation. A worker must neither read a group another worker can change,
+  // nor change a definition read by the ordered refinement phase. Shared leaf
+  // executors remain immutable; groups with dependencies retain source order.
+  CallGraph callGraph(module);
+  DenseSet<CallGraphNode *> groupNodes, reachesGroup, referencedGroups;
+  DenseMap<CallGraphNode *, SmallVector<CallGraphNode *>> callers;
+  for (CallGraphNode *node : callGraph)
+    for (const auto &edge : *node)
+      callers[edge.getTarget()].push_back(node);
+  SmallVector<CallGraphNode *> pending;
+  for (auto function : groups)
+    if (auto *node = callGraph.lookupNode(&function.getBody())) {
+      groupNodes.insert(node);
+      reachesGroup.insert(node);
+      pending.push_back(node);
+    }
+  while (!pending.empty()) {
+    auto *node = pending.pop_back_val();
+    for (auto *caller : callers.lookup(node))
+      if (reachesGroup.insert(caller).second)
+        pending.push_back(caller);
+  }
+  DenseSet<CallGraphNode *> reachable;
+  llvm::append_range(pending, groupNodes);
+  while (!pending.empty()) {
+    auto *node = pending.pop_back_val();
+    if (!reachable.insert(node).second)
+      continue;
+    for (const auto &edge : *node) {
+      if (groupNodes.contains(edge.getTarget()))
+        referencedGroups.insert(edge.getTarget());
+      if (!edge.getTarget()->isExternal())
+        pending.push_back(edge.getTarget());
+    }
+  }
+  SmallVector<LLVM::LLVMFuncOp> stableDefinitions;
+  for (auto *node : reachable) {
+    if (node->isExternal() || groupNodes.contains(node))
+      continue;
+    if (auto function = dyn_cast<LLVM::LLVMFuncOp>(
+            node->getCallableRegion()->getParentOp()))
+      stableDefinitions.push_back(function);
+  }
+  SmallVector<uint64_t> stableCounts(stableDefinitions.size());
+  parallelFor(module.getContext(), 0, stableDefinitions.size(), [&](size_t i) {
+    stableDefinitions[i].walk([&](Operation *operation) {
+      stableCounts[i] += operation != stableDefinitions[i].getOperation();
+    });
+  });
+  DenseMap<Operation *, uint64_t> stableCosts;
+  for (auto [i, function] : llvm::enumerate(stableDefinitions))
+    stableCosts.try_emplace(function, stableCounts[i]);
+
+  // Refinement can replace the original named by candidate metadata without
+  // a call edge. Preserve that write-before-inline dependency as well. An
+  // original preceding its candidate may be prepared early: its ordered
+  // inlining already runs before the candidate's body transaction.
+  DenseMap<Operation *, size_t> groupOrder;
+  for (auto [i, function] : llvm::enumerate(groups))
+    groupOrder.try_emplace(function, i);
+  DenseSet<Operation *> earlyRefinementTargets;
+  for (auto [i, function] : llvm::enumerate(groups))
+    if (auto candidate = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::EvalDataflowCandidate>(function)) {
+      auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
+      auto position = groupOrder.find(original);
+      if (position != groupOrder.end() && position->second > i)
+        earlyRefinementTargets.insert(original);
+    }
+  SmallVector<LLVM::LLVMFuncOp> independent;
+  for (auto function : groups) {
+    auto *node = callGraph.lookupNode(&function.getBody());
+    if (!node || referencedGroups.contains(node) ||
+        earlyRefinementTargets.contains(function) ||
+        externallyUsedCandidates.contains(function) ||
+        llvm::any_of(*node, [&](const auto &edge) {
+          return reachesGroup.contains(edge.getTarget());
+        }))
+      continue;
+    independent.push_back(function);
+  }
+  SmallVector<InlinedGroupBody> inlinedBodies(independent.size());
+  parallelFor(module.getContext(), 0, independent.size(), [&](size_t i) {
+    DenseMap<Operation *, uint64_t> localCosts;
+    inlinedBodies[i] = inlineGroupBody(independent[i], symbols, stableCosts,
+                                       localCosts, operationLimit);
+  });
+  DenseMap<Operation *, InlinedGroupBody> preInlined;
+  for (auto [i, function] : llvm::enumerate(independent))
+    preInlined.try_emplace(function, inlinedBodies[i]);
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk native group inlining: independent="
+                 << independent.size()
+                 << " ordered=" << groups.size() - independent.size() << '\n';
+
   // Refinement appends children. Keep original activation CFGs intact until
   // all candidates have been considered; memory SSA would erase the entry
   // evidence needed to prove a partial split.
@@ -523,84 +736,18 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
           ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
       continue;
     }
-    SmallVector<LLVM::CallOp> pending;
-    function.walk([&](LLVM::CallOp call) {
-      if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupMember>(
-              call))
-        pending.push_back(call);
-    });
-    std::reverse(pending.begin(), pending.end());
-    // The existing native helper-size budget also caps total additional IR
-    // per coordinator. Oversized computation stays in direct helpers; helper
-    // calls do not acquire time/region ownership or become scheduler exits.
-    uint64_t remaining = operationLimit;
-    uint64_t materialized = 0;
-    llvm::DenseSet<Operation *> expanded;
-    while (!pending.empty()) {
-      LLVM::CallOp call = pending.pop_back_val();
-      if (!call.getCallee())
-        continue;
-      auto callee = symbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
-      if (!callee || callee == function || callee.isExternal() ||
-          expanded.contains(callee) ||
-          !(::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalGroupDomainSelected>(call) ||
-            ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
-                callee) ||
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalFourStateSource>(callee) ||
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalConditionallyTwoState>(callee)))
-        continue;
-      auto [found, inserted] = costs.try_emplace(callee, 0);
-      if (inserted)
-        callee.walk([&](Operation *operation) {
-          found->second += operation != callee.getOperation();
-        });
-      uint64_t cost = found->second;
-      if (!cost || cost > remaining)
-        continue;
-      SmallVector<LLVM::CallOp> nested;
-      auto owner =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupMember>(
-              call);
-      auto clone = [&](OpBuilder &, Region *source, Block *inlineBlock,
-                       Block *postInsertBlock, IRMapping &mapping,
-                       bool shouldClone) {
-        assert(shouldClone && "canonical executor bodies must remain intact");
-        source->cloneInto(inlineBlock->getParent(),
-                          postInsertBlock->getIterator(), mapping);
-        for (Block &block : *source)
-          for (Operation &operation : *mapping.lookup(&block)) {
-            if (owner && isa<LLVM::LoadOp, LLVM::StoreOp>(operation))
-              schedule::set<schedule::Field::EvalGroupOwner>(&operation, owner);
-            if (auto child = dyn_cast<LLVM::CallOp>(operation)) {
-              if (owner)
-                ::obelisk::schedule::set<
-                    ::obelisk::schedule::Field::EvalGroupMember>(child, owner);
-              nested.push_back(child);
-            }
-          }
-      };
-      if (failed(inlineCall(interface, clone, cast<CallOpInterface>(*call),
-                            cast<CallableOpInterface>(*callee),
-                            &callee.getBody())))
-        continue;
-      call.erase();
-      // Shared computation remains a direct helper after one expansion.
-      // Besides avoiding Cartesian cloning, this cuts recursive call edges
-      // even when the user disables the operation-size budget.
-      expanded.insert(callee);
-      remaining -= cost;
-      ++materialized;
-      std::reverse(nested.begin(), nested.end());
-      llvm::append_range(pending, nested);
-    }
-    if (materialized)
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalMaterializedGroupCalls>(
-          function, IntegerAttr::get(IntegerType::get(module.getContext(), 64),
-                                     materialized));
+    auto inlined = preInlined.find(function);
+    InlinedGroupBody body =
+        inlined != preInlined.end()
+            ? inlined->second
+            : inlineGroupBody(function, symbols, stableCosts, costs,
+                              operationLimit);
+    // Refinement may erase a candidate and allocate new child functions.
+    // Do not retain a consumed operation pointer across that allocation.
+    if (inlined != preInlined.end())
+      preInlined.erase(inlined);
+    uint64_t remaining = body.remaining;
+    uint64_t materialized = body.materialized;
     if (auto candidate = ::obelisk::schedule::get<
             ::obelisk::schedule::Field::EvalDataflowCandidate>(function)) {
       auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
