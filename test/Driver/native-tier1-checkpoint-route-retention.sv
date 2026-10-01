@@ -1,5 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
+// RUN: obelisk -O3 --compile-threads=1 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
+// RUN: obelisk -O3 --compile-threads=8 --native-scheduler=auto -emit-llvm %s -o %t.threaded.ll
+// RUN: diff -u %t.ll %t.threaded.ll
 // RUN: obelisk -O3 -fno-lto --compile-threads=8 --native-scheduler=auto %s -o %t.auto
 // RUN: %llvm_dist/bin/llvm-nm %t.auto | FileCheck %s --check-prefix=SYMBOLS
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic

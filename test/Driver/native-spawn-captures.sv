@@ -4,6 +4,9 @@
 // RUN: %t.auto | FileCheck %s
 // RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
+// RUN: obelisk -O3 --compile-threads=1 -emit-llvm %s -o %t.serial.ll
+// RUN: obelisk -O3 --compile-threads=8 -emit-llvm %s -o %t.threaded.ll
+// RUN: diff -u %t.serial.ll %t.threaded.ll
 
 // Dynamic child captures include padding and separate wide value/XZ planes.
 // The child must retain the automatic values until its first delayed use.
