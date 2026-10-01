@@ -1,12 +1,16 @@
 //===- DevirtualizeClassCalls.cpp - Resolve exact class dispatches -------===//
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/Pass/PassManager.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -180,59 +184,136 @@ private:
   DenseMap<Operation *, DenseMap<Slot, CachedByKind>> monomorphic;
 };
 
-class ExactClassResolver {
+struct ExactClassFact {
+  bool initialized = false;
+  sim::SimClassDeclOp dynamicClass;
+  bool operator==(const ExactClassFact &rhs) const {
+    return initialized == rhs.initialized && dynamicClass == rhs.dynamicClass;
+  }
+  static ExactClassFact join(ExactClassFact lhs, ExactClassFact rhs) {
+    if (!lhs.initialized)
+      return rhs;
+    if (!rhs.initialized || lhs == rhs)
+      return lhs;
+    return {true, {}};
+  }
+  void print(raw_ostream &os) const {
+    os << (!initialized ? "bottom" : dynamicClass ? "exact" : "unknown");
+  }
+};
+using ExactClassLattice = dataflow::Lattice<ExactClassFact>;
+
+class ExactClassAnalysis
+    : public dataflow::SparseForwardDataFlowAnalysis<ExactClassLattice> {
 public:
-  explicit ExactClassResolver(const analysis::ClassDispatchAnalysis &dispatch)
-      : dispatch(dispatch) {}
-
-  sim::SimClassDeclOp resolve(Value value) {
-    if (auto found = exact.find(value); found != exact.end())
-      return found->second;
-    if (unknown.contains(value) || !visiting.insert(value).second)
-      return {};
-
-    sim::SimClassDeclOp result;
-    if (auto allocation = value.getDefiningOp<sim::SimClassAllocOp>()) {
-      result = dispatch.lookup(
+  ExactClassAnalysis(DataFlowSolver &solver,
+                     const analysis::ClassDispatchAnalysis &dispatch)
+      : SparseForwardDataFlowAnalysis(solver), dispatch(dispatch) {}
+  LogicalResult visitOperation(Operation *op,
+                               ArrayRef<const ExactClassLattice *> operands,
+                               ArrayRef<ExactClassLattice *> results) override {
+    ExactClassFact fact{true, {}};
+    if (auto allocation = dyn_cast<sim::SimClassAllocOp>(op)) {
+      fact.dynamicClass = dispatch.lookup(
           cast<sim::ClassHandleType>(allocation.getResult().getType()));
-    } else if (auto copy = value.getDefiningOp<sim::SimClassCopyOp>()) {
-      result = resolve(copy.getSource());
-    } else if (auto castOp = value.getDefiningOp<sim::SimClassCastOp>()) {
-      sim::SimClassDeclOp dynamicClass = resolve(castOp.getObject());
+    } else if (isa<sim::SimClassCopyOp>(op)) {
+      // LRM 8.12: a shallow copy retains the dynamic class of its source.
+      fact = operands[1]->getValue();
+    } else if (auto castOp = dyn_cast<sim::SimClassCastOp>(op)) {
+      fact = operands.front()->getValue();
       sim::SimClassDeclOp target = dispatch.lookup(
           cast<sim::ClassHandleType>(castOp.getResult().getType()));
-      if (dispatch.isInstanceOf(dynamicClass, target))
-        result = dynamicClass;
+      if (fact.initialized && !dispatch.isInstanceOf(fact.dynamicClass, target))
+        fact.dynamicClass = {};
     }
-
-    visiting.erase(value);
-    if (result)
-      exact.try_emplace(value, result);
-    else
-      unknown.insert(value);
-    return result;
+    for (ExactClassLattice *result : results)
+      propagateIfChanged(result, result->join(fact));
+    return success();
   }
 
 private:
+  void setToEntryState(ExactClassLattice *state) override {
+    propagateIfChanged(state, state->join({true, {}}));
+  }
   const analysis::ClassDispatchAnalysis &dispatch;
-  DenseMap<Value, sim::SimClassDeclOp> exact;
-  DenseSet<Value> unknown;
-  DenseSet<Value> visiting;
 };
 
-FailureOr<sim::SimCallOp> createDirectCall(IRRewriter &rewriter,
-                                           Operation *operation,
-                                           sim::SimFuncOp implementation,
-                                           Value receiver, ValueRange arguments,
-                                           TypeRange resultTypes) {
+class ExactClassResolver {
+public:
+  ExactClassResolver(const analysis::ClassDispatchAnalysis &dispatch,
+                     ArrayRef<sim::SimFuncOp> functions) {
+    // The analysis is intraprocedural. Analyze only functions with queried
+    // receivers, and freeze their facts before rewriting any call or CFG.
+    for (sim::SimFuncOp function : functions) {
+      DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+      solver.load<dataflow::DeadCodeAnalysis>();
+      solver.load<dataflow::SparseConstantPropagation>();
+      solver.load<ExactClassAnalysis>(dispatch);
+      if (failed(solver.initializeAndRun(function)))
+        continue;
+      auto record = [&](Value value) {
+        if (!isa<sim::ClassHandleType>(value.getType()))
+          return;
+        if (const auto *state = solver.lookupState<ExactClassLattice>(value))
+          if (auto dynamicClass = state->getValue().dynamicClass)
+            exactClasses[value] = dynamicClass;
+      };
+      function.walk([&](Operation *op) {
+        for (Value value : op->getResults())
+          record(value);
+        for (Region &region : op->getRegions())
+          for (Block &block : region)
+            for (Value value : block.getArguments())
+              record(value);
+      });
+    }
+  }
+  sim::SimClassDeclOp resolve(Value value) const {
+    return exactClasses.lookup(value);
+  }
+
+private:
+  DenseMap<Value, sim::SimClassDeclOp> exactClasses;
+};
+
+// Snapshot symbol contracts before function passes run. A worker must not
+// inspect a sibling function while that function's CFG is being rewritten.
+struct ClassCallTarget {
+  sim::EntryKind kind;
+  FunctionType type;
+  FlatSymbolRefAttr symbol;
+};
+struct ClassCallTargets {
+  explicit ClassCallTargets(Operation *operation)
+      : dispatch(cast<sim::SimDesignOp>(operation)) {
+    auto design = cast<sim::SimDesignOp>(operation);
+    for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>())
+      functions.try_emplace(
+          function.getSymName(),
+          ClassCallTarget{function.getEntryKind(), function.getFunctionType(),
+                          FlatSymbolRefAttr::get(operation->getContext(),
+                                                 function.getSymName())});
+  }
+  const ClassCallTarget *lookup(StringRef name) const {
+    auto found = functions.find(name);
+    return found == functions.end() ? nullptr : &found->second;
+  }
+  analysis::ClassDispatchAnalysis dispatch;
+  llvm::StringMap<ClassCallTarget> functions;
+};
+
+FailureOr<sim::SimCallOp>
+createDirectCall(IRRewriter &rewriter, Operation *operation,
+                 const ClassCallTarget *implementation, Value receiver,
+                 ValueRange arguments, TypeRange resultTypes) {
   sim::SimFuncOp caller = operation->getParentOfType<sim::SimFuncOp>();
   if (!caller || caller.getBody().empty() ||
       caller.getBody().front().getNumArguments() == 0 || !implementation ||
-      implementation.getEntryKind() != sim::EntryKind::Function ||
-      implementation.getFunctionType().getNumInputs() < 2)
+      implementation->kind != sim::EntryKind::Function ||
+      implementation->type.getNumInputs() < 2)
     return failure();
 
-  Type expectedReceiver = implementation.getFunctionType().getInput(1);
+  Type expectedReceiver = implementation->type.getInput(1);
   Value adjusted = receiver;
   if (adjusted.getType() != expectedReceiver)
     adjusted = sim::SimClassCastOp::create(rewriter, operation->getLoc(),
@@ -241,8 +322,7 @@ FailureOr<sim::SimCallOp> createDirectCall(IRRewriter &rewriter,
   SmallVector<Value> operands{caller.getBody().front().getArgument(0),
                               adjusted};
   llvm::append_range(operands, arguments);
-  auto callee = FlatSymbolRefAttr::get(rewriter.getContext(),
-                                       implementation.getSymName());
+  auto callee = implementation->symbol;
   return sim::SimCallOp::create(rewriter, operation->getLoc(), resultTypes,
                                 callee, operands, ArrayAttr{}, ArrayAttr{});
 }
@@ -250,7 +330,7 @@ FailureOr<sim::SimCallOp> createDirectCall(IRRewriter &rewriter,
 LogicalResult createGuardedDirectCall(IRRewriter &rewriter,
                                       sim::SimClassVirtualCallOp call,
                                       sim::SimClassMethodDeclOp method,
-                                      sim::SimFuncOp implementation) {
+                                      const ClassCallTarget *implementation) {
   Location location = call.getLoc();
   Value receiver = call.getReceiver();
   SmallVector<Value> arguments(call.getArguments());
@@ -299,16 +379,16 @@ LogicalResult createGuardedDirectCall(IRRewriter &rewriter,
 FailureOr<sim::SimTaskCallOp>
 createDirectTaskCall(IRRewriter &rewriter, sim::SimClassVirtualTaskCallOp call,
                      sim::SimClassMethodDeclOp method,
-                     sim::SimFuncOp implementation) {
+                     const ClassCallTarget *implementation) {
   sim::SimFuncOp caller = call->getParentOfType<sim::SimFuncOp>();
   if (!caller || caller.getBody().empty() ||
       caller.getBody().front().getNumArguments() == 0 || !implementation ||
-      implementation.getEntryKind() != sim::EntryKind::Task ||
-      implementation.getFunctionType().getNumInputs() < 2)
+      implementation->kind != sim::EntryKind::Task ||
+      implementation->type.getNumInputs() < 2)
     return failure();
 
   Value receiver = call.getReceiver();
-  Type expectedReceiver = implementation.getFunctionType().getInput(1);
+  Type expectedReceiver = implementation->type.getInput(1);
   if (receiver.getType() != expectedReceiver)
     receiver = sim::SimClassCastOp::create(rewriter, call.getLoc(),
                                            expectedReceiver, receiver);
@@ -318,17 +398,15 @@ createDirectTaskCall(IRRewriter &rewriter, sim::SimClassVirtualTaskCallOp call,
   llvm::append_range(operands, call.getArguments());
   uint64_t argumentCount = operands.size();
   llvm::append_range(operands, call.getContinuationOperands());
-  auto callee = FlatSymbolRefAttr::get(rewriter.getContext(),
-                                       implementation.getSymName());
+  auto callee = implementation->symbol;
   return sim::SimTaskCallOp::create(rewriter, call.getLoc(), callee, operands,
                                     rewriter.getI64IntegerAttr(argumentCount),
                                     call.getSiteAttr(), call.getContinuation());
 }
 
-LogicalResult createGuardedDirectTaskCall(IRRewriter &rewriter,
-                                          sim::SimClassVirtualTaskCallOp call,
-                                          sim::SimClassMethodDeclOp method,
-                                          sim::SimFuncOp implementation) {
+LogicalResult createGuardedDirectTaskCall(
+    IRRewriter &rewriter, sim::SimClassVirtualTaskCallOp call,
+    sim::SimClassMethodDeclOp method, const ClassCallTarget *implementation) {
   Location location = call.getLoc();
   Value receiver = call.getReceiver();
   SmallVector<Value> arguments(call.getArguments());
@@ -365,17 +443,17 @@ LogicalResult createGuardedDirectTaskCall(IRRewriter &rewriter,
   return success();
 }
 
-class ObeliskSimDevirtualizeClassCallsPass final
-    : public impl::ObeliskSimDevirtualizeClassCallsPassBase<
-          ObeliskSimDevirtualizeClassCallsPass> {
+class DevirtualizeFunctionCallsPass final
+    : public PassWrapper<DevirtualizeFunctionCallsPass,
+                         OperationPass<sim::SimFuncOp>> {
 public:
-  using Base = impl::ObeliskSimDevirtualizeClassCallsPassBase<
-      ObeliskSimDevirtualizeClassCallsPass>;
-  using Base::Base;
-  ObeliskSimDevirtualizeClassCallsPass(
-      const ObeliskSimDevirtualizeClassCallsPass &other)
-      : Base(other) {}
-
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(DevirtualizeFunctionCallsPass)
+  DevirtualizeFunctionCallsPass() = default;
+  DevirtualizeFunctionCallsPass(const DevirtualizeFunctionCallsPass &other)
+      : PassWrapper(other) {}
+  StringRef getArgument() const final {
+    return "obelisk-sim-devirtualize-function-calls";
+  }
   void runOnOperation() override;
 
 private:
@@ -404,46 +482,36 @@ private:
                                 "virtual task calls retained conservatively"};
 };
 
-void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
-  sim::SimDesignOp design = getOperation();
-  compactPreparedVirtualSlots(design);
-
-  // The first symbol-DCE pass has now removed unreachable virtual families.
-  // Preserve the surviving closed-world vtable entries across later DCE, then
-  // discard the preparation-only call-graph edges before function lowering.
-  SmallVector<sim::SimClassDispatchTargetsOp> markers;
-  design.walk([&](sim::SimClassMethodDeclOp method) {
-    if (preserveAllMethods || method.getSlot())
-      SymbolTable::setSymbolVisibility(method, SymbolTable::Visibility::Public);
-  });
-  design.walk([&](sim::SimClassDispatchTargetsOp marker) {
-    markers.push_back(marker);
-  });
-  for (sim::SimClassDispatchTargetsOp marker : markers)
-    marker.erase();
-
-  analysis::ClassDispatchAnalysis dispatch(design);
+void DevirtualizeFunctionCallsPass::runOnOperation() {
+  sim::SimFuncOp function = getOperation();
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  auto cached = getCachedParentAnalysis<ClassCallTargets>(design);
+  if (!cached) {
+    function.emitError("class call rewriting requires frozen design targets");
+    return signalPassFailure();
+  }
+  const ClassCallTargets &targets = cached->get();
+  const auto &dispatch = targets.dispatch;
   MonomorphicResolver monomorphic(dispatch);
-  ExactClassResolver resolver(dispatch);
-  IRRewriter rewriter(design.getContext());
-  llvm::StringMap<sim::SimFuncOp> functions;
-  for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>())
-    functions[function.getSymName()] = function;
+  IRRewriter rewriter(function.getContext());
   auto lookupImplementation = [&](sim::SimClassMethodDeclOp method) {
-    if (!method || !method.getImplementationAttr())
-      return sim::SimFuncOp{};
-    auto found = functions.find(*method.getImplementation());
-    return found == functions.end() ? sim::SimFuncOp{} : found->second;
+    return method && method.getImplementationAttr()
+               ? targets.lookup(*method.getImplementation())
+               : nullptr;
   };
 
   SmallVector<sim::SimClassVirtualCallOp> virtualCalls;
   SmallVector<sim::SimClassVirtualTaskCallOp> virtualTaskCalls;
-  design.walk([&](Operation *operation) {
+  function.walk([&](Operation *operation) {
     if (auto call = dyn_cast<sim::SimClassVirtualCallOp>(operation))
       virtualCalls.push_back(call);
     else if (auto call = dyn_cast<sim::SimClassVirtualTaskCallOp>(operation))
       virtualTaskCalls.push_back(call);
   });
+  SmallVector<sim::SimFuncOp, 1> receiverFunctions;
+  if (!virtualCalls.empty() || !virtualTaskCalls.empty())
+    receiverFunctions.push_back(function);
+  ExactClassResolver resolver(dispatch, receiverFunctions);
   for (sim::SimClassVirtualCallOp call : virtualCalls) {
     sim::SimClassDeclOp dynamicClass = resolver.resolve(call.getReceiver());
     if (dynamicClass) {
@@ -454,7 +522,7 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
         continue;
       }
       rewriter.setInsertionPoint(call);
-      sim::SimFuncOp implementation = lookupImplementation(method);
+      const ClassCallTarget *implementation = lookupImplementation(method);
       FailureOr<sim::SimCallOp> replacement =
           createDirectCall(rewriter, call, implementation, call.getReceiver(),
                            call.getArguments(), call.getResultTypes());
@@ -535,11 +603,68 @@ void ObeliskSimDevirtualizeClassCallsPass::runOnOperation() {
     ++guardedTaskCalls;
   }
 
-  uint64_t normalizedDirectCalls = 0;
-  if (failed(sim::normalizeClassDirectCalls(design, &normalizedDirectCalls)))
-    return signalPassFailure();
-  directCalls += normalizedDirectCalls;
+  SmallVector<sim::SimClassDirectCallOp> calls;
+  function.walk([&](sim::SimClassDirectCallOp call) { calls.push_back(call); });
+  for (sim::SimClassDirectCallOp call : calls) {
+    const ClassCallTarget *target = targets.lookup(call.getCallee());
+    if (!target || target->kind != sim::EntryKind::Function) {
+      call.emitError(
+          "direct class call does not reference a zero-time function");
+      return signalPassFailure();
+    }
+    if (function.getBody().empty() ||
+        function.getBody().front().getNumArguments() == 0 ||
+        !isa<sim::ContextType>(
+            function.getBody().front().getArgument(0).getType())) {
+      call.emitError("direct class call has no dominating simulation context");
+      return signalPassFailure();
+    }
+    SmallVector<Value> operands{function.getBody().front().getArgument(0),
+                                call.getReceiver()};
+    llvm::append_range(operands, call.getArguments());
+    rewriter.setInsertionPoint(call);
+    auto replacement = sim::SimCallOp::create(
+        rewriter, call.getLoc(), call.getResultTypes(), target->symbol,
+        operands, ArrayAttr{}, ArrayAttr{});
+    rewriter.replaceOp(call, replacement.getResults());
+    ++directCalls;
+  }
 }
+
+class ObeliskSimDevirtualizeClassCallsPass final
+    : public impl::ObeliskSimDevirtualizeClassCallsPassBase<
+          ObeliskSimDevirtualizeClassCallsPass> {
+public:
+  using Base = impl::ObeliskSimDevirtualizeClassCallsPassBase<
+      ObeliskSimDevirtualizeClassCallsPass>;
+  using Base::Base;
+  void runOnOperation() override {
+    sim::SimDesignOp design = getOperation();
+    compactPreparedVirtualSlots(design);
+
+    // The first symbol-DCE pass has now removed unreachable virtual families.
+    // Preserve the surviving closed-world vtable entries across later DCE, then
+    // discard the preparation-only call-graph edges before function lowering.
+    SmallVector<sim::SimClassDispatchTargetsOp> markers;
+    design.walk([&](sim::SimClassMethodDeclOp method) {
+      if (preserveAllMethods || method.getSlot())
+        SymbolTable::setSymbolVisibility(method,
+                                         SymbolTable::Visibility::Public);
+    });
+    design.walk([&](sim::SimClassDispatchTargetsOp marker) {
+      markers.push_back(marker);
+    });
+    for (sim::SimClassDispatchTargetsOp marker : markers)
+      marker.erase();
+
+    getAnalysis<ClassCallTargets>();
+    OpPassManager pipeline(sim::SimDesignOp::getOperationName());
+    pipeline.nest<sim::SimFuncOp>().addPass(
+        std::make_unique<DevirtualizeFunctionCallsPass>());
+    if (failed(runPipeline(pipeline, design)))
+      signalPassFailure();
+  }
+};
 
 } // namespace
 } // namespace obelisk
