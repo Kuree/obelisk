@@ -333,6 +333,7 @@ set_target_properties(ObeliskGeneratedArithmeticRuntimeTests PROPERTIES
 add_llvm_executable(ObeliskNativePartitionTests EXCLUDE_FROM_ALL
   Support/NativePartitionTest.cpp
   Support/ActivationOrderTest.cpp
+  Support/NativeGlobalInitializersTest.cpp
 )
 llvm_update_compile_flags(ObeliskNativePartitionTests)
 target_include_directories(ObeliskNativePartitionTests PRIVATE
@@ -340,6 +341,9 @@ target_include_directories(ObeliskNativePartitionTests PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
 target_link_libraries(ObeliskNativePartitionTests PRIVATE
+  MLIRBuiltinToLLVMIRTranslation
+  MLIRLLVMToLLVMIRTranslation
+  MLIRTargetLLVMIRExport
   MLIRLLVMDialect
   MLIRParser
   MLIRTransforms

@@ -16,6 +16,7 @@
 #include "BackendUtils.h"
 #include "NativeBackend.h"
 #include "NativeExecutionCounts.h"
+#include "NativeGlobalInitializers.h"
 #include "NativeModulePruning.h"
 #include "NativePartitionCost.h"
 #include "WasmBackend.h"
@@ -1185,6 +1186,14 @@ LogicalResult emitTargetOutput(ModuleOp module,
   if (failed(materializeDeferredRuntimeByteGlobals(module)))
     return failure();
   markBackendTiming("runtime byte-global materialization");
+  if (pruneModel) {
+    unsigned changed = detail::balanceNativeGlobalInitializers(
+        module, targetMachine->createDataLayout());
+    if (options.timing)
+      errs() << "obelisk native balanced global initializers: " << changed
+             << '\n';
+    markBackendTiming("global initializer balancing");
+  }
   llvm::LLVMContext llvmContext;
   std::unique_ptr<llvm::Module> llvmModule =
       translateModuleToLLVMIR(module, llvmContext, "obelisk");
