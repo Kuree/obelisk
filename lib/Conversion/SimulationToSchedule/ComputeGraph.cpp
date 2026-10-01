@@ -14,6 +14,7 @@
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -1788,6 +1789,7 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
   // zero-time ones: a nonblocking assignment inside a function is legal and
   // needs a site even though the function is not itself a graph node.
   for (const FunctionInfo &info : analysis.functions) {
+    std::optional<analysis::ConstantTimeAnalysis> constantTimes;
     auto walkResult =
         info.getFunction().walk([&](Operation *operation) -> WalkResult {
           if (isSuspensionTerminator(operation)) {
@@ -1804,12 +1806,15 @@ LogicalResult ComputeGraphBuilder::buildSites(ComputeGraphResult &result) {
                 schedule::ContinuationSiteAttr::get(design.getContext(),
                                                     found->second);
           }
-          if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation))
+          if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation)) {
+            if (!constantTimes)
+              constantTimes.emplace(info.getFunction());
             result.timings[operation] = schedule::TimingSiteAttr::get(
                 design.getContext(), timingSite++,
-                isConstantTimeValue(delay.getDelay())
+                constantTimes->isConstant(delay.getDelay())
                     ? schedule::ComputeTimingKind::Calendar
                     : schedule::ComputeTimingKind::DeadlineSlot);
+          }
           if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
             HandleFact destination =
                 info.provenance.lookup(nba.getDestination());

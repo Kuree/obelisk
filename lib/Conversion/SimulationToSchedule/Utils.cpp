@@ -107,53 +107,5 @@ ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function) {
   return reexecuting;
 }
 
-bool isConstantTimeValue(Value value) {
-  // A value is a compiled-calendar delay when every definition reaching it is
-  // the same constant. Carrying an argument around a loop preserves, rather
-  // than creates, that proof, so a self-reference contributes no definition.
-  // Whether the proof holds must depend only on the definitions reached, never
-  // on the order the worklist happens to visit them.
-  SmallVector<Value> worklist{value};
-  DenseSet<Value> visited;
-  std::optional<APInt> constantValue;
-  while (!worklist.empty()) {
-    Value current = worklist.pop_back_val();
-    if (!visited.insert(current).second)
-      continue;
-    if (auto constant = current.getDefiningOp<sim::SimTimeConstantOp>()) {
-      APInt value = constant.getValueAttr().getValue();
-      if (constantValue && *constantValue != value)
-        return false;
-      constantValue = value;
-      continue;
-    }
-    auto argument = dyn_cast<BlockArgument>(current);
-    if (!argument)
-      return false;
-    Block *block = argument.getOwner();
-    if (block->isEntryBlock() || block->hasNoPredecessors())
-      return false;
-    for (Block *predecessor : block->getPredecessors()) {
-      auto branch = dyn_cast<BranchOpInterface>(predecessor->getTerminator());
-      if (!branch)
-        return false;
-      for (unsigned successor = 0;
-           successor != predecessor->getTerminator()->getNumSuccessors();
-           ++successor) {
-        if (predecessor->getTerminator()->getSuccessor(successor) != block)
-          continue;
-        auto forwarded =
-            branch.getSuccessorOperands(successor).getForwardedOperands();
-        if (argument.getArgNumber() >= forwarded.size())
-          return false;
-        Value incoming = forwarded[argument.getArgNumber()];
-        if (incoming != current)
-          worklist.push_back(incoming);
-      }
-    }
-  }
-  // An argument defined only by itself reaches no constant at all.
-  return constantValue.has_value();
-}
 
 } // namespace obelisk::simlowering
