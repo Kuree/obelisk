@@ -15,6 +15,7 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -148,20 +149,29 @@ LogicalResult materializeEvalTwoStateVariants(
   // domain. Two-state variants still require the same inductive closure proof
   // as Auto and are selected only after their canonical unknown plane clears.
   constexpr bool forceTwoState = false;
-  FailureOr<StateDomainAnalysis> domains =
-      StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/true);
-  if (failed(domains))
+  auto domainProofs = StateDomainAnalysis::computeForSpecialization(design);
+  if (failed(domainProofs))
     return failure();
-  FailureOr<StateDomainAnalysis> knownStateDomains =
-      StateDomainAnalysis::computeAssumingKnownState(design);
-  if (failed(knownStateDomains))
-    return failure();
+  StateDomainAnalysis *domains = &domainProofs->first;
+  StateDomainAnalysis *knownStateDomains = &domainProofs->second;
 
   // Proof propagation only changes attributes and bodies. Keep the symbol
   // inventory across those walks and maintain it for every generated or
   // rejected function below, rather than rescanning declarations per call
   // and rebuilding the complete table per variant.
   SymbolTable variantSymbols(design);
+  // Freeze source invocation edges before creating variants. Every closure
+  // propagation below uses this index instead of repeatedly walking bodies.
+  DenseMap<Operation *, SmallVector<Operation *>> sourceCallees, sourceCallers;
+  for (sim::SimFuncOp function :
+       design.getBody().front().getOps<sim::SimFuncOp>())
+    function.walk([&](sim::SimCallOp call) {
+      if (sim::SimFuncOp callee =
+              variantSymbols.lookup<sim::SimFuncOp>(call.getCallee())) {
+        sourceCallees[function].push_back(callee);
+        sourceCallers[callee].push_back(function);
+      }
+    });
   SmallVector<sim::SimFuncOp> roots;
   llvm::SmallPtrSet<Operation *, 16> rootSet;
   for (sim::SimFuncOp function :
@@ -255,6 +265,7 @@ LogicalResult materializeEvalTwoStateVariants(
     });
   llvm::SmallPtrSet<Operation *, 32> variantEligibleSources;
   llvm::SmallPtrSet<Operation *, 16> knownOnlyPathSources;
+  llvm::SmallPtrSet<Operation *, 16> resetPathSources;
   if (!forceTwoState) {
     // A transient two-state route need not be globally two-state.  It is
     // sufficient that (1) every canonical input/output slice is known at the
@@ -684,6 +695,29 @@ LogicalResult materializeEvalTwoStateVariants(
       // owners, so only reads reached by this activation constrain promotion.
       bool knownOnlyPath =
           closureRuntimeFree && !closureKnownPreserving && explicitUnknownNBA;
+      // A reset can stage known NBA values without reading the old state on
+      // that path. Admit that activation before the whole owner's range is
+      // known, using the executable SSA/CFG probe rather than a signal name or
+      // edge heuristic. Blocking publications still require the entry proof:
+      // their two-state lowering elides canonical unknown-plane stores.
+      if (closureRuntimeFree && closureKnownPreserving) {
+        bool conditionalRead = false, hasNBA = false, hasBranch = false;
+        bool blockingWrite = false;
+        source.walk([&](Operation *op) {
+          if (isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op))
+            conditionalRead |= op->getBlock() != &source.getBody().front();
+          hasNBA |= isa<sim::SimNBAEnqueueOp>(op);
+          hasBranch |= isa<cf::CondBranchOp>(op);
+          blockingWrite |=
+              isa<sim::SimRefStoreOp, sim::SimNetWriteOp, sim::SimDriverDriveOp,
+                  sim::SimDriverDriveChangedOp, sim::SimDriverDriveDelayedNetOp,
+                  sim::SimCallOp>(op);
+        });
+        if (conditionalRead && hasBranch && hasNBA && !blockingWrite) {
+          knownOnlyPath = true;
+          resetPathSources.insert(source.getOperation());
+        }
+      }
       if (!closureRuntimeFree || knownOnlyPath)
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
@@ -703,31 +737,25 @@ LogicalResult materializeEvalTwoStateVariants(
     // NBA accumulator while the promoted coordinator selects its two-state
     // commit.  Reject these closures transitively instead of relying on a
     // top-level fallback bit that cannot see the indirect route.
-    bool removed;
-    do {
-      removed = false;
-      SmallVector<Operation *> rejected;
-      for (Operation *operation : routeEligibleSources) {
-        auto source = cast<sim::SimFuncOp>(operation);
-        bool closed = true;
-        source.walk([&](sim::SimCallOp call) {
-          sim::SimFuncOp callee =
-              variantSymbols.lookup<sim::SimFuncOp>(call.getCallee());
-          if (callee &&
-              ::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalRawCaptures>(callee) &&
-              !routeEligibleSources.contains(callee.getOperation()))
-            closed = false;
-        });
-        if (!closed)
+    SmallVector<Operation *> rejected;
+    for (Operation *operation : routeEligibleSources)
+      for (Operation *callee : sourceCallees.lookup(operation))
+        if (::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalRawCaptures>(callee) &&
+            !routeEligibleSources.contains(callee)) {
           rejected.push_back(operation);
-      }
-      for (Operation *operation : rejected) {
-        removed |= routeEligibleSources.erase(operation);
-        ::obelisk::schedule::remove<
-            ::obelisk::schedule::Field::EvalConditionallyTwoState>(operation);
-      }
-    } while (removed);
+          break;
+        }
+    while (!rejected.empty()) {
+      Operation *operation = rejected.pop_back_val();
+      if (!routeEligibleSources.erase(operation))
+        continue;
+      ::obelisk::schedule::remove<
+          ::obelisk::schedule::Field::EvalConditionallyTwoState>(operation);
+      for (Operation *caller : sourceCallers.lookup(operation))
+        if (routeEligibleSources.contains(caller))
+          rejected.push_back(caller);
+    }
 
     // A generated owner may call another raw-capture owner (for example, a
     // parent module instance calling an outlined child instance).  Its entry
@@ -749,28 +777,31 @@ LogicalResult materializeEvalTwoStateVariants(
             {static_cast<uint64_t>(values[index]),
              static_cast<uint64_t>(values[index + 1])});
     }
-    do {
-      removed = false;
-      for (Operation *operation : routeEligibleSources) {
-        auto source = cast<sim::SimFuncOp>(operation);
-        source.walk([&](sim::SimCallOp call) {
-          sim::SimFuncOp callee =
-              variantSymbols.lookup<sim::SimFuncOp>(call.getCallee());
-          if (!callee || !routeEligibleSources.contains(callee.getOperation()))
-            return;
-          // A checkpoint callee owns its own guarded route and promotion
-          // closure. Pulling its dormant-path ranges into every caller would
-          // couple otherwise independent module instances and prevent the
-          // caller from ever reaching its two-state entry.
-          if (::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
-                  callee))
-            return;
-          for (PhysicalRange range : routeClosureRanges[callee.getOperation()])
-            removed |= routeClosureRanges[operation].insert(range).second;
-        });
+    SmallVector<Operation *> rangeWorklist(routeEligibleSources.begin(),
+                                           routeEligibleSources.end());
+    DenseSet<Operation *> rangeQueued(routeEligibleSources.begin(),
+                                      routeEligibleSources.end());
+    while (!rangeWorklist.empty()) {
+      Operation *callee = rangeWorklist.pop_back_val();
+      rangeQueued.erase(callee);
+      // Checkpoint callees own independent guarded promotion closures.
+      if (::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+              callee))
+        continue;
+      SmallVector<PhysicalRange> contribution(
+          routeClosureRanges[callee].begin(), routeClosureRanges[callee].end());
+      for (Operation *caller : sourceCallers.lookup(callee)) {
+        if (!routeEligibleSources.contains(caller))
+          continue;
+        bool changed = false;
+        for (PhysicalRange range : contribution)
+          changed |= routeClosureRanges[caller].insert(range).second;
+        if (changed && rangeQueued.insert(caller).second)
+          rangeWorklist.push_back(caller);
       }
-    } while (removed);
+    }
+
     for (Operation *operation : routeEligibleSources) {
       SmallVector<PhysicalRange> orderedRanges(
           routeClosureRanges[operation].begin(),
@@ -860,30 +891,51 @@ LogicalResult materializeEvalTwoStateVariants(
   // insufficient: reject state reads, foreign calls, allocation and recursive
   // cycles. Such calls need neither a state overlay nor a runtime checkpoint.
   DenseMap<Operation *, bool> pureValueHelpers;
-  auto isPureValueHelper = [&](auto &&self, sim::SimFuncOp function) -> bool {
-    if (!function || function.isExternal())
-      return false;
-    auto [cached, inserted] =
-        pureValueHelpers.try_emplace(function.getOperation(), false);
-    if (!inserted)
-      return cached->second;
-    bool pure = function
-                    .walk([&](Operation *operation) {
-                      if (operation == function.getOperation() ||
-                          isa<sim::SimReturnOp>(operation))
-                        return WalkResult::advance();
-                      if (auto call = dyn_cast<sim::SimCallOp>(operation))
-                        return self(self, variantSymbols.lookup<sim::SimFuncOp>(
-                                              call.getCallee()))
-                                   ? WalkResult::advance()
-                                   : WalkResult::interrupt();
-                      return isMemoryEffectFree(operation)
-                                 ? WalkResult::advance()
-                                 : WalkResult::interrupt();
-                    })
-                    .wasInterrupted() == false;
-    pureValueHelpers[function.getOperation()] = pure;
-    return pure;
+  SmallVector<Operation *> helperNodes, impureWorklist;
+  for (sim::SimFuncOp function :
+       design.getBody().front().getOps<sim::SimFuncOp>()) {
+    helperNodes.push_back(function);
+    bool pure =
+        !function.isExternal() &&
+        !function
+             .walk([&](Operation *op) {
+               if (op == function.getOperation() || isa<sim::SimReturnOp>(op))
+                 return WalkResult::advance();
+               if (auto call = dyn_cast<sim::SimCallOp>(op))
+                 return variantSymbols.lookup<sim::SimFuncOp>(call.getCallee())
+                            ? WalkResult::advance()
+                            : WalkResult::interrupt();
+               return isMemoryEffectFree(op) ? WalkResult::advance()
+                                             : WalkResult::interrupt();
+             })
+             .wasInterrupted();
+    pureValueHelpers[function] = pure;
+    if (!pure)
+      impureWorklist.push_back(function);
+  }
+  // Recursive invocation SCCs cannot be speculatively dry-run. Reject each
+  // component, then propagate effects only along reverse invocation edges.
+  for (ArrayRef<Operation *> component :
+       simlowering::computeStronglyConnectedComponents<Operation *>(
+           helperNodes, sourceCallees))
+    if (component.size() > 1 ||
+        llvm::is_contained(sourceCallees.lookup(component.front()),
+                           component.front()))
+      for (Operation *function : component)
+        if (pureValueHelpers[function]) {
+          pureValueHelpers[function] = false;
+          impureWorklist.push_back(function);
+        }
+  while (!impureWorklist.empty()) {
+    Operation *callee = impureWorklist.pop_back_val();
+    for (Operation *caller : sourceCallers.lookup(callee))
+      if (pureValueHelpers[caller]) {
+        pureValueHelpers[caller] = false;
+        impureWorklist.push_back(caller);
+      }
+  }
+  auto isPureValueHelper = [&](auto &&, sim::SimFuncOp function) {
+    return function && pureValueHelpers.lookup(function);
   };
   auto materializePathKnownProbe =
       [&](sim::SimFuncOp source, StringRef name, uint64_t codeUnit,
@@ -1680,6 +1732,22 @@ LogicalResult materializeEvalTwoStateVariants(
       if (failed(probe))
         return failure();
       if (!*probe) {
+        if (resetPathSources.contains(source.getOperation())) {
+          // This optional early-entry proof may fail on an unsupported
+          // overlay. Retain the valid whole-owner range certificate.
+          ::obelisk::schedule::remove<
+              ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+              source);
+          ::obelisk::schedule::remove<
+              ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+              variant);
+          ::obelisk::schedule::remove<schedule::Field::EvalInfallible>(variant);
+          variantNames[source.getSymName()] = name.str().str();
+          variants.push_back(variant);
+          variantDeclarations[variant.getOperation()] =
+              variantDeclaration.getOperation();
+          continue;
+        }
         // An empty owner-level range is sound only when a path predicate
         // guards every activation.  If that predicate needs an unsupported
         // dry-run overlay, or if it proves that no activation stays in the
@@ -1749,41 +1817,42 @@ LogicalResult materializeEvalTwoStateVariants(
   // Reject callers transitively as well.  Their cloned calls would otherwise
   // remain bound to an unsupported four-state checkpoint leaf after the
   // caller itself had entered a nominally two-state closure.
-  bool removedUnsupportedCaller;
-  do {
-    removedUnsupportedCaller = false;
-    SmallVector<sim::SimFuncOp> retained;
-    for (sim::SimFuncOp variant : variants) {
-      auto sourceRef = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalFourStateSource>(variant);
-      sim::SimFuncOp source =
-          sourceRef
-              ? variantSymbols.lookup<sim::SimFuncOp>(sourceRef.getValue())
-              : sim::SimFuncOp{};
-      bool unsupported = !source;
-      if (source)
-        source.walk([&](sim::SimCallOp call) {
-          unsupported |= unsupportedVariantSources.contains(call.getCallee());
-        });
-      if (!unsupported) {
-        retained.push_back(variant);
-        continue;
-      }
-      removedUnsupportedCaller = true;
-      if (source) {
-        unsupportedVariantSources.insert(source.getSymName());
-        ::obelisk::schedule::remove<schedule::metadata::evalTwoStateVariant>(
-            source);
-        variantNames.erase(source.getSymName());
-      }
-      if (Operation *declaration =
-              variantDeclarations.lookup(variant.getOperation()))
-        declaration->erase();
-      variantDeclarations.erase(variant.getOperation());
-      variantSymbols.erase(variant);
+  SmallVector<Operation *> unsupportedWorklist;
+  DenseSet<Operation *> unsupportedSources;
+  for (const auto &name : unsupportedVariantSources)
+    if (auto function = variantSymbols.lookup<sim::SimFuncOp>(name.getKey())) {
+      unsupportedSources.insert(function);
+      unsupportedWorklist.push_back(function);
     }
-    variants = std::move(retained);
-  } while (removedUnsupportedCaller);
+  while (!unsupportedWorklist.empty()) {
+    Operation *callee = unsupportedWorklist.pop_back_val();
+    for (Operation *caller : sourceCallers.lookup(callee))
+      if (unsupportedSources.insert(caller).second)
+        unsupportedWorklist.push_back(caller);
+  }
+  SmallVector<sim::SimFuncOp> retained;
+  for (sim::SimFuncOp variant : variants) {
+    auto sourceRef = ::obelisk::schedule::get<
+        ::obelisk::schedule::Field::EvalFourStateSource>(variant);
+    sim::SimFuncOp source =
+        sourceRef ? variantSymbols.lookup<sim::SimFuncOp>(sourceRef.getValue())
+                  : sim::SimFuncOp{};
+    if (source && !unsupportedSources.contains(source)) {
+      retained.push_back(variant);
+      continue;
+    }
+    if (source) {
+      unsupportedVariantSources.insert(source.getSymName());
+      ::obelisk::schedule::remove<schedule::metadata::evalTwoStateVariant>(
+          source);
+      variantNames.erase(source.getSymName());
+    }
+    if (Operation *declaration = variantDeclarations.lookup(variant))
+      declaration->erase();
+    variantDeclarations.erase(variant);
+    variantSymbols.erase(variant);
+  }
+  variants = std::move(retained);
 
   for (sim::SimFuncOp variant : variants)
     variant.walk([&](sim::SimCallOp call) {
@@ -1833,21 +1902,15 @@ LogicalResult materializeEvalTwoStateVariants(
               operation))
         privateHelperSet.insert(helper.getOperation());
     });
-  bool addedPrivateAncestor;
-  do {
-    addedPrivateAncestor = false;
-    for (sim::SimFuncOp helper : helperSources) {
-      if (privateHelperSet.contains(helper.getOperation()))
-        continue;
-      helper.walk([&](sim::SimCallOp call) {
-        sim::SimFuncOp callee =
-            variantSymbols.lookup<sim::SimFuncOp>(call.getCallee());
-        if (callee && privateHelperSet.contains(callee.getOperation()))
-          addedPrivateAncestor |=
-              privateHelperSet.insert(helper.getOperation()).second;
-      });
-    }
-  } while (addedPrivateAncestor);
+  SmallVector<Operation *> privateWorklist(privateHelperSet.begin(),
+                                           privateHelperSet.end());
+  while (!privateWorklist.empty()) {
+    Operation *callee = privateWorklist.pop_back_val();
+    for (Operation *caller : sourceCallers.lookup(callee))
+      if (helperSet.contains(caller) && privateHelperSet.insert(caller).second)
+        privateWorklist.push_back(caller);
+  }
+
   llvm::StringMap<std::string> privateHelperNames;
   SmallVector<sim::SimFuncOp> privateHelpers;
   for (sim::SimFuncOp source : helperSources) {

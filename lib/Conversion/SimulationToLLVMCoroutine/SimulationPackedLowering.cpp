@@ -314,17 +314,19 @@ LogicalResult lowerPackedSimulationOperations(
     if (!needsInductiveFacts && !needsKnownStateFacts &&
         functionCount > stateDomainFunctionLimit)
       return WalkResult::advance();
-    FailureOr<StateDomainAnalysis> stateDomains =
-        StateDomainAnalysis::compute(design, needsInductiveFacts);
-    if (failed(stateDomains))
-      return WalkResult::interrupt();
+    FailureOr<StateDomainAnalysis> stateDomains = failure();
     std::optional<StateDomainAnalysis> knownStateDomains;
     if (needsKnownStateFacts) {
-      FailureOr<StateDomainAnalysis> computed =
-          StateDomainAnalysis::computeAssumingKnownState(design);
+      auto computed = StateDomainAnalysis::computeForSpecialization(
+          design, needsInductiveFacts);
       if (failed(computed))
         return WalkResult::interrupt();
-      knownStateDomains.emplace(std::move(*computed));
+      stateDomains = std::move(computed->first);
+      knownStateDomains.emplace(std::move(computed->second));
+    } else {
+      stateDomains = StateDomainAnalysis::compute(design, needsInductiveFacts);
+      if (failed(stateDomains))
+        return WalkResult::interrupt();
     }
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {

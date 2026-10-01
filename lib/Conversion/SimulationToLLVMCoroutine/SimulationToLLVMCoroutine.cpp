@@ -2123,6 +2123,12 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   constexpr StringLiteral routePromotionBoundaryName =
       "__obelisk_eval_route_promotion_boundary_v1";
   const uint64_t routeWordCount = (routes.size() + 63) / 64;
+  auto hasPersistentSelector = [](const Route &route) {
+    return !route.pathKnownProbe ||
+           (route.independentEntry &&
+            ::obelisk::schedule::has<schedule::Field::EvalInfallible>(
+                route.twoState));
+  };
   const bool needsRouteSummary = routeWordCount > 1;
   builder.setInsertionPointToStart(module.getBody());
   // One pending word is already its own nonempty summary. Avoid a redundant
@@ -2133,7 +2139,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                            builder.getI8IntegerAttr(1), 1);
   SmallVector<uint64_t> initialRoutePending(routeWordCount, 0);
   for (auto [index, route] : llvm::enumerate(routes))
-    if (!route.pathKnownProbe &&
+    if (hasPersistentSelector(route) &&
         (!route.ranges.empty() || route.independentEntry))
       initialRoutePending[index / 64] |= uint64_t{1} << (index % 64);
   auto pendingType = LLVM::LLVMArrayType::get(i64, routeWordCount);
@@ -2202,6 +2208,24 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       route.dispatcher.getBody().push_back(unknown);
       builder.setInsertionPointToStart(entry);
       SmallVector<Value> arguments(entry->getArguments());
+      if (hasPersistentSelector(route)) {
+        // Once all required state is known, the owner's preserving proof
+        // replaces repeated dry runs. Reset paths may enter early through the
+        // probe, but cannot latch this selector until their NBA has committed.
+        Block *probe = new Block;
+        route.dispatcher.getBody().push_back(probe);
+        Value selected = LLVM::LoadOp::create(
+            builder, route.twoState.getLoc(), i8,
+            LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
+                                      route.selectorName),
+            1);
+        Value promoted = LLVM::ICmpOp::create(
+            builder, route.twoState.getLoc(), LLVM::ICmpPredicate::ne, selected,
+            detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0));
+        LLVM::CondBrOp::create(builder, route.twoState.getLoc(), promoted,
+                               known, probe);
+        builder.setInsertionPointToStart(probe);
+      }
       Value path = LLVM::CallOp::create(builder, route.twoState.getLoc(),
                                         route.pathKnownProbe, arguments)
                        .getResult();
@@ -2696,7 +2720,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
                              call.getResults());
     }
-    if (!route.pathKnownProbe) {
+    if (hasPersistentSelector(route)) {
       builder.setInsertionPointToStart(module.getBody());
       auto global = LLVM::GlobalOp::create(
           builder, route.twoState.getLoc(), i8, false, LLVM::Linkage::Internal,
@@ -2768,7 +2792,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     uint64_t end = std::min<uint64_t>(routes.size(), (word + 1) * 64);
     for (uint64_t index = word * 64; index != end; ++index) {
       Route &route = routes[index];
-      if (route.pathKnownProbe ||
+      if (!hasPersistentSelector(route) ||
           (route.ranges.empty() && !route.independentEntry))
         continue;
       Block *scan = new Block, *nextRoute = new Block;
@@ -2925,7 +2949,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                       routePromotionDirtyName),
             1);
       for (Route &route : routes) {
-        if (route.pathKnownProbe)
+        if (!hasPersistentSelector(route))
           continue;
         LLVM::StoreOp::create(
             builder, returnOp.getLoc(),

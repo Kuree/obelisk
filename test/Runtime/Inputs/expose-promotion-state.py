@@ -4,7 +4,8 @@ from pathlib import Path
 import sys
 
 multiword = sys.argv[-1] == "--multiword"
-arguments = sys.argv[1:-1] if multiword else sys.argv[1:]
+reset = sys.argv[-1] == "--reset"
+arguments = sys.argv[1:-1] if multiword or reset else sys.argv[1:]
 source, output = arguments
 text = Path(source).read_text()
 # Export the private proof-state inspection points and keep the original model
@@ -26,6 +27,11 @@ if multiword:
                "__obelisk_eval_selected_variant_v1_64",
                "__obelisk_eval_route_promotion_pending_v1",
                "__obelisk_eval_route_promotion_dirty_v1")
+if reset:
+    symbols = ("__obelisk_state_value", "__obelisk_state_unknown",
+               "__obelisk_eval_selected_variant_v1_0",
+               "__obelisk_eval_route_promotion_pending_v1",
+               "__obelisk_eval_step_four_state_fallback_v1")
 for symbol in symbols:
     old = "llvm.mlir.global internal @" + symbol + "("
     assert text.count(old) == 1, symbol
