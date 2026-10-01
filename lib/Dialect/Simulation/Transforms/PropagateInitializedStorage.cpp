@@ -1,7 +1,9 @@
 //===- PropagateInitializedStorage.cpp
 //-------------------------------------===//
 
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
@@ -10,6 +12,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Pass/PassManager.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -37,6 +40,58 @@ struct StorageCandidate {
   SmallVector<StorageAccess> writes;
   SmallVector<StorageAccess> reads;
   bool invalid = false;
+};
+
+struct InitializedStorageReplacements {
+  explicit InitializedStorageReplacements(Operation *) {}
+  struct Replacement {
+    sim::SimRefLoadOp load;
+    IntegerAttr value;
+    IntegerAttr unknown;
+  };
+  DenseMap<Operation *, SmallVector<Replacement>> functions;
+};
+
+class PropagateInitializedStorageFunctionPass final
+    : public PassWrapper<PropagateInitializedStorageFunctionPass,
+                         OperationPass<sim::SimFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      PropagateInitializedStorageFunctionPass)
+  StringRef getArgument() const final {
+    return "obelisk-sim-propagate-initialized-storage-function";
+  }
+  void runOnOperation() override {
+    auto function = getOperation();
+    auto cached = getCachedParentAnalysis<InitializedStorageReplacements>(
+        function->getParentOfType<sim::SimDesignOp>());
+    if (!cached) {
+      function.emitError(
+          "initialized storage rewriting requires a frozen proof");
+      return signalPassFailure();
+    }
+    const auto &functions = cached->get().functions;
+    auto found = functions.find(function);
+    if (found == functions.end())
+      return;
+    for (const auto &planned : found->second) {
+      auto load = planned.load;
+      OpBuilder builder(load);
+      Type type = load.getResult().getType();
+      Value replacement;
+      if (auto integer = dyn_cast<IntegerType>(type))
+        replacement = arith::ConstantOp::create(
+            builder, load.getLoc(), integer,
+            IntegerAttr::get(integer, planned.value.getValue() &
+                                          ~planned.unknown.getValue()));
+      else
+        replacement = sim::SimLogicConstantOp::create(
+            builder, load.getLoc(), cast<sim::LogicType>(type), planned.value,
+            planned.unknown);
+      load.getResult().replaceAllUsesWith(replacement);
+      load.erase();
+    }
+  }
 };
 
 class ObeliskSimPropagateInitializedStoragePass
@@ -79,7 +134,7 @@ private:
           return;
         root = function;
       }
-    if (!root || !root.getBody().hasOneBlock())
+    if (!root || root.getBody().empty())
       return;
 
     // This pass rewrites loads but never creates, erases, or renames symbols.
@@ -87,61 +142,83 @@ private:
     SymbolTable symbols(design);
     DenseMap<Operation *, unsigned> callCounts;
     DenseSet<Operation *> initializedBeforeSpawn;
-    SmallVector<sim::SimFuncOp> rootCalls;
+    DenseMap<Operation *, SmallVector<sim::SimFuncOp>> callees;
+    DenseMap<Operation *, bool> simpleInitializers;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {
-      function.walk([&](sim::SimCallOp call) {
-        if (sim::SimFuncOp callee =
-                symbols.lookup<sim::SimFuncOp>(call.getCallee()))
-          ++callCounts[callee.getOperation()];
-      });
-      function.walk([&](sim::SimSpawnOp spawn) {
-        if (sim::SimFuncOp callee =
-                symbols.lookup<sim::SimFuncOp>(spawn.getCallee()))
-          ++callCounts[callee.getOperation()];
-      });
-      function.walk([&](sim::SimTaskCallOp call) {
-        if (sim::SimFuncOp callee =
-                symbols.lookup<sim::SimFuncOp>(call.getCallee()))
-          ++callCounts[callee.getOperation()];
-      });
-    }
-    if (callCounts.lookup(root.getOperation()) != 0)
-      return;
-    bool safePrefix = true;
-    for (Operation &operation : root.getBody().front()) {
-      if (isa<sim::SimSpawnOp>(operation))
-        safePrefix = false;
-      if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
-        sim::SimFuncOp callee =
-            symbols.lookup<sim::SimFuncOp>(call.getCallee());
-        if (!callee)
+      bool simple =
+          function.getBody().hasOneBlock() &&
+          isa<sim::SimReturnOp>(function.getBody().front().getTerminator());
+      function.walk([&](Operation *op) {
+        if (op == function.getOperation())
           return;
-        rootCalls.push_back(callee);
-        // Before the candidate's initializer, every root call must itself
-        // finish without suspending or creating a process. Otherwise a read
-        // could run before the initializer despite the root's block order.
-        bool simpleInitializer =
-            callee.getBody().hasOneBlock() &&
-            isa<sim::SimReturnOp>(callee.getBody().front().getTerminator());
-        if (simpleInitializer)
-          for (Operation &nested : callee.getBody().front())
-            simpleInitializer &=
-                nested.getNumRegions() == 0 &&
-                (isMemoryEffectFree(&nested) ||
-                 isa<sim::SimRefStoreOp, sim::SimReturnOp>(nested));
-        safePrefix &= simpleInitializer;
-        if (safePrefix && callCounts.lookup(callee.getOperation()) == 1)
+        FlatSymbolRefAttr target;
+        if (auto call = dyn_cast<sim::SimCallOp>(op))
+          target = call.getCalleeAttr();
+        else if (auto call = dyn_cast<sim::SimTaskCallOp>(op))
+          target = call.getCalleeAttr();
+        else if (auto spawn = dyn_cast<sim::SimSpawnOp>(op))
+          target = spawn.getCalleeAttr();
+        if (target)
+          if (auto callee = symbols.lookup<sim::SimFuncOp>(target.getValue())) {
+            ++callCounts[callee];
+            if (isa<sim::SimCallOp>(op))
+              callees[function].push_back(callee);
+          }
+        simple &= op->getNumRegions() == 0 &&
+                  (isMemoryEffectFree(op) ||
+                   isa<sim::SimRefStoreOp, sim::SimReturnOp>(op));
+      });
+      simpleInitializers[function] = simple;
+    }
+    if (callCounts.lookup(root) != 0)
+      return;
+    SmallVector<Operation *> definitions, startupBoundaries;
+    root.walk([&](Operation *op) {
+      if (isa<sim::SimRefStoreOp, sim::SimCallOp>(op))
+        definitions.push_back(op);
+      if (isa<sim::SimSpawnOp, sim::SimReturnOp>(op))
+        startupBoundaries.push_back(op);
+    });
+    // LRM 6.8: initialization precedes *every* process startup. A safe prefix
+    // on just one branch does not prove a conditional initializer executed.
+    // Use dense must definitions at all startup/return boundaries and count
+    // execution over the entire root lifetime, without resetting at delays.
+    analysis::NoBarrierAnalysis prefix(root, [&](Operation *op) {
+      if (op == root.getOperation())
+        return false;
+      if (auto call = dyn_cast<sim::SimCallOp>(op)) {
+        auto callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
+        return !callee || !simpleInitializers.lookup(callee);
+      }
+      return op->getNumRegions() != 0 ||
+             !(isMemoryEffectFree(op) ||
+               isa<sim::SimRefStoreOp, sim::SimReturnOp, BranchOpInterface>(
+                   op));
+    });
+    analysis::MustDefinitionAnalysis initialized(
+        root, definitions, [](Operation *) { return false; });
+    analysis::WriteExecutionBounds executions(root, definitions, false, false);
+    for (Operation *definition : definitions) {
+      if (!prefix.isSafeBefore(definition) ||
+          !executions.executesAtMostOnce(definition) ||
+          startupBoundaries.empty() ||
+          !llvm::all_of(startupBoundaries, [&](Operation *boundary) {
+            return initialized.containsBefore(definition, boundary);
+          }))
+        continue;
+      if (auto store = dyn_cast<sim::SimRefStoreOp>(definition))
+        initializedBeforeSpawn.insert(store);
+      else if (auto call = dyn_cast<sim::SimCallOp>(definition)) {
+        auto callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
+        if (callee && simpleInitializers.lookup(callee) &&
+            callCounts.lookup(callee) == 1)
           for (auto store :
                callee.getBody().front().getOps<sim::SimRefStoreOp>())
-            initializedBeforeSpawn.insert(store.getOperation());
-      } else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
-        // Inlining must not hide declaration initialization from this pass.
-        if (safePrefix)
-          initializedBeforeSpawn.insert(store.getOperation());
-      } else if (!isMemoryEffectFree(&operation) || operation.getNumRegions())
-        safePrefix = false;
+            initializedBeforeSpawn.insert(store);
+      }
     }
+    SmallVector<sim::SimFuncOp> rootCalls = callees.lookup(root);
     // A read in any root-called initializer can precede another initializer.
     // Keep that entire call closure out of the rewrite, regardless of the
     // textual order of the root's calls.
@@ -150,11 +227,7 @@ private:
       sim::SimFuncOp function = rootCalls.pop_back_val();
       if (!rootCallClosure.insert(function.getOperation()).second)
         continue;
-      function.walk([&](sim::SimCallOp call) {
-        if (sim::SimFuncOp callee =
-                symbols.lookup<sim::SimFuncOp>(call.getCallee()))
-          rootCalls.push_back(callee);
-      });
+      llvm::append_range(rootCalls, callees.lookup(function));
     }
 
     analysis::HandleDataflowAnalysis provenanceAnalysis(design);
@@ -256,15 +329,13 @@ private:
     if (unknownWrite)
       return;
 
+    auto &replacements = getAnalysis<InitializedStorageReplacements>();
     for (auto &[descriptor, info] : candidates) {
       (void)descriptor;
       if (info.invalid || info.writes.size() != 1 || info.reads.empty())
         continue;
       StorageAccess write = info.writes.front();
-      sim::SimFuncOp initializer = write.function;
-      if (!initializedBeforeSpawn.contains(write.operation) ||
-          !initializer.getBody().hasOneBlock() ||
-          write.operation->getBlock() != &initializer.getBody().front())
+      if (!initializedBeforeSpawn.contains(write.operation))
         continue;
       auto store = cast<sim::SimRefStoreOp>(write.operation);
       Operation *constant = store.getValue().getDefiningOp();
@@ -280,7 +351,7 @@ private:
         continue;
       for (const StorageAccess &read : info.reads) {
         auto load = cast<sim::SimRefLoadOp>(read.operation);
-        OpBuilder builder(load);
+
         APInt value, unknown;
         if (auto integer = dyn_cast<arith::ConstantIntOp>(constant)) {
           value = cast<IntegerAttr>(integer.getValue()).getValue();
@@ -293,21 +364,18 @@ private:
         // IEEE 1800-2023 6.8, 11.5.1: slice both planes without losing Z.
         value = value.extractBits(read.width, read.low);
         unknown = unknown.extractBits(read.width, read.low);
-        Type type = load.getResult().getType();
-        Value replacement;
-        if (auto integer = dyn_cast<IntegerType>(type))
-          replacement = arith::ConstantOp::create(
-              builder, load.getLoc(), integer,
-              IntegerAttr::get(integer, value & ~unknown));
-        else
-          replacement = sim::SimLogicConstantOp::create(
-              builder, load.getLoc(), cast<sim::LogicType>(type),
-              builder.getIntegerAttr(builder.getIntegerType(read.width), value),
-              builder.getIntegerAttr(builder.getIntegerType(read.width),
-                                     unknown));
-        load.getResult().replaceAllUsesWith(replacement);
-        load.erase();
+        auto integer = IntegerType::get(design.getContext(), read.width);
+        replacements.functions[read.function].push_back(
+            {load, IntegerAttr::get(integer, value),
+             IntegerAttr::get(integer, unknown)});
       }
+    }
+    if (!replacements.functions.empty()) {
+      OpPassManager pipeline(sim::SimDesignOp::getOperationName());
+      pipeline.nest<sim::SimFuncOp>().addPass(
+          std::make_unique<PropagateInitializedStorageFunctionPass>());
+      if (failed(runPipeline(pipeline, design)))
+        signalPassFailure();
     }
   }
 };
