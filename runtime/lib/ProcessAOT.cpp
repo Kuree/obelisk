@@ -1478,6 +1478,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     // persistent bytecode clock consumer remains a correctness fallback; a
     // finite consumer (for example a reset sequence) naturally disappears
     // after its last edge and pays only this cold-prefix cost.
+    // LRM 4.5, 9.4.2, 10.4.2: a generated activation can also drive a
+    // clock copy through an NBA rather than a forwarding alias. Drain live
+    // runtime waits on generated writable roots before claiming the calendar;
+    // otherwise removing that writer's checkpoint would strand its consumer.
+    const auto &generatedWritableStates =
+        context->nativePeriodicGeneratedWritableStates;
+    auto generatedWritesState = [&](uint32_t staticState) {
+      return generatedWritableStates.find(staticState) !=
+             generatedWritableStates.end();
+    };
+    // Index immutable clock copies by root and bit so subscriptions to
+    // runtime-only roots do not need to scan the complete alias inventory.
+    std::vector<std::pair<uint32_t, uint64_t>> aliasBits;
+    aliasBits.reserve(aliasCount);
+    for (uint32_t index = 0; index != aliasCount; ++index)
+      aliasBits.emplace_back(aliases[index].target_static_state,
+                             aliases[index].target_bit_offset);
+    std::sort(aliasBits.begin(), aliasBits.end());
     auto subscriptionTouchesClock =
         [&](const SignalSubscription &subscription) {
           uint32_t staticID = 0;
@@ -1485,6 +1503,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           if (!decodeNativeStatic(subscription.stableID, staticID, offset) ||
               offset < 0)
             return false;
+          if (generatedWritesState(staticID))
+            return true;
           const NativeStaticState *state =
               findNativeStaticState(context, staticID);
           if (!state)
@@ -1497,12 +1517,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
             if (clocks[index].bit_offset >= begin &&
                 clocks[index].bit_offset < end)
               return true;
-          for (uint32_t index = 0; index != aliasCount; ++index)
-            if (aliases[index].target_static_state == staticID &&
-                aliases[index].target_bit_offset >= begin &&
-                aliases[index].target_bit_offset < end)
-              return true;
-          return false;
+          auto alias = std::lower_bound(aliasBits.begin(), aliasBits.end(),
+                                        std::pair{staticID, begin});
+          return alias != aliasBits.end() && alias->first == staticID &&
+                 alias->second < end;
         };
     auto hasGeneratedPeriodicOwner =
         [&](uint32_t actorSlot, uint32_t continuation,
@@ -1517,8 +1535,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           uint64_t subscriptionLow = static_cast<uint64_t>(offset);
           uint64_t subscriptionWidth =
               std::max<uint64_t>(subscription.bitWidth, 1);
-          for (uint64_t index = 0;
-               index != context->nativeScheduleFanoutEntryCount; ++index) {
+          uint64_t first = 0, last = context->nativeScheduleFanoutEntryCount;
+          if (staticID < context->nativeScheduleFanoutRanges.size())
+            std::tie(first, last) =
+                context->nativeScheduleFanoutRanges[staticID];
+          // LRM 9.4.2: ownership still requires the exact continuation and
+          // overlapping selection; use the installed root range to narrow it.
+          for (uint64_t index = first; index != last; ++index) {
             const auto &entry = context->nativeScheduleFanoutEntries[index];
             if (fanoutRoute(entry) == OBELISK_RT_FANOUT_RUNTIME ||
                 entry.actor_slot != actorSlot ||
@@ -1606,10 +1629,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           std::fprintf(stderr, "obelisk-periodic-reject=tier3-bootstrap\n");
         return OBELISK_RT_TIER_UNAVAILABLE;
       }
-      NativeScheduleStepScope step(context, UINT32_MAX, false);
-      status = runScheduler(context);
+      {
+        NativeScheduleStepScope step(context, UINT32_MAX, false);
+        status = runScheduler(context);
+      }
       if (status != OBELISK_RT_OK)
         return status;
+      // LRM 4.5: the one-action restriction ends before draining the slot.
+      // A resumed child can release a join or enqueue another ready waiter;
+      // those Active events must complete before the next clock deadline.
       status = drainNativeAOTCurrentSlotUnlocked(context);
       if (status != OBELISK_RT_OK)
         return status;
@@ -1890,12 +1918,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     // drained. Initialization and transient deposits legitimately enter with
     // dirty roots and reconcile above; persistent force/assign state must keep
     // the model on the mask-aware scheduler until release.
-    const auto &generatedWritableStates =
-        context->nativePeriodicGeneratedWritableStates;
-    auto generatedWritesState = [&](uint32_t staticState) {
-      return generatedWritableStates.find(staticState) !=
-             generatedWritableStates.end();
-    };
     // IEEE 1800-2017 Clause 31.7 samples `&&&` only after its primary event.
     // A generated write to that primary must retain runtime ownership so the
     // coordinator observes the publication. Condition handles and compiled
