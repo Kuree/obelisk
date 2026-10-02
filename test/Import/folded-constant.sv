@@ -1,7 +1,10 @@
 // RUN: %split-file %s %t
 // RUN: obelisk -emit-slang %t/computed.sv | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-sim %t/computed.sv | FileCheck %s --check-prefix=SIM
+// RUN: obelisk -O0 -emit-sim %t/computed.sv > %t/computed.mlir
+// RUN: FileCheck %s --check-prefix=SIM --implicit-check-not=dynamic_extract < %t/computed.mlir
+// RUN: FileCheck %s --check-prefix=COMPUTED < %t/computed.mlir
 // RUN: obelisk -emit-slang %t/literal.sv | FileCheck %s --check-prefix=LITERAL
+// RUN: obelisk -O0 -emit-sim %t/literal.sv | FileCheck %s --check-prefix=SIM --implicit-check-not=dynamic_extract
 
 // A part-select bound and a replication count must be constant, and
 // elaboration folds them. Carrying that folded value across means arithmetic
@@ -29,8 +32,9 @@ endmodule
 // SLANG: slang.expression.binary_op
 // SLANG-SAME: folded_constant = "7"
 
-// It reaches lowering as a static extract, exactly as wide[7:0] would.
+// Check lowering before optimization removes these unobserved output stores.
+// The computed bound reaches lowering as the same static extract as wide[7:0].
 // SIM: simulation.logic.extract %{{.*}} from 0 : !simulation.logic<16> -> !simulation.logic<8>
-// SIM-NOT: dynamic_extract
+// COMPUTED: simulation.logic.constant 1 : i8, 0 : i8 : !simulation.logic<8>
 
 // LITERAL-NOT: folded_constant

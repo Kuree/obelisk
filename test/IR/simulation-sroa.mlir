@@ -260,12 +260,19 @@ module {
       simulation.return %loaded : i8
     }
 
-    // Static and dynamic packed views safely retain their nested packed array
-    // while still permitting the outer struct to decompose.
+    // Canonicalization promotes these local packed views to whole-value loads.
+    // SROA can then split both the enclosing struct and the nested packed array;
+    // reconstructing the packed value preserves the static/dynamic bit index.
     // CHECK-LABEL: simulation.func @safe_enclosing_packed_extract
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
-    // CHECK: simulation.ref.alloc {{.*}} : !simulation.packed_array<3 : 0 x i8> -> !simulation.ref<!simulation.packed_array<3 : 0 x i8>>
-    // CHECK: simulation.bits.dyn_extract
+    // CHECK: %[[LOW:.*]] = arith.constant 0 : i64
+    // CHECK: %[[ZERO:.*]] = arith.constant 0 : i8
+    // CHECK-COUNT-4: simulation.ref.alloc %[[ZERO]] : i8 -> !simulation.ref<i8>
+    // CHECK-NOT: simulation.ref.alloc
+    // CHECK: %[[PACKED:.*]] = simulation.aggregate.construct {{.*}} : (i8, i8, i8, i8) -> !simulation.packed_array<3 : 0 x i8>
+    // CHECK: %[[BITS:.*]] = simulation.packed.flatten %[[PACKED]] : (!simulation.packed_array<3 : 0 x i8>) -> i32
+    // CHECK: %[[BYTE:.*]] = simulation.bits.dyn_extract %[[BITS]] from %[[LOW]] : (i32, i64) -> i8
+    // CHECK: simulation.return %[[BYTE]] : i8
     simulation.func @safe_enclosing_packed_extract(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8
         attributes {entry_kind = 8 : i32, code_unit_id = 9000012 : i64} {
@@ -278,9 +285,15 @@ module {
     }
 
     // CHECK-LABEL: simulation.func @safe_enclosing_packed_dynamic
+    // CHECK-SAME: %[[INDEX:[a-zA-Z0-9_]+]]: i64
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
-    // CHECK: simulation.ref.alloc {{.*}} : !simulation.packed_array<3 : 0 x i8> -> !simulation.ref<!simulation.packed_array<3 : 0 x i8>>
-    // CHECK: simulation.bits.dyn_extract
+    // CHECK: %[[ZERO:.*]] = arith.constant 0 : i8
+    // CHECK-COUNT-4: simulation.ref.alloc %[[ZERO]] : i8 -> !simulation.ref<i8>
+    // CHECK-NOT: simulation.ref.alloc
+    // CHECK: %[[PACKED:.*]] = simulation.aggregate.construct {{.*}} : (i8, i8, i8, i8) -> !simulation.packed_array<3 : 0 x i8>
+    // CHECK: %[[BITS:.*]] = simulation.packed.flatten %[[PACKED]] : (!simulation.packed_array<3 : 0 x i8>) -> i32
+    // CHECK: %[[BYTE:.*]] = simulation.bits.dyn_extract %[[BITS]] from %[[INDEX]] : (i32, i64) -> i8
+    // CHECK: simulation.return %[[BYTE]] : i8
     simulation.func @safe_enclosing_packed_dynamic(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
