@@ -1102,6 +1102,20 @@ static obelisk_rt_status nativeStateStorePlane(
         context->continuousUnknown.assign(canonicalPlane->size(), 0);
       }
     }
+    // IEEE 1800-2023 6.11.2 and 9.4.2: a generic captured-handle store must
+    // invalidate cached two-state proofs when it introduces X/Z, and permit
+    // rechecking on recovery. Unlike a statically specialized store, its
+    // compiler cannot name the destination proof roots. Capture the previous
+    // native unknown bits before overwriting them; transition publication
+    // still belongs to the caller after the complete value/unknown write.
+    auto publishKnownness = [&](uint64_t destination, uint64_t width,
+                                uint64_t next) {
+      const auto *plan = context->nativeSchedulePlan;
+      if (unknownPlane && plan && plan->state_unknown == globalPlane)
+        publishNativeKnownnessChangeUnlocked(
+            plan, destination, width,
+            loadPackedBytes(globalPlane, destination, width), next);
+    };
     // IEEE 1800-2023 9.4.2: an event observes a change in the expression's
     // value. Keep one changed result for the complete write: its caller
     // publishes one transition, even for a multi-word payload. This changes
@@ -1126,6 +1140,7 @@ static obelisk_rt_status nativeStateStorePlane(
           storePackedBits(context->continuousMask, destination + bit, width,
                           packedWidthMask(width));
         }
+        publishKnownness(destination + bit, width, next);
         storePackedBytes(globalPlane, destination + bit, width, next);
         if (canonical)
           storePackedBits(*canonicalPlane, destination + bit, width, next);
@@ -1159,6 +1174,7 @@ static obelisk_rt_status nativeStateStorePlane(
                 ? loadPackedBytes(globalPlane, destination, bitWidth)
                 : loadPackedBits(*canonicalPlane, destination, bitWidth);
         *outChanged = old != next;
+        publishKnownness(destination, bitWidth, next);
         storePackedBytes(globalPlane, destination, bitWidth, next);
         storePackedBits(*canonicalPlane, destination, bitWidth, next);
         return OBELISK_RT_OK;
@@ -1195,6 +1211,7 @@ static obelisk_rt_status nativeStateStorePlane(
                  1) != 0
               : byteBit(globalPlane, destination);
       *outChanged |= old != next;
+      publishKnownness(destination, 1, next);
       setByteBit(globalPlane, destination, next);
       if (canonical) {
         uint64_t mask = uint64_t{1} << (destination % 64);

@@ -10696,6 +10696,25 @@ TEST(RuntimeInternals, WidePlaneStoresPreserveBoundsMasksAndContinuousValues) {
             std::array<uint8_t, 23> global;
             global.fill(0x96);
             auto expected = global;
+            // IEEE 1800-2023 6.11.2/9.4.2: generic handle writes must update
+            // the domain proofs used by native consumers, including clipped
+            // and force-masked writes. Check their exact footprints against
+            // the independent per-bit store model below.
+            static std::array<bool, 183> lost, recovered;
+            lost.fill(false);
+            recovered.fill(false);
+            obelisk_rt_native_schedule_plan plan{};
+            plan.state_unknown = global.data();
+            plan.state_bit_count = 183;
+            plan.promotion_invalidate_range = [](uint64_t low, uint64_t width) {
+              for (uint64_t bit = low; bit < low + width; ++bit)
+                lost.at(bit) = true;
+            };
+            plan.promotion_recheck_range = [](uint64_t low, uint64_t width) {
+              for (uint64_t bit = low; bit < low + width; ++bit)
+                recovered.at(bit) = true;
+            };
+            context->nativeSchedulePlan = &plan;
             auto &storage = plane ? context->stateUnknown : context->stateValue;
             storage.assign(3, UINT64_C(0x9696969696969696));
             auto expectedCanonical = storage;
@@ -10732,9 +10751,20 @@ TEST(RuntimeInternals, WidePlaneStoresPreserveBoundsMasksAndContinuousValues) {
             EXPECT_EQ(global, expected);
             EXPECT_EQ(storage, expectedCanonical);
             EXPECT_EQ(changed, expectChange);
+            for (unsigned bit = 0; bit != 183; ++bit) {
+              bool old = (0x96 >> (bit % 8)) & 1;
+              bool next = (expected[bit / 8] >> (bit % 8)) & 1;
+              EXPECT_EQ(lost[bit], plane && !old && next);
+              EXPECT_EQ(recovered[bit], plane && old && !next);
+            }
+            lost.fill(false);
+            recovered.fill(false);
             ASSERT_EQ(store(context, global.data(), 183, handle, 130, plane,
                             payload.data(), &changed), OBELISK_RT_OK);
             EXPECT_EQ(changed, 0);
+            EXPECT_EQ(lost, (std::array<bool, 183>{}));
+            EXPECT_EQ(recovered, (std::array<bool, 183>{}));
+            context->nativeSchedulePlan = nullptr;
             if (canonical && continuous) {
               const auto &retained = plane ? context->continuousUnknown
                                            : context->continuousValue;
