@@ -60,6 +60,7 @@ struct RegionRoot {
   schedule::NBASiteAttr representativeSite;
   Location representativeLocation;
   SmallVector<sim::SimNBAEnqueueOp> enqueues;
+  SmallVector<NamedAttribute> representativeAttributes;
 };
 
 bool isRegionLocalAccumulator(sim::SimNBAEnqueueOp enqueue) {
@@ -189,7 +190,8 @@ bool forwardRegionNextState(sim::SimFuncOp function,
                          enqueue.getValue().getType(),
                          site,
                          enqueue.getLoc(),
-                         {enqueue}});
+                         {enqueue},
+                         llvm::to_vector(enqueue->getDiscardableAttrs())});
         continue;
       }
       RegionRoot &root = roots[found->second];
@@ -201,6 +203,8 @@ bool forwardRegionNextState(sim::SimFuncOp function,
       root.enqueues.push_back(enqueue);
       root.representativeSite = site;
       root.representativeLocation = enqueue.getLoc();
+      root.representativeAttributes =
+          llvm::to_vector(enqueue->getDiscardableAttrs());
     }
   llvm::erase_if(roots, [&](const RegionRoot &root) {
     if (!root.destination)
@@ -404,8 +408,7 @@ bool forwardRegionNextState(sim::SimFuncOp function,
           builder, root.representativeLocation, state->second, root.destination,
           Value{}, root.representativeSite, IntegerAttr{});
       // Keep the representative's provenance, such as its Eval origin site.
-      for (NamedAttribute attribute :
-           root.enqueues.back()->getDiscardableAttrs())
+      for (NamedAttribute attribute : root.representativeAttributes)
         staged->setAttr(attribute.getName(), attribute.getValue());
       cf::BranchOp::create(builder, root.representativeLocation, next);
       test = next;

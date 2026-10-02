@@ -42,7 +42,7 @@ module {
           !simulation.logic<8>
       simulation.nba.enqueue %first to %target {
         site = #schedule.nba_site<id = 0, commit = 7,
-          storage = root_accumulator>
+          storage = root_accumulator>, test.staging_origin = 17 : i64
       } : (!simulation.logic<8>,
            !simulation.ref<!simulation.logic<8>>) -> ()
       %overwrite = arith.constant true
@@ -52,7 +52,7 @@ module {
           !simulation.logic<8>
       simulation.nba.enqueue %last to %target {
         site = #schedule.nba_site<id = 1, commit = 7,
-          storage = root_accumulator>
+          storage = root_accumulator>, test.staging_origin = 42 : i64
       } : (!simulation.logic<8>,
            !simulation.ref<!simulation.logic<8>>) -> ()
       cf.br ^join
@@ -67,3 +67,4 @@ module {
 // CHECK: ^{{.*}}(%{{.*}}: i1, %{{.*}}: !simulation.logic<8>):
 // CHECK-COUNT-1: simulation.nba.enqueue
 // CHECK-SAME: site = #schedule.nba_site<id = 1, commit = 7,
+// CHECK-SAME: test.staging_origin = 42 : i64
