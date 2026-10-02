@@ -60,16 +60,18 @@ struct HandleDataflowResult {
 /// lattice is bottom -> known root/range/lane -> known root with dynamic
 /// selection -> unknown identity. No hand-written whole-function fixpoint or
 /// recursive predecessor walk remains. Driver normalization is indexed once
-/// per design; analysis snapshots are recomputed after IR changes.
+/// per design before function analyses run concurrently; analysis snapshots
+/// are recomputed after IR changes.
 class HandleDataflowAnalysis {
 public:
   explicit HandleDataflowAnalysis(sim::SimDesignOp design);
+  /// Avoid indexing the design for a single function without driver handles.
+  explicit HandleDataflowAnalysis(sim::SimFuncOp function);
   HandleDataflowResult analyze(sim::SimFuncOp function) const;
   HandleFacts derive(sim::SimFuncOp function) const;
 
 private:
-  mlir::Operation *design;
-  mutable std::optional<llvm::DenseMap<uint64_t, uint64_t>> driverNets;
+  llvm::DenseMap<uint64_t, uint64_t> driverNets;
 };
 HandleFacts deriveHandleFacts(sim::SimFuncOp function);
 } // namespace obelisk::analysis

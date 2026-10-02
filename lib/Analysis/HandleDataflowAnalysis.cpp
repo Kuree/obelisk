@@ -295,20 +295,43 @@ private:
   }
   const DenseMap<uint64_t, uint64_t> &driverNets;
 };
+
+static sim::SimDesignOp getDriverDesign(sim::SimFuncOp function) {
+  // Only inspect the owned function. Storage-only convenience queries should
+  // not walk all design declarations for each function.
+  WalkResult result = function.walk([](Operation *op) {
+    for (Value value : op->getResults())
+      if (isa<sim::DriverType>(value.getType()))
+        return WalkResult::interrupt();
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument argument : block.getArguments())
+          if (isa<sim::DriverType>(argument.getType()))
+            return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted() ? function->getParentOfType<sim::SimDesignOp>()
+                                 : sim::SimDesignOp();
+}
 } // namespace
 
-HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design)
-    : design(design ? design.getOperation() : nullptr) {}
+HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
+  // Build the immutable normalization snapshot before parallel consumers run.
+  if (design)
+    for (auto driver : design.getOps<sim::SimDriverDeclOp>())
+      driverNets[driver.getId()] = driver.getNetId();
+}
+HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimFuncOp function)
+    : HandleDataflowAnalysis(getDriverDesign(function)) {}
 HandleDataflowResult
 HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   HandleDataflowResult result;
   if (function.isExternal() || function.getBody().empty())
     return result;
-  bool hasHandles = false, hasDrivers = false;
+  bool hasHandles = false;
   auto inspect = [&](Value value) {
     hasHandles |=
         resourceKind(value.getType()) != schedule::ComputeResourceKind::Unknown;
-    hasDrivers |= isa<sim::DriverType>(value.getType());
   };
   function.walk([&](Operation *op) {
     for (auto value : op->getResults())
@@ -320,20 +343,10 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   });
   if (!hasHandles)
     return result;
-  // Most functions carry no drivers. In particular, the convenience entry
-  // point must not scan the entire design once per storage-only function.
-  if (hasDrivers && !driverNets) {
-    driverNets.emplace();
-    if (design)
-      for (auto driver :
-           cast<sim::SimDesignOp>(design).getOps<sim::SimDriverDeclOp>())
-        (*driverNets)[driver.getId()] = driver.getNetId();
-  }
-  const DenseMap<uint64_t, uint64_t> emptyDriverNets;
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
-  solver.load<ReferenceAnalysis>(driverNets ? *driverNets : emptyDriverNets);
+  solver.load<ReferenceAnalysis>(driverNets);
   if (failed(solver.initializeAndRun(function)))
     return result;
   auto record = [&](Value value) {
@@ -359,7 +372,6 @@ HandleFacts HandleDataflowAnalysis::derive(sim::SimFuncOp function) const {
   return analyze(function).facts;
 }
 HandleFacts deriveHandleFacts(sim::SimFuncOp function) {
-  return HandleDataflowAnalysis(function->getParentOfType<sim::SimDesignOp>())
-      .derive(function);
+  return HandleDataflowAnalysis(function).derive(function);
 }
 } // namespace obelisk::analysis

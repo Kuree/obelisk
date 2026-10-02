@@ -1,4 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' > %t.threaded
+// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' > %t.serial
+// RUN: diff -u %t.serial %t.threaded
+// RUN: FileCheck %s < %t.threaded
 // IEEE 1800-2023 4.9.1: a constant drive is not a lifetime constant until
 // its first update executes. Partial or delayed writers also invalidate it.
 module {
