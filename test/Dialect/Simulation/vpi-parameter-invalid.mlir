@@ -1,5 +1,38 @@
 // RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
 
+// Valid parameter anchors reach symbol-use verification as well as the
+// attribute verifier. Both package and subroutine declaration scopes own them.
+module {
+  simulation.design @parameter_parents {
+    simulation.scope.decl 0
+    simulation.vpi_object.anchor @pkg id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    simulation.vpi_object.anchor @package_parameter id 1 type 41 in 0
+        parent @pkg ordinal 0 hierarchy "pkg.P" debug "P"
+    simulation.vpi_object.anchor @task id 2 type 59 in 0 parent @pkg ordinal 1
+        hierarchy "pkg.t" debug "t"
+    simulation.vpi_object.anchor @task_parameter id 3 type 41 in 0
+        parent @task ordinal 0 hierarchy "pkg.t.P" debug "P"
+  }
+}
+
+// -----
+
+module {
+  simulation.design @parameter_non_declaration_parent {
+    simulation.scope.decl 0
+    simulation.vpi_object.anchor @pkg id 0 type 600 in 0 ordinal 0
+        hierarchy "pkg" debug "pkg"
+    simulation.vpi_object.anchor @event id 1 type 34 in 0 parent @pkg ordinal 0
+        hierarchy "pkg.event" debug "event"
+    // expected-error @+1 {{has an illegal lexical parent kind: child 41, parent 34}}
+    simulation.vpi_object.anchor @p id 2 type 41 in 0 parent @event ordinal 0
+        hierarchy "pkg.event.P" debug "P"
+  }
+}
+
+// -----
+
 module {
   simulation.design @value_without_type {
     simulation.scope.decl 0

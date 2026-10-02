@@ -849,6 +849,9 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       legal =
           isDeclarationScope(parentKind) || parentKind == Kind::ClockingBlock;
       break;
+    case Kind::Parameter:
+      legal = isDeclarationScope(parentKind);
+      break;
     case Kind::ClockingBlock:
       legal = isDesignScope(parentKind);
       break;
@@ -895,7 +898,7 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       legal = parentKind == Kind::Package && target.getIsCompilationUnitAttr();
       break;
     default:
-      llvm_unreachable("anchor kind was checked by verify()");
+      return emitOpError("kind cannot be a persistent lexical source anchor");
     }
     if (!legal)
       return emitOpError("has an illegal lexical parent kind: child ")
