@@ -244,8 +244,7 @@ struct NativeModuleSplitPlan {
 };
 
 Expected<NativeModuleSplitPlan>
-planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
-                      unsigned maxGroups) {
+planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan) {
   // The semantic manifest supplies stable ownership and dependency identity,
   // but an owner can contain a huge generated class or tens of thousands of
   // constants.  Treating every owner as an indivisible physical shard leaves
@@ -253,7 +252,6 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
   // definition units and use deterministic longest-processing-time packing.
   // ThinLTO's global index remains responsible for cross-unit importing and
   // whole-program optimization.
-  maxGroups = std::max(2u, maxGroups);
   llvm::DenseMap<const llvm::GlobalValue *, StringRef> ownerByValue;
   for (const NativePartition &partition : plan.partitions) {
     for (StringRef member : partition.members) {
@@ -332,15 +330,14 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
     return lhs.weight != rhs.weight ? lhs.weight > rhs.weight
                                     : lhs.key < rhs.key;
   });
-  // Worker count controls concurrency, but must not collapse a large design
-  // into two enormous optimization units when compiling on one thread. LLVM
-  // can otherwise inline far more code and spend minutes optimizing/codegening
-  // bodies that stay small with eight workers. Keep a size-based minimum queue;
-  // cap this floor to avoid multiplying the serial clone/serialization cost.
+  // Partition boundaries affect inlining and optimization even with ThinLTO.
+  // Derive them from the input rather than the worker count so concurrency
+  // changes only scheduling. Keep large designs out of enormous optimization
+  // units, while bounding the serial clone/serialization cost.
   unsigned sizeGroups = static_cast<unsigned>(std::min<uint64_t>(
       16, llvm::divideCeil(instructionCount, UINT64_C(100000))));
   unsigned groupCount =
-      std::min<unsigned>(std::max(maxGroups, sizeGroups), units.size());
+      std::min<unsigned>(std::max(2u, sizeGroups), units.size());
   SmallVector<uint64_t> groupWeights(groupCount, 0);
   llvm::DenseMap<const llvm::GlobalValue *, unsigned> assignments;
   llvm::DenseSet<unsigned> nativeObjectGroups;
@@ -351,9 +348,8 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan,
     nativeGroupCount = groupCount;
   else if (nativeUnitCount != 0)
     // Reserve at most one third of the ready queue for direct-O3 outliers.
-    // Packing those definitions across a hardware-thread-sized set keeps all
-    // cores busy without consuming every group and disabling ThinLTO for the
-    // ordinary importable body of the design.
+    // Spread those definitions without consuming every group and disabling
+    // ThinLTO for the ordinary importable body of the design.
     nativeGroupCount = std::min(nativeUnitCount, std::max(1u, groupCount / 3));
   for (unsigned group = 0; group != nativeGroupCount; ++group)
     nativeObjectGroups.insert(group);
@@ -1301,15 +1297,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
       sys::fs::remove(path);
   };
   if (splitModule) {
-    // LPT balancing removes the generated-function outliers before this
-    // point, so two physical groups per requested hardware thread absorb the
-    // remaining backend variance. The planner also retains a size-based
-    // minimum for large designs compiled with fewer workers.
-    // ThinLTO, not this planner, owns cross-shard importing and optimization.
-    unsigned physicalGroups = std::min<uint32_t>(
-        256, std::max<uint32_t>(2, options.compileThreads * 2));
-    Expected<NativeModuleSplitPlan> splitPlan = planNativeModuleSplit(
-        *llvmModule, *nativePartitionPlan, physicalGroups);
+    Expected<NativeModuleSplitPlan> splitPlan =
+        planNativeModuleSplit(*llvmModule, *nativePartitionPlan);
     if (!splitPlan) {
       logAllUnhandledErrors(splitPlan.takeError(), errs(), "obelisk: error: ");
       return failure();
@@ -1334,10 +1323,12 @@ LogicalResult emitTargetOutput(ModuleOp module,
         raw_svector_ostream stream(storage);
         WriteBitcodeToFile(*partition, stream);
         partitionBitcode[index].assign(storage.begin(), storage.end());
+        // ThinLTO imports source modules in lexical filename order. Put the
+        // stable partition index before the random temporary suffix so that
+        // fresh builds retain the same import and global definition order.
         FailureOr<SmallString<256>> temporary = makeTemporaryBeside(
-            options.outputPath,
-            (Twine(".part-") + Twine(index) + (nativeObject ? ".o" : ".bc"))
-                .str());
+            (Twine(options.outputPath) + ".part-" + Twine(index)).str(),
+            nativeObject ? ".o" : ".bc");
         if (failed(temporary)) {
           errs() << "obelisk: error: could not create ThinLTO partition "
                     "temporary\n";
@@ -1447,7 +1438,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         WriteBitcodeToFile(*partition, stream);
         partitionBitcode[index].assign(storage.begin(), storage.end());
         FailureOr<SmallString<256>> temporary = makeTemporaryBeside(
-            options.outputPath, (Twine(".part-") + Twine(index) + ".o").str());
+            (Twine(options.outputPath) + ".part-" + Twine(index)).str(), ".o");
         if (failed(temporary)) {
           errs() << "obelisk: error: could not create partition temporary\n";
           removeTemporaries();
