@@ -760,8 +760,6 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
                                     &analysis,
                                     unmanagedNative,
                                     directActivation,
-                                    copyActivation,
-                                    {},
                                     std::move(tableProcess)};
 }
 
@@ -1229,11 +1227,9 @@ finishPreparedSuspendableProcess(PreparedSuspendableProcess &process,
   if (process.tableProcess)
     materializeTableProcess(process);
   else if (failed(makeNativeWrappers(process.module, process.ramp,
-                                     process.baseName, process.directActivation,
-                                     process.copyKernel)))
+                                     process.baseName,
+                                     process.directActivation)))
     return failure();
-  if (process.copyKernel.kernel)
-    process.ramp.erase();
   return makeProcessDescriptor(
       process.module, embeddedSymbols, process.location, process.baseName,
       process.stableID, *process.analysis, process.unmanagedNative,

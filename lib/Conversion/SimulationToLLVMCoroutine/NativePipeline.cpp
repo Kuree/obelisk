@@ -6,12 +6,15 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager) {
   manager.addPass(createPrepareNativeScheduleInputsPass());
   manager.addPass(createPlanNativeStatePass());
   manager.addPass(createPrepareNativeProcessFramesPass());
+  manager.addPass(createPlanNativeTransfersPass());
+  manager.addPass(createShareNativeTransfersPass());
   manager.addPass(createPlanNativeActorsPass());
   manager.addPass(createSpecializeNativeCapturesPass());
   manager.addPass(createPlanNativeSchedulePass());
   manager.addPass(createPrepareNativeManagedRootsPass());
   manager.addPass(createMarkCleanNativeNBAPass());
   manager.addPass(createSpecializeNativeEvalPass());
+  manager.addPass(createPrepareNativeTransferKernelsPass());
   manager.addPass(createAnnotateCompactNativeNBAPass());
   manager.addPass(createPrepareNativeFragmentsPass());
   manager.addPass(createPlanNativeEvalOwnershipPass());

@@ -1307,9 +1307,7 @@ struct PreparedNativeProcessFrame : NativeFunctionFrameResult {
       return;
     }
     frame = std::move(*result);
-    // IEEE 1800-2023 4.9.1/4.9.6: retain copy activation and publication.
-    if (!state.copyActivations.contains(function))
-      table = analyzeTableProcess(function, *frame);
+    table = analyzeTableProcess(function, *frame);
   }
   bool valid = true;
 };
@@ -1324,8 +1322,8 @@ LogicalResult NativePipelineAnalysis::prepareFrameInputs() {
   // Freeze this source-shape proof before any function worker threads state.
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
-        if (analysis::isCaptureCopyProcess(function))
-          copyActivations.insert(function);
+        if (auto copy = analysis::getCaptureCopyProcess(function))
+          copyActivations.try_emplace(function, *copy);
         frameResults.insert(
             {function, std::make_unique<NativeFunctionFrameResult>()});
       });
@@ -1402,9 +1400,9 @@ LogicalResult NativePipelineAnalysis::restoreFrames() {
         (*frame)->getReplayInputs(function) != inputs)
       return function.emitError(
           "native frame replay rejected changed canonical ABI inputs");
-    if (analysis::isCaptureCopyProcess(function))
-      copyActivations.insert(function);
-    else if (auto table = analyzeTableProcess(function, **frame))
+    if (auto copy = analysis::getCaptureCopyProcess(function))
+      copyActivations.try_emplace(function, *copy);
+    if (auto table = analyzeTableProcess(function, **frame))
       tableProcesses.try_emplace(function, std::move(*table));
     analyses.insert({function, std::move(*frame)});
   }
@@ -1836,6 +1834,44 @@ LogicalResult NativePipelineAnalysis::materialize() {
     return failure();
   markTiming("managed method thunks");
 
+  // The Schedule pass has already selected each shared implementation. IEEE
+  // 1800-2023 4.9.1, 4.9.6 and 9.4.2 require the original initial activation,
+  // source-change wait and update events; only executable code is shared.
+  SmallVector<PreparedSuspendableProcess> transferKernels;
+  llvm::StringMap<LLVM::LLVMFuncOp> transferBodies;
+  for (auto &[op, frame] : transferKernelFrames) {
+    auto function = cast<sim::SimFuncOp>(op);
+    std::string name = function.getSymName().str();
+    auto prepared = prepareSuspendableProcess(function, *frame, false,
+                                              tableProcesses.lookup(op));
+    if (failed(prepared) || !prepared->tableProcess)
+      return module.emitError("selected transfer kernel lost its table ABI");
+    prepared->ramp->setAttr(
+        "passthrough",
+        Builder(context).getArrayAttr({StringAttr::get(context, "noinline")}));
+    transferBodies[name] = prepared->ramp;
+    transferKernels.push_back(std::move(*prepared));
+  }
+  DenseMap<Operation *, LLVM::LLVMFuncOp> transferBindings;
+  SymbolTableCollection transferSymbols;
+  SmallVector<Operation *> consumedTransferPlans;
+  for (auto activation : module.getOps<schedule::TransferActivationOp>()) {
+    consumedTransferPlans.push_back(activation);
+    auto kernel = activation.getKernelAttr();
+    auto actor = transferSymbols.lookupSymbolIn<sim::SimFuncOp>(
+        module, activation.getActorAttr());
+    auto body = kernel
+                    ? transferBodies.lookup(kernel.getValue().str() + ".impl")
+                    : LLVM::LLVMFuncOp{};
+    if (!actor || (kernel && !body) ||
+        !transferBindings.try_emplace(actor, body).second)
+      return activation.emitError("invalid selected transfer implementation");
+  }
+  for (auto kernel : module.getOps<schedule::TransferKernelOp>())
+    consumedTransferPlans.push_back(kernel);
+  for (Operation *op : consumedTransferPlans)
+    op->erase();
+
   SmallVector<std::pair<sim::SimFuncOp, SimulationProcessFrameAnalysis *>>
       processFunctions;
   processFunctions.reserve(analyses.size());
@@ -1851,6 +1887,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
 
   SmallVector<PreparedPlainNativeProcess> plainProcesses;
   SmallVector<PreparedSuspendableProcess> suspendableProcesses;
+  SmallVector<PreparedSuspendableProcess> transferProcesses;
   for (auto [function, analysis] : processFunctions) {
     if (analysis->getSuspensions().empty()) {
       FailureOr<PreparedPlainNativeProcess> prepared =
@@ -1860,14 +1897,26 @@ LogicalResult NativePipelineAnalysis::materialize() {
       plainProcesses.push_back(std::move(*prepared));
       continue;
     }
+    auto selectedTransfer = transferBindings.lookup(function);
+    bool useTable = tableProcesses.contains(function) &&
+                    (!copyActivations.contains(function) ||
+                     transferBindings.contains(function));
     FailureOr<PreparedSuspendableProcess> prepared = prepareSuspendableProcess(
         function, *analysis, copyActivations.contains(function),
-        tableProcesses.contains(function)
-            ? std::optional<detail::NativeTableProcess>(
-                  tableProcesses.lookup(function))
-            : std::nullopt);
+        useTable ? std::optional<detail::NativeTableProcess>(
+                       tableProcesses.lookup(function))
+                 : std::nullopt);
     if (failed(prepared))
       return failure();
+    if (selectedTransfer) {
+      if (!prepared->tableProcess)
+        return module.emitError(
+            "selected transfer activation lost its table ABI");
+      prepared->ramp.erase();
+      prepared->ramp = selectedTransfer;
+      transferProcesses.push_back(std::move(*prepared));
+      continue;
+    }
     suspendableProcesses.push_back(std::move(*prepared));
   }
   markTiming("process body preparation");
@@ -1888,7 +1937,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
       llvm::any_of(suspendableProcesses, [](const auto &process) {
         return !process.directActivation;
       });
-  if ((!plainProcesses.empty() || !suspendableProcesses.empty()) &&
+  if ((!plainProcesses.empty() || !suspendableProcesses.empty() ||
+       !transferProcesses.empty()) &&
       failed(detail::materializeSharedNativeWrappers(module, needsCoroutine)))
     return failure();
   markTiming("shared process support materialization");
@@ -1905,19 +1955,16 @@ LogicalResult NativePipelineAnalysis::materialize() {
                                      })))
     return failure();
   markTiming("suspendable process body lowering");
-  detail::materializeCopyKernels(module, suspendableProcesses);
-  if (detailedTiming) {
-    llvm::DenseSet<Operation *> kernels;
-    unsigned copies = 0;
-    for (auto &process : suspendableProcesses)
-      if (process.copyKernel.kernel) {
-        kernels.insert(process.copyKernel.kernel);
-        ++copies;
-      }
-    llvm::errs() << "obelisk shared copy kernels: " << kernels.size() << " for "
-                 << copies << " activations\n";
-  }
-  markTiming("copy kernel materialization");
+  if (failed(failableParallelForEach(
+          context, transferKernels, [&](PreparedSuspendableProcess &process) {
+            return lowerPreparedSuspendableProcess(process);
+          })))
+    return failure();
+  if (detailedTiming)
+    llvm::errs() << "obelisk scheduled transfer kernels: "
+                 << transferKernels.size() << " for "
+                 << transferProcesses.size() << " activations\n";
+  markTiming("scheduled transfer kernel materialization");
   // Finalization queries only embedded-design symbols: execution/bytecode
   // entries and the descriptor declarations each process replaces. Their
   // identities are already frozen; later wrappers and frame descriptors
@@ -1928,12 +1975,16 @@ LogicalResult NativePipelineAnalysis::materialize() {
     if (failed(finishPreparedPlainNativeProcess(process, embeddedSymbols)))
       return failure();
   markTiming("plain process finalization");
-  if (llvm::any_of(suspendableProcesses,
+  if (!transferProcesses.empty() ||
+      llvm::any_of(suspendableProcesses,
                    [](const PreparedSuspendableProcess &process) {
                      return process.tableProcess.has_value();
                    }))
     declareTableProcessRuntimeABI(module);
   for (PreparedSuspendableProcess &process : suspendableProcesses)
+    if (failed(finishPreparedSuspendableProcess(process, embeddedSymbols)))
+      return failure();
+  for (PreparedSuspendableProcess &process : transferProcesses)
     if (failed(finishPreparedSuspendableProcess(process, embeddedSymbols)))
       return failure();
   markTiming("suspendable process finalization");

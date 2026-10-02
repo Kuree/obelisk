@@ -1,0 +1,26 @@
+// The sharing decision is printable before state accesses or wait CFGs expand.
+// RUN: obelisk-opt %S/simulation-copy-process-admission.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-transfers)' > %t.plan
+// RUN: obelisk-opt %t.plan --schedule-share-native-transfers > %t.shared
+// RUN: FileCheck %s < %t.shared
+// RUN: obelisk-opt %t.shared --schedule-share-native-transfers > %t.again
+// RUN: diff -u %t.shared %t.again
+// RUN: obelisk-opt %t.shared --pass-pipeline='builtin.module(schedule-plan-native-actors,schedule-specialize-native-captures,convert-simulation-to-native-schedule,prepare-native-managed-roots,schedule-mark-clean-native-nba,schedule-specialize-native-eval,schedule-prepare-native-transfer-kernels,schedule-annotate-compact-nba,prepare-native-fragments,schedule-plan-native-eval-ownership,schedule-annotate-compact-nba,schedule-plan-native-executable-nodes,schedule-resolve-native-eval,materialize-native-processes,convert-prepared-sim-processes-to-llvm-coroutines)' > %t.replayed
+// RUN: obelisk-opt %S/simulation-copy-process-admission.mlir --convert-obelisk-sim-processes-to-llvm-coroutines > %t.original
+// RUN: diff -u %t.original %t.replayed
+// RUN: sed 's/source = 1 : i32/source = 2 : i32/g' %t.shared > %t.stale
+// RUN: not obelisk-opt %t.stale --pass-pipeline='builtin.module(schedule-plan-native-actors,schedule-specialize-native-captures,convert-simulation-to-native-schedule,prepare-native-managed-roots,schedule-mark-clean-native-nba,schedule-specialize-native-eval,schedule-prepare-native-transfer-kernels,schedule-annotate-compact-nba,prepare-native-fragments,schedule-plan-native-eval-ownership,schedule-annotate-compact-nba,schedule-plan-native-executable-nodes,schedule-resolve-native-eval,materialize-native-processes,convert-prepared-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=STALE
+// STALE: transfer plan disagrees with canonical copy proof
+// CHECK: schedule.transfer.activation
+// CHECK-SAME: actor = @copies::@input_copy
+// CHECK-SAME: kernel = @__obelisk_transfer_kernel_0
+// CHECK: schedule.transfer.activation
+// CHECK-SAME: actor = @copies::@output_copy
+// CHECK-SAME: kernel = @__obelisk_transfer_kernel_0
+// CHECK: schedule.transfer.activation
+// CHECK-SAME: actor = @copies::@continuous_copy
+// CHECK-SAME: kernel = @__obelisk_transfer_kernel_0
+// CHECK-NOT: schedule.transfer.activation
+// CHECK: schedule.transfer.kernel
+// CHECK-SAME: source = 1 : i32
+// CHECK-SAME: sym_name = "__obelisk_transfer_kernel_0"
+// CHECK-NOT: schedule.transfer.kernel

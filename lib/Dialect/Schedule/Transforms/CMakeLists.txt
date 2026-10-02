@@ -25,6 +25,7 @@ add_mlir_library(ObeliskScheduleTransforms
 add_mlir_library(ObeliskScheduleNativeTransforms
   PARTIAL_SOURCES_INTENDED
   NativeSpecializationPasses.cpp
+  NativeTransfers.cpp
   MarkCleanStaticNBA.cpp
   NativeEvalSpecialization.cpp
   SpecializeNativeCaptures.cpp

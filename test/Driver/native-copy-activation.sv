@@ -1,4 +1,5 @@
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk -O0 --native-scheduler=generic --mlir-timing %s -o %t.generic 2> %t.plan
+// RUN: FileCheck %s --check-prefix=PLAN < %t.plan
 // RUN: %t.generic | FileCheck %s
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s
@@ -60,3 +61,4 @@ module top;
 endmodule
 
 // CHECK: copy activation passed
+// PLAN: obelisk scheduled transfer kernels: {{[1-9][0-9]*}} for {{[1-9][0-9]*}} activations

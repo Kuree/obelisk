@@ -11,6 +11,52 @@ using namespace mlir;
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"
 namespace obelisk::schedule {
+static LogicalResult verifyTransferABI(Operation *op, Type signature,
+                                       uint32_t source, uint32_t destination,
+                                       ArrayRef<int64_t> offsets) {
+  auto type = dyn_cast<FunctionType>(signature);
+  if (!type || type.getNumResults() || type.getNumInputs() < 3 ||
+      !isa<sim::ContextType>(type.getInput(0)) ||
+      offsets.size() != type.getNumInputs() || offsets.front() != -1)
+    return op->emitOpError("requires a context and canonical storage captures");
+  if (source == 0 || destination == 0 || source >= type.getNumInputs() ||
+      destination >= type.getNumInputs() ||
+      type.getInput(source) != type.getInput(destination))
+    return op->emitOpError("requires matching source and destination captures");
+  llvm::DenseSet<int64_t> occupied;
+  for (unsigned index = 1; index < type.getNumInputs(); ++index) {
+    auto reference = dyn_cast<sim::RefType>(type.getInput(index));
+    if (!reference || !sim::getPackedWidth(reference.getElementType()) ||
+        offsets[index] < 0 || offsets[index] % 8 != 0 ||
+        !occupied.insert(offsets[index]).second)
+      return op->emitOpError("requires distinct aligned storage capture slots");
+  }
+  return success();
+}
+LogicalResult TransferKernelOp::verify() {
+  return verifyTransferABI(*this, getSignature(), getSource(), getDestination(),
+                           getCaptureOffsets());
+}
+LogicalResult TransferActivationOp::verify() {
+  return verifyTransferABI(*this, getSignature(), getSource(), getDestination(),
+                           getCaptureOffsets());
+}
+LogicalResult
+TransferActivationOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (auto name = getKernelAttr()) {
+    auto kernel =
+        symbols.lookupNearestSymbolFrom<TransferKernelOp>(*this, name);
+    if (!kernel || kernel.getSignature() != getSignature() ||
+        kernel.getSource() != getSource() ||
+        kernel.getDestination() != getDestination() ||
+        kernel.getCaptureOffsets() != getCaptureOffsets())
+      return emitOpError(
+          "requires a transfer kernel with the same capture ABI");
+  }
+  if (!symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(*this, getActorAttr()))
+    return emitOpError("requires an original simulation process actor");
+  return success();
+}
 LogicalResult NativeKnownValueOp::verify() {
   Type type = getInput().getType();
   if (!isa<IntegerType>(type) && !sim::getPackedWidth(type) &&

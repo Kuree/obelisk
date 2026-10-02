@@ -205,8 +205,7 @@ LogicalResult materializeSharedNativeWrappers(ModuleOp module,
 }
 
 LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
-                                 StringRef baseName, bool directActivation,
-                                 CopyKernelBinding copyKernel) {
+                                 StringRef baseName, bool directActivation) {
   OpBuilder builder(ramp);
   builder.setInsertionPointAfter(ramp);
   Location location = ramp.getLoc();
@@ -258,24 +257,8 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   SmallVector<Value> arguments{
       instance, llvmConstant(builder, location, i32, 1), null, null};
-  if (copyKernel.kernel) {
-    Value row = null;
-    if (copyKernel.table) {
-      Value table = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              copyKernel.table.getSymName());
-      Value offset =
-          llvmConstant(builder, location, builder.getI64Type(),
-                       uint64_t(copyKernel.row) * copyKernel.columns);
-      row =
-          LLVM::GEPOp::create(builder, location, pointer, builder.getI64Type(),
-                              table, ValueRange{offset});
-    }
-    arguments = {instance, row};
-  }
-  LLVM::CallOp::create(
-      builder, location, TypeRange{},
-      SymbolRefAttr::get(copyKernel.kernel ? copyKernel.kernel : ramp),
-      arguments);
+  LLVM::CallOp::create(builder, location, TypeRange{}, SymbolRefAttr::get(ramp),
+                       arguments);
   LLVM::ReturnOp::create(
       builder, location,
       loadAt(builder, location, instance, kInstanceStatusField, i32, 4));

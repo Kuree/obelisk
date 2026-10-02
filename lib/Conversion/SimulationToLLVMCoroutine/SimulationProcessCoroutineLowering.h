@@ -18,14 +18,8 @@ struct PreparedSuspendableProcess {
   const SimulationProcessFrameAnalysis *analysis;
   bool unmanagedNative;
   bool directActivation;
-  bool copyActivation;
-  CopyKernelBinding copyKernel;
   std::optional<NativeTableProcess> tableProcess;
 };
-
-void materializeCopyKernels(
-    mlir::ModuleOp module,
-    llvm::MutableArrayRef<PreparedSuspendableProcess> processes);
 
 mlir::FailureOr<PreparedSuspendableProcess>
 prepareSuspendableProcess(sim::SimFuncOp function,

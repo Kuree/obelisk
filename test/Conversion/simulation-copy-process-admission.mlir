@@ -2,10 +2,17 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading > %t.serial
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines > %t.threaded
 // RUN: diff -u %t.serial %t.threaded
+// RUN: FileCheck %s --check-prefix=ABSENT < %t.serial
+// ABSENT-NOT: llvm.func @input_copy.__obelisk_group_body
+// ABSENT-NOT: llvm.func @output_copy.__obelisk_group_body
+// ABSENT-NOT: llvm.func @continuous_copy.__obelisk_group_body
+// ABSENT-NOT: llvm.func @input_copy.__obelisk_table_body
+// ABSENT-NOT: llvm.func @output_copy.__obelisk_table_body
+// ABSENT-NOT: llvm.func @continuous_copy.__obelisk_table_body
 
 // Admission retains the exact source store and wait. Actor and continuation
-// descriptors survive. Matching native bodies share a kernel, with distinct
-// continuation IDs selected through constant table rows.
+// descriptors survive. Schedule-selected transfer implementations share a kernel. Distinct
+// continuation IDs remain in the original actors' wait tables.
 !word = !simulation.logic<65>
 !ref = !simulation.ref<!word>
 module attributes {
@@ -118,16 +125,14 @@ module attributes {
   }
 }
 
-// CHECK-NOT: llvm.func @input_copy.__obelisk_group_body
-// CHECK-LABEL: llvm.func @input_copy.__obelisk_native_execute
-// CHECK: llvm.call @__obelisk_copy_kernel_0
-// CHECK-NOT: llvm.func @output_copy.__obelisk_group_body
-// CHECK-NOT: llvm.intr.coro
-// CHECK-LABEL: llvm.func @output_copy.__obelisk_native_execute
-// CHECK: llvm.call @__obelisk_copy_kernel_0
-// CHECK-LABEL: llvm.func @continuous_copy.__obelisk_group_body
-// CHECK-NOT: llvm.intr.coro
-// CHECK-LABEL: llvm.func @continuous_copy.__obelisk_native_execute
+// CHECK-LABEL: llvm.mlir.global internal constant @output_copy.__obelisk_table.plan
+// CHECK: llvm.mlir.addressof @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
+// CHECK-LABEL: llvm.mlir.global internal constant @output_copy.__obelisk_table.waits
+// CHECK: llvm.mlir.constant(7 : i32)
+// CHECK-LABEL: llvm.mlir.global internal constant @input_copy.__obelisk_table.plan
+// CHECK: llvm.mlir.addressof @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
+// CHECK-LABEL: llvm.mlir.global internal constant @continuous_copy.__obelisk_table.plan
+// CHECK: llvm.mlir.addressof @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
 // CHECK-LABEL: llvm.func @wrong_watch.__obelisk_table_body
 // CHECK-NOT: llvm.intr.coro
 // CHECK-LABEL: llvm.func @side_effect.__obelisk_table_body
@@ -138,13 +143,6 @@ module attributes {
 // CHECK-NOT: llvm.intr.coro
 // CHECK-LABEL: llvm.func @carried.__obelisk_coro_ramp
 // CHECK: llvm.intr.coro.begin
-
-// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_copy_kernel_0.rows
-// CHECK-SAME: !llvm.array<2 x i64>
-// CHECK: llvm.mlir.constant(1 : i64)
-// CHECK: llvm.mlir.constant(7 : i64)
-// CHECK-LABEL: llvm.func @__obelisk_copy_kernel_0
+// CHECK-LABEL: llvm.func @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
 // CHECK-SAME: passthrough = ["noinline"]
-// CHECK: llvm.load {{.*}} : !llvm.ptr -> i64
-// CHECK: llvm.trunc {{.*}} : i64 to i32
 // CHECK-NOT: llvm.intr.coro

@@ -1,4 +1,4 @@
-// Physical scheduler operations produced by native representation conversion.
+// Scheduling plans and executable scheduler actions.
 #ifndef OBELISK_DIALECT_SCHEDULE_SCHEDULEOPS_TD
 #define OBELISK_DIALECT_SCHEDULE_SCHEDULEOPS_TD
 include "obelisk/Dialect/Simulation/SimulationAttrs.td"
@@ -13,6 +13,46 @@ include "obelisk/Dialect/Runtime/RuntimeTypes.td"
 class ScheduleNativeOp<string mnemonic, list<Trait> traits = []>
     : Op<ScheduleDialect, mnemonic, traits> {
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+}
+def TransferActivationOp : ScheduleNativeOp<"transfer.activation",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "one ordered continuous copy activation and its source wait";
+  let description = [{
+    IEEE 1800-2023 4.9.1, 4.9.6, 9.4.2 and 10.6.2.
+    Binds an original process to a continuous transfer between entry storage
+    captures. The process executes initially and on each source change, in
+    Active, retaining its identity, canonical frame, wait and publication.
+    Source and destination remain distinct handles even when implementations
+    are shared. A transfer samples the source, performs the complete continuous
+    assignment (including force/release contribution), and then arms its wait.
+    It must not be interpreted as an alias or as a final-value-only update.
+
+    signature, source, destination and capture_offsets specify the canonical
+    capture ABI. -1 offsets identify context captures supplied by the instance.
+    Without kernel, this actor has its own table-process entry. With kernel,
+    it uses the shared implementation selected by Schedule optimization;
+    representation conversion must not regroup activations.
+  }];
+  let arguments = (ins SymbolRefAttr:$actor, TypeAttr:$signature,
+      I32Attr:$source, I32Attr:$destination,
+      DenseI64ArrayAttr:$capture_offsets,
+      OptionalAttr<FlatSymbolRefAttr>:$kernel);
+  let hasVerifier = 1;
+}
+def TransferKernelOp : ScheduleNativeOp<"transfer.kernel", [Symbol]> {
+  let summary = "shared implementation of ordered continuous transfers";
+  let description = [{
+    IEEE 1800-2023 4.9.1 and 10.3.2: code sharing preserves separate updates.
+    Implements the transfer semantics of transfer.activation using the
+    executing instance's context and canonical storage captures. No storage
+    identity, source owner, continuation ID or wait record is baked into this
+    kernel. Each activation supplies those through its own instance and wait
+    plan. All sharing and ABI compatibility decisions precede conversion.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$signature,
+      I32Attr:$source, I32Attr:$destination,
+      DenseI64ArrayAttr:$capture_offsets);
+  let hasVerifier = 1;
 }
 // Executable actions retain facts that used to be recovered from runtime-call
 // names and the shape of expanded LLVM loads/stores.

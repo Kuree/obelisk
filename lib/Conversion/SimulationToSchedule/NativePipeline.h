@@ -5,6 +5,7 @@
 #include "../SimulationToLLVMCoroutine/SimulationProcessWrapperLowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationTableProcess.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "llvm/ADT/MapVector.h"
@@ -102,8 +103,14 @@ struct NativePipelineAnalysis {
       frameResults;
   // Source-shape certificates captured before state threading/packed lowering.
   // Actor identity and the canonical frame remain owned by analyses above.
-  llvm::DenseSet<mlir::Operation *> copyActivations;
+  llvm::DenseMap<mlir::Operation *, analysis::CaptureCopyProcess>
+      copyActivations;
   llvm::DenseMap<mlir::Operation *, NativeTableProcess> tableProcesses;
+  // Canonical ABI snapshots for the explicit Schedule transfer kernels. They
+  // are implementations, not actors: no spawn, owner or descriptor is created.
+  llvm::MapVector<mlir::Operation *,
+                  std::unique_ptr<SimulationProcessFrameAnalysis>>
+      transferKernelFrames;
   llvm::DenseMap<uint64_t, uint32_t> aotActorSlotsByCodeUnit;
   bool cleanSuperstep = false, staticEvalIsland = false,
        closedStaticIsland = false;

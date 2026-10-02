@@ -144,6 +144,23 @@ def ObeliskSimOptimizeNativeRegionsPass
   ];
 }
 
+def PlanNativeTransfersPass
+    : Pass<"schedule-plan-native-transfers", "mlir::ModuleOp"> {
+  let summary = "Expose ordered capture-copy activations before specialization";
+  let dependentDialects = ["obelisk::schedule::ScheduleDialect"];
+}
+def ShareNativeTransfersPass
+    : Pass<"schedule-share-native-transfers", "mlir::ModuleOp"> {
+  let summary = "Share transfer implementations with identical canonical capture ABIs";
+  let dependentDialects = ["obelisk::schedule::ScheduleDialect"];
+}
+def PrepareNativeTransferKernelsPass
+    : Pass<"schedule-prepare-native-transfer-kernels", "mlir::ModuleOp"> {
+  let summary = "Prepare selected transfer kernels for native representation lowering";
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "obelisk::schedule::ScheduleDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
 def CoalesceNativeReadyPass
     : Pass<"schedule-coalesce-native-ready", "mlir::ModuleOp"> {
   let summary = "Combine exact pending-set updates before physical expansion";
