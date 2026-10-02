@@ -5,9 +5,22 @@
 
 include "mlir/Pass/PassBase.td"
 
+def ObeliskSimSimplifyBodiesPass
+    : Pass<"obelisk-sim-simplify-bodies", "obelisk::sim::SimDesignOp"> {
+  let summary =
+      "Simplify semantic bodies using sparse bits and dense memory SSA facts";
+  let options = [Option<
+      "vpi", "vpi", "std::string", "\"full\"",
+      "External observation/mutation contract: off, read, or full">];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+}
+
 def ObeliskSimUnrollBoundedLoopsPass
     : Pass<"obelisk-sim-unroll-bounded-loops", "obelisk::sim::SimFuncOp"> {
   let summary = "Unroll small constant-trip, non-suspending CFG loops";
+  let options = [Option<"maximumGrowth", "maximum-growth", "uint64_t", "0",
+                        "Maximum additional weighted body cost per function "
+                        "before packed expansion">];
   let dependentDialects = ["mlir::arith::ArithDialect",
                            "mlir::cf::ControlFlowDialect"];
 }

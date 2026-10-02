@@ -2214,6 +2214,9 @@ enum {
 // The descriptor has an obelisk_rt_table_process_descriptor_v1 trailing plan.
 // Unflagged v1 descriptors retain their original size and layout.
 #define OBELISK_RT_PROCESS_TABLE_NATIVE UINT32_C(2)
+// Frozen bytecode closure certificate: no canonical state mutation, unknown
+// footprint, foreign call or reentrant callback in any reachable callee.
+#define OBELISK_RT_PROCESS_BYTECODE_READ_ONLY UINT32_C(4)
 
 typedef struct obelisk_rt_process_descriptor_v1 {
   obelisk_rt_handle_v1 handle;

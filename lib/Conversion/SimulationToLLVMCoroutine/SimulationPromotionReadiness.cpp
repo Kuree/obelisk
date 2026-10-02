@@ -12,6 +12,216 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
+LogicalResult materializeNativeRoutePromotionScan(
+    ModuleOp module, LLVM::LLVMFuncOp scanner, uint64_t stateBits,
+    ArrayRef<NativeRoutePromotion> routes, StringRef pendingName,
+    StringRef dirtyName) {
+  OpBuilder builder(module.getContext());
+  Location loc = scanner.getLoc();
+  Type i1 = builder.getI1Type(), i8 = builder.getI8Type(),
+       i64 = builder.getI64Type();
+  Type ptr = LLVM::LLVMPointerType::get(module.getContext());
+  SmallVector<uint64_t> scans, starts, ends;
+  for (const auto &route : routes) {
+    SmallVector<std::pair<uint64_t, uint64_t>> intervals;
+    for (auto range : route.ranges) {
+      if (!range.bitWidth || range.bitOffset > stateBits ||
+          range.bitWidth > stateBits - range.bitOffset)
+        return module.emitError("route promotion range exceeds native state");
+      intervals.emplace_back(range.bitOffset, range.bitOffset + range.bitWidth);
+    }
+    llvm::sort(intervals);
+    SmallVector<std::pair<uint64_t, uint64_t>> merged;
+    for (auto [begin, end] : intervals) {
+      if (!merged.empty() && begin <= merged.back().second)
+        merged.back().second = std::max(merged.back().second, end);
+      else
+        merged.emplace_back(begin, end);
+    }
+    starts.push_back(scans.size() / 4);
+    for (auto [begin, end] : merged)
+      llvm::append_range(
+          scans,
+          ArrayRef<uint64_t>{begin / 8, end / 8 + (end % 8 != 0),
+                             (UINT64_C(255) << (begin % 8)) & 255,
+                             end % 8 ? (uint64_t{1} << (end % 8)) - 1 : 255});
+    ends.push_back(scans.size() / 4);
+  }
+  auto constant = [&](uint64_t n) {
+    return llvmConstant(builder, loc, i64, n);
+  };
+  auto address = [&](StringRef name) -> Value {
+    return LLVM::AddressOfOp::create(builder, loc, ptr, name);
+  };
+  auto gep = [&](Value base, Type type, Value index) -> Value {
+    return LLVM::GEPOp::create(builder, loc, ptr, type, base,
+                               ArrayRef<LLVM::GEPArg>{index});
+  };
+  constexpr StringLiteral ownerName =
+      "__obelisk_eval_route_promotion_owners_v1";
+  constexpr StringLiteral rangeName =
+      "__obelisk_eval_route_promotion_ranges_v1";
+  auto ownerType =
+      LLVM::LLVMStructType::getLiteral(module.getContext(), {i64, i64, ptr});
+  auto ownerArray = LLVM::LLVMArrayType::get(ownerType, routes.size());
+  builder.setInsertionPointToStart(module.getBody());
+  auto ownerTable = LLVM::GlobalOp::create(builder, loc, ownerArray, true,
+                                           LLVM::Linkage::Internal, ownerName,
+                                           Attribute{}, 8);
+  ownerTable.getInitializerRegion().push_back(new Block);
+  builder.setInsertionPointToStart(&ownerTable.getInitializerRegion().front());
+  Value owners = LLVM::ZeroOp::create(builder, loc, ownerArray);
+  for (auto [index, route] : llvm::enumerate(routes)) {
+    Value row = LLVM::ZeroOp::create(builder, loc, ownerType);
+    row = LLVM::InsertValueOp::create(
+        builder, loc, row, constant(starts[index]), ArrayRef<int64_t>{0});
+    row = LLVM::InsertValueOp::create(builder, loc, row, constant(ends[index]),
+                                      ArrayRef<int64_t>{1});
+    if (!route.selector.empty())
+      row = LLVM::InsertValueOp::create(
+          builder, loc, row, address(route.selector), ArrayRef<int64_t>{2});
+    owners = LLVM::InsertValueOp::create(builder, loc, owners, row,
+                                         ArrayRef<int64_t>{int64_t(index)});
+  }
+  LLVM::ReturnOp::create(builder, loc, owners);
+  builder.setInsertionPointToStart(module.getBody());
+  auto tensor = RankedTensorType::get({int64_t(scans.size())}, i64);
+  LLVM::GlobalOp::create(builder, loc,
+                         LLVM::LLVMArrayType::get(i64, scans.size()), true,
+                         LLVM::Linkage::Internal, rangeName,
+                         DenseIntElementsAttr::get(tensor, scans), 8);
+
+  Block *entry = scanner.addEntryBlock(builder);
+  auto block = [&](ArrayRef<Type> arguments = {}) {
+    auto *result = new Block;
+    for (Type type : arguments)
+      result->addArgument(type, loc);
+    scanner.getBody().push_back(result);
+    return result;
+  };
+  Block *nextWord = block({i64}), *readWord = block();
+  Block *nextBit = block({i64}), *inspect = block(), *owner = block();
+  Block *nextRange = block({i64}), *readRange = block();
+  Block *nextByte = block({i64}), *advanceByte = block();
+  Block *advanceRange = block(), *known = block(), *unknown = block();
+  Block *publish = block({i1}), *advanceWord = block(), *done = block();
+  auto branch = [&](Block *dest, ValueRange values) {
+    return LLVM::BrOp::create(builder, loc, values, dest);
+  };
+  auto condBranch = [&](Value condition, Block *yes, ValueRange yesValues,
+                        Block *no, ValueRange noValues) {
+    return LLVM::CondBrOp::create(builder, loc, condition, yes, yesValues, no,
+                                  noValues);
+  };
+  builder.setInsertionPointToStart(entry);
+  Value pendingBase = address(pendingName), ownerBase = address(ownerName),
+        rangeBase = address(rangeName),
+        state = address("__obelisk_state_unknown");
+  if (!dirtyName.empty())
+    LLVM::StoreOp::create(builder, loc, llvmConstant(builder, loc, i8, 0),
+                          address(dirtyName), 1);
+  branch(nextWord, ValueRange{constant(0)});
+  builder.setInsertionPointToStart(nextWord);
+  Value word = nextWord->getArgument(0);
+  Value finished =
+      LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq, word,
+                           constant((routes.size() + 63) / 64));
+  condBranch(finished, done, ValueRange{}, readWord, ValueRange{});
+  builder.setInsertionPointToStart(readWord);
+  Value pendingAddress = gep(pendingBase, i64, word);
+  Value pending = LLVM::LoadOp::create(builder, loc, i64, pendingAddress, 8);
+  // This scan executes no callbacks or actors. Snapshot and consume each word
+  // once; subsequent mutations enqueue their own exact proof dependencies.
+  LLVM::StoreOp::create(builder, loc, constant(0), pendingAddress, 8);
+  branch(nextBit, ValueRange{pending});
+  builder.setInsertionPointToStart(nextBit);
+  Value remaining = nextBit->getArgument(0);
+  Value empty = LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq,
+                                     remaining, constant(0));
+  condBranch(empty, advanceWord, ValueRange{}, inspect, ValueRange{});
+  builder.setInsertionPointToStart(inspect);
+  Value tail = LLVM::AndOp::create(
+      builder, loc, remaining,
+      LLVM::SubOp::create(builder, loc, remaining, constant(1)));
+  Value bit =
+      LLVM::CountTrailingZerosOp::create(builder, loc, i64, remaining, true);
+  Value id = LLVM::AddOp::create(
+      builder, loc, LLVM::MulOp::create(builder, loc, word, constant(64)), bit);
+  Value valid = LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ult, id,
+                                     constant(routes.size()));
+  condBranch(valid, owner, ValueRange{}, nextBit, ValueRange{tail});
+  builder.setInsertionPointToStart(owner);
+  Value row = LLVM::LoadOp::create(builder, loc, ownerType,
+                                   gep(ownerBase, ownerType, id), 8);
+  Value first =
+      LLVM::ExtractValueOp::create(builder, loc, row, ArrayRef<int64_t>{0});
+  Value end =
+      LLVM::ExtractValueOp::create(builder, loc, row, ArrayRef<int64_t>{1});
+  Value selector =
+      LLVM::ExtractValueOp::create(builder, loc, row, ArrayRef<int64_t>{2});
+  Value present =
+      LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne, selector,
+                           LLVM::ZeroOp::create(builder, loc, ptr));
+  condBranch(present, nextRange, ValueRange{first}, nextBit, ValueRange{tail});
+  builder.setInsertionPointToStart(nextRange);
+  Value range = nextRange->getArgument(0);
+  Value allKnown =
+      LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq, range, end);
+  condBranch(allKnown, known, ValueRange{}, readRange, ValueRange{});
+  builder.setInsertionPointToStart(readRange);
+  auto field = [&](uint64_t n) -> Value {
+    Value index = LLVM::AddOp::create(
+        builder, loc, LLVM::MulOp::create(builder, loc, range, constant(4)),
+        constant(n));
+    return LLVM::LoadOp::create(builder, loc, i64, gep(rangeBase, i64, index),
+                                8);
+  };
+  Value beginByte = field(0), endByte = field(1);
+  Value firstMask = LLVM::TruncOp::create(builder, loc, i8, field(2));
+  Value lastMask = LLVM::TruncOp::create(builder, loc, i8, field(3));
+  branch(nextByte, ValueRange{beginByte});
+  builder.setInsertionPointToStart(nextByte);
+  Value byte = nextByte->getArgument(0);
+  Value following = LLVM::AddOp::create(builder, loc, byte, constant(1));
+  Value isFirst = LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq,
+                                       byte, beginByte);
+  Value isLast = LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq,
+                                      following, endByte);
+  Value full = llvmConstant(builder, loc, i8, 255);
+  Value mask = LLVM::AndOp::create(
+      builder, loc,
+      LLVM::SelectOp::create(builder, loc, isFirst, firstMask, full),
+      LLVM::SelectOp::create(builder, loc, isLast, lastMask, full));
+  Value bits = LLVM::LoadOp::create(builder, loc, i8, gep(state, i8, byte), 1);
+  Value hasUnknown =
+      LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne,
+                           LLVM::AndOp::create(builder, loc, bits, mask),
+                           llvmConstant(builder, loc, i8, 0));
+  condBranch(hasUnknown, unknown, ValueRange{}, advanceByte, ValueRange{});
+  builder.setInsertionPointToStart(advanceByte);
+  condBranch(isLast, advanceRange, ValueRange{}, nextByte,
+             ValueRange{following});
+  builder.setInsertionPointToStart(advanceRange);
+  branch(nextRange,
+         ValueRange{LLVM::AddOp::create(builder, loc, range, constant(1))});
+  builder.setInsertionPointToStart(known);
+  branch(publish, ValueRange{llvmConstant(builder, loc, i1, 1)});
+  builder.setInsertionPointToStart(unknown);
+  branch(publish, ValueRange{llvmConstant(builder, loc, i1, 0)});
+  builder.setInsertionPointToStart(publish);
+  LLVM::StoreOp::create(
+      builder, loc,
+      LLVM::ZExtOp::create(builder, loc, i8, publish->getArgument(0)), selector,
+      1);
+  branch(nextBit, ValueRange{tail});
+  builder.setInsertionPointToStart(advanceWord);
+  branch(nextWord,
+         ValueRange{LLVM::AddOp::create(builder, loc, word, constant(1))});
+  builder.setInsertionPointToStart(done);
+  LLVM::ReturnOp::create(builder, loc, ValueRange{});
+  return success();
+}
+
 LogicalResult materializeNativeKernelPromotionReadiness(
     ModuleOp module, uint64_t stateBits,
     ArrayRef<SmallVector<NativePromotionRange>> ranges,

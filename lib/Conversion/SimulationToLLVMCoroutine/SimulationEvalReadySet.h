@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Runtime/ClockKernelReadySet.h"
 
 namespace obelisk::detail {
@@ -81,21 +82,20 @@ inline mlir::Value updateOwnerWord(mlir::OpBuilder &builder, mlir::Location loc,
 
 // Mutate authoritative ingress and its derived index as one serialized
 // operation. Clears may leave the minimum cache stale-low, never stale-high.
-inline void updateEvalReadyWord(mlir::OpBuilder &builder, mlir::Location loc,
-                                mlir::Value base,
-                                const runtime::ReadySetLayout &layout,
-                                unsigned word, mlir::Value mask,
-                                bool clear = false) {
+inline void materializeEvalReadyIndexes(mlir::OpBuilder &builder,
+                                        mlir::Location loc, mlir::Value base,
+                                        const runtime::ReadySetLayout &layout,
+                                        unsigned word, mlir::Value next,
+                                        mlir::Value added) {
   using namespace mlir;
   auto i64 = builder.getI64Type();
-  Value next = updateOwnerWord(builder, loc, base, word, mask, clear);
   if (!layout.hasCache())
     return;
   Value zero = llvmConstant(builder, loc, i64, 0);
-  if (!clear) {
+  if (added) {
     Value cache = loadOwnerWord(builder, loc, base, layout.cacheOffset());
     Value published = arith::CmpIOp::create(
-        builder, loc, arith::CmpIPredicate::ne, mask, zero);
+        builder, loc, arith::CmpIPredicate::ne, added, zero);
     Value candidate = arith::SelectOp::create(
         builder, loc, published, llvmConstant(builder, loc, i64, word), cache);
     Value minimum = arith::MinUIOp::create(builder, loc, cache, candidate);
@@ -119,6 +119,26 @@ inline void updateEvalReadyWord(mlir::OpBuilder &builder, mlir::Location loc,
                           ownerWordAddress(builder, loc, base, parent), 8);
     child /= 64;
   }
+}
+
+inline void materializeEvalReadyWord(mlir::OpBuilder &builder,
+                                     mlir::Location loc, mlir::Value base,
+                                     const runtime::ReadySetLayout &layout,
+                                     unsigned word, mlir::Value mask,
+                                     bool clear = false) {
+  mlir::Value next = updateOwnerWord(builder, loc, base, word, mask, clear);
+  materializeEvalReadyIndexes(builder, loc, base, layout, word, next,
+                              clear ? mlir::Value{} : mask);
+}
+
+inline void updateEvalReadyWord(mlir::OpBuilder &builder, mlir::Location loc,
+                                mlir::Value base,
+                                const runtime::ReadySetLayout &layout,
+                                unsigned word, mlir::Value mask,
+                                bool clear = false) {
+  schedule::NativeReadyUpdateOp::create(
+      builder, loc, base, mask, builder.getI64IntegerAttr(layout.capacity),
+      builder.getI64IntegerAttr(word), builder.getBoolAttr(clear));
 }
 
 inline void

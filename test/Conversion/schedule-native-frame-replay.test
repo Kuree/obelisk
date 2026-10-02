@@ -1,0 +1,11 @@
+// Frame replay reconstructs analyses from immutable inputs at the Frames
+// boundary. The exact canonical capture/continuation ABI must survive reload.
+// RUN: obelisk-opt %S/simulation-to-llvm-coroutine.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames)' > %t.frames
+// RUN: obelisk-opt %t.frames --pass-pipeline='builtin.module(schedule-plan-native-actors,schedule-specialize-native-captures,convert-simulation-to-native-schedule,prepare-native-managed-roots,schedule-mark-clean-native-nba,schedule-specialize-native-eval,schedule-annotate-compact-nba,prepare-native-fragments,schedule-plan-native-eval-ownership,schedule-plan-native-executable-nodes,schedule-resolve-native-eval,materialize-native-processes,convert-prepared-sim-processes-to-llvm-coroutines)' > %t.replayed
+// RUN: obelisk-opt %S/simulation-to-llvm-coroutine.mlir --convert-obelisk-sim-processes-to-llvm-coroutines > %t.original
+// RUN: diff -u %t.original %t.replayed
+// RUN: sed 's/abi = array<i64: /abi = array<i64: 999, /' %t.frames > %t.stale
+// RUN: not obelisk-opt %t.stale --schedule-plan-native-actors 2>&1 | FileCheck %s --check-prefix=STALE
+// RUN: sed -e 's/code_unit_id = 9000001 : i64/code_unit_id = 9100001 : i64/' -e 's/simulation.code_unit.decl 9000001 /simulation.code_unit.decl 9100001 /' %t.frames > %t.identity
+// RUN: not obelisk-opt %t.identity --schedule-plan-native-actors 2>&1 | FileCheck %s --check-prefix=STALE
+// STALE: native frame replay rejected changed canonical ABI inputs

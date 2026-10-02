@@ -232,6 +232,8 @@ static bool validInertialStrengthPairUnlocked(
 void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
                                      uint32_t rootIndex,
                                      StaticNBAAccumulator &accumulator) {
+  if (!accumulator.valid)
+    ++context->staticNBAPendingAccumulatorCount;
   accumulator.valid = true;
   context->staticNBAAccumulatorsPending = true;
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
@@ -249,11 +251,7 @@ void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
 
 void refreshStaticNBAAccumulatorsPending(obelisk_rt_context *context) {
   context->staticNBAAccumulatorsPending =
-      std::any_of(context->staticNBAAccumulators.begin(),
-                  context->staticNBAAccumulators.end(),
-                  [](const StaticNBAAccumulator &accumulator) {
-                    return accumulator.valid;
-                  });
+      context->staticNBAPendingAccumulatorCount != 0;
 }
 
 static obelisk_rt_status schedulerNBA(
@@ -3388,6 +3386,8 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
   std::fill(accumulator.transient.begin(), accumulator.transient.end(),
             uint64_t{0});
   accumulator.valid = false;
+  assert(context->staticNBAPendingAccumulatorCount != 0);
+  --context->staticNBAPendingAccumulatorCount;
   accumulator.sequence = 0;
   ++context->signalDiagnostics.aotNBACommits;
   return OBELISK_RT_OK;

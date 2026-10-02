@@ -11,6 +11,73 @@ using namespace mlir;
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"
 namespace obelisk::schedule {
+LogicalResult NativeKnownValueOp::verify() {
+  Type type = getInput().getType();
+  if (!isa<IntegerType>(type) && !sim::getPackedWidth(type) &&
+      (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type) ||
+       !sim::getFixedBitStreamPlan(type)))
+    return emitOpError("requires a fixed native bit value");
+  return success();
+}
+LogicalResult NativeTransitionOp::verify() {
+  if (getStaticStateAttr().getValue().isNegative() ||
+      getStaticState() > UINT32_MAX)
+    return emitOpError(
+        "static state must fit an unsigned 32-bit root identity");
+  if (getWidth() < 1 || getWidth() > 64)
+    return emitOpError("transition width must be between 1 and 64");
+  if (auto owner = getSourceOwnerAttr()) {
+    auto code = owner.getCodeUnit();
+    auto continuation = owner.getContinuation();
+    if (!code || !continuation || code.getValue().getBitWidth() > 64 ||
+        continuation.getValue().getBitWidth() > 64 ||
+        continuation.getUInt() > UINT32_MAX)
+      return emitOpError("requires a canonical code-unit/continuation owner");
+  }
+  return success();
+}
+LogicalResult NativeReadyUpdateOp::verify() {
+  if (getCapacity() < 1 || getCapacity() > UINT32_MAX)
+    return emitOpError("ready capacity must be between 1 and UINT32_MAX");
+  if (getWordAttr().getValue().isNegative() ||
+      getWord() >= (getCapacity() + 63) / 64)
+    return emitOpError("ready word must name a leaf within capacity");
+  return success();
+}
+void NativeReadyUpdateOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       sim::SchedulerResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       sim::SchedulerResource::get());
+}
+LogicalResult NativeReadyCommitOp::verify() {
+  if (getCapacity() < 1 || getCapacity() > UINT32_MAX)
+    return emitOpError("ready capacity must be between 1 and UINT32_MAX");
+  if (getWordAttr().getValue().isNegative() ||
+      getWord() >= (getCapacity() + 63) / 64)
+    return emitOpError("ready word must name a leaf within capacity");
+  return success();
+}
+void NativeReadyCommitOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       sim::SchedulerResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       sim::SchedulerResource::get());
+}
 SuccessorOperands NativeSuspendDelayOp::getSuccessorOperands(unsigned index) {
   assert(index == 0);
   return SuccessorOperands(getContinuationOperandsMutable());

@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Conversion/SimulationRuntime.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -120,35 +121,25 @@ collectGeneratedTransitionRanges(ModuleOp module,
         identity && identity.getInt() >= 0 &&
         static_cast<uint64_t>(identity.getInt()) < fragments.size())
       directFragment = static_cast<unsigned>(identity.getUInt());
-    function.walk([&](LLVM::CallOp call) {
-      if (failed(valid) || !call.getCallee() ||
-          *call.getCallee() != "obelisk_rt_v1_scheduler_static_transition")
+    function.walk([&](schedule::NativeTransitionOp call) {
+      if (failed(valid))
         return;
-      ValueRange arguments = call.getArgOperands();
-      if (arguments.size() != 8) {
-        valid = call.emitError("malformed static transition ABI");
-        return;
-      }
-      std::optional<uint64_t> staticState = constantU64(arguments[1]);
-      std::optional<uint64_t> lowBit = constantU64(arguments[2]);
-      std::optional<uint64_t> bitWidth = constantU64(arguments[3]);
-      if (!staticState || !bitWidth || *bitWidth == 0 || *bitWidth > 64) {
-        valid = call.emitError("eval transition is not a fixed scalar range");
-        return;
-      }
+      uint64_t staticState = call.getStaticState();
+      std::optional<uint64_t> lowBit = constantU64(call.getOffset());
+      uint64_t bitWidth = call.getWidth();
       if (lowBit)
-        ranges.emplace_back(static_cast<uint32_t>(*staticState), *lowBit,
-                            *bitWidth, directFragment);
+        ranges.emplace_back(static_cast<uint32_t>(staticState), *lowBit,
+                            bitWidth, directFragment);
       else {
         auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &bound) {
-          return bound.handleID == *staticState;
+          return bound.handleID == staticState;
         });
         if (bound == stateLayout.bounds.end()) {
           valid = call.emitError("eval dynamic transition has no root bounds");
           return;
         }
-        ranges.emplace_back(static_cast<uint32_t>(*staticState), 0,
-                            bound->width, directFragment);
+        ranges.emplace_back(static_cast<uint32_t>(staticState), 0, bound->width,
+                            directFragment);
       }
     });
   }
@@ -667,23 +658,13 @@ static void normalizeGeneratedWideTransitions(
                    : LLVM::ZExtOp::create(builder, call.getLoc(), i64, value)
                          .getResult();
       };
-      auto publication = LLVM::CallOp::create(
-          builder, call.getLoc(), TypeRange{},
-          SymbolRefAttr::get(module.getContext(),
-                             "obelisk_rt_v1_scheduler_static_transition"),
-          ValueRange{args[0],
-                     llvmConstant(builder, call.getLoc(), builder.getI32Type(),
-                                  range->staticID),
-                     llvmConstant(builder, call.getLoc(), i64,
-                                  range->localOffset + low),
-                     llvmConstant(builder, call.getLoc(), i64, bits),
-                     load(args[3]), load(args[4]), load(args[5]),
-                     load(args[6])});
-      if (auto owner =
-              ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
-                  call))
-        ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
-            publication, owner);
+      schedule::NativeTransitionOp::create(
+          builder, call.getLoc(), args[0],
+          llvmConstant(builder, call.getLoc(), i64, range->localOffset + low),
+          load(args[3]), load(args[4]), load(args[5]), load(args[6]),
+          builder.getI64IntegerAttr(range->staticID),
+          builder.getI64IntegerAttr(bits),
+          ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(call));
     }
     call.erase();
   }
@@ -1686,7 +1667,7 @@ FailureOr<bool> makeNativeEvalPlan(
       }
     }
     struct GeneratedTransition {
-      LLVM::CallOp call;
+      schedule::NativeTransitionOp call;
       APInt activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
     };
@@ -1697,14 +1678,9 @@ FailureOr<bool> makeNativeEvalPlan(
       APInt activeOwnerMask = activeOwner == activeOwnerBits.end()
                                   ? APInt(ownerCount, 0)
                                   : activeOwner->second;
-      function.walk([&](LLVM::CallOp call) {
-        if (!call.getCallee() ||
-            *call.getCallee() != "obelisk_rt_v1_scheduler_static_transition")
-          return;
+      function.walk([&](schedule::NativeTransitionOp call) {
         std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
-        if (auto owner =
-                ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
-                    call)) {
+        if (auto owner = call.getSourceOwnerAttr()) {
           auto codeUnit = owner.getCodeUnit();
           auto continuation = owner.getContinuation();
           if (codeUnit && continuation && continuation.getInt() > 0 &&
@@ -1736,33 +1712,28 @@ FailureOr<bool> makeNativeEvalPlan(
         transitions.push_back({call, activeOwnerMask, physicalSourceOwner});
       });
     }
-    SmallVector<std::pair<LLVM::CallOp, uint32_t>> ownedPublications;
+    SmallVector<std::pair<schedule::NativeTransitionOp, uint32_t>>
+        ownedPublications;
     auto packedMask = [](uint64_t width) {
       return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     };
     for (const GeneratedTransition &transition : transitions) {
-      LLVM::CallOp call = transition.call;
+      schedule::NativeTransitionOp call = transition.call;
       const APInt &activeOwnerMask = transition.activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner =
           transition.physicalSourceOwner;
-      ValueRange arguments = call.getArgOperands();
-      if (arguments.size() != 8)
-        return call.emitError("malformed static transition ABI"), failure();
-      std::optional<uint64_t> staticState = constantU64(arguments[1]);
-      std::optional<uint64_t> lowBit = constantU64(arguments[2]);
-      std::optional<uint64_t> bitWidth = constantU64(arguments[3]);
-      if (!staticState || !bitWidth || *bitWidth == 0 || *bitWidth > 64)
-        return call.emitError("eval transition is not a fixed scalar range"),
-               failure();
+      std::optional<uint64_t> staticState = call.getStaticState();
+      std::optional<uint64_t> lowBit = constantU64(call.getOffset());
+      std::optional<uint64_t> bitWidth = call.getWidth();
       bool hasRuntimeOwnedObserver =
           staticFanoutPlan.runtimeTransitionStates.contains(*staticState);
       if (hasRuntimeOwnedObserver && physicalSourceOwner)
         ownedPublications.emplace_back(call, physicalSourceOwner->first);
       OpBuilder transitionBuilder(call);
-      Value oldValue = arguments[4];
-      Value oldUnknown = arguments[5];
-      Value newValue = arguments[6];
-      Value newUnknown = arguments[7];
+      Value oldValue = call.getOldValue();
+      Value oldUnknown = call.getOldUnknown();
+      Value newValue = call.getNewValue();
+      Value newUnknown = call.getNewUnknown();
       Value changed = arith::OrIOp::create(
           transitionBuilder, call.getLoc(),
           arith::XOrIOp::create(transitionBuilder, call.getLoc(), oldValue,
@@ -1781,7 +1752,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                        constant(UINT64_MAX))
               .getResult();
         };
-        Value start = arguments[2];
+        Value start = call.getOffset();
         Value end = arith::AddIOp::create(transitionBuilder, call.getLoc(),
                                           start, constant(*bitWidth));
         Value oldZero =
@@ -2037,10 +2008,16 @@ FailureOr<bool> makeNativeEvalPlan(
     // This publishes an event without executing the actor at a checkpoint.
     for (auto [call, actorSlot] : ownedPublications) {
       OpBuilder publication(call);
-      SmallVector<Value> arguments(call.getArgOperands());
-      arguments.insert(
-          arguments.begin() + 1,
-          llvmConstant(publication, call.getLoc(), i32, actorSlot));
+      SmallVector<Value> arguments{
+          call.getContext(),
+          llvmConstant(publication, call.getLoc(), i32, actorSlot),
+          llvmConstant(publication, call.getLoc(), i32, call.getStaticState()),
+          call.getOffset(),
+          llvmConstant(publication, call.getLoc(), i64, call.getWidth()),
+          call.getOldValue(),
+          call.getOldUnknown(),
+          call.getNewValue(),
+          call.getNewUnknown()};
       LLVM::CallOp::create(
           publication, call.getLoc(), TypeRange{},
           SymbolRefAttr::get(context,
@@ -5148,6 +5125,7 @@ FailureOr<bool> makeNativeEvalPlan(
   Value queueOffset, queueValue, queueUnknown;
   Value orderedDirectGuard;
   llvm::DenseMap<uint64_t, Block *> queueCases;
+  llvm::DenseMap<std::pair<uint32_t, uint64_t>, Block *> commitCases;
   if (hasOrderedNBA) {
     if (::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
@@ -5217,7 +5195,15 @@ FailureOr<bool> makeNativeEvalPlan(
     SmallVector<ValueRange> operands;
     for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
       if (entry.queued) {
-        Block *destination = block();
+        // A record retains its site and position in the ordered queue. The
+        // commit action depends only on the exact root and captured width;
+        // offset and both RHS planes are loaded from that individual record.
+        // Share executable preparation, never records or event history.
+        auto [commit, inserted] = commitCases.try_emplace(
+            std::pair{entry.rootIndex, entry.width}, nullptr);
+        if (inserted)
+          commit->second = block();
+        Block *destination = commit->second;
         queueCases[entry.site] = destination;
         values.emplace_back(64, entry.site);
         destinations.push_back(destination);
@@ -5238,6 +5224,7 @@ FailureOr<bool> makeNativeEvalPlan(
                           llvmConstant(builder, location, i32, 0),
                           evalNBAQueueField(builder, location, 1), 4);
   }
+  llvm::SmallPtrSet<Block *, 32> emittedCommitCases;
   for (const DynamicEvalNBA &entry : dynamicEvalNBAs) {
     // Fixed latches belong to the canonical barrier in a shared calendar.
     // Only the ordered queue is drained by this generated callback.
@@ -5249,7 +5236,10 @@ FailureOr<bool> makeNativeEvalPlan(
     Value validAddress, active;
     Block *nextDynamic;
     if (entry.queued) {
-      builder.setInsertionPointToStart(queueCases.lookup(entry.site));
+      Block *commit = queueCases.lookup(entry.site);
+      if (!emittedCommitCases.insert(commit).second)
+        continue;
+      builder.setInsertionPointToStart(commit);
       if (orderedDirectGuard) {
         Block *direct = new Block, *canonical = new Block, *failed = new Block;
         nbaCommit.getBody().getBlocks().insert(
@@ -6320,14 +6310,16 @@ FailureOr<bool> makeNativeEvalPlan(
     cf::BranchOp::create(builder, location, mapping.lookup(genericNBACommit));
   }
 
-  if (scalarCount >= 32) {
+  uint64_t directScalarCost = 0;
+  for (Block *block : scalarBlocks)
+    directScalarCost += block->getOperations().size();
+  // Compare the actual generated direct footprint with the bounded loop
+  // footprint. A handful of heavily observed roots can be larger than many
+  // sparse simple roots; root count alone does not capture that tradeoff.
+  uint64_t tableScalarCost = 512 + 16 * scalarRootsByWord.size();
+  if (scalarCount >= 8 && directScalarCost > tableScalarCost) {
     // IEEE 1800-2023 6.3.1, 10.4.2: retain separate canonicalizing and
     // value-only commits. The latter already has a destination proof.
-    builder.setInsertionPointAfter(nbaCommit);
-    auto fast =
-        cast<LLVM::LLVMFuncOp>(builder.clone(*nbaCommit.getOperation()));
-    fast.setSymName("__obelisk_aot_static_nba_commit_two_state_fast_v1");
-    fast.setLinkage(LLVM::Linkage::Internal);
     scalarEntry->getTerminator()->erase();
     for (Block *block : scalarBlocks)
       block->dropAllReferences();
@@ -6338,6 +6330,14 @@ FailureOr<bool> makeNativeEvalPlan(
                             nbaCommitEntry->getArgument(2), staticNBAPlan,
                             scalarRootsByWord, fanoutEntries, activatedNodes,
                             activatedDirect, directActivationWordCount);
+    // The destination-known variant uses the same chosen representation.
+    // Keeping an unrolled clone here would duplicate the footprint we just
+    // bounded. Its domain specialization still happens after construction.
+    builder.setInsertionPointAfter(nbaCommit);
+    auto fast =
+        cast<LLVM::LLVMFuncOp>(builder.clone(*nbaCommit.getOperation()));
+    fast.setSymName("__obelisk_aot_static_nba_commit_two_state_fast_v1");
+    fast.setLinkage(LLVM::Linkage::Internal);
   }
 
   // The generated coordinator consumes eval latches and publishes model

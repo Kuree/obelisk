@@ -14,6 +14,77 @@ class ScheduleNativeOp<string mnemonic, list<Trait> traits = []>
     : Op<ScheduleDialect, mnemonic, traits> {
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
+// Executable actions retain facts that used to be recovered from runtime-call
+// names and the shape of expanded LLVM loads/stores.
+def NativeKnownValueOp : ScheduleNativeOp<"known.value", [Pure]> {
+  let summary = "test the complete unknown plane of a fixed native value";
+  let description = [{
+    Establishes that every represented bit of input is two-state. Fixed
+    unpacked arrays and structs retain their native value/unknown planes;
+    there is no bit-stream export, allocation, runtime call or state effect.
+    This predicate proves knownness only, not equality, visibility or bounds.
+  }];
+  let arguments = (ins AnyType:$input);
+  let results = (outs I1:$known);
+  let hasVerifier = 1;
+}
+def NativeTransitionOp
+    : ScheduleNativeOp<
+          "transition",
+          [MemoryEffects<
+              [MemRead, MemWrite, MemRead<SimStorageResource>,
+               MemWrite<SimStorageResource>, MemRead<SimSchedulerResource>,
+               MemWrite<SimSchedulerResource>, MemRead<SimProcessResource>,
+               MemWrite<SimProcessResource>, MemRead<SimExternalResource>,
+               MemWrite<SimExternalResource>]>]> {
+  let summary = "publish one exact scalar four-state transition";
+  let description = [{
+    Publishes the captured old/new value and unknown planes of one store in
+    the executing process's current event region. The offset is relative to
+    the static root, and width is between 1 and 64. Dynamic offsets retain
+    their original selector semantics. source_owner identifies the original
+    logical process, including inside a fused activation; its absence requires
+    runtime source resolution. Publication is synchronous and may deliver
+    observers/callbacks. It is never a final-value-only notification and may
+    not be moved across another effect or coalesced with another occurrence.
+  }];
+  let arguments = (ins LLVM_AnyPointer:$context, I64:$offset, I64:$old_value,
+      I64:$old_unknown, I64:$new_value, I64:$new_unknown, I64Attr:$static_state,
+      I64Attr:$width, OptionalAttr<ScheduleSourceOwnerAttr>:$source_owner);
+  let hasVerifier = 1;
+}
+def NativeReadyUpdateOp
+    : ScheduleNativeOp<"ready.update", [DeclareOpInterfaceMethods<
+                                           MemoryEffectsOpInterface>]> {
+  let summary = "add or consume an exact word of pending fine activations";
+  let description = [{
+    Updates the authoritative ReadySetLayout leaf and its derived indexes.
+    With consume=false it unions mask; with consume=true it removes mask.
+    capacity freezes the ready universe and word identifies the leaf, without
+    recovering either from addresses. These are pending activations, not
+    event history. Ordered updates may be combined only while no selection,
+    observer, callback, opaque alias, or handoff can observe intermediate
+    storage. All leaves/indexes must be materialized at those boundaries.
+  }];
+  let arguments = (ins LLVM_AnyPointer:$base, I64:$mask, I64Attr:$capacity,
+      I64Attr:$word, BoolAttr:$consume);
+  let hasVerifier = 1;
+}
+def NativeReadyCommitOp
+    : ScheduleNativeOp<"ready.commit", [DeclareOpInterfaceMethods<
+                                           MemoryEffectsOpInterface>]> {
+  let summary = "materialize one SSA pending-word update and its indexes";
+  let description = [{
+    Replaces a certified unobserved sequence of ordered add/consume actions.
+    The resulting pending word is (previous & ~remove_mask) | add_mask.
+    SSA masks include every intervening consume; event publications remain
+    distinct ordered effects. Materializes the authoritative leaf and derived
+    indexes together before any selection, observer or handoff boundary.
+  }];
+  let arguments = (ins LLVM_AnyPointer:$base, I64:$remove_mask, I64:$add_mask,
+      I64Attr:$capacity, I64Attr:$word);
+  let hasVerifier = 1;
+}
 class ScheduleNativeSuspendOp<string mnemonic, dag extraArgs = (ins),
                    list<Trait> extraTraits = []>
     : ScheduleNativeOp<mnemonic,

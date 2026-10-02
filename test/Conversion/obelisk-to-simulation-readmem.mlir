@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim | FileCheck %s
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' | FileCheck %s
 
 // MLIR-level coverage for the semantic lowering of a descending, bounded
 // $readmemh load. Address records and data words take distinct validation

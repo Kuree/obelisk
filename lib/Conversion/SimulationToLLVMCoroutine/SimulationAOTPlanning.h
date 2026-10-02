@@ -50,6 +50,16 @@ struct NativePromotionRange {
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
 };
+struct NativeRoutePromotion {
+  llvm::SmallVector<NativePromotionRange> ranges;
+  std::string selector;
+};
+/// Compact equivalent of the route proof scanner. Pending bits are consumed
+/// once per word; only exact masked unknown-plane ranges certify a selector.
+mlir::LogicalResult materializeNativeRoutePromotionScan(
+    mlir::ModuleOp module, mlir::LLVM::LLVMFuncOp scanner, uint64_t stateBits,
+    mlir::ArrayRef<NativeRoutePromotion> routes, llvm::StringRef pendingName,
+    llvm::StringRef dirtyName);
 
 inline constexpr llvm::StringLiteral kernelPromotionReadyName =
     "__obelisk_eval_kernel_promotion_ready_v1";

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim | FileCheck %s
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' | FileCheck %s
 
 // IEEE 1800-2017 20.16 semantic-IR lowering. Keep source-call ownership,
 // output-argument copyback, four-state payload conversion, and frozen scope

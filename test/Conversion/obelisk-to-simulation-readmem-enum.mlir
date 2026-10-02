@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim | FileCheck %s
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' | FileCheck %s
 
 // Enum data is checked against the frontend-frozen numeric inventory before
 // any memory write. An invalid word follows the LRM error-and-stop path.

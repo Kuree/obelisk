@@ -17,6 +17,9 @@
 namespace llvm {
 class DataLayout;
 }
+namespace mlir {
+class DictionaryAttr;
+}
 
 namespace obelisk {
 
@@ -84,9 +87,15 @@ public:
   static mlir::FailureOr<std::unique_ptr<SimulationProcessFrameAnalysis>>
   create(sim::SimFuncOp function, const llvm::DataLayout &dataLayout);
 
+  /// Compact immutable inputs and canonical ABI digest for replay at the
+  /// frame-planning boundary. Recomputing a frame must reproduce this entire
+  /// certificate, including capture types and exact continuation identities.
+  mlir::DictionaryAttr getReplayInputs(sim::SimFuncOp function) const;
+
   uint64_t getFrameSize() const { return frameSize; }
   uint64_t getFrameAlignment() const { return frameAlignment; }
   uint64_t getChecksum() const { return checksum; }
+  bool isBytecodeReadOnly() const { return bytecodeReadOnly; }
   llvm::ArrayRef<ProcessFrameField> getFields() const { return fields; }
   llvm::ArrayRef<uint32_t> getContinuations() const { return continuations; }
   llvm::ArrayRef<ProcessFrameValue> getEntryCaptureLayout() const {
@@ -103,6 +112,7 @@ public:
 
 private:
   uint64_t frameSize = 0;
+  bool bytecodeReadOnly = false;
   uint64_t frameAlignment = 1;
   uint64_t checksum = 0;
   llvm::SmallVector<ProcessFrameField> fields;

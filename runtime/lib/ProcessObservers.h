@@ -12,6 +12,12 @@ struct obelisk_rt_context;
 
 ScheduledProcess *findScheduledProcess(obelisk_rt_context *context,
                                        uint64_t token);
+ScheduledProcess *
+findScheduledProcessByInstance(obelisk_rt_context *context,
+                               obelisk_rt_process_instance_v1 *instance);
+void updateScheduledProcessInstance(obelisk_rt_context *context,
+                                    ScheduledProcess &process,
+                                    obelisk_rt_process_instance_v1 *instance);
 obelisk_rt_computed_wait_record_v1 *computedWait(ScheduledProcess &process);
 bool obelisk_rt_evaluate_native_clock_condition_unlocked(
     obelisk_rt_context *context, uint64_t processToken, uint64_t codeUnitID,

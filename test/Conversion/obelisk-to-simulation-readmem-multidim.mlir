@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim | FileCheck %s
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' | FileCheck %s
 
 // IEEE 1800-2017 21.4.3: lower unpacked dimensions always advance from
 // their numerical low bound to high bound, while start/finish and @ records

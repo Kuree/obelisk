@@ -4,6 +4,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -216,6 +217,30 @@ private:
   uint64_t stateBitCount;
   const NativeStateLayout *directLayout;
   bool experimentalTwoState;
+};
+
+class KnownValueConversion final
+    : public OpConversionPattern<schedule::NativeKnownValueOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(schedule::NativeKnownValueOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto planes = adaptor.getInput();
+    if (planes.size() == 1) {
+      rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+          op, rewriter.getI1Type(), rewriter.getBoolAttr(true));
+      return success();
+    }
+    if (planes.size() != 2 || !isa<IntegerType>(planes[1].getType()))
+      return failure();
+    Value zero = arith::ConstantOp::create(
+        rewriter, op.getLoc(), planes[1].getType(),
+        rewriter.getIntegerAttr(planes[1].getType(), 0));
+    rewriter.replaceOpWithNewOp<arith::CmpIOp>(op, arith::CmpIPredicate::eq,
+                                               planes[1], zero);
+    return success();
+  }
 };
 
 class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
@@ -863,6 +888,7 @@ void populateStateReadWriteToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState) {
+  patterns.add<KnownValueConversion>(converter, patterns.getContext());
   patterns.add<BulkRefCopyConversion>(converter, patterns.getContext(),
                                       stateBitCount, directLayout,
                                       experimentalTwoState);

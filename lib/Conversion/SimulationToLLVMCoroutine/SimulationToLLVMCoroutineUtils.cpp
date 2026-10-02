@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
 
+#include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -56,49 +57,138 @@ uint64_t getNativeSchedulePlanSize(const llvm::DataLayout &dataLayout) {
   return dataLayout.getTypeAllocSize(type).getFixedValue();
 }
 
-std::optional<uint64_t> resolveCFGConstantInteger(Value value,
-                                                  DenseSet<Value> &active) {
-  if (auto constant = value.getDefiningOp<arith::ConstantOp>())
-    if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
-      return integer.getValue().getZExtValue();
-  auto argument = dyn_cast<BlockArgument>(value);
-  if (!argument || !active.insert(value).second)
-    return std::nullopt;
-  std::optional<uint64_t> resolved;
-  Block *block = argument.getOwner();
-  for (Block *predecessor : block->getPredecessors()) {
-    Operation *terminator = predecessor->getTerminator();
-    auto branch = dyn_cast<BranchOpInterface>(terminator);
-    if (!branch) {
-      active.erase(value);
-      return std::nullopt;
+namespace {
+// A sparse lattice on the queried SSA/CFG slice: bottom -> constant -> unknown.
+// Dependencies are registered with MLIR's solver. Diamonds and cycles share
+// their lattice state instead of recursively enumerating predecessor paths.
+class HandleConstantState final : public AnalysisState {
+public:
+  using AnalysisState::AnalysisState;
+  bool initialized = false;
+  std::optional<uint64_t> constant;
+  ChangeResult join(std::optional<uint64_t> incoming) {
+    if (!initialized) {
+      initialized = true;
+      constant = incoming;
+      return ChangeResult::Change;
     }
-    for (unsigned successor = 0; successor != terminator->getNumSuccessors();
-         ++successor) {
-      if (terminator->getSuccessor(successor) != block)
-        continue;
-      SuccessorOperands operands = branch.getSuccessorOperands(successor);
-      unsigned index = argument.getArgNumber();
-      if (index >= operands.size() || operands.isOperandProduced(index)) {
-        active.erase(value);
-        return std::nullopt;
-      }
-      std::optional<uint64_t> incoming =
-          resolveCFGConstantInteger(operands[index], active);
-      if (!incoming || (resolved && *resolved != *incoming)) {
-        active.erase(value);
-        return std::nullopt;
-      }
-      resolved = incoming;
+    if (constant && constant != incoming) {
+      constant.reset();
+      return ChangeResult::Change;
     }
+    return ChangeResult::NoChange;
   }
-  active.erase(value);
-  return resolved;
-}
+  void print(raw_ostream &os) const override {
+    if (constant)
+      os << *constant;
+    else
+      os << "unknown";
+  }
+};
+class HandleConstantDataflow final : public DataFlowAnalysis {
+public:
+  HandleConstantDataflow(DataFlowSolver &solver, Value query)
+      : DataFlowAnalysis(solver), query(query) {}
+  LogicalResult initialize(Operation *) override {
+    SmallVector<Value> worklist{query};
+    DenseSet<Value> seen;
+    while (!worklist.empty()) {
+      Value value = worklist.pop_back_val();
+      if (!seen.insert(value).second)
+        continue;
+      auto &node = nodes[value];
+      APInt literal;
+      if (matchPattern(value, m_ConstantInt(&literal)) &&
+          literal.getBitWidth() <= 64) {
+        node.local = literal.getZExtValue();
+        node.leaf = true;
+      } else if (auto argument = dyn_cast<BlockArgument>(value)) {
+        Block *block = argument.getOwner();
+        node.leaf = block->hasNoPredecessors();
+        for (Block *predecessor : block->getPredecessors()) {
+          Operation *terminator = predecessor->getTerminator();
+          auto branch = dyn_cast<BranchOpInterface>(terminator);
+          if (!branch) {
+            node.leaf = true;
+            break;
+          }
+          for (unsigned successor = 0;
+               successor != terminator->getNumSuccessors(); ++successor) {
+            if (terminator->getSuccessor(successor) != block)
+              continue;
+            auto operands = branch.getSuccessorOperands(successor);
+            unsigned index = argument.getArgNumber();
+            if (index >= operands.size() || operands.isOperandProduced(index)) {
+              node.leaf = true;
+              break;
+            }
+            node.incoming.push_back(operands[index]);
+          }
+          if (node.leaf)
+            break;
+        }
+        if (node.leaf)
+          node.incoming.clear();
+        else
+          llvm::append_range(worklist, node.incoming);
+      } else {
+        node.leaf = true;
+      }
+      ProgramPoint *point =
+          value.getDefiningOp()
+              ? getProgramPointAfter(value.getDefiningOp())
+              : getProgramPointBefore(cast<BlockArgument>(value).getOwner());
+      points[point].push_back(value);
+    }
+    for (auto &entry : points)
+      if (failed(visit(entry.first)))
+        return failure();
+    return success();
+  }
+  LogicalResult visit(ProgramPoint *point) override {
+    for (Value value : points.lookup(point)) {
+      const auto &node = nodes.find(value)->second;
+      bool initialized = node.leaf;
+      auto constant = node.local;
+      for (Value incoming : node.incoming) {
+        auto *state = getOrCreateFor<HandleConstantState>(point, incoming);
+        if (!state->initialized)
+          continue;
+        if (!initialized) {
+          initialized = true;
+          constant = state->constant;
+        } else if (constant != state->constant)
+          constant.reset();
+      }
+      if (initialized) {
+        auto *state = getOrCreate<HandleConstantState>(value);
+        propagateIfChanged(state, state->join(constant));
+      }
+    }
+    return success();
+  }
 
+private:
+  struct Node {
+    bool leaf = false;
+    std::optional<uint64_t> local;
+    SmallVector<Value> incoming;
+  };
+  Value query;
+  DenseMap<Value, Node> nodes;
+  DenseMap<ProgramPoint *, SmallVector<Value>> points;
+};
+} // namespace
 std::optional<uint64_t> resolveCFGConstantInteger(Value value) {
-  DenseSet<Value> active;
-  return resolveCFGConstantInteger(value, active);
+  DataFlowSolver solver;
+  solver.load<HandleConstantDataflow>(value);
+  Operation *owner = value.getDefiningOp();
+  if (!owner)
+    owner = cast<BlockArgument>(value).getOwner()->getParentOp();
+  if (failed(solver.initializeAndRun(owner)))
+    return std::nullopt;
+  auto *state = solver.lookupState<HandleConstantState>(value);
+  return state && state->initialized ? state->constant : std::nullopt;
 }
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
   if (value > std::numeric_limits<uint64_t>::max() - (alignment - 1))

@@ -342,25 +342,46 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
   // path, leaving the entry to branch to `^loop(%c0)` directly. That branch
   // executes exactly what a branch to the forwarding block would, so it
   // reaches the activation. The eval body repeats the preamble on every
-  // activation, so this holds only while the preamble itself has no effect.
-  auto sameConstant = [](Value lhs, Value rhs) {
+  // activation, so its initial and resumed inputs must be equivalent. A
+  // canonical snapshot loaded from the same immutable capture is also an
+  // equivalent input: the evaluator reloads it on every activation. This
+  // never assumes that its contents stay equal across a suspension.
+  auto sameActivationInput = [&](Value lhs, Value rhs) {
     if (lhs == rhs)
       return true;
     auto left = lhs.getDefiningOp<arith::ConstantOp>();
     auto right = rhs.getDefiningOp<arith::ConstantOp>();
-    return left && right && left.getValue() == right.getValue();
+    if (left && right && left.getValue() == right.getValue())
+      return true;
+    auto first = lhs.getDefiningOp<sim::SimRefLoadOp>();
+    auto second = rhs.getDefiningOp<sim::SimRefLoadOp>();
+    if (!combinationalProcedure || !first || !second ||
+        first.getType() != second.getType() ||
+        first.getReference() != second.getReference())
+      return false;
+    auto capture = dyn_cast<BlockArgument>(first.getReference());
+    return capture && capture.getOwner() == &sourceEntry;
+  };
+  auto isSnapshotPreambleOp = [&](Operation &operation) {
+    if (isMemoryEffectFree(&operation) ||
+        isa<sim::SimCoveragePointHitOp>(operation))
+      return true;
+    auto load = dyn_cast<sim::SimRefLoadOp>(operation);
+    auto capture =
+        load ? dyn_cast<BlockArgument>(load.getReference()) : BlockArgument{};
+    return combinationalProcedure && capture &&
+           capture.getOwner() == &sourceEntry;
   };
   auto forwardsLikeActivation = [&](cf::BranchOp branch) {
     auto forward = dyn_cast<cf::BranchOp>(activation->getTerminator());
     if (!forward || activation->getNumArguments() != 0 ||
         forward.getDest() != branch.getDest() ||
-        !llvm::all_of(activation->without_terminator(),
-                      [](Operation &op) { return isa<arith::ConstantOp>(op); }))
+        !llvm::all_of(activation->without_terminator(), isSnapshotPreambleOp))
       return false;
     return llvm::all_of(
         llvm::zip_equal(branch.getDestOperands(), forward.getDestOperands()),
         [&](auto pair) {
-          return sameConstant(std::get<0>(pair), std::get<1>(pair));
+          return sameActivationInput(std::get<0>(pair), std::get<1>(pair));
         });
   };
   Block *forwardedPreamble = nullptr;
@@ -375,10 +396,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     }
     preambleBlocks.push_back(preamble);
     purePreamble &=
-        llvm::all_of(preamble->without_terminator(), [](Operation &operation) {
-          return isMemoryEffectFree(&operation) ||
-                 isa<sim::SimCoveragePointHitOp>(operation);
-        });
+        llvm::all_of(preamble->without_terminator(), isSnapshotPreambleOp);
     if (purePreamble && forwardsLikeActivation(branch)) {
       forwardedPreamble = preamble;
       preamble = activation;

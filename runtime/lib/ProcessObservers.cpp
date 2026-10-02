@@ -436,6 +436,45 @@ ScheduledProcess *findScheduledProcess(obelisk_rt_context *context,
   return nullptr;
 }
 
+ScheduledProcess *
+findScheduledProcessByInstance(obelisk_rt_context *context,
+                               obelisk_rt_process_instance_v1 *instance) {
+  ScheduledProcess *first = nullptr;
+  auto [begin, end] = context->scheduledProcessTokens.equal_range(instance);
+  for (auto it = begin; it != end; ++it)
+    if (auto *process = findScheduledProcess(context, it->second);
+        process && process->instance == instance &&
+        (!first || process->token < first->token))
+      first = process;
+  if (first)
+    return first;
+  // Internal fixtures and recovery may install records before rebuilding.
+  for (auto &process : context->scheduledProcesses)
+    if (process.instance == instance)
+      return &process;
+  return nullptr;
+}
+
+void updateScheduledProcessInstance(obelisk_rt_context *context,
+                                    ScheduledProcess &process,
+                                    obelisk_rt_process_instance_v1 *instance) {
+  auto [begin, end] =
+      context->scheduledProcessTokens.equal_range(process.instance);
+  for (auto it = begin; it != end; ++it) {
+    if (it->second != process.token)
+      continue;
+    auto node = context->scheduledProcessTokens.extract(it);
+    if (instance) {
+      // Reuse the ownership record; task calls and returns allocate no index
+      // nodes and cannot leave a key pointing at a destroyed callee.
+      node.key() = instance;
+      context->scheduledProcessTokens.insert(std::move(node));
+    }
+    break;
+  }
+  process.instance = instance;
+}
+
 bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
                                                uint64_t stableID) {
   return evaluateNativeComputedWaiters(

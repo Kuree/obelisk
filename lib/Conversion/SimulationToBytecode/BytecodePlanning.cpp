@@ -6,8 +6,10 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
+#include "obelisk/Analysis/SimulationEffectAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Analysis/Liveness.h"
@@ -146,6 +148,13 @@ void pruneNativeFunctions(sim::SimDesignOp design,
 } // namespace
 
 LogicalResult Encoder::planFunctions() {
+  analysis::SimulationEffectAnalysis effects(design);
+  design.walk([&](sim::SimFuncOp function) {
+    function->removeAttr(sim::metadata::bytecodeReadOnly);
+    if (effects.isReadOnly(function))
+      function->setAttr(sim::metadata::bytecodeReadOnly,
+                        UnitAttr::get(design.getContext()));
+  });
   SmallVector<sim::SimFuncOp> functions;
   for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>()) {
     if (function.isExternal())

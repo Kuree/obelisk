@@ -3,7 +3,9 @@
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlow/IntegerRangeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -56,6 +58,7 @@ struct ReferenceValue {
     // lowering certificate loses its constant-address proof below.
     a.dynamic |= b.dynamic || !inBounds;
     lhs.proof.constantAddress &= rhs.proof.constantAddress && exact;
+    lhs.proof.inBounds &= rhs.proof.inBounds;
     if (!lhs.proof.laneKnown || !rhs.proof.laneKnown ||
         lhs.proof.low != rhs.proof.low || lhs.proof.width != rhs.proof.width ||
         lhs.proof.stride != rhs.proof.stride ||
@@ -81,8 +84,10 @@ class ReferenceAnalysis
     : public dataflow::SparseForwardDataFlowAnalysis<ReferenceLattice> {
 public:
   ReferenceAnalysis(DataFlowSolver &solver,
-                    const DenseMap<uint64_t, uint64_t> &driverNets)
-      : SparseForwardDataFlowAnalysis(solver), driverNets(driverNets) {}
+                    const DenseMap<uint64_t, uint64_t> &driverNets,
+                    ScopedIntegerRangeAnalysis *scopedRanges)
+      : SparseForwardDataFlowAnalysis(solver), driverNets(driverNets),
+        scopedRanges(scopedRanges) {}
   LogicalResult visitOperation(Operation *op,
                                ArrayRef<const ReferenceLattice *> operands,
                                ArrayRef<ReferenceLattice *> results) override {
@@ -105,6 +110,7 @@ public:
                      0,
                      false,
                      {}};
+      value.proof.inBounds = true;
       put(value);
     };
     auto forgetSelection = [&]() {
@@ -159,6 +165,57 @@ public:
         if (c.directDynamicSelection)
           c.directDynamicSelection = result;
       } else {
+        bool selectorValid = false;
+        Value selector = op->getOperand(1);
+        auto selectorWidth = sim::getPackedWidth(selector.getType());
+        if (selectorWidth && *selectorWidth <= 128 &&
+            isa<IntegerType, sim::LogicType>(selector.getType())) {
+          std::optional<ConstantIntRanges> bounds;
+          if (isa<IntegerType>(selector.getType())) {
+            auto *range = getOrCreateFor<dataflow::IntegerValueRangeLattice>(
+                getProgramPointAfter(op), selector);
+            if (range->getValue().isUninitialized())
+              return;
+            bounds = range->getValue().getValue();
+          }
+          if (scopedRanges) {
+            const auto *scoped = getOrCreateFor<ScopedRangeLattice>(
+                getProgramPointAfter(op), getProgramPointBefore(op));
+            if (!scoped->reachable)
+              return;
+            if (auto constraint = scopedRanges->getRange(selector, *scoped))
+              bounds = bounds ? bounds->intersection(*constraint) : *constraint;
+          }
+          if (bounds) {
+            unsigned comparisonWidth = std::max<unsigned>(*selectorWidth, 65);
+            APInt low = bounds->smin().sext(comparisonWidth);
+            APInt high = bounds->smax().sext(comparisonWidth);
+            auto inDeclaredRange = [&](int64_t left, int64_t right) {
+              return low.sge(
+                         APInt(comparisonWidth, std::min(left, right), true)) &&
+                     high.sle(
+                         APInt(comparisonWidth, std::max(left, right), true));
+            };
+            Type parentType =
+                llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
+                    .Case<sim::RefType, sim::DriverType>(
+                        [](auto type) { return type.getElementType(); });
+            if (auto arrayType = dyn_cast<sim::UnpackedArrayType>(parentType))
+              selectorValid =
+                  inDeclaredRange(arrayType.getLeft(), arrayType.getRight());
+            else if (auto arrayType =
+                         dyn_cast<sim::PackedArrayType>(parentType))
+              selectorValid =
+                  inDeclaredRange(arrayType.getLeft(), arrayType.getRight());
+            else if (!array) {
+              auto parentWidth = sim::getProvenanceSpan(parentType);
+              selectorValid =
+                  parentWidth && *width <= *parentWidth && !low.isNegative() &&
+                  high.ule(APInt(comparisonWidth, *parentWidth - *width));
+            }
+          }
+        }
+        c.inBounds &= selectorValid;
         bool wholeRoot = !p.dynamic && p.low == 0 && p.width == p.rootWidth &&
                          c.constantAddress;
         // Array selectors validate against their declared parent range before
@@ -291,9 +348,11 @@ private:
     }
     value.proof = {false, true, value.target.low, value.target.width, 0,
                    false, {}};
+    value.proof.inBounds = true;
     propagateIfChanged(lattice, lattice->join(value));
   }
   const DenseMap<uint64_t, uint64_t> &driverNets;
+  ScopedIntegerRangeAnalysis *scopedRanges;
 };
 
 static sim::SimDesignOp getDriverDesign(sim::SimFuncOp function) {
@@ -346,7 +405,18 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
-  solver.load<ReferenceAnalysis>(driverNets);
+  solver.load<dataflow::IntegerRangeAnalysis>();
+  bool dynamicSelectors = false;
+  function.walk([&](Operation *op) {
+    dynamicSelectors |=
+        isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
+            sim::SimDriverArrayElementOp, sim::SimDriverDynExtractOp>(op);
+  });
+  auto *scopedRanges =
+      dynamicSelectors
+          ? solver.load<ScopedIntegerRangeAnalysis>(function.getOperation())
+          : nullptr;
+  solver.load<ReferenceAnalysis>(driverNets, scopedRanges);
   if (failed(solver.initializeAndRun(function)))
     return result;
   auto record = [&](Value value) {

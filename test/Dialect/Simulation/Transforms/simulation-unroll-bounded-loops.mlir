@@ -1,4 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops,canonicalize)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-growth=64},canonicalize)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops,canonicalize)))' | FileCheck %s --check-prefix=COMPACT
 
 // The induction loop is finite within one activation, even with a conditional
 // body. Its exact sequence of publications must survive unrolling. Dynamic
@@ -16,6 +17,11 @@ module {
     simulation.code_unit.decl 8 in 0 initial hierarchy "side_exit"
     simulation.code_unit.decl 9 in 0 initial hierarchy "large"
     // CHECK-LABEL: simulation.func @ascending
+    // COMPACT-LABEL: simulation.func @ascending
+    // COMPACT: cf.cond_br
+    // COMPACT: simulation.ref.store
+    // COMPACT-NOT: simulation.ref.store
+    // COMPACT: simulation.return
     // CHECK: simulation.ref.store %{{.*}} to %{{.*}}
     // CHECK: simulation.ref.store %{{.*}} to %{{.*}}
     // CHECK: simulation.ref.store %{{.*}} to %{{.*}}

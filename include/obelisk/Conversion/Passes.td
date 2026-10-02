@@ -552,4 +552,15 @@ def ResolveNativeEvalSchedulePass : Pass<"schedule-resolve-native-eval", "mlir::
   ];
 }
 
+def ConvertNativeScheduleActionsToLLVMPass
+    : Pass<"convert-native-schedule-actions-to-llvm", "mlir::ModuleOp"> {
+  let summary =
+      "Expand verified executable scheduling actions into the native ABI";
+  let dependentDialects = ["obelisk::schedule::ScheduleDialect",
+                           "mlir::LLVM::LLVMDialect",
+                           "mlir::arith::ArithDialect"];
+  let options = [Option<
+      "coalesce", "coalesce", "bool", "true",
+      "Combine unobservable pending-set updates before physical expansion">];
+}
 #endif // OBELISK_CONVERSION_PASSES_TD

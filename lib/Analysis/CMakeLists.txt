@@ -1,14 +1,20 @@
 add_mlir_library(ObeliskSimulationAnalysis
+  BoundedLoopAnalysis.cpp
+  ScopedIntegerRangeAnalysis.cpp
   ClassBitstreamAnalysis.cpp
   ClassBitstreamPlan.cpp
   ClassDispatchAnalysis.cpp
   ClockInferenceAnalysis.cpp
+  DemandedBitAnalysis.cpp
   HandleDataflowAnalysis.cpp
+  LogicBitAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   NativeAOTAnalysis.cpp
   NativeStateLayoutAnalysis.cpp
   NetConnectivityAnalysis.cpp
+  PrivateStorageAnalysis.cpp
   SimulationCopyProcessAnalysis.cpp
+  SimulationEffectAnalysis.cpp
   SimulationProcessFrameAnalysis.cpp
   SimulationScheduleAnalysis.cpp
   SimulationAnalysis.cpp
@@ -16,6 +22,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   SimulationVPIAnalysis.cpp
   StaticSpecializationAnalysis.cpp
   SSAValueAnalysis.cpp
+  SourceMemoryAnalysis.cpp
   StateDomainAnalysis.cpp
   StorageWriteAnalysis.cpp
 

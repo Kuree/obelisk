@@ -28,6 +28,8 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   MarkCleanStaticNBA.cpp
   NativeEvalSpecialization.cpp
   SpecializeNativeCaptures.cpp
+  CoalesceNativeReady.cpp
+  CachePureCones.cpp
   DEPENDS
   ObeliskSchedulePassIncGen
   LINK_LIBS PUBLIC

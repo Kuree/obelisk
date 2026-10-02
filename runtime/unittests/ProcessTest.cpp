@@ -7,6 +7,7 @@
 #include "../lib/DesignBytecodeExecution.h"
 #include "../lib/DesignBytecodeImage.h"
 #include "../lib/DesignBytecodeNets.h"
+#include "../lib/ProcessObservers.h"
 #include "../lib/ProcessPacking.h"
 #include "../lib/ProcessSchedulerScope.h"
 #include "../lib/ProcessShared.h"
@@ -7405,6 +7406,42 @@ TEST(Scheduler, ParentIndexStaysBoundedAcrossNaturalAndKilledChurn) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, InstanceIndexTracksCallsReturnsAndAddressReuse) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 caller{}, callee{};
+  context->scheduledProcesses.resize(2);
+  context->scheduledProcesses[0].instance = &caller;
+  context->scheduledProcesses[0].token = 1;
+  context->scheduledProcesses[1].instance = &caller;
+  context->scheduledProcesses[1].token = 2;
+  rebuildNativeSchedulerIndexUnlocked(context);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &caller)->token, 1u);
+  auto &first = context->scheduledProcesses.front();
+  updateScheduledProcessInstance(context, first, &callee);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &caller)->token, 2u);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &callee)->token, 1u);
+  updateScheduledProcessInstance(context, first, &caller);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &callee), nullptr);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &caller)->token, 1u);
+  updateScheduledProcessInstance(context, first, nullptr);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &caller)->token, 2u);
+  // Reusing the callee address cannot recover its old logical process.
+  callee = {};
+  updateScheduledProcessInstance(context, context->scheduledProcesses[1],
+                                 &callee);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &caller), nullptr);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &callee)->token, 2u);
+  context->scheduledProcesses.erase(context->scheduledProcesses.begin());
+  rebuildNativeSchedulerIndexUnlocked(context);
+  EXPECT_EQ(findScheduledProcessByInstance(context, &callee)->token, 2u);
+  updateScheduledProcessInstance(context, context->scheduledProcesses[0],
+                                 nullptr);
+  EXPECT_TRUE(context->scheduledProcessTokens.empty());
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTStaticNBASitesMergeAndCommitEachRootOnce) {
   AOTTestState state;
   const obelisk_rt_static_nba_root roots[] = {
@@ -7440,17 +7477,22 @@ TEST(Scheduler, AOTStaticNBASitesMergeAndCommitEachRootOnce) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_static_nba(context, 7, &plane, nullptr, 8,
                                                root, 4, &first, nullptr),
             OBELISK_RT_OK);
+  EXPECT_EQ(context->staticNBAPendingAccumulatorCount, 1u);
   ASSERT_EQ(obelisk_rt_v1_scheduler_static_nba(
                 context, 8, &plane, nullptr, 8,
                 obelisk_rt_v1_native_handle_offset(root, 2), 4, &second,
                 nullptr),
             OBELISK_RT_OK);
+  // Repeated partial stages of one root remain one pending accumulator.
+  EXPECT_EQ(context->staticNBAPendingAccumulatorCount, 1u);
   EXPECT_TRUE(context->scheduledNBAs.empty());
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(plane, 0x0e);
   EXPECT_EQ(context->stateValue[0], 0x0e);
   EXPECT_EQ(context->signalDiagnostics.aotNBAStages, 2u);
   EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 1u);
+  EXPECT_EQ(context->staticNBAPendingAccumulatorCount, 0u);
+  EXPECT_FALSE(context->staticNBAAccumulatorsPending);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -8138,6 +8180,7 @@ TEST(Scheduler, SharedNBABarrierSelectionMatchesScalarInventory) {
     std::fill(dirty.begin(), dirty.end(), 0);
     std::fill(summary.begin(), summary.end(), 0);
     context->staticNBAAccumulatorsPending = false;
+    context->staticNBAPendingAccumulatorCount = 0;
     uint32_t expectedGenerated = UINT32_MAX;
     uint32_t expectedRuntime = UINT32_MAX;
     for (uint32_t root = 0; root != rootCount; ++root) {

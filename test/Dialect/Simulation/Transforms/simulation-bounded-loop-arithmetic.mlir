@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-mark-bounded-loops)))' | FileCheck %s --check-prefix=MARK
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops,canonicalize)))' | FileCheck %s --check-prefix=UNROLL
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-growth=64},canonicalize)))' | FileCheck %s --check-prefix=UNROLL
 
 // IEEE 1800-2023 11.6.1, 12.7.1: fixed-width induction must reach the
 // exit, including the final step. A bound below the type maximum is not

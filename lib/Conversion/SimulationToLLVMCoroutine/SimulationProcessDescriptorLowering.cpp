@@ -210,14 +210,16 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
         descriptor = insertValue(
             builder, location, descriptor,
             llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 1);
+        uint32_t flags = analysis.isBytecodeReadOnly()
+                             ? OBELISK_RT_PROCESS_BYTECODE_READ_ONLY
+                             : 0;
         if (unmanagedNative && !bytecodeOnly)
-          descriptor = insertValue(
-              builder, location, descriptor,
-              llvmConstant(
-                  builder, location, i32,
-                  OBELISK_RT_PROCESS_UNMANAGED_NATIVE |
-                      (tableProcess ? OBELISK_RT_PROCESS_TABLE_NATIVE : 0)),
-              2);
+          flags |= OBELISK_RT_PROCESS_UNMANAGED_NATIVE |
+                   (tableProcess ? OBELISK_RT_PROCESS_TABLE_NATIVE : 0);
+        if (flags)
+          descriptor =
+              insertValue(builder, location, descriptor,
+                          llvmConstant(builder, location, i32, flags), 2);
         uint32_t availableTiers =
             bytecodeOnly
                 ? OBELISK_RT_TIER_MASK_BYTECODE

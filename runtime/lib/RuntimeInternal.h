@@ -2060,6 +2060,10 @@ struct obelisk_rt_context {
   // and external overrides are still checked at every periodic re-entry.
   std::unordered_set<uint32_t> nativePeriodicGeneratedWritableStates;
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
+  // Active instances only: suspended task callers are reindexed on return.
+  // Multiple registration retains the earliest scheduler token semantics.
+  std::unordered_multimap<obelisk_rt_process_instance_v1 *, uint64_t>
+      scheduledProcessTokens;
   std::unordered_set<uint64_t> nativePollCandidates;
   NativeReadyPublicationBatch *nativeReadyPublicationBatch = nullptr;
   // Lazy min-heap of (wake time, process token). Stale entries are discarded
@@ -2110,6 +2114,7 @@ struct obelisk_rt_context {
   bool schedulerApplyingNativeUpdate = false;
   std::vector<StaticNBAAccumulator> staticNBAAccumulators;
   bool staticNBAAccumulatorsPending = false;
+  size_t staticNBAPendingAccumulatorCount = 0;
   std::vector<uint8_t> staticNBASlowRoots;
   bool staticNBASlowRootsPresent = false;
   std::vector<uint8_t> staticNBARootHasFanout;

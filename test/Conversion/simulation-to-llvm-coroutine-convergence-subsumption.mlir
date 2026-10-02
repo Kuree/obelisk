@@ -109,10 +109,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: %[[MEMBER_MASK:.*]] = llvm.mlir.constant(2 : i64)
 // CHECK: %[[MEMBER_READY:.*]] = llvm.and %[[AFTER_CALL_READY]], %[[MEMBER_MASK]]
 // CHECK: %[[MEMBER_PENDING:.*]] = llvm.icmp "ne" %[[MEMBER_READY]],
-// CHECK: %[[CLEAR_MEMBER:.*]] = llvm.mlir.constant(-3 : i64)
-// CHECK: %[[AFTER_MEMBER_CLEAR:.*]] = llvm.and {{.*}}, %[[CLEAR_MEMBER]]
-// CHECK: llvm.store %[[AFTER_MEMBER_CLEAR]],
 // CHECK: %[[COORDINATOR:.*]] = llvm.mlir.constant(1 : i64)
 // CHECK: %[[REPUBLISH:.*]] = llvm.select %[[MEMBER_PENDING]], %[[COORDINATOR]],
+// CHECK: %[[CLEAR_MEMBER:.*]] = llvm.mlir.constant(-3 : i64)
+// CHECK: %[[CLEAR_MEMBER_FOLDED:.*]] = llvm.mlir.constant(-3 : i64)
+// CHECK: %[[AFTER_MEMBER_CLEAR:.*]] = llvm.and {{.*}}, %[[CLEAR_MEMBER_FOLDED]]
 // CHECK: %[[REPUBLISH_READY:.*]] = llvm.or {{.*}}, %[[REPUBLISH]]
 // CHECK: llvm.store %[[REPUBLISH_READY]],

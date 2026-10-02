@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim > %t.threaded.mlir
-// RUN: obelisk-opt %s --lower-obelisk-to-sim --mlir-disable-threading > %t.single.mlir
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' > %t.threaded.mlir
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' --mlir-disable-threading > %t.single.mlir
 // RUN: diff -u %t.single.mlir %t.threaded.mlir
 // RUN: FileCheck %s < %t.threaded.mlir
 

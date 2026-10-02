@@ -428,6 +428,13 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     initializedStorageOptions.vpi = vpiMode.str();
     designManager.addPass(createObeliskSimPropagateInitializedStoragePass(
         std::move(initializedStorageOptions)));
+    ObeliskSimSimplifyBodiesPassOptions simplifyOptions;
+    simplifyOptions.vpi = vpiMode.str();
+    designManager.addPass(createObeliskSimSimplifyBodiesPass(simplifyOptions));
+    auto &functions = designManager.nest<sim::SimFuncOp>();
+    functions.addPass(createCanonicalizerPass());
+    functions.addPass(createMem2Reg());
+    functions.addPass(createCSEPass());
   }
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
@@ -436,13 +443,25 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
       functionManager.addPass(createCanonicalizerPass());
       functionManager.addPass(createCSEPass());
     }
-    // Record loop termination proofs for the sweeps the unroller refused to
-    // replicate. This is metadata only, so it runs at every optimization level:
-    // schedule-group classification must not depend on whether replication
-    // happened to fit its budget. It must precede suspension threading, which
-    // adds continuation block arguments that hide the induction shape.
-    functionManager.addPass(createObeliskSimMarkBoundedLoopsPass());
-    functionManager.addPass(createObeliskSimThreadSuspensionPass());
+  }
+  if (optLevel > 0) {
+    ObeliskSimSimplifyBodiesPassOptions simplifyOptions;
+    simplifyOptions.vpi = vpiMode.str();
+    designManager.addPass(createObeliskSimSimplifyBodiesPass(simplifyOptions));
+    auto &functions = designManager.nest<sim::SimFuncOp>();
+    functions.addPass(createCanonicalizerPass());
+    functions.addPass(createMem2Reg());
+    functions.addPass(createCSEPass());
+  }
+  {
+    auto &functions = designManager.nest<sim::SimFuncOp>();
+    // Finish executable simplification before making continuation liveness
+    // explicit. Canonicalization after threading can remove forwarded live
+    // values and change admission when the frame planner threads them again.
+    // Record the remaining loop proofs before those new arguments obscure
+    // the induction shape, then freeze the complete suspension operands.
+    functions.addPass(createObeliskSimMarkBoundedLoopsPass());
+    functions.addPass(createObeliskSimThreadSuspensionPass());
   }
 
   if (optLevel > 0)

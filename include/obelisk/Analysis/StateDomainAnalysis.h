@@ -68,6 +68,7 @@ enum class StateDomainReason {
   DivisionDivisor,
   CaseComparison,
   AbsorbingConstant,
+  PartialKnownBits,
   InductiveRootRead,
   RefLoad,
   NetRead,

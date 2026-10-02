@@ -44,11 +44,13 @@ struct HandleCertificate {
   uint64_t low = 0, width = 0, stride = 0;
   bool clipped = false;
   mlir::Value directDynamicSelection;
+  bool inBounds = false;
   bool operator==(const HandleCertificate &rhs) const {
     return constantAddress == rhs.constantAddress &&
            laneKnown == rhs.laneKnown && low == rhs.low && width == rhs.width &&
            stride == rhs.stride && clipped == rhs.clipped &&
-           directDynamicSelection == rhs.directDynamicSelection;
+           directDynamicSelection == rhs.directDynamicSelection &&
+           inBounds == rhs.inBounds;
   }
 };
 struct HandleDataflowResult {

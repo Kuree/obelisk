@@ -4,6 +4,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "obelisk/Runtime/Runtime.h"
@@ -28,7 +29,6 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
                   std::optional<DirectStaticStateRange> directRange,
                   schedule::SourceOwnerAttr sourceOwner) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
-  Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   Value address = LLVM::AddressOfOp::create(builder, location, pointer,
                                             "__obelisk_current_context");
@@ -63,19 +63,12 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
     cf::CondBranchOp::create(builder, location, unchanged, continuation,
                              ValueRange{}, publish, ValueRange{});
     builder.setInsertionPointToEnd(publish);
-    LLVM::CallOp transition = LLVM::CallOp::create(
-        builder, location, TypeRange{},
-        SymbolRefAttr::get(builder.getContext(),
-                           "obelisk_rt_v1_scheduler_static_transition"),
-        ValueRange{
-            context,
-            llvmConstant(builder, location, i32, directRange->staticID),
-            llvmConstant(builder, location, i64, directRange->localOffset),
-            llvmConstant(builder, location, i64, width), oldValueScalar,
-            oldUnknownScalar, newValueScalar, newUnknownScalar});
-    if (sourceOwner)
-      ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
-          transition, sourceOwner);
+    schedule::NativeTransitionOp::create(
+        builder, location, context,
+        llvmConstant(builder, location, i64, directRange->localOffset),
+        oldValueScalar, oldUnknownScalar, newValueScalar, newUnknownScalar,
+        builder.getI64IntegerAttr(directRange->staticID),
+        builder.getI64IntegerAttr(width), sourceOwner);
     cf::BranchOp::create(builder, location, continuation);
     builder.setInsertionPointToStart(continuation);
     return;
@@ -855,22 +848,13 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
           value = resize(value, rewriter.getIntegerType(width));
           return resize(value, i64);
         };
-        auto transition = LLVM::CallOp::create(
-            rewriter, location, TypeRange{},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_static_transition"),
-            ValueRange{context,
-                       llvmConstant(rewriter, location, rewriter.getI32Type(),
-                                    range->staticID),
-                       arith::AddIOp::create(
-                           rewriter, location, clamped,
-                           llvmConstant(rewriter, location, i64, low)),
-                       llvmConstant(rewriter, location, i64, width),
-                       chunk(oldValue), chunk(oldUnknown), chunk(newValue),
-                       chunk(newUnknown)});
-        if (sourceOwner)
-          ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
-              transition, sourceOwner);
+        schedule::NativeTransitionOp::create(
+            rewriter, location, context,
+            arith::AddIOp::create(rewriter, location, clamped,
+                                  llvmConstant(rewriter, location, i64, low)),
+            chunk(oldValue), chunk(oldUnknown), chunk(newValue),
+            chunk(newUnknown), rewriter.getI64IntegerAttr(range->staticID),
+            rewriter.getI64IntegerAttr(width), sourceOwner);
       }
     }
     return true;

@@ -208,9 +208,22 @@ LogicalResult NativePipelineAnalysis::planActors() {
   bool certifiedStaticSuperstep = false;
   if (staticSuperstep && useAOT) {
     ArrayAttr actors = staticSuperstep.getActors();
-    if (actors.size() != aotEligibility.getActorSlots().size())
-      return module.emitError(
+    if (actors.size() != aotEligibility.getActorSlots().size()) {
+      auto diagnostic = module.emitError(
           "native lowering rejected stale static-superstep actor inventory");
+      diagnostic << " (planned=" << actors.size()
+                 << ", current=" << aotEligibility.getActorSlots().size()
+                 << ')';
+      for (Attribute attribute : actors) {
+        auto actor = dyn_cast<FlatSymbolRefAttr>(attribute);
+        auto function = actor ? planningSymbols.lookupSymbolIn<sim::SimFuncOp>(
+                                    metadataDesign, actor)
+                              : nullptr;
+        if (function && !aotEligibility.getActorSlots().contains(function))
+          diagnostic << "; no longer admitted: " << actor;
+      }
+      return failure();
+    }
     for (auto [slot, attribute] : llvm::enumerate(actors)) {
       auto actor = dyn_cast<FlatSymbolRefAttr>(attribute);
       sim::SimFuncOp function =
@@ -1814,9 +1827,15 @@ class PlanNativeActorsPass final
     using Analysis = detail::NativePipelineAnalysis;
     auto cached = getCachedAnalysis<Analysis>();
     if (!cached) {
-      getOperation().emitError("schedule-plan-native-actors requires the "
-                               "native preparation pipeline analysis");
-      return signalPassFailure();
+      if (!getOperation()->hasAttr(sim::metadata::nativeFrameCheckpoint)) {
+        getOperation().emitError(
+            "schedule-plan-native-actors requires the "
+            "native preparation pipeline analysis or frame checkpoint");
+        return signalPassFailure();
+      }
+      if (failed(getAnalysis<Analysis>().restoreFrames()))
+        return signalPassFailure();
+      cached = getCachedAnalysis<Analysis>();
     }
     auto &state = cached->get();
     if (state.stage != Analysis::Stage::Frames) {
@@ -1826,6 +1845,10 @@ class PlanNativeActorsPass final
     }
     if (failed(state.planActors()))
       return signalPassFailure();
+    // The replay certificate describes the pre-specialization boundary.
+    getOperation()->removeAttr(sim::metadata::nativeFrameCheckpoint);
+    for (const auto &[function, frame] : state.analyses)
+      function->removeAttr(sim::metadata::nativeFrameInputs);
     state.stage = Analysis::Stage::Actors;
     markAnalysesPreserved<Analysis>();
   }

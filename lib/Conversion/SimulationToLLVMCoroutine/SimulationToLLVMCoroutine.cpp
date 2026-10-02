@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 
 #include "NativeSymbolUses.h"
 #include "SimulationAOTPlanning.h"
@@ -1344,6 +1345,26 @@ LogicalResult NativePipelineAnalysis::collectFrames() {
       analyses.insert({function, std::move(result->frame)});
   }
   frameResults.clear();
+  SmallVector<Attribute> inventory;
+  for (const auto &[operation, frame] : analyses) {
+    auto function = cast<sim::SimFuncOp>(operation);
+    function->setAttr(sim::metadata::nativeFrameInputs,
+                      frame->getReplayInputs(function));
+    if (auto design = function->getParentOfType<sim::SimDesignOp>())
+      inventory.push_back(SymbolRefAttr::get(
+          design.getSymNameAttr(), {FlatSymbolRefAttr::get(function)}));
+    else
+      inventory.push_back(FlatSymbolRefAttr::get(function));
+  }
+  if (!bytecodeOnly) {
+    Builder builder(context);
+    module->setAttr(
+        sim::metadata::nativeFrameCheckpoint,
+        builder.getDictionaryAttr({
+            builder.getNamedAttr("layout", module->getAttr("llvm.data_layout")),
+            builder.getNamedAttr("functions", builder.getArrayAttr(inventory)),
+        }));
+  }
   markTiming("frame analysis and state threading");
   if (detailedTiming)
     llvm::errs() << "obelisk native copy activations: "
@@ -1351,6 +1372,55 @@ LogicalResult NativePipelineAnalysis::collectFrames() {
   if (detailedTiming)
     llvm::errs() << "obelisk native table candidates: " << tableProcesses.size()
                  << '\n';
+  return success();
+}
+
+LogicalResult NativePipelineAnalysis::restoreFrames() {
+  auto checkpoint = module->getAttrOfType<DictionaryAttr>(
+      sim::metadata::nativeFrameCheckpoint);
+  auto inventory =
+      checkpoint ? checkpoint.getAs<ArrayAttr>("functions") : ArrayAttr{};
+  if (!inventory ||
+      checkpoint.get("layout") != module->getAttr("llvm.data_layout"))
+    return module.emitError(
+        "native frame replay requires a matching target checkpoint");
+  if (failed(initialize()) || bytecodeOnly || failed(planState()))
+    return failure();
+  SymbolTableCollection symbols;
+  DenseSet<Operation *> restored;
+  for (Attribute attribute : inventory) {
+    auto name = dyn_cast<SymbolRefAttr>(attribute);
+    auto function = name ? symbols.lookupSymbolIn<sim::SimFuncOp>(module, name)
+                         : sim::SimFuncOp{};
+    if (!function || !restored.insert(function).second)
+      return module.emitError(
+          "native frame replay has an invalid function identity");
+    auto inputs = function->getAttrOfType<DictionaryAttr>(
+        sim::metadata::nativeFrameInputs);
+    auto frame = SimulationProcessFrameAnalysis::create(function, dataLayout);
+    if (!inputs || failed(frame) ||
+        (*frame)->getReplayInputs(function) != inputs)
+      return function.emitError(
+          "native frame replay rejected changed canonical ABI inputs");
+    if (analysis::isCaptureCopyProcess(function))
+      copyActivations.insert(function);
+    else if (auto table = analyzeTableProcess(function, **frame))
+      tableProcesses.try_emplace(function, std::move(*table));
+    analyses.insert({function, std::move(*frame)});
+  }
+  // Additional actors cannot inherit an absent canonical fallback frame.
+  bool complete = true;
+  walkNativeFunctions<sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
+    if (!function.isExternal() &&
+        function.getEntryKind() != sim::EntryKind::Function &&
+        function.getEntryKind() != sim::EntryKind::Observer &&
+        !restored.contains(function))
+      complete = false;
+  });
+  if (!complete)
+    return module.emitError(
+        "native frame replay rejected an incomplete actor inventory");
+  stage = Stage::Frames;
   return success();
 }
 
@@ -2285,14 +2355,22 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     if (route.pathKnownProbe) {
       auto bodyType = route.fourState.getFunctionType();
       auto probeType = route.pathKnownProbe.getFunctionType();
-      if (probeType.getParams() != bodyType.getParams() ||
-          probeType.getReturnType() != i8)
+      auto isProbeType = [&](LLVM::LLVMFunctionType type) {
+        if (type.getParams() != bodyType.getParams())
+          return false;
+        if (type.getReturnType() == i8)
+          return true;
+        auto result = dyn_cast<LLVM::LLVMStructType>(type.getReturnType());
+        return result && !result.isOpaque() &&
+               result.getBody() == ArrayRef<Type>({i8, builder.getI32Type()});
+      };
+      if (!isProbeType(probeType))
         return route.pathKnownProbe.emitError(
             "path-known probe ABI does not match its eval body");
       if (!::obelisk::schedule::has<schedule::Field::EvalInfallible>(
               route.twoState)) {
         if (!route.checkpointPathProbe ||
-            route.checkpointPathProbe.getFunctionType() != probeType)
+            !isProbeType(route.checkpointPathProbe.getFunctionType()))
           return route.twoState.emitError(
               "checkpoint path probe ABI does not match its eval body");
         if (bodyType.getReturnType() != builder.getI32Type())
@@ -2343,6 +2421,27 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
 
   auto materializeRouteBody = [&](Route &route) -> LogicalResult {
     OpBuilder builder(context);
+    auto probePath = [&](LLVM::LLVMFuncOp probe,
+                         ValueRange arguments) -> Value {
+      Location loc = probe.getLoc();
+      Value result =
+          LLVM::CallOp::create(builder, loc, probe, arguments).getResult();
+      if (result.getType() == i8)
+        return result;
+      Value path = LLVM::ExtractValueOp::create(builder, loc, result,
+                                                ArrayRef<int64_t>{0});
+      Value status = LLVM::ExtractValueOp::create(builder, loc, result,
+                                                  ArrayRef<int64_t>{1});
+      Value ok = LLVM::ICmpOp::create(
+          builder, loc, LLVM::ICmpPredicate::eq, status,
+          detail::llvmConstant(builder, loc, builder.getI32Type(),
+                               OBELISK_RT_OK));
+      // Aggregate probes may need temporary runtime storage. Their failures
+      // establish no proof. Replay the canonical activation, which handles
+      // its own status and effects, rather than selecting an unchecked domain.
+      return LLVM::SelectOp::create(builder, loc, ok, path,
+                                    detail::llvmConstant(builder, loc, i8, 0));
+    };
     if (route.pathKnownProbe &&
         ::obelisk::schedule::has<schedule::Field::EvalInfallible>(
             route.twoState)) {
@@ -2372,9 +2471,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                known, probe);
         builder.setInsertionPointToStart(probe);
       }
-      Value path = LLVM::CallOp::create(builder, route.twoState.getLoc(),
-                                        route.pathKnownProbe, arguments)
-                       .getResult();
+      Value path = probePath(route.pathKnownProbe, arguments);
       Value isKnown = LLVM::ICmpOp::create(
           builder, route.twoState.getLoc(), LLVM::ICmpPredicate::eq, path,
           detail::llvmConstant(builder, route.twoState.getLoc(), i8, 1));
@@ -2615,16 +2712,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::CondBrOp::create(builder, route.twoState.getLoc(), promoted,
                              knownStateProbe, fullProbe);
       builder.setInsertionPointToStart(fullProbe);
-      Value fullPath = LLVM::CallOp::create(builder, route.twoState.getLoc(),
-                                            route.pathKnownProbe, arguments)
-                           .getResult();
+      Value fullPath = probePath(route.pathKnownProbe, arguments);
       LLVM::BrOp::create(builder, route.twoState.getLoc(), ValueRange{fullPath},
                          probeJoin);
       builder.setInsertionPointToStart(knownStateProbe);
-      Value knownPath =
-          LLVM::CallOp::create(builder, route.twoState.getLoc(),
-                               route.checkpointPathProbe, arguments)
-              .getResult();
+      Value knownPath = probePath(route.checkpointPathProbe, arguments);
       LLVM::BrOp::create(builder, route.twoState.getLoc(),
                          ValueRange{knownPath}, probeJoin);
       builder.setInsertionPointToStart(probeJoin);
@@ -2797,127 +2889,165 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   routePromotionScan->setAttr(
       "passthrough", builder.getArrayAttr({builder.getStringAttr("noinline"),
                                            builder.getStringAttr("cold")}));
-  Block *routeScanEntry = routePromotionScan.addEntryBlock(builder);
-  builder.setInsertionPointToStart(routeScanEntry);
-  if (needsRouteSummary)
-    LLVM::StoreOp::create(builder, module.getLoc(),
-                          detail::llvmConstant(builder, module.getLoc(), i8, 0),
-                          LLVM::AddressOfOp::create(builder, module.getLoc(),
-                                                    pointer,
-                                                    routePromotionDirtyName),
-                          1);
-  // Each pending word has an independent CFG and no SSA operands shared
-  // with another word. Build detached regions in parallel, then concatenate
-  // their blocks in word order without adding runtime calls or branches.
-  SmallVector<std::unique_ptr<Region>> scanFragments;
-  SmallVector<Block *> scanExits(routeWordCount);
-  for (uint64_t word = 0; word != routeWordCount; ++word)
-    scanFragments.push_back(std::make_unique<Region>());
-  parallelFor(context, 0, routeWordCount, [&](size_t word) {
-    Region &fragment = *scanFragments[word];
-    auto *entry = new Block;
-    fragment.push_back(entry);
-    OpBuilder builder(context);
-    builder.setInsertionPointToStart(entry);
-    Location location = module.getLoc();
-    Value address =
-        detail::byteGEP(builder, location,
-                        LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  routePromotionPendingName),
-                        word * sizeof(uint64_t));
-    Value pending = LLVM::LoadOp::create(builder, location, i64, address, 8);
-    Block *inspect = new Block, *nextWord = new Block;
-    fragment.push_back(inspect);
-    fragment.push_back(nextWord);
-    LLVM::CondBrOp::create(
-        builder, location,
-        LLVM::ICmpOp::create(builder, location, LLVM::ICmpPredicate::ne,
-                             pending,
-                             detail::llvmConstant(builder, location, i64, 0)),
-        inspect, nextWord);
-    builder.setInsertionPointToStart(inspect);
-    // No actor, observer, or foreign call runs during a proof scan. Consume
-    // this word once; newly invalidated proofs are queued at actual mutations.
-    LLVM::StoreOp::create(builder, location,
-                          detail::llvmConstant(builder, location, i64, 0),
-                          address, 8);
-    uint64_t end = std::min<uint64_t>(routes.size(), (word + 1) * 64);
-    for (uint64_t index = word * 64; index != end; ++index) {
-      Route &route = routes[index];
-      if (!hasPersistentSelector(route) ||
-          (route.ranges.empty() && !route.independentEntry))
-        continue;
-      Block *scan = new Block, *nextRoute = new Block;
-      fragment.push_back(scan);
-      fragment.push_back(nextRoute);
-      Value selectedBit = LLVM::AndOp::create(
-          builder, location, pending,
-          detail::llvmConstant(builder, location, i64,
-                               uint64_t{1} << (index % 64)));
+  uint64_t directScanCost = 16 * routes.size();
+  for (const auto &route : routes) {
+    auto encoded = route.ranges.asArrayRef();
+    for (size_t i = 0; i < encoded.size(); i += 2)
+      directScanCost += 8 + 4 * ((encoded[i] % 8 + encoded[i + 1] + 7) / 8);
+  }
+  // Cost includes pointer-table initialization as well as the shared loop.
+  // Small proof sets keep direct scans; large ranges never expand per byte.
+  if (directScanCost > 256 + 9 * routes.size()) {
+    SmallVector<detail::NativeRoutePromotion> compact;
+    for (const auto &route : routes) {
+      detail::NativeRoutePromotion record;
+      if (hasPersistentSelector(route) &&
+          (!route.ranges.empty() || route.independentEntry)) {
+        record.selector = route.selectorName;
+        auto encoded = route.ranges.asArrayRef();
+        for (size_t i = 0; i < encoded.size(); i += 2)
+          record.ranges.push_back(
+              {uint64_t(encoded[i]), uint64_t(encoded[i + 1])});
+      }
+      compact.push_back(std::move(record));
+    }
+    auto stateBits =
+        module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+    if (!stateBits)
+      return module.emitError(
+          "route promotion requires the native state layout");
+    if (failed(detail::materializeNativeRoutePromotionScan(
+            module, routePromotionScan, stateBits.getUInt(), compact,
+            routePromotionPendingName,
+            needsRouteSummary ? StringRef(routePromotionDirtyName)
+                              : StringRef{})))
+      return failure();
+  } else {
+    Block *routeScanEntry = routePromotionScan.addEntryBlock(builder);
+    builder.setInsertionPointToStart(routeScanEntry);
+    if (needsRouteSummary)
+      LLVM::StoreOp::create(
+          builder, module.getLoc(),
+          detail::llvmConstant(builder, module.getLoc(), i8, 0),
+          LLVM::AddressOfOp::create(builder, module.getLoc(), pointer,
+                                    routePromotionDirtyName),
+          1);
+    // Each pending word has an independent CFG and no SSA operands shared
+    // with another word. Build detached regions in parallel, then concatenate
+    // their blocks in word order without adding runtime calls or branches.
+    SmallVector<std::unique_ptr<Region>> scanFragments;
+    SmallVector<Block *> scanExits(routeWordCount);
+    for (uint64_t word = 0; word != routeWordCount; ++word)
+      scanFragments.push_back(std::make_unique<Region>());
+    parallelFor(context, 0, routeWordCount, [&](size_t word) {
+      Region &fragment = *scanFragments[word];
+      auto *entry = new Block;
+      fragment.push_back(entry);
+      OpBuilder builder(context);
+      builder.setInsertionPointToStart(entry);
+      Location location = module.getLoc();
+      Value address =
+          detail::byteGEP(builder, location,
+                          LLVM::AddressOfOp::create(builder, location, pointer,
+                                                    routePromotionPendingName),
+                          word * sizeof(uint64_t));
+      Value pending = LLVM::LoadOp::create(builder, location, i64, address, 8);
+      Block *inspect = new Block, *nextWord = new Block;
+      fragment.push_back(inspect);
+      fragment.push_back(nextWord);
       LLVM::CondBrOp::create(
           builder, location,
           LLVM::ICmpOp::create(builder, location, LLVM::ICmpPredicate::ne,
-                               selectedBit,
+                               pending,
                                detail::llvmConstant(builder, location, i64, 0)),
-          scan, nextRoute);
-      builder.setInsertionPointToStart(scan);
-      Location location = route.twoState.getLoc();
-      Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                "__obelisk_state_unknown");
-      Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
-      ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
-      for (size_t index = 0; index != encoded.size(); index += 2) {
-        uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
-        uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
-        uint64_t firstByte = bitOffset / 8;
-        uint64_t lastBit = bitOffset + bitWidth;
-        uint64_t lastByte = (lastBit + 7) / 8;
-        for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
-          uint8_t mask = UINT8_MAX;
-          if (byte == firstByte && bitOffset % 8 != 0)
-            mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
-          if (byte + 1 == lastByte && lastBit % 8 != 0)
-            mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
-          Value bits = LLVM::LoadOp::create(
-              builder, location, i8,
-              detail::byteGEP(builder, location, unknown, byte), 1);
-          if (mask != UINT8_MAX)
-            bits = LLVM::AndOp::create(
-                builder, location, bits,
-                detail::llvmConstant(builder, location, i8, mask));
-          anyUnknown = LLVM::OrOp::create(builder, location, anyUnknown, bits);
+          inspect, nextWord);
+      builder.setInsertionPointToStart(inspect);
+      // No actor, observer, or foreign call runs during a proof scan. Consume
+      // this word once; newly invalidated proofs are queued at actual
+      // mutations.
+      LLVM::StoreOp::create(builder, location,
+                            detail::llvmConstant(builder, location, i64, 0),
+                            address, 8);
+      uint64_t end = std::min<uint64_t>(routes.size(), (word + 1) * 64);
+      for (uint64_t index = word * 64; index != end; ++index) {
+        Route &route = routes[index];
+        if (!hasPersistentSelector(route) ||
+            (route.ranges.empty() && !route.independentEntry))
+          continue;
+        Block *scan = new Block, *nextRoute = new Block;
+        fragment.push_back(scan);
+        fragment.push_back(nextRoute);
+        Value selectedBit = LLVM::AndOp::create(
+            builder, location, pending,
+            detail::llvmConstant(builder, location, i64,
+                                 uint64_t{1} << (index % 64)));
+        LLVM::CondBrOp::create(
+            builder, location,
+            LLVM::ICmpOp::create(
+                builder, location, LLVM::ICmpPredicate::ne, selectedBit,
+                detail::llvmConstant(builder, location, i64, 0)),
+            scan, nextRoute);
+        builder.setInsertionPointToStart(scan);
+        Location location = route.twoState.getLoc();
+        Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
+                                                  "__obelisk_state_unknown");
+        Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
+        ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
+        for (size_t index = 0; index != encoded.size(); index += 2) {
+          uint64_t bitOffset = static_cast<uint64_t>(encoded[index]);
+          uint64_t bitWidth = static_cast<uint64_t>(encoded[index + 1]);
+          uint64_t firstByte = bitOffset / 8;
+          uint64_t lastBit = bitOffset + bitWidth;
+          uint64_t lastByte = (lastBit + 7) / 8;
+          for (uint64_t byte = firstByte; byte != lastByte; ++byte) {
+            uint8_t mask = UINT8_MAX;
+            if (byte == firstByte && bitOffset % 8 != 0)
+              mask &= static_cast<uint8_t>(UINT8_MAX << (bitOffset % 8));
+            if (byte + 1 == lastByte && lastBit % 8 != 0)
+              mask &= static_cast<uint8_t>((uint16_t{1} << (lastBit % 8)) - 1);
+            Value bits = LLVM::LoadOp::create(
+                builder, location, i8,
+                detail::byteGEP(builder, location, unknown, byte), 1);
+            if (mask != UINT8_MAX)
+              bits = LLVM::AndOp::create(
+                  builder, location, bits,
+                  detail::llvmConstant(builder, location, i8, mask));
+            anyUnknown =
+                LLVM::OrOp::create(builder, location, anyUnknown, bits);
+          }
         }
+        Value known =
+            encoded.empty()
+                ? detail::llvmConstant(builder, location, builder.getI1Type(),
+                                       true)
+                : LLVM::ICmpOp::create(
+                      builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
+                      detail::llvmConstant(builder, location, i8, 0));
+        Value selected = LLVM::ZExtOp::create(builder, location, i8, known);
+        LLVM::StoreOp::create(builder, location, selected,
+                              LLVM::AddressOfOp::create(builder, location,
+                                                        pointer,
+                                                        route.selectorName),
+                              1);
+        LLVM::BrOp::create(builder, location, ValueRange{}, nextRoute);
+        builder.setInsertionPointToStart(nextRoute);
       }
-      Value known =
-          encoded.empty()
-              ? detail::llvmConstant(builder, location, builder.getI1Type(),
-                                     true)
-              : LLVM::ICmpOp::create(
-                    builder, location, LLVM::ICmpPredicate::eq, anyUnknown,
-                    detail::llvmConstant(builder, location, i8, 0));
-      Value selected = LLVM::ZExtOp::create(builder, location, i8, known);
-      LLVM::StoreOp::create(builder, location, selected,
-                            LLVM::AddressOfOp::create(
-                                builder, location, pointer, route.selectorName),
-                            1);
-      LLVM::BrOp::create(builder, location, ValueRange{}, nextRoute);
-      builder.setInsertionPointToStart(nextRoute);
+      LLVM::BrOp::create(builder, location, ValueRange{}, nextWord);
+      builder.setInsertionPointToStart(nextWord);
+      scanExits[word] = builder.getInsertionBlock();
+    });
+    for (uint64_t word = 0; word != routeWordCount; ++word) {
+      Region &fragment = *scanFragments[word];
+      Block &entry = fragment.front();
+      builder.getInsertionBlock()->getOperations().splice(
+          builder.getInsertionBlock()->end(), entry.getOperations());
+      fragment.getBlocks().erase(&entry);
+      routePromotionScan.getBody().getBlocks().splice(
+          routePromotionScan.getBody().end(), fragment.getBlocks());
+      builder.setInsertionPointToEnd(scanExits[word]);
     }
-    LLVM::BrOp::create(builder, location, ValueRange{}, nextWord);
-    builder.setInsertionPointToStart(nextWord);
-    scanExits[word] = builder.getInsertionBlock();
-  });
-  for (uint64_t word = 0; word != routeWordCount; ++word) {
-    Region &fragment = *scanFragments[word];
-    Block &entry = fragment.front();
-    builder.getInsertionBlock()->getOperations().splice(
-        builder.getInsertionBlock()->end(), entry.getOperations());
-    fragment.getBlocks().erase(&entry);
-    routePromotionScan.getBody().getBlocks().splice(
-        routePromotionScan.getBody().end(), fragment.getBlocks());
-    builder.setInsertionPointToEnd(scanExits[word]);
+    LLVM::ReturnOp::create(builder, module.getLoc(), ValueRange{});
   }
-  LLVM::ReturnOp::create(builder, module.getLoc(), ValueRange{});
 
   builder.setInsertionPointToEnd(module.getBody());
   Type i32 = builder.getI32Type();
@@ -3252,12 +3382,11 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
             .getResult());
     load.erase();
   }
-  // This compact value-plane-only barrier is part of the Tier-1 slot
-  // coordinator, not a handoff boundary. Leave it to normal profitability:
-  // forcing a large fixed-root barrier into run_until inflates the hot loop
-  // without improving the generated schedule. Keep the canonical and
-  // four-state barriers explicitly out of line below.
-  fastClone->removeAttr("passthrough");
+  // Keep the shared barrier in one helper even when the table loop looks
+  // small to LLVM's inliner. Replicating that loop in slot coordinators adds
+  // instruction footprint without removing its dynamic root work.
+  fastClone->setAttr("passthrough",
+                     builder.getArrayAttr({builder.getStringAttr("noinline")}));
   // The promoted coordinator enters this clone only for the NBA update
   // region.  AOT partitioning deliberately keeps the (large) barrier out of
   // the coordinator's object, so LLVM cannot propagate that constant across
@@ -3510,6 +3639,7 @@ public:
     // Nested finalization pipelines invalidate the outer analysis cache.
     // Own the target facts and timing state needed by this terminal pass.
     llvm::DataLayout targetLayout = cached->get().dataLayout;
+    materializeNativeScheduleActions(module);
     const llvm::DataLayout *parsed = &targetLayout;
     bool detailedTiming = cached->get().detailedTiming;
     auto lastTiming = std::chrono::steady_clock::now();
@@ -3661,11 +3791,13 @@ public:
     if (failed(groupPromotions))
       return signalPassFailure();
     markTiming("native activation group materialization");
+    materializeNativeScheduleActions(module);
     if (failed(verifyGeneratedEvalCallClosures(module))) {
       signalPassFailure();
       return;
     }
     markTiming("eval call closure verification");
+    schedule::cacheNativePureCones(module);
     auto partitionInventory =
         detail::prepareNativePartitionManifest(module, getAnalysisManager());
     if (failed(partitionInventory))

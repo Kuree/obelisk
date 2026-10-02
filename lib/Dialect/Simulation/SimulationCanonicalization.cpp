@@ -1576,7 +1576,8 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
       for (Operation *user : reference.getUsers()) {
         if (user->getParentOp() != allocation->getParentOp())
           return failure();
-        if (isa<SimRefArrayElementOp, SimRefSubelementOp>(user)) {
+        if (isa<SimRefArrayElementOp, SimRefSubelementOp, SimRefExtractOp,
+                SimRefDynExtractOp>(user)) {
           if (auto field = dyn_cast<SimRefSubelementOp>(user)) {
             Type type = field.getInput().getType().getElementType();
             for (int64_t index : field.getIndices()) {
@@ -1591,6 +1592,17 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
                 return failure();
               type = child;
             }
+          }
+          if (isa<SimRefExtractOp, SimRefDynExtractOp>(user)) {
+            Type parent =
+                cast<RefType>(user->getOperand(0).getType()).getElementType();
+            Type child =
+                cast<RefType>(user->getResult(0).getType()).getElementType();
+            Type parentScalar = getPackedScalarType(parent);
+            Type childScalar = getPackedScalarType(child);
+            if (!parentScalar || !childScalar ||
+                (!isa<LogicType>(parentScalar) && isa<LogicType>(childScalar)))
+              return failure();
           }
           pending.push_back(user->getResult(0));
           continue;
@@ -1615,7 +1627,8 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
       if (!visited.insert(reference).second)
         continue;
       for (Operation *user : reference.getUsers())
-        if (isa<SimRefArrayElementOp, SimRefSubelementOp>(user)) {
+        if (isa<SimRefArrayElementOp, SimRefSubelementOp, SimRefExtractOp,
+                SimRefDynExtractOp>(user)) {
           pending.push_back(user->getResult(0));
           selectedViews.push_back(user);
         } else
@@ -1642,6 +1655,7 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
         Value index;
         int64_t ordinal = -1;
         bool unionMember = false;
+        Type packedChild;
       };
       SmallVector<Selection> selections;
       for (Operation *view : path) {
@@ -1651,6 +1665,39 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
               rewriter, access->getLoc(),
               array.getResult().getType().getElementType(), selected,
               array.getIndex());
+        } else if (isa<SimRefExtractOp, SimRefDynExtractOp>(view)) {
+          Type parentType = selected.getType();
+          Type parentScalar = getPackedScalarType(parentType);
+          Type child =
+              cast<RefType>(view->getResult(0).getType()).getElementType();
+          Type childScalar = getPackedScalarType(child);
+          Type planeChild = childScalar;
+          if (isa<LogicType>(parentScalar) && isa<IntegerType>(childScalar))
+            planeChild =
+                LogicType::get(op.getContext(), *getPackedWidth(child));
+          Value low;
+          if (auto fixed = dyn_cast<SimRefExtractOp>(view))
+            low = arith::ConstantIntOp::create(rewriter, access->getLoc(),
+                                               fixed.getLowBit(), 64);
+          else
+            low = cast<SimRefDynExtractOp>(view).getLowBit();
+          selections.push_back({selected, low, -1, false, child});
+          Value bits = selected;
+          if (parentType != parentScalar)
+            bits = SimPackedFlattenOp::create(rewriter, access->getLoc(),
+                                              parentScalar, bits);
+          if (isa<LogicType>(parentScalar))
+            selected = SimLogicDynExtractOp::create(rewriter, access->getLoc(),
+                                                    planeChild, bits, low);
+          else
+            selected = SimBitsDynExtractOp::create(rewriter, access->getLoc(),
+                                                   planeChild, bits, low);
+          if (planeChild != childScalar)
+            selected = SimLogicToBitsOp::create(rewriter, access->getLoc(),
+                                                childScalar, selected);
+          if (child != childScalar)
+            selected = SimPackedUnflattenOp::create(rewriter, access->getLoc(),
+                                                    child, selected);
         } else {
           auto field = cast<SimRefSubelementOp>(view);
           for (int64_t index : field.getIndices()) {
@@ -1678,7 +1725,35 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
       auto store = cast<SimRefStoreOp>(access);
       selected = store.getValue();
       for (const Selection &selection : llvm::reverse(selections))
-        if (selection.index)
+        if (selection.packedChild) {
+          Type parentType = selection.parent.getType();
+          Type parentScalar = getPackedScalarType(parentType);
+          Type childScalar = getPackedScalarType(selection.packedChild);
+          Value parent = selection.parent;
+          if (parentType != parentScalar)
+            parent = SimPackedFlattenOp::create(rewriter, store.getLoc(),
+                                                parentScalar, parent);
+          if (selection.packedChild != childScalar)
+            selected = SimPackedFlattenOp::create(rewriter, store.getLoc(),
+                                                  childScalar, selected);
+          if (isa<LogicType>(parentScalar) && isa<IntegerType>(childScalar))
+            selected = SimLogicFromBitsOp::create(
+                rewriter, store.getLoc(),
+                LogicType::get(op.getContext(),
+                               *getPackedWidth(selection.packedChild)),
+                selected);
+          if (isa<LogicType>(parentScalar))
+            selected = SimLogicDynInsertOp::create(rewriter, store.getLoc(),
+                                                   parentScalar, parent,
+                                                   selected, selection.index);
+          else
+            selected = SimBitsDynInsertOp::create(rewriter, store.getLoc(),
+                                                  parentScalar, parent,
+                                                  selected, selection.index);
+          if (parentType != parentScalar)
+            selected = SimPackedUnflattenOp::create(rewriter, store.getLoc(),
+                                                    parentType, selected);
+        } else if (selection.index)
           selected = SimArrayDynInsertOp::create(
               rewriter, store.getLoc(), selection.parent.getType(),
               selection.parent, selected, selection.index);

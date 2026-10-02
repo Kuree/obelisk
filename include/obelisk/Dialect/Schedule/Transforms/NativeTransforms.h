@@ -5,6 +5,7 @@
 #include <cstdint>
 namespace mlir {
 class ModuleOp;
+class Operation;
 }
 namespace obelisk::sim {
 class SimDesignOp;
@@ -18,4 +19,12 @@ mlir::LogicalResult materializeEvalTwoStateVariants(
     const NativeStateLayout &stateLayout, bool enabled,
     const llvm::DenseMap<uint64_t, uint32_t> &actorSlots);
 } // namespace obelisk::detail
+namespace obelisk::schedule {
+// Function-local executable scheduling rewrites; no fallback/frame facts are
+// recomputed by these actions.
+void coalesceNativeReadyUpdates(mlir::Operation *operation);
+void cacheNativePureCones(mlir::ModuleOp module, uint64_t minimumCost = 256,
+                          uint64_t maximumCost = 4096,
+                          unsigned maximumCaches = 128);
+} // namespace obelisk::schedule
 #endif

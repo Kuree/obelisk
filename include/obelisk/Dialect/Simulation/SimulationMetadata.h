@@ -21,6 +21,16 @@ namespace obelisk::sim::metadata {
 /// Transient function attribute containing ArgumentBindingAttr,
 /// LocalBindingAttr, and ConstantBindingAttr entries.
 inline constexpr llvm::StringLiteral bindings = "simulation.bindings";
+/// Frozen by the bytecode encoder from complete call-closure effect analysis.
+/// Recomputed whenever the bytecode image is rebuilt.
+inline constexpr llvm::StringLiteral bytecodeReadOnly =
+    "simulation.bytecode_read_only";
+/// Immutable canonical-frame certificate and module checkpoint inventory.
+/// Valid only at the Frames boundary, before derived native specialization.
+inline constexpr llvm::StringLiteral nativeFrameInputs =
+    "simulation.native_frame_inputs";
+inline constexpr llvm::StringLiteral nativeFrameCheckpoint =
+    "simulation.native_frame_checkpoint";
 inline constexpr llvm::StringLiteral delayScale = "simulation.delay_scale";
 inline constexpr llvm::StringLiteral delayQuantum = "simulation.delay_quantum";
 inline constexpr llvm::StringLiteral captureKind = "simulation.capture_kind";

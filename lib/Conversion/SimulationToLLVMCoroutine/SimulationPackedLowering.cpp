@@ -345,13 +345,23 @@ LogicalResult lowerPackedSimulationOperations(
                     ? guardedDomains.isTwoStateWithInductiveRoots(value)
                     : stateDomains->isTwoState(value));
       };
-      analysis::HandleFacts provenance = analysis::deriveHandleFacts(function);
+      auto handles =
+          analysis::HandleDataflowAnalysis(function).analyze(function);
+      const auto &provenance = handles.facts;
+      auto isValidSelection = [&](Value handle) {
+        auto root = provenance.find(handle);
+        auto proof = handles.certificates.find(handle);
+        return root != provenance.end() &&
+               (!root->second.dynamic ||
+                (proof != handles.certificates.end() &&
+                 proof->second.inBounds && !proof->second.clipped));
+      };
       auto isPromotableAccess = [&](Value handle, Value result) {
         if (!guardedDomains.isTwoStateWithInductiveRoots(result))
           return false;
         auto root = provenance.find(handle);
         return root != provenance.end() && root->second.descriptor &&
-               !root->second.dynamic && root->second.width != 0 &&
+               isValidSelection(handle) && root->second.width != 0 &&
                guardedDomains.isInductivelyTwoState(root->second.resource,
                                                     *root->second.descriptor);
       };
@@ -398,7 +408,7 @@ LogicalResult lowerPackedSimulationOperations(
             continue;
           auto root = provenance.find(destination);
           if (root == provenance.end() || !root->second.descriptor ||
-              root->second.dynamic ||
+              !isValidSelection(destination) ||
               !guardedDomains.isInductivelyTwoState(root->second.resource,
                                                     *root->second.descriptor))
             continue;
@@ -1021,6 +1031,7 @@ LogicalResult lowerPackedSimulationOperations(
     target.addLegalDialect<runtime::ObeliskRuntimeDialect>();
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
     target.addLegalDialect<schedule::ScheduleDialect>();
+    target.addIllegalOp<schedule::NativeKnownValueOp>();
     target.addDynamicallyLegalOp<sim::SimFuncOp>([&](sim::SimFuncOp function) {
       return c.isSignatureLegal(function.getFunctionType()) &&
              c.isLegal(&function.getBody());

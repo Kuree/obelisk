@@ -375,6 +375,7 @@ void destroyContextNow(obelisk_rt_context *context) noexcept {
         obelisk_rt_unregister_signal_wait_unlocked(context,
                                                    task.signalSubscriptions);
       processes.swap(context->scheduledProcesses);
+      context->scheduledProcessTokens.clear();
     }
     for (ScheduledProcess &scheduled : processes) {
       if (scheduled.instance)

@@ -16,6 +16,7 @@ class LLVMTypeConverter;
 class ModuleOp;
 class OpPassManager;
 class RewritePatternSet;
+class Operation;
 } // namespace mlir
 
 namespace obelisk {
@@ -27,6 +28,10 @@ mlir::LogicalResult materializeDPIExportBridges(mlir::ModuleOp module);
 /// Append each native planning, specialization and lowering pass in ABI order.
 void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager);
 void registerSimulationToLLVMCoroutinePipeline();
+
+/// Lower executable schedule actions after their effect-aware optimization.
+void materializeNativeScheduleActions(mlir::Operation *operation,
+                                      bool coalesce = true);
 
 /// Add terminal conversion patterns after the native preparation pipeline.
 void populateSimulationCoroutineToLLVMPatterns(

@@ -661,16 +661,20 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
 
 void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
   context->scheduledProcessIndices.clear();
+  context->scheduledProcessTokens.clear();
   context->nativePollCandidates.clear();
   context->scheduledProcessDelayHeap.clear();
   std::fill(context->nativeScheduleActorIndices.begin(),
             context->nativeScheduleActorIndices.end(), SIZE_MAX);
   context->scheduledProcessIndices.reserve(context->scheduledProcesses.size());
+  context->scheduledProcessTokens.reserve(context->scheduledProcesses.size());
   context->nativePollCandidates.reserve(context->scheduledProcesses.size());
   context->scheduledProcessDelayHeap.reserve(context->scheduledProcesses.size());
   for (size_t index = 0; index != context->scheduledProcesses.size(); ++index) {
     const ScheduledProcess &process = context->scheduledProcesses[index];
     context->scheduledProcessIndices[process.token] = index;
+    if (process.instance)
+      context->scheduledProcessTokens.emplace(process.instance, process.token);
     if (process.aotActorSlot < context->nativeScheduleActorIndices.size())
       context->nativeScheduleActorIndices[process.aotActorSlot] = index;
     if (process.instance && !indexedSignalBlocked(process))
@@ -1294,6 +1298,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     OBELISK_RT_TRY {
       context->scheduledProcessIndices[token] =
           context->scheduledProcesses.size() - 1;
+      context->scheduledProcessTokens.emplace(instance, token);
       context->nativePollCandidates.insert(token);
       if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
         obelisk_rt_register_unstarted_actor(context, phase,
@@ -1309,6 +1314,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
             context, kNativeLogicalProcessTag | token,
             context->scheduledProcesses.back().programOwner);
       context->scheduledProcessIndices.erase(token);
+      auto [begin, end] = context->scheduledProcessTokens.equal_range(instance);
+      for (auto it = begin; it != end; ++it)
+        if (it->second == token) {
+          context->scheduledProcessTokens.erase(it);
+          break;
+        }
       context->nativePollCandidates.erase(token);
       obelisk_rt_unregister_unstarted_actor(context, phase,
                                             kNativeLogicalProcessTag | token);
@@ -1750,6 +1761,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       context->staticNBAAccumulators.clear();
       context->staticNBAAccumulators.reserve(nbaRootCount);
       context->staticNBAAccumulatorsPending = false;
+      context->staticNBAPendingAccumulatorCount = 0;
       context->staticNBASlowRoots.assign(nbaRootCount, 0);
       context->staticNBASlowRootsPresent = false;
       context->staticNBARootHasFanout.assign(nbaRootCount, 0);
@@ -2060,28 +2072,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     return status;
   auto rollback = [&] {
     ContextMutexLock lock(context);
-    auto found = std::find_if(context->scheduledProcesses.begin(),
-                              context->scheduledProcesses.end(),
-                              [&](const ScheduledProcess &process) {
-                                return process.instance == instance;
-                              });
-    if (found == context->scheduledProcesses.end())
+    auto *found = findScheduledProcessByInstance(context, instance);
+    if (!found)
       return;
     obelisk_rt_release_controls_unlocked(context, found->controls);
     context->nativePollCandidates.erase(found->token);
     context->scheduledProcessIndices.erase(found->token);
-    context->scheduledProcesses.erase(found);
+    context->scheduledProcesses.erase(
+        context->scheduledProcesses.begin() +
+        (found - context->scheduledProcesses.data()));
     rebuildNativeSchedulerIndexUnlocked(context);
   };
   uint64_t actorToken = 0;
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
-    auto found = std::find_if(context->scheduledProcesses.begin(),
-                              context->scheduledProcesses.end(),
-                              [&](const ScheduledProcess &process) {
-                                return process.instance == instance;
-                              });
-    if (found == context->scheduledProcesses.end())
+    auto *found = findScheduledProcessByInstance(context, instance);
+    if (!found)
       status = OBELISK_RT_INVALID_LIFECYCLE;
     else {
       if (bytecodeContinuationCount == 0)
@@ -2149,9 +2155,8 @@ extern "C" uint64_t obelisk_rt_v1_scheduler_process_token(
     return 0;
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
-    for (const ScheduledProcess &process : context->scheduledProcesses)
-      if (process.instance == instance)
-        return OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
+    if (auto *process = findScheduledProcessByInstance(context, instance))
+      return OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process->token;
   }
   OBELISK_RT_CATCH_ALL {}
   return 0;
@@ -5277,7 +5282,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             !killRequested) {
           if (scheduled.callerControlDepths.size() != scheduled.callers.size())
             return OBELISK_RT_INVALID_LIFECYCLE;
-          scheduled.instance = scheduled.callers.back();
+          updateScheduledProcessInstance(context, scheduled,
+                                         scheduled.callers.back());
           scheduled.callers.pop_back();
           scheduled.callerControlDepths.pop_back();
           scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
@@ -5302,7 +5308,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           obelisk_rt_reparent_process_children_unlocked(
               context, kNativeLogicalProcessTag | token, scheduled.parent);
           context->terminatedNativeProcesses.insert(token, scheduled.random);
-          scheduled.instance = nullptr;
+          updateScheduledProcessInstance(context, scheduled, nullptr);
           ++context->schedulerDeadProcessCount;
           context->schedulerCompactionPending = true;
           if (terminationRequested || killRequested)
@@ -5351,7 +5357,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           return status;
         scheduled.callers.push_back(selected);
         scheduled.callerControlDepths.push_back(scheduled.controls.size());
-        scheduled.instance = callee;
+        updateScheduledProcessInstance(context, scheduled, callee);
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
         scheduled.waitSize = 0;

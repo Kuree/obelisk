@@ -2,6 +2,7 @@
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -123,6 +124,7 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     return failure();
   }
   auto result = std::make_unique<SimulationProcessFrameAnalysis>();
+  result->bytecodeReadOnly = function->hasAttr(sim::metadata::bytecodeReadOnly);
   // Do not leave cached layouts for types owned by this temporary context in
   // a DataLayout that is subsequently reused by another analysis.
   llvm::DataLayout analysisLayout(dataLayout.getStringRepresentation());
@@ -453,6 +455,48 @@ SimulationProcessFrameAnalysis::getContinuationLayout(Block *block) const {
   return found == continuationLayouts.end()
              ? ArrayRef<ProcessFrameValue>{}
              : ArrayRef<ProcessFrameValue>(found->second);
+}
+
+DictionaryAttr
+SimulationProcessFrameAnalysis::getReplayInputs(sim::SimFuncOp function) const {
+  Builder builder(function.getContext());
+  DenseMap<Block *, int64_t> blockIDs;
+  for (auto [index, block] : llvm::enumerate(function.getBody()))
+    blockIDs[&block] = index;
+  SmallVector<Attribute> sites;
+  for (const auto &suspension : suspensions) {
+    SmallVector<Attribute> types;
+    for (Type type : suspension.continuation->getArgumentTypes())
+      types.push_back(TypeAttr::get(type));
+    sites.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("identity",
+                             builder.getDenseI64ArrayAttr(
+                                 {int64_t(suspension.continuationID),
+                                  blockIDs.lookup(suspension.continuation),
+                                  int64_t(suspension.waitOffset),
+                                  int64_t(suspension.waitSize)})),
+        builder.getNamedAttr("types", builder.getArrayAttr(types)),
+    }));
+  }
+  SmallVector<NamedAttribute> inputs{
+      builder.getNamedAttr("version", builder.getI32IntegerAttr(1)),
+      builder.getNamedAttr("signature",
+                           TypeAttr::get(function.getFunctionType())),
+      builder.getNamedAttr(
+          "identity",
+          builder.getDenseI64ArrayAttr(
+              {int64_t(function.getCodeUnitId().value_or(UINT64_MAX)),
+               int64_t(function.getEntryKind()),
+               int64_t(function.getHomeRegion())})),
+      builder.getNamedAttr("abi",
+                           builder.getDenseI64ArrayAttr(
+                               {int64_t(frameSize), int64_t(frameAlignment),
+                                int64_t(checksum), int64_t(bytecodeReadOnly)})),
+      builder.getNamedAttr("continuations", builder.getArrayAttr(sites)),
+  };
+  if (auto arguments = function->getAttr("arg_attrs"))
+    inputs.push_back(builder.getNamedAttr("captures", arguments));
+  return builder.getDictionaryAttr(inputs);
 }
 
 ArrayRef<ProcessFrameValue>

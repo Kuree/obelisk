@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --lower-obelisk-to-sim | FileCheck %s
+// RUN: obelisk-opt %s --lower-obelisk-to-sim='vpi=read' | FileCheck %s
 
 // A specified higher-order index removes that dimension before readmem's
 // start/finish and row-major rules are applied.

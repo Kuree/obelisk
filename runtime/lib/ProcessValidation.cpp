@@ -72,8 +72,9 @@ obelisk_rt_status
 validateLayout(const obelisk_rt_process_descriptor_v1 &descriptor) {
   if (descriptor.handle.kind != OBELISK_RT_DESCRIPTOR_PROCESS ||
       descriptor.version != OBELISK_RT_VERSION ||
-      (descriptor.flags & ~(OBELISK_RT_PROCESS_UNMANAGED_NATIVE |
-                            OBELISK_RT_PROCESS_TABLE_NATIVE)) != 0 ||
+      (descriptor.flags &
+       ~(OBELISK_RT_PROCESS_UNMANAGED_NATIVE | OBELISK_RT_PROCESS_TABLE_NATIVE |
+         OBELISK_RT_PROCESS_BYTECODE_READ_ONLY)) != 0 ||
       descriptor.reserved != 0 || !descriptor.frame_layout)
     return OBELISK_RT_LAYOUT_MISMATCH;
   const obelisk_rt_frame_layout_v1 &layout = *descriptor.frame_layout;

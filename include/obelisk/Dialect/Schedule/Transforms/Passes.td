@@ -144,7 +144,26 @@ def ObeliskSimOptimizeNativeRegionsPass
   ];
 }
 
-
+def CoalesceNativeReadyPass
+    : Pass<"schedule-coalesce-native-ready", "mlir::ModuleOp"> {
+  let summary = "Combine exact pending-set updates before physical expansion";
+  let dependentDialects = ["obelisk::schedule::ScheduleDialect",
+                           "mlir::arith::ArithDialect"];
+}
+def CacheNativePureConesPass
+    : Pass<"schedule-cache-pure-cones", "mlir::ModuleOp"> {
+  let summary =
+      "Cache bounded pure native cones by complete scalar input snapshots";
+  let dependentDialects = ["mlir::LLVM::LLVMDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+  let options = [Option<"minimumCost", "minimum-cost", "uint64_t", "256",
+                        "Minimum pure operation count">,
+                 Option<"maximumCost", "maximum-cost", "uint64_t", "4096",
+                        "Maximum cone code budget">,
+                 Option<"maximumCaches", "maximum-caches", "unsigned", "128",
+                        "Maximum per-thread cache records">];
+}
 def AnnotateCompactNativeNBAPass : Pass<"schedule-annotate-compact-nba", "mlir::ModuleOp"> {
   let summary = "Propagate selected native NBA proofs to their consuming operations";
 }

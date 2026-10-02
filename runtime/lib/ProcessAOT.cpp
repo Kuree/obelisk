@@ -947,7 +947,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     // external-write hook. Invalidate before executing it so the next
     // quiescent generated dispatch rescans canonical unknown planes instead
     // of reusing a stale two-state selection.
-    invalidateNativeTwoStatePromotionUnlocked(context);
+    if (!(selected->descriptor->flags & OBELISK_RT_PROCESS_BYTECODE_READ_ONLY))
+      invalidateNativeTwoStatePromotionUnlocked(context);
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     bool synchronized = plan && plan->state_bit_count == 0;
     if (plan && plan->state_bit_count != 0) {
@@ -989,7 +990,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     if (status == OBELISK_RT_OK) {
       {
         ContextMutexLock lock(context);
-        invalidateNativeTwoStatePromotionUnlocked(context);
+        if (!(selected->descriptor->flags &
+              OBELISK_RT_PROCESS_BYTECODE_READ_ONLY))
+          invalidateNativeTwoStatePromotionUnlocked(context);
       }
       tier = OBELISK_RT_TIER_BYTECODE;
       generatedActions = false;
@@ -1138,7 +1141,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
             scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
-        scheduled.instance = caller;
+        updateScheduledProcessInstance(context, scheduled, caller);
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
         scheduled.waitSize = 0;
@@ -1173,7 +1176,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
                                                 scheduled.random);
       obelisk_rt_unregister_signal_wait_unlocked(
           context, scheduled.signalSubscriptions, scheduled.token, false);
-      scheduled.instance = nullptr;
+      updateScheduledProcessInstance(context, scheduled, nullptr);
       ++context->schedulerDeadProcessCount;
       context->schedulerCompactionPending = true;
       if (terminationRequested || killRequested)
@@ -1313,7 +1316,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         return status;
       scheduled.callers.push_back(selected);
       scheduled.callerControlDepths.push_back(scheduled.controls.size());
-      scheduled.instance = callee;
+      updateScheduledProcessInstance(context, scheduled, callee);
       scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
       scheduled.waitOffset = 0;
       scheduled.waitSize = 0;
@@ -2794,9 +2797,7 @@ nativeCheckpoint:
             obelisk_rt_replaceable_events(context))
       pendingNBAs += replaceable->calendar.size();
     pendingNBAs += context->scheduledPassSwitchEvents.size();
-    for (const StaticNBAAccumulator &accumulator :
-         context->staticNBAAccumulators)
-      pendingNBAs += accumulator.valid;
+    pendingNBAs += context->staticNBAPendingAccumulatorCount;
     bool valid = snapshot.size == sizeof(obelisk_rt_aot_deopt_snapshot) &&
                  snapshot.current_time == context->schedulerTime &&
                  snapshot.actor_count == liveActors &&
@@ -2983,6 +2984,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleSnapshotNBAs.clear();
   context->staticNBAAccumulators.clear();
   context->staticNBAAccumulatorsPending = false;
+  context->staticNBAPendingAccumulatorCount = 0;
   context->staticNBASlowRoots.clear();
   context->staticNBASlowRootsPresent = false;
   context->staticNBARootHasFanout.clear();

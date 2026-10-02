@@ -22,7 +22,9 @@ struct NativeFunctionFrameResult {
 /// specialized body would change the native/bytecode fallback ABI. Each pass
 /// explicitly preserves this module analysis; unrelated mutations invalidate
 /// it, and dependent passes diagnose a missing prerequisite instead of using
-/// stale operation pointers. No state is shared between modules or pass copies.
+/// stale operation pointers. The unspecialized Frames boundary can be replayed
+/// from verified immutable frame certificates; later boundaries still require
+/// this preserved analysis. No state is shared between modules or pass copies.
 struct NativePipelineAnalysis {
   explicit NativePipelineAnalysis(mlir::Operation *operation)
       : module(mlir::cast<mlir::ModuleOp>(operation)),
@@ -56,6 +58,7 @@ struct NativePipelineAnalysis {
   mlir::LogicalResult planState();
   mlir::LogicalResult prepareFrameInputs();
   mlir::LogicalResult collectFrames();
+  mlir::LogicalResult restoreFrames();
   mlir::LogicalResult planActors();
   mlir::LogicalResult specializeCaptures();
   mlir::LogicalResult planSchedule();

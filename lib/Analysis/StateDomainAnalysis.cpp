@@ -2,6 +2,7 @@
 
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
+#include "obelisk/Analysis/LogicBitAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -178,10 +179,11 @@ bool hasInRangeConstantIndex(sim::SimLogicDynExtractOp op) {
   return low <= inputWidth && resultWidth <= inputWidth - low;
 }
 
-StateDomainFact transferOperation(Operation *op,
-                                  const DenseMap<Value, StateDomainFact> &facts,
-                                  const analysis::HandleFacts &provenance,
-                                  const RootSet &assumedKnownRoots) {
+StateDomainFact transferOperation(
+    Operation *op, const DenseMap<Value, StateDomainFact> &facts,
+    const analysis::HandleFacts &provenance,
+    const DenseMap<Value, analysis::HandleCertificate> &certificates,
+    const RootSet &assumedKnownRoots) {
   if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
     return constant.getUnknown().isZero()
                ? twoState(StateDomainReason::LogicConstant)
@@ -190,7 +192,10 @@ StateDomainFact transferOperation(Operation *op,
     return twoState(StateDomainReason::LogicFromBits);
   if (auto load = dyn_cast<sim::SimRefLoadOp>(op)) {
     auto root = provenance.find(load.getReference());
+    auto certificate = certificates.find(load.getReference());
     if (root != provenance.end() && root->second.descriptor &&
+        (!root->second.dynamic ||
+         (certificate != certificates.end() && certificate->second.inBounds)) &&
         assumedKnownRoots.contains(
             getRootKey(root->second.resource, *root->second.descriptor)))
       return twoState(StateDomainReason::InductiveRootRead);
@@ -331,6 +336,8 @@ struct BlockArgumentSummary {
 struct FunctionSummary {
   sim::SimFuncOp function;
   analysis::HandleFacts provenance;
+  DenseMap<Value, analysis::HandleCertificate> certificates;
+  LogicBitAnalysis bitAnalysis;
   SmallVector<Block *> blocks;
   SmallVector<BlockArgumentSummary> blockArguments;
   SmallVector<Operation *> operations;
@@ -345,7 +352,10 @@ buildSummary(sim::SimFuncOp function,
              const analysis::HandleDataflowAnalysis &descriptorProvenance) {
   FunctionSummary summary;
   summary.function = function;
-  summary.provenance = descriptorProvenance.derive(function);
+  summary.bitAnalysis = LogicBitAnalysis(function);
+  auto handles = descriptorProvenance.analyze(function);
+  summary.provenance = std::move(handles.facts);
+  summary.certificates = std::move(handles.certificates);
   if (function.getBody().empty())
     return summary;
 
@@ -614,6 +624,7 @@ void propagateFunction(const FunctionSummary &summary,
     return;
 
   Block &entry = function.getBody().front();
+  const auto &bitAnalysis = summary.bitAnalysis;
   for (BlockArgument argument : entry.getArguments())
     if (isLogic(argument.getType()) &&
         argument.getArgNumber() < formalBoundaries.size())
@@ -708,8 +719,14 @@ void propagateFunction(const FunctionSummary &summary,
         }
         continue;
       }
-      StateDomainFact transferred = transferOperation(
-          operation, local.values, summary.provenance, assumedKnownRoots);
+      StateDomainFact transferred =
+          transferOperation(operation, local.values, summary.provenance,
+                            summary.certificates, assumedKnownRoots);
+      if (transferred.domain != StateDomain::TwoState &&
+          operation->getNumResults() == 1)
+        if (auto bits = bitAnalysis.get(operation->getResult(0));
+            bits && bits->known.isAllOnes())
+          transferred = twoState(StateDomainReason::PartialKnownBits);
       for (Value result : operation->getResults())
         if (shouldTrackResult(operation, result))
           update(result, transferred);
@@ -819,6 +836,8 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
     return "case-comparison";
   case StateDomainReason::AbsorbingConstant:
     return "absorbing-constant";
+  case StateDomainReason::PartialKnownBits:
+    return "partial-known-bits";
   case StateDomainReason::InductiveRootRead:
     return "inductive-root-read";
   case StateDomainReason::RefLoad:
