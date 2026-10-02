@@ -1,0 +1,22 @@
+// RUN: %python %S/Inputs/gen-write-execution.py > %t.mlir
+// RUN: obelisk-opt %t.mlir --test-obelisk-storage-writes -o /dev/null 2>&1 | FileCheck %s
+
+// Preserve path exclusivity, repeated execution, and conservative call effects
+// with more than one word of tracked writes and long identity-transfer spans.
+// CHECK-LABEL: function diamond
+// CHECK-COUNT-130: once=1
+// CHECK: pair 0,64 exclusive=0
+// CHECK-NEXT: pair 0,65 exclusive=1
+// CHECK: pair 64,65 exclusive=1
+// CHECK: pair 65,129 exclusive=0
+// CHECK-LABEL: function loop
+// CHECK-COUNT-130: once=0
+// CHECK: pair 0,64 exclusive=0
+// CHECK-NEXT: pair 0,65 exclusive=1
+// CHECK: pair 64,65 exclusive=1
+// CHECK: pair 65,129 exclusive=0
+// CHECK-LABEL: function call
+// CHECK-COUNT-130: once=0
+// CHECK: pair 0,65 exclusive=0
+// CHECK: pair 64,65 exclusive=0
+// CHECK: pair 65,129 exclusive=0

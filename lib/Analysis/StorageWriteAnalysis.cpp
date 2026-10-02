@@ -1,4 +1,5 @@
-//===- StorageWriteAnalysis.cpp - Storage-write dataflow --------------------===//
+//===- StorageWriteAnalysis.cpp - Storage-write dataflow
+//--------------------===//
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -131,30 +132,35 @@ class WriteExecutionLattice : public dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
   bool reachable = false;
-  SmallVector<uint8_t> counts;
-  ChangeResult joinCounts(ArrayRef<uint8_t> incoming) {
+  // The product of {0, 1, many} counts is two may-bitsets. Keeping the
+  // representation packed makes joins word-parallel without losing any
+  // per-statement execution or mutual-exclusion information.
+  llvm::BitVector seen, repeated;
+  ChangeResult joinCounts(const llvm::BitVector &incomingSeen,
+                          const llvm::BitVector &incomingRepeated) {
     if (!reachable) {
       reachable = true;
-      counts.assign(incoming.begin(), incoming.end());
+      seen = incomingSeen;
+      repeated = incomingRepeated;
       return ChangeResult::Change;
     }
-    bool changed = false;
-    for (auto [count, rhs] : llvm::zip(counts, incoming))
-      if (rhs > count) {
-        count = rhs;
-        changed = true;
-      }
-    return changed ? ChangeResult::Change : ChangeResult::NoChange;
+    if (!incomingSeen.test(seen) && !incomingRepeated.test(repeated))
+      return ChangeResult::NoChange;
+    seen |= incomingSeen;
+    repeated |= incomingRepeated;
+    return ChangeResult::Change;
   }
   ChangeResult join(const AbstractDenseLattice &rhs) override {
     const auto &other = static_cast<const WriteExecutionLattice &>(rhs);
-    return other.reachable ? joinCounts(other.counts) : ChangeResult::NoChange;
+    return other.reachable ? joinCounts(other.seen, other.repeated)
+                           : ChangeResult::NoChange;
   }
   void print(raw_ostream &os) const override {
     if (!reachable)
       os << "unreachable";
     else
-      llvm::interleaveComma(counts, os);
+      for (unsigned index = 0; index != seen.size(); ++index)
+        os << (repeated.test(index) ? 2 : seen.test(index) ? 1 : 0) << ' ';
   }
 };
 
@@ -172,20 +178,22 @@ public:
                                WriteExecutionLattice *after) override {
     if (!before.reachable)
       return success();
-    SmallVector<uint8_t> next = before.counts;
-    if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(op)) {
-      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
-      if (resetAtPositiveDelay && constant && constant.getValue() != 0)
-        std::fill(next.begin(), next.end(), 0);
-    } else if (auto write = writes.find(op); write != writes.end()) {
-      uint8_t &count = next[write->second];
-      count = std::min<unsigned>(2, count + 1);
-    } else if (unknownCallEffects &&
-               isa<CallOpInterface, sim::SimCallOp, sim::SimClassDirectCallOp,
-                   sim::SimClassVirtualCallOp>(op)) {
-      std::fill(next.begin(), next.end(), 2);
+    auto write = writes.find(op);
+    if (resetsWindow(op)) {
+      llvm::BitVector zero(writes.size());
+      propagateIfChanged(after, after->joinCounts(zero, zero));
+    } else if (write != writes.end()) {
+      llvm::BitVector seen = before.seen, repeated = before.repeated;
+      if (seen.test(write->second))
+        repeated.set(write->second);
+      seen.set(write->second);
+      propagateIfChanged(after, after->joinCounts(seen, repeated));
+    } else if (hasUnknownCallEffects(op)) {
+      llvm::BitVector many(writes.size(), true);
+      propagateIfChanged(after, after->joinCounts(many, many));
+    } else if (&before != after) {
+      propagateIfChanged(after, after->join(before));
     }
-    propagateIfChanged(after, after->joinCounts(next));
     return success();
   }
   void visitCallControlFlowTransfer(CallOpInterface call,
@@ -198,9 +206,33 @@ public:
   }
 
 private:
+  bool resetsWindow(Operation *op) const {
+    auto delay = dyn_cast<sim::SimSuspendDelayOp>(op);
+    if (!resetAtPositiveDelay || !delay)
+      return false;
+    auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+    return constant && constant.getValue() != 0;
+  }
+  bool hasUnknownCallEffects(Operation *op) const {
+    return unknownCallEffects &&
+           isa<CallOpInterface, sim::SimCallOp, sim::SimClassDirectCallOp,
+               sim::SimClassVirtualCallOp>(op);
+  }
+  void buildOperationEquivalentLatticeAnchor(Operation *op) override {
+    // Most operations have an identity transfer. Use the solver's lattice
+    // equivalence classes so a long arithmetic cone shares one execution
+    // state, rather than propagating the entire write product at every op.
+    // Region/call/CFG transfers remain under the dense framework's control.
+    if (op->getNumRegions() || op->getNumSuccessors() ||
+        op->hasTrait<OpTrait::IsTerminator>() || isa<CallOpInterface>(op) ||
+        writes.contains(op) || resetsWindow(op) || hasUnknownCallEffects(op))
+      return;
+    unionLatticeAnchors<WriteExecutionLattice>(getProgramPointBefore(op),
+                                               getProgramPointAfter(op));
+  }
   void setToEntryState(WriteExecutionLattice *lattice) override {
-    SmallVector<uint8_t> zero(writes.size(), 0);
-    propagateIfChanged(lattice, lattice->joinCounts(zero));
+    llvm::BitVector zero(writes.size());
+    propagateIfChanged(lattice, lattice->joinCounts(zero, zero));
   }
   const DenseMap<Operation *, unsigned> &writes;
   bool unknownCallEffects;
@@ -320,6 +352,8 @@ WriteExecutionBounds::WriteExecutionBounds(Operation *scope,
                                            bool resetAtPositiveDelay) {
   for (Operation *op : tracked)
     indices.try_emplace(op, indices.size());
+  if (indices.empty())
+    return;
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
@@ -337,11 +371,12 @@ WriteExecutionBounds::WriteExecutionBounds(Operation *scope,
     if (!before || !after)
       preceding[index].set();
     else {
-      bounds[index] = after->reachable ? after->counts[index] : 0;
+      bounds[index] = !after->reachable        ? 0
+                      : after->repeated[index] ? 2
+                      : after->seen[index]     ? 1
+                                               : 0;
       if (before->reachable)
-        for (auto [other, count] : llvm::enumerate(before->counts))
-          if (count)
-            preceding[index].set(other);
+        preceding[index] = before->seen;
     }
   }
   valid = true;
