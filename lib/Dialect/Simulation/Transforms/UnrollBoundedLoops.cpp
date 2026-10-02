@@ -9,12 +9,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/Support/raw_ostream.h"
 
 #include <optional>
-#include <string>
 
 using namespace mlir;
 
@@ -610,13 +609,11 @@ class ObeliskSimMarkBoundedLoopsPass
     if (!provenBackedges.empty() &&
         function->getParentOfType<ModuleOp>()->hasAttr(
             "obelisk.debug.native_timing")) {
-      // Per-function passes run concurrently, so build the line before writing
-      // it: separate stream insertions interleave between actors.
-      std::string line;
-      llvm::raw_string_ostream(line)
+      // The diagnostic engine serializes output from concurrent function
+      // passes.
+      emitRemark(function.getLoc())
           << "obelisk bounded loops: proven=" << provenBackedges.size()
-          << " actor=" << function.getSymName() << '\n';
-      llvm::errs() << line;
+          << " actor=" << function.getSymName();
     }
   }
 };
