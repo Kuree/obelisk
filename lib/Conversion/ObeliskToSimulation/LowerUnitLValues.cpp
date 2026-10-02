@@ -2586,14 +2586,12 @@ LogicalResult UnitLowering::lowerStaticClockingOutputAssignment(
   } else {
     auto reference =
         clockingVariable->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-    semantic::SVClockVarSymbolOp declaration;
-    if (reference)
-      clockingVariable->getParentOfType<ModuleOp>().walk(
-          [&](semantic::SVClockVarSymbolOp candidate) {
-            if (!declaration && candidate.getSymName() ==
-                                    reference.getLeafReference().getValue())
-              declaration = candidate;
-          });
+    auto declaration =
+        reference
+            ? loweringInputs.lookupNearestSymbolFrom<
+                  semantic::SVClockVarSymbolOp>(
+                  clockingVariable->getParentOfType<ModuleOp>(), reference)
+            : semantic::SVClockVarSymbolOp{};
     SmallVector<Operation *> declarationChildren =
         declaration ? getChildren(declaration) : SmallVector<Operation *>{};
     Operation *outputExpression = nullptr;

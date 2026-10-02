@@ -1,4 +1,7 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' > %t.threaded
+// RUN: obelisk-opt %s --mlir-disable-threading '--lower-obelisk-to-sim=opt-level=0' > %t.serial
+// RUN: diff -u %t.serial %t.threaded
+// RUN: FileCheck %s < %t.threaded
 
 module {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
