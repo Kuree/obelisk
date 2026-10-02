@@ -1244,7 +1244,7 @@ UnitLowering::outlineForkBranch(
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
   IRMapping mapping;
   Operation *root = bodyBuilder.clone(*branch, mapping);
-  UnitLowering nested(outlined);
+  UnitLowering nested(outlined, loweringInputs);
   for (auto [expression, argument] : expressionCaptureArguments) {
     Operation *cloned = mapping.lookupOrNull(expression);
     if (!cloned) {

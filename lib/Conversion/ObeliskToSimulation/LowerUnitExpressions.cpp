@@ -37,17 +37,17 @@ bool containsUnboundedLiteral(Operation *operation) {
 }
 
 // Whether `object`'s class, or one of its base classes, declares `field`.
-bool classDeclares(Operation *from, sim::ClassHandleType object,
-                   FlatSymbolRefAttr owner) {
+bool classDeclares(const UnitLoweringInputs &loweringInputs, Operation *from,
+                   sim::ClassHandleType object, FlatSymbolRefAttr owner) {
   llvm::SmallPtrSet<Operation *, 8> visited;
-  auto current = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+  auto current = loweringInputs.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
       from, object.getClassName());
   while (current && visited.insert(current).second) {
     if (current.getSymNameAttr() == owner.getAttr())
       return true;
     if (!current.getBaseAttr())
       break;
-    current = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+    current = loweringInputs.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
         current, current.getBaseAttr());
   }
   return false;
@@ -541,10 +541,10 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     auto ownsClassProperty = [&](Value candidate) {
       auto handle = dyn_cast<sim::ClassHandleType>(candidate.getType());
       auto declaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
-              function, field);
+          lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(function, field);
       return handle && declaration &&
-             classDeclares(function, handle, declaration.getOwnerAttr());
+             classDeclares(loweringInputs, function, handle,
+                           declaration.getOwnerAttr());
     };
     Value object = thisObject;
     if (enclosingThisObject && !ownsClassProperty(thisObject) &&

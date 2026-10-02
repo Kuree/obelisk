@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s \
-// RUN:   '--pass-pipeline=builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
+// RUN:   '--pass-pipeline=builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
 // RUN:   --verify-diagnostics
 
 module {

@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
+// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
 
 // Observer result metadata crosses the prepare/unit-lowering boundary. Reject
 // unknown values instead of silently treating them as packed-value observers.

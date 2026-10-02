@@ -322,14 +322,18 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // anchor after the nested early DCE has completed. A nested pass must not
   // mutate its parent operation.
   manager.addPass(createObeliskSimPrepareCoveragePass());
-  OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   // Prepared virtual calls expose all compatible targets as symbol edges.
   // Once DCE removes unused method families, compact their vtable slots before
   // those call contracts are lowered to executable dispatch operations.
   ObeliskSimDevirtualizeClassCallsPassOptions earlyDevirtualizeOptions;
   earlyDevirtualizeOptions.preserveAllMethods = !earlySymbolDCE;
-  designManager.addPass(createObeliskSimDevirtualizeClassCallsPass(
-      std::move(earlyDevirtualizeOptions)));
+  manager.nest<sim::SimDesignOp>().addPass(
+      createObeliskSimDevirtualizeClassCallsPass(
+          std::move(earlyDevirtualizeOptions)));
+  // Freeze after DCE and dispatch preparation, before any nested function
+  // worker can replace a sibling function's attribute dictionary.
+  manager.addPass(createObeliskSimPrepareUnitLoweringPass());
+  OpPassManager &designManager = manager.nest<sim::SimDesignOp>();
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createObeliskSimLowerUnitPass());

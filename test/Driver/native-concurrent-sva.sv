@@ -14,7 +14,7 @@
 // RUN: diff -u %t.o0.native.out %t.o3.aot.out
 // RUN: FileCheck %s < %t.o0.native.out
 // RUN: obelisk --std=1800-2023 -emit-obelisk %s -o %t.obelisk.mlir
-// RUN: obelisk-opt %t.obelisk.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
+// RUN: obelisk-opt %t.obelisk.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
 // RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=FINAL --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
 
 module native_concurrent_sva;

@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=NO-PARENT-AWAIT
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=NO-PARENT-AWAIT
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' -o /dev/null
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 

@@ -4,7 +4,7 @@
 // RUN:   | %python %S/Inputs/dump-coverage-schema.py \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
+// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
 // RUN:   | FileCheck %s --check-prefix=LOWER
 
 !int = !obelisk.integral<32, true, false, 31 : 0, int>

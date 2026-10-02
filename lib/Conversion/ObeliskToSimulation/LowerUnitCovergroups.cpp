@@ -78,11 +78,10 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
   } else {
     auto reference =
         optionExpression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-    auto property = reference
-                        ? SymbolTable::lookupNearestSymbolFrom<
-                              semantic::SVClassPropertySymbolOp>(
-                              optionExpression, reference)
-                        : semantic::SVClassPropertySymbolOp{};
+    auto property =
+        reference ? lookupNearestSymbolFrom<semantic::SVClassPropertySymbolOp>(
+                        optionExpression, reference)
+                  : semantic::SVClassPropertySymbolOp{};
     auto referencedPath =
         optionExpression->getAttrOfType<StringAttr>("referenced_path");
     if ((!property || property.getName() != "type_option") &&
@@ -108,11 +107,10 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
 
   if (typeOption) {
     auto reference = owner->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-    auto property = reference
-                        ? SymbolTable::lookupNearestSymbolFrom<
-                              semantic::SVClassPropertySymbolOp>(owner,
-                                                                  reference)
-                        : semantic::SVClassPropertySymbolOp{};
+    auto property =
+        reference ? lookupNearestSymbolFrom<semantic::SVClassPropertySymbolOp>(
+                        owner, reference)
+                  : semantic::SVClassPropertySymbolOp{};
     auto covergroup =
         property
             ? property->getParentOfType<semantic::SVCovergroupTypeOp>()
@@ -174,11 +172,10 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
     auto handleType = succeeded(loweredType)
                           ? dyn_cast<sim::CovergroupHandleType>(*loweredType)
                           : sim::CovergroupHandleType{};
-    auto declaration =
-        handleType
-            ? SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
-                  function, handleType.getCovergroupName())
-            : sim::SimCovergroupDeclOp{};
+    auto declaration = handleType
+                           ? lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+                                 function, handleType.getCovergroupName())
+                           : sim::SimCovergroupDeclOp{};
     if (!declaration || !declaration.getSchemaType()) {
       emitError(location)
           << "functional coverage type option has no typed v1 declaration";
@@ -1449,7 +1446,8 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
   return success();
 }
 
-LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
+LogicalResult materializeCovergroupClockingSamplers(
+    sim::SimDesignOp design, const UnitLoweringInputs &loweringInputs) {
   SmallVector<sim::SimCovergroupClockingSpawnOp> plans;
   design.walk(
       [&](sim::SimCovergroupClockingSpawnOp plan) { plans.push_back(plan); });
@@ -1668,7 +1666,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
         sim::EntryKind::Observer, evaluatorAttributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(evaluator,
                                      SymbolTable::Visibility::Private);
-    UnitLowering evaluatorLowering(evaluator);
+    UnitLowering evaluatorLowering(evaluator, loweringInputs);
     Value classOwner = classOwnerCapture >= 0
                            ? evaluator.getArgument(2 + classOwnerCapture)
                            : Value{};
@@ -1692,7 +1690,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
         sim::EntryKind::Fork, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(sampler, SymbolTable::Visibility::Private);
 
-    UnitLowering nested(sampler);
+    UnitLowering nested(sampler, loweringInputs);
 
     SmallVector<semantic::SVSignalEventControlOp> events;
     if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(control))
@@ -1905,7 +1903,7 @@ LogicalResult materializeCovergroupClockingSamplers(sim::SimDesignOp design) {
         sim::EntryKind::Observer, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(evaluator,
                                      SymbolTable::Visibility::Private);
-    UnitLowering evaluatorLowering(evaluator);
+    UnitLowering evaluatorLowering(evaluator, loweringInputs);
     Value classOwner = classOwnerCapture >= 0
                            ? evaluator.getArgument(2 + classOwnerCapture)
                            : Value{};

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare-coverage | FileCheck %s --check-prefix=INVENTORY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-coverage,obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
 // RUN: obelisk-opt %s --obelisk-sim-prepare-coverage \
 // RUN:   | %python %S/Inputs/dump-coverage-schema.py \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA

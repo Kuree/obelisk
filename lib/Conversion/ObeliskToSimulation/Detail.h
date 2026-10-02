@@ -537,8 +537,8 @@ bool isStaticallyAllocatedOverrideTarget(::mlir::Value value);
 /// Materialize deferred automatic covergroup clocking samplers at the design
 /// anchor. Per-function lowering records plans but never mutates sibling
 /// symbols, keeping the nested pass safe under MLIR's parallel pass manager.
-::mlir::LogicalResult
-materializeCovergroupClockingSamplers(sim::SimDesignOp design);
+::mlir::LogicalResult materializeCovergroupClockingSamplers(
+    sim::SimDesignOp design, const class UnitLoweringInputs &loweringInputs);
 
 /// Whether a packed semantic type is signed.
 bool isSignedSemanticType(::mlir::Type type);

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-clocked-samples))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(obelisk-sim-materialize-clocked-samples))' | FileCheck %s
 
 // One source function may contain multiple concurrent assertions. Every
 // observer request must survive parallel unit lowering and be finalized; a

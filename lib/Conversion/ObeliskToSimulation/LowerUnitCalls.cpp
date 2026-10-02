@@ -779,13 +779,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     sim::SimClassDeclOp declaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-            function, objectType.getClassName());
+        lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
+                                                     objectType.getClassName());
     while (declaration &&
            !declaration->hasAttr("simulation.random_mode_field")) {
       if (!declaration.getBaseAttr())
         break;
-      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+      declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
     auto modeField = declaration
@@ -1003,13 +1003,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return convert(enabled, *resultType, false, location);
     }
     sim::SimClassDeclOp declaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-            function, objectType.getClassName());
+        lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
+                                                     objectType.getClassName());
     while (declaration &&
            !declaration->hasAttr("simulation.constraint_mode_field")) {
       if (!declaration.getBaseAttr())
         break;
-      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+      declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
     auto modeField = declaration
@@ -1146,13 +1146,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     auto emitMethod = [&](Value receiver) -> FailureOr<Value> {
       auto objectType = cast<sim::ClassHandleType>(receiver.getType());
       sim::SimClassDeclOp declaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, objectType.getClassName());
       while (declaration &&
              !declaration->hasAttr("simulation.random_state_field")) {
         if (!declaration.getBaseAttr())
           break;
-        declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, declaration.getBaseAttr());
       }
       auto stateField = declaration
@@ -1566,10 +1566,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     auto method =
         op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_method");
     auto declaration =
-        method
-            ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
-                  op, method)
-            : sim::SimClassMethodDeclOp{};
+        method ? lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(op, method)
+               : sim::SimClassMethodDeclOp{};
     if (declaration) {
       Type targetType = sim::ClassHandleType::get(function.getContext(),
                                                   declaration.getOwnerAttr());
@@ -2449,9 +2447,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
   bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
   sim::SimFuncOp directCallee =
-      SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(op, callee);
-  bool voidFunction =
-      directCallee && directCallee->hasAttr("simulation.void_function");
+      lookupNearestSymbolFrom<sim::SimFuncOp>(op, callee);
+  const UnitLoweringInputs::Callable *callable =
+      loweringInputs.getCallable(directCallee);
+  bool voidFunction = callable && callable->voidFunction;
   bool hasFunctionResult = !dpiTask && !directTask && !voidFunction;
   SmallVector<Type> callResultTypes;
   if (hasFunctionResult) {
@@ -2753,13 +2752,13 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
         return failure();
       }
       sim::SimClassDeclOp derived =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, receiverType.getClassName());
       if (!derived || !derived.getBaseAttr()) {
         emitError(location) << "implicit super.new has no resolved base class";
         return failure();
       }
-      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+      declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, derived.getBaseAttr());
       receiverType = sim::ClassHandleType::get(function.getContext(),
                                                derived.getBaseAttr());
@@ -2770,7 +2769,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       if (failed(resultType) ||
           !(receiverType = dyn_cast<sim::ClassHandleType>(*resultType)))
         return failure();
-      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+      declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, receiverType.getClassName());
       receiver = sim::SimClassAllocOp::create(
           builder, location, receiverType,
@@ -3042,21 +3041,22 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       }
       arguments.push_back(capture);
     }
-  auto constructor =
-      SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(function, callee);
-  if (!constructor || constructor.getFunctionType().getNumInputs() < 2 ||
-      !isa<sim::ClassHandleType>(constructor.getFunctionType().getInput(1))) {
+  auto constructor = lookupNearestSymbolFrom<sim::SimFuncOp>(function, callee);
+  const UnitLoweringInputs::Callable *signature =
+      loweringInputs.getCallable(constructor);
+  if (!signature || signature->type.getNumInputs() < 2 ||
+      !isa<sim::ClassHandleType>(signature->type.getInput(1))) {
     emitError(location) << "constructor implementation has no this parameter";
     return failure();
   }
-  FailureOr<Value> adjustedReceiver = convert(
-      receiver, constructor.getFunctionType().getInput(1), false, location);
+  FailureOr<Value> adjustedReceiver =
+      convert(receiver, signature->type.getInput(1), false, location);
   if (failed(adjustedReceiver))
     return failure();
   SmallVector<Type> resultTypes;
   for (const ConstructorCopyOut &copyOut : copyOuts)
     resultTypes.push_back(copyOut.formalType);
-  if (constructor.getFunctionType().getNumResults() != resultTypes.size()) {
+  if (signature->type.getNumResults() != resultTypes.size()) {
     emitError(location)
         << "constructor implementation has inconsistent copy-out results";
     return failure();
@@ -3089,13 +3089,13 @@ LogicalResult UnitLowering::initializeObjectRandomStream(Value object,
   if (!objectType)
     return failure();
   sim::SimClassDeclOp declaration =
-      SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-          function, objectType.getClassName());
+      lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
+                                                   objectType.getClassName());
   while (declaration &&
          !declaration->hasAttr("simulation.random_state_field")) {
     if (!declaration.getBaseAttr())
       break;
-    declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+    declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
         function, declaration.getBaseAttr());
   }
   auto stateField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(

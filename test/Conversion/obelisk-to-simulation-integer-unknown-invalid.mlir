@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
+// RUN: not obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 5.7.1 permits an X/Z/? in a decimal literal only when it is
 // the sole digit. Keep the shared parser defensive for hand-authored IR.

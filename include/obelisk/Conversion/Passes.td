@@ -59,9 +59,19 @@ def ObeliskSimPrepareCoveragePass
   ];
 }
 
+def ObeliskSimPrepareUnitLoweringPass
+    : Pass<"obelisk-sim-prepare-unit-lowering", "mlir::ModuleOp"> {
+  let summary = "Cache symbol tables and callable metadata before parallel unit lowering";
+}
+
 def ObeliskSimLowerUnitPass
     : Pass<"obelisk-sim-lower-unit", "obelisk::sim::SimFuncOp"> {
   let summary = "Lower one frozen simulation code unit to SSA and CF";
+  let description = [{
+    Requires obelisk-sim-prepare-unit-lowering at the enclosing module anchor.
+    Workers resolve external symbols through the cached parent analysis and
+    never read mutable sibling function attribute dictionaries.
+  }];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::arith::ArithDialect",

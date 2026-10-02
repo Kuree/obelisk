@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/up.mlir --obelisk-sim-prepare -o %t.up.prepared
-// RUN: obelisk-opt %t.up.prepared --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %t.up.prepared --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 // RUN: obelisk-opt %t/down.mlir --obelisk-sim-prepare -o %t.down.prepared
-// RUN: obelisk-opt %t.down.prepared --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %t.down.prepared --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 // Both indexed-up and indexed-down assertion slices sample the whole base
 // and index before extracting a value, never a dynamically addressed reference.
 

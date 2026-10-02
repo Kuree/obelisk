@@ -9,6 +9,7 @@
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_LOWERUNIT_H
 
 #include "Detail.h"
+#include "UnitLoweringInputs.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
@@ -50,14 +51,27 @@ lowerStringLiteralValue(::mlir::OpBuilder &builder,
 
 class UnitLowering {
 public:
-  explicit UnitLowering(sim::SimFuncOp function);
+  UnitLowering(sim::SimFuncOp function,
+               const UnitLoweringInputs &loweringInputs);
 
   ::mlir::LogicalResult lower(::mlir::ArrayRef<::mlir::Operation *> roots);
 
-  friend ::mlir::LogicalResult
-  materializeCovergroupClockingSamplers(sim::SimDesignOp design);
+  friend ::mlir::LogicalResult materializeCovergroupClockingSamplers(
+      sim::SimDesignOp design, const UnitLoweringInputs &loweringInputs);
 
 private:
+  template <typename T>
+  T lookupNearestSymbolFrom(::mlir::Operation *from,
+                            ::mlir::SymbolRefAttr symbol) {
+    // Source scopes and outlined clones inside this function are owned by this
+    // worker. Keep their tables private so erasing those scopes cannot leave
+    // stale operation pointers in the shared parent analysis.
+    auto *scope = ::mlir::SymbolTable::getNearestSymbolTable(from);
+    if (scope && function->isAncestor(scope))
+      return localSymbols.lookupNearestSymbolFrom<T>(from, symbol);
+    return loweringInputs.lookupNearestSymbolFrom<T>(from, symbol);
+  }
+
   struct LoweredOutputList {
     ::mlir::SmallVector<::mlir::Value> items;
     ::mlir::SmallVector<int32_t> flags;
@@ -672,6 +686,8 @@ private:
   }
 
   sim::SimFuncOp function;
+  const UnitLoweringInputs &loweringInputs;
+  ::mlir::SymbolTableCollection localSymbols;
   ::mlir::OpBuilder builder;
   ::mlir::Block *current;
   /// SSA remapping for the short prepared initializer fragment encountered

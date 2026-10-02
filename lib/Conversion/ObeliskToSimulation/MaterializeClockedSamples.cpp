@@ -1,6 +1,7 @@
 //===- MaterializeClockedSamples.cpp - Deferred clock samplers ------------===//
 
 #include "Detail.h"
+#include "UnitLoweringInputs.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
@@ -30,7 +31,15 @@ class ObeliskSimMaterializeClockedSamplesPass
 public:
   void runOnOperation() override {
     sim::SimDesignOp design = getOperation();
-    if (failed(simlowering::materializeCovergroupClockingSamplers(design))) {
+    auto inputs = getCachedParentAnalysis<simlowering::UnitLoweringInputs>(
+        design->getParentOfType<ModuleOp>());
+    if (!inputs) {
+      design.emitError("clocked sample materialization requires "
+                       "obelisk-sim-prepare-unit-lowering");
+      return signalPassFailure();
+    }
+    if (failed(simlowering::materializeCovergroupClockingSamplers(
+            design, inputs->get()))) {
       signalPassFailure();
       return;
     }

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare -o %t.prepared.mlir
-// RUN: obelisk-opt %t.prepared.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: obelisk-opt %t.prepared.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
 
 // A sampled constant part-select must load its subreference; an indexed
 // part-select must sample the whole base before dynamic extraction.

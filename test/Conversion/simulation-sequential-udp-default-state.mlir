@@ -1,11 +1,11 @@
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
+// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
 // RUN:   | FileCheck %s --check-prefix=LOWER
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-unit)),encode-obelisk-sim-to-bytecode)' \
+// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),encode-obelisk-sim-to-bytecode)' \
 // RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 

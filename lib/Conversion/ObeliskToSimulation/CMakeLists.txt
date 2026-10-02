@@ -34,6 +34,7 @@ add_mlir_library(ObeliskToSimulation
   PrepareUnits.cpp
   PrepareValidation.cpp
   SemanticUtils.cpp
+  UnitLoweringInputs.cpp
 
   DEPENDS
   ObeliskConversionPassIncGen

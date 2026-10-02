@@ -458,8 +458,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   sim::SimRandomConstraintTemplateOp constraintTemplate;
   if (constraintTemplateAttr) {
-    constraintTemplate = SymbolTable::lookupNearestSymbolFrom<
-        sim::SimRandomConstraintTemplateOp>(function, constraintTemplateAttr);
+    constraintTemplate =
+        lookupNearestSymbolFrom<sim::SimRandomConstraintTemplateOp>(
+            function, constraintTemplateAttr);
     auto planClass =
         op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
     if (!constraintTemplate || !planClass ||
@@ -632,14 +633,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       auto concreteType =
           cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
-      auto declaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-              function, concreteType.getClassName());
+      auto declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, concreteType.getClassName());
       while (declaration &&
              !declaration->hasAttr("simulation.random_mode_field")) {
         if (!declaration.getBaseAttr())
           break;
-        declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, declaration.getBaseAttr());
       }
       auto modeField = declaration
@@ -751,18 +751,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           objectType.getClassName());
       nestedObjectReference = sim::SimClassFieldRefOp::create(
           builder, location, objectReferenceType, receiver, nestedObjectField);
-      auto nestedDeclaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-              function,
-              cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
-                  .getClassName());
+      auto nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
+                        .getClassName());
       while (nestedDeclaration &&
              !nestedDeclaration->hasAttr("simulation.random_mode_field")) {
         if (!nestedDeclaration.getBaseAttr())
           break;
-        nestedDeclaration =
-            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                function, nestedDeclaration.getBaseAttr());
+        nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, nestedDeclaration.getBaseAttr());
       }
       nestedModeField =
           nestedDeclaration
@@ -1086,18 +1083,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           objectType.getClassName());
       nestedObjectReference = sim::SimClassFieldRefOp::create(
           builder, location, objectReferenceType, receiver, nestedObjectField);
-      auto nestedDeclaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-              function,
-              cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
-                  .getClassName());
+      auto nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
+                        .getClassName());
       while (nestedDeclaration &&
              !nestedDeclaration->hasAttr("simulation.random_mode_field")) {
         if (!nestedDeclaration.getBaseAttr())
           break;
-        nestedDeclaration =
-            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                function, nestedDeclaration.getBaseAttr());
+        nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, nestedDeclaration.getBaseAttr());
       }
       nestedModeField =
           nestedDeclaration
@@ -1189,13 +1183,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                builder.getI64IntegerAttr(0));
   } else {
     sim::SimClassDeclOp declaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-            function, objectType.getClassName());
+        lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
+                                                     objectType.getClassName());
     while (declaration &&
            !declaration->hasAttr("simulation.random_state_field")) {
       if (!declaration.getBaseAttr())
         break;
-      declaration = SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+      declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
     auto stateField = declaration
@@ -1297,16 +1291,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     auto rootConcreteType =
         cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
-    auto rootDeclaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-            function, rootConcreteType.getClassName());
+    auto rootDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        function, rootConcreteType.getClassName());
     while (rootDeclaration &&
            !rootDeclaration->hasAttr("simulation.random_mode_field")) {
       if (!rootDeclaration.getBaseAttr())
         break;
-      rootDeclaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-              function, rootDeclaration.getBaseAttr());
+      rootDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, rootDeclaration.getBaseAttr());
     }
     auto rootModeField =
         rootDeclaration ? rootDeclaration->getAttrOfType<FlatSymbolRefAttr>(
@@ -1538,15 +1530,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
       for (const ObjectPathElement &element : path) {
         sim::SimClassDeclOp currentDeclaration =
-            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            lookupNearestSymbolFrom<sim::SimClassDeclOp>(
                 function, currentType.getClassName());
         while (currentDeclaration &&
                !currentDeclaration->hasAttr("simulation.random_mode_field")) {
           if (!currentDeclaration.getBaseAttr())
             break;
-          currentDeclaration =
-              SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                  function, currentDeclaration.getBaseAttr());
+          currentDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+              function, currentDeclaration.getBaseAttr());
         }
         auto currentModeField =
             currentDeclaration
@@ -1712,15 +1703,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto concreteType = cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
     for (const ObjectPathElement &element : path) {
       sim::SimClassDeclOp currentDeclaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, concreteType.getClassName());
       while (currentDeclaration &&
              !currentDeclaration->hasAttr("simulation.random_mode_field")) {
         if (!currentDeclaration.getBaseAttr())
           break;
-        currentDeclaration =
-            SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                function, currentDeclaration.getBaseAttr());
+        currentDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            function, currentDeclaration.getBaseAttr());
       }
       auto currentModeField =
           currentDeclaration
@@ -1766,15 +1756,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       concreteType = cast<sim::ClassHandleType>(element.concreteType);
     }
     sim::SimClassDeclOp nestedDeclaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, concreteType.getClassName());
     while (nestedDeclaration &&
            !nestedDeclaration->hasAttr("simulation.constraint_mode_field")) {
       if (!nestedDeclaration.getBaseAttr())
         break;
-      nestedDeclaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-              function, nestedDeclaration.getBaseAttr());
+      nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+          function, nestedDeclaration.getBaseAttr());
     }
     auto nestedModeField =
         nestedDeclaration ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
@@ -2830,9 +2819,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             << "active random variable cannot be materialized as state";
         return failure();
       }
-      auto field =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
-              function, reference.getTarget());
+      auto field = lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+          function, reference.getTarget());
       if (!field || field.getIsStatic()) {
         emitError(valueOp.getLoc())
             << "random constraint template state field does not resolve";

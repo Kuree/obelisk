@@ -4,6 +4,9 @@
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.bytecode.out %t.native.out
 // RUN: FileCheck %s < %t.native.out
+// RUN: obelisk -O0 --vpi=off --compile-threads=1 -emit-sim %s -o %t.serial.mlir
+// RUN: obelisk -O0 --vpi=off --compile-threads=8 -emit-sim %s -o %t.parallel.mlir
+// RUN: diff -u %t.serial.mlir %t.parallel.mlir
 
 class conditional_base;
   int value;

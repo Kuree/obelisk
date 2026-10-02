@@ -4165,7 +4165,7 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&entry);
   IRMapping mapping;
   Operation *clonedControl = bodyBuilder.clone(*control, mapping);
-  UnitLowering nested(deferred);
+  UnitLowering nested(deferred, loweringInputs);
   if (repeatArgument) {
     Operation *clonedCount = mapping.lookupOrNull(controlChildren[0]);
     if (!clonedCount) {

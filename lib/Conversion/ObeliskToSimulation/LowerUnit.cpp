@@ -328,9 +328,10 @@ describeContainerElement(Type type, Location location) {
   return describeContainerElementImpl(type, location);
 }
 
-UnitLowering::UnitLowering(sim::SimFuncOp function)
-    : function(function), builder(function.getContext()),
-      current(&function.getBody().front()) {
+UnitLowering::UnitLowering(sim::SimFuncOp function,
+                           const UnitLoweringInputs &loweringInputs)
+    : function(function), loweringInputs(loweringInputs),
+      builder(function.getContext()), current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
   if (auto argument =
           function->getAttrOfType<IntegerAttr>(sim::metadata::thisArgument)) {
@@ -4464,8 +4465,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     // initializer's type need not already be it -- `bit x = 1'b0` initializes
     // a scalar property from a self-determined `bit [0:0]` literal.
     auto property =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(function,
-                                                                       field);
+        lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(function, field);
     if (!property) {
       emitError(location) << "class property initializer has no declared "
                              "property: "
@@ -6843,6 +6843,13 @@ public:
     // call sites lower to simulation.dpi.call in the caller instead.
     if (function.getBody().empty())
       return;
+    auto inputs = getCachedParentAnalysis<simlowering::UnitLoweringInputs>(
+        function->getParentOfType<ModuleOp>());
+    if (!inputs) {
+      function.emitError(
+          "unit lowering requires obelisk-sim-prepare-unit-lowering");
+      return signalPassFailure();
+    }
     if (failed(sim::verifyUnitBindings(function))) {
       signalPassFailure();
       return;
@@ -6862,7 +6869,7 @@ public:
       if (op.hasAttr(placeholderAttrName))
         op.erase();
 
-    simlowering::UnitLowering lowering(function);
+    simlowering::UnitLowering lowering(function, inputs->get());
     LogicalResult result = lowering.lower(sourceRoots);
     for (Operation *source : sourceRoots)
       source->erase();
