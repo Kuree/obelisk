@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
@@ -18,6 +19,40 @@ namespace obelisk {
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 using Pipeline = detail::NativePipelineAnalysis;
+
+// StaticSpecializationAnalysis validated this revision-coupled root policy in
+// planState. Index it once: checking each transfer must not rescan all roots.
+class TransferBindingPolicy {
+public:
+  explicit TransferBindingPolicy(const Pipeline &state) {
+    if (state.staticSpecialization)
+      for (Attribute attribute : state.staticSpecialization.getRoots()) {
+        auto root = cast<schedule::StaticStateRootAttr>(attribute);
+        if (root.getDirect() || root.getGuarded())
+          specializedRoots.insert(root.getDescriptor());
+      }
+  }
+
+  bool canShare(sim::SimFuncOp function,
+                analysis::CaptureCopyProcess copy) const {
+    // IEEE 1800-2023 4.9.1, 4.9.6 and 9.4.2: sharing must preserve
+    // publication as well as the copied value. A descriptor-free kernel
+    // cannot retain a capture's static access/publication certificate.
+    // Those bindings keep their original bodies; an unresolved binding
+    // cannot prove disjointness from the specialized roots either.
+    auto needsStaticBinding = [&](unsigned argument) {
+      auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+          argument, sim::metadata::descriptorId);
+      return !specializedRoots.empty() &&
+             (!descriptor || specializedRoots.contains(descriptor.getUInt()));
+    };
+    return !needsStaticBinding(copy.source) &&
+           !needsStaticBinding(copy.destination);
+  }
+
+private:
+  llvm::SmallDenseSet<uint64_t, 16> specializedRoots;
+};
 
 // Only these captures can be represented by the transfer ABI. The slots come
 // from the canonical frame analysis, never from a specialized function body.
@@ -54,6 +89,7 @@ class PlanNativeTransfersPass final
       return signalPassFailure();
     }
     auto &state = cached->get();
+    TransferBindingPolicy bindings(state);
     OpBuilder builder(getOperation().getBodyRegion());
     builder.setInsertionPointToEnd(getOperation().getBody());
     // IEEE 1800-2023 4.9.1/4.9.6 require time-zero evaluation and source
@@ -67,6 +103,8 @@ class PlanNativeTransfersPass final
           !state.tableProcesses.contains(op))
         continue;
       auto function = cast<sim::SimFuncOp>(op);
+      if (!bindings.canShare(function, copy->second))
+        continue;
       auto offsets = captureOffsets(function, *frame);
       if (!offsets)
         continue;
@@ -136,6 +174,7 @@ class PrepareNativeTransferKernelsPass final
     }
     auto &state = cached->get();
     ModuleOp module = getOperation();
+    TransferBindingPolicy bindings(state);
     OpBuilder builder(module.getContext());
     SymbolTableCollection symbols;
     DenseSet<Operation *> boundActors;
@@ -156,6 +195,11 @@ class PrepareNativeTransferKernelsPass final
           ArrayRef<int64_t>(*offsets) != activation.getCaptureOffsets()) {
         activation.emitError(
             "transfer plan disagrees with canonical copy proof");
+        return signalPassFailure();
+      }
+      if (!bindings.canShare(actor, copy->second)) {
+        activation.emitError(
+            "transfer plan cannot erase specialized storage bindings");
         return signalPassFailure();
       }
     }
