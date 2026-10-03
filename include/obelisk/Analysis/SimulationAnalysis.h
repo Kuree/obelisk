@@ -54,11 +54,17 @@ public:
     return storage != commitStorage.end() &&
            storageNeedsTransients(storage->second);
   }
+  bool commitHasPrivateInfluence(uint32_t commit) const {
+    auto storage = commitStorage.find(commit);
+    return storage != commitStorage.end() &&
+           privateInfluence.contains(storage->second);
+  }
 
 private:
   bool known = false;
   llvm::DenseSet<uint64_t> observable;
   llvm::DenseSet<uint64_t> changeWatched;
+  llvm::DenseSet<uint64_t> privateInfluence;
   llvm::DenseMap<uint32_t, uint64_t> commitStorage;
 };
 

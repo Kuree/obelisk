@@ -65,6 +65,30 @@ LogicalResult NativeKnownValueOp::verify() {
     return emitOpError("requires a fixed native bit value");
   return success();
 }
+LogicalResult NativeNBABatchOp::verify() {
+  if (getBody().empty() || getBody().front().getNumArguments())
+    return emitOpError("requires one block without arguments");
+  Block &body = getBody().front();
+  if (body.empty() || !isa<NativeNBAYieldOp>(body.back()))
+    return emitOpError("requires an nba.yield terminator");
+  int64_t previous = -1;
+  for (Operation &operation : body.without_terminator()) {
+    auto commit = dyn_cast<NativeNBACommitOp>(operation);
+    if (!commit)
+      return emitOpError("body permits only nba.commit actions");
+    if (static_cast<int64_t>(commit.getRoot()) <= previous)
+      return emitOpError("requires distinct roots in increasing order");
+    previous = commit.getRoot();
+  }
+  if (previous == -1)
+    return emitOpError("requires at least one commit");
+  return success();
+}
+LogicalResult NativeNBACommitOp::verify() {
+  if (getRootAttr().getValue().isNegative() || getRoot() >= UINT32_MAX)
+    return emitOpError("root must be between 0 and UINT32_MAX - 1");
+  return success();
+}
 LogicalResult NativeTransitionOp::verify() {
   if (getStaticStateAttr().getValue().isNegative() ||
       getStaticState() > UINT32_MAX)

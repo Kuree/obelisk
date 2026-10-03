@@ -288,6 +288,7 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
       "fallback_rescans=%llu aot_node_executions=%llu "
       "aot_region_passes=%llu aot_fanout_entries=%llu "
       "aot_nba_stages=%llu aot_nba_commits=%llu "
+      "aot_nba_batches=%llu aot_nba_private_commits=%llu "
       "aot_state_fast_paths=%llu aot_state_slow_paths=%llu "
       "aot_deadline_high_water=%llu aot_fallbacks=%llu "
       "aot_checkpoints=%llu aot_terminal_checkpoints=%llu "
@@ -317,6 +318,9 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
           context->signalDiagnostics.aotFanoutEntries),
       static_cast<unsigned long long>(context->signalDiagnostics.aotNBAStages),
       static_cast<unsigned long long>(context->signalDiagnostics.aotNBACommits),
+      static_cast<unsigned long long>(context->signalDiagnostics.aotNBABatches),
+      static_cast<unsigned long long>(
+          context->signalDiagnostics.aotNBAPrivateCommits),
       static_cast<unsigned long long>(
           context->signalDiagnostics.aotStateFastPaths),
       static_cast<unsigned long long>(

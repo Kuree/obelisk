@@ -1,12 +1,47 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 namespace {
+class NBAInfluenceTestPass
+    : public PassWrapper<NBAInfluenceTestPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NBAInfluenceTestPass)
+  StringRef getArgument() const final { return "test-obelisk-nba-influence"; }
+  StringRef getDescription() const final {
+    return "print NBA observer influence cones";
+  }
+  void runOnOperation() final {
+    namespace sim = obelisk::sim;
+    using Analysis = obelisk::analysis::NBAInfluenceAnalysis;
+    using Resource = obelisk::schedule::ComputeResourceKind;
+    getOperation().walk([&](sim::SimDesignOp design) {
+      SmallVector<Analysis::Root> roots, seeds;
+      design.walk([&](sim::SimStorageDeclOp op) {
+        roots.emplace_back(Resource::Storage, op.getId());
+        if (op->hasAttr("test.observer"))
+          seeds.push_back(roots.back());
+      });
+      design.walk([&](sim::SimNetDeclOp op) {
+        roots.emplace_back(Resource::Net, op.getId());
+        if (op->hasAttr("test.observer"))
+          seeds.push_back(roots.back());
+      });
+      Analysis analysis(design, seeds);
+      llvm::errs() << "influence " << design.getSymName() << '\n';
+      for (auto root : roots)
+        llvm::errs() << (root.first == Resource::Storage ? "storage " : "net ")
+                     << root.second
+                     << " observed=" << analysis.mayReachObserver(root) << '\n';
+    });
+    markAllAnalysesPreserved();
+  }
+};
 class StorageWriteAnalysisTestPass
     : public PassWrapper<StorageWriteAnalysisTestPass,
                          OperationPass<ModuleOp>> {
@@ -136,6 +171,7 @@ public:
 };
 } // namespace
 void obelisk::registerStorageWriteAnalysisTestPass() {
+  PassRegistration<NBAInfluenceTestPass>();
   PassRegistration<StorageWriteAnalysisTestPass>();
   PassRegistration<StorageFlowTestPass>();
   PassRegistration<SemanticRootsTestPass>();

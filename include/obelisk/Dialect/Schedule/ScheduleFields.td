@@ -169,6 +169,8 @@ def NativeSchedulerAutoRequested : ScheduleField<"NativeSchedulerAutoRequested",
     "::mlir::UnitAttr">;
 def NbaChangeWatched : ScheduleField<"NbaChangeWatched", "schedule.nba.change_watched",
     "::mlir::DenseI64ArrayAttr">;
+def NbaPrivateInfluence : ScheduleField<"NbaPrivateInfluence", "schedule.nba.private_influence",
+    "::mlir::DenseI64ArrayAttr">;
 def NbaTransientObservable : ScheduleField<"NbaTransientObservable", "schedule.nba.transient_observable",
     "::mlir::DenseI64ArrayAttr">;
 def BoundedLoopHeader : ScheduleField<"BoundedLoopHeader", "schedule.bounded_loop_header",

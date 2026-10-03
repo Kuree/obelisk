@@ -7637,6 +7637,129 @@ TEST(RuntimeInternals, WritableNBADirectCommitRequiresCleanLockedBoundary) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, PrivateNBABatchPreservesMasksTransientsAndFallback) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 64;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  alignas(uint64_t) std::array<uint8_t, 16> value{}, unknown{};
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_shared(context, value.data(),
+                                                   unknown.data(), 64),
+            OBELISK_RT_OK);
+  obelisk_rt_generated_nba_accumulator_256 staged[3]{};
+  obelisk_rt_static_nba_root roots[] = {
+      {0, 1, 8, &staged[0]}, {1, 2, 8, &staged[1]}, {2, 3, 8, &staged[2]}};
+  uint64_t dirty = 7, summary = 1, ingress = 0;
+  obelisk_rt_native_clock_kernel kernel{};
+  kernel.ingress_mask = &ingress;
+  kernel.ingress_word_count = 1;
+  obelisk_rt_static_fanout_entry fanout[2]{};
+  for (auto &entry : fanout) {
+    entry.edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+    entry.reserved = OBELISK_RT_FANOUT_DIRECT;
+    entry.bit_width = 8;
+    entry.merged_bit = 5;
+  }
+  fanout[0].static_state = 1;
+  fanout[1].static_state = 2;
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+  plan.state_value = value.data();
+  plan.state_unknown = unknown.data();
+  plan.state_bit_count = 64;
+  plan.clock_kernels = &kernel;
+  plan.clock_kernel_count = 1;
+  plan.nba_dirty_roots = &dirty;
+  plan.nba_dirty_word_count = 1;
+  plan.nba_dirty_summary = &summary;
+  plan.nba_dirty_summary_word_count = 1;
+  context->nativeSchedulePlan = &plan;
+  context->nativeScheduleNBARoots = roots;
+  context->nativeScheduleNBARootCount = 3;
+  context->nativeScheduleGeneratedNBAOffsets = {3, 16, 32};
+  context->staticNBAAccumulators.resize(3);
+  context->staticNBASlowRoots.resize(3);
+  context->nativeScheduleFanoutEntries = fanout;
+  context->nativeScheduleFanoutEntryCount = 2;
+  context->nativeScheduleFanoutRanges = {{0, 0}, {0, 1}, {1, 2}, {2, 2}};
+  for (auto &record : staged) {
+    record.valid = 1;
+    record.exec_region = OBELISK_RT_REGION_NBA;
+    record.write_mask[0] = 0xf;
+  }
+  // Partial, unaligned write; X/Z must preserve both neighbouring bits and
+  // the unwritten part of the root. The second root's round trip ends at zero.
+  value[0] = 0x87;
+  unknown[0] = 0x80;
+  staged[0].value[0] = 5;
+  staged[0].unknown[0] = 2;
+  staged[1].transient[0] = 1;
+  staged[2].exec_region = OBELISK_RT_REGION_RE_NBA;
+  const uint32_t candidates[] = {0, 1, 2};
+  uint32_t changed = 0;
+  {
+    NativeAOTContextScope active(context);
+    NativeAOTMutexScope locked(context);
+    // Neither a region mismatch nor external observation consumes staging.
+    ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
+                  context, candidates, 3, OBELISK_RT_REGION_RE_NBA, &changed),
+              OBELISK_RT_OK);
+    context->vpiObservationDemand = true;
+    ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
+                  context, candidates, 3, OBELISK_RT_REGION_NBA, &changed),
+              OBELISK_RT_OK);
+    context->vpiObservationDemand = false;
+    context->forceMask.assign(1, 8);
+    ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
+                  context, candidates, 3, OBELISK_RT_REGION_NBA, &changed),
+              OBELISK_RT_OK);
+    EXPECT_EQ(dirty, 7u);
+    EXPECT_EQ(staged[0].valid, 1u);
+    EXPECT_EQ(ingress | changed, 0u);
+    context->forceMask.clear();
+    ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
+                  context, candidates, 3, OBELISK_RT_REGION_NBA, &changed),
+              OBELISK_RT_OK);
+  }
+  EXPECT_EQ(value[0], 0xafu);
+  EXPECT_EQ(unknown[0], 0x90u);
+  EXPECT_EQ(value[2], 0u);
+  EXPECT_EQ(staged[0].valid | staged[1].valid, 0u);
+  EXPECT_EQ(staged[0].write_mask[0] | staged[1].transient[0], 0u);
+  EXPECT_EQ(staged[2].valid, 1u);
+  EXPECT_EQ(dirty, 4u);
+  EXPECT_EQ(summary, 1u);
+  EXPECT_EQ(ingress, 1u << 5);
+  EXPECT_EQ(changed, 1u);
+  EXPECT_EQ(context->signalDiagnostics.aotNBAPrivateCommits, 2u);
+  EXPECT_EQ(context->signalDiagnostics.publications, 0u);
+  // An unchanged canonical value still has to refresh a detached native mirror.
+  std::array<uint8_t, 16> mirrorValue, mirrorUnknown;
+  mirrorValue.fill(0xff);
+  mirrorUnknown.fill(0xff);
+  context->nativeStateValue = mirrorValue.data();
+  context->nativeStateUnknown = mirrorUnknown.data();
+  context->nativeStateBitCount = 64;
+  staged[1].valid = 1;
+  staged[1].write_mask[0] = 0xf;
+  dirty |= 2;
+  {
+    NativeAOTContextScope active(context);
+    NativeAOTMutexScope locked(context);
+    ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
+                  context, candidates + 1, 1, OBELISK_RT_REGION_NBA, &changed),
+              OBELISK_RT_OK);
+  }
+  EXPECT_EQ(mirrorValue[2] | mirrorUnknown[2], 0u);
+  EXPECT_EQ(dirty, 4u);
+  context->nativeStateValue = value.data();
+  context->nativeStateUnknown = unknown.data();
+  context->nativeSchedulePlan = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, GeneratedFixedNBASlotsShareBarrierAndSnapshotWithoutQueue) {
   AOTTestState state;
   std::array<int64_t, 2> offsets{0, 64};

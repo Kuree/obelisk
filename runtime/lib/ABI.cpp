@@ -1686,6 +1686,9 @@ ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_root,
 ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_roots,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, uint32_t,
                                    uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_batch,
+             obelisk_rt_status (*)(obelisk_rt_context *, const uint32_t *,
+                                   uint32_t, uint32_t, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_ordered,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, int64_t,
                                    uint64_t, uint64_t, uint64_t));

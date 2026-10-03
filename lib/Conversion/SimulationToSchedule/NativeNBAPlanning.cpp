@@ -373,9 +373,12 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
 
   analysis::NBAMergeSafety mergeSafety(design);
   SmallVector<bool> unobservable(plan.roots.size());
+  plan.privateInfluenceRoots.assign(plan.roots.size(), false);
   plan.trackTransients.assign(plan.roots.size(), false);
   plan.changeWatchedRoots.assign(plan.roots.size(), false);
   for (auto [index, root] : llvm::enumerate(plan.roots)) {
+    plan.privateInfluenceRoots[index] =
+        mergeSafety.commitHasPrivateInfluence(root.commit_node);
     plan.changeWatchedRoots[index] =
         mergeSafety.commitNeedsTransients(root.commit_node);
     // A root seen only by change waits merges with a transient mask. Every

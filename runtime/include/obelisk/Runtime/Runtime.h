@@ -3967,6 +3967,13 @@ obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
     obelisk_rt_context *context, uint32_t root_count, uint32_t barrier_region,
     uint32_t *out_changed);
 
+// schedule.nba.batch: compiler-certified private scalar roots. Guards that
+// fail leave the root staged for the subsequent canonical barrier. Candidates
+// must be distinct and ordered; direct change fanout includes transient bits.
+obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
+    obelisk_rt_context *context, const uint32_t *roots, uint32_t count,
+    uint32_t barrier_region, uint32_t *out_changed);
+
 // Cold commit of one generated ordered record after external mutation. It
 // honors force/assign masks and publishes through canonical runtime fanout.
 obelisk_rt_status obelisk_rt_v1_static_nba_commit_ordered(

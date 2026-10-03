@@ -237,50 +237,54 @@ endmodule
   // The coverage design above uses the ordinary runtime calendar. Exercise
   // the shared periodic ABI too: LRM 4.4-4.6, 9.4.1 and 10.4.2 require exact
   // delayed-initial timing and pre-/post-NBA observations on wasm32 as well.
-  const periodicSource = await readFile(
-    new URL('../Driver/native-periodic-initial-delays.sv', import.meta.url),
-    'utf8',
-  );
-  for (const optimization of ['-O0', '-O3']) {
-    let referenceOutput;
-    for (const scheduler of ['generic', 'eval']) {
-      const label = `${optimization} ${scheduler} periodic`;
-      logs.length = 0;
-      phase = `loading the compiler for ${label}`;
-      const mod = await createObeliskModule({
-        noInitialRun: true,
-        thisProgram: '/bin/obelisk',
-        locateFile: (name) => `${directory}${name}`,
-        print: (line) => logs.push(line),
-        printErr: (line) => logs.push(line),
-      });
-      await globalThis.installObeliskToolchain(mod, {
-        load: (name) => readFile(`${directory}toolchain/${name}`),
-      });
-      mod.FS.mkdir('/work');
-      mod.FS.writeFile('/work/periodic.sv', periodicSource);
-      phase = `compiling ${label}`;
-      const status = mod.callMain([
-        '--compile-threads=1', '--sysroot=/sysroot', '--target=wasm32',
-        optimization, `--native-scheduler=${scheduler}`,
-        '-o', '/work/periodic.wasm', '/work/periodic.sv',
-      ]) ?? 0;
-      if (status !== 0) throw new Error(`compiler exited with ${status}`);
-      phase = `running ${label}`;
-      let output = '';
-      const exitCode = await runSimulation(
-        mod.FS.readFile('/work/periodic.wasm'),
-        (text) => { output += text; },
-      );
-      if (exitCode !== 0 ||
-          !output.includes('periodic delays 5000 5007 at 50007'))
-        throw new Error(`unexpected periodic result (${exitCode}): ${output}`);
-      if (scheduler === 'generic') referenceOutput = output;
-      else if (output !== referenceOutput)
-        throw new Error(`periodic scheduler output mismatch at ${optimization}`);
+  for (const [fixture, expected] of [
+    ['native-periodic-initial-delays', 'periodic delays 5000 5007 at 50007'],
+    ['native-nba-batch', 'NBA batch complete 5000 5000'],
+  ]) {
+    const periodicSource = await readFile(
+      new URL(`../Driver/${fixture}.sv`, import.meta.url), 'utf8',
+    );
+    for (const optimization of ['-O0', '-O3']) {
+      let referenceOutput;
+      for (const scheduler of ['generic', 'eval']) {
+        const label = `${optimization} ${scheduler} ${fixture}`;
+        logs.length = 0;
+        phase = `loading the compiler for ${label}`;
+        const mod = await createObeliskModule({
+          noInitialRun: true,
+          thisProgram: '/bin/obelisk',
+          locateFile: (name) => `${directory}${name}`,
+          print: (line) => logs.push(line),
+          printErr: (line) => logs.push(line),
+        });
+        await globalThis.installObeliskToolchain(mod, {
+          load: (name) => readFile(`${directory}toolchain/${name}`),
+        });
+        mod.FS.mkdir('/work');
+        mod.FS.writeFile('/work/periodic.sv', periodicSource);
+        phase = `compiling ${label}`;
+        const status = mod.callMain([
+          '--compile-threads=1', '--sysroot=/sysroot', '--target=wasm32',
+          optimization, `--native-scheduler=${scheduler}`,
+          '-o', '/work/periodic.wasm', '/work/periodic.sv',
+        ]) ?? 0;
+        if (status !== 0) throw new Error(`compiler exited with ${status}`);
+        phase = `running ${label}`;
+        let output = '';
+        const exitCode = await runSimulation(
+          mod.FS.readFile('/work/periodic.wasm'),
+          (text) => { output += text; },
+        );
+        if (exitCode !== 0 ||
+            !output.includes(expected))
+          throw new Error(`unexpected ${fixture} result (${exitCode}): ${output}`);
+        if (scheduler === 'generic') referenceOutput = output;
+        else if (output !== referenceOutput)
+          throw new Error(`${fixture} scheduler output mismatch at ${optimization}`);
+      }
     }
   }
-  console.log('wasm-periodic-ok (generic and eval O0/O3 delayed initial)');
+  console.log('wasm-periodic-ok (generic and eval O0/O3 delayed initial and private NBA batch)');
 } catch (error) {
   if (logs.length) console.error(logs.join('\n'));
   console.error(`web smoke test failed while ${phase}`);

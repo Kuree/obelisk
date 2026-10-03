@@ -125,6 +125,50 @@ def NativeReadyCommitOp
       I64Attr:$capacity, I64Attr:$word);
   let hasVerifier = 1;
 }
+def NativeNBABatchOp : ScheduleNativeOp<"nba.batch", [SingleBlock,
+    MemoryEffects<[MemRead, MemWrite, MemRead<SimStorageResource>,
+      MemWrite<SimStorageResource>, MemRead<SimSchedulerResource>,
+      MemWrite<SimSchedulerResource>, MemRead<SimExternalResource>]>]> {
+  let summary = "commit a certified private set of NBA roots at one barrier";
+  let description = [{
+    IEEE 1800-2023 4.3, 4.5, 4.6, 4.9.4 and 10.4.2.
+    Executes the commit actions in body at the current NBA barrier. Each root
+    has already captured its RHS, destination and write mask during staging.
+    Admission proves that intermediate values have no observers, except direct
+    generated change consumers covered by the accumulator's transient mask.
+    No edge, expression, runtime, clocking or external observer may be elided.
+    These proofs concern observation, not source-language visibility.
+
+    The region is a non-suspending commit boundary, not a time-slot boundary.
+    Only nba.commit and nba.yield are permitted inside it. Commits may share
+    guards and combine pending consumer activations; they cannot move into
+    Active or across another barrier. Roots whose runtime guard fails remain
+    pending for the canonical commit that must follow this region. A successful
+    root commit consumes its staging record and only its own dirty bit. The
+    changed flag is accumulated, and status reports a runtime error, if any.
+  }];
+  let arguments = (ins LLVM_AnyPointer:$context, I32:$barrier,
+      LLVM_AnyPointer:$changed);
+  let results = (outs I32:$status);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = [{ $context `,` $barrier `,` $changed $body attr-dict
+    `:` functional-type(operands, results) }];
+  let hasVerifier = 1;
+}
+def NativeNBACommitOp : ScheduleNativeOp<"nba.commit",
+    [HasParent<"NativeNBABatchOp">,
+     MemoryEffects<[MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+       MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>]>]> {
+  let summary = "consume one private scalar accumulator if its guard holds";
+  let arguments = (ins I64Attr:$root);
+  let assemblyFormat = "$root attr-dict";
+  let hasVerifier = 1;
+}
+def NativeNBAYieldOp : ScheduleNativeOp<"nba.yield",
+    [Terminator, HasParent<"NativeNBABatchOp">, Pure]> {
+  let summary = "finish a private NBA commit region";
+  let assemblyFormat = "attr-dict";
+}
 class ScheduleNativeSuspendOp<string mnemonic, dag extraArgs = (ins),
                    list<Trait> extraTraits = []>
     : ScheduleNativeOp<mnemonic,

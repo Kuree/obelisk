@@ -17,6 +17,7 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
+#include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -3695,6 +3696,133 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
       context, rootCount, barrierRegion, changed);
   *outChanged = changed ? 1u : 0u;
   return status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
+    obelisk_rt_context *context, const uint32_t *roots, uint32_t count,
+    uint32_t barrierRegion, uint32_t *outChanged) {
+  if (!context || !outChanged || (count && !roots))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const auto *plan = context->nativeSchedulePlan;
+  // A failed guard consumes nothing. The canonical barrier immediately after
+  // this region retains force, external observation and mixed-tier semantics.
+  if (!plan || barrierRegion != OBELISK_RT_REGION_NBA ||
+      activeNativeAOTContext != context || lockedNativeAOTContext != context ||
+      !canUseStaticAOTFanout(context) ||
+      !nativeAOTTransientBoundaryClean(context) ||
+      !nativeStaticSpecializationEnvironmentClean(context) ||
+      !context->stateValue.shared() || !context->stateUnknown.shared() ||
+      reinterpret_cast<uint8_t *>(context->stateValue.data()) !=
+          plan->state_value ||
+      reinterpret_cast<uint8_t *>(context->stateUnknown.data()) !=
+          plan->state_unknown ||
+      !plan->nba_dirty_roots || !plan->nba_dirty_summary)
+    return OBELISK_RT_OK;
+  ++context->signalDiagnostics.aotNBABatches;
+  const bool sharedNative =
+      (!context->nativeStateValue && !context->nativeStateUnknown &&
+       context->nativeStateBitCount == 0) ||
+      (context->nativeStateValue == plan->state_value &&
+       context->nativeStateUnknown == plan->state_unknown &&
+       context->nativeStateBitCount == plan->state_bit_count);
+  for (uint32_t i = 0; i != count; ++i) {
+    uint32_t index = roots[i];
+    if ((i && index <= roots[i - 1]) ||
+        index >= context->nativeScheduleNBARootCount ||
+        index >= context->staticNBAAccumulators.size() ||
+        index >= context->staticNBASlowRoots.size() ||
+        index >= context->nativeScheduleGeneratedNBAOffsets.size() ||
+        index / 64 >= plan->nba_dirty_word_count ||
+        index / 4096 >= plan->nba_dirty_summary_word_count)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t dirtyMask = uint64_t{1} << (index % 64);
+    if (!(plan->nba_dirty_roots[index / 64] & dirtyMask))
+      continue;
+    const auto &root = context->nativeScheduleNBARoots[index];
+    auto *staged = root.generated_accumulator;
+    if (!staged || !staged->valid || staged->exec_region != barrierRegion ||
+        context->staticNBAAccumulators[index].valid ||
+        context->staticNBASlowRoots[index] || hasGeneratedNBASlots(root) ||
+        !root.bit_width || root.bit_width > 64)
+      continue;
+    uint64_t offset = context->nativeScheduleGeneratedNBAOffsets[index];
+    if (offset > plan->state_bit_count ||
+        root.bit_width > plan->state_bit_count - offset)
+      return OBELISK_RT_LAYOUT_MISMATCH;
+    // A private root can have generated change consumers, but no runtime or
+    // edge consumer. Validate the executable fanout before changing storage.
+    // The dense range index ends at the last state with a consumer. A later
+    // certified root has empty fanout, rather than an unknown observer.
+    auto [first, last] =
+        root.static_state < context->nativeScheduleFanoutRanges.size()
+            ? context->nativeScheduleFanoutRanges[root.static_state]
+            : std::pair<uint64_t, uint64_t>{0, 0};
+    if (first > last || last > context->nativeScheduleFanoutEntryCount)
+      return OBELISK_RT_INVALID_DESIGN;
+    bool direct = true;
+    for (uint64_t f = first; f != last; ++f) {
+      const auto &entry = context->nativeScheduleFanoutEntries[f];
+      if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) !=
+              OBELISK_RT_FANOUT_DIRECT ||
+          entry.edge != OBELISK_RT_WAIT_EDGE_CHANGE ||
+          entry.kernel >= plan->clock_kernel_count ||
+          !plan->clock_kernels[entry.kernel].ingress_mask ||
+          entry.merged_bit / 64 >=
+              plan->clock_kernels[entry.kernel].ingress_word_count) {
+        direct = false;
+        break;
+      }
+    }
+    if (!direct)
+      continue;
+    uint64_t mask = staged->write_mask[0] & packedWidthMask(root.bit_width);
+    uint64_t oldValue =
+        loadPackedBytes(plan->state_value, offset, root.bit_width);
+    uint64_t oldUnknown =
+        loadPackedBytes(plan->state_unknown, offset, root.bit_width);
+    uint64_t value = (oldValue & ~mask) | (staged->value[0] & mask);
+    uint64_t unknown = (oldUnknown & ~mask) | (staged->unknown[0] & mask);
+    uint64_t changed = (oldValue ^ value) | (oldUnknown ^ unknown) |
+                       (staged->transient[0] & mask);
+    // This also invalidates/recovers destination knownness certificates on
+    // actual X/Z changes and synchronizes any separately bound native mirror.
+    // LRM 4.3: an unchanged shared image needs no physical store or knownness
+    // recheck. Still consume this NBA and deliver any transient change below.
+    if ((!sharedNative || oldValue != value || oldUnknown != unknown) &&
+        !storeNativeScheduleStateUnlocked(context, offset, root.bit_width,
+                                          value, unknown, oldUnknown))
+      return OBELISK_RT_LAYOUT_MISMATCH;
+    staged->write_mask[0] = 0;
+    staged->transient[0] = 0;
+    staged->valid = 0;
+    plan->nba_dirty_roots[index / 64] &= ~dirtyMask;
+    if (!plan->nba_dirty_roots[index / 64])
+      plan->nba_dirty_summary[index / 4096] &=
+          ~(uint64_t{1} << ((index / 64) % 64));
+    ++context->signalDiagnostics.aotNBAStages;
+    ++context->signalDiagnostics.aotNBACommits;
+    ++context->signalDiagnostics.aotNBAPrivateCommits;
+    if (!changed)
+      continue;
+    *outChanged = 1;
+    for (uint64_t f = first; f != last; ++f) {
+      const auto &entry = context->nativeScheduleFanoutEntries[f];
+      if (entry.low_bit >= root.bit_width || !entry.bit_width)
+        continue;
+      uint64_t width =
+          std::min(entry.bit_width, root.bit_width - entry.low_bit);
+      if (!((changed >> entry.low_bit) & packedWidthMask(width)))
+        continue;
+      const auto &kernel = plan->clock_kernels[entry.kernel];
+      // Already pending consumers need no further leaf/index updates. The
+      // region publishes no event history; its proof covers only these bits.
+      if (!(kernel.ingress_mask[entry.merged_bit / 64] &
+            (uint64_t{1} << (entry.merged_bit % 64))))
+        publishClockKernelReady(kernel, entry.merged_bit);
+      context->nativeScheduleClockIngressPending = true;
+    }
+  }
+  return context->schedulerStatus;
 }
 
 extern "C" uint32_t

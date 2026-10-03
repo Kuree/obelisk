@@ -1311,6 +1311,8 @@ struct SignalSubscriptionDiagnostics {
   uint64_t aotFanoutEntries = 0;
   uint64_t aotNBAStages = 0;
   uint64_t aotNBACommits = 0;
+  uint64_t aotNBABatches = 0;
+  uint64_t aotNBAPrivateCommits = 0;
   uint64_t aotStateFastPaths = 0;
   uint64_t aotStateSlowPaths = 0;
   uint64_t aotDeadlineHighWater = 0;

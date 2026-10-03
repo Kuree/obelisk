@@ -49,6 +49,9 @@ struct NativeStaticNBAPlan {
   // and 10.4.2 makes each one its own update event, so a root that fails this
   // proof must keep the ordered runtime path.
   llvm::SmallVector<bool> mergeSafeRoots;
+  // Source storage lies outside the pre-fusion sparse observer influence cone.
+  // Missing proof means false, independently of the once-per-window proof.
+  llvm::SmallVector<bool> privateInfluenceRoots;
   // Merge-safe roots whose watchers wait for any change. Each merge into
   // their accumulator ORs bits rewritten with a different value into its
   // transient mask; each commit reports those bits as changed.

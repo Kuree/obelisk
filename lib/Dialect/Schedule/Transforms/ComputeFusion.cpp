@@ -892,8 +892,7 @@ computeNBATransientObservers(sim::SimDesignOp design) {
       continue;
     SmallVector<schedule::ComputeEffectAttr> watches;
     for (auto effect : summary.getAsRange<schedule::ComputeEffectAttr>())
-      if (effect.getEffect() == schedule::ComputeEffectKind::Watch &&
-          effect.getResource() != schedule::ComputeResourceKind::Net)
+      if (effect.getEffect() == schedule::ComputeEffectKind::Watch)
         watches.push_back(effect);
     if (watches.empty() ||
         (writersComplete && isIdempotentObserver(function, storageWriters)))
@@ -923,14 +922,19 @@ computeNBATransientObservers(sim::SimDesignOp design) {
       // reach any root.
       if (watch.getTarget() != schedule::ComputeTargetKind::Descriptor)
         return std::nullopt;
-      if (watch.getResource() != schedule::ComputeResourceKind::Storage)
-        continue;
-      // A dynamic watch wakes on a change anywhere in its root, which the
-      // commit's per-bit change report covers as well.
       bool changeWatch =
           changeWaitsOnly &&
           (watch.getTrigger() == schedule::ComputeTriggerKind::None ||
            watch.getTrigger() == schedule::ComputeTriggerKind::Change);
+      if (watch.getResource() == schedule::ComputeResourceKind::Net) {
+        if (!changeWatch)
+          result.netObservable.insert(watch.getDescriptor());
+        continue;
+      }
+      if (watch.getResource() != schedule::ComputeResourceKind::Storage)
+        continue;
+      // A dynamic watch wakes on a change anywhere in its root, which the
+      // commit's per-bit change report covers as well.
       (changeWatch ? result.changeWatched : observable)
           .insert(watch.getDescriptor());
     }

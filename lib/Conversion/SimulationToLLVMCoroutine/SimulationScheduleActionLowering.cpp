@@ -8,6 +8,44 @@ using namespace mlir;
 
 namespace obelisk {
 void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
+  SmallVector<schedule::NativeNBABatchOp> batches;
+  operation->walk(
+      [&](schedule::NativeNBABatchOp op) { batches.push_back(op); });
+  for (auto batch : batches) {
+    auto module = batch->getParentOfType<ModuleOp>();
+    OpBuilder builder(batch);
+    auto loc = batch.getLoc();
+    auto ptr = LLVM::LLVMPointerType::get(builder.getContext());
+    auto i32 = builder.getI32Type();
+    detail::getOrDeclareLLVMFunction(module,
+                                     "obelisk_rt_v1_static_nba_commit_batch",
+                                     i32, {ptr, ptr, i32, i32, ptr});
+    SmallVector<uint32_t> roots;
+    for (auto commit : batch.getBody().getOps<schedule::NativeNBACommitOp>())
+      roots.push_back(commit.getRoot());
+    LLVM::GlobalOp table;
+    {
+      SymbolTable symbols(module);
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(module.getBody());
+      auto tensor = RankedTensorType::get({int64_t(roots.size())}, i32);
+      table = LLVM::GlobalOp::create(
+          builder, loc, LLVM::LLVMArrayType::get(i32, roots.size()), true,
+          LLVM::Linkage::Internal, "__obelisk_nba_batch_roots",
+          DenseIntElementsAttr::get(tensor, ArrayRef<uint32_t>(roots)), 4);
+      symbols.insert(table);
+    }
+    Value address = LLVM::AddressOfOp::create(builder, loc, table);
+    auto call = LLVM::CallOp::create(
+        builder, loc, TypeRange{i32},
+        SymbolRefAttr::get(builder.getContext(),
+                           "obelisk_rt_v1_static_nba_commit_batch"),
+        ValueRange{batch.getContext(), address,
+                   detail::llvmConstant(builder, loc, i32, roots.size()),
+                   batch.getBarrier(), batch.getChanged()});
+    batch.replaceAllUsesWith(call.getResult());
+    batch.erase();
+  }
   if (coalesce)
     schedule::coalesceNativeReadyUpdates(operation);
   SmallVector<schedule::NativeReadyUpdateOp> updates;

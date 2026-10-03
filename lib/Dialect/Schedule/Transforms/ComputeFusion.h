@@ -64,6 +64,9 @@ struct NBATransientObservers {
   /// Seen only by waits for any change of whole references. A merged commit
   /// is exact for these when it also reports rewritten bits.
   llvm::DenseSet<uint64_t> changeWatched;
+  /// Net value-sequence observers seed the influence cone through drives and
+  /// aliases. Plain change consumers are covered by exact pending activations.
+  llvm::DenseSet<uint64_t> netObservable;
 };
 
 /// Classify the design's storage, or std::nullopt when its observers cannot

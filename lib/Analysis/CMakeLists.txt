@@ -10,6 +10,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   LogicBitAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   NativeAOTAnalysis.cpp
+  NBAInfluenceAnalysis.cpp
   NativeStateLayoutAnalysis.cpp
   NetConnectivityAnalysis.cpp
   PrivateStorageAnalysis.cpp

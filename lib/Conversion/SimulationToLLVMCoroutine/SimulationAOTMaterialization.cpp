@@ -6446,6 +6446,59 @@ FailureOr<bool> makeNativeEvalPlan(
     LLVM::ReturnOp::create(builder, location, status);
     builder.setInsertionPointToStart(canonical);
   }
+  // The typed NBA and fanout plans, not LLVM store shapes, certify admission.
+  // Runtime/edge observers keep ordered publication. Change-only generated
+  // consumers retain per-bit transient masks and receive one pending
+  // activation.
+  SmallVector<uint32_t> privateRoots;
+  llvm::DenseSet<uint32_t> nonPrivateFanout;
+  for (const auto &entry : fanoutEntries)
+    if (fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
+        entry.edge != OBELISK_RT_WAIT_EDGE_CHANGE)
+      nonPrivateFanout.insert(entry.static_state);
+  if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module))
+    for (auto [index, root] : llvm::enumerate(nbaRoots)) {
+      if (root.bit_width == 0 || root.bit_width > 64 ||
+          staticNBAPlan.generatedAccumulators[index].empty() ||
+          !staticNBAPlan.mergeSafeRoots[index] ||
+          staticNBAPlan.generatedCommitRegions[index] !=
+              OBELISK_RT_REGION_NBA ||
+          !staticNBAPlan.privateInfluenceRoots[index] ||
+          staticFanoutPlan.runtimeTransitionStates.contains(root.static_state))
+        continue;
+      if (!nonPrivateFanout.contains(root.static_state))
+        privateRoots.push_back(index);
+    }
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk native NBA batch: candidates="
+                 << privateRoots.size() << " roots=" << nbaRoots.size()
+                 << " private-cone="
+                 << llvm::count(staticNBAPlan.privateInfluenceRoots, true)
+                 << '\n';
+  if (!privateRoots.empty()) {
+    auto batch = schedule::NativeNBABatchOp::create(
+        builder, location, i32, runtimeCommitEntry->getArgument(1),
+        runtimeCommitEntry->getArgument(2), runtimeCommitEntry->getArgument(3));
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.createBlock(&batch.getBody());
+      for (uint32_t root : privateRoots)
+        schedule::NativeNBACommitOp::create(builder, location, root);
+      schedule::NativeNBAYieldOp::create(builder, location);
+    }
+    auto *canonical = new Block, *failed = new Block;
+    runtimeNBACommit.getBody().push_back(canonical);
+    runtimeNBACommit.getBody().push_back(failed);
+    Value ok = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, batch.getStatus(),
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, ok, canonical, ValueRange{},
+                             failed, ValueRange{});
+    builder.setInsertionPointToStart(failed);
+    LLVM::ReturnOp::create(builder, location, batch.getStatus());
+    builder.setInsertionPointToStart(canonical);
+  }
   Value runtimeCommitStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},

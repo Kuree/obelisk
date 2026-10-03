@@ -1,6 +1,7 @@
 //===- MaterializeComputeFusion.cpp - Fuse static process bodies ----------===//
 
 #include "ComputeFusion.h"
+#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
@@ -3457,6 +3458,27 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
           design, sorted(observers->observable));
       ::obelisk::schedule::set<schedule::metadata::nbaChangeWatched>(
           design, sorted(observers->changeWatched));
+      // Keep original activation dependencies: a fused summary would connect
+      // unrelated reads and writes. Sparse backward dataflow closes observer
+      // influence through immediate state updates and aliases before fusion.
+      using Influence = analysis::NBAInfluenceAnalysis;
+      SmallVector<Influence::Root> sinks;
+      for (uint64_t root : observers->observable)
+        sinks.emplace_back(schedule::ComputeResourceKind::Storage, root);
+      // A plain change consumer is reproduced by the batch's transient mask
+      // and pending activation. Only value-sequence observers seed the cone;
+      // native ownership separately rejects runtime change consumers.
+      for (uint64_t root : observers->netObservable)
+        sinks.emplace_back(schedule::ComputeResourceKind::Net, root);
+      Influence influence(design, sinks);
+      llvm::DenseSet<uint64_t> privateRoots;
+      design.walk([&](sim::SimStorageDeclOp storage) {
+        if (!influence.mayReachObserver(
+                {schedule::ComputeResourceKind::Storage, storage.getId()}))
+          privateRoots.insert(storage.getId());
+      });
+      schedule::set<schedule::Field::NbaPrivateInfluence>(design,
+                                                          sorted(privateRoots));
     }
   // Graph rebuilding renumbers the canonical actors as well as their eval
   // clones. Preserve both sides before fusion changes traversal order;

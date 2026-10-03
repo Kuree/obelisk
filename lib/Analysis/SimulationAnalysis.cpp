@@ -96,6 +96,9 @@ NBAMergeSafety::NBAMergeSafety(sim::SimDesignOp design) {
   if (!observed || !graph)
     return;
   known = true;
+  if (auto roots = schedule::get<schedule::Field::NbaPrivateInfluence>(design))
+    for (int64_t descriptor : roots.asArrayRef())
+      privateInfluence.insert(static_cast<uint64_t>(descriptor));
   for (int64_t descriptor : observed.asArrayRef())
     observable.insert(static_cast<uint64_t>(descriptor));
   if (auto watched =
