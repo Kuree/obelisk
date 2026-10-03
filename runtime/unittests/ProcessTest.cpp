@@ -7703,15 +7703,37 @@ TEST(RuntimeInternals, PrivateNBABatchPreservesMasksTransientsAndFallback) {
     NativeAOTContextScope active(context);
     NativeAOTMutexScope locked(context);
     // Neither a region mismatch nor external observation consumes staging.
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_NBA),
+              1u);
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_RE_NBA),
+              0u);
+    context->staticNBAAccumulatorsPending = true;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_NBA),
+              0u);
+    context->staticNBAAccumulatorsPending = false;
+    context->staticNBASlowRootsPresent = true;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_NBA),
+              0u);
+    context->staticNBASlowRootsPresent = false;
     ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
                   context, candidates, 3, OBELISK_RT_REGION_RE_NBA, &changed),
               OBELISK_RT_OK);
     context->vpiObservationDemand = true;
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_NBA),
+              0u);
     ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
                   context, candidates, 3, OBELISK_RT_REGION_NBA, &changed),
               OBELISK_RT_OK);
     context->vpiObservationDemand = false;
     context->forceMask.assign(1, 8);
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_NBA),
+              0u);
     ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
                   context, candidates, 3, OBELISK_RT_REGION_NBA, &changed),
               OBELISK_RT_OK);
@@ -7748,6 +7770,9 @@ TEST(RuntimeInternals, PrivateNBABatchPreservesMasksTransientsAndFallback) {
   {
     NativeAOTContextScope active(context);
     NativeAOTMutexScope locked(context);
+    EXPECT_EQ(obelisk_rt_v1_static_nba_batch_guard(context, &plan,
+                                                   OBELISK_RT_REGION_NBA),
+              0u);
     ASSERT_EQ(obelisk_rt_v1_static_nba_commit_batch(
                   context, candidates + 1, 1, OBELISK_RT_REGION_NBA, &changed),
               OBELISK_RT_OK);

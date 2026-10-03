@@ -3825,6 +3825,50 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
   return context->schedulerStatus;
 }
 
+extern "C" uint32_t obelisk_rt_v1_static_nba_batch_guard(
+    obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan,
+    uint32_t barrierRegion) {
+  if (!context || !plan || plan != context->nativeSchedulePlan ||
+      barrierRegion != OBELISK_RT_REGION_NBA ||
+      activeNativeAOTContext != context || lockedNativeAOTContext != context ||
+      context->schedulerStatus != OBELISK_RT_OK ||
+      context->staticNBAAccumulatorsPending ||
+      context->staticNBASlowRootsPresent || !canUseStaticAOTFanout(context) ||
+      !nativeAOTTransientBoundaryClean(context) ||
+      !nativeStaticSpecializationEnvironmentClean(context) ||
+      !context->stateValue.shared() || !context->stateUnknown.shared() ||
+      reinterpret_cast<uint8_t *>(context->stateValue.data()) !=
+          plan->state_value ||
+      reinterpret_cast<uint8_t *>(context->stateUnknown.data()) !=
+          plan->state_unknown ||
+      !plan->nba_dirty_roots || !plan->nba_dirty_summary)
+    return 0;
+  // A detached native mirror requires the canonical store's synchronization.
+  return (!context->nativeStateValue && !context->nativeStateUnknown &&
+          !context->nativeStateBitCount) ||
+         (context->nativeStateValue == plan->state_value &&
+          context->nativeStateUnknown == plan->state_unknown &&
+          context->nativeStateBitCount == plan->state_bit_count);
+}
+
+extern "C" void obelisk_rt_v1_static_nba_batch_knownness(
+    obelisk_rt_context *context, uint64_t offset, uint64_t width,
+    uint64_t oldUnknown, uint64_t newUnknown) {
+  publishNativeKnownnessChangeUnlocked(context->nativeSchedulePlan, offset,
+                                       width, oldUnknown, newUnknown);
+}
+
+extern "C" void
+obelisk_rt_v1_static_nba_batch_finish(obelisk_rt_context *context,
+                                      uint64_t stages, uint64_t commits,
+                                      uint32_t ingressPending) {
+  ++context->signalDiagnostics.aotNBABatches;
+  context->signalDiagnostics.aotNBAStages += stages;
+  context->signalDiagnostics.aotNBACommits += commits;
+  context->signalDiagnostics.aotNBAPrivateCommits += commits;
+  context->nativeScheduleClockIngressPending |= ingressPending != 0;
+}
+
 extern "C" uint32_t
 obelisk_rt_v1_static_nba_direct_commit_guard(obelisk_rt_context *context) {
   if (!context || activeNativeAOTContext != context ||

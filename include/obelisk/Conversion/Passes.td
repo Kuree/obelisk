@@ -558,7 +558,8 @@ def ConvertNativeScheduleActionsToLLVMPass
       "Expand verified executable scheduling actions into the native ABI";
   let dependentDialects = ["obelisk::schedule::ScheduleDialect",
                            "mlir::LLVM::LLVMDialect",
-                           "mlir::arith::ArithDialect"];
+                           "mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
   let options = [Option<
       "coalesce", "coalesce", "bool", "true",
       "Combine unobservable pending-set updates before physical expansion">];

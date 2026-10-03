@@ -52,6 +52,10 @@ struct NativeStaticNBAPlan {
   // Source storage lies outside the pre-fusion sparse observer influence cone.
   // Missing proof means false, independently of the once-per-window proof.
   llvm::SmallVector<bool> privateInfluenceRoots;
+  // No read/watch anywhere in the design, including future activations, and
+  // no external observation. Immediate plain NBA enqueues can be erased;
+  // evaluation of their SSA operands and delayed events remains separate.
+  llvm::SmallVector<bool> unreadRoots;
   // Merge-safe roots whose watchers wait for any change. Each merge into
   // their accumulator ORs bits rewritten with a different value into its
   // transient mask; each commit reports those bits as changed.

@@ -11,6 +11,7 @@ module {
     simulation.storage.decl 4 in 0 : i1 static
     simulation.storage.decl 5 in 0 : i1 static
     simulation.storage.decl 6 in 0 : i1 static
+    simulation.storage.decl 7 in 0 : i1 static
     simulation.net.decl 0 in 0 : !simulation.logic<1> design
     simulation.net.decl 1 in 0 : !simulation.logic<1> design {test.observer}
     simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 1 reversed = false
@@ -35,8 +36,11 @@ module {
 // CHECK: storage 2 observed=1
 // CHECK: storage 3 observed=1
 // CHECK: storage 4 observed=0
+// CHECK-SAME: unread=0
 // CHECK: storage 5 observed=0
+// CHECK-SAME: unread=0
 // CHECK: storage 6 observed=1
+// CHECK: storage 7 observed=0 unread=1
 // CHECK: net 0 observed=1
 // CHECK: net 1 observed=1
   simulation.design @unknown attributes {compute_graph = #g} {

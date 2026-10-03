@@ -6459,11 +6459,9 @@ FailureOr<bool> makeNativeEvalPlan(
   if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module))
     for (auto [index, root] : llvm::enumerate(nbaRoots)) {
-      if (root.bit_width == 0 || root.bit_width > 64 ||
-          staticNBAPlan.generatedAccumulators[index].empty() ||
-          !staticNBAPlan.mergeSafeRoots[index] ||
-          staticNBAPlan.generatedCommitRegions[index] !=
-              OBELISK_RT_REGION_NBA ||
+      bool accumulator = !staticNBAPlan.generatedAccumulators[index].empty();
+      if (root.bit_width == 0 || (!accumulator && rootSlots[index].empty()) ||
+          (accumulator && !staticNBAPlan.mergeSafeRoots[index]) ||
           !staticNBAPlan.privateInfluenceRoots[index] ||
           staticFanoutPlan.runtimeTransitionStates.contains(root.static_state))
         continue;
@@ -6475,16 +6473,58 @@ FailureOr<bool> makeNativeEvalPlan(
                  << privateRoots.size() << " roots=" << nbaRoots.size()
                  << " private-cone="
                  << llvm::count(staticNBAPlan.privateInfluenceRoots, true)
+                 << " unread=" << llvm::count(staticNBAPlan.unreadRoots, true)
+                 << " wide="
+                 << llvm::count_if(privateRoots,
+                                   [&](uint32_t root) {
+                                     return nbaRoots[root].bit_width > 64;
+                                   })
+                 << " slots="
+                 << llvm::count_if(
+                        privateRoots,
+                        [&](uint32_t root) { return !rootSlots[root].empty(); })
                  << '\n';
   if (!privateRoots.empty()) {
     auto batch = schedule::NativeNBABatchOp::create(
         builder, location, i32, runtimeCommitEntry->getArgument(1),
-        runtimeCommitEntry->getArgument(2), runtimeCommitEntry->getArgument(3));
+        runtimeCommitEntry->getArgument(2), runtimeCommitEntry->getArgument(3),
+        schedule::NBABatchLayoutAttr::get(
+            context, FlatSymbolRefAttr::get(context, planName),
+            FlatSymbolRefAttr::get(context, "__obelisk_state_value"),
+            FlatSymbolRefAttr::get(context, "__obelisk_state_unknown"),
+            FlatSymbolRefAttr::get(context, nbaDirtyRootsName),
+            FlatSymbolRefAttr::get(context, nbaDirtySummaryName),
+            FlatSymbolRefAttr::get(context, evalModelIngressName),
+            stateLayout.bitCount, nbaRoots.size(), mergedFragments.size()));
     {
       OpBuilder::InsertionGuard guard(builder);
       builder.createBlock(&batch.getBody());
-      for (uint32_t root : privateRoots)
-        schedule::NativeNBACommitOp::create(builder, location, root);
+      for (uint32_t root : privateRoots) {
+        SmallVector<Attribute> slots, consumers;
+        for (const auto *slot : rootSlots[root])
+          slots.push_back(schedule::NBASlotLayoutAttr::get(
+              context, FlatSymbolRefAttr::get(context, slot->offsetName),
+              FlatSymbolRefAttr::get(context, slot->valueName),
+              FlatSymbolRefAttr::get(context, slot->unknownName),
+              FlatSymbolRefAttr::get(context, slot->validName), slot->width));
+        for (const auto &entry : fanoutEntries)
+          if (entry.static_state == nbaRoots[root].static_state &&
+              entry.low_bit < nbaRoots[root].bit_width && entry.bit_width)
+            consumers.push_back(schedule::NBAConsumerAttr::get(
+                context, entry.low_bit,
+                std::min(entry.bit_width,
+                         nbaRoots[root].bit_width - entry.low_bit),
+                entry.merged_bit));
+        auto name = staticNBAPlan.generatedAccumulators[root];
+        schedule::NativeNBACommitOp::create(
+            builder, location, root,
+            schedule::NBACommitLayoutAttr::get(
+                context, staticNBAPlan.generatedOffsets[root],
+                nbaRoots[root].bit_width,
+                name.empty() ? FlatSymbolRefAttr{}
+                             : FlatSymbolRefAttr::get(context, name),
+                builder.getArrayAttr(slots), builder.getArrayAttr(consumers)));
+      }
       schedule::NativeNBAYieldOp::create(builder, location);
     }
     auto *canonical = new Block, *failed = new Block;

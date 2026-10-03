@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Analysis/GraphAlgorithms.h"
+#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
@@ -372,13 +373,23 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   // number of updates, in any order relative to other roots.
 
   analysis::NBAMergeSafety mergeSafety(design);
+  analysis::NBAInfluenceAnalysis readerProof(design, {});
+  llvm::DenseMap<uint32_t, uint64_t> commitStorage;
+  for (auto commit : orderedCommits)
+    commitStorage[commit.getId()] = commit.getEffect().getDescriptor();
   SmallVector<bool> unobservable(plan.roots.size());
+  plan.unreadRoots.assign(plan.roots.size(), false);
   plan.privateInfluenceRoots.assign(plan.roots.size(), false);
   plan.trackTransients.assign(plan.roots.size(), false);
   plan.changeWatchedRoots.assign(plan.roots.size(), false);
   for (auto [index, root] : llvm::enumerate(plan.roots)) {
     plan.privateInfluenceRoots[index] =
         mergeSafety.commitHasPrivateInfluence(root.commit_node);
+    plan.unreadRoots[index] =
+        module->hasAttr(sim::metadata::nativeClosedExecutable) &&
+        plan.privateInfluenceRoots[index] &&
+        readerProof.isNeverRead({schedule::ComputeResourceKind::Storage,
+                                 commitStorage.lookup(root.commit_node)});
     plan.changeWatchedRoots[index] =
         mergeSafety.commitNeedsTransients(root.commit_node);
     // A root seen only by change waits merges with a transient mask. Every

@@ -25,6 +25,24 @@ using namespace mlir;
 
 namespace obelisk::detail {
 namespace {
+// LRM 4.3 permits an unobservable immediate update to disappear, but 4.9.4
+// still evaluates its RHS and target. Those are independent SSA producers;
+// erase only the enqueue. Delayed events can affect time-slot lifetime and
+// clocking outputs have additional semantics, so neither is admitted here.
+bool canDropUnreadNBA(sim::SimNBAEnqueueOp op,
+                      const NativeStaticNBAPlan *plan) {
+  auto site = op.getSiteAttr();
+  if (!plan || !site || op.getDelay() || site.getTiming() ||
+      op.getClockingOutputAttr() ||
+      site.getStorage() == schedule::ComputeNBAStorageKind::DynamicFrontier ||
+      !isa<sim::RefType>(op.getDestination().getType()) ||
+      !sim::getPackedWidth(op.getValue().getType()))
+    return false;
+  auto root = plan->siteRoots.find(site.getId());
+  return root != plan->siteRoots.end() &&
+         root->second < plan->unreadRoots.size() &&
+         plan->unreadRoots[root->second];
+}
 
 class InertialDriverConversion final
     : public OpConversionPattern<sim::SimDriverDriveInertialOp> {
@@ -534,6 +552,10 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (canDropUnreadNBA(op, staticPlan)) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     auto view = op.getDestination().getDefiningOp<sim::SimRefDynExtractOp>();
     if (!view || adaptor.getValue().empty() ||
         adaptor.getDestination().size() != 1)
@@ -992,6 +1014,10 @@ public:
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (canDropUnreadNBA(op, staticPlan)) {
+      rewriter.eraseOp(op);
+      return success();
+    }
     if (adaptor.getDestination().size() != 1 || adaptor.getValue().empty())
       return failure();
     std::optional<unsigned> width = nativeStateWidth(op.getValue().getType());

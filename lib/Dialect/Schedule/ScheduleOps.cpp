@@ -79,14 +79,45 @@ LogicalResult NativeNBABatchOp::verify() {
     if (static_cast<int64_t>(commit.getRoot()) <= previous)
       return emitOpError("requires distinct roots in increasing order");
     previous = commit.getRoot();
+    if (bool(getLayoutAttr()) != bool(commit.getLayoutAttr()))
+      return emitOpError("requires layouts on both batch and every commit");
   }
   if (previous == -1)
     return emitOpError("requires at least one commit");
+  if (auto layout = getLayoutAttr())
+    if (!layout.getBitCount() || !layout.getRootCount() ||
+        uint64_t(previous) >= layout.getRootCount())
+      return emitOpError("requires a nonempty layout covering every root");
   return success();
 }
 LogicalResult NativeNBACommitOp::verify() {
   if (getRootAttr().getValue().isNegative() || getRoot() >= UINT32_MAX)
     return emitOpError("root must be between 0 and UINT32_MAX - 1");
+  if (auto layout = getLayoutAttr()) {
+    auto batch = (*this)->getParentOfType<NativeNBABatchOp>();
+    auto parent = batch ? batch.getLayoutAttr() : NBABatchLayoutAttr{};
+    if (!parent || !layout.getWidth() ||
+        layout.getOffset() > parent.getBitCount() ||
+        layout.getWidth() > parent.getBitCount() - layout.getOffset())
+      return emitOpError("commit range must lie within the batch state layout");
+    if ((!layout.getAccumulator() && layout.getSlots().empty()) ||
+        (layout.getAccumulator() && layout.getWidth() > 256))
+      return emitOpError(
+          "requires slots or an accumulator no wider than 256 bits");
+    for (auto attr : layout.getSlots()) {
+      auto slot = dyn_cast<NBASlotLayoutAttr>(attr);
+      if (!slot || !slot.getWidth() || slot.getWidth() > 64)
+        return emitOpError("requires fixed slots between 1 and 64 bits");
+    }
+    for (auto attr : layout.getConsumers()) {
+      auto consumer = dyn_cast<NBAConsumerAttr>(attr);
+      if (!consumer || !consumer.getWidth() ||
+          consumer.getLow() >= layout.getWidth() ||
+          consumer.getWidth() > layout.getWidth() - consumer.getLow() ||
+          consumer.getBit() >= parent.getCapacity())
+        return emitOpError("requires consumers within root and ready capacity");
+    }
+  }
   return success();
 }
 LogicalResult NativeTransitionOp::verify() {

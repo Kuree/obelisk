@@ -10,6 +10,32 @@ class ScheduleAttr<string name, string mnemonicValue, list<Trait> traits = []>
     : AttrDef<ScheduleDialect, name, traits> {
   let mnemonic = mnemonicValue;
 }
+// Revision-coupled storage and activation facts carried by an executable NBA
+// region. Conversion consumes these facts, never inferring them from stores.
+def NBABatchLayoutAttr : ScheduleAttr<"NBABatchLayout", "nba_batch_layout"> {
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$plan,
+      "::mlir::FlatSymbolRefAttr":$value, "::mlir::FlatSymbolRefAttr":$unknown,
+      "::mlir::FlatSymbolRefAttr":$dirty, "::mlir::FlatSymbolRefAttr":$summary,
+      "::mlir::FlatSymbolRefAttr":$ingress, "uint64_t":$bitCount,
+      "uint32_t":$rootCount, "uint32_t":$capacity);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+def NBASlotLayoutAttr : ScheduleAttr<"NBASlotLayout", "nba_slot_layout"> {
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$offset,
+      "::mlir::FlatSymbolRefAttr":$value, "::mlir::FlatSymbolRefAttr":$unknown,
+      "::mlir::FlatSymbolRefAttr":$valid, "uint64_t":$width);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+def NBAConsumerAttr : ScheduleAttr<"NBAConsumer", "nba_consumer"> {
+  let parameters = (ins "uint64_t":$low, "uint64_t":$width, "uint32_t":$bit);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+def NBACommitLayoutAttr : ScheduleAttr<"NBACommitLayout", "nba_commit_layout"> {
+  let parameters = (ins "uint64_t":$offset, "uint64_t":$width,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$accumulator,
+      "::mlir::ArrayAttr":$slots, "::mlir::ArrayAttr":$consumers);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
 def SimComputeEffectAttr : ScheduleAttr<"ComputeEffect", "effect"> {
   let parameters = (ins EnumParameter<SimComputeEffectKind>:$effect,
       EnumParameter<SimComputeResourceKind>:$resource,

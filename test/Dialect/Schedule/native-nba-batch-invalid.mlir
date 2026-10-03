@@ -51,3 +51,30 @@ module {
     llvm.return
   }
 }
+// -----
+#batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 256, rootCount = 1, capacity = 130>
+#consumer = #schedule.nba_consumer<low = 0, width = 1, bit = 130>
+#root = #schedule.nba_commit_layout<offset = 0, width = 8, accumulator = @accumulator, slots = [], consumers = [#consumer]>
+module {
+  llvm.func @bad_consumer(%ctx: !llvm.ptr, %region: i32, %changed: !llvm.ptr) {
+    %r = schedule.nba.batch %ctx, %region, %changed {
+      // expected-error @+1 {{requires consumers within root and ready capacity}}
+      schedule.nba.commit 0 {layout = #root}
+      schedule.nba.yield
+    } {layout = #batch} : (!llvm.ptr, i32, !llvm.ptr) -> i32
+    llvm.return
+  }
+}
+// -----
+#batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 256, rootCount = 1, capacity = 130>
+#root = #schedule.nba_commit_layout<offset = 250, width = 8, accumulator = @accumulator, slots = [], consumers = []>
+module {
+  llvm.func @bad_range(%ctx: !llvm.ptr, %region: i32, %changed: !llvm.ptr) {
+    %r = schedule.nba.batch %ctx, %region, %changed {
+      // expected-error @+1 {{commit range must lie within the batch state layout}}
+      schedule.nba.commit 0 {layout = #root}
+      schedule.nba.yield
+    } {layout = #batch} : (!llvm.ptr, i32, !llvm.ptr) -> i32
+    llvm.return
+  }
+}

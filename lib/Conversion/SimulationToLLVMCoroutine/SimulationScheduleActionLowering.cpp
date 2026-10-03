@@ -7,11 +7,18 @@
 using namespace mlir;
 
 namespace obelisk {
+namespace detail {
+void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op);
+}
 void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
   SmallVector<schedule::NativeNBABatchOp> batches;
   operation->walk(
       [&](schedule::NativeNBABatchOp op) { batches.push_back(op); });
   for (auto batch : batches) {
+    if (batch.getLayoutAttr()) {
+      detail::lowerSpecializedNBABatch(batch);
+      continue;
+    }
     auto module = batch->getParentOfType<ModuleOp>();
     OpBuilder builder(batch);
     auto loc = batch.getLoc();

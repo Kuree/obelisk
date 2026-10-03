@@ -148,12 +148,17 @@ the original fallback semantics remain encoded under the same function,
 continuation, descriptor, hierarchy, and code-unit identities. Falling back is
 a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
-The shared runtime calendar represents eligible scalar commits with the
+The shared runtime calendar represents eligible private commits with the
 `schedule.nba.batch` region. Its body contains ordered `schedule.nba.commit`
 root actions and ends in `schedule.nba.yield`. It cannot contain calls,
-suspensions or arbitrary stores. Conversion packs the admitted roots into one
-constant table and lowers the region to one guarded batch call, followed by
-the canonical commit for any remaining roots.
+suspensions or arbitrary stores. Typed layout attributes retain canonical
+plane offsets, accumulator and fixed-slot symbols, and exact change-consumer
+destinations. Conversion emits a guard for the installed plan, then visits
+only dirty eligible roots using word masks and trailing-zero selection.
+Each case uses specialized masked stores and combines consumer readiness in
+local words before updating the ready set once per affected word. The
+canonical commit follows for any roots left pending. Regions without layout
+facts retain the validating runtime batch implementation.
 
 Eligibility uses a sparse backward dataflow analysis before process fusion.
 Observer sensitivity propagates to a fixed point through immediate storage
@@ -163,16 +168,30 @@ transient masks and pending activations. NBA writes stop propagation at their
 capture/commit boundary. Unresolved effects yield no private
 certificate. The typed `schedule.nba.private_influence` field carries the
 root-wide result through fusion. Admission also requires the existing NBA
-merge proof, a fixed NBA region, and exclusively direct generated change
-consumers. This first implementation handles roots up to 64 bits; it does not
-infer privacy from hierarchy or port visibility.
+merge proof for accumulators and exclusively direct generated change
+consumers. Accumulators up to 256 bits and certified fixed slots on larger
+roots are supported. Slot targets remain the captured enqueue-time offsets,
+including clipped partial and invalid selections. Mixed-region accumulators
+retain their validity and dirty bit until their own barrier. Privacy is not
+inferred from hierarchy or port visibility.
+
+A separate whole-design reader inventory can prove that a storage root has
+no reads or watches in any activation. Combined with the private influence
+proof, a complete executable may remove an immediate plain NBA enqueue
+entirely while retaining the evaluation of its RHS and destination. Missing
+effects reject this proof. Waveform dumps count as readers of settled state;
+object and IR emission preserve updates for external helper callers. Delayed
+assignments and clocking outputs remain intact. An
+ordinary private register read on a later clock is still live and must update
+at its NBA barrier; lack of value-sequence observers alone never removes it.
 
 The batch preserves captured RHS values, targets, partial-write masks,
 transient change masks and both X/Z planes. It updates canonical storage and
 knownness proofs, consumes only committed staging records and dirty bits,
 and combines pending consumer activations without signal publications.
 Unchanged shared values consume staging without redundant state stores;
-detached native mirrors are still refreshed.
+knownness notifications occur only when the unknown plane actually changes.
+Detached native mirrors are refreshed by the canonical fallback.
 Force, VPI observation, unshared state, runtime-owned accumulators and other
 failed guards leave work pending for canonical commit. Each NBA barrier
 remains distinct, including repeated Active/NBA iterations within one time

@@ -28,10 +28,16 @@ public:
   bool mayReachObserver(Root root) const {
     return !complete || !known.contains(root) || observed.contains(root);
   }
+  /// Stronger than private influence: no process can ever read/watch this
+  /// root. Unknown effects reject the proof, including unresolved call reads.
+  /// The caller must also exclude external/toggle observation.
+  bool isNeverRead(Root root) const {
+    return complete && known.contains(root) && !readers.contains(root);
+  }
 
 private:
   bool complete = false;
-  llvm::DenseSet<Root> known, observed;
+  llvm::DenseSet<Root> known, observed, readers;
 };
 } // namespace obelisk::analysis
 #endif

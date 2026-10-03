@@ -148,7 +148,7 @@ def NativeNBABatchOp : ScheduleNativeOp<"nba.batch", [SingleBlock,
     changed flag is accumulated, and status reports a runtime error, if any.
   }];
   let arguments = (ins LLVM_AnyPointer:$context, I32:$barrier,
-      LLVM_AnyPointer:$changed);
+      LLVM_AnyPointer:$changed, OptionalAttr<NBABatchLayoutAttr>:$layout);
   let results = (outs I32:$status);
   let regions = (region AnyRegion:$body);
   let assemblyFormat = [{ $context `,` $barrier `,` $changed $body attr-dict
@@ -159,8 +159,8 @@ def NativeNBACommitOp : ScheduleNativeOp<"nba.commit",
     [HasParent<"NativeNBABatchOp">,
      MemoryEffects<[MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
        MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>]>]> {
-  let summary = "consume one private scalar accumulator if its guard holds";
-  let arguments = (ins I64Attr:$root);
+  let summary = "consume certified private accumulator or fixed-slot staging";
+  let arguments = (ins I64Attr:$root, OptionalAttr<NBACommitLayoutAttr>:$layout);
   let assemblyFormat = "$root attr-dict";
   let hasVerifier = 1;
 }

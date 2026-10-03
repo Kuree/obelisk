@@ -69,6 +69,11 @@ module attributes {
     simulation.code_unit.decl 3 in 0 always hierarchy "work"
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      // Preserve NBA destinations for the external runtime state checks too.
+      %levels = arith.constant 0 : i64
+      %scope = simulation.bytes.constant ""
+      simulation.dump.vars %ctx, %levels, %scope :
+          (!simulation.context, i64, !simulation.bytes) -> ()
       %clk = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<1>>
       %c = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process
       %w = simulation.spawn @work(%ctx, %clk) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process

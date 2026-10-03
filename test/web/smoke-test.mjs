@@ -240,6 +240,8 @@ endmodule
   for (const [fixture, expected] of [
     ['native-periodic-initial-delays', 'periodic delays 5000 5007 at 50007'],
     ['native-nba-batch', 'NBA batch complete 5000 5000'],
+    ['native-nba-batch-wide', 'NBA wide batch complete 5000'],
+    ['native-nba-unread', 'unread NBA complete 5000 5000'],
   ]) {
     const periodicSource = await readFile(
       new URL(`../Driver/${fixture}.sv`, import.meta.url), 'utf8',

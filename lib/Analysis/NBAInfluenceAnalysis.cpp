@@ -71,6 +71,20 @@ NBAInfluenceAnalysis::NBAInfluenceAnalysis(sim::SimDesignOp design,
     dependencies[entry.second];
     known.insert(entry.first);
   }
+  // Waveform dumping reads settled canonical state without a per-root Watch
+  // effect. It permits batching but forbids erasing the stored value. Dynamic
+  // scopes/depths conservatively make every root a possible reader target.
+  bool dumpsState = design
+                        .walk([](Operation *op) {
+                          return isa<sim::SimDumpVarsOp, sim::SimDumpAllOp,
+                                     sim::SimDumpControlOp, sim::SimDumpPortsOp,
+                                     sim::SimDumpPortsControlOp>(op)
+                                     ? WalkResult::interrupt()
+                                     : WalkResult::advance();
+                        })
+                        .wasInterrupted();
+  if (dumpsState)
+    readers = known;
   for (Root root : observers) {
     auto found = declarations.find(root);
     if (found == declarations.end())
@@ -132,6 +146,8 @@ NBAInfluenceAnalysis::NBAInfluenceAnalysis(sim::SimDesignOp design,
         continue;
       }
       (input ? inputs : outputs).push_back(found->second);
+      if (input)
+        readers.insert({effect.getResource(), effect.getDescriptor()});
     }
     for (Operation *input : inputs) {
       llvm::append_range(dependencies[input], outputs);

@@ -37,7 +37,8 @@ public:
       for (auto root : roots)
         llvm::errs() << (root.first == Resource::Storage ? "storage " : "net ")
                      << root.second
-                     << " observed=" << analysis.mayReachObserver(root) << '\n';
+                     << " observed=" << analysis.mayReachObserver(root)
+                     << " unread=" << analysis.isNeverRead(root) << '\n';
     });
     markAllAnalysesPreserved();
   }

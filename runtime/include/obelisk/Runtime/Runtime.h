@@ -3973,6 +3973,19 @@ obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
 obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
     obelisk_rt_context *context, const uint32_t *roots, uint32_t count,
     uint32_t barrier_region, uint32_t *out_changed);
+// A compiled batch names its installed plan and runs only with shared state,
+// no overrides/observers, and no canonical or slow-root staging. All layout
+// and fanout decisions have already been certified by Schedule.
+uint32_t obelisk_rt_v1_static_nba_batch_guard(
+    obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan,
+    uint32_t barrier_region);
+void obelisk_rt_v1_static_nba_batch_knownness(obelisk_rt_context *context,
+                                              uint64_t offset, uint64_t width,
+                                              uint64_t old_unknown,
+                                              uint64_t new_unknown);
+void obelisk_rt_v1_static_nba_batch_finish(obelisk_rt_context *context,
+                                           uint64_t stages, uint64_t commits,
+                                           uint32_t ingress_pending);
 
 // Cold commit of one generated ordered record after external mutation. It
 // honors force/assign masks and publishes through canonical runtime fanout.

@@ -1689,6 +1689,14 @@ ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_roots,
 ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_batch,
              obelisk_rt_status (*)(obelisk_rt_context *, const uint32_t *,
                                    uint32_t, uint32_t, uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_batch_guard,
+             uint32_t (*)(obelisk_rt_context *,
+                          const obelisk_rt_native_schedule_plan *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_batch_knownness,
+             void (*)(obelisk_rt_context *, uint64_t, uint64_t, uint64_t,
+                      uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_static_nba_batch_finish,
+             void (*)(obelisk_rt_context *, uint64_t, uint64_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_static_nba_commit_ordered,
              obelisk_rt_status (*)(obelisk_rt_context *, uint32_t, int64_t,
                                    uint64_t, uint64_t, uint64_t));

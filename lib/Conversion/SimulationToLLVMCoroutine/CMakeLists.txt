@@ -29,6 +29,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationManagedStringLowering.cpp
   SimulationNBALowering.cpp
   SimulationNBACommit.cpp
+  SimulationNBABatchLowering.cpp
   SimulationNBAPlanMaterialization.cpp
   SimulationNativeGroupMaterialization.cpp
   SimulationGroupDataflow.cpp
