@@ -1863,6 +1863,45 @@ TEST(RuntimeInternals, SignalSubscriptionsAreRangeIndexedStableAndBounded) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, SignalObjectFilterRetainsCollidingSparseSubscriptions) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint32_t kind = OBELISK_RT_STABLE_HANDLE_STATIC;
+  constexpr uint32_t first = 3, second = 0x10000003;
+  ASSERT_EQ(signalSubscriptionObjectFilterIndex(kind, first),
+            signalSubscriptionObjectFilterIndex(kind, second));
+  struct {
+    obelisk_rt_wait_record_v1 wait;
+    obelisk_rt_wait_entry_v1 entry;
+  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0},
+           {0, OBELISK_RT_WAIT_EDGE_CHANGE, 8192}};
+  std::vector<std::unique_ptr<SignalSubscription>> subscriptions[2];
+  std::unique_ptr<SignalWaitLatch> latches[2];
+  const uint32_t ids[] = {first, second};
+  for (unsigned i = 0; i < 2; ++i) {
+    record.entry.stable_id = obelisk_rt_stable_handle_encode(kind, ids[i], 0);
+    ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+        context, &record.wait, subscriptions[i], latches[i]));
+  }
+  ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
+      context, obelisk_rt_stable_handle_encode(kind, first, 4096), 1,
+      OBELISK_RT_SIGNAL_CHANGE));
+  EXPECT_TRUE(latches[0]->triggered);
+  EXPECT_FALSE(latches[1]->triggered);
+  // Removing every page of one object must retain the colliding object.
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions[0]);
+  ASSERT_TRUE(obelisk_rt_publish_signal_occurrence_unlocked(
+      context, obelisk_rt_stable_handle_encode(kind, second, 4096), 1,
+      OBELISK_RT_SIGNAL_CHANGE));
+  EXPECT_TRUE(latches[1]->triggered);
+  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions[1]);
+  EXPECT_TRUE(context->signalSubscriptionBuckets.empty());
+  EXPECT_TRUE(std::all_of(context->signalSubscriptionObjectFilter.begin(),
+                          context->signalSubscriptionObjectFilter.end(),
+                          [](uint64_t count) { return count == 0; }));
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeInternals,
      ClockOccurrenceCohortsFinalizeByProducerWaveAndRemainTokenLocal) {
   obelisk_rt_context *context = nullptr;

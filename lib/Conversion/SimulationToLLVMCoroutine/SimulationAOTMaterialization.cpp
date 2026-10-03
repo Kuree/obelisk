@@ -3485,6 +3485,10 @@ FailureOr<bool> makeNativeEvalPlan(
     }
     return failure();
   }
+  const bool sharedPeriodic =
+      !periodicClocks.empty() &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module);
   if (periodicClocks.empty()) {
     // A clockless design retains ordinary calendar/control ownership in the
     // trusted AOT node loop. Static fanout queues generated ingress there, so
@@ -3739,6 +3743,12 @@ FailureOr<bool> makeNativeEvalPlan(
     Block *step = new Block;
     Block *dispatchStep = new Block;
     Block *executeStep = new Block;
+    Block *drainSlot = sharedPeriodic ? new Block : nullptr;
+    Block *runtimeSlot = sharedPeriodic ? new Block : nullptr;
+    if (sharedPeriodic) {
+      run.getBody().push_back(drainSlot);
+      run.getBody().push_back(runtimeSlot);
+    }
     Block *silentFall = nullptr;
     Block *advanceSilentFall = nullptr;
     Block *afterStep = new Block;
@@ -3791,7 +3801,8 @@ FailureOr<bool> makeNativeEvalPlan(
               alias.getTargetStaticState());
         });
     bool canCompressSilentFall =
-        periodicClocks.size() == 1 && clockMasks.front().second == 0 &&
+        !sharedPeriodic && periodicClocks.size() == 1 &&
+        clockMasks.front().second == 0 &&
         clockDirectMasks.front().second == 0 && canSkipSilentSlot;
     if (canCompressSilentFall) {
       silentFall = new Block;
@@ -3831,10 +3842,9 @@ FailureOr<bool> makeNativeEvalPlan(
     Value preparedTerminationAddress = LLVM::LoadOp::create(
         builder, location, pointer,
         fieldGEP(builder, location, control, controlType, 1), 0);
-    // The runtime is not re-entered while this generated transaction runs, so
-    // its control addresses and deadline are immutable until handoff. Capture
-    // them once outside the hot loop; direct bodies have no runtime escape
-    // through which a new timed callback could be installed.
+    // Control addresses are stable across shared slot drains. The exclusive
+    // loop also has an immutable deadline; the shared loop reloads that field
+    // after runtime continuations install new timed waits.
     Value preparedTimeAddress = LLVM::LoadOp::create(
         builder, location, pointer,
         fieldGEP(builder, location, control, controlType, 0), 0);
@@ -3891,8 +3901,9 @@ FailureOr<bool> makeNativeEvalPlan(
       Value initialized = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, initialStatus,
           llvmConstant(builder, location, i32, OBELISK_RT_OK));
-      cf::CondBranchOp::create(builder, location, initialized, loop,
-                               ValueRange{}, failed, ValueRange{initialStatus});
+      cf::CondBranchOp::create(builder, location, initialized,
+                               sharedPeriodic ? drainSlot : loop, ValueRange{},
+                               afterStep, ValueRange{initialStatus});
     } else {
       cf::BranchOp::create(builder, location, loop);
     }
@@ -3910,19 +3921,54 @@ FailureOr<bool> makeNativeEvalPlan(
       nextTime = arith::SelectOp::create(builder, location, earlier, candidate,
                                          nextTime);
     }
-    Value runtimeDue =
-        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ule,
-                              preparedDeadline, nextTime);
+    // Runtime continuations can install a new positive delay while the clock
+    // bindings stay installed. Reload its exact deadline (LRM 9.4.1).
+    Value runtimeDeadline = preparedDeadline;
+    if (sharedPeriodic)
+      runtimeDeadline = LLVM::LoadOp::create(
+          builder, location, i64,
+          fieldGEP(builder, location, control, controlType, 2), 8);
+    Value runtimeDue = arith::CmpIOp::create(
+        builder, location,
+        sharedPeriodic ? arith::CmpIPredicate::ult : arith::CmpIPredicate::ule,
+        runtimeDeadline, nextTime);
     step->addArgument(i64, location);
-    cf::CondBranchOp::create(
-        builder, location, runtimeDue, handoff,
-        ValueRange{llvmConstant(builder, location, i32,
-                                OBELISK_RT_AOT_TIMED_CHECKPOINT)},
-        step, ValueRange{nextTime});
+    if (sharedPeriodic) {
+      cf::CondBranchOp::create(builder, location, runtimeDue, runtimeSlot,
+                               ValueRange{}, step, ValueRange{nextTime});
+      builder.setInsertionPointToStart(runtimeSlot);
+      LLVM::StoreOp::create(builder, location, runtimeDeadline,
+                            preparedTimeAddress, 8);
+      cf::BranchOp::create(builder, location, drainSlot);
+    } else {
+      cf::CondBranchOp::create(
+          builder, location, runtimeDue, handoff,
+          ValueRange{llvmConstant(builder, location, i32,
+                                  OBELISK_RT_AOT_TIMED_CHECKPOINT)},
+          step, ValueRange{nextTime});
+    }
 
     builder.setInsertionPointToStart(step);
-    LLVM::StoreOp::create(builder, location, step->getArgument(0),
-                          preparedTimeAddress, 8);
+    if (sharedPeriodic) {
+      Value entered =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_scheduler_enter_periodic_aot"),
+              ValueRange{runEntry->getArgument(1), step->getArgument(0)})
+              .getResult();
+      Value ok = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, entered,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      Block *toggle = new Block;
+      run.getBody().push_back(toggle);
+      cf::CondBranchOp::create(builder, location, ok, toggle, ValueRange{},
+                               afterStep, ValueRange{entered});
+      builder.setInsertionPointToStart(toggle);
+    } else {
+      LLVM::StoreOp::create(builder, location, step->getArgument(0),
+                            preparedTimeAddress, 8);
+    }
     Value hasIngress = llvmConstant(builder, location, builder.getI1Type(), 0);
     SmallVector<Value> directReady(allOwners.getNumWords(),
                                    llvmConstant(builder, location, i64, 0));
@@ -4045,8 +4091,12 @@ FailureOr<bool> makeNativeEvalPlan(
         // The forwarding driver's canonical plane is not consumed inside the
         // closed generated loop. Keep the resolved net current for model
         // reads, and reconstruct the driver at a runtime/checkpoint handoff.
-        // This avoids maintaining a checkpoint-only projection per edge.
-        for (uint64_t bitOffset : {alias.getTargetBitOffset()}) {
+        // A shared periodic driver enters the runtime every slot, so it also
+        // maintains the driver's projection before that slot's drain.
+        SmallVector<uint64_t, 2> aliasBits{alias.getTargetBitOffset()};
+        if (sharedPeriodic)
+          aliasBits.push_back(alias.getDriverBitOffset());
+        for (uint64_t bitOffset : aliasBits) {
           Value aliasAddress =
               byteGEP(builder, location, stateValue, bitOffset / 8);
           Value aliasOld = LLVM::LoadOp::create(
@@ -4080,7 +4130,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                                  builder.getI8Type(),
                                                  aliasMask)),
               llvmConstant(builder, location, builder.getI8Type(), 0));
-          if (mlir::failed(publishRuntimeClockBit(alias.getTargetStaticState(),
+          if (bitOffset == alias.getTargetBitOffset() &&
+              mlir::failed(publishRuntimeClockBit(alias.getTargetStaticState(),
                                                   bitOffset, aliasOldSet,
                                                   aliasNewSet)))
             return failure();
@@ -4604,56 +4655,57 @@ FailureOr<bool> makeNativeEvalPlan(
 
     builder.setInsertionPointToStart(completeStep);
     Value completedStatus = completeStep->getArgument(0);
-    if (!nbaRoots.empty() &&
-        ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
-      // IEEE 1800-2023 4.5, 10.4.2: a mixed calendar commits generated
-      // accumulators at the shared NBA
-      // barrier. Hand off once after the whole Active batch, not per writer.
-      Value pending = llvmConstant(builder, location, i64, 0);
-      Value summary = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                nbaDirtySummaryName);
-      for (unsigned word = 0; word != (nbaRoots.size() + 4095) / 4096; ++word)
-        pending = arith::OrIOp::create(
-            builder, location, pending,
-            LLVM::LoadOp::create(builder, location, i64,
-                                 byteGEP(builder, location, summary, word * 8),
-                                 8));
-      Value needsBarrier = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ne, pending,
-          llvmConstant(builder, location, i64, 0));
+    if (sharedPeriodic) {
       Value ok = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, completedStatus,
           llvmConstant(builder, location, i32, OBELISK_RT_OK));
-      completedStatus = arith::SelectOp::create(
+      cf::CondBranchOp::create(builder, location, ok, drainSlot, ValueRange{},
+                               afterStep, ValueRange{completedStatus});
+      builder.setInsertionPointToStart(drainSlot);
+      Value drained =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_scheduler_drain_periodic_aot"),
+              ValueRange{runEntry->getArgument(1), control})
+              .getResult();
+      Value drainedOK = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, drained,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      Value terminated = LLVM::LoadOp::create(builder, location, i32,
+                                              preparedTerminationAddress, 4);
+      Value running = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, terminated,
+          llvmConstant(builder, location, i32, 0));
+      cf::CondBranchOp::create(
           builder, location,
-          arith::AndIOp::create(builder, location, ok, needsBarrier),
-          llvmConstant(builder, location, i32, OBELISK_RT_AOT_CHECKPOINT),
+          arith::AndIOp::create(builder, location, drainedOK, running), loop,
+          ValueRange{}, afterStep, ValueRange{drained});
+    } else {
+      Value stepOK = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, completedStatus,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      Value handoffPending =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_scheduler_handoff_pending"),
+              ValueRange{runEntry->getArgument(1)})
+              .getResult();
+      Value noRuntimeHandoff = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, handoffPending,
+          llvmConstant(builder, location, i32, 0));
+      Value continueGenerated =
+          arith::AndIOp::create(builder, location, stepOK, noRuntimeHandoff);
+      Value runtimeHandoffStatus = arith::SelectOp::create(
+          builder, location, stepOK,
+          llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE),
           completedStatus);
+      cf::CondBranchOp::create(builder, location, continueGenerated,
+                               canCompressSilentFall ? silentFall : loop,
+                               ValueRange{}, afterStep,
+                               ValueRange{runtimeHandoffStatus});
     }
-    Value stepOK = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, completedStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    Value handoffPending =
-        LLVM::CallOp::create(
-            builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_scheduler_handoff_pending"),
-            ValueRange{runEntry->getArgument(1)})
-            .getResult();
-    Value noRuntimeHandoff = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, handoffPending,
-        llvmConstant(builder, location, i32, 0));
-    Value continueGenerated =
-        arith::AndIOp::create(builder, location, stepOK, noRuntimeHandoff);
-    Value runtimeHandoffStatus = arith::SelectOp::create(
-        builder, location, stepOK,
-        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE),
-        completedStatus);
-    cf::CondBranchOp::create(builder, location, continueGenerated,
-                             canCompressSilentFall ? silentFall : loop,
-                             ValueRange{}, afterStep,
-                             ValueRange{runtimeHandoffStatus});
 
     if (canCompressSilentFall) {
       // A falling phase with no physical fanout is not an event region. It may
@@ -6724,6 +6776,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                      EvalRuntimeCalendar>(module)
                          ? OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL
                          : 0) |
+                    (sharedPeriodic ? OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC
+                                    : 0) |
                     OBELISK_RT_NATIVE_SCHEDULE_EVAL),
             NativeSchedulePlanField::Flags);
         value = insertValue(initializerBuilder, location, value,
@@ -6951,6 +7005,10 @@ FailureOr<bool> makeNativeEvalPlan(
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_scheduler_handoff_periodic_aot", i32,
                            {pointer, pointer, i32, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_drain_periodic_aot",
+                           i32, {pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_enter_periodic_aot",
+                           i32, {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_root", i32,
                            {pointer, i32, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_roots", i32,

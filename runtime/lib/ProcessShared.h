@@ -194,6 +194,8 @@ inline uint32_t designTaskOrderingRegion(const ScheduledDesignTask &task,
 }
 void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
                                         const ScheduledProcess &process);
+std::optional<uint64_t>
+nextScheduledProcessDelayUnlocked(obelisk_rt_context *context);
 void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context);
 uint32_t nativeAOTContinuationRank(const ScheduledProcess &scheduled,
                                    uint32_t continuation);

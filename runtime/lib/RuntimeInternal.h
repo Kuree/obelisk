@@ -977,6 +977,13 @@ struct SignalSubscriptionBucketKeyHash {
   }
 };
 
+// A counting membership filter for signal objects. Collisions only cause an
+// extra exact bucket lookup; zero proves that no page of the object is watched.
+// Fixed size also bounds memory when stable handles have sparse, large IDs.
+inline size_t signalSubscriptionObjectFilterIndex(uint32_t kind, uint32_t id) {
+  return (id ^ (kind * uint32_t{0x9e3779b9})) & 255;
+}
+
 struct SignalSubscriptionBucketSlot {
   SignalSubscriptionBucketKey key;
   size_t bucketIndex = 0;
@@ -1297,6 +1304,7 @@ struct SignalSubscriptionDiagnostics {
   uint64_t aotNodeExecutions = 0;
   uint64_t evalDispatches = 0;
   uint64_t periodicPreparations = 0;
+  uint64_t periodicSlotDrains = 0;
   uint64_t periodicClocksHighWater = 0;
   uint64_t aotActorExecutions[64] = {};
   uint64_t aotRegionPasses = 0;
@@ -2077,6 +2085,7 @@ struct obelisk_rt_context {
                      std::vector<SignalSubscriptionBucketEntry>,
                      SignalSubscriptionBucketKeyHash>
       signalSubscriptionBuckets;
+  std::array<uint64_t, 256> signalSubscriptionObjectFilter{};
   // Dynamic native subscriptions are omitted from the frozen AOT fanout.
   // Computed waits and custom Clause 31.5 descriptors share this already-hot
   // specialization guard instead of adding a transition-path feature probe.

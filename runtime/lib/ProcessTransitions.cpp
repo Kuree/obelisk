@@ -1172,7 +1172,14 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
     return true;
   };
   __int128 pageCount = static_cast<__int128>(lastPage) - firstPage + 1;
-  if (pageCount <= kMaximumIndexedSignalPages) {
+  // LRM 9.4.2: skip only the ordinary subscription lookup when the complete
+  // object is unwatched. Clock-occurrence and covergroup indexes below are
+  // independent and still observe the publication, including its sequence.
+  bool objectWatched =
+      context
+          ->signalSubscriptionObjectFilter[signalSubscriptionObjectFilterIndex(
+              kind, objectID)] != 0;
+  if (objectWatched && pageCount <= kMaximumIndexedSignalPages) {
     if (!visitBucket(kWideSignalSubscriptionPage))
       return false;
     for (int64_t page = firstPage;; ++page) {
@@ -1181,7 +1188,7 @@ publishSignalOccurrenceUnlocked(obelisk_rt_context *context, uint64_t stableID,
       if (page == lastPage)
         break;
     }
-  } else {
+  } else if (objectWatched) {
     std::vector<int64_t> pages;
     OBELISK_RT_TRY {
       for (const auto &[key, bucket] : context->signalSubscriptionBuckets) {

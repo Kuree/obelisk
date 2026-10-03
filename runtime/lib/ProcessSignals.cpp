@@ -95,6 +95,8 @@ bool appendSignalSubscriptionUnlocked(
       auto &bucket = context->signalSubscriptionBuckets[key];
       bucket.push_back({&stored, slotIndex});
       bucketEntryAppended = true;
+      ++context->signalSubscriptionObjectFilter
+            [signalSubscriptionObjectFilterIndex(kind, objectID)];
       stored.bucketSlots.push_back({key, bucket.size() - 1});
     }
     OBELISK_RT_CATCH_ALL {
@@ -102,8 +104,11 @@ bool appendSignalSubscriptionUnlocked(
       if (found != context->signalSubscriptionBuckets.end()) {
         if (bucketEntryAppended && !found->second.empty() &&
             found->second.back().subscription == &stored &&
-            found->second.back().slotIndex == slotIndex)
+            found->second.back().slotIndex == slotIndex) {
           found->second.pop_back();
+          --context->signalSubscriptionObjectFilter
+                [signalSubscriptionObjectFilterIndex(kind, objectID)];
+        }
         if (found->second.empty())
           context->signalSubscriptionBuckets.erase(found);
       }
@@ -1116,6 +1121,9 @@ void obelisk_rt_unregister_signal_wait_unlocked(
           SignalSubscriptionBucketEntry moved = bucket->second.back();
           entry = moved;
           bucket->second.pop_back();
+          --context->signalSubscriptionObjectFilter
+                [signalSubscriptionObjectFilterIndex(slot.key.kind,
+                                                     slot.key.id)];
           if (moved.subscription && moved.subscription != &subscription &&
               moved.slotIndex < moved.subscription->bucketSlots.size())
             moved.subscription->bucketSlots[moved.slotIndex].bucketIndex =

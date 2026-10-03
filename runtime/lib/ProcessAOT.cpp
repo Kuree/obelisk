@@ -1414,6 +1414,42 @@ private:
   obelisk_rt_context *context;
 };
 
+// Claimed periodic actors have no runtime deadline. Query the existing delay
+// heap rather than walking every suspended design actor at each clock edge.
+uint64_t nextPeriodicRuntimeDeadlineUnlocked(obelisk_rt_context *context) {
+  uint64_t nextRuntimeDeadline = UINT64_MAX;
+  auto considerDeadline = [&](uint64_t candidate) {
+    if (candidate > context->schedulerTime)
+      nextRuntimeDeadline = std::min(nextRuntimeDeadline, candidate);
+  };
+  if (context->nextVPITimeCallback)
+    considerDeadline(*context->nextVPITimeCallback);
+  if (auto deadline = nextScheduledProcessDelayUnlocked(context))
+    considerDeadline(*deadline);
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (!task.terminated && task.phase == 0 && task.started &&
+        task.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+      considerDeadline(task.wakeTime);
+  for (const ScheduledDesignNBA &update : context->scheduledDesignNBAs)
+    considerDeadline(update.dueTime);
+  for (const ScheduledNBA &update : context->scheduledNBAs)
+    if (!update.cancelled)
+      considerDeadline(update.dueTime);
+  if (!context->scheduledInertialPathNBAs.empty())
+    considerDeadline(context->scheduledInertialPathNBAs.begin()->first.first);
+  for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
+    considerDeadline(update.dueTime);
+  for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
+    considerDeadline(event.dueTime);
+  if (const ReplaceableEventFeatureState *replaceable =
+          obelisk_rt_replaceable_events(context);
+      replaceable && !replaceable->calendar.empty())
+    considerDeadline(replaceable->calendar.begin()->first.first);
+  if (!context->scheduledPassSwitchEvents.empty())
+    considerDeadline(context->scheduledPassSwitchEvents.begin()->first.first);
+  return nextRuntimeDeadline;
+}
+
 // Bootstrap and checkpoint work use the same actor/region arbitration as
 // ordinary execution. Restrict only calendar advancement, not executor tiers.
 obelisk_rt_status
@@ -1447,6 +1483,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
   bool staticEvalIsland = context->nativeSchedulePlan &&
                           (context->nativeSchedulePlan->flags &
                            OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0;
+  const bool sharedCalendar = context->nativeSchedulePlan &&
+                              (context->nativeSchedulePlan->flags &
+                               OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC);
   if (staticEvalIsland)
     context->nativeStaticEvalIslandCertified = false;
   // Generated run_until owns `schedulerTime` directly, so time slots complete
@@ -1626,7 +1665,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     };
     constexpr uint32_t maxPeriodicBootstrapSteps = 4096;
     uint32_t periodicBootstrapSteps = 0;
-    while (hasTier3PeriodicWork()) {
+    // A shared coordinator preserves runtime publications and drains their
+    // subscribers in every slot; persistent consumers no longer need to
+    // disappear during bootstrap (LRM 4.5, 9.4.2).
+    while (!sharedCalendar && hasTier3PeriodicWork()) {
       if (periodicBootstrapSteps++ == maxPeriodicBootstrapSteps) {
         if (context->signalDiagnosticsEnabled)
           std::fprintf(stderr, "obelisk-periodic-reject=tier3-bootstrap\n");
@@ -1736,7 +1778,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       }
       return false;
     };
-    while (missingPeriodicFanoutActive()) {
+    while (!sharedCalendar && missingPeriodicFanoutActive()) {
       if (periodicBootstrapSteps++ == maxPeriodicBootstrapSteps) {
         if (context->signalDiagnosticsEnabled)
           std::fprintf(stderr, "obelisk-periodic-reject=fanout-bootstrap\n");
@@ -1957,7 +1999,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           scheduled.aotActorSlot != UINT32_MAX)
         continue;
       for (const auto &subscription : scheduled.signalSubscriptions)
-        if (subscription && subscriptionReadsGeneratedState(*subscription)) {
+        if (!sharedCalendar && subscription &&
+            subscriptionReadsGeneratedState(*subscription)) {
           if (context->signalDiagnosticsEnabled)
             std::fprintf(stderr,
                          "obelisk-periodic-reject=process-subscription\n");
@@ -1968,7 +2011,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       if (task.terminated || task.phase != 0)
         continue;
       for (const auto &subscription : task.signalSubscriptions)
-        if (subscription && subscriptionReadsGeneratedState(*subscription)) {
+        if (!sharedCalendar && subscription &&
+            subscriptionReadsGeneratedState(*subscription)) {
           if (context->signalDiagnosticsEnabled)
             std::fprintf(stderr, "obelisk-periodic-reject=task-subscription\n");
           return OBELISK_RT_TIER_UNAVAILABLE;
@@ -1981,7 +2025,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     for (uint64_t index = 0; index != context->nativeScheduleFanoutEntryCount;
          ++index) {
       const auto &entry = context->nativeScheduleFanoutEntries[index];
-      if (fanoutRoute(entry) != OBELISK_RT_FANOUT_RUNTIME ||
+      if (sharedCalendar || fanoutRoute(entry) != OBELISK_RT_FANOUT_RUNTIME ||
           !generatedWritesState(entry.static_state) ||
           entry.actor_slot >= context->nativeScheduleActors.size())
         continue;
@@ -1995,8 +2039,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     }
 
     std::vector<uint8_t> claimed(context->nativeScheduleActors.size(), 0);
-    std::vector<size_t> claimedProcessIndices;
-    claimedProcessIndices.reserve(clockCount);
     for (uint32_t index = 0; index != clockCount; ++index) {
       const auto &clock = clocks[index];
       if (clock.reserved != 0 || clock.half_period == 0 ||
@@ -2026,69 +2068,75 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
            scheduled.wakeTime - context->schedulerTime > clock.half_period))
         return OBELISK_RT_INVALID_CONTINUATION;
       nextEdges[index] = scheduled.wakeTime;
-      claimedProcessIndices.push_back(processIndex);
-      removeNativeAOTDeadlineUnlocked(context, clock.actor_slot);
     }
+    // Validate the entire cohort and allocate its bookkeeping before detaching
+    // any source, so an invalid later clock cannot partially claim the plan.
     context->nativePeriodicClockActorSlots.clear();
     context->nativePeriodicClockActorSlots.reserve(clockCount);
-    for (uint32_t index = 0; index != clockCount; ++index)
-      context->nativePeriodicClockActorSlots.push_back(
-          clocks[index].actor_slot);
+    for (uint32_t index = 0; index != clockCount; ++index) {
+      uint32_t actorSlot = clocks[index].actor_slot;
+      context->nativePeriodicClockActorSlots.push_back(actorSlot);
+      removeNativeAOTDeadlineUnlocked(context, actorSlot);
+      // Invalidate the generic heap entry too. Shared slot drains must not
+      // execute the source actor a second time (LRM 4.5, 9.4.1).
+      context->scheduledProcesses[context->nativeScheduleActorIndices[actorSlot]]
+          .wakeTime = UINT64_MAX;
+    }
     context->nativePeriodicTerminationRequested =
         context->schedulerFinishRequested ? 1u : 0u;
     outControl->scheduler_time = &context->schedulerTime;
     outControl->termination_requested =
         &context->nativePeriodicTerminationRequested;
-    uint64_t nextRuntimeDeadline = UINT64_MAX;
-    auto considerDeadline = [&](uint64_t candidate) {
-      if (candidate > context->schedulerTime)
-        nextRuntimeDeadline = std::min(nextRuntimeDeadline, candidate);
-    };
-    if (context->nextVPITimeCallback)
-      considerDeadline(*context->nextVPITimeCallback);
-    for (size_t index = 0; index != context->scheduledProcesses.size();
-         ++index) {
-      if (std::find(claimedProcessIndices.begin(), claimedProcessIndices.end(),
-                    index) != claimedProcessIndices.end())
-        continue;
-      const ScheduledProcess &scheduled = context->scheduledProcesses[index];
-      if (scheduled.instance && scheduled.phase == 0 && scheduled.started &&
-          scheduled.suspendKind == OBELISK_RT_SUSPEND_DELAY)
-        considerDeadline(scheduled.wakeTime);
-    }
-    for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
-      if (!task.terminated && task.phase == 0 && task.started &&
-          task.suspendKind == OBELISK_RT_SUSPEND_DELAY)
-        considerDeadline(task.wakeTime);
-    for (const ScheduledDesignNBA &update : context->scheduledDesignNBAs)
-      considerDeadline(update.dueTime);
-    for (const ScheduledNBA &update : context->scheduledNBAs)
-      considerDeadline(update.dueTime);
-    if (!context->scheduledInertialPathNBAs.empty())
-      considerDeadline(context->scheduledInertialPathNBAs.begin()->first.first);
-    for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
-      considerDeadline(update.dueTime);
-    for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
-      considerDeadline(event.dueTime);
-    if (const ReplaceableEventFeatureState *replaceable =
-            obelisk_rt_replaceable_events(context);
-        replaceable && !replaceable->calendar.empty())
-      considerDeadline(replaceable->calendar.begin()->first.first);
-    if (!context->scheduledPassSwitchEvents.empty())
-      considerDeadline(context->scheduledPassSwitchEvents.begin()->first.first);
-    outControl->next_runtime_deadline = nextRuntimeDeadline;
-    context->nativePeriodicRuntimeDeadline = nextRuntimeDeadline;
+    outControl->next_runtime_deadline =
+        nextPeriodicRuntimeDeadlineUnlocked(context);
+    context->nativePeriodicRuntimeDeadline = outControl->next_runtime_deadline;
     if (context->signalDiagnosticsEnabled) {
       ++context->signalDiagnostics.periodicPreparations;
       context->signalDiagnostics.periodicClocksHighWater = std::max<uint64_t>(
           context->signalDiagnostics.periodicClocksHighWater, clockCount);
     }
     if (staticEvalIsland)
-      context->nativeStaticEvalIslandCertified = true;
+      context->nativeStaticEvalIslandCertified = !sharedCalendar;
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_enter_periodic_aot(obelisk_rt_context *context,
+                                           uint64_t time) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || time < context->schedulerTime)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  context->schedulerTime = time;
+  return enterSchedulerTimeSlotUnlocked(context);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_drain_periodic_aot(
+    obelisk_rt_context *context,
+    obelisk_rt_native_periodic_control_v1 *control) {
+  if (!context || !control || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || !context->nativeSchedulePlan ||
+      !(context->nativeSchedulePlan->flags &
+        OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC))
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  // IEEE 1800-2023 4.4-4.6, 9.4.1, 10.4.2: finish runtime Active work
+  // before the common NBA barrier, then settle all resulting region work.
+  // Positive delays in initial blocks keep their exact time and continuation.
+  auto status = drainNativeAOTCurrentSlotUnlocked(context);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (context->signalDiagnosticsEnabled)
+    ++context->signalDiagnostics.periodicSlotDrains;
+  if (context->schedulerFinishRequested)
+    return OBELISK_RT_OK;
+  if (obelisk_rt_dump_active_unlocked(context) ||
+      !nativePeriodicAOTEnvironmentClean(context))
+    return OBELISK_RT_TIER_UNAVAILABLE;
+  control->next_runtime_deadline = nextPeriodicRuntimeDeadlineUnlocked(context);
+  context->nativePeriodicRuntimeDeadline = control->next_runtime_deadline;
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
@@ -2111,7 +2159,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
       if (!scheduled.instance ||
           scheduled.suspendKind != OBELISK_RT_SUSPEND_DELAY ||
           scheduled.instance->continuation != clock.continuation ||
-          nextEdges[index] <= context->schedulerTime)
+          nextEdges[index] < context->schedulerTime ||
+          (nextEdges[index] == context->schedulerTime &&
+           !(context->nativeSchedulePlan->flags &
+             OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC)))
         return OBELISK_RT_INVALID_CONTINUATION;
       if (scheduled.wakeTime != nextEdges[index]) {
         scheduled.wakeTime = nextEdges[index];

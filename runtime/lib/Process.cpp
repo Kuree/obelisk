@@ -1446,6 +1446,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
        context->execution->observer_count == 0 &&
        !(context->execution->flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
                                       OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)));
+  runtimeCalendarEvalValid &=
+      !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC) ||
+      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL);
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -1471,7 +1474,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                        OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
                        OBELISK_RT_NATIVE_SCHEDULE_EVAL |
                        OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND |
-                       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL)) != 0 ||
+                       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL |
+                       OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC)) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
     return OBELISK_RT_INVALID_ARGUMENT;
   const obelisk_rt_static_nba_root *nbaRoots = plan->nba_roots;

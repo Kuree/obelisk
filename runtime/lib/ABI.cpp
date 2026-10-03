@@ -1558,6 +1558,11 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_handoff_periodic_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_native_periodic_clock_v1 *,
                                    uint32_t, const uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_drain_periodic_aot,
+             obelisk_rt_status (*)(obelisk_rt_context *,
+                                   obelisk_rt_native_periodic_control_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_enter_periodic_aot,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_snapshot_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_aot_deopt_snapshot *));

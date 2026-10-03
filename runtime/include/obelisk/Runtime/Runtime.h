@@ -3225,6 +3225,10 @@ void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 // and remains alive until plan release.
 // Runtime consumers keep their subscriptions and ordinary event arbitration.
 #define OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL UINT32_C(4096)
+// The periodic coordinator drains the shared event regions after each edge
+// and at runtime deadlines, retaining its clock bindings across those drains.
+// Requires RUNTIME_CALENDAR_EVAL and its complete publication certificate.
+#define OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC UINT32_C(8192)
 
 typedef struct obelisk_rt_aot_deopt_actor {
   uint32_t slot;
@@ -3645,6 +3649,14 @@ obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
     obelisk_rt_context *context,
     const obelisk_rt_native_periodic_clock_v1 *clocks, uint32_t clock_count,
     const uint64_t *next_edges);
+// Drain the current slot without advancing or releasing generated clocks.
+// Refresh the deadline after runtime continuations have installed new waits.
+obelisk_rt_status obelisk_rt_v1_scheduler_drain_periodic_aot(
+    obelisk_rt_context *context,
+    obelisk_rt_native_periodic_control_v1 *control);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_enter_periodic_aot(obelisk_rt_context *context,
+                                           uint64_t time);
 // Materialize the runtime-owned hybrid scheduler records at an AOT region
 // boundary. Returned pointers remain context-owned until scheduler mutation.
 obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
