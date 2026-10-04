@@ -1,6 +1,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/Transforms/InliningUtils.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -26,7 +27,19 @@ static FailureOr<SmallVector<uint64_t>> parseCoveragePoints(AsmParser &parser) {
 #define GET_ATTRDEF_CLASSES
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.cpp.inc"
 namespace obelisk::schedule {
+namespace {
+struct ReadyInlinerInterface final : DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+  bool isLegalToInline(Operation *op, Region *, bool, IRMapping &) const final {
+    // Cloning preserves ordered accesses to the same pending set. Regions
+    // are formed after body inlining; other schedule actions retain their
+    // existing callable/activation restrictions.
+    return isa<NativeReadyReadOp, NativeReadyUpdateOp, NativeReadyCommitOp>(op);
+  }
+};
+} // namespace
 void ScheduleDialect::initialize() {
+  addInterfaces<ReadyInlinerInterface>();
   addOperations<
 #define GET_OP_LIST
 #include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"

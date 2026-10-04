@@ -202,9 +202,9 @@ void cacheFunction(ModuleOp module, LLVM::LLVMFuncOp function,
     Value previous =
         LLVM::LoadOp::create(builder, loc, value.getType(), keyAddress);
     auto compare = [&](Value lhs, Value rhs) {
-      Value same = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
-                                         lhs, rhs);
-      match = arith::AndIOp::create(builder, loc, match, same);
+      Value same =
+          LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq, lhs, rhs);
+      match = LLVM::AndOp::create(builder, loc, match, same);
     };
     if (auto structure = dyn_cast<LLVM::LLVMStructType>(value.getType())) {
       // Packed logic keys include both planes. A known-to-X change must miss
@@ -219,8 +219,8 @@ void cacheFunction(ModuleOp module, LLVM::LLVMFuncOp function,
     } else
       compare(previous, value);
   }
-  cf::CondBranchOp::create(builder, loc, match, hit, ValueRange{}, &original,
-                           arguments);
+  LLVM::CondBrOp::create(builder, loc, match, hit, ValueRange{}, &original,
+                         arguments);
   builder.setInsertionPointToStart(hit);
   Value cached = LLVM::LoadOp::create(builder, loc, resultType, resultAddress);
   LLVM::ReturnOp::create(builder, loc, cached);
@@ -231,8 +231,8 @@ void cacheFunction(ModuleOp module, LLVM::LLVMFuncOp function,
       LLVM::StoreOp::create(builder, loc, arguments[key], keyAddresses[index]);
     LLVM::StoreOp::create(builder, loc, result, resultAddress);
     returned->setOperand(0, result);
-    Value valid = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
-                                            builder.getBoolAttr(true));
+    Value valid = LLVM::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                           builder.getBoolAttr(true));
     LLVM::StoreOp::create(builder, loc, valid, validAddress);
   }
   function->setAttr("schedule.pure_cache",

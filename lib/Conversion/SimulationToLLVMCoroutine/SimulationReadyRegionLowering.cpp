@@ -4,6 +4,7 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include <map>
@@ -30,6 +31,10 @@ std::optional<Key> keyFor(Operation *op, SymbolTableCollection &symbols) {
     base = commit.getBase();
     capacity = commit.getCapacity();
     word = commit.getWord();
+  } else if (auto read = dyn_cast<schedule::NativeReadyReadOp>(op)) {
+    base = read.getBase();
+    capacity = read.getCapacity();
+    word = read.getWord();
   } else {
     return std::nullopt;
   }
@@ -112,9 +117,10 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
   llvm::SmallPtrSet<Operation *, 16> barriers;
   for (Operation *op : operations) {
     auto key = keyFor(op, symbols);
-    if (key && keys.count(*key))
-      additions[op] = uint64_t{1} << keys.at(*key);
-    else if (isBoundary(op, keys, symbols))
+    if (key && keys.count(*key)) {
+      if (!isa<schedule::NativeReadyReadOp>(op))
+        additions[op] = uint64_t{1} << keys.at(*key);
+    } else if (isBoundary(op, keys, symbols))
       barriers.insert(op);
   }
   DenseMap<Block *, uint64_t> incoming, outgoing;
@@ -200,6 +206,21 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
     auto key = keyFor(op, symbols);
     if (key && pending.count(*key)) {
       auto &value = pending.at(*key);
+      if (auto read = dyn_cast<schedule::NativeReadyReadOp>(op)) {
+        Value previous = loadOwnerWord(b, loc, value.base, key->word);
+        if (auto owner =
+                schedule::get<schedule::Field::EvalActivationEntry>(read))
+          schedule::set<schedule::Field::EvalActivationEntry>(
+              previous.getDefiningOp(), owner);
+        Value keep =
+            b.createOrFold<arith::XOrIOp>(loc, load(value.remove), ones);
+        Value current = b.createOrFold<arith::OrIOp>(
+            loc, b.createOrFold<arith::AndIOp>(loc, previous, keep),
+            load(value.add));
+        read.replaceAllUsesWith(current);
+        read.erase();
+        continue;
+      }
       Value remove, add;
       if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op)) {
         remove = update.getConsume() ? update.getMask() : zero;

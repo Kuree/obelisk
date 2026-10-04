@@ -15,6 +15,7 @@ add_mlir_library(ObeliskScheduleIR
   MLIRFunctionInterfaces
   MLIRLLVMDialect
   MLIRSideEffectInterfaces
+  MLIRTransformUtils
   MLIRIR
 )
 # These dialects share typed scheduling sites and native process operands.

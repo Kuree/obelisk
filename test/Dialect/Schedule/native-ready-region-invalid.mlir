@@ -1,5 +1,13 @@
 // RUN: obelisk-opt %s --split-input-file --verify-diagnostics
 module {
+  llvm.func @bad(%base: !llvm.ptr) {
+    // expected-error @+1 {{ready word must name a leaf within capacity}}
+    %value = schedule.ready.read %base {capacity = 64 : i64, word = 1 : i64} : (!llvm.ptr) -> i64
+    llvm.return
+  }
+}
+// -----
+module {
   llvm.func @bad() {
     // expected-error @+1 {{requires a nonempty CFG without entry arguments}}
     schedule.ready.region {

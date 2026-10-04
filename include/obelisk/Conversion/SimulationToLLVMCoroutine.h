@@ -31,7 +31,12 @@ void registerSimulationToLLVMCoroutinePipeline();
 
 /// Lower executable schedule actions after their effect-aware optimization.
 void materializeNativeScheduleActions(mlir::Operation *operation,
-                                      bool coalesce = true);
+                                      bool coalesce = true,
+                                      bool preserveReadiness = false);
+/// Materialize actions introduced after the main LLVM conversion, including
+/// the integer arithmetic and CFG needed by local readiness regions.
+mlir::LogicalResult
+lowerNativeScheduleActionsToLLVM(mlir::Operation *operation);
 
 /// Add terminal conversion patterns after the native preparation pipeline.
 void populateSimulationCoroutineToLLVMPatterns(

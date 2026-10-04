@@ -288,6 +288,8 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
       ::obelisk::schedule::Field::EvalPathKnownPredicate>(function);
   auto evalInfallible =
       ::obelisk::schedule::get<schedule::Field::EvalInfallible>(function);
+  auto evalRawCaptures =
+      ::obelisk::schedule::get<schedule::Field::EvalRawCaptures>(function);
   auto evalSelectedTwoState = ::obelisk::schedule::get<
       ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
   ArrayAttr outlinedPassthrough;
@@ -339,6 +341,9 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   if (evalInfallible)
     ::obelisk::schedule::set<schedule::Field::EvalInfallible>(replacement,
                                                               evalInfallible);
+  if (evalRawCaptures)
+    ::obelisk::schedule::set<schedule::Field::EvalRawCaptures>(replacement,
+                                                               evalRawCaptures);
   if (evalSelectedTwoState)
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSelectedTwoState>(
         replacement, evalSelectedTwoState);

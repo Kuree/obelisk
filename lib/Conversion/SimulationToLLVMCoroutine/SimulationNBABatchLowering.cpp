@@ -1,6 +1,9 @@
 //===- SimulationNBABatchLowering.cpp - Certified private NBA regions -----===//
 
 #include "SimulationEvalReadySet.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Transforms/Mem2Reg.h"
 #include "obelisk/Runtime/Runtime.h"
 #include <map>
 
@@ -17,6 +20,7 @@ public:
         i32(b.getI32Type()), ptr(LLVM::LLVMPointerType::get(b.getContext())) {}
 
   void run() {
+    auto function = op->getParentOfType<FunctionOpInterface>();
     Block *entry = op->getBlock();
     done = entry->splitBlock(Block::iterator(op));
     b.setInsertionPointToEnd(entry);
@@ -36,9 +40,9 @@ public:
     cf::CondBranchOp::create(b, loc, ne(guard, llvmConstant(b, loc, i32, 0)),
                              start, done);
     b.setInsertionPointToStart(start);
-    stages = entryAlloca(b, loc, i64, 1, 8);
-    commits = entryAlloca(b, loc, i64, 1, 8);
-    changed = entryAlloca(b, loc, i64, 1, 8);
+    stages = scratch();
+    commits = scratch();
+    changed = scratch();
     store(c(0), stages);
     store(c(0), commits);
     store(c(0), changed);
@@ -54,9 +58,9 @@ public:
                                .getAsRange<schedule::NBAConsumerAttr>())
         ready.try_emplace(consumer.getBit() / 64);
     }
-    for (auto &[word, scratch] : ready) {
-      scratch = entryAlloca(b, loc, i64, 1, 8);
-      store(c(0), scratch);
+    for (auto &[word, slot] : ready) {
+      slot = scratch();
+      store(c(0), slot);
     }
     for (auto &[word, roots] : words) {
       uint64_t eligible = 0;
@@ -64,7 +68,7 @@ public:
         eligible |= uint64_t{1} << (root.getRoot() % 64);
       Value dirtyAddress = byteGEP(b, loc, dirty, uint64_t(word) * 8);
       Value pending = band(load(dirtyAddress), c(eligible));
-      Value consumed = entryAlloca(b, loc, i64, 1, 8);
+      Value consumed = scratch();
       store(c(0), consumed);
       // Avoid an indirect branch through a potentially large commit body for
       // every dirty root. Test eight neighboring bits at a time, then visit
@@ -133,9 +137,24 @@ public:
           resize(ne(pending, c(0)), i32)});
     cf::BranchOp::create(b, loc, done);
     op.erase();
+    // These slots express region-local accounting and pending consumers, never
+    // ABI state. Expose their SSA form now rather than carrying artificial
+    // memory traffic through the rest of the MLIR pipeline.
+    if (function && !allocations.empty()) {
+      b.setInsertionPointToStart(&function.getFunctionBody().front());
+      DominanceInfo dominance(function);
+      (void)tryToPromoteMemorySlots(allocations, b,
+                                    DataLayout::closest(function), dominance);
+    }
   }
 
 private:
+  Value scratch() {
+    Value slot = entryAlloca(b, loc, i64, 1, 8);
+    allocations.push_back(
+        cast<PromotableAllocationOpInterface>(slot.getDefiningOp()));
+    return slot;
+  }
   Block *block() {
     auto *result = new Block;
     done->getParent()->getBlocks().insert(Region::iterator(done), result);
@@ -409,6 +428,7 @@ private:
   Block *done = nullptr;
   Value valuePlane, unknownPlane, dirty, summary, stages, commits, changed;
   std::map<uint32_t, Value> ready;
+  SmallVector<PromotableAllocationOpInterface> allocations;
 };
 } // namespace
 void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op) {

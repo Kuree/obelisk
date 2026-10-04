@@ -3,13 +3,14 @@
 // RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | mlir-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o -o %t.exe
 // RUN: %t.exe
+// RUN: %llvm_dist/bin/mlir-opt %s --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-opt --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=30' | mlir-translate --mlir-to-llvmir -o %t.late.ll
 !planes = !llvm.struct<(i64, i64)>
 module {
   // CHECK-LABEL: llvm.func internal @planes
   // CHECK: schedule.pure_cache = array<i32: 0>
-  // CHECK: arith.cmpi eq
-  // CHECK: arith.cmpi eq
-  // CHECK: cf.cond_br
+  // CHECK: llvm.icmp "eq"
+  // CHECK: llvm.icmp "eq"
+  // CHECK: llvm.cond_br
   llvm.func internal @planes(%key: !planes) -> i64 {
     %v = llvm.extractvalue %key[0] : !planes
     %u = llvm.extractvalue %key[1] : !planes

@@ -3654,8 +3654,10 @@ public:
       patterns.emplace(std::move(localPatterns));
       target = std::make_unique<ConversionTarget>(getContext());
       target->addLegalDialect<LLVM::LLVMDialect>();
-      target->addLegalOp<schedule::NativeByteAddressOp,
-                         UnrealizedConversionCastOp>();
+      target->addLegalOp<
+          schedule::NativeByteAddressOp, schedule::NativeReadyReadOp,
+          schedule::NativeReadyUpdateOp, schedule::NativeReadyCommitOp,
+          UnrealizedConversionCastOp>();
       target->markUnknownOpDynamicallyLegal([](Operation *operation) {
         return isa<LLVM::LLVMFuncOp>(operation);
       });
@@ -3690,7 +3692,10 @@ public:
     // Nested finalization pipelines invalidate the outer analysis cache.
     // Own the target facts and timing state needed by this terminal pass.
     llvm::DataLayout targetLayout = cached->get().dataLayout;
-    materializeNativeScheduleActions(module);
+    // Keep readiness semantic until generated member calls have been inlined.
+    // Otherwise each call/leaf inspection prematurely flushes its region.
+    materializeNativeScheduleActions(module, /*coalesce=*/false,
+                                     /*preserveReadiness=*/true);
     const llvm::DataLayout *parsed = &targetLayout;
     bool detailedTiming = cached->get().detailedTiming;
     auto lastTiming = std::chrono::steady_clock::now();
@@ -3751,7 +3756,9 @@ public:
       return signalPassFailure();
     ConversionTarget target(getContext());
     target.addLegalDialect<LLVM::LLVMDialect>();
-    target.addLegalOp<schedule::NativeByteAddressOp>();
+    target.addLegalOp<
+        schedule::NativeByteAddressOp, schedule::NativeReadyReadOp,
+        schedule::NativeReadyUpdateOp, schedule::NativeReadyCommitOp>();
     SmallVector<schedule::NativeObserverOp> deadObservers;
     module.walk([&](schedule::NativeObserverOp observer) {
       if (observer->use_empty())
@@ -3842,7 +3849,8 @@ public:
     if (failed(groupPromotions))
       return signalPassFailure();
     markTiming("native activation group materialization");
-    materializeNativeScheduleActions(module);
+    if (failed(lowerNativeScheduleActionsToLLVM(module)))
+      return signalPassFailure();
     if (failed(verifyGeneratedEvalCallClosures(module))) {
       signalPassFailure();
       return;

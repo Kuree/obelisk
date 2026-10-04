@@ -129,6 +129,13 @@ struct DirectPackedPlane {
   unsigned bitOffset;
 };
 
+DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
+                                        StringRef globalName,
+                                        uint64_t bitOffset, unsigned width);
+Value extractDirectPackedPlane(OpBuilder &builder, Location location,
+                               const DirectPackedPlane &plane,
+                               IntegerType resultType);
+
 struct DirectDynamicStateRange {
   Value valid;
   Value bitOffset;
@@ -314,6 +321,30 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
                                    bool unknownFallback) {
   IntegerType i64 = rewriter.getI64Type();
   if (range.inBounds) {
+    // A proved contained selector in a register-sized root can read the same
+    // canonical word used by its updates. Keep a constant physical address so
+    // activation-local memory SSA can carry reductions through their CFG.
+    // The bounds certificate concerns selectors only; both value/unknown
+    // planes independently retain their contents (LRM 7.4.5, 11.5.1).
+    if (range.rootWidth <= 64) {
+      auto rootType = rewriter.getIntegerType(range.rootWidth);
+      Value root = extractDirectPackedPlane(
+          rewriter, location,
+          loadDirectPackedPlane(rewriter, location, globalName,
+                                range.rootOffset, range.rootWidth),
+          rootType);
+      Value offset = arith::AddIOp::create(
+          rewriter, location, range.bitOffset,
+          llvmConstant(rewriter, location, i64, range.localOffset));
+      if (rootType != i64)
+        offset = LLVM::TruncOp::create(rewriter, location, rootType, offset);
+      Value selected = arith::ShRUIOp::create(rewriter, location, root, offset);
+      return rootType == resultType
+                 ? selected
+                 : LLVM::TruncOp::create(rewriter, location, resultType,
+                                         selected)
+                       .getResult();
+    }
     Value absolute = arith::AddIOp::create(
         rewriter, location, range.bitOffset,
         llvmConstant(rewriter, location, i64,

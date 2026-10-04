@@ -3,6 +3,7 @@
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -43,9 +44,9 @@ class MemoryDataflow final
     : public dataflow::DenseForwardDataFlowAnalysis<MemoryLattice> {
 public:
   MemoryDataflow(DataFlowSolver &solver, const DenseMap<Value, Range> &ranges,
-                 bool canonicalWrites)
+                 bool canonicalWrites, DominanceInfo &dominance)
       : DenseForwardDataFlowAnalysis(solver), ranges(ranges),
-        canonicalWrites(canonicalWrites) {}
+        canonicalWrites(canonicalWrites), dominance(dominance) {}
   LogicalResult visitOperation(Operation *op, const MemoryLattice &before,
                                MemoryLattice *after) override {
     if (!before.reachable)
@@ -93,19 +94,24 @@ public:
                                     MemoryLattice *after) override {
     (void)visitOperation(call, before, after);
   }
-  void visitBlockTransfer(Block *, ProgramPoint *, Block *,
+  void visitBlockTransfer(Block *block, ProgramPoint *, Block *,
                           const MemoryLattice &before,
                           MemoryLattice *after) override {
     if (!before.reachable)
       return;
     Memory next = before.values;
-    // A loop argument denotes a new selector value on each iteration. Keep
-    // dynamically addressed snapshots local to one block until an invariant
-    // address certificate proves that an edge retains the same binding.
+    // A dominating reference keeps its exact SSA address binding through
+    // branches and inner loops. Entering its defining block can recompute the
+    // reference (or rebind a block argument), so discard that snapshot there.
+    // Bounds prove validity, not identity across a loop backedge (LRM 7.4.5).
     SmallVector<Range> remove;
     for (const auto &entry : next)
-      if (std::get<0>(entry.first) && !std::get<5>(entry.first))
-        remove.push_back(entry.first);
+      if (Value identity = std::get<0>(entry.first);
+          identity && !std::get<5>(entry.first)) {
+        Block *binding = identity.getParentBlock();
+        if (binding == block || !dominance.dominates(binding, block))
+          remove.push_back(entry.first);
+      }
     for (const auto &key : remove)
       next.erase(key);
     propagateIfChanged(after, after->merge(next));
@@ -117,6 +123,7 @@ private:
   }
   const DenseMap<Value, Range> &ranges;
   bool canonicalWrites;
+  DominanceInfo &dominance;
 };
 } // namespace
 SourceMemoryAnalysis::SourceMemoryAnalysis(sim::SimFuncOp function,
@@ -158,9 +165,10 @@ SourceMemoryAnalysis::SourceMemoryAnalysis(sim::SimFuncOp function,
                          *range.descriptor, range.low, width, type, false);
   });
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  DominanceInfo dominance(function);
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
-  solver.load<MemoryDataflow>(ranges, canonicalWrites);
+  solver.load<MemoryDataflow>(ranges, canonicalWrites, dominance);
   if (failed(solver.initializeAndRun(function)))
     return;
   function.walk([&](sim::SimRefLoadOp load) {

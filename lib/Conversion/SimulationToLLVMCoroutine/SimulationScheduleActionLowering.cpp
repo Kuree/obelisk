@@ -1,4 +1,8 @@
 #include "SimulationEvalReadySet.h"
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -12,7 +16,8 @@ void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op);
 void lowerNativeReadyRegion(schedule::NativeReadyRegionOp op,
                             SymbolTableCollection &symbols);
 }
-void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
+void materializeNativeScheduleActions(Operation *operation, bool coalesce,
+                                      bool preserveReadiness) {
   SmallVector<schedule::NativeNBABatchOp> batches;
   operation->walk(
       [&](schedule::NativeNBABatchOp op) { batches.push_back(op); });
@@ -55,23 +60,29 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
     batch.replaceAllUsesWith(call.getResult());
     batch.erase();
   }
-  if (coalesce)
+  if (coalesce && !preserveReadiness)
     schedule::coalesceNativeReadyUpdates(operation);
   SmallVector<schedule::NativeReadyRegionOp> readyRegions;
-  operation->walk(
-      [&](schedule::NativeReadyRegionOp op) { readyRegions.push_back(op); });
+  if (!preserveReadiness)
+    operation->walk(
+        [&](schedule::NativeReadyRegionOp op) { readyRegions.push_back(op); });
   SymbolTableCollection symbols;
   for (auto region : readyRegions)
     detail::lowerNativeReadyRegion(region, symbols);
   SmallVector<schedule::NativeReadyUpdateOp> updates;
   SmallVector<schedule::NativeTransitionOp> transitions;
   SmallVector<schedule::NativeReadyCommitOp> commits;
-  operation->walk(
-      [&](schedule::NativeReadyUpdateOp op) { updates.push_back(op); });
+  SmallVector<schedule::NativeReadyReadOp> reads;
+  if (!preserveReadiness) {
+    operation->walk(
+        [&](schedule::NativeReadyUpdateOp op) { updates.push_back(op); });
+    operation->walk(
+        [&](schedule::NativeReadyCommitOp op) { commits.push_back(op); });
+    operation->walk(
+        [&](schedule::NativeReadyReadOp op) { reads.push_back(op); });
+  }
   operation->walk(
       [&](schedule::NativeTransitionOp op) { transitions.push_back(op); });
-  operation->walk(
-      [&](schedule::NativeReadyCommitOp op) { commits.push_back(op); });
   if (!transitions.empty()) {
     auto module = dyn_cast<ModuleOp>(operation);
     if (!module)
@@ -84,6 +95,16 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
         {ptr, builder.getI32Type(), builder.getI64Type(), builder.getI64Type(),
          builder.getI64Type(), builder.getI64Type(), builder.getI64Type(),
          builder.getI64Type()});
+  }
+  for (auto read : reads) {
+    OpBuilder builder(read);
+    Value value = detail::loadOwnerWord(builder, read.getLoc(), read.getBase(),
+                                        read.getWord());
+    if (auto owner = schedule::get<schedule::Field::EvalActivationEntry>(read))
+      schedule::set<schedule::Field::EvalActivationEntry>(value.getDefiningOp(),
+                                                          owner);
+    read.replaceAllUsesWith(value);
+    read.erase();
   }
   for (auto update : updates) {
     OpBuilder builder(update);
@@ -135,6 +156,19 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
       schedule::set<schedule::Field::EvalSourceOwner>(call, owner);
     transition.erase();
   }
+}
+
+LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation) {
+  materializeNativeScheduleActions(operation);
+  LLVMTypeConverter converter(operation->getContext());
+  RewritePatternSet patterns(operation->getContext());
+  arith::populateArithToLLVMConversionPatterns(converter, patterns);
+  cf::populateControlFlowToLLVMConversionPatterns(converter, patterns);
+  ConversionTarget target(*operation->getContext());
+  target.addLegalDialect<LLVM::LLVMDialect>();
+  target.addIllegalDialect<arith::ArithDialect, cf::ControlFlowDialect>();
+  target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
+  return applyPartialConversion(operation, target, std::move(patterns));
 }
 
 #define GEN_PASS_DEF_CONVERTNATIVESCHEDULEACTIONSTOLLVMPASS

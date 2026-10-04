@@ -9,6 +9,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Analysis/CallGraph.h"
@@ -37,6 +38,21 @@ using namespace mlir;
 
 namespace obelisk::detail {
 namespace {
+
+uint64_t nativeOperationCost(Operation *operation) {
+  uint64_t capacity = 0;
+  if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(operation))
+    capacity = update.getCapacity();
+  else if (auto commit = dyn_cast<schedule::NativeReadyCommitOp>(operation))
+    capacity = commit.getCapacity();
+  if (capacity) {
+    runtime::ReadySetLayout layout(capacity);
+    // Charge deferred leaf/index maintenance before inlining. Semantic ops
+    // must not accidentally multiply the existing machine-IR growth budget.
+    return 12 * layout.levels + (layout.hasCache() ? 8 : 0);
+  }
+  return isa<schedule::NativeReadyReadOp>(operation) ? 2 : 1;
+}
 
 std::optional<uint64_t> staticByteOffset(Value pointer) {
   uint64_t bytes = 0;
@@ -206,7 +222,9 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
     bool read = false;
     bool written = false;
     bool overlaps = false;
+    unsigned stores = 0;
   };
+  bool activation = schedule::has<schedule::Field::EvalRawCaptures>(function);
   std::map<std::pair<uint64_t, uint64_t>, Range> ranges;
   llvm::SetVector<Operation *> boundaries;
   bool supported = true;
@@ -258,7 +276,8 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
                    load.getOrdering() == LLVM::AtomicOrdering::not_atomic
              : !store.getVolatile_() &&
                    store.getOrdering() == LLVM::AtomicOrdering::not_atomic;
-    if (!owner || !plain || !type || type.getWidth() % 8 || !offset) {
+    if ((!owner && !activation) || !plain || !type || type.getWidth() % 8 ||
+        !offset) {
       boundaries.insert(operation);
       return;
     }
@@ -271,9 +290,11 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
     Range &range = ranges[{*offset, width}];
     range.type = type;
     range.operations.push_back(operation);
-    range.owners.insert(owner.getUInt());
+    if (owner)
+      range.owners.insert(owner.getUInt());
     range.read |= bool(load);
     range.written |= bool(store);
+    range.stores += bool(store);
   });
   // The global address must never escape into an opaque memory operation.
   // Calls are handled at boundaries, but storing the pointer or passing it
@@ -320,7 +341,9 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
                           function.getBody().getBlocks().size();
   for (auto &[key, range] : ranges)
     if (!range.overlaps && range.read && range.written &&
-        range.owners.size() > 1 && budget >= perRangeCost) {
+        (range.owners.size() > 1 ||
+         (activation && key.second <= 8 && range.stores > boundaries.size())) &&
+        budget >= perRangeCost) {
       selected.push_back({key.first, &range});
       budget -= perRangeCost;
     }
@@ -429,8 +452,10 @@ public:
         failed(promoteGroupState(function, inputs.globalTypes,
                                  "__obelisk_state_unknown", remaining)))
       return signalPassFailure();
-    if (remaining == budget)
+    if (remaining == budget) {
       markAllAnalysesPreserved();
+      return;
+    }
     if (!inputs.debugTiming)
       return;
     llvm::raw_string_ostream diagnostic(inputs.report->diagnostics[index]);
@@ -496,7 +521,8 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
       auto [found, inserted] = costs.try_emplace(callee, 0);
       if (inserted)
         callee.walk([&](Operation *operation) {
-          found->second += operation != callee.getOperation();
+          if (operation != callee.getOperation())
+            found->second += nativeOperationCost(operation);
         });
       cost = found->second;
     }
@@ -565,8 +591,6 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRankedMembers>(
             function))
       groups.push_back(function);
-  if (groups.empty())
-    return report;
   auto &inputs = manager.getAnalysis<NativeGroupPromotionInputs>();
   inputs.report = report;
   DialectRegistry registry;
@@ -677,7 +701,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   SmallVector<uint64_t> stableCounts(stableDefinitions.size());
   parallelFor(module.getContext(), 0, stableDefinitions.size(), [&](size_t i) {
     stableDefinitions[i].walk([&](Operation *operation) {
-      stableCounts[i] += operation != stableDefinitions[i].getOperation();
+      if (operation != stableDefinitions[i].getOperation())
+        stableCounts[i] += nativeOperationCost(operation);
     });
   });
   DenseMap<Operation *, uint64_t> stableCosts;
@@ -746,6 +771,10 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     // Do not retain a consumed operation pointer across that allocation.
     if (inlined != preInlined.end())
       preInlined.erase(inlined);
+    // Member effects are now visible in one CFG. Combine semantic readiness
+    // reads/updates before expanding indexes or predicating the computation.
+    if (failed(lowerNativeScheduleActionsToLLVM(function)))
+      return failure();
     uint64_t remaining = body.remaining;
     uint64_t materialized = body.materialized;
     if (auto candidate = ::obelisk::schedule::get<
@@ -820,6 +849,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       // materialization never introduces loads on a collapsed child's entry.
       if (auto remaining = residualBudgets.find(original);
           remaining != residualBudgets.end()) {
+        if (failed(lowerNativeScheduleActionsToLLVM(original)))
+          return failure();
         if (failed(promoteGroupReadyWords(original, inputs.globalTypes,
                                           remaining->second)) ||
             failed(promoteGroupState(original, inputs.globalTypes,
@@ -1029,6 +1060,17 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
            ::obelisk::schedule::has<
                ::obelisk::schedule::Field::EvalGroupChildren>(function);
   });
+  // A canonical output need not be globally private to keep its intermediate
+  // contents in SSA during a native activation. Transition/knownness actions
+  // have already been materialized; their ordered notifications are retained.
+  // The access inventory flushes at every opaque alias, observer call and exit
+  // (LRM 4.3, 4.6, 9.4.2). Unlike group predication, this retains
+  // loops/branches.
+  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+    if (!function.isExternal() &&
+        schedule::has<schedule::Field::EvalRawCaptures>(function) &&
+        !schedule::has<schedule::Field::EvalRankedMembers>(function))
+      residuals.emplace_back(function, operationLimit);
   report->diagnostics.resize(residuals.size());
   for (auto [index, residual] : llvm::enumerate(residuals))
     inputs.residuals.try_emplace(residual.first,

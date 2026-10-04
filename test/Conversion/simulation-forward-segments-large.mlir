@@ -8,12 +8,14 @@
 // PLAN-SAME: schedule.eval.predicated_dataflow
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: {{.*}}66, 68, 69,{{.*}}>
-// PLAN-SAME: schedule.eval.ssa_value_ranges = 2 : i64
+// Deferred readiness is charged before expansion; the remaining helper
+// budget admits one state range. Readiness itself already uses region SSA.
+// PLAN-SAME: schedule.eval.ssa_value_ranges = 1 : i64
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_2(
 // PLAN-SAME: schedule.eval.cache_hint_words = 2 : i64
 // PLAN-SAME: schedule.eval.predicated_dataflow
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_2.fallback(
-// PLAN-SAME: schedule.eval.ssa_ready_words = 3 : i64
+// PLAN-NOT: schedule.ready.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.segment(
 // PLAN-SAME: schedule.eval.segment_helpers = [@__obelisk_eval_ranked_group_0, @__obelisk_eval_ranked_group_1, @__obelisk_eval_ranked_group_2]
 

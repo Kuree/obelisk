@@ -188,6 +188,22 @@ LogicalResult NativeReadyCommitOp::verify() {
     return emitOpError("ready word must name a leaf within capacity");
   return success();
 }
+LogicalResult NativeReadyReadOp::verify() {
+  if (getCapacity() < 1 || getCapacity() > UINT32_MAX)
+    return emitOpError("ready capacity must be between 1 and UINT32_MAX");
+  if (getWordAttr().getValue().isNegative() ||
+      getWord() >= (getCapacity() + 63) / 64)
+    return emitOpError("ready word must name a leaf within capacity");
+  return success();
+}
+void NativeReadyReadOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       sim::SchedulerResource::get());
+}
 void NativeReadyCommitOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   effects.emplace_back(MemoryEffects::Read::get(),

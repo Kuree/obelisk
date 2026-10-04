@@ -125,16 +125,31 @@ def NativeReadyCommitOp
       I64Attr:$capacity, I64Attr:$word);
   let hasVerifier = 1;
 }
+def NativeReadyReadOp : ScheduleNativeOp<"ready.read", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "inspect the current pending leaf, including region-local updates";
+  let description = [{
+    Reads one authoritative pending word without consuming it. Within a
+    ready.region the result includes all preceding ordered add/consume actions
+    in that region; it does not require materializing derived indexes. Opaque
+    accesses, calls and handoffs still require coherent physical storage.
+    This reads pending activation state, not event history (LRM 4.3--4.7).
+  }];
+  let arguments = (ins LLVM_AnyPointer:$base, I64Attr:$capacity, I64Attr:$word);
+  let results = (outs I64:$value);
+  let hasVerifier = 1;
+}
 def NativeReadyRegionOp : ScheduleNativeOp<"ready.region", [RecursiveMemoryEffects]> {
   let summary = "carry pending readiness through a non-suspending CFG";
   let description = [{
     Execute the body in source order while representing ready.update and
     ready.commit actions as local remove/add masks. Materialize pending masks
-    before readiness inspection, potentially aliasing accesses, calls,
+    before opaque readiness inspection, potentially aliasing accesses, calls,
     observers and region exit. Disjoint ordinary storage accesses do not
     inspect readiness. Signal transitions and NBA actions retain their order
     and are observation boundaries. This changes pending-set representation,
     never event history or activation eligibility (IEEE 1800-2023 4.3--4.7).
+    ready.read observes the current local pending word without a flush.
     The region has no entry arguments; exits use ready.yield. Only flat CFG
     branches are allowed, with no suspensions or nested regions.
   }];

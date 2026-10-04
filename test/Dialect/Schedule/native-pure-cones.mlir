@@ -8,7 +8,7 @@ module {
   llvm.mlir.global internal @state(0 : i64) : i64
   // CHECK-LABEL: llvm.func internal @pure
   // CHECK: schedule.pure_cache = array<i32: 0, 1>
-  // CHECK: cf.cond_br
+  // CHECK: llvm.cond_br
   // CHECK: llvm.store
   llvm.func internal @pure(%x: i64, %u: i64) -> i64 {
     %sum = arith.addi %x, %u : i64

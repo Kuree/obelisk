@@ -197,7 +197,8 @@ materializeNativeRankedGroups(ModuleOp module,
     for (const auto *node : members) {
       uint32_t owner = node->owner;
       Value bit = llvmConstant(builder, loc, i64, uint64_t{1} << (owner % 64));
-      Value ingress = loadOwnerWord(builder, loc, ready, owner / 64);
+      Value ingress = schedule::NativeReadyReadOp::create(
+          builder, loc, i64, ready, readyLayout.capacity, owner / 64);
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalActivationEntry>(
           ingress.getDefiningOp(), builder.getI32IntegerAttr(owner));
       Value dirty = arith::AndIOp::create(builder, loc, ingress, bit);
@@ -301,7 +302,8 @@ materializeNativeRankedGroups(ModuleOp module,
         uint32_t owner = node->owner;
         Value bit =
             llvmConstant(builder, loc, i64, uint64_t{1} << (owner % 64));
-        Value ingress = loadOwnerWord(builder, loc, ready, owner / 64);
+        Value ingress = schedule::NativeReadyReadOp::create(
+            builder, loc, i64, ready, readyLayout.capacity, owner / 64);
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalActivationEntry>(
             ingress.getDefiningOp(), builder.getI32IntegerAttr(owner));
