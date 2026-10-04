@@ -5,10 +5,11 @@
 // Runtime behavior is checked in ../Runtime/simulation-native-group-budget.test.
 
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN-NOT: llvm.call @__obelisk_eval_ranked_group_
+// Even a one-operation inlining budget retains the certified shared sweep.
+// PLAN: llvm.call @__obelisk_eval_ranked_group_
 // PLAN-NOT: schedule.eval.materialized_group_calls
 // PLAN-NOT: schedule.eval.ssa_ready_words
-// PLAN: llvm.call @__obelisk_direct_fragment_
+
 
 // Only startup and the timed checker use node dispatch; clock work must
 // execute through the native coordinator at both optimization levels.

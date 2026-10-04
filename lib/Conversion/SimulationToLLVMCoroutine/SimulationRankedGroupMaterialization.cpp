@@ -12,6 +12,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/StringMap.h"
+#include <optional>
 
 using namespace mlir;
 
@@ -128,11 +129,7 @@ materializeNativeRankedGroups(ModuleOp module,
     chunks.clear();
   };
   auto emit = [&]() {
-    if (members.size() < 2) {
-      // An ungrouped singleton still uses its own executor. Do not bridge
-      // across it when joining the preceding and following bounded helpers.
-      if (!members.empty())
-        finishSegment();
+    if (members.empty()) {
       members.clear();
       cost = 0;
       return;
@@ -273,7 +270,7 @@ materializeNativeRankedGroups(ModuleOp module,
     // This is only a candidate. After lowering, dense memory/control-flow
     // analysis must prove that its computation can be predicated without
     // speculative effects. Until then the ordinary ranked helper owns entry.
-    if (llvm::all_of(members, [&](const auto *node) {
+    if (members.size() > 1 && llvm::all_of(members, [&](const auto *node) {
           return !node->twoStateBody.empty() &&
                  !plan.twoStateExecutors[node->owner].empty();
         })) {
@@ -329,11 +326,31 @@ materializeNativeRankedGroups(ModuleOp module,
     members.clear();
     cost = 0;
   };
+  // Singleton dependency islands have no edges between certified bodies, but
+  // often share an NBA activation. Give independent singletons in one ready
+  // word a bounded predicated sweep instead of a dispatcher trip per owner.
+  // Keep connected islands in their proven topological order. Readiness is
+  // still checked at each member, so this never invents an activation.
+  DenseMap<uint32_t, unsigned> islandSizes;
+  uint32_t nextIsland = 0;
   for (const auto &node : plan.rankedNodes) {
-    if (!members.empty() && node.island != members.front()->island) {
+    ++islandSizes[node.island];
+    nextIsland = std::max(nextIsland, node.island + 1);
+  }
+  SmallVector<NativeRankedEvalNode> ordered(plan.rankedNodes);
+  for (auto &node : ordered)
+    if (islandSizes.lookup(node.island) == 1)
+      node.island = nextIsland + node.owner / 64;
+  llvm::stable_sort(ordered, [](const auto &a, const auto &b) {
+    return a.island < b.island;
+  });
+  std::optional<uint32_t> currentIsland;
+  for (const auto &node : ordered) {
+    if (currentIsland && node.island != *currentIsland) {
       emit();
       finishSegment();
     }
+    currentIsland = node.island;
     uint64_t four = bodyCost(node.body);
     uint64_t two = node.twoStateBody.empty() ? 0 : bodyCost(node.twoStateBody);
     if (!four || (!node.twoStateBody.empty() && !two)) {
@@ -344,15 +361,15 @@ materializeNativeRankedGroups(ModuleOp module,
     // Charge both domain bodies and pending/proof control to this helper,
     // rather than spending one model-wide budget on fragment wrappers.
     uint64_t weight = four + two + 64;
-    if (weight > budget) {
-      emit();
-      finishSegment();
-      continue;
-    }
     if (weight > budget - cost)
       emit();
     members.push_back(&node);
     cost += weight;
+    // A large certified body is a direct call in its own bounded helper.
+    // The inliner still enforces its budget; code size does not introduce a
+    // scheduling boundary or break the surrounding predicated segment.
+    if (cost >= budget)
+      emit();
   }
   emit();
   finishSegment();

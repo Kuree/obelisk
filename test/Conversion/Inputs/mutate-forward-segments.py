@@ -81,6 +81,58 @@ simulation.ref.store %newcount to %count : i8, !vref
         start = text.index('simulation.func @step3(')
         end = text.index('simulation.func @step4(', start)
     text = text[:start] + body + text[end:]
+elif mode == 'initial-edge':
+    start = text.index('simulation.func @step1(')
+    end = text.index('simulation.func @step2(', start)
+    body = text[start:end].replace(
+        'simulation.ref.store %next to %output : i8, !vref',
+        'simulation.nba.enqueue %next to %output : (i8, !vref) -> ()')
+    text = text[:start] + body + text[end:]
+    text = text.replace('%delay = simulation.time.constant 3\n'
+                        'simulation.suspend.delay %delay to ^first',
+                        '%clk = simulation.context.storage %ctx[0] : !ref\n'
+                        'simulation.suspend.edge posedge %clk to ^first : !ref')
+    text = text.replace('%again = simulation.time.constant 2',
+                        '%again = simulation.time.constant 1')
+elif mode == 'islands':
+    # The NBA producer is outside the ranked combinational graph. Its four
+    # independent consumers share a ready word and must share a sweep too.
+    start = text.index('simulation.func @step1(')
+    end = text.index('simulation.func @step2(', start)
+    body = text[start:end].replace(
+        'simulation.ref.store %next to %output : i8, !vref',
+        'simulation.nba.enqueue %next to %output : (i8, !vref) -> ()')
+    text = text[:start] + body + text[end:]
+    for i in range(3, 6):
+        text = text.replace(f'@step{i}(%ctx, %s{i-1}, %s{i})',
+                            f'@step{i}(%ctx, %s1, %s{i})')
+        start = text.index(f'simulation.func @step{i}(')
+        end = text.index('simulation.func @', start + 1)
+        body = text[start:end].replace(
+            f'descriptor_id = {i-1} : i64', 'descriptor_id = 1 : i64')
+        text = text[:start] + body + text[end:]
+    # One independent member never receives an activation. Sharing its ready
+    # word must not execute its body or change its initially-zero output.
+    text = text.replace('simulation.storage.decl 5 in 0 : i8 design',
+                        'simulation.storage.decl 5 in 0 : i8 design\n'
+                        'simulation.storage.decl 6 in 0 : i8 design')
+    text = text.replace('%s5 = simulation.context.storage %ctx[5] : !vref',
+                        '%s5 = simulation.context.storage %ctx[5] : !vref\n'
+                        '%s6 = simulation.context.storage %ctx[6] : !vref')
+    text = text.replace('@step4(%ctx, %s1, %s4)', '@step4(%ctx, %s6, %s4)')
+    start = text.index('simulation.func @step4(')
+    end = text.index('simulation.func @step5(', start)
+    body = text[start:end].replace('descriptor_id = 1 : i64',
+                                   'descriptor_id = 6 : i64')
+    text = text[:start] + body + text[end:]
+    text = text.replace('%zero = arith.constant 0 : i32\nsimulation.finish',
+                        '%idle = simulation.context.storage %ctx[4] : !vref\n'
+                        '%idleValue = simulation.ref.load %idle : !vref -> i8\n'
+                        '%idleFmt = simulation.bytes.constant "idle %0d"\n'
+                        'simulation.display %ctx to %channel2(%idleFmt, %idleValue) '
+                        'newline = true radix = <decimal> flags = [0, 0] : '
+                        '!simulation.bytes, i8\n'
+                        '%zero = arith.constant 0 : i32\nsimulation.finish')
 elif mode == 'budget':
     text = text.replace('schedule.native_scheduler = 3 : i32',
                         'schedule.native_scheduler = 3 : i32, schedule.native.max_inline_ops = 1 : i64')

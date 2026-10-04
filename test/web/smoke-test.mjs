@@ -242,6 +242,7 @@ endmodule
     ['native-nba-batch', 'NBA batch complete 5000 5000'],
     ['native-nba-batch-wide', 'NBA wide batch complete 5000'],
     ['native-nba-unread', 'unread NBA complete 5000 5000'],
+    ['native-nba-region-slices', 'slice NBA PASS'],
   ]) {
     const periodicSource = await readFile(
       new URL(`../Driver/${fixture}.sv`, import.meta.url), 'utf8',

@@ -1266,6 +1266,49 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   if (invalidPlan || !root)
     return result;
 
+  // An initial signal waiter belongs to the Active queue even if every one
+  // of its operations can compile natively. It is not part of the periodic
+  // model closure; that closure must not drain NBA before the waiter reads
+  // pre-NBA state (IEEE 1800-2023 4.4.2, 4.5, 10.4.2).
+  auto scheduler = schedule::get<schedule::Field::NativeScheduler>(module);
+  bool hasNBA = llvm::any_of(nodes, [](Attribute node) {
+    return isa<schedule::ComputeNBACommitAttr>(node);
+  });
+  if (hasNBA && result.reasons.empty() && scheduler &&
+      (scheduler.getValue() == schedule::NativeSchedulerMode::Eval ||
+       scheduler.getValue() == schedule::NativeSchedulerMode::Auto)) {
+    module.walk([&](sim::SimFuncOp function) {
+      if (function.getEntryKind() != sim::EntryKind::Initial)
+        return;
+      // Materialized clocked controls already execute their complete Active
+      // activation inside the generated closure, before its NBA barrier.
+      if (schedule::has<schedule::Field::ClockedControl>(function))
+        return;
+      bool signalWait = false, readsState = false;
+      for (Block &block : function.getBody()) {
+        auto fragment = fragmentsByBlock.find(&block);
+        if (fragment == fragmentsByBlock.end())
+          continue;
+        for (Attribute raw : fragment->second.getEffects()) {
+          auto effect = cast<schedule::ComputeEffectAttr>(raw);
+          readsState |= effect.getEffect() == schedule::ComputeEffectKind::Read;
+        }
+      }
+      function.walk([&](Operation *op) {
+        signalWait |=
+            isa<sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
+                sim::SimSuspendChangeOp, sim::SimSuspendAnyOp,
+                sim::SimSuspendClockSetOp, sim::SimSuspendLevelOp>(op);
+      });
+      if (signalWait && readsState) {
+        result.runtimeOwnedFanoutActors.insert(function.getOperation());
+        bytecodeActors.insert(function.getOperation());
+        result.reasons.emplace_back(
+            "initial signal waiter requires Active ordering");
+        onlyConcurrentColdBoundaries = false;
+      }
+    });
+  }
   uint32_t slot = 0;
   if (!dynamicActors.contains(root.getOperation()) &&
       !bytecodeActors.contains(root.getOperation()))
@@ -1408,7 +1451,12 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       result.eligible && result.nativeGraphCost > result.totalGraphCost / 2 &&
       (result.fullyEligible ||
        ((result.periodicClockCandidate || largeClocklessIsland) &&
-        result.runtimeOwnedFanoutActors.empty() && !hasRuntimePathPublication));
+        llvm::all_of(result.runtimeOwnedFanoutActors,
+                     [](Operation *actor) {
+                       return cast<sim::SimFuncOp>(actor).getEntryKind() ==
+                              sim::EntryKind::Initial;
+                     }) &&
+        !hasRuntimePathPublication));
   return result;
 }
 

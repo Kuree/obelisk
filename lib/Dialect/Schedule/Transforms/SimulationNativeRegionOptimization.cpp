@@ -56,6 +56,9 @@ private:
 struct RegionRoot {
   uint32_t commit;
   Value destination;
+  Value base;
+  uint64_t low;
+  uint64_t width;
   Type valueType;
   schedule::NBASiteAttr representativeSite;
   Location representativeLocation;
@@ -170,23 +173,55 @@ bool forwardRegionNextState(sim::SimFuncOp function,
   if (order.size() != activation.size() || order.front() != activationEntry)
     return false;
 
-  // One commit root may have several part-select destinations. Their relative
-  // order cannot be reconstructed by independent epilogues, so optimize a root
-  // only when every local site names the same SSA destination and type.
+  // Independent next states are safe for identical or disjoint fixed slices.
+  // Do not synthesize a full-root assignment: bits this activation never wrote
+  // may be assigned by another process before the NBA barrier (LRM 4.9.4).
+  // Overlapping slices and captured dynamic targets retain their original
+  // staging order. The influence proof still excludes observable transients.
   SmallVector<RegionRoot> roots;
-  DenseMap<uint32_t, unsigned> rootsByCommit;
+  DenseMap<uint32_t, SmallVector<unsigned>> rootsByCommit;
+  DenseSet<uint32_t> rejected;
   for (Block *block : order)
     for (Operation &operation : block->without_terminator()) {
       auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(&operation);
-      if (!enqueue || !isRegionLocalAccumulator(enqueue))
+      if (!enqueue || !enqueue.getSiteAttr())
         continue;
       schedule::NBASiteAttr site = enqueue.getSiteAttr();
-      auto found = rootsByCommit.find(site.getCommit());
-      if (found == rootsByCommit.end()) {
+      Value base = enqueue.getDestination();
+      uint64_t low = 0;
+      while (auto extract = base.getDefiningOp<sim::SimRefExtractOp>()) {
+        low += extract.getLowBit();
+        base = extract.getInput();
+      }
+      auto argument = dyn_cast<BlockArgument>(base);
+      auto width =
+          analysis::getSimulationStorageBitWidth(enqueue.getValue().getType());
+      if (!isRegionLocalAccumulator(enqueue) || !width || !argument ||
+          argument.getOwner() != &function.getBody().front()) {
+        rejected.insert(site.getCommit());
+        continue;
+      }
+      auto &slices = rootsByCommit[site.getCommit()];
+      RegionRoot *same = nullptr;
+      for (unsigned index : slices) {
+        RegionRoot &root = roots[index];
+        if (root.base == base && root.low == low && root.width == *width &&
+            root.valueType == enqueue.getValue().getType()) {
+          same = &root;
+          continue;
+        }
+        if (root.base != base ||
+            (root.low < low + *width && low < root.low + root.width))
+          rejected.insert(site.getCommit());
+      }
+      if (!same) {
         unsigned index = roots.size();
-        rootsByCommit.try_emplace(site.getCommit(), index);
+        slices.push_back(index);
         roots.push_back({site.getCommit(),
                          enqueue.getDestination(),
+                         base,
+                         low,
+                         *width,
                          enqueue.getValue().getType(),
                          site,
                          enqueue.getLoc(),
@@ -194,12 +229,7 @@ bool forwardRegionNextState(sim::SimFuncOp function,
                          llvm::to_vector(enqueue->getDiscardableAttrs())});
         continue;
       }
-      RegionRoot &root = roots[found->second];
-      if (root.destination != enqueue.getDestination() ||
-          root.valueType != enqueue.getValue().getType()) {
-        root.destination = {};
-        continue;
-      }
+      RegionRoot &root = *same;
       root.enqueues.push_back(enqueue);
       root.representativeSite = site;
       root.representativeLocation = enqueue.getLoc();
@@ -207,11 +237,8 @@ bool forwardRegionNextState(sim::SimFuncOp function,
           llvm::to_vector(enqueue->getDiscardableAttrs());
     }
   llvm::erase_if(roots, [&](const RegionRoot &root) {
-    if (!root.destination)
-      return true;
-    auto argument = dyn_cast<BlockArgument>(root.destination);
-    return !argument || argument.getOwner() != &function.getBody().front() ||
-           root.enqueues.size() < 2 || !mergeSafety.commitMayMerge(root.commit);
+    return rejected.contains(root.commit) || root.enqueues.size() < 2 ||
+           !mergeSafety.commitMayMerge(root.commit);
   });
   if (roots.empty())
     return false;
@@ -257,6 +284,12 @@ bool forwardRegionNextState(sim::SimFuncOp function,
   DenseMap<Block *, SmallVector<OptionalRootState>> incoming;
   OpBuilder builder(function.getContext());
   builder.setInsertionPointToStart(activationEntry);
+  for (RegionRoot &root : roots)
+    if (root.destination != root.base)
+      root.destination = sim::SimRefExtractOp::create(
+          builder, root.representativeLocation,
+          sim::RefType::get(function.getContext(), root.valueType), root.base,
+          root.low);
   SmallVector<OptionalRootState> initial(roots.size());
   for (auto [rootIndex, root] : llvm::enumerate(roots)) {
     if (!liveIn[activationEntry][rootIndex])
