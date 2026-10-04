@@ -23,7 +23,8 @@ def NBABatchLayoutAttr : ScheduleAttr<"NBABatchLayout", "nba_batch_layout"> {
 def NBASlotLayoutAttr : ScheduleAttr<"NBASlotLayout", "nba_slot_layout"> {
   let parameters = (ins "::mlir::FlatSymbolRefAttr":$offset,
       "::mlir::FlatSymbolRefAttr":$value, "::mlir::FlatSymbolRefAttr":$unknown,
-      "::mlir::FlatSymbolRefAttr":$valid, "uint64_t":$width);
+      "::mlir::FlatSymbolRefAttr":$valid, "uint64_t":$width,
+      OptionalParameter<"::mlir::IntegerAttr">:$constantOffset);
   let assemblyFormat = "`<` struct(params) `>`";
 }
 def NBAConsumerAttr : ScheduleAttr<"NBAConsumer", "nba_consumer"> {

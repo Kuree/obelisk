@@ -33,6 +33,9 @@ struct NativeStaticNBAPlan {
   // like independently ordered NBA statements.
   llvm::DenseMap<uint64_t, uint64_t> siteSemanticOrigins;
   llvm::DenseMap<uint64_t, uint64_t> siteWidths;
+  // Constant in-range targets certified by handle dataflow at every copy of
+  // the site. A missing entry retains the captured dynamic destination.
+  llvm::DenseMap<uint64_t, uint64_t> siteFixedOffsets;
   llvm::SmallVector<uint8_t> runtimeQueueRoots;
   // Distinct semantic sites select disjoint fixed root slices / array lanes,
   // or lie on mutually exclusive paths of the same outlined activation.

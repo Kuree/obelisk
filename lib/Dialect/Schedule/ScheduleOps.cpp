@@ -108,6 +108,13 @@ LogicalResult NativeNBACommitOp::verify() {
       auto slot = dyn_cast<NBASlotLayoutAttr>(attr);
       if (!slot || !slot.getWidth() || slot.getWidth() > 64)
         return emitOpError("requires fixed slots between 1 and 64 bits");
+      if (auto offset = slot.getConstantOffset()) {
+        const APInt &value = offset.getValue();
+        if (value.isNegative() || value.getActiveBits() > 64 ||
+            value.getZExtValue() > layout.getWidth() ||
+            slot.getWidth() > layout.getWidth() - value.getZExtValue())
+          return emitOpError("constant slot target must lie within its root");
+      }
     }
     for (auto attr : layout.getConsumers()) {
       auto consumer = dyn_cast<NBAConsumerAttr>(attr);

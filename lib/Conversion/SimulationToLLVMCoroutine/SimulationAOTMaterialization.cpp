@@ -1037,6 +1037,7 @@ FailureOr<bool> makeNativeEvalPlan(
     std::string unknownName;
     std::string validName;
     bool queued = false;
+    std::optional<uint64_t> constantOffset;
   };
   SmallVector<DynamicEvalNBA> dynamicEvalNBAs;
   llvm::SmallDenseSet<uint32_t, 8> orderedNBARoots;
@@ -2390,6 +2391,9 @@ FailureOr<bool> makeNativeEvalPlan(
             if (existing == dynamicEvalNBAs.end()) {
               DynamicEvalNBA entry{root->second, slotSite,
                                    std::min<uint64_t>(64, *width - index * 64)};
+              if (auto target = staticNBAPlan.siteFixedOffsets.find(*site);
+                  target != staticNBAPlan.siteFixedOffsets.end())
+                entry.constantOffset = target->second + index * 64;
               entry.offsetName =
                   (Twine("__obelisk_eval_nba_offset_") + Twine(slotSite)).str();
               entry.valueName =
@@ -6506,7 +6510,10 @@ FailureOr<bool> makeNativeEvalPlan(
               context, FlatSymbolRefAttr::get(context, slot->offsetName),
               FlatSymbolRefAttr::get(context, slot->valueName),
               FlatSymbolRefAttr::get(context, slot->unknownName),
-              FlatSymbolRefAttr::get(context, slot->validName), slot->width));
+              FlatSymbolRefAttr::get(context, slot->validName), slot->width,
+              slot->constantOffset
+                  ? builder.getI64IntegerAttr(*slot->constantOffset)
+                  : IntegerAttr{}));
         for (const auto &entry : fanoutEntries)
           if (entry.static_state == nbaRoots[root].static_state &&
               entry.low_bit < nbaRoots[root].bit_width && entry.bit_width)

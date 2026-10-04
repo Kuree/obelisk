@@ -78,3 +78,45 @@ module {
     llvm.return
   }
 }
+// -----
+#batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 256, rootCount = 1, capacity = 130>
+#slot = #schedule.nba_slot_layout<offset = @offset, value = @staged_value, unknown = @staged_unknown, valid = @valid, width = 5, constantOffset = 4 : i64>
+#root = #schedule.nba_commit_layout<offset = 0, width = 8, slots = [#slot], consumers = []>
+module {
+  llvm.func @bad_constant_target(%ctx: !llvm.ptr, %region: i32, %changed: !llvm.ptr) {
+    %r = schedule.nba.batch %ctx, %region, %changed {
+      // expected-error @+1 {{constant slot target must lie within its root}}
+      schedule.nba.commit 0 {layout = #root}
+      schedule.nba.yield
+    } {layout = #batch} : (!llvm.ptr, i32, !llvm.ptr) -> i32
+    llvm.return
+  }
+}
+// -----
+#batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 256, rootCount = 1, capacity = 130>
+#slot = #schedule.nba_slot_layout<offset = @offset, value = @staged_value, unknown = @staged_unknown, valid = @valid, width = 5, constantOffset = -1 : i64>
+#root = #schedule.nba_commit_layout<offset = 0, width = 8, slots = [#slot], consumers = []>
+module {
+  llvm.func @bad_constant_target(%ctx: !llvm.ptr, %region: i32, %changed: !llvm.ptr) {
+    %r = schedule.nba.batch %ctx, %region, %changed {
+      // expected-error @+1 {{constant slot target must lie within its root}}
+      schedule.nba.commit 0 {layout = #root}
+      schedule.nba.yield
+    } {layout = #batch} : (!llvm.ptr, i32, !llvm.ptr) -> i32
+    llvm.return
+  }
+}
+// -----
+#batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 256, rootCount = 1, capacity = 130>
+#slot = #schedule.nba_slot_layout<offset = @offset, value = @staged_value, unknown = @staged_unknown, valid = @valid, width = 5, constantOffset = 18446744073709551616 : i128>
+#root = #schedule.nba_commit_layout<offset = 0, width = 8, slots = [#slot], consumers = []>
+module {
+  llvm.func @bad_constant_target(%ctx: !llvm.ptr, %region: i32, %changed: !llvm.ptr) {
+    %r = schedule.nba.batch %ctx, %region, %changed {
+      // expected-error @+1 {{constant slot target must lie within its root}}
+      schedule.nba.commit 0 {layout = #root}
+      schedule.nba.yield
+    } {layout = #batch} : (!llvm.ptr, i32, !llvm.ptr) -> i32
+    llvm.return
+  }
+}

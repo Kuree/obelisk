@@ -7,8 +7,8 @@
 using namespace mlir;
 namespace obelisk::detail {
 namespace {
-// Each generated case uses constant storage offsets and consumer masks. The
-// only dispatch is over dirty eligible roots; no actor runs inside this region.
+// Each generated commit uses constant storage offsets and consumer masks.
+// Dirty bits predicate bounded runs of roots; no actor runs inside this region.
 class BatchLowering {
 public:
   explicit BatchLowering(schedule::NativeNBABatchOp op)
@@ -64,46 +64,49 @@ public:
         eligible |= uint64_t{1} << (root.getRoot() % 64);
       Value dirtyAddress = byteGEP(b, loc, dirty, uint64_t(word) * 8);
       Value pending = band(load(dirtyAddress), c(eligible));
-      Block *head = block(), *dispatch = block(), *next = block();
-      head->addArgument(i64, loc);
-      cf::BranchOp::create(b, loc, head, ValueRange{pending});
-      b.setInsertionPointToStart(head);
-      Value remaining = head->getArgument(0);
-      cf::CondBranchOp::create(b, loc, ne(remaining, c(0)), dispatch, next);
-      b.setInsertionPointToStart(dispatch);
-      Value bit =
-          LLVM::CountTrailingZerosOp::create(b, loc, i64, remaining, true);
-      Value rest =
-          band(remaining, arith::SubIOp::create(b, loc, remaining, c(1)));
-      SmallVector<APInt> cases;
-      SmallVector<Block *> bodies;
-      SmallVector<ValueRange> operands;
-      for (auto root : roots) {
-        cases.emplace_back(64, root.getRoot() % 64);
-        bodies.push_back(block());
-        operands.push_back({});
-      }
-      LLVM::SwitchOp::create(b, loc, bit, next, ValueRange{}, cases, bodies,
-                             operands);
-      for (auto [root, body] : llvm::zip(roots, bodies)) {
+      Value consumed = entryAlloca(b, loc, i64, 1, 8);
+      store(c(0), consumed);
+      // Avoid an indirect branch through a potentially large commit body for
+      // every dirty root. Test eight neighboring bits at a time, then visit
+      // only that bounded run in ascending root order. Empty runs do no work.
+      for (unsigned first = 0; first < 64; first += 8) {
+        uint64_t group = eligible & (uint64_t{0xff} << first);
+        if (!group)
+          continue;
+        Block *body = block(), *next = block();
+        cf::CondBranchOp::create(b, loc, ne(band(pending, c(group)), c(0)),
+                                 body, next);
         b.setInsertionPointToStart(body);
-        emitRoot(root.getLayoutAttr());
-        // A mixed NBA/Re-NBA accumulator can remain staged after fixed slots
-        // have committed. Its dirty bit must survive for the later barrier.
-        Value retained = c(0);
-        if (auto acc = root.getLayoutAttr().getAccumulator())
-          retained = resize(
-              load32(byteGEP(
-                  b, loc, address(acc),
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid))),
-              i64);
-        Value previous = load(dirtyAddress);
-        Value cleared =
-            band(previous, c(~(uint64_t{1} << (root.getRoot() % 64))));
-        store(select(ne(retained, c(0)), previous, cleared), dirtyAddress);
-        cf::BranchOp::create(b, loc, head, ValueRange{rest});
+        for (auto root : roots) {
+          uint64_t bit = uint64_t{1} << (root.getRoot() % 64);
+          if (!(group & bit))
+            continue;
+          Block *write = block(), *after = block();
+          cf::CondBranchOp::create(b, loc, ne(band(pending, c(bit)), c(0)),
+                                   write, after);
+          b.setInsertionPointToStart(write);
+          emitRoot(root.getLayoutAttr());
+          // A mixed NBA/Re-NBA accumulator can remain staged after fixed
+          // slots commit. Preserve its dirty bit for the later barrier.
+          Value retained = c(0);
+          if (auto acc = root.getLayoutAttr().getAccumulator())
+            retained = resize(
+                load32(byteGEP(
+                    b, loc, address(acc),
+                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid))),
+                i64);
+          store(bor(load(consumed), select(ne(retained, c(0)), c(0), c(bit))),
+                consumed);
+          cf::BranchOp::create(b, loc, after);
+          b.setInsertionPointToStart(after);
+        }
+        cf::BranchOp::create(b, loc, next);
+        b.setInsertionPointToStart(next);
       }
-      b.setInsertionPointToStart(next);
+      // No actor or observer callback runs inside a guarded batch. Clear
+      // the consumed bits together, preserving other roots and later regions.
+      store(band(load(dirtyAddress), bxor(load(consumed), c(UINT64_MAX))),
+            dirtyAddress);
       // Clear only this leaf's summary bit, and only if all owners consumed it.
       Value summaryAddress = byteGEP(b, loc, summary, uint64_t(word / 64) * 8);
       Value previous = load(summaryAddress);
@@ -296,6 +299,20 @@ private:
                                pending, next);
       b.setInsertionPointToStart(pending);
       LLVM::StoreOp::create(b, loc, llvmConstant(b, loc, i32, 0), valid, 4);
+      if (auto fixed = slot.getConstantOffset()) {
+        uint64_t local = fixed.getValue().getZExtValue();
+        uint64_t offset = root.getOffset() + local;
+        Value observed = commitChunk(
+            c(offset), offset, slot.getWidth(), c(slot.getWidth()),
+            c(mask(slot.getWidth())), load(address(slot.getValue())),
+            load(address(slot.getUnknown())), c(0));
+        activate(root, c(local), c(slot.getWidth()), observed, local);
+        increment(stages, c(1));
+        increment(commits, c(1));
+        cf::BranchOp::create(b, loc, next);
+        b.setInsertionPointToStart(next);
+        continue;
+      }
       Value requested = load(address(slot.getOffset()));
       Value negative = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::slt,
                                              requested, c(0));

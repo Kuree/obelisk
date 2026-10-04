@@ -454,6 +454,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   SmallVector<bool> fixedMask(plan.roots.size(), true);
   SmallVector<uint64_t> writeMasks(plan.roots.size(), 0);
   SmallVector<bool> seen(plan.roots.size(), false);
+  llvm::SmallDenseSet<uint64_t, 8> nonFixedSites;
   module.walk([&](sim::SimNBAEnqueueOp enqueue) {
     schedule::NBASiteAttr site = enqueue.getSiteAttr();
     auto mapped =
@@ -466,10 +467,26 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     std::optional<unsigned> width =
         nativeStateWidth(enqueue.getValue().getType());
     sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
-    std::optional<StaticNBADestination> destination =
-        function ? getStaticNBAReference(enqueue.getDestination(), stateLayout,
-                                         writesFor(function).getHandles())
-                 : std::nullopt;
+    std::optional<StaticNBADestination> destination;
+    if (function)
+      destination = getStaticNBAReference(enqueue.getDestination(), stateLayout,
+                                          writesFor(function).getHandles());
+    // Carry the existing handle dataflow certificate through wide fixed-slot
+    // staging. This proves the target captured at enqueue (LRM 4.9.4), not
+    // merely the root or a dynamic reference's possible range.
+    bool fixedTarget = width && destination &&
+                       destination->staticID == root.static_state &&
+                       destination->offset <= root.bit_width &&
+                       *width <= root.bit_width - destination->offset;
+    if (fixedTarget && !nonFixedSites.contains(site.getId())) {
+      auto [previous, inserted] =
+          plan.siteFixedOffsets.try_emplace(site.getId(), destination->offset);
+      fixedTarget = inserted || previous->second == destination->offset;
+    }
+    if (!fixedTarget) {
+      plan.siteFixedOffsets.erase(site.getId());
+      nonFixedSites.insert(site.getId());
+    }
     uint32_t homeRegion =
         function ? getRuntimeEventRegion(function.getHomeRegion()) : UINT32_MAX;
     uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||

@@ -8,10 +8,10 @@ struct {
   uint64_t value[4], unknown[4], mask[4];
   uint32_t valid, region;
   uint64_t transient[4];
-} accumulator;
-int64_t offset;
+} accumulator, aux2, aux63;
+int64_t offset, constant_offset;
 uint64_t staged_value, staged_unknown;
-uint32_t valid;
+uint32_t valid, constant_valid;
 static uint64_t stages, commits, notifications;
 static unsigned allowed = 1, pending;
 void specialized(void *, uint32_t, uint32_t *);
@@ -41,11 +41,14 @@ static void reset(void) {
   memset(value, 0xa5, sizeof(value));
   memset(unknown, 0, sizeof(unknown));
   memset(&accumulator, 0, sizeof(accumulator));
+  memset(&aux2, 0, sizeof(aux2));
+  memset(&aux63, 0, sizeof(aux63));
   memset(ingress, 0, sizeof(ingress));
   dirty[0] = (1ull << 1) | (1ull << 9);
   dirty[1] = 1ull << 1;
   summary = 3;
   stages = commits = notifications = pending = 0;
+  constant_valid = 0;
 }
 int main(void) {
   reset();
@@ -120,6 +123,49 @@ int main(void) {
     assert(commits == writes && stages == writes && pending == observed);
     assert(ingress[1] == observed && ingress[2] == 0);
   }
+  // Several roots share a word, including its highest bit. Dirty predicates
+  // must skip stale valid payloads, including when another root in the same
+  // eight-bit run commits. Preserve a pending Re-NBA and a non-batch root.
+  for (unsigned selected = 0; selected < 4; ++selected) {
+    reset();
+    valid = 0;
+    accumulator.valid = 1;
+    accumulator.region = 4;
+    aux2.valid = aux63.valid = 1;
+    aux2.region = aux63.region = 2;
+    aux2.mask[0] = aux63.mask[0] = 0xff;
+    aux2.value[0] = 0x5a;
+    aux63.value[0] = 0;
+    if (selected & 1)
+      dirty[0] |= 1ull << 2;
+    if (selected & 2)
+      dirty[0] |= 1ull << 63;
+    changed = 0;
+    specialized(0, 2, &changed);
+    assert(value[29] == (selected & 1 ? 0x5a : 0xa5));
+    assert(value[30] == (selected & 2 ? 0 : 0xa5));
+    assert(aux2.valid == !(selected & 1));
+    assert(aux63.valid == !(selected & 2));
+    assert(accumulator.valid && accumulator.region == 4);
+    assert(dirty[0] == ((1ull << 1) | (1ull << 9)) && !dirty[1]);
+    assert(summary == 1 && changed == !!selected && !pending);
+    assert(commits == ((selected & 1) + !!(selected & 2)) && stages == commits);
+  }
+  // The fixed target certificate avoids a dynamic address and clipping, but
+  // still preserves neighboring packed bits and four-state knownness changes.
+  reset();
+  valid = 0;
+  constant_valid = 1;
+  constant_offset = 3;
+  dirty[0] |= 1ull << 3;
+  staged_value = 0x12;
+  staged_unknown = 0x8;
+  changed = 0;
+  specialized(0, 2, &changed);
+  assert(value[28] == ((0xa5 & 7) | (0x12 << 3)));
+  assert(unknown[28] == (0x8 << 3));
+  assert(!constant_valid && commits == 1 && stages == 1 && notifications == 1);
+  assert(changed == 1 && dirty[0] == (1ull << 9) && !dirty[1]);
   // Guard failure consumes neither a payload nor its dirty/summary bits.
   reset();
   allowed = 0;
