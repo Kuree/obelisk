@@ -125,6 +125,28 @@ def NativeReadyCommitOp
       I64Attr:$capacity, I64Attr:$word);
   let hasVerifier = 1;
 }
+def NativeReadyRegionOp : ScheduleNativeOp<"ready.region", [RecursiveMemoryEffects]> {
+  let summary = "carry pending readiness through a non-suspending CFG";
+  let description = [{
+    Execute the body in source order while representing ready.update and
+    ready.commit actions as local remove/add masks. Materialize pending masks
+    before readiness inspection, potentially aliasing accesses, calls,
+    observers and region exit. Disjoint ordinary storage accesses do not
+    inspect readiness. Signal transitions and NBA actions retain their order
+    and are observation boundaries. This changes pending-set representation,
+    never event history or activation eligibility (IEEE 1800-2023 4.3--4.7).
+    The region has no entry arguments; exits use ready.yield. Only flat CFG
+    branches are allowed, with no suspensions or nested regions.
+  }];
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "$body attr-dict";
+  let hasVerifier = 1;
+}
+def NativeReadyYieldOp : ScheduleNativeOp<"ready.yield",
+    [Terminator, HasParent<"NativeReadyRegionOp">, Pure]> {
+  let summary = "materialize pending readiness and leave its region";
+  let assemblyFormat = "attr-dict";
+}
 def NativeNBABatchOp : ScheduleNativeOp<"nba.batch", [SingleBlock,
     MemoryEffects<[MemRead, MemWrite, MemRead<SimStorageResource>,
       MemWrite<SimStorageResource>, MemRead<SimSchedulerResource>,

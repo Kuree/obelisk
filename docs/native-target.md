@@ -135,6 +135,19 @@ maintenance on every internal transition. The compiler selects the
 representation from kernel size and estimated ingress density rather than
 imposing one layout globally.
 
+Native readiness updates can also live in a `schedule.ready.region`. This
+non-suspending CFG carries ordered add/remove masks across branches and loops,
+then updates the authoritative leaves and indexes together before readiness
+reads, calls, aliasing accesses, signal transitions, NBA actions, or exit.
+Dense forward dataflow limits each flush to words that can be pending on an
+incoming path. Ordinary accesses to proven distinct LLVM global objects or
+local allocations need no flush; global aliases and opaque pointers retain
+the conservative boundary. Only words with multiple actions before a boundary
+are accumulated; isolated updates keep their direct lowering. Temporary masks
+are promoted to SSA before group formation. This is a representation change
+permitted by LRM 4.3: event publications and source/NBA ordering under 4.6
+remain unchanged.
+
 Kernel materialization runs after the first verified compute graph and before
 the final graph rebuild. It is followed by the simulation inliner, SROA,
 mem2reg, canonicalization, CSE, simulation SCCP, and symbol DCE. The compute

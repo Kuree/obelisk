@@ -2,6 +2,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -63,6 +64,20 @@ LogicalResult NativeKnownValueOp::verify() {
       (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type) ||
        !sim::getFixedBitStreamPlan(type)))
     return emitOpError("requires a fixed native bit value");
+  return success();
+}
+LogicalResult NativeReadyRegionOp::verify() {
+  if (getBody().empty() || getBody().front().getNumArguments())
+    return emitOpError("requires a nonempty CFG without entry arguments");
+  for (Block &block : getBody()) {
+    for (Operation &op : block)
+      if (op.getNumRegions())
+        return emitOpError("does not permit nested regions");
+    Operation *end = block.getTerminator();
+    if (!isa<NativeReadyYieldOp>(end) &&
+        (!isa<BranchOpInterface>(end) || !isMemoryEffectFree(end)))
+      return emitOpError("requires non-suspending branches or ready.yield");
+  }
   return success();
 }
 LogicalResult NativeNBABatchOp::verify() {

@@ -50,6 +50,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationRuntimeStatusThreading.cpp
   SimulationSchedulerLowering.cpp
   SimulationScheduleActionLowering.cpp
+  SimulationReadyRegionLowering.cpp
   SimulationSchedulerMainLowering.cpp
   SimulationStaticSpecializationLowering.cpp
   SimulationStateAccessLowering.cpp

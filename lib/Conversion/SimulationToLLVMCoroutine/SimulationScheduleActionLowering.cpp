@@ -9,6 +9,8 @@ using namespace mlir;
 namespace obelisk {
 namespace detail {
 void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op);
+void lowerNativeReadyRegion(schedule::NativeReadyRegionOp op,
+                            SymbolTableCollection &symbols);
 }
 void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
   SmallVector<schedule::NativeNBABatchOp> batches;
@@ -55,6 +57,12 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce) {
   }
   if (coalesce)
     schedule::coalesceNativeReadyUpdates(operation);
+  SmallVector<schedule::NativeReadyRegionOp> readyRegions;
+  operation->walk(
+      [&](schedule::NativeReadyRegionOp op) { readyRegions.push_back(op); });
+  SymbolTableCollection symbols;
+  for (auto region : readyRegions)
+    detail::lowerNativeReadyRegion(region, symbols);
   SmallVector<schedule::NativeReadyUpdateOp> updates;
   SmallVector<schedule::NativeTransitionOp> transitions;
   SmallVector<schedule::NativeReadyCommitOp> commits;
