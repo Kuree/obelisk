@@ -5,6 +5,8 @@
 // Runtime behavior is checked in ../Runtime/simulation-forward-segments-large.test.
 
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// PLAN-SAME: schedule.eval.predicated_dataflow
+// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: {{.*}}66, 68, 69,{{.*}}>
 // PLAN-SAME: schedule.eval.ssa_value_ranges = 2 : i64
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_2(

@@ -1,9 +1,10 @@
 // RUN: obelisk-opt %s --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm -o %t.lowered
 // RUN: FileCheck %s < %t.lowered
 // RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/clang -O0 %t.ll %S/Inputs/native-ready-region.c -o %t.o0
+// RUN: %llvm_dist/bin/mlir-opt %S/Inputs/native-ready-region-harness.mlir --convert-arith-to-llvm --convert-cf-to-llvm | mlir-translate --mlir-to-llvmir > %t.harness.ll
+// RUN: %llvm_dist/bin/clang -O0 %t.ll %t.harness.ll -o %t.o0
 // RUN: %t.o0
-// RUN: %llvm_dist/bin/clang -O3 %t.ll %S/Inputs/native-ready-region.c -o %t.o3
+// RUN: %llvm_dist/bin/clang -O3 %t.ll %t.harness.ll -o %t.o3
 // RUN: %t.o3
 // Ordered additions/consumes cross loop backedges and joins. Alias reads and
 // callbacks see materialized leaves AND indexes. Callback changes survive.

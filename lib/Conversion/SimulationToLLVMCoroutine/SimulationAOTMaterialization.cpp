@@ -642,6 +642,20 @@ static void normalizeGeneratedWideTransitions(
       continue;
     OpBuilder builder(call);
     auto i64 = builder.getI64Type();
+    // Integer snapshots must retain their original access type. Reloading
+    // each word through an i8 GEP hides the store/load pair from mem2reg and
+    // leaves stack spills even after LLVM SROA (notably for i76 and i2930).
+    // Recover the SSA snapshot before extracting words. Byte-buffer snapshots
+    // keep their existing layout-dependent path.
+    DenseMap<Value, Value> snapshots;
+    if (*width <= 4096)
+      for (Value snapshot : args.drop_front(3)) {
+        auto allocation = snapshot.getDefiningOp<LLVM::AllocaOp>();
+        if (allocation && allocation.getElemType().isInteger(*width) &&
+            !snapshots.contains(snapshot))
+          snapshots[snapshot] = LLVM::LoadOp::create(
+              builder, call.getLoc(), allocation.getElemType(), snapshot, 1);
+      }
     for (uint64_t low = 0; low < *width; low += 64) {
       unsigned bits = std::min<uint64_t>(64, *width - low);
       uint64_t byteOffset = dataLayout.isLittleEndian()
@@ -650,6 +664,13 @@ static void normalizeGeneratedWideTransitions(
       auto load = [&](Value snapshot) -> Value {
         if (snapshot.getDefiningOp<LLVM::ZeroOp>())
           return llvmConstant(builder, call.getLoc(), i64, 0);
+        if (Value value = snapshots.lookup(snapshot)) {
+          if (low)
+            value = LLVM::LShrOp::create(
+                builder, call.getLoc(), value,
+                llvmConstant(builder, call.getLoc(), value.getType(), low));
+          return LLVM::TruncOp::create(builder, call.getLoc(), i64, value);
+        }
         Value value = LLVM::LoadOp::create(
             builder, call.getLoc(), builder.getIntegerType(bits),
             byteGEP(builder, call.getLoc(), snapshot, byteOffset), 1);

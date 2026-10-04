@@ -226,9 +226,15 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
     for (Block *next : order[i]->getSuccessors())
       if (--indegree[next] == 0)
         order.push_back(next);
-  if (order.size() != function.getBody().getBlocks().size() ||
-      order.size() > budget / slots.size())
-    return reject("cyclic/unreachable CFG or analysis budget");
+  if (order.size() != function.getBody().getBlocks().size())
+    return reject("cyclic/unreachable CFG");
+  // Copying lattice values is much cheaper than emitting instructions. Do
+  // not reject a small computation merely because its exact memory inventory
+  // crosses many blocks. Bound analysis work separately; the original and
+  // final operation counts still obey the unchanged code-growth budget.
+  uint64_t analysisBudget = budget > UINT64_MAX / 64 ? UINT64_MAX : budget * 64;
+  if (order.size() > analysisBudget / slots.size())
+    return reject("analysis budget");
 
   // At a complete reconvergence, reachability equals that of the controlling
   // dominator. This structural proof also holds when an inactive branch's

@@ -999,6 +999,44 @@ private:
   bool guardedClaims = false;
 };
 
+// Compare both canonical planes within the exact captured target. The byte
+// window may straddle a machine word; neighboring bits are excluded.
+Value buildGeneratedNBAChange(OpBuilder &builder, Location location,
+                              uint64_t bitOffset, unsigned width, Value value,
+                              Value unknown) {
+  assert(width > 0 && width <= 64);
+  Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
+  Type i64 = builder.getI64Type();
+  unsigned firstBit = bitOffset % 8;
+  auto spanType =
+      IntegerType::get(builder.getContext(), ((width + firstBit + 7) / 8) * 8);
+  auto loadCurrent = [&](StringRef name) -> Value {
+    Value plane = LLVM::AddressOfOp::create(builder, location, pointer, name);
+    Value current = LLVM::LoadOp::create(
+        builder, location, spanType,
+        byteGEP(builder, location, plane, bitOffset / 8), 1);
+    if (firstBit)
+      current = arith::ShRUIOp::create(
+          builder, location, current,
+          llvmConstant(builder, location, spanType, firstBit));
+    if (spanType.getWidth() < 64)
+      return LLVM::ZExtOp::create(builder, location, i64, current);
+    if (spanType.getWidth() > 64)
+      return LLVM::TruncOp::create(builder, location, i64, current);
+    return current;
+  };
+  Value changed = arith::OrIOp::create(
+      builder, location,
+      arith::XOrIOp::create(builder, location, value,
+                            loadCurrent("__obelisk_state_value")),
+      arith::XOrIOp::create(builder, location, unknown,
+                            loadCurrent("__obelisk_state_unknown")));
+  return arith::AndIOp::create(
+      builder, location, changed,
+      llvmConstant(builder, location, i64,
+                   width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1));
+}
+
 class ImmediateNBAConversion final
     : public OpConversionPattern<sim::SimNBAEnqueueOp> {
 public:
@@ -1127,6 +1165,46 @@ public:
       bool directGeneratedStage = commitRegion != UINT32_MAX &&
                                   (directPartialScalarStage || directLaneStage);
       auto emitDirectGeneratedStage = [&] {
+        Block *unchangedContinuation = nullptr;
+        if (directPartialScalarStage &&
+            staticRoot->second < staticPlan->unchangedSafeRoots.size() &&
+            staticPlan->unchangedSafeRoots[staticRoot->second]) {
+          // Retain RHS/target evaluation, and never discard a write that may
+          // overwrite an earlier pending NBA (LRM 4.6, 4.9.4, 10.4.2).
+          // The shared dirty index covers both runtime and generated stages.
+          // The plan separately excludes intervening immediate writers.
+          uint64_t bitOffset =
+              staticPlan->generatedOffsets[staticRoot->second] + decoded.offset;
+          Value changed = buildGeneratedNBAChange(rewriter, location, bitOffset,
+                                                  *width, value, unknown);
+          Value dirty = LLVM::LoadOp::create(
+              rewriter, location, i64,
+              byteGEP(
+                  rewriter, location,
+                  LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                            "__obelisk_aot_nba_dirty_roots_v1"),
+                  uint64_t{staticRoot->second / 64} * 8),
+              8);
+          Value pending = arith::AndIOp::create(
+              rewriter, location, dirty,
+              llvmConstant(rewriter, location, i64,
+                           uint64_t{1} << (staticRoot->second % 64)));
+          Value needed = arith::CmpIOp::create(
+              rewriter, location, arith::CmpIPredicate::ne,
+              arith::OrIOp::create(rewriter, location, changed, pending),
+              llvmConstant(rewriter, location, i64, 0));
+          Block *head = rewriter.getInsertionBlock();
+          unchangedContinuation =
+              rewriter.splitBlock(head, rewriter.getInsertionPoint());
+          Block *stage = rewriter.createBlock(
+              head->getParent(), unchangedContinuation->getIterator());
+          recordStaticSpecializationCFGBlocks(rewriter, head, 2);
+          rewriter.setInsertionPointToEnd(head);
+          cf::CondBranchOp::create(rewriter, location, needed, stage,
+                                   ValueRange{}, unchangedContinuation,
+                                   ValueRange{});
+          rewriter.setInsertionPointToEnd(stage);
+        }
         bool fixedRegionEvalStage =
             compactEvalMetadata &&
             staticRoot->second < staticPlan->generatedCommitRegions.size() &&
@@ -1315,6 +1393,10 @@ public:
                            uint64_t{1} << (dirtyWordIndex % 64)));
           LLVM::StoreOp::create(rewriter, location, markedSummary, summaryWord,
                                 8);
+        }
+        if (unchangedContinuation) {
+          cf::BranchOp::create(rewriter, location, unchangedContinuation);
+          rewriter.setInsertionPointToStart(unchangedContinuation);
         }
       };
       if (!useGuardedClaim && directGeneratedStage) {

@@ -59,6 +59,10 @@ struct NativeStaticNBAPlan {
   // no external observation. Immediate plain NBA enqueues can be erased;
   // evaluation of their SSA operands and delayed events remains separate.
   llvm::SmallVector<bool> unreadRoots;
+  // Closed private roots written only by immediate NBAs in one event region
+  // after declaration initialization. With no pending NBA, assigning their
+  // current four-state value cannot change state before or at the barrier.
+  llvm::SmallVector<bool> unchangedSafeRoots;
   // Merge-safe roots whose watchers wait for any change. Each merge into
   // their accumulator ORs bits rewritten with a different value into its
   // transient mask; each commit reports those bits as changed.

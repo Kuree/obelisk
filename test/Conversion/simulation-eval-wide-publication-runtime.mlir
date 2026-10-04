@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: obelisk-opt %t.llvm.mlir --pass-pipeline='builtin.module(llvm.func(mem2reg))' | FileCheck %s --check-prefix=SSA
 
 // Runtime behavior is checked in ../Runtime/simulation-eval-wide-publication-runtime.test.
 
@@ -8,6 +9,14 @@
 // posedge observers: vector edges use only the LSB (LRM 9.4.2).
 // Shared helpers retain monitor-aware runtime output; only their private
 // generated copies may use snapshot output. Warnings are not dropped.
+// Reload integer snapshots at their original width so that mem2reg can remove
+// the snapshot ABI's stack spills before group analysis. Both planes and the
+// partial high word retain their original numeric values.
+// SSA-LABEL: llvm.func @publish.__obelisk_eval_body_0(
+// SSA-NOT: llvm.alloca
+// SSA: llvm.lshr {{.*}} : i65
+// SSA-NOT: llvm.alloca
+// SSA: llvm.return
 // PLAN-LABEL: llvm.func @report(
 // PLAN: llvm.call @obelisk_rt_v1_display(
 // PLAN-LABEL: llvm.func @report.__obelisk_eval_private_

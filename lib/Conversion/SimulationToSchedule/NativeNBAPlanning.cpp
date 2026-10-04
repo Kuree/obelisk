@@ -454,6 +454,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   SmallVector<bool> fixedMask(plan.roots.size(), true);
   SmallVector<uint64_t> writeMasks(plan.roots.size(), 0);
   SmallVector<bool> seen(plan.roots.size(), false);
+  SmallVector<bool> immediateOnly(plan.roots.size(), true);
   llvm::SmallDenseSet<uint64_t, 8> nonFixedSites;
   module.walk([&](sim::SimNBAEnqueueOp enqueue) {
     schedule::NBASiteAttr site = enqueue.getSiteAttr();
@@ -493,6 +494,13 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
                                     homeRegion == OBELISK_RT_REGION_REACTIVE
                                 ? homeRegion + 2
                                 : UINT32_MAX;
+    immediateOnly[rootIndex] =
+        immediateOnly[rootIndex] && !enqueue.getDelay() && !site.getTiming() &&
+        !enqueue.getClockingOutputAttr() &&
+        isa<sim::RefType>(enqueue.getDestination().getType()) &&
+        bool(sim::getPackedWidth(enqueue.getValue().getType())) &&
+        site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier &&
+        commitRegion == OBELISK_RT_REGION_NBA;
     bool direct =
         width && root.bit_width <= 64 && destination &&
         *width <= root.bit_width && destination->offset <= root.bit_width &&
@@ -531,6 +539,56 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
       plan.generatedFixedWriteMasks[root] =
           fixedMask[root] ? writeMasks[root] : 0;
     }
+  // LRM 4.3 permits an inert update to disappear, but equality at enqueue is
+  // insufficient when a blocking writer can intervene before NBA replay.
+  // Use instantiated process effects, including called tasks and aliases, to
+  // exclude every physical root with an immediate writer. Declaration
+  // initialization precedes all processes (6.8); it cannot intervene here.
+  llvm::DenseSet<uint32_t> immediateWriters;
+  bool completeWriters = bool(design);
+  if (design)
+    design.walk([&](sim::SimFuncOp function) {
+      if (function.getEntryKind() == sim::EntryKind::Function ||
+          function.getEntryKind() == sim::EntryKind::Task ||
+          function.getEntryKind() == sim::EntryKind::RootInitializer)
+        return;
+      auto summary = function.getEffectSummaryAttr();
+      if (!summary) {
+        completeWriters = false;
+        return;
+      }
+      for (auto effect : summary.getAsRange<schedule::ComputeEffectAttr>()) {
+        if (effect.getResource() == schedule::ComputeResourceKind::Unknown) {
+          completeWriters = false;
+          continue;
+        }
+        if (effect.getResource() != schedule::ComputeResourceKind::Storage ||
+            (effect.getEffect() != schedule::ComputeEffectKind::Write &&
+             effect.getEffect() != schedule::ComputeEffectKind::Drive))
+          continue;
+        auto handle = stateLayout.storage.find(effect.getDescriptor());
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
+            handle == stateLayout.storage.end() ||
+            !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC) {
+          completeWriters = false;
+          continue;
+        }
+        immediateWriters.insert(decoded.id);
+      }
+    });
+  plan.unchangedSafeRoots.assign(plan.roots.size(), false);
+  for (auto [index, root] : llvm::enumerate(plan.roots))
+    plan.unchangedSafeRoots[index] =
+        completeWriters && root.bit_width <= 64 &&
+        module->hasAttr(sim::metadata::nativeClosedExecutable) &&
+        plan.privateInfluenceRoots[index] && seen[index] &&
+        immediateOnly[index] && !immediateWriters.contains(root.static_state);
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk native unchanged NBA roots: "
+                 << llvm::count(plan.unchangedSafeRoots, true) << "/"
+                 << plan.roots.size() << '\n';
   return plan;
 }
 
