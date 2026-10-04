@@ -788,8 +788,16 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
             arith::AndIOp::create(
                 rewriter, location, mask,
                 arith::XOrIOp::create(rewriter, location, old, positioned)));
-        LLVM::StoreOp::create(rewriter, location, resize(updated, spanType),
-                              address, 1);
+        auto write = LLVM::StoreOp::create(
+            rewriter, location, resize(updated, spanType), address, 1);
+        // The clipped mask preserves every bit outside the root, including
+        // neighboring bits in the first and last byte. Retain that proof for
+        // promotion bookkeeping even though the byte address is dynamic.
+        if (plane == "__obelisk_state_unknown")
+          schedule::set<schedule::Field::EvalUnknownWriteRange>(
+              write,
+              rewriter.getDenseI64ArrayAttr(
+                  {int64_t(range->rootOffset), int64_t(range->rootWidth)}));
         return std::pair<Value, Value>{
             resize(arith::ShRUIOp::create(rewriter, location, old, shift),
                    inputType),

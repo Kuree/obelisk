@@ -806,10 +806,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       return OBELISK_RT_OK;
     }
     // LRM 21.4 permits arbitrarily long binary/hex words and X/Z digits.
-    // A machine-word destination retains the low bits as each digit arrives,
-    // avoiding a temporary string and a second per-bit parsing pass.
+    // Destinations up to two machine words retain low bits as digits arrive,
+    // avoiding a temporary string and a second parsing pass. Separate limbs
+    // keep this path cheap on both native and wasm targets.
     bool scalarWord = bitWidth <= 64;
+    bool doubleWord = bitWidth > 64 && bitWidth <= 128;
     uint64_t scalarValue = 0, scalarUnknown = 0;
+    uint64_t highValue = 0, highUnknown = 0;
     unsigned bitsPerDigit = radix == 2 ? 1 : 4;
     unsigned digitMask = (1u << bitsPerDigit) - 1;
     bool haveCharacter = false;
@@ -826,7 +829,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       if (!valid)
         break;
       haveCharacter = true;
-      if (scalarWord) {
+      if (scalarWord || doubleWord) {
         if (character != '_') {
           unsigned digit =
               character >= '0' && character <= '9'   ? character - '0'
@@ -835,6 +838,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
                                                      : 0;
           bool isX = character == 'x' || character == 'X';
           bool isZ = character == 'z' || character == 'Z';
+          if (doubleWord) {
+            highValue = (highValue << bitsPerDigit) |
+                        (scalarValue >> (64 - bitsPerDigit));
+            highUnknown = (highUnknown << bitsPerDigit) |
+                          (scalarUnknown >> (64 - bitsPerDigit));
+          }
           scalarValue =
               (scalarValue << bitsPerDigit) | (isZ ? digitMask : digit);
           scalarUnknown =
@@ -867,6 +876,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
       for (uint64_t byte = 0; byte != requiredBytes; ++byte) {
         valueBytes[byte] = static_cast<uint8_t>(scalarValue >> (byte * 8));
         unknownBytes[byte] = static_cast<uint8_t>(scalarUnknown >> (byte * 8));
+      }
+      *outKind = OBELISK_RT_READMEM_DATA;
+      return OBELISK_RT_OK;
+    }
+    if (doubleWord) {
+      uint64_t mask =
+          bitWidth == 128 ? UINT64_MAX : (uint64_t{1} << (bitWidth - 64)) - 1;
+      highValue &= mask;
+      highUnknown &= mask;
+      for (uint64_t byte = 0; byte != 8; ++byte) {
+        valueBytes[byte] = static_cast<uint8_t>(scalarValue >> (byte * 8));
+        unknownBytes[byte] = static_cast<uint8_t>(scalarUnknown >> (byte * 8));
+      }
+      for (uint64_t byte = 8; byte != requiredBytes; ++byte) {
+        valueBytes[byte] = static_cast<uint8_t>(highValue >> ((byte - 8) * 8));
+        unknownBytes[byte] =
+            static_cast<uint8_t>(highUnknown >> ((byte - 8) * 8));
       }
       *outKind = OBELISK_RT_READMEM_DATA;
       return OBELISK_RT_OK;

@@ -1,0 +1,13 @@
+// Mixed-case digits and underscores.
+fedcba9876543210_0123456789abcdef
+/* next word */
+f123456789abcdef0_123456789abcdef0
+/* next word */
+z123456789abcdef_XZ123456789abcde
+/* next word */
+xZ0123456789abcd_efXZ0123456789ab
+/* next word */
+1a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5Xz
+/* next word */
+ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0123456789ABCDEF_FEDCBA9876543210
+@123 // address, then EOF

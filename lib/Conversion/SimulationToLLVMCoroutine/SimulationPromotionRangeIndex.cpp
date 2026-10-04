@@ -376,7 +376,7 @@ struct NativeFunctionProofPublications {
     auto disjointStore = [&](LLVM::StoreOp store) {
       if (auto range = ::obelisk::schedule::get<
               ::obelisk::schedule::Field::EvalUnknownWriteRange>(store)) {
-        // The generated dynamic commit's clipped mask proves containment.
+        // The generated dynamic store's clipped mask proves containment.
         // Missing or malformed evidence is conservative, never a guessed lane.
         if (bits && range.size() == 2 && range[0] >= 0 && range[1] > 0 &&
             static_cast<uint64_t>(range[0]) <= bits.getUInt() &&
