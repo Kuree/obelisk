@@ -162,7 +162,8 @@ bool emitDirectDynamicPackedStore(mlir::ConversionPatternRewriter &rewriter,
                                   const NativeStateLayout *layout,
                                   bool assumeClean, bool continuous,
                                   bool twoState,
-                                  schedule::SourceOwnerAttr sourceOwner);
+                                  schedule::SourceOwnerAttr sourceOwner,
+                                  std::optional<uint32_t> inBoundsRoot = {});
 
 /// Compiler-side field indices for obelisk_rt_native_schedule_plan. Keep all
 /// LLVM literal construction and aggregate access tied to one named layout.
@@ -400,7 +401,8 @@ void populateSchedulerToLLVMConversionPatterns(
 void populateStateReadWriteToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
-    bool experimentalTwoState);
+    bool experimentalTwoState,
+    const llvm::DenseMap<mlir::Operation *, uint32_t> &inBoundsAccesses);
 void annotateStaticDriverNets(mlir::ModuleOp module,
                               const NativeStateLayout &layout);
 void populateDriverToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
@@ -428,7 +430,8 @@ mlir::Value loadStatePlane(mlir::ConversionPatternRewriter &rewriter,
                            uint64_t stateBitCount,
                            const NativeStateLayout *directLayout = nullptr,
                            mlir::Value guardedPermission = {},
-                           bool assumeClean = false);
+                           bool assumeClean = false,
+                           std::optional<uint32_t> inBoundsRoot = {});
 mlir::Value storeStatePlane(mlir::ConversionPatternRewriter &rewriter,
                             mlir::Location location, mlir::Value handle,
                             mlir::Value input, llvm::StringRef globalName,

@@ -137,11 +137,13 @@ struct DirectDynamicStateRange {
   uint64_t rootWidth;
   uint32_t staticID;
   bool guarded;
+  bool inBounds;
 };
 
 std::optional<DirectDynamicStateRange>
 resolveDirectDynamicStateRange(Value handle, unsigned width,
-                               const NativeStateLayout *layout) {
+                               const NativeStateLayout *layout,
+                               std::optional<uint32_t> inBoundsRoot) {
   if (!layout || width == 0)
     return std::nullopt;
   Operation *producer = handle.getDefiningOp();
@@ -189,6 +191,26 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
     return std::nullopt;
   OpBuilder builder(producer);
   Location location = producer->getLoc();
+  // The sparse handle and dense scoped-index analyses proved every enclosing
+  // selection valid, including four-state knownness. Recheck the physical root
+  // and stable-handle capacity before using that certificate. IEEE 1800-2023
+  // 7.4.5 and 11.5.1 fallbacks remain necessary for every unproved selection.
+  bool inBounds = inBoundsRoot == decoded.id && bound->width <= INT32_MAX;
+  if (inBounds) {
+    auto i64 = builder.getI64Type();
+    Value amount = llvmConstant(builder, location, i64, localOffset);
+    for (Value next : llvm::reverse(amounts))
+      amount = arith::AddIOp::create(builder, location, amount, next);
+    return DirectDynamicStateRange{
+        llvmConstant(builder, location, builder.getI1Type(), 1),
+        amount,
+        bound->offset,
+        0,
+        bound->width,
+        decoded.id,
+        guarded,
+        true};
+  }
   Value valid = guards.front();
   for (Value next : ArrayRef<Value>(guards).drop_front())
     valid = arith::AndIOp::create(builder, location, valid, next);
@@ -212,8 +234,77 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
                                    llvmConstant(builder, location, i64, 0));
     amount = arith::AddIOp::create(builder, location, amount, next);
   }
-  return DirectDynamicStateRange{valid,        amount,     bound->offset, 0,
-                                 bound->width, decoded.id, guarded};
+  return DirectDynamicStateRange{valid,   amount,       bound->offset,
+                                 0,       bound->width, decoded.id,
+                                 guarded, false};
+}
+
+// Load precisely the bytes touched by a fully contained packed window. A
+// byte-aligned access must not speculatively read the trailing byte of a plane.
+Value loadDynamicPackedWindow(ConversionPatternRewriter &rewriter,
+                              Location location, StringRef globalName,
+                              IntegerType resultType, Value absolute) {
+  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+  IntegerType i8 = rewriter.getI8Type();
+  IntegerType i64 = rewriter.getI64Type();
+  unsigned minimumSpanWidth = llvm::alignTo(resultType.getWidth(), 8u);
+  unsigned maximumSpanWidth = llvm::alignTo(resultType.getWidth() + 7, 8u);
+  Value byteOffset = arith::ShRUIOp::create(
+      rewriter, location, absolute,
+      llvmConstant(rewriter, location, i64, uint64_t{3}));
+  Value firstBit =
+      arith::AndIOp::create(rewriter, location, absolute,
+                            llvmConstant(rewriter, location, i64, uint64_t{7}));
+  Value base =
+      LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
+  Value address = LLVM::GEPOp::create(rewriter, location, pointer, i8, base,
+                                      ValueRange{byteOffset});
+  auto loadSpan = [&](unsigned spanWidth) {
+    IntegerType spanType = rewriter.getIntegerType(spanWidth);
+    Value span = LLVM::LoadOp::create(rewriter, location, spanType, address, 1);
+    Value firstBitShift =
+        spanWidth == 64 ? firstBit
+        : spanWidth < 64
+            ? LLVM::TruncOp::create(rewriter, location, spanType, firstBit)
+                  .getResult()
+            : LLVM::ZExtOp::create(rewriter, location, spanType, firstBit)
+                  .getResult();
+    Value shifted =
+        arith::ShRUIOp::create(rewriter, location, span, firstBitShift);
+    return spanType == resultType
+               ? shifted
+               : LLVM::TruncOp::create(rewriter, location, resultType, shifted)
+                     .getResult();
+  };
+  if (minimumSpanWidth == maximumSpanWidth)
+    return loadSpan(minimumSpanWidth);
+  {
+    Block *load = rewriter.getInsertionBlock();
+    Block *continuation =
+        rewriter.splitBlock(load, rewriter.getInsertionPoint());
+    Region *region = load->getParent();
+    recordStaticSpecializationCFGBlocks(rewriter, load, 3);
+    Block *narrow = rewriter.createBlock(region, continuation->getIterator());
+    Block *wide = rewriter.createBlock(region, continuation->getIterator());
+    Block *loadedJoin = continuation;
+    BlockArgument joined = loadedJoin->addArgument(resultType, location);
+    rewriter.setInsertionPointToEnd(load);
+    Value useNarrow = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::ule, firstBit,
+        llvmConstant(rewriter, location, i64,
+                     minimumSpanWidth - resultType.getWidth()));
+    cf::CondBranchOp::create(rewriter, location, useNarrow, narrow,
+                             ValueRange{}, wide, ValueRange{});
+    rewriter.setInsertionPointToEnd(narrow);
+    Value narrowValue = loadSpan(minimumSpanWidth);
+    cf::BranchOp::create(rewriter, location, loadedJoin,
+                         ValueRange{narrowValue});
+    rewriter.setInsertionPointToEnd(wide);
+    Value wideValue = loadSpan(maximumSpanWidth);
+    cf::BranchOp::create(rewriter, location, loadedJoin, ValueRange{wideValue});
+    rewriter.setInsertionPointToStart(loadedJoin);
+    return joined;
+  }
 }
 
 Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
@@ -221,9 +312,15 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
                                    IntegerType resultType,
                                    const DirectDynamicStateRange &range,
                                    bool unknownFallback) {
-  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-  IntegerType i8 = rewriter.getI8Type();
   IntegerType i64 = rewriter.getI64Type();
+  if (range.inBounds) {
+    Value absolute = arith::AddIOp::create(
+        rewriter, location, range.bitOffset,
+        llvmConstant(rewriter, location, i64,
+                     range.rootOffset + range.localOffset));
+    return loadDynamicPackedWindow(rewriter, location, globalName, resultType,
+                                   absolute);
+  }
   Value zero = llvmConstant(rewriter, location, i64, 0);
   Value minimum = llvmConstant(
       rewriter, location, i64,
@@ -252,10 +349,7 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
   Region *region = head->getParent();
   Block *load = rewriter.createBlock(region, continuation->getIterator());
   Block *fallback = rewriter.createBlock(region, continuation->getIterator());
-  unsigned minimumSpanWidth = ((resultType.getWidth() + 7) / 8) * 8;
-  unsigned maximumSpanWidth = ((7 + resultType.getWidth() + 7) / 8) * 8;
-  recordStaticSpecializationCFGBlocks(
-      rewriter, head, minimumSpanWidth == maximumSpanWidth ? 3 : 6);
+  recordStaticSpecializationCFGBlocks(rewriter, head, 3);
   rewriter.setInsertionPointToEnd(head);
   cf::CondBranchOp::create(rewriter, location, valid, load, ValueRange{},
                            fallback, ValueRange{});
@@ -283,59 +377,8 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
       arith::AddIOp::create(rewriter, location, clamped,
                             llvmConstant(rewriter, location, i64,
                                          range.rootOffset + range.localOffset));
-  Value byteOffset = arith::ShRUIOp::create(
-      rewriter, location, absolute,
-      llvmConstant(rewriter, location, i64, uint64_t{3}));
-  Value firstBit =
-      arith::AndIOp::create(rewriter, location, absolute,
-                            llvmConstant(rewriter, location, i64, uint64_t{7}));
-  Value base =
-      LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
-  Value address = LLVM::GEPOp::create(rewriter, location, pointer, i8, base,
-                                      ValueRange{byteOffset});
-  auto loadSpan = [&](unsigned spanWidth) {
-    IntegerType spanType = rewriter.getIntegerType(spanWidth);
-    Value span = LLVM::LoadOp::create(rewriter, location, spanType, address, 1);
-    Value firstBitShift =
-        spanWidth == 64 ? firstBit
-        : spanWidth < 64
-            ? LLVM::TruncOp::create(rewriter, location, spanType, firstBit)
-                  .getResult()
-            : LLVM::ZExtOp::create(rewriter, location, spanType, firstBit)
-                  .getResult();
-    Value shifted =
-        arith::ShRUIOp::create(rewriter, location, span, firstBitShift);
-    return spanType == resultType
-               ? shifted
-               : LLVM::TruncOp::create(rewriter, location, resultType, shifted)
-                     .getResult();
-  };
-  Value loaded;
-  if (minimumSpanWidth == maximumSpanWidth) {
-    loaded = loadSpan(minimumSpanWidth);
-  } else {
-    Block *narrow = rewriter.createBlock(region, continuation->getIterator());
-    Block *wide = rewriter.createBlock(region, continuation->getIterator());
-    Block *loadedJoin =
-        rewriter.createBlock(region, continuation->getIterator());
-    BlockArgument joined = loadedJoin->addArgument(resultType, location);
-    rewriter.setInsertionPointToEnd(load);
-    Value useNarrow = arith::CmpIOp::create(
-        rewriter, location, arith::CmpIPredicate::ule, firstBit,
-        llvmConstant(rewriter, location, i64,
-                     minimumSpanWidth - resultType.getWidth()));
-    cf::CondBranchOp::create(rewriter, location, useNarrow, narrow,
-                             ValueRange{}, wide, ValueRange{});
-    rewriter.setInsertionPointToEnd(narrow);
-    Value narrowValue = loadSpan(minimumSpanWidth);
-    cf::BranchOp::create(rewriter, location, loadedJoin,
-                         ValueRange{narrowValue});
-    rewriter.setInsertionPointToEnd(wide);
-    Value wideValue = loadSpan(maximumSpanWidth);
-    cf::BranchOp::create(rewriter, location, loadedJoin, ValueRange{wideValue});
-    rewriter.setInsertionPointToStart(loadedJoin);
-    loaded = joined;
-  }
+  Value loaded = loadDynamicPackedWindow(rewriter, location, globalName,
+                                         resultType, absolute);
   Value resultShift =
       resultType.getWidth() == 64 ? absoluteDelta
       : resultType.getWidth() > 64
@@ -480,7 +523,8 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                      Value handle, IntegerType resultType, StringRef globalName,
                      bool unknownFallback, uint64_t stateBitCount,
                      const NativeStateLayout *directLayout,
-                     Value guardedPermission, bool assumeClean) {
+                     Value guardedPermission, bool assumeClean,
+                     std::optional<uint32_t> inBoundsRoot) {
   std::optional<DirectStaticStateRange> range = resolveDirectStaticStateRange(
       handle, resultType.getWidth(), directLayout);
   if (range && (!range->guarded || assumeClean))
@@ -491,7 +535,7 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
         resultType);
   std::optional<DirectDynamicStateRange> dynamicRange =
       resolveDirectDynamicStateRange(handle, resultType.getWidth(),
-                                     directLayout);
+                                     directLayout, inBoundsRoot);
   if (dynamicRange && (!dynamicRange->guarded || assumeClean))
     return loadDirectDynamicPackedPlane(rewriter, location, globalName,
                                         resultType, *dynamicRange,
@@ -685,12 +729,13 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
                                   const NativeStateLayout *layout,
                                   bool assumeClean, bool continuous,
                                   bool twoState,
-                                  schedule::SourceOwnerAttr sourceOwner) {
+                                  schedule::SourceOwnerAttr sourceOwner,
+                                  std::optional<uint32_t> inBoundsRoot) {
   auto inputType = dyn_cast<IntegerType>(value.getType());
   if (!inputType || !layout || !layout->transitionHandlesExact)
     return false;
-  auto range =
-      resolveDirectDynamicStateRange(handle, inputType.getWidth(), layout);
+  auto range = resolveDirectDynamicStateRange(handle, inputType.getWidth(),
+                                              layout, inBoundsRoot);
   if (!range || (range->guarded && (continuous || !assumeClean)))
     return false;
   if (range->rootWidth > 64) {
@@ -701,34 +746,38 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value zero = llvmConstant(rewriter, location, i64, 0);
     Value offset = range->bitOffset;
-    Value valid = arith::AndIOp::create(
-        rewriter, location, range->valid,
-        arith::AndIOp::create(
-            rewriter, location,
-            arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::sgt,
-                                  offset,
-                                  llvmConstant(rewriter, location, i64,
-                                               -int64_t(inputType.getWidth()))),
-            arith::CmpIOp::create(
-                rewriter, location, arith::CmpIPredicate::slt, offset,
-                llvmConstant(rewriter, location, i64, range->rootWidth))));
-    Value safe =
-        arith::SelectOp::create(rewriter, location, valid, offset, zero);
-    Value negative = arith::CmpIOp::create(
-        rewriter, location, arith::CmpIPredicate::slt, safe, zero);
-    Value last = llvmConstant(rewriter, location, i64,
-                              range->rootWidth - inputType.getWidth());
-    Value above = arith::CmpIOp::create(rewriter, location,
-                                        arith::CmpIPredicate::sgt, safe, last);
-    Value clamped = arith::SelectOp::create(
-        rewriter, location, above, last,
-        arith::SelectOp::create(rewriter, location, negative, zero, safe));
-    Value lowClip = arith::SelectOp::create(
-        rewriter, location, negative,
-        arith::SubIOp::create(rewriter, location, zero, safe), zero);
-    Value highClip = arith::SelectOp::create(
-        rewriter, location, above,
-        arith::SubIOp::create(rewriter, location, safe, last), zero);
+    Value valid = range->valid, clamped = offset, lowClip = zero,
+          highClip = zero;
+    if (!range->inBounds) {
+      valid = arith::AndIOp::create(
+          rewriter, location, range->valid,
+          arith::AndIOp::create(
+              rewriter, location,
+              arith::CmpIOp::create(
+                  rewriter, location, arith::CmpIPredicate::sgt, offset,
+                  llvmConstant(rewriter, location, i64,
+                               -int64_t(inputType.getWidth()))),
+              arith::CmpIOp::create(
+                  rewriter, location, arith::CmpIPredicate::slt, offset,
+                  llvmConstant(rewriter, location, i64, range->rootWidth))));
+      Value safe =
+          arith::SelectOp::create(rewriter, location, valid, offset, zero);
+      Value negative = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::slt, safe, zero);
+      Value last = llvmConstant(rewriter, location, i64,
+                                range->rootWidth - inputType.getWidth());
+      Value above = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::sgt, safe, last);
+      clamped = arith::SelectOp::create(
+          rewriter, location, above, last,
+          arith::SelectOp::create(rewriter, location, negative, zero, safe));
+      lowClip = arith::SelectOp::create(
+          rewriter, location, negative,
+          arith::SubIOp::create(rewriter, location, zero, safe), zero);
+      highClip = arith::SelectOp::create(
+          rewriter, location, above,
+          arith::SubIOp::create(rewriter, location, safe, last), zero);
+    }
     Value absolute = arith::AddIOp::create(
         rewriter, location, clamped,
         llvmConstant(rewriter, location, i64, range->rootOffset));
@@ -874,24 +923,27 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
   auto rootType = rewriter.getIntegerType(range->rootWidth);
   Value zero = llvmConstant(rewriter, location, i64, 0);
   Value offset = range->bitOffset;
-  Value aboveBegin = arith::CmpIOp::create(
-      rewriter, location, arith::CmpIPredicate::sgt, offset,
-      llvmConstant(rewriter, location, i64, -int64_t(inputType.getWidth())));
-  Value belowEnd = arith::CmpIOp::create(
-      rewriter, location, arith::CmpIPredicate::slt, offset,
-      llvmConstant(rewriter, location, i64, range->rootWidth));
-  Value valid = arith::AndIOp::create(
-      rewriter, location, range->valid,
-      arith::AndIOp::create(rewriter, location, aboveBegin, belowEnd));
-  // Sanitize before either shift, not merely before the final select.
-  Value safe = arith::SelectOp::create(rewriter, location, valid, offset, zero);
-  Value negative = arith::CmpIOp::create(rewriter, location,
-                                         arith::CmpIPredicate::slt, safe, zero);
-  Value right = arith::SelectOp::create(
-      rewriter, location, negative,
-      arith::SubIOp::create(rewriter, location, zero, safe), zero);
-  Value left =
-      arith::SelectOp::create(rewriter, location, negative, zero, safe);
+  Value valid = range->valid, right = zero, left = offset;
+  if (!range->inBounds) {
+    Value aboveBegin = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::sgt, offset,
+        llvmConstant(rewriter, location, i64, -int64_t(inputType.getWidth())));
+    Value belowEnd = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::slt, offset,
+        llvmConstant(rewriter, location, i64, range->rootWidth));
+    valid = arith::AndIOp::create(
+        rewriter, location, range->valid,
+        arith::AndIOp::create(rewriter, location, aboveBegin, belowEnd));
+    // Sanitize before either shift, not merely before the final select.
+    Value safe =
+        arith::SelectOp::create(rewriter, location, valid, offset, zero);
+    Value negative = arith::CmpIOp::create(
+        rewriter, location, arith::CmpIPredicate::slt, safe, zero);
+    right = arith::SelectOp::create(
+        rewriter, location, negative,
+        arith::SubIOp::create(rewriter, location, zero, safe), zero);
+    left = arith::SelectOp::create(rewriter, location, negative, zero, safe);
+  }
   Value mask = llvmConstant(rewriter, location, i64,
                             inputType.getWidth() == 64
                                 ? UINT64_MAX

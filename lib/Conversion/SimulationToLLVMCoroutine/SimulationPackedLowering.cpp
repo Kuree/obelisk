@@ -77,8 +77,9 @@ bool hasNoLogic(Operation *operation) {
   return true;
 }
 
-void fuseWideDynamicRefCopies(ModuleOp module,
-                              DenseSet<Operation *> &nativeTwoStateOperations) {
+void fuseWideDynamicRefCopies(
+    ModuleOp module, DenseSet<Operation *> &nativeTwoStateOperations,
+    DenseMap<Operation *, uint32_t> &inBoundsAccesses) {
   SmallVector<std::pair<sim::SimRefLoadOp, sim::SimRefStoreOp>> copies;
   module.walk([&](sim::SimRefStoreOp store) {
     auto load = store.getValue().getDefiningOp<sim::SimRefLoadOp>();
@@ -105,6 +106,8 @@ void fuseWideDynamicRefCopies(ModuleOp module,
     if (::obelisk::schedule::has<assumeCleanSpecializationAttr>(load))
       copy->setAttr(bulkCopySourceAssumeCleanAttr, rewriter.getUnitAttr());
     nativeTwoStateOperations.erase(load.getOperation());
+    inBoundsAccesses.erase(load);
+    inBoundsAccesses.erase(store);
     rewriter.eraseOp(store);
     rewriter.eraseOp(load);
   }
@@ -276,6 +279,10 @@ LogicalResult lowerPackedSimulationOperations(
   // and local producers expose a constant-zero unknown plane to LLVM.
   DenseSet<Value> nativeTwoStateValues;
   DenseSet<Operation *> nativeTwoStateOperations;
+  // Keep selector proofs separate from value-domain proofs: a known index
+  // does not imply that the selected four-state data is known. This snapshot
+  // is consumed by the access patterns before their source ops are erased.
+  DenseMap<Operation *, uint32_t> inBoundsAccesses;
   uint64_t stateDomainFunctionLimit = std::numeric_limits<uint64_t>::max();
   auto optimizationLevel =
       module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
@@ -348,6 +355,27 @@ LogicalResult lowerPackedSimulationOperations(
       auto handles =
           analysis::HandleDataflowAnalysis(function).analyze(function);
       const auto &provenance = handles.facts;
+      function.walk([&](Operation *operation) {
+        Value reference;
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+          reference = load.getReference();
+        else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
+          reference = store.getReference();
+        else
+          return;
+        auto fact = provenance.find(reference);
+        auto proof = handles.certificates.find(reference);
+        if (fact == provenance.end() || proof == handles.certificates.end() ||
+            !fact->second.descriptor || !proof->second.inBounds ||
+            fact->second.resource != schedule::ComputeResourceKind::Storage)
+          return;
+        auto root = stateLayout.storage.find(*fact->second.descriptor);
+        obelisk_rt_stable_handle_v1 decoded{};
+        if (root != stateLayout.storage.end() &&
+            obelisk_rt_stable_handle_decode(root->second, &decoded) &&
+            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
+          inBoundsAccesses.try_emplace(operation, decoded.id);
+      });
       auto isValidSelection = [&](Value handle) {
         auto root = provenance.find(handle);
         auto proof = handles.certificates.find(handle);
@@ -432,7 +460,7 @@ LogicalResult lowerPackedSimulationOperations(
   // facts have been attached, keep dynamic whole-vector copies byte-backed:
   // representing their payload as one giant LLVM integer makes SelectionDAG
   // scheduling superlinear.
-  fuseWideDynamicRefCopies(module, nativeTwoStateOperations);
+  fuseWideDynamicRefCopies(module, nativeTwoStateOperations, inBoundsAccesses);
 
   // Record the net driven by each operation before dialect conversion starts
   // rewriting function signatures and their block arguments.  Conversion
@@ -900,7 +928,7 @@ LogicalResult lowerPackedSimulationOperations(
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
         enableDirectStaticState ? &selectedLayout : nullptr,
-        experimentalTwoState);
+        experimentalTwoState, inBoundsAccesses);
     populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
                                              dataLayout);
     populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,
