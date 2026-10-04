@@ -816,6 +816,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_file_readmem_token(
     unsigned bitsPerDigit = radix == 2 ? 1 : 4;
     unsigned digitMask = (1u << bitsPerDigit) - 1;
     bool haveCharacter = false;
+    if (doubleWord && radix == 16) {
+      // Known hexadecimal prefixes need only the value plane. Keep this
+      // common memory-image loop free of per-digit width/radix tests and
+      // unknown-plane shifts. The general loop resumes at the first X/Z or
+      // underscore, preserving arbitrary-length words and low-bit truncation
+      // (LRM 21.4), including a known prefix followed by unknown digits.
+      for (;;) {
+        unsigned digit = static_cast<unsigned>(character - '0');
+        if (digit >= 10) {
+          unsigned letter = static_cast<unsigned>((character | 32) - 'a');
+          if (letter >= 6)
+            break;
+          digit = letter + 10;
+        }
+        highValue = (highValue << 4) | (scalarValue >> 60);
+        scalarValue = (scalarValue << 4) | digit;
+        haveCharacter = true;
+        character = next();
+      }
+    }
     std::array<char, 64> shortDigits;
     size_t shortSize = 0;
     std::string digits;

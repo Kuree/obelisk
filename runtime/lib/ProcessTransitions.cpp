@@ -1580,6 +1580,20 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
                        return fragment.execute != nullptr;
                      });
   }
+  // A pending generated activation is a set member, not an occurrence log
+  // (LRM 4.3, 9.4.2). Repeated writes need no new static publication when its
+  // ready bit is already present and no runtime observer watches this source.
+  // Keep every event for conditional/clocking/covergroup/VPI observers. The
+  // ingress-pending flag must already be set; otherwise even a present bit
+  // can require a new handoff notification to the calendar.
+  bool coalescePending =
+      UseClockIngress && context->nativeScheduleClockIngressPending &&
+      !context->clockOccurrences && !context->covergroupClockEvents &&
+      !context->vpiObservationDemand &&
+      !obelisk_rt_has_conditional_signal_waiters(context) &&
+      context->signalSubscriptionObjectFilter
+              [signalSubscriptionObjectFilterIndex(
+                  OBELISK_RT_STABLE_HANDLE_STATIC, staticID)] == 0;
   bool published = false;
   const obelisk_rt_static_fanout_entry *begin =
       context->nativeScheduleFanoutEntries;
@@ -1631,6 +1645,20 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
         (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
          scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
       continue;
+    if constexpr (UseClockIngress) {
+      if (coalescePending &&
+          ((entry->reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
+               OBELISK_RT_FANOUT_DIRECT ||
+           metadataOnlyClockCoordinator) &&
+          entry->kernel < context->nativeSchedulePlan->clock_kernel_count) {
+        const auto &kernel =
+            context->nativeSchedulePlan->clock_kernels[entry->kernel];
+        if (entry->merged_bit / 64 < kernel.ingress_word_count &&
+            (kernel.ingress_mask[entry->merged_bit / 64] &
+             (uint64_t{1} << (entry->merged_bit % 64))))
+          continue;
+      }
+    }
     uint64_t overlapLow = std::max(publishedLow, entry->low_bit);
     uint64_t overlapHigh =
         std::min(publishedLow + bitWidth, entry->low_bit + entry->bit_width);
@@ -1768,8 +1796,22 @@ bool obelisk_rt_publish_signal_transition_batch_unlocked(
       // any already-armed native subscription to the same idempotent ingress
       // bit, never to a duplicate framed activation. Clock observers still
       // need that walk, but must not suppress the generated fanout.
-      if ((context->nativeSchedulePlan->flags &
-           OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) != 0 ||
+      // Static fanout already delivered the generated consumers. A calendar
+      // plan needs the generic walk only if this object has a live runtime
+      // subscription. The counting filter has false positives, never false
+      // negatives; registration and removal update it under the same lock.
+      // Keep independent clock/covergroup occurrence streams below (9.4.2,
+      // 19.5, 31.5). No occurrence sequence is needed for an unwatched object.
+      uint32_t staticID = 0;
+      int64_t staticOffset = 0;
+      bool runtimeWatched =
+          !decodeNativeStatic(stableID, staticID, staticOffset) ||
+          context->signalSubscriptionObjectFilter
+                  [signalSubscriptionObjectFilterIndex(
+                      OBELISK_RT_STABLE_HANDLE_STATIC, staticID)] != 0;
+      if (((context->nativeSchedulePlan->flags &
+            OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) != 0 &&
+           runtimeWatched) ||
           (feature && !feature->waits.empty()) ||
           context->covergroupClockEvents)
         return publishSignalTransitionBatchImpl(
@@ -1887,6 +1929,32 @@ bool publishNativeSignalTransitionUnlocked(
       decodeNativeStatic(bitOffset, publishedStaticID, publishedOffset);
   bool publishedGlobal =
       !publishedStatic && decodeNativeGlobal(bitOffset, publishedOffset);
+  // LRM 4.3, 4.6, 9.4.2: shared generated storage is already the canonical
+  // publication image. With no source observer or override, a blocking write
+  // only needs to activate its exact fanout. In particular, startup functions
+  // need not enter snapshot/observer bookkeeping for every initialized word.
+  // Keep the normal path whenever any publication-time side effect is live.
+  if (publishedStatic && context->stateValue.shared() &&
+      context->stateUnknown.shared() && !establishesOverride &&
+      context->forceMask.empty() && context->assignMask.empty() &&
+      !context->coverage && !context->clockOccurrences &&
+      !context->covergroupClockEvents && !context->vpiObservationDemand &&
+      !context->observerDepth && !context->observerForcesCanonicalPlane &&
+      context->signalValueSnapshots.empty() &&
+      context->pendingNativeComputedWaiters.empty() &&
+      context->pendingDesignComputedWaiters.empty() &&
+      !obelisk_rt_has_conditional_signal_waiters(context) &&
+      context->signalSubscriptionObjectFilter
+              [signalSubscriptionObjectFilterIndex(
+                  OBELISK_RT_STABLE_HANDLE_STATIC, publishedStaticID)] == 0 &&
+      publishStaticAOTSignalTransitionUnlocked(context, bitOffset, bitWidth,
+                                               changed, posedge, negedge,
+                                               nullptr, false)) {
+    // Readiness does not alter the clean-environment specialization proof.
+    if (++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    return context->schedulerStatus == OBELISK_RT_OK;
+  }
   const NativeStaticState *publishedState =
       publishedStatic ? findNativeStaticState(context, publishedStaticID)
                       : nullptr;
