@@ -701,8 +701,15 @@ public:
         lane->managedRootRanges.load(std::memory_order_acquire) ||
         lane->providers.load(std::memory_order_acquire))
       return OBELISK_RT_INVALID_LIFECYCLE;
-    lane->owner.store(0, std::memory_order_release);
-    lane->state.store(LaneState::Inactive, std::memory_order_release);
+    {
+      // A collector evaluates lane states under worldMutex before waiting.
+      // Publish the transition under that mutex too; otherwise it can land
+      // between the collector's predicate check and its wait, and the
+      // notification below is lost.
+      std::lock_guard<std::mutex> lock(worldMutex);
+      lane->owner.store(0, std::memory_order_release);
+      lane->state.store(LaneState::Inactive, std::memory_order_release);
+    }
     worldCondition.notify_all();
     return OBELISK_RT_OK;
   }
