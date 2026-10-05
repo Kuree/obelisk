@@ -90,6 +90,38 @@ def ObeliskSimPropagateInitializedStoragePass
   ];
 }
 
+def ObeliskSimAliasPortConnectionsPass
+    : Pass<"obelisk-sim-alias-port-connections",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Share storage across VPI-invisible single-driver port copies";
+  let description = [{
+    Removes implicit port-connection copy processes of the form
+    `[subelement] load [subelement] store; suspend.change source` spawned by
+    the root initializer. The side that is a whole storage root is replaced
+    everywhere by the other side: a plain connection redirects its sink to
+    the source root. With `elements`, an input from an array element
+    redirects its sink to that element, and an output into an array element
+    redirects the child's output storage. Requires VPI off, no waveform
+    dumping, no other writer of the eliminated sink or of the target element,
+    no force/release on either side, and identical types. Copies feeding a
+    self-settling process, and the first copies below delay-driven roots,
+    are kept for generated-eval ownership and fanout.
+  }];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+  let statistics = [
+    Statistic<"numCandidates", "candidates", "Port copy candidates examined">,
+    Statistic<"numAliased", "aliased", "Port copy processes eliminated">
+  ];
+  let options = [
+    Option<"vpi", "vpi", "std::string", "\"full\"",
+           "VPI observability mode: off, read, or full">,
+    Option<"elements", "elements", "bool", "false",
+           "Also alias constant-index element connections. Consumers then "
+           "select their element from the parent root; generated eval does "
+           "not yet certify every such body or shared-root writer set">
+  ];
+}
+
 def ObeliskSimDevirtualizeClassCallsPass
     : Pass<"obelisk-sim-devirtualize-class-calls",
            "obelisk::sim::SimDesignOp"> {

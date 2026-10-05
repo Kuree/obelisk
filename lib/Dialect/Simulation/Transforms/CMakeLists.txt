@@ -1,4 +1,5 @@
 add_mlir_dialect_library(ObeliskSimulationTransforms
+  AliasPortConnections.cpp
   DevirtualizeClassCalls.cpp
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp

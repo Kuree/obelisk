@@ -412,6 +412,17 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   }
   designManager.addPass(createSymbolDCEPass());
 
+  if (optLevel > 0 && vpiMode == "off") {
+    // IEEE 1800-2023 23.3.3/4.9.6/4.7: an invisible single-driver port
+    // connection may update its sink with the source write itself. Share the
+    // storage before clock extraction sees clock ports, then drop the copies.
+    ObeliskSimAliasPortConnectionsPassOptions aliasOptions;
+    aliasOptions.vpi = vpiMode.str();
+    designManager.addPass(
+        createObeliskSimAliasPortConnectionsPass(std::move(aliasOptions)));
+    designManager.addPass(createSymbolDCEPass());
+  }
+
   if (optLevel > 0) {
     ObeliskSimExtractPeriodicClocksPassOptions periodicOptions;
     periodicOptions.vpi = vpiMode.str();
