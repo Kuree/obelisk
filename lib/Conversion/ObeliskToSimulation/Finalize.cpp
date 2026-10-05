@@ -450,7 +450,13 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     if (optLevel > 0) {
-      functionManager.addPass(createObeliskSimUnrollBoundedLoopsPass());
+      ObeliskSimUnrollBoundedLoopsPassOptions unrollOptions;
+      // Expose small constant-index loops before sparse state-domain analysis.
+      // Bound replication using the shared state/call-weighted body cost.
+      if (optLevel >= 3)
+        unrollOptions.maximumGrowth = 128;
+      functionManager.addPass(
+          createObeliskSimUnrollBoundedLoopsPass(unrollOptions));
       functionManager.addPass(createCanonicalizerPass());
       functionManager.addPass(createCSEPass());
     }
