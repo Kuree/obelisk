@@ -153,6 +153,21 @@ def OptimizeNativeWordsPass
     "mlir::ub::UBDialect"];
 }
 
+def OptimizeNativeAggregatesPass
+    : Pass<"schedule-optimize-native-aggregates", "::obelisk::sim::SimFuncOp"> {
+  let summary = "Forward proved SSA array elements before packed lowering";
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                          "mlir::arith::ArithDialect"];
+  let options = [Option<"evalOnly", "eval-only", "bool", "false",
+      "Only rewrite specialized eval bodies after native frame planning">];
+}
+def PrepareNativeAggregatesPass
+    : Pass<"schedule-prepare-native-aggregates", "mlir::ModuleOp"> {
+  let summary = "Optimize native SSA arrays with concurrent function passes";
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                          "mlir::arith::ArithDialect"];
+}
+
 def PlanNativeTransfersPass
     : Pass<"schedule-plan-native-transfers", "mlir::ModuleOp"> {
   let summary = "Expose ordered capture-copy activations before specialization";

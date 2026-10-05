@@ -161,6 +161,18 @@ the original fallback semantics remain encoded under the same function,
 continuation, descriptor, hierarchy, and code-unit identities. Falling back is
 a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
+`schedule-optimize-native-aggregates` forwards SSA array reads from preceding
+updates at the same selector when dense scoped ranges prove that selector known
+and in bounds. It also removes overwritten updates and read/write identities;
+these latter rules preserve invalid-index no-ops without a bounds assumption.
+This lets field-by-field construction remain local to one element instead of
+repeatedly shifting and copying the whole array. Four-state element values are
+unchanged (LRM 7.4.5 and 11.5).
+The function pass can run before frame planning. Its native pipeline wrapper,
+`schedule-prepare-native-aggregates`, restricts late rewriting to specialized
+nonsuspending eval bodies so original resumable bodies retain their frozen
+frame and rematerialization plans. Function workers own their range solvers.
+
 `schedule-optimize-native-words` recognizes independent packed-element loops in
 native eval bodies before packed conversion. Sparse SSA lane facts combine
 with dense scoped integer ranges and reference bounds to prove consecutive,

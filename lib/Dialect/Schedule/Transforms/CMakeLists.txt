@@ -26,6 +26,7 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   PARTIAL_SOURCES_INTENDED
   NativeSpecializationPasses.cpp
   NativeWords.cpp
+  NativeAggregates.cpp
   NativeWordPredication.cpp
   NativeTransfers.cpp
   MarkCleanStaticNBA.cpp

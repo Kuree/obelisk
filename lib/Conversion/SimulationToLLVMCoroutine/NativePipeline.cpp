@@ -4,7 +4,8 @@
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 namespace obelisk {
 void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
-                                            bool nativeWords) {
+                                            bool nativeWords,
+                                            bool nativeAggregates) {
   manager.addPass(createPrepareNativeScheduleInputsPass());
   manager.addPass(createPlanNativeStatePass());
   manager.addPass(createPrepareNativeProcessFramesPass());
@@ -16,6 +17,8 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
   manager.addPass(createPrepareNativeManagedRootsPass());
   manager.addPass(createMarkCleanNativeNBAPass());
   manager.addPass(createSpecializeNativeEvalPass());
+  if (nativeAggregates)
+    manager.addPass(createPrepareNativeAggregatesPass());
   if (nativeWords)
     manager.addPass(createOptimizeNativeWordsPass());
   manager.addPass(createLowerNativeWordRegionsPass());
@@ -35,12 +38,17 @@ void registerSimulationToLLVMCoroutinePipeline() {
         *this, "native-words",
         llvm::cl::desc("Optimize independent native word lanes"),
         llvm::cl::init(true)};
+    Option<bool> nativeAggregates{
+        *this, "native-aggregates",
+        llvm::cl::desc("Forward proved native SSA array elements"),
+        llvm::cl::init(true)};
   };
   mlir::PassPipelineRegistration<Options>(
       "convert-obelisk-sim-processes-to-llvm-coroutines",
       "Plan, specialize, and lower native simulation processes",
       [](mlir::OpPassManager &manager, const Options &options) {
-        buildSimulationToLLVMCoroutinePipeline(manager, options.nativeWords);
+        buildSimulationToLLVMCoroutinePipeline(manager, options.nativeWords,
+                                                options.nativeAggregates);
       });
 }
 } // namespace obelisk
