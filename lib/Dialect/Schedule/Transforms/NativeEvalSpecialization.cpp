@@ -11,6 +11,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "obelisk/Analysis/AccessFootprintAnalysis.h"
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -285,7 +286,9 @@ LogicalResult materializeEvalTwoStateVariants(
     llvm::SmallPtrSet<Operation *, 16> routeEligibleSources;
     bool invalidRange = false;
     auto selectRange =
-        [&](Value handle, const analysis::HandleDataflowResult &handles,
+        [&](Operation *access, Value handle,
+            const analysis::HandleDataflowResult &handles,
+            const analysis::AccessFootprintAnalysis &footprints,
             llvm::SmallDenseSet<PhysicalRange, 8> &localRanges) -> bool {
       const auto &provenance = handles.facts;
       auto found = provenance.find(handle);
@@ -332,11 +335,26 @@ LogicalResult materializeEvalTwoStateVariants(
       }
       if (!bound->fourState)
         return true;
+      if (const auto *ranges = footprints.lookup(access, handle)) {
+        // The access-local proof refines a may range; it never changes root
+        // identity, validity, or the known-state preservation requirement.
+        if (llvm::all_of(*ranges, [&](const auto &range) {
+              auto [low, accessWidth] = range;
+              return low >= found->second.low &&
+                     low - found->second.low <= width &&
+                     accessWidth <= width - (low - found->second.low);
+            })) {
+          for (auto [low, accessWidth] : *ranges)
+            insertRange(bound->offset + low, accessWidth);
+          return true;
+        }
+      }
       insertRange(bound->offset + found->second.low, width);
       return true;
     };
     for (sim::SimFuncOp source : sources) {
       auto handles = analysis::HandleDataflowAnalysis(source).analyze(source);
+      analysis::AccessFootprintAnalysis footprints(source, handles);
       const auto &provenance = handles.facts;
       llvm::SmallDenseSet<PhysicalRange, 8> localRanges;
       llvm::SmallDenseSet<PhysicalRange, 8> inductiveRanges;
@@ -417,11 +435,13 @@ LogicalResult materializeEvalTwoStateVariants(
             if (found != provenance.end() && found->second.descriptor &&
                 domains->isInductivelyTwoState(found->second.resource,
                                                *found->second.descriptor))
-              (void)selectRange(load.getReference(), handles, inductiveRanges);
+              (void)selectRange(operation, load.getReference(), handles,
+                                footprints, inductiveRanges);
           }
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             load.getResult()) &&
-                        selectRange(load.getReference(), handles, localRanges);
+                        selectRange(operation, load.getReference(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto read = dyn_cast<sim::SimNetReadOp>(operation)) {
@@ -430,11 +450,13 @@ LogicalResult materializeEvalTwoStateVariants(
             if (found != provenance.end() && found->second.descriptor &&
                 domains->isInductivelyTwoState(found->second.resource,
                                                *found->second.descriptor))
-              (void)selectRange(read.getNet(), handles, inductiveRanges);
+              (void)selectRange(operation, read.getNet(), handles, footprints,
+                                inductiveRanges);
           }
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             read.getResult()) &&
-                        selectRange(read.getNet(), handles, localRanges);
+                        selectRange(operation, read.getNet(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto write = dyn_cast<sim::SimNetWriteOp>(operation)) {
@@ -442,10 +464,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(write.getNet(), handles, inductiveRanges);
+            (void)selectRange(operation, write.getNet(), handles, footprints,
+                              inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             write.getValue()) &&
-                        selectRange(write.getNet(), handles, localRanges);
+                        selectRange(operation, write.getNet(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto store = dyn_cast<sim::SimRefStoreOp>(operation)) {
@@ -453,10 +477,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(store.getReference(), handles, inductiveRanges);
+            (void)selectRange(operation, store.getReference(), handles,
+                              footprints, inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             store.getValue()) &&
-                        selectRange(store.getReference(), handles, localRanges);
+                        selectRange(operation, store.getReference(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
@@ -464,10 +490,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(nba.getDestination(), handles, inductiveRanges);
+            (void)selectRange(operation, nba.getDestination(), handles,
+                              footprints, inductiveRanges);
           preserving &=
               knownStateDomains->isTwoStateWithInductiveRoots(nba.getValue()) &&
-              selectRange(nba.getDestination(), handles, localRanges);
+              selectRange(operation, nba.getDestination(), handles, footprints,
+                          localRanges);
           return;
         }
         if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
@@ -475,10 +503,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(drive.getDriver(), handles, inductiveRanges);
+            (void)selectRange(operation, drive.getDriver(), handles, footprints,
+                              inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             drive.getValue()) &&
-                        selectRange(drive.getDriver(), handles, localRanges);
+                        selectRange(operation, drive.getDriver(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto drive = dyn_cast<sim::SimDriverDriveInertialOp>(operation)) {
@@ -486,10 +516,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(drive.getDriver(), handles, inductiveRanges);
+            (void)selectRange(operation, drive.getDriver(), handles, footprints,
+                              inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             drive.getValue()) &&
-                        selectRange(drive.getDriver(), handles, localRanges);
+                        selectRange(operation, drive.getDriver(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto drive =
@@ -498,10 +530,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(drive.getDriver(), handles, inductiveRanges);
+            (void)selectRange(operation, drive.getDriver(), handles, footprints,
+                              inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             drive.getValue()) &&
-                        selectRange(drive.getDriver(), handles, localRanges);
+                        selectRange(operation, drive.getDriver(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto pair = dyn_cast<sim::SimDriverDriveInertialStrengthPairOp>(
@@ -511,10 +545,12 @@ LogicalResult materializeEvalTwoStateVariants(
             if (found != provenance.end() && found->second.descriptor &&
                 domains->isInductivelyTwoState(found->second.resource,
                                                *found->second.descriptor))
-              (void)selectRange(driver, handles, inductiveRanges);
+              (void)selectRange(operation, driver, handles, footprints,
+                                inductiveRanges);
             preserving &=
                 knownStateDomains->isTwoStateWithInductiveRoots(value) &&
-                selectRange(driver, handles, localRanges);
+                selectRange(operation, driver, handles, footprints,
+                            localRanges);
           };
           inspect(pair.getLowDriver(), pair.getLowValue());
           inspect(pair.getHighDriver(), pair.getHighValue());
@@ -529,10 +565,12 @@ LogicalResult materializeEvalTwoStateVariants(
             if (found != provenance.end() && found->second.descriptor &&
                 domains->isInductivelyTwoState(found->second.resource,
                                                *found->second.descriptor))
-              (void)selectRange(driver, handles, inductiveRanges);
+              (void)selectRange(operation, driver, handles, footprints,
+                                inductiveRanges);
             preserving &=
                 knownStateDomains->isTwoStateWithInductiveRoots(value) &&
-                selectRange(driver, handles, localRanges);
+                selectRange(operation, driver, handles, footprints,
+                            localRanges);
           };
           inspect(pair.getLowDriver(), pair.getLowValue());
           inspect(pair.getHighDriver(), pair.getHighValue());
@@ -545,10 +583,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(drive.getDriver(), handles, inductiveRanges);
+            (void)selectRange(operation, drive.getDriver(), handles, footprints,
+                              inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             drive.getValue()) &&
-                        selectRange(drive.getDriver(), handles, localRanges);
+                        selectRange(operation, drive.getDriver(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
@@ -556,10 +596,12 @@ LogicalResult materializeEvalTwoStateVariants(
           if (found != provenance.end() && found->second.descriptor &&
               domains->isInductivelyTwoState(found->second.resource,
                                              *found->second.descriptor))
-            (void)selectRange(drive.getDriver(), handles, inductiveRanges);
+            (void)selectRange(operation, drive.getDriver(), handles, footprints,
+                              inductiveRanges);
           preserving &= knownStateDomains->isTwoStateWithInductiveRoots(
                             drive.getValue()) &&
-                        selectRange(drive.getDriver(), handles, localRanges);
+                        selectRange(operation, drive.getDriver(), handles,
+                                    footprints, localRanges);
           return;
         }
         if (auto branch = dyn_cast<cf::CondBranchOp>(operation))

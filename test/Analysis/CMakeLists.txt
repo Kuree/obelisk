@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskAnalysisTestPasses
+  AccessFootprintAnalysisTestPass.cpp
   ClockInferenceAnalysisTestPass.cpp
   ManagedClassLayoutAnalysisTestPass.cpp
   NativeAOTAnalysisTestPass.cpp

@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskSimulationAnalysis
+  AccessFootprintAnalysis.cpp
   BoundedLoopAnalysis.cpp
   ScopedIntegerRangeAnalysis.cpp
   ClassBitstreamAnalysis.cpp
