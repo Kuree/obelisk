@@ -27,7 +27,8 @@ public:
       const analysis::HandleDataflowAnalysis &provenance);
   std::optional<CombinationalFusionBody>
   analyze(sim::SimFuncOp function,
-          const analysis::HandleDataflowAnalysis &provenance) const;
+          const analysis::HandleDataflowAnalysis &provenance,
+          bool interleaved = false) const;
 
 private:
   bool unsupported = false;

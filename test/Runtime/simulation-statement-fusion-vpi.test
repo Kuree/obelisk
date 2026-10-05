@@ -1,0 +1,31 @@
+// Acyclic statement dependencies do not make internal VPI deposits
+// safe for unconditional whole-body replay. Preserve exact owner activation.
+// RUN: %llvm_dist/bin/clang -I%S/../../runtime/include -I%resource_dir/include -c %S/Inputs/statement-fusion-vpi.c -o %t.helper.o
+// RUN: obelisk-opt %S/Inputs/statement-fusion-vpi.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full prune-native=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.native.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.native.ll | %llc -filetype=obj -relocation-model=pic -o %t.native.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.native.o0.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.native.o0.exe
+// RUN: %t.native.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.native.ll | %llc -filetype=obj -relocation-model=pic -o %t.native.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.native.o3.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.native.o3.exe
+// RUN: %t.native.o3.exe | FileCheck %s
+// RUN: obelisk-opt %S/Inputs/statement-fusion-vpi.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.bytecode.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.bytecode.ll | %llc -filetype=obj -relocation-model=pic -o %t.bytecode.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.bytecode.o0.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o0.exe
+// RUN: %t.bytecode.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.bytecode.ll | %llc -filetype=obj -relocation-model=pic -o %t.bytecode.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.bytecode.o3.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o3.exe
+// RUN: %t.bytecode.o3.exe | FileCheck %s
+
+// CHECK: step 0 input=07 internal=08 output=08
+// CHECK-NEXT: step 1 input=09 internal=0a output=0a
+// CHECK-NEXT: step 2 input=09 internal=40 output=40
+// CHECK-NEXT: step 3 input=09 internal=40 output=40
+// CHECK-NEXT: step 4 input=09 internal=07 output=07
+// CHECK-NEXT: step 5 input=0b internal=07 output=07
+// CHECK-NEXT: step 6 input=0b internal=07 output=07
+// CHECK-NEXT: step 7 input=0c internal=0d output=0d
+// CHECK-NEXT: step 8 input=0c internal=xx output=xx
+// CHECK-NEXT: step 9 input=0c internal=zz output=zz
+// CHECK-NEXT: step 10 input=ff internal=00 output=00
+// CHECK-NEXT: step 11 input=ff internal=00 output=63
+// CHECK-NEXT: step 12 input=00 internal=01 output=01

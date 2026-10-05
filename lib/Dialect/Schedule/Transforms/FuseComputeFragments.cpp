@@ -344,7 +344,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       if (fragments.size() >= 2) {
         fusions.push_back(schedule::ComputeFusionAttr::get(
             design.getContext(), id++,
-            DenseI64ArrayAttr::get(design.getContext(), fragments)));
+            DenseI64ArrayAttr::get(design.getContext(), fragments), false));
         ++plannedFusions;
       }
       fragments.clear();
@@ -499,7 +499,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
           continue;
         fusions.push_back(schedule::ComputeFusionAttr::get(
             design.getContext(), id++,
-            DenseI64ArrayAttr::get(design.getContext(), chunk)));
+            DenseI64ArrayAttr::get(design.getContext(), chunk), false));
         ++plannedFusions;
       }
     }

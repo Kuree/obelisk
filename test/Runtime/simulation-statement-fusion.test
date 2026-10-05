@@ -1,0 +1,37 @@
+// RUN: sed 's/schedule.native_scheduler = 1/schedule.native_scheduler = 3/' %S/Inputs/statement-fusion.mlir > %t.eval.mlir
+// RUN: obelisk-opt %t.eval.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.eval.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.eval.ll | %llc -filetype=obj -relocation-model=pic -o %t.eval.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.eval.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.eval.o0.exe
+// RUN: %t.eval.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.eval.ll | %llc -filetype=obj -relocation-model=pic -o %t.eval.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.eval.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.eval.o3.exe
+// RUN: %t.eval.o3.exe | FileCheck %s
+// Whole-program statement scheduling preserves X/Z and NBA boundaries.
+// RUN: obelisk-opt %S/Inputs/statement-fusion.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.fused.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.fused.ll | %llc -filetype=obj -relocation-model=pic -o %t.fused.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.fused.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.fused.o0.exe
+// RUN: %t.fused.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.fused.ll | %llc -filetype=obj -relocation-model=pic -o %t.fused.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.fused.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.fused.o3.exe
+// RUN: %t.fused.o3.exe | FileCheck %s
+// RUN: obelisk-opt %S/Inputs/statement-fusion.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.original.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.original.ll | %llc -filetype=obj -relocation-model=pic -o %t.original.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.original.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.original.o0.exe
+// RUN: %t.original.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.original.ll | %llc -filetype=obj -relocation-model=pic -o %t.original.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.original.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.original.o3.exe
+// RUN: %t.original.o3.exe | FileCheck %s
+// RUN: obelisk-opt %S/Inputs/statement-fusion.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.bytecode.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.bytecode.ll | %llc -filetype=obj -relocation-model=pic -o %t.bytecode.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.bytecode.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o0.exe
+// RUN: %t.bytecode.o0.exe | FileCheck %s
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.bytecode.ll | %llc -filetype=obj -relocation-model=pic -o %t.bytecode.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.bytecode.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.o3.exe
+// RUN: %t.bytecode.o3.exe | FileCheck %s
+
+// CHECK: result xx sample xx
+// CHECK-NEXT: result 08 sample 08
+// CHECK-NEXT: result xx sample xx
+// CHECK-NEXT: result xx sample xx
+// CHECK-NEXT: result 00 sample 00
+// CHECK-NEXT: result 01 sample 01

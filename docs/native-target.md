@@ -161,6 +161,36 @@ the original fallback semantics remain encoded under the same function,
 continuation, descriptor, hierarchy, and code-unit identities. Falling back is
 a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
+The opt-in `schedule-plan-combinational-statements` design pass addresses a
+different source of repeated execution: a process can publish an address and
+consume the result returned by another process in the same activation. The
+process graph then has a cycle even when its individual statements form a DAG.
+`CombinationalDependencyAnalysis` solves transitive direct-call effects with
+MLIR dataflow and canonical reference ranges, then combines cross-process
+memory dependencies with each process's statement order. The planner records
+an interleaved fusion request; the materializer rechecks eligibility and the
+operation order against the current IR. This is not an unchecked execute-once
+attribute. Complete, exclusive, straight-line activations can become one
+ordered kernel with no internal self-wake subscriptions or feedback checks.
+Hierarchy boundaries do not restrict this proof. Source-order cycles, actual
+feedback, incomplete assignments and opaque effects retain their existing
+execution. Full VPI retains individual activation points as described in
+[VPI startup and backdoor access](vpi.md). This pass is not yet enabled by the
+driver: general CFG/loop scheduling, external entry points and performance
+validation remain necessary before broader use.
+
+The scheduling proof follows IEEE 1800-2023 4.5 (activation and region
+boundaries), 4.6 (procedural source order and ordered NBAs), and 4.7 (permitted
+interleaving between processes). A topological order may select a legal
+interleaving; it cannot reorder statements within one process or cross a
+suspension/NBA boundary. Section 9.2.2.2.1 also excludes expressions written
+by an `always_comb` block from its implicit sensitivity. Consequently a
+read-before-write block cannot be treated as an algebraic fixed-point equation.
+The proof requires actual complete assignments, not just the `always_comb`
+spelling or a may-write range. A normal acyclic cone needs no feedback checks.
+Its affected work can execute once for a propagation wave with stable ingress;
+a later clock, NBA or external write is a distinct activation wave.
+
 `schedule-optimize-native-aggregates` forwards SSA array reads from preceding
 updates at the same selector when dense scoped ranges prove that selector known
 and in bounds. It also removes overwritten updates and read/write identities;

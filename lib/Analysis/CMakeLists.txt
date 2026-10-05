@@ -6,6 +6,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   ClassBitstreamPlan.cpp
   ClassDispatchAnalysis.cpp
   ClockInferenceAnalysis.cpp
+  CombinationalDependencyAnalysis.cpp
   DemandedBitAnalysis.cpp
   HandleDataflowAnalysis.cpp
   LogicBitAnalysis.cpp

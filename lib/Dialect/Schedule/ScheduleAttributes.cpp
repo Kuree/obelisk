@@ -142,8 +142,10 @@ ComputeGroupAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 ComputeFusionAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                          uint32_t id, DenseI64ArrayAttr fragments) {
+                          uint32_t id, DenseI64ArrayAttr fragments,
+                          bool interleaved) {
   (void)id;
+  (void)interleaved;
   if (!fragments || fragments.size() < 2)
     return emitError() << "compute fusion requires at least two fragments";
   llvm::SmallDenseSet<int64_t> unique;

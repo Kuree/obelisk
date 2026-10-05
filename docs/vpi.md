@@ -95,6 +95,17 @@ skips bytecode stabilization when no observer, conditional wait, force, or
 dirty specialization state is active. Deposits without an exact mapping and
 force/release operations retain the guarded bytecode handoff.
 
+A combinational DAG can propagate a deposit through its affected downstream
+cone once in dependency order, provided no further input change occurs during
+that propagation. A write to an internal signal starts at that signal's
+consumers; it must not unconditionally replay upstream assignments and erase
+the deposited value. Combining process bodies therefore has to preserve these
+external activation points as well as the topological order. The experimental
+statement-fusion pass currently retains the original processes in full VPI
+mode until it can preserve those entry points. The existing scheduler continues
+to handle deposits and force/release. These requirements follow IEEE 1800-2023
+4.10 and 38.34; acyclicity alone is not an activation or override proof.
+
 The cold lifecycle callbacks `cbEndOfCompile`, `cbStartOfSimulation`, and
 `cbEndOfSimulation` are implemented, including callback-object iteration,
 `vpi_get_cb_info`, release, and removal. Lifecycle registration does not

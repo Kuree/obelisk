@@ -4,6 +4,7 @@ add_mlir_library(ObeliskScheduleTransforms
   FuseComputeFragments.cpp
   MaterializeComputeFusion.cpp
   MaterializeGraphRegions.cpp
+  PlanCombinationalStatements.cpp
   PlanStaticSuperstep.cpp
   SimulationNativeRegionOptimization.cpp
   SpecializeStaticStateNBA.cpp

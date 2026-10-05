@@ -1,6 +1,7 @@
 //===- MaterializeComputeFusion.cpp - Fuse static process bodies ----------===//
 
 #include "ComputeFusion.h"
+#include "obelisk/Analysis/CombinationalDependencyAnalysis.h"
 #include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
@@ -1561,6 +1562,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     schedule::ComputeGraphAttr graph,
     const analysis::HandleDataflowAnalysis &provenance,
     const CombinationalFusionAnalysis &combinational,
+    const analysis::CombinationalDependencyAnalysis *dependencies,
     const DenseMap<int64_t, int64_t> &resumeTargets,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
   struct Candidate {
@@ -1590,8 +1592,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         function &&
         ::obelisk::schedule::has<::obelisk::schedule::Field::PrimitiveName>(
             function);
-    auto combinationalBody = combinational.analyze(function, provenance);
-    if (!function ||
+    auto combinationalBody =
+        combinational.analyze(function, provenance, fusion.getInterleaved());
+    if (!function || (fusion.getInterleaved() && !combinationalBody) ||
         (!combinationalBody &&
          function.getEntryKind() != sim::EntryKind::Continuous) ||
         !(primitive ? isPrimitiveComputeBodyFusionEligible(function, provenance)
@@ -1608,7 +1611,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     Block &entry = function.getBody().front();
     Block &body = combinationalBody ? *combinationalBody->activation
                                     : function.getBody().back();
-    if (!primitive && body.getNumArguments() != 0)
+    if (!primitive && !fusion.getInterleaved() && body.getNumArguments() != 0)
       return failure();
     auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
     Operation *suspend =
@@ -1674,17 +1677,18 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         return candidate.combinationalBody.has_value() != rankedCombinational;
       }))
     return failure();
-  for (Candidate &candidate : candidates)
-    if (candidate.combinationalBody &&
-        (candidate.function.getEntryKind() !=
-             candidates.front().function.getEntryKind() ||
-         candidate.function.getDomain() !=
-             candidates.front().function.getDomain() ||
-         candidate.function.getHomeRegion() !=
-             candidates.front().function.getHomeRegion() ||
-         codeUnits.getScope(candidate.function) !=
-             codeUnits.getScope(candidates.front().function)))
+  for (Candidate &candidate : candidates) {
+    if (!candidate.combinationalBody)
+      continue;
+    auto first = candidates.front().function;
+    if (candidate.function.getDomain() != first.getDomain() ||
+        candidate.function.getHomeRegion() != first.getHomeRegion())
       return failure();
+    if (!fusion.getInterleaved() &&
+        (candidate.function.getEntryKind() != first.getEntryKind() ||
+         codeUnits.getScope(candidate.function) != codeUnits.getScope(first)))
+      return failure();
+  }
 
   SmallVector<Value> operands;
   SmallVector<Type> inputTypes;
@@ -1800,6 +1804,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     for (Operation &operation :
          candidate.function.getBody().front().without_terminator())
       builder.clone(operation, *mapping);
+    if (fusion.getInterleaved())
+      for (auto [argument, initial] : llvm::zip_equal(
+               candidate.body->getArguments(), candidate.initialState))
+        mapping->map(argument, mapping->lookup(initial));
     mappings.push_back(std::move(mapping));
   }
   // A frontend primitive commonly watches a statically selected bit of a
@@ -1828,9 +1836,11 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     return cloned->getResult(result);
   };
   if (rankedCombinational) {
+    std::optional<SmallVector<Operation *>> interleaving;
     DenseMap<StringAttr, unsigned> owners;
     for (auto [index, candidate] : llvm::enumerate(candidates))
       owners[candidate.function.getSymNameAttr()] = index;
+    bool backward = false;
     for (Attribute attribute : graph.getEdges()) {
       auto edge = cast<schedule::ComputeEdgeAttr>(attribute);
       if (edge.getKind() != schedule::ComputeEdgeKind::Sensitivity)
@@ -1843,10 +1853,37 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       auto to = owners.find(target.getFunction().getAttr());
       if (from != owners.end() && to != owners.end() &&
           to->second <= from->second)
+        backward = true;
+    }
+    if (backward && !fusion.getInterleaved())
+      return bail();
+    if (fusion.getInterleaved()) {
+      if (!dependencies)
         return bail();
+      SmallVector<sim::SimFuncOp> members;
+      for (Candidate &candidate : candidates)
+        members.push_back(candidate.function);
+      interleaving = dependencies->getInterleaving(members);
+      if (!interleaving)
+        return bail();
+    }
+    DenseMap<uint64_t, SmallVector<std::pair<uint64_t, uint64_t>>> groupWrites;
+    if (interleaving) {
+      for (Candidate &producer : candidates)
+        for (const auto &access :
+             dependencies->lookup(producer.function)->accesses)
+          if (access.kind == analysis::CombinationalDependencyAnalysis::
+                                 AccessKind::Write &&
+              access.target.descriptor && !access.target.dynamic)
+            groupWrites[*access.target.descriptor].emplace_back(
+                access.target.low, access.target.low + access.target.width);
+      for (auto &[root, writes] : groupWrites)
+        llvm::sort(writes);
     }
     SmallVector<Value> watched;
     for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+      auto facts = interleaving ? provenance.derive(candidate.function)
+                                : analysis::HandleFacts{};
       SmallVector<Value> memberWatches;
       if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend))
         memberWatches.push_back(change.getWatched());
@@ -1855,12 +1892,33 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
             memberWatches,
             cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched());
       for (Value watch : memberWatches) {
+        if (interleaving) {
+          // Only remove a complete watch owned exclusively by this kernel.
+          // Its producers execute before its consumers in the certified DAG;
+          // subscribing to it would manufacture self-reactivation. Partial
+          // coverage conservatively keeps the original complete watch.
+          auto found = facts.find(watch);
+          if (found != facts.end() && found->second.descriptor &&
+              !found->second.dynamic) {
+            const auto &range = found->second;
+            uint64_t covered = range.low;
+            for (auto [low, high] : groupWrites[*range.descriptor]) {
+              if (low > covered)
+                break;
+              covered = std::max(covered, high);
+            }
+            if (covered >= range.low + range.width)
+              continue;
+          }
+        }
         Value handle = mapWatchHandle(watch, *mapping, mapWatchHandle);
         if (!handle)
           return bail();
         watched.push_back(handle);
       }
     }
+    if (watched.empty())
+      return bail();
     // Exclusive, complete, deterministic assignments make an unchanged-input
     // activation idempotent: every store writes its existing four-state value
     // and publishes no transition. It is therefore observationally equivalent
@@ -1869,27 +1927,37 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     // extra executions of tasks, coverage, latches or other effects (4.3, 4.6).
     cf::BranchOp::create(builder, kernel.getLoc(), body);
     Block *tail = body;
-    for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
-      for (Block *source : candidate.combinationalBody->blocks) {
-        Block *cloned = new Block;
-        kernel.getBody().push_back(cloned);
-        mapping->map(source, cloned);
-        for (BlockArgument argument : source->getArguments())
-          mapping->map(argument, cloned->addArgument(argument.getType(),
-                                                     argument.getLoc()));
+    if (interleaving) {
+      builder.setInsertionPointToStart(body);
+      DenseMap<Operation *, IRMapping *> mappingForOwner;
+      for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
+        mappingForOwner[candidate.function] = mapping.get();
+      for (Operation *op : *interleaving)
+        if (!hoistedWatchOps.contains(op))
+          builder.clone(
+              *op, *mappingForOwner.at(op->getParentOfType<sim::SimFuncOp>()));
+    } else
+      for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+        for (Block *source : candidate.combinationalBody->blocks) {
+          Block *cloned = new Block;
+          kernel.getBody().push_back(cloned);
+          mapping->map(source, cloned);
+          for (BlockArgument argument : source->getArguments())
+            mapping->map(argument, cloned->addArgument(argument.getType(),
+                                                       argument.getLoc()));
+        }
+        builder.setInsertionPointToEnd(tail);
+        cf::BranchOp::create(
+            builder, kernel.getLoc(),
+            mapping->lookup(candidate.combinationalBody->activation));
+        for (Block *source : candidate.combinationalBody->blocks) {
+          builder.setInsertionPointToStart(mapping->lookup(source));
+          for (Operation &op : *source)
+            if (&op != candidate.suspend && !hoistedWatchOps.contains(&op))
+              builder.clone(op, *mapping);
+        }
+        tail = mapping->lookup(candidate.suspend->getBlock());
       }
-      builder.setInsertionPointToEnd(tail);
-      cf::BranchOp::create(
-          builder, kernel.getLoc(),
-          mapping->lookup(candidate.combinationalBody->activation));
-      for (Block *source : candidate.combinationalBody->blocks) {
-        builder.setInsertionPointToStart(mapping->lookup(source));
-        for (Operation &op : *source)
-          if (&op != candidate.suspend && !hoistedWatchOps.contains(&op))
-            builder.clone(op, *mapping);
-      }
-      tail = mapping->lookup(candidate.suspend->getBlock());
-    }
     builder.setInsertionPointToEnd(tail);
     cf::BranchOp::create(builder, kernel.getLoc(), wait);
     builder.setInsertionPointToStart(wait);
@@ -3592,6 +3660,13 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   std::unique_ptr<PrivateStaticAccessIndex> fusionAccessIndex;
   llvm::StringMap<uint64_t> fusionRejections;
   CombinationalFusionAnalysis combinational(design, provenance);
+  std::unique_ptr<analysis::CombinationalDependencyAnalysis> dependencies;
+  if (llvm::any_of(fusions, [](Attribute attr) {
+        auto fusion = dyn_cast<schedule::ComputeFusionAttr>(attr);
+        return fusion && fusion.getInterleaved();
+      }))
+    dependencies =
+        std::make_unique<analysis::CombinationalDependencyAnalysis>(design);
   FusionInputIndex inputIndex(design, graph);
   for (Attribute attribute : fusions) {
     auto fusion = dyn_cast<schedule::ComputeFusionAttr>(attribute);
@@ -3599,11 +3674,13 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       continue;
     bool primitiveContinuous =
         isPrimitiveContinuousFusion(symbols, fusion, graph);
-    FailureOr<sim::SimFuncOp> fused = materializeFusion(
-        design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
-        scheduleOrder, resumeTargets, entryOrder, spawnsByCallee, evalScheduler,
-        removedPolls, convertedNBAs, sharedConditions, promotedStores,
-        fusionAccessIndex, fusionRejections);
+    FailureOr<sim::SimFuncOp> fused = failure();
+    if (!fusion.getInterleaved())
+      fused = materializeFusion(
+          design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
+          scheduleOrder, resumeTargets, entryOrder, spawnsByCallee,
+          evalScheduler, removedPolls, convertedNBAs, sharedConditions,
+          promotedStores, fusionAccessIndex, fusionRejections);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
     // the actor scheduler.  A primitive-only cohort is different: replacing
@@ -3611,10 +3688,11 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     // exact union-wait kernel is the forced-native compile-space bound. Its
     // typed source owners preserve the original fine identities for eval
     // handoff.
-    if (failed(fused) && (!evalScheduler || primitiveContinuous)) {
+    if (failed(fused) &&
+        (!evalScheduler || primitiveContinuous || fusion.getInterleaved())) {
       fused = materializeStraightLineKernel(
           design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
-          combinational, firstResumeTargets, spawnsByCallee);
+          combinational, dependencies.get(), firstResumeTargets, spawnsByCallee);
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.

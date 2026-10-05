@@ -372,17 +372,22 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
 }
 
 std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
-    sim::SimFuncOp function,
-    const analysis::HandleDataflowAnalysis &analysis) const {
-  if (unsupported || !function || function.isExternal() ||
-      function.getEntryKind() != sim::EntryKind::AlwaysComb ||
+    sim::SimFuncOp function, const analysis::HandleDataflowAnalysis &analysis,
+    bool interleaved) const {
+  bool kind =
+      function && (function.getEntryKind() == sim::EntryKind::AlwaysComb ||
+                   (interleaved &&
+                    (function.getEntryKind() == sim::EntryKind::Continuous ||
+                     function.getEntryKind() == sim::EntryKind::PortInput ||
+                     function.getEntryKind() == sim::EntryKind::PortOutput)));
+  if (unsupported || !function || function.isExternal() || !kind ||
       function.getHomeRegion() != sim::EventRegion::Active ||
       nonNativeOwners.contains(function.getSymNameAttr()) ||
       !isComputeBodyFusionEligible(function, analysis))
     return std::nullopt;
   auto &entry = function.getBody().front();
   auto start = dyn_cast<cf::BranchOp>(entry.getTerminator());
-  if (!start || !start.getDestOperands().empty())
+  if (!start || (!interleaved && !start.getDestOperands().empty()))
     return std::nullopt;
   for (Operation &op : entry.without_terminator())
     if (!isMemoryEffectFree(&op) || !isSpeculatable(&op))
@@ -417,12 +422,23 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     }
   });
   if (!valid || !result.suspend || result.outputs.empty() || watches.empty() ||
-      result.suspend->getSuccessor(0) != result.activation ||
-      !cast<BranchOpInterface>(result.suspend)
-           .getSuccessorOperands(0)
-           .getForwardedOperands()
-           .empty())
+      result.suspend->getSuccessor(0) != result.activation)
     return std::nullopt;
+  auto resumed = cast<BranchOpInterface>(result.suspend)
+                     .getSuccessorOperands(0)
+                     .getForwardedOperands();
+  if (!interleaved && !resumed.empty())
+    return std::nullopt;
+  // Suspension lowering threads stable handles through block arguments.
+  // The activation header has one initial edge and one suspension backedge;
+  // a phi receiving itself on that backedge is invariant. Changing carried
+  // state is not an idempotent combinational activation and remains separate.
+  if (resumed.size() != start.getDestOperands().size())
+    return std::nullopt;
+  for (auto [argument, initial, next] : llvm::zip_equal(
+           result.activation->getArguments(), start.getDestOperands(), resumed))
+    if (next != argument && next != initial)
+      return std::nullopt;
   if (auto region =
           TypeSwitch<Operation *, sim::EventRegionAttr>(result.suspend)
               .Case<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(
@@ -461,7 +477,13 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
   for (auto [index, output] : llvm::enumerate(result.outputs)) {
     const auto *w = precise(output);
     auto type = dyn_cast<sim::RefType>(output.getType());
+    auto span = sim::getProvenanceSpan(output.getType());
     if (!w || !type || !sim::getPackedScalarType(type.getElementType()))
+      return std::nullopt;
+    // Interleaving removes fully internal watches. A phi/select of several
+    // fixed views has a may-hull wider than one store: it cannot establish
+    // complete coverage of the enclosed range for that removal.
+    if (interleaved && (!span || w->width != *span))
       return std::nullopt;
     for (Value read : reads)
       if (overlap(*w, *precise(read)))

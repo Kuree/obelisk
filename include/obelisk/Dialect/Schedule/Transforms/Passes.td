@@ -109,6 +109,21 @@ def ObeliskSimFuseComputeFragmentsPass
   ];
 }
 
+def PlanCombinationalStatementsPass
+    : Pass<"schedule-plan-combinational-statements", "obelisk::sim::SimDesignOp"> {
+  let summary = "Plan source-ordered DAGs across combinational process boundaries";
+  let description = [{
+    Uses whole-design call, storage and statement dependence analysis to find
+    artificial process SCCs whose individual operations form a DAG. Plans only
+    complete, exclusive, finite combinational activations. The materializer
+    rechecks the proof and preserves every process's statement order. Actual
+    feedback and unsupported effects retain their existing scheduler.
+  }];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+  let options = [Option<"maxMembers", "max-members", "unsigned", "64",
+                        "Maximum activations in one statement DAG">];
+}
+
 def ObeliskSimMaterializeComputeFusionPass
     : Pass<"obelisk-sim-materialize-compute-fusion",
            "obelisk::sim::SimDesignOp"> {
