@@ -952,6 +952,39 @@ TEST(RuntimeABI, FinishStopAndFatalHaveDistinctEntryPoints) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeABI, TerminationPollingObservesConcurrentRequests) {
+  using Request = obelisk_rt_status (*)(obelisk_rt_context *, uint32_t);
+  for (Request request :
+       {obelisk_rt_v1_scheduler_finish, obelisk_rt_v1_scheduler_stop,
+        obelisk_rt_v1_scheduler_fatal}) {
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_NE(context, nullptr);
+    std::atomic<bool> polling{false};
+    bool observed = false;
+    std::thread reader([&] {
+      // Read before announcing readiness, then overlap further queries with
+      // the request. The deadline makes a missed publication fail finitely.
+      observed = obelisk_rt_v1_scheduler_termination_requested(context) != 0;
+      polling.store(true, std::memory_order_release);
+      auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (!observed && std::chrono::steady_clock::now() < deadline) {
+        observed = obelisk_rt_v1_scheduler_termination_requested(context) != 0;
+        std::this_thread::yield();
+      }
+    });
+    while (!polling.load(std::memory_order_acquire))
+      std::this_thread::yield();
+    EXPECT_EQ(request(context, 0), OBELISK_RT_OK);
+    reader.join();
+    EXPECT_TRUE(observed);
+    // The latch is monotonic, including after the request's transaction ends.
+    EXPECT_EQ(obelisk_rt_v1_scheduler_termination_requested(context), 1u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 struct DpiObservation {
   uint32_t calls = 0;
   uint32_t nestedID = 0;

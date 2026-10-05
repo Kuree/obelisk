@@ -4263,6 +4263,8 @@ obelisk_rt_status obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context,
 // Record a run-time error without requesting simulation termination. The
 // scheduler continues normally and reports an unsuccessful final status.
 obelisk_rt_status obelisk_rt_v1_scheduler_error(obelisk_rt_context *context);
+// Read the termination latch only. This query is not a synchronization barrier
+// for other context state; the caller must keep the context alive.
 uint32_t
 obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context);
 uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);

@@ -1046,7 +1046,7 @@ static void requestImplicitProgramFinishUnlocked(obelisk_rt_context *context) {
   if (!context->programTrackingSeen || !context->programTrackingSealed ||
       context->liveProgramInstances != 0)
     return;
-  context->schedulerFinishRequested = true;
+  context->schedulerFinishRequested.store(1, std::memory_order_relaxed);
   context->nativePeriodicTerminationRequested = 1;
   context->schedulerFinishVerbosity = 0;
 }
@@ -2475,7 +2475,7 @@ static void requestExplicitFinishUnlocked(obelisk_rt_context *context,
                                           obelisk_rt_status status) {
   if (context->schedulerRunningFinals)
     context->schedulerFinalsAborted = true;
-  context->schedulerFinishRequested = true;
+  context->schedulerFinishRequested.store(1, std::memory_order_relaxed);
   context->nativePeriodicTerminationRequested = 1;
   context->schedulerFinishVerbosity = verbosity;
   if (status != OBELISK_RT_OK)
@@ -2578,14 +2578,12 @@ obelisk_rt_v1_scheduler_error(obelisk_rt_context *context) {
 
 extern "C" uint32_t
 obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
+  // IEEE 1800-2023 20.2/20.10/24.7: observe the finish/stop/fatal/program
+  // completion latch without changing when callers test it. This query does
+  // not access finish status or any other mutex-protected context state.
   if (!context)
     return 0;
-  ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
-    ContextMutexLock lock(context);
-    return context->schedulerFinishRequested ? 1u : 0u;
-  }
-  OBELISK_RT_CATCH_ALL { return 0; }
+  return context->schedulerFinishRequested.load(std::memory_order_relaxed);
 }
 
 extern "C" uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context) {
@@ -3091,7 +3089,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           return status;
       }
       if (!context->schedulerRunningFinals &&
-          !context->schedulerFinishRequested &&
+          !context->schedulerFinishRequested.load(std::memory_order_relaxed) &&
           !context->vpiTimeCallbackActive && context->nextVPITimeCallback &&
           *context->nextVPITimeCallback <= context->schedulerTime) {
         obelisk_rt_status status =
@@ -3159,7 +3157,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         context->schedulerCompactionPending =
             context->schedulerDeadProcessCount != 0;
       }
-      if (context->schedulerFinishRequested) {
+      if (context->schedulerFinishRequested.load(std::memory_order_relaxed)) {
         context->schedulerRunningFinals = true;
         setSchedulerDrainingReactive(context, false);
         if (context->schedulerFinalsAborted)
@@ -5229,7 +5227,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       context->controlEscapePending = false;
       context->activeLogicalProcessParent = 0;
       context->activeWaitOrderFailed = false;
-      terminationRequested = context->schedulerFinishRequested;
+      terminationRequested =
+          context->schedulerFinishRequested.load(std::memory_order_relaxed);
     };
     if (status != OBELISK_RT_OK) [[unlikely]] {
       bool dpiDisabled = status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
@@ -5282,7 +5281,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
-        if (!scheduled.callers.empty() && !context->schedulerFinishRequested &&
+        if (!scheduled.callers.empty() &&
+            !context->schedulerFinishRequested.load(
+                std::memory_order_relaxed) &&
             !killRequested) {
           if (scheduled.callerControlDepths.size() != scheduled.callers.size())
             return OBELISK_RT_INVALID_LIFECYCLE;

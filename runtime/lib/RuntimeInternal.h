@@ -2248,7 +2248,13 @@ struct obelisk_rt_context {
   // IEEE 1800-2023 4.5: finish the Reactive through Re-NBA iteration
   // before returning to Active. Retain this cursor across scheduler reentry.
   bool schedulerDrainingReactive = false;
-  bool schedulerFinishRequested = false;
+  // Termination polls only observe this monotonic latch; they do not publish
+  // or consume other context state. Keep it atomic so polling needs neither
+  // a context transaction nor the scheduler mutex. Associated finish status
+  // and final-process state remain protected by the existing transaction.
+  // A 0/1 word also matches the query's ABI result without normalizing a
+  // byte-sized atomic bool at every generated function-call boundary.
+  std::atomic<uint32_t> schedulerFinishRequested{0};
   // An explicit termination request made while a final procedure is active
   // suppresses every remaining final procedure (IEEE 1800-2017 9.2.3).
   bool schedulerFinalsAborted = false;

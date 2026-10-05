@@ -3673,7 +3673,7 @@ obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context) {
     // The callback may remove itself, release its handle, or cancel a peer.
     eraseCallback(state, id);
     if (status != OBELISK_RT_OK || context->destroyPending ||
-        context->schedulerFinishRequested)
+        context->schedulerFinishRequested.load(std::memory_order_relaxed))
       return status;
   }
   return OBELISK_RT_OK;

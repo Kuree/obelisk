@@ -1031,7 +1031,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     context->activeProgramOwner = 0;
     context->activeLogicalProcessParent = 0;
     context->activeWaitOrderFailed = false;
-    terminationRequested = context->schedulerFinishRequested;
+    terminationRequested =
+        context->schedulerFinishRequested.load(std::memory_order_relaxed);
     if (terminationRequested)
       context->schedulerRunningFinals = true;
     if (!terminationRequested && status == OBELISK_RT_OK && generatedActions &&
@@ -1507,7 +1508,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     status = drainNativeAOTCurrentSlotUnlocked(context);
     if (status != OBELISK_RT_OK)
       return status;
-    if (context->schedulerFinishRequested)
+    if (context->schedulerFinishRequested.load(std::memory_order_relaxed))
       return OBELISK_RT_TIER_UNAVAILABLE;
     // Startup actors can enable waveform collection during the drain above.
     // Recheck before the periodic loop takes ownership of the clock.
@@ -1686,13 +1687,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       status = drainNativeAOTCurrentSlotUnlocked(context);
       if (status != OBELISK_RT_OK)
         return status;
-      if (context->schedulerFinishRequested)
+      if (context->schedulerFinishRequested.load(std::memory_order_relaxed))
         break;
     }
     // A runtime-owned bootstrap actor may request $finish before the periodic
     // handoff. The generated loop has no work left to claim; return control to
     // the scheduler so it can complete final callbacks and terminate.
-    if (context->schedulerFinishRequested)
+    if (context->schedulerFinishRequested.load(std::memory_order_relaxed))
       return OBELISK_RT_TIER_UNAVAILABLE;
 
     auto periodicFanoutMatches =
@@ -1951,7 +1952,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       status = drainNativeAOTCurrentSlotUnlocked(context);
       if (status != OBELISK_RT_OK)
         return status;
-      if (context->schedulerFinishRequested)
+      if (context->schedulerFinishRequested.load(std::memory_order_relaxed))
         return OBELISK_RT_TIER_UNAVAILABLE;
     }
 
@@ -2083,7 +2084,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           .wakeTime = UINT64_MAX;
     }
     context->nativePeriodicTerminationRequested =
-        context->schedulerFinishRequested ? 1u : 0u;
+        context->schedulerFinishRequested.load(std::memory_order_relaxed) ? 1u
+                                                                          : 0u;
     outControl->scheduler_time = &context->schedulerTime;
     outControl->termination_requested =
         &context->nativePeriodicTerminationRequested;
@@ -2129,7 +2131,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_drain_periodic_aot(
     return status;
   if (context->signalDiagnosticsEnabled)
     ++context->signalDiagnostics.periodicSlotDrains;
-  if (context->schedulerFinishRequested)
+  if (context->schedulerFinishRequested.load(std::memory_order_relaxed))
     return OBELISK_RT_OK;
   if (obelisk_rt_dump_active_unlocked(context) ||
       !nativePeriodicAOTEnvironmentClean(context))
@@ -2670,10 +2672,12 @@ nativeCheckpoint:
                 break;
               }
               ++context->schedulerSlotProgress;
-              finishing |= context->schedulerFinishRequested;
+              finishing |= context->schedulerFinishRequested.load(
+                  std::memory_order_relaxed);
               if (context->signalDiagnosticsEnabled) {
                 ++context->signalDiagnostics.aotCheckpoints;
-                if (context->schedulerFinishRequested)
+                if (context->schedulerFinishRequested.load(
+                        std::memory_order_relaxed))
                   ++context->signalDiagnostics.aotTerminalCheckpoints;
               }
             }
@@ -2756,7 +2760,8 @@ nativeCheckpoint:
         return status;
       {
         ContextMutexLock lock(context);
-        finishing = context->schedulerFinishRequested;
+        finishing =
+            context->schedulerFinishRequested.load(std::memory_order_relaxed);
       }
       if (finishing) {
         // Finish/final callbacks are an enabled synchronization checkpoint,
@@ -2789,7 +2794,7 @@ nativeCheckpoint:
           status == OBELISK_RT_OK &&
           (context->schedulerSlotProgress != checkpointProgressBefore ||
            context->schedulerTime != checkpointTimeBefore ||
-           context->schedulerFinishRequested);
+           context->schedulerFinishRequested.load(std::memory_order_relaxed));
       if (!checkpointProgress) {
         // A checkpointed continuation that is not directly runnable by either
         // current-slot drain must deopt transactionally. Retrying run_until
