@@ -125,8 +125,9 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_owners_v1
 // CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_ranges_v1
 // CHECK: llvm.mlir.addressof @__obelisk_state_unknown
-// CHECK: llvm.load {{.*}} : !llvm.ptr -> i8
-// CHECK: llvm.and {{.*}} : i8
+// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_hints_v1
+// CHECK: llvm.load {{.*}} : !llvm.ptr -> i64
+// CHECK: llvm.and {{.*}} : i64
 // CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
 // CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_ready_v1(
 // CHECK-SAME: passthrough = ["alwaysinline"]

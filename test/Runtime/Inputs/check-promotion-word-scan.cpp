@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 extern "C" {
 extern uint8_t __obelisk_state_unknown[];
@@ -92,6 +93,46 @@ int main() {
     check();
     __obelisk_state_unknown[bit / 8] = 0;
     __obelisk_eval_promotion_recheck_range_v1(bit, 1);
+  }
+  // A negative hint must be rechecked, and clearing it must resume a complete
+  // proof. Move the remaining X between distant words, including back before
+  // the previous hint, while unrelated owners continue to promote.
+  for (unsigned bit : {13u, 310u}) {
+    __obelisk_state_unknown[bit / 8] |= 1u << (bit % 8);
+    __obelisk_eval_promotion_invalidate_range_v1(bit, 1);
+  }
+  for (unsigned retry = 0; retry != 8; ++retry)
+    check();
+  __obelisk_state_unknown[13 / 8] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(13, 1);
+  check();
+  __obelisk_state_unknown[13 / 8] = 1u << (13 % 8);
+  __obelisk_eval_promotion_invalidate_range_v1(13, 1);
+  __obelisk_state_unknown[310 / 8] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(310, 1);
+  check();
+  __obelisk_state_unknown[13 / 8] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(13, 1);
+  check();
+
+  // The final state word includes guard bytes beyond the last root. Unknown
+  // padding is outside the proof, but its final live bit (423) must still
+  // defeat promotion, including repeated queries and recovery from a hint.
+  for (unsigned byte = 53; byte != 56; ++byte)
+    __obelisk_state_unknown[byte] = 0xff;
+  __obelisk_eval_promotion_invalidate_range_v1(416, 8);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+  __obelisk_state_unknown[52] = 0x80;
+  __obelisk_eval_promotion_invalidate_range_v1(423, 1);
+  for (unsigned retry = 0; retry != 8; ++retry)
+    assert(!__obelisk_eval_kernel_promotion_ready_v1(0));
+  assert(__obelisk_eval_kernel_promotion_ready_v1(1));
+  __obelisk_state_unknown[52] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(423, 1);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+  for (unsigned byte = 53; byte != 56; ++byte) {
+    assert(__obelisk_state_unknown[byte] == 0xff);
+    __obelisk_state_unknown[byte] = 0;
   }
   // All uncertified bits are unknown simultaneously, including both partial
   // boundary bytes. They must not prevent promotion or be cleared by a scan.

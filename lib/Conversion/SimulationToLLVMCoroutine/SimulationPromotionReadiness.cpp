@@ -233,7 +233,9 @@ LogicalResult materializeNativeKernelPromotionReadiness(
 
   // IEEE 1800-2023 6.3.1, 6.11.2: every certified bit must be known before
   // using a two-state body. Merge overlapping intervals without filling gaps
-  // or admitting neighboring bits in either partial boundary byte.
+  // or admitting neighboring bits in either partial boundary word. The state
+  // plane has an aligned guard word, so a masked final i64 load remains within
+  // its allocation even when the last certified bit is not word-aligned.
   SmallVector<uint64_t> owners, scans;
   for (auto [index, executor] : llvm::enumerate(twoStateExecutors)) {
     SmallVector<std::pair<uint64_t, uint64_t>> intervals;
@@ -256,11 +258,12 @@ LogicalResult materializeNativeKernelPromotionReadiness(
     }
     uint64_t first = scans.size() / 4;
     for (auto [begin, end] : merged) {
-      uint64_t firstMask = (UINT64_C(255) << (begin % 8)) & 255;
-      uint64_t lastMask = end % 8 ? (uint64_t{1} << (end % 8)) - 1 : 255;
-      llvm::append_range(scans,
-                         ArrayRef<uint64_t>{begin / 8, end / 8 + (end % 8 != 0),
-                                            firstMask, lastMask});
+      uint64_t firstMask = UINT64_MAX << (begin % 64);
+      uint64_t lastMask =
+          end % 64 ? (uint64_t{1} << (end % 64)) - 1 : UINT64_MAX;
+      llvm::append_range(scans, ArrayRef<uint64_t>{begin / 64,
+                                                   end / 64 + (end % 64 != 0),
+                                                   firstMask, lastMask});
     }
     uint64_t bit = fragments[index].bit;
     llvm::append_range(owners,
@@ -274,17 +277,26 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   Type i1 = builder.getI1Type(), i8 = builder.getI8Type(),
        i64 = builder.getI64Type();
   Type pointer = LLVM::LLVMPointerType::get(context);
-  auto table = [&](StringRef name, ArrayRef<uint64_t> words) {
+  auto table = [&](StringRef name, ArrayRef<uint64_t> words,
+                   bool isConstant = true) {
     builder.setInsertionPointToStart(module.getBody());
     auto tensor =
         RankedTensorType::get({static_cast<int64_t>(words.size())}, i64);
     return LLVM::GlobalOp::create(builder, loc,
                                   LLVM::LLVMArrayType::get(i64, words.size()),
-                                  true, LLVM::Linkage::Internal, name,
+                                  isConstant, LLVM::Linkage::Internal, name,
                                   DenseIntElementsAttr::get(tensor, words), 8);
   };
   auto ownerTable = table("__obelisk_eval_kernel_promotion_owners_v1", owners);
   auto rangeTable = table("__obelisk_eval_kernel_promotion_ranges_v1", scans);
+  // A negative hint is not a cached result: every invocation rereads this
+  // exact masked word. When it clears, rescan the complete certificate. The
+  // immutable range table makes hints valid across invalidation and context
+  // reset; no additional invalidation protocol is needed. A zero mask is an
+  // empty hint and safely reads word zero in the guarded state allocation.
+  SmallVector<uint64_t> hints(twoStateExecutors.size() * 2, 0);
+  auto hintTable =
+      table("__obelisk_eval_kernel_promotion_hints_v1", hints, false);
   auto constant = [&](uint64_t value) {
     return llvmConstant(builder, loc, i64, value);
   };
@@ -320,15 +332,31 @@ LogicalResult materializeNativeKernelPromotionReadiness(
     scan.getBody().push_back(result);
     return result;
   };
-  Block *nextRange = block(true), *readRange = block();
-  Block *readByte = block(true), *advanceByte = block(),
+  Block *fullScan = block(), *nextRange = block(true), *readRange = block();
+  Block *readWord = block(true), *advanceWord = block(),
         *advanceRange = block();
-  Block *known = block(), *unknown = block();
+  Block *rememberUnknown = block(), *known = block(), *unknown = block();
   builder.setInsertionPointToStart(entry);
   Value owner = entry->getArgument(0);
   Value ownerBase = address(ownerTable.getSymName());
   Value rangeBase = address(rangeTable.getSymName());
   Value state = address("__obelisk_state_unknown");
+  Value hintBase = address(hintTable.getSymName());
+  Value hintIndex = arith::MulIOp::create(builder, loc, owner, constant(2));
+  Value hintWordAddress = gep(hintBase, i64, hintIndex);
+  Value hintMaskAddress =
+      gep(hintBase, i64,
+          arith::AddIOp::create(builder, loc, hintIndex, constant(1)));
+  Value hintWord = LLVM::LoadOp::create(builder, loc, i64, hintWordAddress, 8);
+  Value hintMask = LLVM::LoadOp::create(builder, loc, i64, hintMaskAddress, 8);
+  Value hintBits =
+      LLVM::LoadOp::create(builder, loc, i64, gep(state, i64, hintWord), 8);
+  Value stillUnknown = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::ne,
+      arith::AndIOp::create(builder, loc, hintBits, hintMask), constant(0));
+  cf::CondBranchOp::create(builder, loc, stillUnknown, unknown, ValueRange{},
+                           fullScan, ValueRange{});
+  builder.setInsertionPointToStart(fullScan);
   Value first = field(ownerBase, owner, 0), end = field(ownerBase, owner, 1);
   cf::BranchOp::create(builder, loc, nextRange, ValueRange{first});
 
@@ -339,40 +367,43 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   cf::CondBranchOp::create(builder, loc, done, known, ValueRange{}, readRange,
                            ValueRange{});
   builder.setInsertionPointToStart(readRange);
-  Value beginByte = field(rangeBase, range, 0),
-        endByte = field(rangeBase, range, 1);
-  Value firstMask =
-      arith::TruncIOp::create(builder, loc, i8, field(rangeBase, range, 2));
-  Value lastMask =
-      arith::TruncIOp::create(builder, loc, i8, field(rangeBase, range, 3));
-  cf::BranchOp::create(builder, loc, readByte, ValueRange{beginByte});
+  Value beginWord = field(rangeBase, range, 0),
+        endWord = field(rangeBase, range, 1);
+  Value firstMask = field(rangeBase, range, 2);
+  Value lastMask = field(rangeBase, range, 3);
+  cf::BranchOp::create(builder, loc, readWord, ValueRange{beginWord});
 
-  builder.setInsertionPointToStart(readByte);
-  Value byte = readByte->getArgument(0);
-  Value nextByte = arith::AddIOp::create(builder, loc, byte, constant(1));
+  builder.setInsertionPointToStart(readWord);
+  Value word = readWord->getArgument(0);
+  Value nextWord = arith::AddIOp::create(builder, loc, word, constant(1));
   Value isFirst = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
-                                        byte, beginByte);
+                                        word, beginWord);
   Value isLast = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
-                                       nextByte, endByte);
-  Value fullMask = llvmConstant(builder, loc, i8, 255);
+                                       nextWord, endWord);
+  Value fullMask = constant(UINT64_MAX);
   Value mask = arith::AndIOp::create(
       builder, loc,
       arith::SelectOp::create(builder, loc, isFirst, firstMask, fullMask),
       arith::SelectOp::create(builder, loc, isLast, lastMask, fullMask));
-  Value bits = LLVM::LoadOp::create(builder, loc, i8, gep(state, i8, byte), 1);
-  Value hasUnknown =
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
-                            arith::AndIOp::create(builder, loc, bits, mask),
-                            llvmConstant(builder, loc, i8, 0));
-  cf::CondBranchOp::create(builder, loc, hasUnknown, unknown, ValueRange{},
-                           advanceByte, ValueRange{});
-  builder.setInsertionPointToStart(advanceByte);
+  Value bits =
+      LLVM::LoadOp::create(builder, loc, i64, gep(state, i64, word), 8);
+  Value hasUnknown = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::ne,
+      arith::AndIOp::create(builder, loc, bits, mask), constant(0));
+  cf::CondBranchOp::create(builder, loc, hasUnknown, rememberUnknown,
+                           ValueRange{}, advanceWord, ValueRange{});
+  builder.setInsertionPointToStart(advanceWord);
   cf::CondBranchOp::create(builder, loc, isLast, advanceRange, ValueRange{},
-                           readByte, ValueRange{nextByte});
+                           readWord, ValueRange{nextWord});
   builder.setInsertionPointToStart(advanceRange);
   cf::BranchOp::create(
       builder, loc, nextRange,
       ValueRange{arith::AddIOp::create(builder, loc, range, constant(1))});
+
+  builder.setInsertionPointToStart(rememberUnknown);
+  LLVM::StoreOp::create(builder, loc, word, hintWordAddress, 8);
+  LLVM::StoreOp::create(builder, loc, mask, hintMaskAddress, 8);
+  cf::BranchOp::create(builder, loc, unknown);
 
   builder.setInsertionPointToStart(known);
   LLVM::StoreOp::create(builder, loc, llvmConstant(builder, loc, i8, 1),

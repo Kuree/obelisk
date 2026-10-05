@@ -17,8 +17,9 @@
 // CHECK: llvm.load
 // CHECK: llvm.icmp "eq"
 
-// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[47, 51, 255, 255, 52, 53, 255, 255, 1, 18, 248, 15, 21, 38, 255, 1, 38, 46, 255, 255, 51, 52, 255, 255]>
+// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[5, 7, -72057594037927936, 16777215, 6, 7, -4294967296, 1099511627775, 0, 3, -2048, 4095, 2, 5, -1099511627776, 2199023255551, 4, 6, -281474976710656, 281474976710655, 6, 7, -16777216, 4294967295]>
 // KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_owners_v1(dense<[0, 2, 0, 1, 2, 6, 0, 2]>
+// KERNEL-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_hints_v1(dense<0> : tensor<4xi64>)
 // RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_dependencies_v1(dense<{{.*}}> : tensor<{{[0-9]+}}x4xi64>)
 // RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_certificates_v1
 // RANGE-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_range_v1
