@@ -4,6 +4,7 @@
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -11,6 +12,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -1133,12 +1135,16 @@ public:
       Value safeDivisor =
           select(rewriter, loc, dangerous,
                  integerConstant(rewriter, loc, type, 1), rhs.value);
+      // In i1, the bit pattern 1 is -1, so it is not a safe divisor for
+      // MIN/-1. Suppress the numerator as well before forming signed IR.
+      Value dividend = lhs.value;
+      if (isSigned && type.getWidth() == 1)
+        dividend = select(rewriter, loc, dangerous, zero(rewriter, loc, type),
+                          lhs.value);
       if (isSigned && isRemainder)
-        computed =
-            arith::RemSIOp::create(rewriter, loc, lhs.value, safeDivisor);
+        computed = arith::RemSIOp::create(rewriter, loc, dividend, safeDivisor);
       else if (isSigned)
-        computed =
-            arith::DivSIOp::create(rewriter, loc, lhs.value, safeDivisor);
+        computed = arith::DivSIOp::create(rewriter, loc, dividend, safeDivisor);
       else if (isRemainder)
         computed =
             arith::RemUIOp::create(rewriter, loc, lhs.value, safeDivisor);
@@ -1186,8 +1192,10 @@ public:
     Value safeBase = select(rewriter, loc, anyUnknown, zeroBase, base.value);
     Value safeExponent =
         select(rewriter, loc, anyUnknown, zeroExponent, exponent.value);
+    // math.ipowi's expansion shifts its exponent by one. An i1 shift by
+    // one is poison, and can make even 0**0 loop forever after optimization.
     unsigned commonWidth =
-        std::max(baseType.getWidth(), exponentType.getWidth());
+        std::max({2u, baseType.getWidth(), exponentType.getWidth()});
     Value commonBase =
         resizeInteger(rewriter, loc, safeBase, commonWidth, false);
     Value commonExponent =
@@ -1765,6 +1773,8 @@ public:
     populateSimulationToStandardPatterns(converter, patterns);
 
     ConversionTarget target(context);
+    target.addIllegalOp<schedule::NativeWordTableOp,
+                        schedule::NativeWordReverseOp>();
     target.addIllegalOp<
         sim::SimLogicConstantOp, sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
         sim::SimLogicIsTrueOp, sim::SimLogicMuxOp, sim::SimLogicCountBitsOp,
@@ -1801,6 +1811,7 @@ void populateSimulationPackedAggregateViewPatterns(
 static void populateSimulationToStandardPatternsImpl(
     const TypeConverter &converter, RewritePatternSet &patterns,
     const llvm::DenseSet<Operation *> *provenTwoStateOperations) {
+  populateNativeWordValuePatterns(converter, patterns);
   patterns.add<
       ConstantConversion, FromBitsConversion, ToBitsConversion,
       IsTrueConversion, MuxConversion, CountBitsConversion, Clog2Conversion,

@@ -144,6 +144,15 @@ def ObeliskSimOptimizeNativeRegionsPass
   ];
 }
 
+def OptimizeNativeWordsPass
+    : Pass<"schedule-optimize-native-words", "mlir::ModuleOp"> {
+  let summary = "Prove independent packed lanes and form native word regions";
+  let dependentDialects = ["obelisk::schedule::ScheduleDialect",
+    "obelisk::sim::ObeliskSimulationDialect", "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect", "mlir::scf::SCFDialect",
+    "mlir::ub::UBDialect"];
+}
+
 def PlanNativeTransfersPass
     : Pass<"schedule-plan-native-transfers", "mlir::ModuleOp"> {
   let summary = "Expose ordered capture-copy activations before specialization";

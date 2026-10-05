@@ -12,6 +12,106 @@ using namespace mlir;
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"
 namespace obelisk::schedule {
+static LogicalResult verifyNativeUnpackedWord(Operation *op, Type input,
+                                              Type result) {
+  auto array = dyn_cast<sim::UnpackedArrayType>(input);
+  if (!array || !sim::getPackedWidth(array.getElementType()) ||
+      !isa<IntegerType, sim::LogicType>(result))
+    return op->emitOpError(
+        "requires an unpacked array of packed elements and a "
+        "packed word result");
+  if (auto integer = dyn_cast<IntegerType>(result);
+      integer && !integer.isSignless())
+    return op->emitOpError("requires a signless integer word");
+  auto width = sim::getPackedWidth(result);
+  bool logic =
+      isa<sim::LogicType>(sim::getPackedScalarType(array.getElementType()));
+  auto span = sim::getProvenanceSpan(array);
+  if (!width || *width < 2 || *width > 64 || !span || *width > *span ||
+      *span > INT64_MAX || logic != isa<sim::LogicType>(result))
+    return op->emitOpError(
+        "requires a contained native word with the same state domain");
+  return success();
+}
+LogicalResult NativeWordViewOp::verify() {
+  return verifyNativeUnpackedWord(*this, getInput().getType().getElementType(),
+                                  getResult().getType().getElementType());
+}
+LogicalResult NativeWordExtractOp::verify() {
+  return verifyNativeUnpackedWord(*this, getInput().getType(),
+                                  getResult().getType());
+}
+LogicalResult NativeWordReverseOp::verify() {
+  Type type = getInput().getType();
+  if (getResult().getType() != type)
+    return emitOpError("requires matching operand and result types");
+  auto width = sim::getPackedWidth(type);
+  if (!isa<IntegerType, sim::LogicType>(type) || !width || *width < 2 ||
+      *width > 64)
+    return emitOpError("requires a native integer or logic word");
+  if (auto integer = dyn_cast<IntegerType>(type);
+      integer && !integer.isSignless())
+    return emitOpError("requires a signless integer word");
+  if (getLaneWidth() < 1 || getLaneWidth() > *width || *width % getLaneWidth())
+    return emitOpError("requires a lane width dividing the native word width");
+  return success();
+}
+LogicalResult NativeWordTableOp::verify() {
+  auto laneWidth = [](Type type) -> unsigned {
+    if (auto integer = dyn_cast<IntegerType>(type))
+      return integer.isSignless() ? integer.getWidth() : 0;
+    if (auto logic = dyn_cast<sim::LogicType>(type))
+      return logic.getWidth();
+    return 0;
+  };
+  unsigned width = laneWidth(getResult().getType());
+  if (width < 2 || width > 64)
+    return emitOpError("requires a native integer or logic word result");
+  unsigned planes = 0;
+  for (Value input : getInputs()) {
+    if (laneWidth(input.getType()) != width)
+      return emitOpError("requires matching native word operand widths");
+    planes += isa<sim::LogicType>(input.getType()) ? 2 : 1;
+  }
+  if (planes > 6 || getValueTable().getBitWidth() != (1u << planes) ||
+      getUnknownTable().getBitWidth() != (1u << planes))
+    return emitOpError(
+        "requires complete truth tables for at most six input planes");
+  if (isa<IntegerType>(getResult().getType()) && !getUnknownTable().isZero())
+    return emitOpError("integer results cannot have unknown bits");
+  return success();
+}
+LogicalResult NativeWordRegionOp::verify() {
+  if (getWidth() < 2 || getWidth() > 64)
+    return emitOpError("requires a native word width between 2 and 64");
+  if (getLaneCount() && (getLaneCount() < 2 || getLaneCount() > getWidth() ||
+                         getWidth() % getLaneCount()))
+    return emitOpError("requires a lane count dividing the maximum word width");
+  if (getBody().empty() || getBody().front().getNumArguments())
+    return emitOpError("requires a nonempty CFG without entry arguments");
+  for (Block &block : getBody()) {
+    for (Operation &op : block) {
+      if (op.getNumRegions())
+        return emitOpError("does not permit nested regions");
+      if (isa<CallOpInterface>(op))
+        return emitOpError("does not permit calls");
+      if (auto store = dyn_cast<sim::SimRefStoreOp>(op)) {
+        auto width = sim::getPackedWidth(store.getValue().getType());
+        if (!width || *width < 2 || *width > getWidth() ||
+            (getLaneCount() ? *width % getLaneCount() != 0
+                            : *width != getWidth()))
+          return emitOpError("requires native-width packed stores");
+      } else if (!isa<sim::SimRefLoadOp>(&op) && !isMemoryEffectFree(&op)) {
+        return emitOpError(
+            "permits only packed state accesses and pure computation");
+      }
+    }
+    Operation *end = block.getTerminator();
+    if (!isa<NativeWordYieldOp>(end) && !isa<BranchOpInterface>(end))
+      return emitOpError("requires CFG branches or word.yield");
+  }
+  return success();
+}
 static LogicalResult verifyTransferABI(Operation *op, Type signature,
                                        uint32_t source, uint32_t destination,
                                        ArrayRef<int64_t> offsets) {

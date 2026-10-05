@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -31,7 +32,8 @@ constexpr llvm::StringLiteral automaticOwnerReleaseInstrumentedAttr =
 
 bool isReferenceView(Operation *operation) {
   return isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
-             sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(operation);
+             schedule::NativeWordViewOp, sim::SimRefSubelementOp,
+             sim::SimRefArrayElementOp>(operation);
 }
 
 llvm::SetVector<Value> collectReferenceFamily(Value root) {

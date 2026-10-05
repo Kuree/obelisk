@@ -6,6 +6,7 @@
 #include "mlir/Analysis/DataFlow/IntegerRangeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -200,19 +201,22 @@ public:
                 llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
                     .Case<sim::RefType, sim::DriverType>(
                         [](auto type) { return type.getElementType(); });
-            if (auto arrayType = dyn_cast<sim::UnpackedArrayType>(parentType))
+            if (!array) {
+              // Dynamic extracts and word views use physical bit offsets,
+              // including when their parent is an array. Declaration indices
+              // apply only to ref.array_element.
+              auto parentWidth = sim::getProvenanceSpan(parentType);
+              selectorValid =
+                  parentWidth && *width <= *parentWidth && !low.isNegative() &&
+                  high.ule(APInt(comparisonWidth, *parentWidth - *width));
+            } else if (auto arrayType =
+                           dyn_cast<sim::UnpackedArrayType>(parentType))
               selectorValid =
                   inDeclaredRange(arrayType.getLeft(), arrayType.getRight());
             else if (auto arrayType =
                          dyn_cast<sim::PackedArrayType>(parentType))
               selectorValid =
                   inDeclaredRange(arrayType.getLeft(), arrayType.getRight());
-            else if (!array) {
-              auto parentWidth = sim::getProvenanceSpan(parentType);
-              selectorValid =
-                  parentWidth && *width <= *parentWidth && !low.isNegative() &&
-                  high.ule(APInt(comparisonWidth, *parentWidth - *width));
-            }
           }
         }
         c.inBounds &= selectorValid;
@@ -270,7 +274,8 @@ public:
         .Case<sim::SimRefExtractOp, sim::SimNetExtractOp,
               sim::SimDriverExtractOp>(
             [&](auto x) { select(x.getResult(), x.getLowBit(), false); })
-        .Case<sim::SimRefDynExtractOp, sim::SimDriverDynExtractOp>(
+        .Case<sim::SimRefDynExtractOp, schedule::NativeWordViewOp,
+              sim::SimDriverDynExtractOp>(
             [&](auto x) { select(x.getResult(), {}, false); })
         .Case<sim::SimRefArrayElementOp, sim::SimDriverArrayElementOp>(
             [&](auto x) { select(x.getResult(), {}, true); })
@@ -410,7 +415,8 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   function.walk([&](Operation *op) {
     dynamicSelectors |=
         isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
-            sim::SimDriverArrayElementOp, sim::SimDriverDynExtractOp>(op);
+            schedule::NativeWordViewOp, sim::SimDriverArrayElementOp,
+            sim::SimDriverDynExtractOp>(op);
   });
   auto *scopedRanges =
       dynamicSelectors

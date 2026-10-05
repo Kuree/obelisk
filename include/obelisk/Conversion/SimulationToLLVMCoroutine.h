@@ -26,7 +26,8 @@ namespace obelisk {
 mlir::LogicalResult materializeDPIExportBridges(mlir::ModuleOp module);
 
 /// Append each native planning, specialization and lowering pass in ABI order.
-void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager);
+void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
+                                            bool nativeWords = true);
 void registerSimulationToLLVMCoroutinePipeline();
 
 /// Lower executable schedule actions after their effect-aware optimization.

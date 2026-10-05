@@ -178,6 +178,7 @@ def ConvertObeliskSimValuesToStandardPass
     "mlir::cf::ControlFlowDialect",
     "mlir::func::FuncDialect",
     "mlir::math::MathDialect",
+    "mlir::LLVM::LLVMDialect",
     "mlir::scf::SCFDialect"
   ];
 }
@@ -564,4 +565,10 @@ def ConvertNativeScheduleActionsToLLVMPass
       "coalesce", "coalesce", "bool", "true",
       "Combine unobservable pending-set updates before physical expansion">];
 }
+def LowerNativeWordRegionsPass
+    : Pass<"convert-schedule-word-regions", "mlir::ModuleOp"> {
+  let summary = "Lower proven word regions without scalarizing packed values";
+  let dependentDialects = ["mlir::cf::ControlFlowDialect"];
+}
+
 #endif // OBELISK_CONVERSION_PASSES_TD

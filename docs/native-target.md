@@ -161,6 +161,97 @@ the original fallback semantics remain encoded under the same function,
 continuation, descriptor, hierarchy, and code-unit identities. Falling back is
 a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
+`schedule-optimize-native-words` recognizes independent packed-element loops in
+native eval bodies before packed conversion. Sparse SSA lane facts combine
+with dense scoped integer ranges and reference bounds to prove consecutive,
+nonwrapping accesses. MLIR `CFGLoopInfo` (LLVM generic LoopInfo) discovers
+natural loops and orders nested termination proofs without repeated CFG scans.
+Dominance-based CSE identifies equivalent address maps.
+The module entry point snapshots design-wide observer and driver facts once,
+then runs a nested `simulation.func` pass. MLIR's pass manager can optimize
+independent eval bodies concurrently using the driver's compiler thread pool;
+diagnostics are collected per function and printed in source order.
+Eligible loops become a `schedule.word.region` containing word-wide loads,
+computations and stores; `convert-schedule-word-regions` separately lowers its
+CFG. Both value and X/Z planes retain their native width.
+
+The proof admits groups of two or more lanes fitting in 64 bits, in either
+iteration direction. Longer loops use repeated complete word groups and an
+exact tail, which can itself become a smaller word region. The proof
+supports signed declaration bounds, ascending and descending packed and fixed
+unpacked arrays, reversed operands, packed SSA sources, and packed wrappers.
+`schedule.word.view` expresses a contained native view of consecutive unpacked
+elements using their canonical storage order.
+`schedule.word.extract` reads the same order from unpacked SSA arrays without
+a streaming conversion or temporary storage. Packed SSA array extracts use
+packed bit order. Both paths prove declared-range containment before grouping.
+Invariant loop captures and final induction values passed through exits retain
+their scalar values. Same-root accesses must have equal lane maps or disjoint
+ranges; repeated writes retain their order within each lane. Uniform
+nested loops remain eligible when the memory-dependence proof succeeds.
+A sparse address-congruence domain proves that repeated inner stores retain
+distinct outer-lane addresses, retaining invariant offsets symbolically even
+when they pass through unchanged header arguments. SSA identity alone is
+insufficient.
+Full-value invariance is tracked separately from address residues, so fixed
+storage lookups rematerialized within the loop remain provable without
+mistaking a multiple of the address modulus for an invariant value. Equal
+nested access maps can retain ordered per-lane read/modify/write sequences
+once their outer iterations are proved disjoint.
+Lane-dependent control is converted transactionally to path masks and selected
+values using upstream MLIR `transformCFGToSCF`. Structured `scf.if` regions
+expose joins, including conditionals around or within bounded nested loops.
+`scf.while` retains the original signed or unsigned comparison and fixed-width
+induction; the pass does not uplift it to `scf.for`. Arithmetic and SCF
+canonicalization place loop guards in `scf.condition` before predication, so
+an extra out-of-range iteration is never accepted. Synthetic switch dispatch
+uses `scf.if` chains, avoiding target-sized `scf.index_switch` selectors. CFG
+conversion follows predication before rerunning the complete dataflow proof.
+No speculative transformation is retained unless the full
+bounds, independence and private-observer proofs pass. Unselected stores keep
+the previous value; procedural X/Z conditions follow the false edge.
+
+Scalar computations use `schedule.word.table`, an exact finite truth table of
+up to six input planes. Constant operands are specialized before enumeration.
+Conversion minimizes a shared Boolean decision diagram for both result planes
+and emits native AND/OR/XOR operations, without runtime lookup tables or bit
+loops. Arithmetic retains the original *scalar* width: simply widening an add,
+comparison, reduction or conditional would change SystemVerilog semantics.
+For wider elements, only copies and componentwise bitwise operations widen
+directly; broadcasts replicate the complete scalar element.
+Independent fields of different widths can share the same iteration group.
+The region's `lane_count` records that common group size; each field keeps its
+own packed width and state domain, with every widened value fitting in 64 bits.
+For example, eight byte fields and eight one-bit flags use 64-bit and 8-bit
+words in the same region. Bounds, reversal and broadcasts use each field's
+element width; grouping never introduces padding or cross-field arithmetic.
+`schedule.word.reverse` reverses element order while preserving the bits within
+each element, using LLVM bit-reverse for one-bit lanes.
+
+The implementation was reviewed against IEEE 1800-2023 (`build/lrm-2023.txt`):
+
+| LRM clauses | Admitted pattern and required semantics |
+| --- | --- |
+| 4.6–4.9, 9.4.2 | Private nonsuspending computations; preserve ordered writes and change masks. Calls, overrides, suspensions, VPI and value-sequence observers remain barriers. |
+| 6.11, 11.6, 11.8 | Preserve elaborated widths, signedness, and X/Z-to-zero two-state conversion. Width alone never establishes knownness. |
+| 11.4.3 | One-bit unary arithmetic, add/subtract/multiply/divide/remainder/power use exact tables, including unknowns and division by zero. Undefined integer operations cannot be speculated. |
+| 11.4.4–11.4.6 | Signed/unsigned relations, logical/case/wildcard comparisons remain per lane, including wildcard asymmetry. |
+| 11.4.7–11.4.9 | Logical, bitwise and reduction operations preserve their distinct X/Z rules; direct word bitwise operations are used where equivalent. |
+| 11.4.10 | Scalar shifts retain vacated-bit, sign-bit and unknown-amount behavior. Wider constant amounts can be specialized. |
+| 11.4.11, 12.4 | Expression `?:` uses ambiguous-condition merging; procedural `if` uses known truth. Pure branch computations and packed phis can be predicated. |
+| 12.5, 12.7.1 | Exact switch dispatch preserves matching and default arms. Nested loop tests preserve unsigned comparisons and fixed-width termination. |
+| 7.4.5, 11.5 | Normalize packed and unpacked indices and prove bounds before coalescing either declaration/iteration direction; preserve neighboring bits. |
+| 11.4.12, 11.4.14 | Exact copies, scalar broadcasts, packed wrappers and whole-lane reversal preserve Z as well as X. |
+
+The LRM permits more programs than this optimization proves independent.
+Scattered or clipped accesses, cross-lane recurrences, variable trip counts,
+wider per-lane arithmetic, arbitrary streaming
+permutations, and effectful
+control keep their existing lowering. These require additional layout or
+dependence proofs, not relaxed SystemVerilog semantics. Direct MLIR tests cover
+all supported scalar operator families and address/control cases against
+literal expected planes, with scalar and optimized native execution at O0/O3.
+
 The shared runtime calendar represents eligible private commits with the
 `schedule.nba.batch` region. Its body contains ordered `schedule.nba.commit`
 root actions and ends in `schedule.nba.yield`. It cannot contain calls,

@@ -25,6 +25,8 @@ add_mlir_library(ObeliskScheduleTransforms
 add_mlir_library(ObeliskScheduleNativeTransforms
   PARTIAL_SOURCES_INTENDED
   NativeSpecializationPasses.cpp
+  NativeWords.cpp
+  NativeWordPredication.cpp
   NativeTransfers.cpp
   MarkCleanStaticNBA.cpp
   NativeEvalSpecialization.cpp
@@ -38,7 +40,11 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   ObeliskSimulationAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect
+  MLIRControlFlowToSCF
   MLIRLLVMDialect
+  MLIRSCFDialect
+  MLIRSCFToControlFlow
+  MLIRUBDialect
   MLIRTransforms
 )
 target_include_directories(ObeliskScheduleNativeTransforms PRIVATE

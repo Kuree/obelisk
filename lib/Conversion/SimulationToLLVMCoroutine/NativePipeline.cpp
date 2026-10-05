@@ -1,8 +1,10 @@
 #include "mlir/Pass/PassManager.h"
+#include "obelisk/Conversion/Passes.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 namespace obelisk {
-void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager) {
+void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
+                                            bool nativeWords) {
   manager.addPass(createPrepareNativeScheduleInputsPass());
   manager.addPass(createPlanNativeStatePass());
   manager.addPass(createPrepareNativeProcessFramesPass());
@@ -14,6 +16,9 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager) {
   manager.addPass(createPrepareNativeManagedRootsPass());
   manager.addPass(createMarkCleanNativeNBAPass());
   manager.addPass(createSpecializeNativeEvalPass());
+  if (nativeWords)
+    manager.addPass(createOptimizeNativeWordsPass());
+  manager.addPass(createLowerNativeWordRegionsPass());
   manager.addPass(createPrepareNativeTransferKernelsPass());
   manager.addPass(createAnnotateCompactNativeNBAPass());
   manager.addPass(createPrepareNativeFragmentsPass());
@@ -25,9 +30,17 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager) {
   manager.addPass(createConvertPreparedSimProcessesToLLVMCoroutinesPass());
 }
 void registerSimulationToLLVMCoroutinePipeline() {
-  mlir::PassPipelineRegistration<>(
+  struct Options : mlir::PassPipelineOptions<Options> {
+    Option<bool> nativeWords{
+        *this, "native-words",
+        llvm::cl::desc("Optimize independent native word lanes"),
+        llvm::cl::init(true)};
+  };
+  mlir::PassPipelineRegistration<Options>(
       "convert-obelisk-sim-processes-to-llvm-coroutines",
       "Plan, specialize, and lower native simulation processes",
-      buildSimulationToLLVMCoroutinePipeline);
+      [](mlir::OpPassManager &manager, const Options &options) {
+        buildSimulationToLLVMCoroutinePipeline(manager, options.nativeWords);
+      });
 }
 } // namespace obelisk

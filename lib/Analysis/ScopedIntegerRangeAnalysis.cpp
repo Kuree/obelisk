@@ -4,6 +4,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
@@ -52,7 +53,9 @@ ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
   SmallVector<Value> pending;
   function->walk([&](Operation *op) {
     if (isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
-            sim::SimDriverArrayElementOp, sim::SimDriverDynExtractOp>(op))
+            schedule::NativeWordViewOp, sim::SimDriverArrayElementOp,
+            sim::SimDriverDynExtractOp, sim::SimLogicDynExtractOp,
+            sim::SimBitsDynExtractOp, sim::SimArrayDynExtractOp>(op))
       pending.push_back(op->getOperand(1));
   });
   while (!pending.empty()) {

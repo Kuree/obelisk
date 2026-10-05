@@ -943,6 +943,9 @@ LogicalResult lowerPackedSimulationOperations(
   populatePackedPatterns(packedConverter, packedPatterns);
   auto configurePackedTarget = [&](ConversionTarget &target,
                                    SimulationToStandardTypeConverter &c) {
+    target.addIllegalOp<schedule::NativeWordTableOp,
+                        schedule::NativeWordReverseOp,
+                        schedule::NativeWordExtractOp>();
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
         sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
@@ -961,7 +964,8 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimRefCopyOp,
         sim::SimOverrideOp, sim::SimDynamicOverrideOp,
         sim::SimReleaseOverrideOp, sim::SimNetExtractOp, sim::SimRefExtractOp,
-        sim::SimRefDynExtractOp, sim::SimRefSubelementOp,
+        sim::SimRefDynExtractOp, schedule::NativeWordViewOp,
+        sim::SimRefSubelementOp,
         sim::SimRefArrayElementOp, sim::SimNetReadOp, sim::SimNetCountDriversOp,
         sim::SimPassSwitchControlOp, sim::SimPassSwitchControlDelayedOp,
         sim::SimMosDriveDelayedOp, sim::SimDriverDriveInertialOp,

@@ -14,6 +14,85 @@ class ScheduleNativeOp<string mnemonic, list<Trait> traits = []>
     : Op<ScheduleDialect, mnemonic, traits> {
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
+def NativeWordRegionOp : ScheduleNativeOp<"word.region", [RecursiveMemoryEffects]> {
+  let summary = "execute a proven native-width packed computation";
+  let description = [{
+    Executes the enclosed non-suspending CFG once, in program order. Packed
+    updates fit the declared maximum native word width, between 2 and 64 bits.
+    If lane_count is nonzero, each update contains that many complete scalar
+    elements; independent fields can retain different element widths. A zero
+    lane_count denotes the legacy form with all updates at the declared width. Both
+    value and unknown planes remain exact; width does not imply two-state.
+    Formation proves bounded lane iteration, contained selectors, independent
+    lane dataflow, and unobservable intermediate publications before replacing
+    scalar iterations. Calls, overrides and other observation boundaries are
+    not permitted. Conversion only removes the representation boundary; it
+    must not rediscover eligibility or scalarize a word into individual bits.
+    The entry block has no arguments and exits use word.yield.
+  }];
+  let arguments = (ins I32Attr:$width,
+                       DefaultValuedAttr<I32Attr, "0">:$lane_count);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "$width $body attr-dict";
+  let hasVerifier = 1;
+}
+def NativeWordYieldOp : ScheduleNativeOp<"word.yield",
+    [Terminator, HasParent<"NativeWordRegionOp">, Pure]> {
+  let assemblyFormat = "attr-dict";
+}
+def NativeWordTableOp : ScheduleNativeOp<"word.table", [Pure]> {
+  let summary = "evaluate an exact scalar truth table independently in each lane";
+  let description = [{
+    Operands and result have one common word width (2 through 64), using either
+    integer bits or exact four-state logic. Each table index consists of each
+    operand's value bit followed by its unknown bit for four-state operands.
+    Table entries supply the result's value and unknown bits. The tables have
+    2^P entries, where P is the number of operand planes, at most six. This
+    represents scalar arithmetic, comparisons and selections without allowing
+    carries, reductions or control predicates to cross independent lanes.
+    Conversion emits Boolean word operations, never a per-bit loop or helper.
+  }];
+  let arguments = (ins Variadic<AnyType>:$inputs, APIntAttr:$value_table,
+                       APIntAttr:$unknown_table);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+def NativeWordReverseOp : ScheduleNativeOp<"word.reverse", [Pure]> {
+  let summary = "reverse native elements, preserving both four-state planes";
+  let arguments = (ins AnyType:$input, DefaultValuedAttr<I32Attr, "1">:$lane_width);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+def NativeWordViewOp : ScheduleNativeOp<"word.view", [Pure]> {
+  let summary = "view consecutive scalar array storage lanes as one packed word";
+  let description = [{
+    Selects a packed native word from the canonical storage of a fixed unpacked
+    array of packed elements. low_bit is a physical storage offset:
+    unpacked elements are ordered from the declaration's left bound. This is
+    a storage view, not a SystemVerilog packed cast or streaming expression.
+    The formation pass proves containment and equal state domains. Invalid
+    offsets produce an invalid reference, as for native reference selectors.
+  }];
+  let arguments = (ins SimRefType:$input, AnySignlessInteger:$low_bit);
+  let results = (outs SimRefType:$result);
+  let hasVerifier = 1;
+}
+def NativeWordExtractOp : ScheduleNativeOp<"word.extract", [Pure]> {
+  let summary = "extract a native word from canonical unpacked SSA storage";
+  let description = [{
+    Extracts consecutive bits of a fixed unpacked array of packed elements.
+    low_bit is a physical storage offset, with elements ordered from the
+    declaration's left bound. Value and unknown planes retain that order;
+    this operation does not perform a packed cast or streaming conversion.
+    The result has the same state domain as the element. A negative offset
+    or a word extending past the array returns the result's default value
+    (all X for logic, zero for an integer). Formation proves containment.
+  }];
+  let arguments = (ins AnyType:$input, AnySignlessInteger:$low_bit);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
 def TransferActivationOp : ScheduleNativeOp<"transfer.activation",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "one ordered continuous copy activation and its source wait";

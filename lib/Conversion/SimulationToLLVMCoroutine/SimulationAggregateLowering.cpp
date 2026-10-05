@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -460,6 +461,56 @@ public:
   }
 };
 
+class NativeWordExtractConversion final
+    : public OpConversionPattern<schedule::NativeWordExtractOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(schedule::NativeWordExtractOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto span = sim::getProvenanceSpan(op.getInput().getType());
+    auto width = sim::getPackedWidth(op.getResult().getType());
+    if (!span || !width || adaptor.getInput().empty())
+      return failure();
+    Location loc = op.getLoc();
+    Value offset = adaptor.getLowBit().front();
+    auto offsetType = cast<IntegerType>(offset.getType());
+    // Compare before narrowing to a storage plane. Sign extension makes a
+    // negative offset fail the unsigned upper-bound check as well.
+    if (offsetType.getWidth() < 65) {
+      offsetType = rewriter.getIntegerType(65);
+      offset = arith::ExtSIOp::create(rewriter, loc, offsetType, offset);
+    }
+    Value limit = arith::ConstantOp::create(
+        rewriter, loc, offsetType,
+        rewriter.getIntegerAttr(offsetType,
+                                APInt(offsetType.getWidth(), *span - *width)));
+    Value valid = arith::CmpIOp::create(
+        rewriter, loc, arith::CmpIPredicate::ule, offset, limit);
+    Value zero = arith::ConstantOp::create(rewriter, loc, offsetType,
+                                           rewriter.getZeroAttr(offsetType));
+    Value safeOffset =
+        arith::SelectOp::create(rewriter, loc, valid, offset, zero);
+    auto resultType = rewriter.getIntegerType(*width);
+    SmallVector<Value> results;
+    for (auto [i, plane] : llvm::enumerate(adaptor.getInput())) {
+      auto planeType = cast<IntegerType>(plane.getType());
+      Value amount = resizeNativeInteger(rewriter, loc, safeOffset, planeType);
+      Value value = arith::ShRUIOp::create(rewriter, loc, plane, amount);
+      if (planeType != resultType)
+        value = arith::TruncIOp::create(rewriter, loc, resultType, value);
+      Value fallback = arith::ConstantOp::create(
+          rewriter, loc, resultType,
+          rewriter.getIntegerAttr(resultType, i == 1 ? APInt::getAllOnes(*width)
+                                                     : APInt::getZero(*width)));
+      results.push_back(
+          arith::SelectOp::create(rewriter, loc, valid, value, fallback));
+    }
+    rewriter.replaceOpWithMultiple(op, {ValueRange(results)});
+    return success();
+  }
+};
+
 class AggregateDynamicInsertConversion final
     : public OpConversionPattern<sim::SimArrayDynInsertOp> {
 public:
@@ -757,7 +808,8 @@ void populateAggregateToLLVMConversionPatterns(RewritePatternSet &patterns,
   patterns
       .add<PackedAggregateExtractConversion, PackedAggregateInsertConversion,
            PackedAggregateConstructConversion, PackedAggregateSplatConversion,
-           AggregateDynamicExtractConversion, AggregateDynamicInsertConversion,
+           AggregateDynamicExtractConversion, NativeWordExtractConversion,
+           AggregateDynamicInsertConversion,
            AggregateDefaultConversion, UnionConstructConversion,
            UnionExtractConversion, UnionIsActiveConversion>(converter, context);
 }

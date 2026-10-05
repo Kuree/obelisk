@@ -13,6 +13,10 @@ class RewritePatternSet;
 
 namespace obelisk {
 
+/// Lower exact word lane functions as shared Boolean word expressions.
+void populateNativeWordValuePatterns(const mlir::TypeConverter &converter,
+                                     mlir::RewritePatternSet &patterns);
+
 /// Converts an exact four-state packed value to its value and unknown planes.
 /// All non-logic types are deliberately preserved for composition with later
 /// runtime lowering. No materializations are registered: every logic boundary

@@ -10,6 +10,8 @@ add_mlir_library(ObeliskSimulationAnalysis
   LogicBitAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   NativeAOTAnalysis.cpp
+  NativeWordAnalysis.cpp
+  WordTruthTable.cpp
   NBAInfluenceAnalysis.cpp
   NativeStateLayoutAnalysis.cpp
   NetConnectivityAnalysis.cpp
@@ -29,9 +31,11 @@ add_mlir_library(ObeliskSimulationAnalysis
 
   DEPENDS
   ObeliskSimulationOpsIncGen
+  ObeliskScheduleOpsIncGen
 
   LINK_LIBS PUBLIC
   ObeliskSimulationIR
+  ObeliskScheduleIR
   MLIRAnalysis
   MLIRControlFlowDialect
   MLIRControlFlowInterfaces

@@ -1,5 +1,6 @@
 #include "obelisk/Analysis/PrivateStorageAnalysis.h"
 #include "mlir/Interfaces/CallInterfaces.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 using namespace mlir;
 namespace obelisk::analysis {
@@ -75,7 +76,8 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
                      cast<sim::RefType>(operand.getType()).getElementType() ==
                          access.declaration.getType();
         bool view = isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
-                        sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(op);
+                        schedule::NativeWordViewOp, sim::SimRefSubelementOp,
+                        sim::SimRefArrayElementOp>(op);
         if (view)
           view = llvm::all_of(op->getResults(), [&](Value result) {
             auto selected = facts.facts.find(result);

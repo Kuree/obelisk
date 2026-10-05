@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -126,16 +127,22 @@ public:
     SignedI64Index convertedLow =
         resizeSignedIndexToI64(rewriter, location, adaptor.getLowBit().front());
     Value low = convertedLow.value;
-    unsigned inputWidth =
-        *sim::getPackedWidth(op.getInput().getType().getElementType());
+    uint64_t inputWidth =
+        *sim::getProvenanceSpan(op.getInput().getType().getElementType());
     unsigned resultWidth =
         *sim::getPackedWidth(op.getResult().getType().getElementType());
     Value minimum = arith::ConstantOp::create(
         rewriter, location, rewriter.getI64Type(),
-        rewriter.getI64IntegerAttr(-static_cast<int64_t>(resultWidth - 1)));
-    Value maximum =
-        arith::ConstantOp::create(rewriter, location, rewriter.getI64Type(),
-                                  rewriter.getI64IntegerAttr(inputWidth - 1));
+        rewriter.getI64IntegerAttr(
+            std::is_same_v<Op, schedule::NativeWordViewOp>
+                ? 0
+                : -static_cast<int64_t>(resultWidth - 1)));
+    Value maximum = arith::ConstantOp::create(
+        rewriter, location, rewriter.getI64Type(),
+        rewriter.getI64IntegerAttr(
+            std::is_same_v<Op, schedule::NativeWordViewOp>
+                ? inputWidth - resultWidth
+                : inputWidth - 1));
     Value overlapsLow = arith::CmpIOp::create(
         rewriter, location, arith::CmpIPredicate::sge, low, minimum);
     Value inRange = arith::CmpIOp::create(
@@ -315,6 +322,7 @@ void populateNativeHandleConversionPatterns(
                StaticHandleExtractConversion<sim::SimNetExtractOp>,
                StaticHandleExtractConversion<sim::SimDriverExtractOp>,
                DynamicHandleExtractConversion<sim::SimRefDynExtractOp>,
+               DynamicHandleExtractConversion<schedule::NativeWordViewOp>,
                DynamicHandleExtractConversion<sim::SimDriverDynExtractOp>,
                SubelementHandleConversion<sim::SimRefSubelementOp>,
                SubelementHandleConversion<sim::SimDriverSubelementOp>,
