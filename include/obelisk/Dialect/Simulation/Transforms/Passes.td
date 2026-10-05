@@ -40,6 +40,25 @@ def ObeliskSimMarkBoundedLoopsPass
                            "mlir::cf::ControlFlowDialect"];
 }
 
+def ObeliskSimRefineContinuousSensitivityPass
+    : Pass<"obelisk-sim-refine-continuous-sensitivity", "obelisk::sim::SimDesignOp"> {
+  let summary = "Refine pure continuous RHS wakeups with sparse storage ranges";
+  let description = [{
+    Narrow change watches for stateless, single-writer continuous assignments
+    under IEEE 1800-2023 10.3.2. Sparse handle provenance bounds every RHS load;
+    dense must-definition analysis proves the store executes before suspension.
+    Dynamic selections retain their entire static parent range. Procedural
+    implicit sensitivity and port-copy cohorts retain their existing watches.
+    Requires VPI off and closed, unambiguous storage bindings. Run before
+    compute-graph construction, after executable simplification.
+  }];
+  let options = [Option<"vpi", "vpi", "std::string", "\"full\"",
+                        "External observation/mutation contract">];
+  let statistics = [Statistic<"numRefined", "refined",
+                              "Continuous processes with narrower wakeups">];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+}
+
 def ObeliskSimThreadSuspensionPass
     : Pass<"obelisk-sim-thread-suspension", "obelisk::sim::SimFuncOp"> {
   let summary = "Thread promoted SSA state through suspension continuations";

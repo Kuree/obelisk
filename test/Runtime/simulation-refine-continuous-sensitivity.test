@@ -1,0 +1,43 @@
+// Four-state values and dynamic/unknown/out-of-range selectors.
+
+// RUN: obelisk-opt %S/Inputs/continuous-sensitivity.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: obelisk-opt %S/Inputs/continuous-sensitivity.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=off},simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: obelisk-opt %S/Inputs/continuous-sensitivity.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: obelisk-opt %S/Inputs/continuous-sensitivity.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=off},simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+
+// CHECK: prefix step0=12
+// CHECK-NEXT: prefix step1=zz
+// CHECK-NEXT: prefix step2=xx
+// CHECK-NEXT: prefix step3=12
+// CHECK-NEXT: prefix step4=xx
+// CHECK-NEXT: prefix step5=56
+// CHECK-NEXT: prefix step6=78
+// CHECK-NEXT: prefix step7=78
+// CHECK-NEXT: prefix step8=78
+// CHECK-NEXT: prefix step9=34
+// CHECK-NEXT: prefix step10=xx
+// CHECK-NEXT: prefix step11=xx

@@ -470,6 +470,12 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functions.addPass(createMem2Reg());
     functions.addPass(createCSEPass());
   }
+  if (optLevel >= 3) {
+    ObeliskSimRefineContinuousSensitivityPassOptions sensitivityOptions;
+    sensitivityOptions.vpi = vpiMode.str();
+    designManager.addPass(createObeliskSimRefineContinuousSensitivityPass(
+        std::move(sensitivityOptions)));
+  }
   {
     auto &functions = designManager.nest<sim::SimFuncOp>();
     // Finish executable simplification before making continuation liveness

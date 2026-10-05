@@ -5,6 +5,7 @@ add_mlir_dialect_library(ObeliskSimulationTransforms
   EliminateDeadCaptures.cpp
   Inline.cpp
   PropagateInitializedStorage.cpp
+  RefineContinuousSensitivity.cpp
   SCCP.cpp
   SimplifyBodies.cpp
   ThreadSuspension.cpp
