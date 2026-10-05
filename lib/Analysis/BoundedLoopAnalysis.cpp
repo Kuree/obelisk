@@ -1,4 +1,5 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "mlir/Analysis/CFGLoopInfo.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/SmallPtrSet.h"
 using namespace mlir;
@@ -368,7 +369,8 @@ recognizeBoundedLoop(Block *header,
     Operation *terminator = block->getTerminator();
     bool leavesProcedure = forMarking && terminator->getNumSuccessors() == 0;
     if (block->getParent() != header->getParent() ||
-        (!leavesProcedure && !isa<cf::BranchOp, cf::CondBranchOp>(terminator)))
+        (!leavesProcedure &&
+         !isa<cf::BranchOp, cf::CondBranchOp, cf::SwitchOp>(terminator)))
       return std::nullopt;
     loop.blocks.push_back(block);
     loop.operations += block->getOperations().size();
@@ -441,19 +443,28 @@ recognizeBoundedLoop(Block *header,
 
 SmallVector<BoundedLoop> analyzeBoundedLoops(Region &region) {
   SmallVector<BoundedLoop> loops;
+  if (region.empty() || region.hasOneBlock())
+    return loops;
+  DominanceInfo dominance;
+  CFGLoopInfo loopInfo(dominance.getDomTree(&region));
   llvm::DenseSet<Operation *> provenBackedges;
-  // Peel the structural nesting dependency, not a numerical iteration bound.
-  bool changed;
-  do {
-    changed = false;
-    for (Block &block : region) {
-      auto loop = recognizeBoundedLoop(&block, provenBackedges, true);
-      if (!loop || !provenBackedges.insert(loop->latch.getOperation()).second)
-        continue;
-      loops.push_back(std::move(*loop));
-      changed = true;
-    }
-  } while (changed);
+  // LLVM's generic LoopInfo supplies natural-loop headers and nesting. Visit
+  // children before parents once, instead of rescanning every block until the
+  // nesting proof converges. Keep the fixed-width induction/early-exit proof:
+  // LoopInfo alone says nothing about termination or four-state conditions.
+  // Its loop membership also excludes terminating side paths, which the
+  // recognizer must still check for unsupported control or residual cycles.
+  auto preorder = loopInfo.getLoopsInPreorder();
+  for (CFGLoop *natural : llvm::reverse(preorder)) {
+    if (!natural->getLoopLatch())
+      continue;
+    auto loop =
+        recognizeBoundedLoop(natural->getHeader(), provenBackedges, true);
+    if (!loop)
+      continue;
+    provenBackedges.insert(loop->latch.getOperation());
+    loops.push_back(std::move(*loop));
+  }
   return loops;
 }
 

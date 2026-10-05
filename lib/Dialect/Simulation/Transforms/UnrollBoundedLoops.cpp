@@ -193,32 +193,19 @@ class ObeliskSimMarkBoundedLoopsPass
           operation);
     });
     UnitAttr marker = UnitAttr::get(&getContext());
-    llvm::DenseSet<Operation *> provenBackedges;
-    // Innermost loops are recognized first; each round lets an enclosing sweep
-    // become recognizable once its inner backedges are proven.
-    bool changed;
-    do {
-      changed = false;
-      for (Block &block : function.getBody()) {
-        auto loop = recognizeBoundedLoop(&block, provenBackedges,
-                                         /*forMarking=*/true);
-        if (!loop || provenBackedges.contains(loop->latch.getOperation()))
-          continue;
-        provenBackedges.insert(loop->latch.getOperation());
-        ::obelisk::schedule::set<schedule::metadata::boundedLoopLatch>(
-            loop->latch, marker);
-        ::obelisk::schedule::set<schedule::metadata::boundedLoopHeader>(
-            loop->condition, marker);
-        changed = true;
-      }
-    } while (changed);
-    if (!provenBackedges.empty() &&
-        function->getParentOfType<ModuleOp>()->hasAttr(
-            "obelisk.debug.native_timing")) {
+    auto loops = analysis::analyzeBoundedLoops(function.getBody());
+    for (const auto &loop : loops) {
+      ::obelisk::schedule::set<schedule::metadata::boundedLoopLatch>(loop.latch,
+                                                                     marker);
+      ::obelisk::schedule::set<schedule::metadata::boundedLoopHeader>(
+          loop.condition, marker);
+    }
+    if (!loops.empty() && function->getParentOfType<ModuleOp>()->hasAttr(
+                              "obelisk.debug.native_timing")) {
       // The diagnostic engine serializes output from concurrent function
       // passes.
       emitRemark(function.getLoc())
-          << "obelisk bounded loops: proven=" << provenBackedges.size()
+          << "obelisk bounded loops: proven=" << loops.size()
           << " actor=" << function.getSymName();
     }
   }
