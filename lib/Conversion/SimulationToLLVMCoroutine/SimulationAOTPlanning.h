@@ -153,6 +153,9 @@ struct NativeRankedEvalNode {
   // when a configuration proof later cuts an inactive value dependency.
   llvm::SmallVector<uint32_t> successors;
   uint32_t island = 0;
+  // A certified edge-triggered activation. Its ready bit remains
+  // authoritative; it must never become a speculative dataflow body.
+  bool clocked = false;
 };
 
 /// Immutable result of eval scheduling analysis.  All identities are resolved

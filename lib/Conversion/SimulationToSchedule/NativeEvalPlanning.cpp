@@ -66,6 +66,24 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     SmallVector<Range> reads, writes;
   };
   SmallVector<Node, 0> nodes;
+  using ClockKey = std::tuple<uint32_t, uint32_t, uint64_t, uint64_t>;
+  SmallVector<std::optional<ClockKey>> clocks(plan.mergedFragments.size());
+  DenseSet<uint32_t> multipleClocks;
+  for (const auto &entry : plan.fanoutEntries) {
+    if (entry.merged_bit >= clocks.size() ||
+        (entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) !=
+            OBELISK_RT_FANOUT_DIRECT)
+      continue;
+    ClockKey key{entry.static_state, entry.edge, entry.low_bit,
+                 entry.bit_width};
+    auto &clock = clocks[entry.merged_bit];
+    if ((clock && *clock != key) ||
+        (entry.edge != OBELISK_RT_WAIT_EDGE_POSEDGE &&
+         entry.edge != OBELISK_RT_WAIT_EDGE_NEGEDGE))
+      multipleClocks.insert(entry.merged_bit);
+    clock = key;
+  }
+  SmallVector<std::pair<NativeRankedEvalNode, ClockKey>> clockedNodes;
   DenseMap<uint32_t, uint64_t> widths;
   for (const auto &bound : stateLayout.bounds)
     widths.try_emplace(bound.handleID, bound.width);
@@ -81,6 +99,15 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         subsumed[record.bit] || !plan.ownerSubsumptionMasks[owner].isZero())
       continue;
     Node node{{record.bit, direct.body, direct.twoStateBody, {}}, {}, {}};
+    bool clocked = llvm::any_of(direct.fragmentIDs, [&](uint32_t id) {
+      auto fragment = fragments.lookup(id);
+      return fragment && llvm::any_of(fragment.getEffects(), [](Attribute raw) {
+               return cast<schedule::ComputeEffectAttr>(raw).getEffect() ==
+                      schedule::ComputeEffectKind::NBA;
+             });
+    });
+    if (clocked && (!clocks[record.bit] || multipleClocks.contains(record.bit)))
+      continue;
     bool safe = llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
       auto fragment = fragments.find(id);
       if (fragment == fragments.end() ||
@@ -88,23 +115,36 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         return false;
       auto function =
           functions.lookup(fragment->second.getFunction().getValue());
-      if (!function ||
-          (function.getEntryKind() != sim::EntryKind::Continuous &&
-           function.getEntryKind() != sim::EntryKind::Always &&
-           function.getEntryKind() != sim::EntryKind::AlwaysComb &&
-           function.getEntryKind() != sim::EntryKind::AlwaysLatch &&
-           function.getEntryKind() != sim::EntryKind::PortInput &&
-           function.getEntryKind() != sim::EntryKind::PortOutput))
+      if (!function)
+        return false;
+      auto kind = function.getEntryKind();
+      if (clocked ? kind != sim::EntryKind::Always &&
+                        kind != sim::EntryKind::AlwaysFF
+                  : kind != sim::EntryKind::Continuous &&
+                        kind != sim::EntryKind::Always &&
+                        kind != sim::EntryKind::AlwaysComb &&
+                        kind != sim::EntryKind::AlwaysLatch &&
+                        kind != sim::EntryKind::PortInput &&
+                        kind != sim::EntryKind::PortOutput)
         return false;
       return llvm::all_of(fragment->second.getEffects(), [&](Attribute raw) {
         auto effect = cast<schedule::ComputeEffectAttr>(raw);
+        // IEEE 1800-2023 4.5-4.7, 10.4.2: consecutive Active evaluations
+        // may stage their NBAs in this order, but cannot commit them early.
+        // Immediate stores need the separate trigger/observer proof below.
+        // Bounded indexed reads/NBAs keep their existing checked lowering
+        // and exact publication at the NBA barrier. Delayed NBAs and opaque
+        // effects are excluded; emission also checks for runtime boundaries.
         if (effect.getEffect() != schedule::ComputeEffectKind::Read &&
             effect.getEffect() != schedule::ComputeEffectKind::Write &&
-            effect.getEffect() != schedule::ComputeEffectKind::Watch)
+            effect.getEffect() != schedule::ComputeEffectKind::Watch &&
+            !(clocked &&
+              effect.getEffect() == schedule::ComputeEffectKind::NBA))
           return false;
         if (effect.getResource() != schedule::ComputeResourceKind::Storage ||
             effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
-            effect.getDynamic() || effect.getDeferred() || !effect.getWidth())
+            (!clocked && effect.getDynamic()) || effect.getDeferred() ||
+            !effect.getWidth())
           return false;
         auto handle = stateLayout.storage.find(effect.getDescriptor());
         obelisk_rt_stable_handle_v1 decoded{};
@@ -116,13 +156,37 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         if (width == widths.end() || effect.getLow() >= width->second ||
             effect.getWidth() > width->second - effect.getLow())
           return false;
+        if (clocked &&
+            effect.getEffect() == schedule::ComputeEffectKind::Watch) {
+          uint32_t edge =
+              effect.getTrigger() == schedule::ComputeTriggerKind::Posedge
+                  ? OBELISK_RT_WAIT_EDGE_POSEDGE
+              : effect.getTrigger() == schedule::ComputeTriggerKind::Negedge
+                  ? OBELISK_RT_WAIT_EDGE_NEGEDGE
+                  : OBELISK_RT_WAIT_EDGE_CHANGE;
+          if (effect.getDynamic() ||
+              ClockKey{decoded.id, edge, effect.getLow(), effect.getWidth()} !=
+                  *clocks[record.bit])
+            return false;
+        }
         Range range{decoded.id, effect.getLow(),
                     effect.getLow() + effect.getWidth()};
         if (effect.getEffect() == schedule::ComputeEffectKind::Write) {
           if (fanout.runtimeTransitionStates.contains(decoded.id))
             return false;
-          node.writes.push_back(range);
-        } else
+          if (clocked) {
+            auto [state, edge, low, width] = *clocks[record.bit];
+            // The source-order body and its per-member ready bit
+            // preserve intermediate publications. A body must not change
+            // its own trigger while it is inactive (LRM 9.4.2); the effect
+            // range includes every possible dynamic target, not just the
+            // currently selected element.
+            if (decoded.id == state && range.low < low + width &&
+                low < range.high)
+              return false;
+          } else
+            node.writes.push_back(range);
+        } else if (!clocked)
           node.reads.push_back(range);
         return true;
       });
@@ -135,7 +199,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
       for (const auto &read : node.reads)
         safe &= write.state != read.state || write.low >= read.high ||
                 read.low >= write.high;
-    if (safe && !node.writes.empty())
+    if (safe && clocked) {
+      node.plan.clocked = true;
+      clockedNodes.emplace_back(std::move(node.plan), *clocks[record.bit]);
+    } else if (safe && !node.writes.empty())
       nodes.push_back(std::move(node));
   }
   struct Reader {
@@ -210,6 +277,18 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
   SmallVector<NativeRankedEvalNode> ranked;
   for (uint32_t id : order.nodes)
     ranked.push_back(std::move(result[id]));
+  // Each exact physical edge gets a fixed-order direct-call sequence, using
+  // the existing ready/proof/NBA-taint protocol. Independent clocks and async
+  // resets stay separate. A checkpoint can enqueue a subset, so emission still
+  // checks every member's ready bit instead of inventing co-activations.
+  DenseMap<ClockKey, uint32_t> cohorts;
+  uint32_t nextIsland = result.size();
+  for (auto &[node, clock] : clockedNodes) {
+    auto [cohort, inserted] = cohorts.try_emplace(clock, nextIsland);
+    nextIsland += inserted;
+    node.island = cohort->second;
+    ranked.push_back(std::move(node));
+  }
   return ranked;
 }
 

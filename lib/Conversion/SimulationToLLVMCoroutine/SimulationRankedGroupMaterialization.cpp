@@ -65,6 +65,7 @@ materializeNativeRankedGroups(ModuleOp module,
   SmallVector<const NativeRankedEvalNode *> members;
   uint64_t cost = 0;
   unsigned groupID = 0;
+  unsigned clockedMembers = 0;
   struct Chunk {
     std::string name;
     SmallVector<uint32_t> owners;
@@ -145,6 +146,7 @@ materializeNativeRankedGroups(ModuleOp module,
     for (auto *member : members) {
       identities.push_back(member->owner);
       executors[member->owner] = name;
+      clockedMembers += member->clocked;
     }
     Chunk chunk{name, {}, {}};
     for (auto *member : members)
@@ -272,7 +274,7 @@ materializeNativeRankedGroups(ModuleOp module,
     // analysis must prove that its computation can be predicated without
     // speculative effects. Until then the ordinary ranked helper owns entry.
     if (members.size() > 1 && llvm::all_of(members, [&](const auto *node) {
-          return !node->twoStateBody.empty() &&
+          return !node->clocked && !node->twoStateBody.empty() &&
                  !plan.twoStateExecutors[node->owner].empty();
         })) {
       builder.setInsertionPointToEnd(module.getBody());
@@ -341,7 +343,7 @@ materializeNativeRankedGroups(ModuleOp module,
   }
   SmallVector<NativeRankedEvalNode> ordered(plan.rankedNodes);
   for (auto &node : ordered)
-    if (islandSizes.lookup(node.island) == 1)
+    if (!node.clocked && islandSizes.lookup(node.island) == 1)
       node.island = nextIsland + node.owner / 64;
   llvm::stable_sort(ordered, [](const auto &a, const auto &b) {
     return a.island < b.island;
@@ -382,7 +384,7 @@ materializeNativeRankedGroups(ModuleOp module,
                  << llvm::count_if(
                         executors,
                         [](const auto &name) { return !name.empty(); })
-                 << '\n';
+                 << " clocked_members=" << clockedMembers << '\n';
     // Tie runtime entry counts back to the actual native ownership plan.
     // The helper dependency graph excludes boundary actors, so print the
     // full owner inventory as well; its compute-node IDs retain global rank.
