@@ -23,6 +23,35 @@ struct CombinationalFusionBody {
   const analysis::ActivationRegionAnalysis *structured = nullptr;
 };
 
+struct CombinationalFusionFailure {
+  enum class Reason {
+    None,
+    UnsupportedOwner,
+    Activation,
+    IncompleteWrites,
+    SensitivityRegion,
+    ImpreciseSensitivity,
+    UnwatchedLiveIn,
+    IncomingOutputState,
+    MissingWriterInventory,
+    NonExclusiveWriter,
+    ActivationEntry,
+    UnsupportedObservations,
+    MissingActivationProof,
+    ToggleCoverage,
+    UnknownWatchedResource,
+    UnresolvedWatchedStorage,
+    OutsideWatch,
+  };
+  Reason reason = Reason::None;
+  analysis::ActivationRegionAnalysis::FailureReason activation =
+      analysis::ActivationRegionAnalysis::FailureReason::None;
+  uint64_t storage = 0;
+  mlir::StringAttr owner;
+  /// Format only when emitting a diagnostic; decisions use the enum above.
+  std::string getMessage() const;
+};
+
 /// Immutable, revision-local writer inventory for local ranked kernels.
 class CombinationalFusionAnalysis {
 public:
@@ -33,11 +62,11 @@ public:
   analyze(sim::SimFuncOp function,
           const analysis::HandleDataflowAnalysis &provenance,
           bool interleaved = false,
-          llvm::StringRef *failureReason = nullptr) const;
+          CombinationalFusionFailure *failureReason = nullptr) const;
   /// Internal transitions can be hidden from the union wait only after all
   /// external watches and toggle observers of repeated writes are excluded.
   bool canInterleave(llvm::ArrayRef<sim::SimFuncOp> functions,
-                     std::string *failureReason = nullptr) const;
+                     CombinationalFusionFailure *failureReason = nullptr) const;
 
 private:
   bool unsupported = false;

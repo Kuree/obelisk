@@ -235,6 +235,27 @@ spelling or a may-write range. A normal acyclic cone needs no feedback checks.
 Its affected work can execute once for a propagation wave with stable ingress;
 a later clock, NBA or external write is a distinct activation wave.
 
+A bounded loop can still mix request generation and response consumption. For
+example, a producer writes `q[i]` and reads `r[i]` in each iteration, while a
+consumer computes prefix sums and publishes the complete response after its
+loop. The equations `q0 = v`, `q1 = v + 1`, `r0 = q0`, `r1 = q0 + q1` are
+acyclic, but treating each loop as one scheduling node introduces a cycle.
+A sparse SSA input lattice now follows individual result and argument lanes
+through `RegionBranchOpInterface`, including `scf.yield`, `scf.condition` and
+both arms of `scf.if`. Its fixed point distinguishes independent recurrences
+from crossed yields and retains predicate/bound dependencies. The resulting
+publication graph recognizes this example as acyclic. This analysis is read-only;
+the scheduling proof still conservatively retains those actors. The MLIR
+request/response loop regression checks settling, X/Z, overflow and independent
+NBA sampling in eval, generic native and bytecode execution. Admitting this case requires
+dependencies between individual outputs and loop iterations, together with
+source-order and observation proofs for any loop distribution or fusion. Physical
+memory dependencies remain conservative until reaching definitions and overwritten
+aggregate lanes are resolved. Analysis failures and planning decisions use enums;
+text is produced only for diagnostics.
+Whole-activation input unions and whole-actor graph contraction alone do not
+establish that proof.
+
 `schedule-optimize-native-aggregates` forwards SSA array reads from preceding
 updates at the same selector when dense scoped ranges prove that selector known
 and in bounds. It also removes overwritten updates and read/write identities;

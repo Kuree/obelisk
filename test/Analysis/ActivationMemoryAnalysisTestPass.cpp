@@ -6,9 +6,57 @@
 #include "mlir/Pass/Pass.h"
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
+#include <memory>
 
 using namespace mlir;
 namespace {
+class RegionValueDependencyTestPass
+    : public PassWrapper<RegionValueDependencyTestPass,
+                         OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RegionValueDependencyTestPass)
+  StringRef getArgument() const final {
+    return "test-obelisk-region-value-dependencies";
+  }
+  StringRef getDescription() const final {
+    return "print result-specific SSA dependencies through region yields";
+  }
+  void runOnOperation() final {
+    getOperation().walk([&](func::FuncOp function) {
+      if (function.isExternal())
+        return;
+      SmallVector<Value> inputs(function.getArguments());
+      Operation *root = function;
+      function.walk([&](Operation *op) {
+        if (op->hasAttr("test.root"))
+          root = op;
+      });
+      obelisk::analysis::RegionValueDependencyAnalysis analysis(root, inputs);
+      llvm::errs() << "values @" << function.getSymName()
+                   << " valid=" << analysis.isValid() << '\n';
+      if (!analysis.isValid())
+        return;
+      function.walk([&](Operation *op) {
+        if (!op->hasAttr("test.values"))
+          return;
+        for (auto [index, result] : llvm::enumerate(op->getResults())) {
+          llvm::errs() << "  " << op->getName() << " result " << index << ':';
+          for (Value input : analysis.getInputs(result))
+            llvm::errs() << " arg" << cast<BlockArgument>(input).getArgNumber();
+          llvm::errs() << '\n';
+        }
+        if (op->getNumResults() == 0) {
+          llvm::errs() << "  " << op->getName() << " effect:";
+          for (Value input : analysis.getInputs(op))
+            llvm::errs() << " arg" << cast<BlockArgument>(input).getArgNumber();
+          llvm::errs() << '\n';
+        }
+      });
+    });
+    markAllAnalysesPreserved();
+  }
+};
 class ActivationMemoryTestPass
     : public PassWrapper<ActivationMemoryTestPass, OperationPass<ModuleOp>> {
 public:
@@ -67,29 +115,43 @@ public:
     return "print structured activation regions and their memory effects";
   }
   Option<bool> dump{*this, "dump", llvm::cl::init(false)};
+  Option<bool> publications{*this, "publications", llvm::cl::init(false)};
   ListOption<std::string> functions{*this, "functions",
                                     llvm::cl::CommaSeparated};
   void runOnOperation() final {
     getOperation().walk([&](obelisk::sim::SimDesignOp design) {
       obelisk::analysis::HandleDataflowAnalysis handles(design);
+      SmallVector<std::unique_ptr<obelisk::analysis::ActivationRegionAnalysis>>
+          owned;
       for (auto function : design.getBody().getOps<obelisk::sim::SimFuncOp>()) {
         if (!functions.empty() &&
             !llvm::is_contained(functions, function.getSymName().str()))
           continue;
-        auto trace = [&](StringRef phase, Operation *view) {
-          if (!dump)
-            return;
-          llvm::errs() << "activation " << phase << " @"
-                       << function.getSymName() << '\n';
-          view->print(llvm::errs());
-          llvm::errs() << '\n';
-        };
-        obelisk::analysis::ActivationRegionAnalysis analysis(function, handles,
-                                                             trace);
+        auto trace =
+            [&](obelisk::analysis::ActivationRegionAnalysis::TracePhase phase,
+                Operation *view) {
+              if (!dump)
+                return;
+              llvm::errs()
+                  << "activation "
+                  << (phase == obelisk::analysis::ActivationRegionAnalysis::
+                                   TracePhase::Initial
+                          ? "initial"
+                          : "resume")
+                  << " @" << function.getSymName() << '\n';
+              view->print(llvm::errs());
+              llvm::errs() << '\n';
+            };
+        auto proof =
+            std::make_unique<obelisk::analysis::ActivationRegionAnalysis>(
+                function, handles, trace);
+        auto &analysis = *proof;
         llvm::errs() << "regions @" << function.getSymName()
                      << " valid=" << analysis.isValid();
         if (!analysis.isValid())
-          llvm::errs() << " reason=" << analysis.getFailureReason();
+          llvm::errs() << " reason="
+                       << obelisk::analysis::stringifyActivationFailure(
+                              analysis.getFailureReason());
         llvm::errs() << '\n';
         for (const auto &node : analysis.getNodes()) {
           if (node.reads.empty() && node.writes.empty())
@@ -107,6 +169,37 @@ public:
         }
         if (dump && analysis.isValid())
           analysis.getStructuredFunction().print(llvm::errs());
+        if (publications && analysis.isValid()) {
+          auto values = obelisk::analysis::getActivationPublications(analysis);
+          if (values)
+            for (const auto &publication : *values) {
+              llvm::errs() << "  publication";
+              auto print = [&](StringRef kind, auto ranges) {
+                for (auto range : ranges)
+                  llvm::errs()
+                      << ' ' << kind << ":s" << range.root << '[' << range.low
+                      << ',' << range.low + range.width << ')';
+              };
+              print("read", publication.reads);
+              print("write", publication.writes);
+              llvm::errs() << '\n';
+            }
+        }
+        if (publications)
+          owned.push_back(std::move(proof));
+      }
+      if (publications) {
+        SmallVector<const obelisk::analysis::ActivationRegionAnalysis *> views;
+        for (const auto &view : owned)
+          views.push_back(view.get());
+        SmallVector<obelisk::analysis::ActivationRegionStep> cycle;
+        auto order =
+            obelisk::analysis::getActivationPublicationOrder(views, &cycle);
+        llvm::errs() << "publication graph: "
+                     << (order           ? "acyclic"
+                         : cycle.empty() ? "unavailable"
+                                         : "cyclic")
+                     << '\n';
       }
     });
     markAllAnalysesPreserved();
@@ -114,6 +207,7 @@ public:
 };
 } // namespace
 void obelisk::registerActivationMemoryAnalysisTestPass() {
+  PassRegistration<RegionValueDependencyTestPass>();
   PassRegistration<ActivationMemoryTestPass>();
   PassRegistration<ActivationRegionTestPass>();
 }

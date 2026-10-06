@@ -396,11 +396,56 @@ bool activationRangeCovered(ArrayRef<ActivationRange> ranges,
 }
 } // namespace
 
+std::string CombinationalFusionFailure::getMessage() const {
+  switch (reason) {
+  case Reason::None:
+    return {};
+  case Reason::Activation:
+    return analysis::stringifyActivationFailure(activation).str();
+  case Reason::UnsupportedOwner:
+    return "owner or unsupported effects";
+  case Reason::IncompleteWrites:
+    return "incomplete writes";
+  case Reason::SensitivityRegion:
+    return "sensitivity region";
+  case Reason::ImpreciseSensitivity:
+    return "imprecise sensitivity";
+  case Reason::UnwatchedLiveIn:
+    return "unwatched live-in";
+  case Reason::IncomingOutputState:
+    return "incoming output state";
+  case Reason::MissingWriterInventory:
+    return "missing writer inventory";
+  case Reason::NonExclusiveWriter:
+    return "non-exclusive writer";
+  case Reason::ActivationEntry:
+    return "activation entry";
+  case Reason::UnsupportedObservations:
+    return "unsupported observations";
+  case Reason::MissingActivationProof:
+    return "missing activation proof";
+  case Reason::UnknownWatchedResource:
+    return "unknown watched resource";
+  case Reason::UnresolvedWatchedStorage:
+    return "unresolved watched storage";
+  case Reason::ToggleCoverage:
+    return (Twine("toggle coverage on storage ") + Twine(storage)).str();
+  case Reason::OutsideWatch:
+    return (Twine("outside watch in ") + owner.getValue() +
+            " on repeated storage " + Twine(storage))
+        .str();
+  }
+  llvm_unreachable("unknown combinational fusion failure");
+}
+
 std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     sim::SimFuncOp function, const analysis::HandleDataflowAnalysis &analysis,
-    bool interleaved, StringRef *failureReason) const {
-  auto reject =
-      [&](StringRef reason) -> std::optional<CombinationalFusionBody> {
+    bool interleaved, CombinationalFusionFailure *failureReason) const {
+  using Reason = CombinationalFusionFailure::Reason;
+  if (failureReason)
+    *failureReason = {};
+  auto reject = [&](CombinationalFusionFailure reason)
+      -> std::optional<CombinationalFusionBody> {
     if (failureReason)
       *failureReason = reason;
     return std::nullopt;
@@ -415,17 +460,17 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
       function.getHomeRegion() != sim::EventRegion::Active ||
       nonNativeOwners.contains(function.getSymNameAttr()) ||
       !isComputeBodyFusionEligible(function, analysis))
-    return reject("owner or unsupported effects");
+    return reject({Reason::UnsupportedOwner});
   if (interleaved) {
     auto &activation = activations[function];
     if (!activation)
       activation = std::make_unique<analysis::ActivationRegionAnalysis>(
           function, analysis);
     if (!activation->isValid())
-      return reject(activation->getFailureReason());
+      return reject({Reason::Activation, activation->getFailureReason()});
     const auto &memory = activation->getMemory();
     if (!memory.hasCompleteWrites() || memory.getMayWrites().empty())
-      return reject("incomplete writes");
+      return reject({Reason::IncompleteWrites});
     Operation *suspend = activation->getSuspension();
     SmallVector<Value> watched;
     sim::EventRegionAttr region;
@@ -439,7 +484,7 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     }
     if (watched.empty() ||
         (region && region.getValue() != sim::EventRegion::Active))
-      return reject("sensitivity region");
+      return reject({Reason::SensitivityRegion});
     auto facts = analysis.derive(function);
     ActivationRanges watches;
     for (Value watch : watched) {
@@ -448,22 +493,22 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
       if (found == facts.end() || !found->second.descriptor ||
           found->second.resource != schedule::ComputeResourceKind::Storage ||
           found->second.dynamic || !span || found->second.width != *span)
-        return reject("imprecise sensitivity");
+        return reject({Reason::ImpreciseSensitivity});
       auto &fact = found->second;
       watches.push_back({*fact.descriptor, fact.low, fact.width});
     }
     for (const auto &read : memory.getLiveIns()) {
       if (!activationRangeCovered(watches, read))
-        return reject("unwatched live-in");
+        return reject({Reason::UnwatchedLiveIn});
       if (llvm::any_of(memory.getMayWrites(), [&](const auto &write) {
             return activationRangesOverlap(read, write);
           }))
-        return reject("incoming output state");
+        return reject({Reason::IncomingOutputState});
     }
     for (const auto &write : memory.getMayWrites()) {
       auto writers = storageWriters.find(write.root);
       if (writers == storageWriters.end())
-        return reject("missing writer inventory");
+        return reject({Reason::MissingWriterInventory});
       for (auto [owner, effect] : writers->second) {
         if (owner == function.getSymNameAttr())
           continue;
@@ -471,13 +516,13 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
             effect.getLow() > UINT64_MAX - effect.getWidth() ||
             activationRangesOverlap(
                 write, {write.root, effect.getLow(), effect.getWidth()}))
-          return reject("non-exclusive writer");
+          return reject({Reason::NonExclusiveWriter});
       }
     }
     auto start =
         dyn_cast<cf::BranchOp>(function.getBody().front().getTerminator());
     if (!start)
-      return reject("activation entry");
+      return reject({Reason::ActivationEntry});
     return CombinationalFusionBody{
         start.getDest(), suspend, {}, {}, activation.get()};
   }
@@ -640,21 +685,25 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
 }
 
 bool CombinationalFusionAnalysis::canInterleave(
-    ArrayRef<sim::SimFuncOp> functions, std::string *failureReason) const {
+    ArrayRef<sim::SimFuncOp> functions,
+    CombinationalFusionFailure *failureReason) const {
+  using Reason = CombinationalFusionFailure::Reason;
+  if (failureReason)
+    *failureReason = {};
   auto design = this->design;
-  auto reject = [&](const Twine &reason) {
+  auto reject = [&](CombinationalFusionFailure reason) {
     if (failureReason)
-      *failureReason = reason.str();
+      *failureReason = reason;
     return false;
   };
   if (unsupported)
-    return reject("unsupported observations");
+    return reject({Reason::UnsupportedObservations});
   DenseSet<StringAttr> owners;
   ActivationRanges repeated;
   for (auto function : functions) {
     auto found = activations.find(function);
     if (found == activations.end() || !found->second->isValid())
-      return reject("missing activation proof");
+      return reject({Reason::MissingActivationProof});
     owners.insert(function.getSymNameAttr());
     llvm::append_range(repeated,
                        found->second->getMemory().getRepeatedWrites());
@@ -664,8 +713,8 @@ bool CombinationalFusionAnalysis::canInterleave(
         llvm::any_of(repeated, [&](const auto &r) {
           return r.root == static_cast<uint64_t>(storage.getId());
         }))
-      return reject(Twine("toggle coverage on storage ") +
-                    Twine(storage.getId()));
+      return reject(
+          {Reason::ToggleCoverage, {}, static_cast<uint64_t>(storage.getId())});
   auto graph = design.getComputeGraphAttr();
   for (Attribute raw : graph.getNodes()) {
     auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
@@ -678,13 +727,13 @@ bool CombinationalFusionAnalysis::canInterleave(
       if (effect.getResource() != schedule::ComputeResourceKind::Storage) {
         if (!repeated.empty() &&
             effect.getResource() == schedule::ComputeResourceKind::Unknown)
-          return reject("unknown watched resource");
+          return reject({Reason::UnknownWatchedResource});
         continue;
       }
       if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
           !effect.getWidth() ||
           effect.getLow() > UINT64_MAX - effect.getWidth())
-        return reject("unresolved watched storage");
+        return reject({Reason::UnresolvedWatchedStorage});
       ActivationRange watch{static_cast<uint64_t>(effect.getDescriptor()),
                             effect.getLow(), effect.getWidth()};
       if (owners.contains(fragment.getFunction().getAttr())) {
@@ -701,9 +750,10 @@ bool CombinationalFusionAnalysis::canInterleave(
         // No outside wait may observe those extra transitions. Inside the
         // cohort all consumers execute after their producers' complete
         // regions and fully internal watches are removed.
-        return reject(Twine("outside watch in ") +
-                      fragment.getFunction().getValue() +
-                      " on repeated storage " + Twine(watch.root));
+        return reject({Reason::OutsideWatch,
+                       {},
+                       watch.root,
+                       fragment.getFunction().getAttr()});
       }
     }
   }

@@ -8,6 +8,31 @@
 
 namespace obelisk::analysis {
 
+/// Sparse SSA dependence through structured region interfaces. Each result and
+/// region argument follows its corresponding successor operands (including
+/// scf.yield and scf.condition), rather than all values used inside the region.
+/// Predicate/bound dependencies are retained independently of value forwarding.
+/// The finite union lattice solves loop-carried recurrences without unrolling.
+///
+/// Dependencies are relative to the supplied SSA input values. Memory reads
+/// must be supplied as inputs; this does not infer reaching memory definitions
+/// or authorize reordering effects. Unknown region control flow invalidates the
+/// query. Rebuild after changing the IR.
+class RegionValueDependencyAnalysis {
+public:
+  RegionValueDependencyAnalysis(mlir::Operation *root,
+                                llvm::ArrayRef<mlir::Value> inputs);
+  bool isValid() const { return valid; }
+  llvm::ArrayRef<mlir::Value> getInputs(mlir::Value value) const;
+  /// Inputs of the operands and enclosing control decisions of an operation.
+  llvm::SmallVector<mlir::Value> getInputs(mlir::Operation *operation) const;
+
+private:
+  bool valid = false;
+  llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> dependencies;
+  llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Value>> controls;
+};
+
 /// Immutable function snapshots. Rebuild after changing CFG operands.
 class SemanticValueRootAnalysis {
 public:

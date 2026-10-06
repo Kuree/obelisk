@@ -504,7 +504,10 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
       llvm::errs() << "obelisk ranked activation: " << function.getSymName()
                    << " valid=" << activation.isValid()
                    << " complete=" << activation.getMemory().hasCompleteWrites()
-                   << " reason=" << activation.getFailureReason() << '\n';
+                   << " reason="
+                   << analysis::stringifyActivationFailure(
+                          activation.getFailureReason())
+                   << '\n';
     if (activation.isValid() && activation.getMemory().hasCompleteWrites())
       llvm::append_range(result.liveIns[function.getSymNameAttr()],
                          activation.getMemory().getLiveIns());

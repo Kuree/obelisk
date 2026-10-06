@@ -2,13 +2,16 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t.quiet
 // RUN: diff %t %t.quiet
 // RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
+// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b,c,d publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
 // A process SCC can contain both schedulable statement paths and actual
 // feedback. Report a directed witness without weakening the acyclicity guard.
 // The source-order paths between these two cross-owner edges close the cycle.
 // REASON: statement component rejected: structured dependence cycle
+// REASON-SAME: SSA publication graph: cyclic
 // REASON-SAME: cycle edge: @c:{{[0-9]+}} (simulation.ref.store) -> @d:{{[0-9]+}} (simulation.ref.load) via s7[0,8)
 // REASON-SAME: cycle edge: @d:{{[0-9]+}} (simulation.ref.store) -> @c:{{[0-9]+}} (simulation.ref.load) via s6[0,8)
 // REASON: 0 plans
+// VALUES: publication graph: cyclic
 // KEEP: simulation.spawn @a
 // KEEP: simulation.spawn @b
 // KEEP: simulation.spawn @c

@@ -164,7 +164,9 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
   if (failed(canonicalizeControl(copy)))
     return {};
   if (trace)
-    trace(resume ? "resume" : "initial", copy);
+    trace(resume ? ActivationRegionAnalysis::TracePhase::Resume
+                 : ActivationRegionAnalysis::TracePhase::Initial,
+          copy);
   return owner;
 }
 
@@ -214,6 +216,30 @@ bool equivalentActivations(sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
 }
 } // namespace
 
+StringRef
+stringifyActivationFailure(ActivationRegionAnalysis::FailureReason reason) {
+  using FailureReason = ActivationRegionAnalysis::FailureReason;
+  switch (reason) {
+  case FailureReason::None:
+    return {};
+  case FailureReason::ActivationShape:
+    return "activation shape";
+  case FailureReason::InitialResumeEquivalence:
+    return "initial/resume equivalence";
+  case FailureReason::Termination:
+    return "termination";
+  case FailureReason::MemoryEffects:
+    return "memory effects";
+  case FailureReason::CFGStructuring:
+    return "CFG structuring";
+  case FailureReason::UnsupportedRegionSSASlot:
+    return "unsupported region SSA slot";
+  case FailureReason::UnmappedStructuredMemoryAccess:
+    return "unmapped structured memory access";
+  }
+  llvm_unreachable("unknown activation failure");
+}
+
 ActivationRegionAnalysis::ActivationRegionAnalysis(
     sim::SimFuncOp function, const HandleDataflowAnalysis &handles,
     Trace trace) {
@@ -242,11 +268,11 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
   auto resumed = cloneActivation(function, suspension, true, resumeMap, trace);
   if (!initial || !resumed ||
       !equivalentActivations(initial.get(), resumed.get())) {
-    reason = "initial/resume equivalence";
+    reason = FailureReason::InitialResumeEquivalence;
     return;
   }
   if (!finiteActivation(initial.get())) {
-    reason = "termination";
+    reason = FailureReason::Termination;
     return;
   }
   // Canonicalization can merge CFG blocks and change a reference phi's range.
@@ -254,7 +280,7 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
   // never be projected through a rewrite that may have merged accesses.
   memory = ActivationMemoryAnalysis(initial.get(), handles);
   if (!memory.isValid()) {
-    reason = "memory effects";
+    reason = FailureReason::MemoryEffects;
     return;
   }
   const auto &reads = memory.getReads();
@@ -288,12 +314,12 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
   DominanceInfo dominance(view);
   if (failed(transformCFGToSCF(view.getBody(), conversion, dominance)) ||
       !llvm::hasSingleElement(view.getBody()) || failed(verify(view))) {
-    reason = "CFG structuring";
+    reason = FailureReason::CFGStructuring;
     return;
   }
   if (view.walk([](ub::PoisonOp) { return WalkResult::interrupt(); })
           .wasInterrupted()) {
-    reason = "unsupported region SSA slot";
+    reason = FailureReason::UnsupportedRegionSSASlot;
     return;
   }
   for (Operation &op : view.getBody().front().without_terminator()) {
@@ -316,47 +342,22 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
     });
     if (!accounted) {
       nodes.clear();
-      reason = "unmapped structured memory access";
+      reason = FailureReason::UnmappedStructuredMemoryAccess;
       return;
     }
     nodes.push_back(std::move(node));
   }
   structured = std::move(structuredView);
-  reason = {};
+  reason = FailureReason::None;
 }
 
+namespace {
 std::optional<SmallVector<ActivationRegionStep>>
-getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
-                         SmallVectorImpl<ActivationRegionStep> *cycle) {
+orderSteps(ArrayRef<ActivationRegionStep> steps,
+           SmallVector<std::pair<unsigned, unsigned>> edges,
+           SmallVectorImpl<ActivationRegionStep> *cycle) {
   if (cycle)
     cycle->clear();
-  using Range = ActivationMemoryAnalysis::Range;
-  SmallVector<ActivationRegionStep> steps;
-  SmallVector<std::pair<unsigned, unsigned>> edges;
-  DenseMap<uint64_t, SmallVector<std::pair<unsigned, Range>>> readers, writers;
-  for (const auto *activation : activations) {
-    if (!activation->isValid())
-      return std::nullopt;
-    std::optional<unsigned> previous;
-    for (const auto &node : activation->getNodes()) {
-      unsigned id = steps.size();
-      steps.push_back({activation, node.operation});
-      if (previous)
-        edges.emplace_back(*previous, id);
-      previous = id;
-      for (const Range &range : node.reads)
-        readers[range.root].emplace_back(id, range);
-      for (const Range &range : node.writes)
-        writers[range.root].emplace_back(id, range);
-    }
-  }
-  for (const auto &[root, writes] : writers)
-    for (const auto &[producer, write] : writes)
-      for (const auto &[consumer, read] : readers[root])
-        if (steps[producer].activation != steps[consumer].activation &&
-            write.low < read.low + read.width &&
-            read.low < write.low + write.width)
-          edges.emplace_back(producer, consumer);
   llvm::sort(edges);
   edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
   SmallVector<SmallVector<unsigned>> successors(steps.size());
@@ -418,5 +419,102 @@ getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
     return std::nullopt;
   }
   return result;
+}
+} // namespace
+
+std::optional<SmallVector<ActivationPublication>>
+getActivationPublications(const ActivationRegionAnalysis &activation) {
+  if (!activation.isValid())
+    return std::nullopt;
+  auto function = activation.getStructuredFunction();
+  SmallVector<Value> inputs;
+  function.walk(
+      [&](sim::SimRefLoadOp load) { inputs.push_back(load.getResult()); });
+  RegionValueDependencyAnalysis values(function, inputs);
+  if (!values.isValid())
+    return std::nullopt;
+  SmallVector<ActivationPublication> publications;
+  const auto &memory = activation.getMemory();
+  function.walk([&](sim::SimRefStoreOp store) {
+    auto writes = memory.getWrites().find(store);
+    // Accesses absent from the validated memory inventory are unreachable for
+    // every proven induction context. Structuring retains their dead arms.
+    if (writes == memory.getWrites().end())
+      return;
+    ActivationPublication publication{store, {}, writes->second};
+    for (Value input : values.getInputs(store)) {
+      auto reads = memory.getReads().find(input.getDefiningOp());
+      if (reads != memory.getReads().end())
+        unionRanges(publication.reads, reads->second);
+    }
+    publications.push_back(std::move(publication));
+  });
+  return publications;
+}
+
+std::optional<SmallVector<ActivationRegionStep>> getActivationPublicationOrder(
+    ArrayRef<const ActivationRegionAnalysis *> activations,
+    SmallVectorImpl<ActivationRegionStep> *cycle) {
+  if (cycle)
+    cycle->clear();
+  using Range = ActivationMemoryAnalysis::Range;
+  SmallVector<ActivationRegionStep> steps;
+  SmallVector<std::pair<unsigned, unsigned>> edges;
+  DenseMap<uint64_t, SmallVector<std::pair<unsigned, Range>>> readers, writers;
+  for (const auto *activation : activations) {
+    auto publications = getActivationPublications(*activation);
+    if (!publications)
+      return std::nullopt;
+    for (const auto &publication : *publications) {
+      unsigned id = steps.size();
+      steps.push_back({activation, publication.operation});
+      for (const auto &range : publication.reads)
+        readers[range.root].emplace_back(id, range);
+      for (const auto &range : publication.writes)
+        writers[range.root].emplace_back(id, range);
+    }
+  }
+  for (const auto &[root, writes] : writers)
+    for (const auto &[producer, write] : writes)
+      for (const auto &[consumer, read] : readers[root])
+        if (write.low < read.low + read.width &&
+            read.low < write.low + write.width)
+          edges.emplace_back(producer, consumer);
+  return orderSteps(steps, std::move(edges), cycle);
+}
+
+std::optional<SmallVector<ActivationRegionStep>>
+getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
+                         SmallVectorImpl<ActivationRegionStep> *cycle) {
+  if (cycle)
+    cycle->clear();
+  using Range = ActivationMemoryAnalysis::Range;
+  SmallVector<ActivationRegionStep> steps;
+  SmallVector<std::pair<unsigned, unsigned>> edges;
+  DenseMap<uint64_t, SmallVector<std::pair<unsigned, Range>>> readers, writers;
+  for (const auto *activation : activations) {
+    if (!activation->isValid())
+      return std::nullopt;
+    std::optional<unsigned> previous;
+    for (const auto &node : activation->getNodes()) {
+      unsigned id = steps.size();
+      steps.push_back({activation, node.operation});
+      if (previous)
+        edges.emplace_back(*previous, id);
+      previous = id;
+      for (const Range &range : node.reads)
+        readers[range.root].emplace_back(id, range);
+      for (const Range &range : node.writes)
+        writers[range.root].emplace_back(id, range);
+    }
+  }
+  for (const auto &[root, writes] : writers)
+    for (const auto &[producer, write] : writes)
+      for (const auto &[consumer, read] : readers[root])
+        if (steps[producer].activation != steps[consumer].activation &&
+            write.low < read.low + read.width &&
+            read.low < write.low + write.width)
+          edges.emplace_back(producer, consumer);
+  return orderSteps(steps, std::move(edges), cycle);
 }
 } // namespace obelisk::analysis

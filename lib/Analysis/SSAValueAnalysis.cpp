@@ -5,11 +5,78 @@
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "obelisk/Analysis/GraphAlgorithms.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SparseBitVector.h"
 
 using namespace mlir;
 namespace obelisk::analysis {
 namespace {
+struct InputOrigins {
+  llvm::SparseBitVector<> inputs;
+  bool operator==(const InputOrigins &other) const {
+    return inputs == other.inputs;
+  }
+  static InputOrigins join(const InputOrigins &a, const InputOrigins &b) {
+    InputOrigins result = a;
+    result.inputs |= b.inputs;
+    return result;
+  }
+  void print(raw_ostream &os) const { os << inputs.count() << " SSA inputs"; }
+};
+using OriginState = dataflow::Lattice<InputOrigins>;
+
+/// The region interface defines the sparse forwarding graph. A separate edge
+/// for every result lane is essential: unioning all yields would couple
+/// independent loop-carried accumulators and manufacture feedback.
+class RegionInputDataflow final : public DataFlowAnalysis {
+public:
+  RegionInputDataflow(DataFlowSolver &solver,
+                      const llvm::MapVector<Value, SmallVector<Value>> &edges,
+                      ArrayRef<Value> inputs)
+      : DataFlowAnalysis(solver), edges(edges), inputs(inputs) {}
+  LogicalResult initialize(Operation *) override {
+    for (auto [value, operands] : edges) {
+      ProgramPoint *point =
+          isa<BlockArgument>(value)
+              ? getProgramPointBefore(cast<BlockArgument>(value).getOwner())
+              : getProgramPointAfter(value.getDefiningOp());
+      targets[point].push_back(value);
+      for (Value operand : operands)
+        addDependency(getOrCreate<OriginState>(operand), point);
+    }
+    for (auto [index, input] : llvm::enumerate(inputs)) {
+      InputOrigins origin;
+      origin.inputs.set(index);
+      auto *state = getOrCreate<OriginState>(input);
+      propagateIfChanged(state, state->join(origin));
+    }
+    // Initial empty facts also matter for a loop that carries no source input.
+    for (const auto &[point, values] : targets)
+      if (failed(visit(point)))
+        return failure();
+    return success();
+  }
+  LogicalResult visit(ProgramPoint *point) override {
+    for (Value value : targets.lookup(point)) {
+      InputOrigins origins;
+      for (Value operand : edges.lookup(value))
+        origins.inputs |=
+            getOrCreateFor<OriginState>(point, operand)->getValue().inputs;
+      auto *state = getOrCreate<OriginState>(value);
+      propagateIfChanged(state, state->join(origins));
+    }
+    return success();
+  }
+
+private:
+  const llvm::MapVector<Value, SmallVector<Value>> &edges;
+  ArrayRef<Value> inputs;
+  llvm::MapVector<ProgramPoint *, SmallVector<Value>> targets;
+};
+
 template <typename T> struct ForwardedFact {
   bool initialized = false;
   T value;
@@ -50,6 +117,102 @@ private:
   }
 };
 } // namespace
+
+RegionValueDependencyAnalysis::RegionValueDependencyAnalysis(
+    Operation *root, ArrayRef<Value> inputs) {
+  llvm::MapVector<Value, SmallVector<Value>> edges;
+  bool supported = true;
+  root->walk([&](Operation *op) {
+    for (Value result : op->getResults())
+      edges.try_emplace(result);
+    for (Region &region : op->getRegions()) {
+      if (!region.empty() && !llvm::hasSingleElement(region))
+        supported = false;
+      for (Block &block : region)
+        for (Value argument : block.getArguments())
+          edges.try_emplace(argument);
+    }
+  });
+  if (!supported)
+    return;
+  root->walk([&](Operation *op) {
+    if (op == root && isa<FunctionOpInterface>(op))
+      return;
+    auto branch = dyn_cast<RegionBranchOpInterface>(op);
+    if (!branch) {
+      if (op->getNumRegions()) {
+        supported = false;
+        return;
+      }
+      for (Value result : op->getResults())
+        llvm::append_range(edges[result], op->getOperands());
+      return;
+    }
+    RegionBranchSuccessorMapping forwarding;
+    branch.getSuccessorOperandInputMapping(forwarding);
+    for (const auto &[operand, targets] : forwarding)
+      for (Value target : targets)
+        edges[target].push_back(operand->get());
+    // Operands not forwarded as region values control the selected successor
+    // or invocation count: if/switch selectors, for bounds, while conditions.
+    llvm::SetVector<Value> predicates;
+    auto collect = [&](Operation *point) {
+      for (OpOperand &operand : point->getOpOperands())
+        if (!forwarding.contains(&operand))
+          predicates.insert(operand.get());
+    };
+    collect(op);
+    for (RegionBranchPoint point : branch.getAllRegionBranchPoints())
+      if (auto *term = point.getTerminatorPredecessorOrNull())
+        collect(term);
+    controls[op].assign(predicates.begin(), predicates.end());
+    for (Value result : op->getResults())
+      llvm::append_range(edges[result], predicates);
+    // Include non-forwarded region arguments, such as an scf.for induction
+    // value. Control dependence of effects is queried separately below.
+    for (Region &region : op->getRegions())
+      if (!region.empty())
+        for (BlockArgument argument : region.front().getArguments())
+          llvm::append_range(edges[argument], predicates);
+  });
+  if (!supported)
+    return;
+  // Supplied inputs may be captures defined outside the queried region tree.
+  // Keep their seeded facts available to direct operand/effect queries too.
+  for (Value input : inputs)
+    edges.try_emplace(input);
+  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  solver.load<RegionInputDataflow>(edges, inputs);
+  if (failed(solver.initializeAndRun(root)))
+    return;
+  for (const auto &[value, operands] : edges) {
+    auto &origins = dependencies[value];
+    if (auto *state = solver.lookupState<OriginState>(value))
+      for (unsigned index : state->getValue().inputs)
+        origins.push_back(inputs[index]);
+  }
+  valid = true;
+}
+
+ArrayRef<Value> RegionValueDependencyAnalysis::getInputs(Value value) const {
+  auto found = dependencies.find(value);
+  return found == dependencies.end() ? ArrayRef<Value>() : found->second;
+}
+
+SmallVector<Value>
+RegionValueDependencyAnalysis::getInputs(Operation *operation) const {
+  llvm::SetVector<Value> result;
+  for (Value operand : operation->getOperands())
+    result.insert_range(getInputs(operand));
+  for (Operation *parent = operation->getParentOp(); parent;
+       parent = parent->getParentOp()) {
+    auto found = controls.find(parent);
+    if (found != controls.end())
+      for (Value predicate : found->second)
+        result.insert_range(getInputs(predicate));
+  }
+  return {result.begin(), result.end()};
+}
 
 SemanticValueRootAnalysis::SemanticValueRootAnalysis(sim::SimFuncOp function) {
   struct Constraint {

@@ -17,6 +17,32 @@ namespace obelisk {
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
+enum class ComponentRejection {
+  None,
+  MemberBudget,
+  OperationBudget,
+  Observer,
+  StructuredDependenceCycle,
+};
+
+std::string
+stringifyComponentRejection(ComponentRejection reason,
+                            const CombinationalFusionFailure &observerFailure) {
+  switch (reason) {
+  case ComponentRejection::None:
+    return {};
+  case ComponentRejection::MemberBudget:
+    return "member budget";
+  case ComponentRejection::OperationBudget:
+    return "operation budget";
+  case ComponentRejection::Observer:
+    return observerFailure.getMessage();
+  case ComponentRejection::StructuredDependenceCycle:
+    return "structured dependence cycle";
+  }
+  llvm_unreachable("unknown statement component rejection");
+}
+
 class PlanCombinationalStatementsPass final
     : public impl::PlanCombinationalStatementsPassBase<
           PlanCombinationalStatementsPass> {
@@ -62,12 +88,13 @@ public:
       if (!function || indices.contains(function))
         continue;
       ++examined;
-      StringRef reason;
+      CombinationalFusionFailure reason;
       auto body =
           eligibility.analyze(function, handles, /*interleaved=*/true, &reason);
       if (!body || !body->structured) {
         if (explain)
-          function.emitRemark() << "statement scheduling rejected: " << reason;
+          function.emitRemark()
+              << "statement scheduling rejected: " << reason.getMessage();
         continue;
       }
       ++admitted;
@@ -172,25 +199,35 @@ public:
         memberFragments.push_back(fragments[member]);
         cost += analysis::getSimulationOperationCost(candidates[member]);
       }
-      std::string observerReason;
-      StringRef reason;
+      CombinationalFusionFailure observerReason;
+      ComponentRejection reason = ComponentRejection::None;
       SmallVector<analysis::ActivationRegionStep> cycle;
       if (maxMembers && component.size() > maxMembers)
-        reason = "member budget";
+        reason = ComponentRejection::MemberBudget;
       else if (budget && cost > budget)
-        reason = "operation budget";
+        reason = ComponentRejection::OperationBudget;
       else if (!eligibility.canInterleave(members, &observerReason))
-        reason = observerReason;
+        reason = ComponentRejection::Observer;
       else if (!analysis::getActivationRegionOrder(memberActivations,
                                                    explain ? &cycle : nullptr))
-        reason = "structured dependence cycle";
-      if (!reason.empty()) {
+        reason = ComponentRejection::StructuredDependenceCycle;
+      if (reason != ComponentRejection::None) {
         if (explain) {
           auto diagnostic = members.front().emitRemark();
-          diagnostic << "statement component rejected: " << reason
+          diagnostic << "statement component rejected: "
+                     << stringifyComponentRejection(reason, observerReason)
                      << "; operations=" << cost << "; members=";
           for (auto member : members)
             diagnostic << ' ' << member.getSymName();
+          if (reason == ComponentRejection::StructuredDependenceCycle) {
+            SmallVector<analysis::ActivationRegionStep> publicationCycle;
+            auto valueOrder = analysis::getActivationPublicationOrder(
+                memberActivations, &publicationCycle);
+            diagnostic << "; SSA publication graph: "
+                       << (valueOrder                 ? "acyclic"
+                           : publicationCycle.empty() ? "unavailable"
+                                                      : "cyclic");
+          }
           for (unsigned i = 0; i < cycle.size(); ++i) {
             const auto &from = cycle[i];
             const auto &to = cycle[(i + 1) % cycle.size()];
