@@ -21,6 +21,11 @@ private:
   llvm::DenseMap<mlir::Value, mlir::Value> roots;
 };
 
+/// Propagate exact forwarded SSA identities in a closed activation. Suspension
+/// functions retain their explicit continuation lanes and are left unchanged.
+/// CFG arguments remain intact; only dominated uses are replaced.
+bool propagateActivationValueRoots(sim::SimFuncOp function);
+
 class ConstantTimeAnalysis {
 public:
   explicit ConstantTimeAnalysis(sim::SimFuncOp function);

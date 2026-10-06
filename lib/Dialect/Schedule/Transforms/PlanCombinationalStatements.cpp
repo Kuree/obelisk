@@ -1,11 +1,15 @@
 //===- PlanCombinationalStatements.cpp - Statement DAG fusion ===//
 #include "ComputeFusion.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Analysis/CombinationalDependencyAnalysis.h"
 #include "obelisk/Analysis/GraphAlgorithms.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
+#include "llvm/ADT/IntEqClasses.h"
+#include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 namespace obelisk {
@@ -18,15 +22,21 @@ class PlanCombinationalStatementsPass final
           PlanCombinationalStatementsPass> {
 public:
   using Base::Base;
+  Statistic examined{this, "examined",
+                     "Native change-sensitive owners examined"};
+  Statistic admitted{this, "admitted",
+                     "Owners with complete activation proofs"};
+  Statistic componentsFound{this, "components", "Nontrivial candidate SCCs"};
+  Statistic plans{this, "plans", "Source-ordered DAGs planned"};
   void runOnOperation() override {
     auto design = getOperation();
     auto graph = design.getComputeGraphAttr();
     if (!graph || graph.getWorkers() != 1 ||
         graph.getVpi() == schedule::ComputeVPIMode::Full)
       return;
-    if (maxMembers < 2 || maxMembers > 64) {
+    if (maxMembers == 1) {
       design.emitOpError(
-          "statement fusion member limit must be between 2 and 64");
+          "statement fusion member limit must be 0 or at least 2");
       return signalPassFailure();
     }
     // Fusion plans are consumed as a transaction. Never append a plan that
@@ -39,6 +49,7 @@ public:
     SmallVector<sim::SimFuncOp> candidates;
     SmallVector<int64_t> fragments;
     DenseMap<Operation *, unsigned> indices;
+    SmallVector<const analysis::ActivationRegionAnalysis *> activations;
     for (Attribute raw : graph.getNodes()) {
       auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
       if (!fragment ||
@@ -48,10 +59,19 @@ public:
         continue;
       auto function =
           symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
-      if (!function || indices.contains(function) ||
-          function.getBody().getBlocks().size() != 2 ||
-          !eligibility.analyze(function, handles, /*interleaved=*/true))
+      if (!function || indices.contains(function))
         continue;
+      ++examined;
+      StringRef reason;
+      auto body =
+          eligibility.analyze(function, handles, /*interleaved=*/true, &reason);
+      if (!body || !body->structured) {
+        if (explain)
+          function.emitRemark() << "statement scheduling rejected: " << reason;
+        continue;
+      }
+      ++admitted;
+      activations.push_back(body->structured);
       indices[function] = candidates.size();
       candidates.push_back(function);
       fragments.push_back(fragment.getId());
@@ -59,45 +79,120 @@ public:
     if (candidates.size() < 2)
       return;
 
-    analysis::CombinationalDependencyAnalysis dependencies(design);
     SmallVector<unsigned> owners;
     DenseMap<unsigned, SmallVector<unsigned>> adjacency;
-    for (unsigned owner = 0; owner < candidates.size(); ++owner)
+    using Range = analysis::ActivationMemoryAnalysis::Range;
+    DenseMap<uint64_t, SmallVector<std::pair<unsigned, Range>>> readers;
+    for (unsigned owner = 0; owner < candidates.size(); ++owner) {
       owners.push_back(owner);
-    auto nodes = dependencies.getNodes();
-    for (const auto &edge : dependencies.getEdges()) {
-      if (edge.kind !=
-          analysis::CombinationalDependencyAnalysis::EdgeKind::Memory)
-        continue;
-      auto from = indices.find(nodes[edge.source].owner);
-      auto to = indices.find(nodes[edge.target].owner);
-      if (from != indices.end() && to != indices.end() &&
-          from->second != to->second)
-        adjacency[from->second].push_back(to->second);
+      for (const auto &read : activations[owner]->getMemory().getLiveIns())
+        readers[read.root].emplace_back(owner, read);
     }
+    for (unsigned owner = 0; owner < candidates.size(); ++owner)
+      for (const auto &write : activations[owner]->getMemory().getMayWrites())
+        for (const auto &[consumer, read] : readers[write.root])
+          if (consumer != owner && write.low < read.low + read.width &&
+              read.low < write.low + write.width)
+            adjacency[owner].push_back(consumer);
     for (auto &[owner, targets] : adjacency) {
       llvm::sort(targets);
       targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
     }
     auto components = analysis::computeStronglyConnectedComponents<unsigned>(
         owners, adjacency);
+    // Close each cyclic cohort over eligible observers of its intermediate
+    // publications. The new observers may publish intermediate values too;
+    // a worklist computes that transitive closure. Merge overlapping cohorts
+    // before planning, so no owner can appear in two transactions.
+    DenseMap<uint64_t, SmallVector<std::pair<unsigned, Range>>> watchers;
+    for (Attribute raw : graph.getNodes()) {
+      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
+      if (!fragment)
+        continue;
+      auto function =
+          symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
+      auto found = indices.find(function);
+      if (found == indices.end())
+        continue;
+      for (auto effect :
+           fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>())
+        if (effect.getEffect() == schedule::ComputeEffectKind::Watch &&
+            effect.getResource() == schedule::ComputeResourceKind::Storage &&
+            effect.getTarget() == schedule::ComputeTargetKind::Descriptor &&
+            effect.getWidth() &&
+            effect.getLow() <= UINT64_MAX - effect.getWidth())
+          watchers[effect.getDescriptor()].push_back(
+              {found->second,
+               {static_cast<uint64_t>(effect.getDescriptor()), effect.getLow(),
+                effect.getWidth()}});
+    }
+    llvm::IntEqClasses cohorts(candidates.size());
+    SmallVector<unsigned> pending;
+    DenseSet<unsigned> included;
+    auto include = [&](unsigned owner) {
+      if (included.insert(owner).second)
+        pending.push_back(owner);
+    };
+    for (const auto &component : components) {
+      if (component.size() < 2)
+        continue;
+      ++componentsFound;
+      for (unsigned owner : component) {
+        cohorts.join(component.front(), owner);
+        include(owner);
+      }
+    }
+    for (size_t cursor = 0; cursor < pending.size(); ++cursor) {
+      unsigned owner = pending[cursor];
+      for (const auto &write :
+           activations[owner]->getMemory().getRepeatedWrites())
+        for (const auto &[consumer, watch] : watchers[write.root])
+          if (write.low < watch.low + watch.width &&
+              watch.low < write.low + write.width) {
+            cohorts.join(owner, consumer);
+            include(consumer);
+          }
+    }
+    llvm::MapVector<unsigned, SmallVector<unsigned>> closedComponents;
+    for (unsigned owner : owners)
+      if (included.contains(owner))
+        closedComponents[cohorts.findLeader(owner)].push_back(owner);
     auto module = design->getParentOfType<ModuleOp>();
     auto limit = schedule::get<schedule::Field::MaxInlineOps>(module);
     uint64_t budget = limit ? limit.getUInt() : 5000;
     SmallVector<Attribute> fusions;
-    for (const auto &component : components) {
-      if (component.size() < 2 || component.size() > maxMembers)
-        continue;
+    for (const auto &[leader, component] : closedComponents) {
       SmallVector<sim::SimFuncOp> members;
       SmallVector<int64_t> memberFragments;
+      SmallVector<const analysis::ActivationRegionAnalysis *> memberActivations;
       uint64_t cost = 0;
       for (unsigned member : component) {
         members.push_back(candidates[member]);
+        memberActivations.push_back(activations[member]);
         memberFragments.push_back(fragments[member]);
         cost += analysis::getSimulationOperationCost(candidates[member]);
       }
-      if ((budget && cost > budget) || !dependencies.getInterleaving(members))
+      std::string observerReason;
+      StringRef reason;
+      if (maxMembers && component.size() > maxMembers)
+        reason = "member budget";
+      else if (budget && cost > budget)
+        reason = "operation budget";
+      else if (!eligibility.canInterleave(members, &observerReason))
+        reason = observerReason;
+      else if (!analysis::getActivationRegionOrder(memberActivations))
+        reason = "structured dependence cycle";
+      if (!reason.empty()) {
+        if (explain) {
+          auto diagnostic = members.front().emitRemark();
+          diagnostic << "statement component rejected: " << reason
+                     << "; operations=" << cost << "; members=";
+          for (auto member : members)
+            diagnostic << ' ' << member.getSymName();
+        }
         continue;
+      }
+      ++plans;
       // This requests materialization, not permission to assume acyclicity.
       // The materializer consumes a fresh revision-local analysis and checks
       // exclusive writers, complete assignments and spawn/observation rules.
@@ -108,6 +203,11 @@ public:
     if (!fusions.empty())
       schedule::set<schedule::metadata::staticBodyFusion>(
           design, ArrayAttr::get(design.getContext(), fusions));
+    if (explain)
+      design.emitRemark() << "statement scheduling: " << candidates.size()
+                          << " eligible owners, " << closedComponents.size()
+                          << " observer-closed cohorts, " << fusions.size()
+                          << " plans";
   }
 };
 } // namespace

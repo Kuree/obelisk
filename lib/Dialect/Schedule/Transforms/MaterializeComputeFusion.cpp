@@ -1,7 +1,13 @@
 //===- MaterializeComputeFusion.cpp - Fuse static process bodies ----------===//
 
 #include "ComputeFusion.h"
-#include "obelisk/Analysis/CombinationalDependencyAnalysis.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/Transforms/CSE.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
@@ -740,6 +746,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
       enter.erase();
     }
   }
+  analysis::propagateActivationValueRoots(evalBody);
   preserveEvalNBASiteOrigins(evalBody);
   ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBody>(
       function, FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
@@ -1556,13 +1563,77 @@ uint64_t shareStableBranchConditions(sim::SimFuncOp function,
   return shared;
 }
 
+/// Represent an exact external sensitivity interval with existing typed views.
+/// Unpacked aggregate offsets use the same structural layout as provenance;
+/// packed leaves use bit extracts. Padding and unsupported layouts reject the
+/// transaction instead of widening a watch back across internal publications.
+LogicalResult appendWatchRange(OpBuilder &builder, Location loc, Value handle,
+                               uint64_t low, uint64_t width,
+                               SmallVectorImpl<Value> &watched,
+                               uint64_t &budget) {
+  Type type = cast<sim::RefType>(handle.getType()).getElementType();
+  auto span = sim::getProvenanceSpan(type);
+  if (!span || low > *span || !width || width > *span - low || !budget)
+    return failure();
+  if (!low && width == *span) {
+    --budget;
+    watched.push_back(handle);
+    return success();
+  }
+  if (Type scalar = sim::getPackedScalarType(type)) {
+    if (width > UINT_MAX)
+      return failure();
+    Type slice = isa<IntegerType>(scalar)
+                     ? Type(builder.getIntegerType(width))
+                     : Type(sim::LogicType::get(builder.getContext(), width));
+    watched.push_back(sim::SimRefExtractOp::create(
+        builder, loc, sim::RefType::get(builder.getContext(), slice), handle,
+        low));
+    --budget;
+    return success();
+  }
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return failure();
+  unsigned first = 0, count = sim::getAggregateNumElements(type);
+  if (isa<sim::UnpackedArrayType>(type) && count > 1) {
+    auto second = sim::getAggregateProvenanceSubelement(type, 1);
+    if (!second || !second->first)
+      return failure();
+    first = std::min<uint64_t>(count, low / second->first);
+  }
+  uint64_t covered = 0;
+  for (unsigned index = first; index < count; ++index) {
+    auto child = sim::getAggregateProvenanceSubelement(type, index);
+    if (!child)
+      return failure();
+    if (child->first >= low + width)
+      break;
+    uint64_t begin = std::max(low, child->first);
+    uint64_t end = std::min(low + width, child->first + child->second);
+    if (begin >= end)
+      continue;
+    if (!budget)
+      return failure();
+    --budget;
+    Value view = sim::SimRefSubelementOp::create(
+        builder, loc,
+        sim::RefType::get(builder.getContext(),
+                          sim::getAggregateElementType(type, index)),
+        handle, builder.getDenseI64ArrayAttr({static_cast<int64_t>(index)}));
+    if (failed(appendWatchRange(builder, loc, view, begin - child->first,
+                                end - begin, watched, budget)))
+      return failure();
+    covered += end - begin;
+  }
+  return success(covered == width);
+}
+
 FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     sim::SimDesignOp design, SymbolTable &symbols, CodeUnitIndex &codeUnits,
     FusionInputIndex &inputIndex, schedule::ComputeFusionAttr fusion,
     schedule::ComputeGraphAttr graph,
     const analysis::HandleDataflowAnalysis &provenance,
     const CombinationalFusionAnalysis &combinational,
-    const analysis::CombinationalDependencyAnalysis *dependencies,
     const DenseMap<int64_t, int64_t> &resumeTargets,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
   struct Candidate {
@@ -1627,19 +1698,22 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     auto successorOperands = cast<BranchOpInterface>(suspend)
                                  .getSuccessorOperands(0)
                                  .getForwardedOperands();
-    if (!branch || branch.getDest() != &body ||
-        branch.getDestOperands().size() != body.getNumArguments() ||
-        successorOperands.size() != body.getNumArguments() ||
-        !llvm::all_of(llvm::zip_equal(body.getArguments(),
-                                      branch.getDestOperands(),
-                                      successorOperands),
-                      [](auto values) {
-                        Type type = std::get<0>(values).getType();
-                        return std::get<1>(values).getType() == type &&
-                               std::get<2>(values).getType() == type;
-                      }) ||
-        suspend->getSuccessor(0) != &body || !changeWait ||
-        resume == resumeTargets.end())
+    if (!changeWait || resume == resumeTargets.end())
+      return failure();
+    if (!fusion.getInterleaved() &&
+        (!branch || branch.getDest() != &body ||
+         branch.getDestOperands().size() != body.getNumArguments() ||
+         successorOperands.size() != body.getNumArguments() ||
+         !llvm::all_of(llvm::zip_equal(body.getArguments(),
+                                       branch.getDestOperands(),
+                                       successorOperands),
+                       [](auto values) {
+                         Type type = std::get<0>(values).getType();
+                         return std::get<1>(values).getType() == type &&
+                                std::get<2>(values).getType() == type;
+                       }) ||
+         suspend->getSuccessor(0) != &body || !changeWait ||
+         resume == resumeTargets.end()))
       return failure();
     // The local dirty mask must observe every immediate publication made by
     // the body. Plain and changed driver drives have an exact transition
@@ -1670,7 +1744,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                                successorOperands.end());
     candidates.push_back(std::move(candidate));
   }
-  if (candidates.size() < 2 || candidates.size() > 64)
+  if (candidates.size() < 2 ||
+      (!fusion.getInterleaved() && candidates.size() > 64))
     return failure();
   bool rankedCombinational = candidates.front().combinationalBody.has_value();
   if (llvm::any_of(candidates, [&](const Candidate &candidate) {
@@ -1801,13 +1876,18 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
          llvm::zip_equal(candidate.function.getBody().front().getArguments(),
                          candidate.fusedArguments))
       mapping->map(argument, entry.getArgument(index));
-    for (Operation &operation :
-         candidate.function.getBody().front().without_terminator())
-      builder.clone(operation, *mapping);
-    if (fusion.getInterleaved())
-      for (auto [argument, initial] : llvm::zip_equal(
-               candidate.body->getArguments(), candidate.initialState))
-        mapping->map(argument, mapping->lookup(initial));
+    if (fusion.getInterleaved()) {
+      auto structured =
+          candidate.combinationalBody->structured->getStructuredFunction();
+      for (auto [argument, index] :
+           llvm::zip_equal(structured.getBody().front().getArguments(),
+                           candidate.fusedArguments))
+        mapping->map(argument, entry.getArgument(index));
+    } else {
+      for (Operation &operation :
+           candidate.function.getBody().front().without_terminator())
+        builder.clone(operation, *mapping);
+    }
     mappings.push_back(std::move(mapping));
   }
   // A frontend primitive commonly watches a statically selected bit of a
@@ -1816,13 +1896,29 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   // handle outside the conditional member body. Hoist only pure speculatable
   // expression trees; descriptor views meet this contract and remain stable
   // for the lifetime of the spawned kernel.
+  DenseMap<Operation *, std::unique_ptr<analysis::SemanticValueRootAnalysis>>
+      valueRoots;
   auto mapWatchHandle = [&](Value value, IRMapping &mapping,
                             auto &mapWatchHandle) -> Value {
     if (Value mapped = mapping.lookupOrNull(value))
       return mapped;
     auto argument = dyn_cast<BlockArgument>(value);
-    if (argument)
-      return {};
+    if (argument) {
+      auto function =
+          dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+      if (!function)
+        return {};
+      auto &roots = valueRoots[function];
+      if (!roots)
+        roots = std::make_unique<analysis::SemanticValueRootAnalysis>(function);
+      Value root = roots->lookup(value);
+      if (root == value)
+        return {};
+      Value mapped = mapWatchHandle(root, mapping, mapWatchHandle);
+      if (mapped)
+        mapping.map(value, mapped);
+      return mapped;
+    }
     Operation *definition = value.getDefiningOp();
     if (!definition || !isMemoryEffectFree(definition) ||
         !isSpeculatable(definition))
@@ -1836,7 +1932,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     return cloned->getResult(result);
   };
   if (rankedCombinational) {
-    std::optional<SmallVector<Operation *>> interleaving;
+    std::optional<SmallVector<analysis::ActivationRegionStep>> interleaving;
     DenseMap<StringAttr, unsigned> owners;
     for (auto [index, candidate] : llvm::enumerate(candidates))
       owners[candidate.function.getSymNameAttr()] = index;
@@ -1858,29 +1954,35 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     if (backward && !fusion.getInterleaved())
       return bail();
     if (fusion.getInterleaved()) {
-      if (!dependencies)
-        return bail();
       SmallVector<sim::SimFuncOp> members;
-      for (Candidate &candidate : candidates)
+      SmallVector<const analysis::ActivationRegionAnalysis *> activations;
+      for (Candidate &candidate : candidates) {
         members.push_back(candidate.function);
-      interleaving = dependencies->getInterleaving(members);
+        activations.push_back(candidate.combinationalBody->structured);
+      }
+      if (!combinational.canInterleave(members))
+        return bail();
+      interleaving = analysis::getActivationRegionOrder(activations);
       if (!interleaving)
         return bail();
     }
     DenseMap<uint64_t, SmallVector<std::pair<uint64_t, uint64_t>>> groupWrites;
     if (interleaving) {
       for (Candidate &producer : candidates)
-        for (const auto &access :
-             dependencies->lookup(producer.function)->accesses)
-          if (access.kind == analysis::CombinationalDependencyAnalysis::
-                                 AccessKind::Write &&
-              access.target.descriptor && !access.target.dynamic)
-            groupWrites[*access.target.descriptor].emplace_back(
-                access.target.low, access.target.low + access.target.width);
+        for (const auto &range :
+             producer.combinationalBody->structured->getMemory()
+                 .getMustWrites())
+          groupWrites[range.root].emplace_back(range.low,
+                                               range.low + range.width);
       for (auto &[root, writes] : groupWrites)
         llvm::sort(writes);
     }
     SmallVector<Value> watched;
+    auto watchLimit = schedule::get<schedule::Field::MaxInlineOps>(
+        design->getParentOfType<ModuleOp>());
+    uint64_t watchBudget = watchLimit ? watchLimit.getUInt() : 5000;
+    if (!watchBudget)
+      watchBudget = UINT64_MAX;
     for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
       auto facts = interleaving ? provenance.derive(candidate.function)
                                 : analysis::HandleFacts{};
@@ -1893,23 +1995,36 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
             cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched());
       for (Value watch : memberWatches) {
         if (interleaving) {
-          // Only remove a complete watch owned exclusively by this kernel.
-          // Its producers execute before its consumers in the certified DAG;
-          // subscribing to it would manufacture self-reactivation. Partial
-          // coverage conservatively keeps the original complete watch.
+          // Subtract only definite, exclusively owned writes. Retaining the
+          // original whole-aggregate watch for partial coverage would cause
+          // self-reactivation even though its data dependence graph is a DAG.
           auto found = facts.find(watch);
-          if (found != facts.end() && found->second.descriptor &&
-              !found->second.dynamic) {
-            const auto &range = found->second;
-            uint64_t covered = range.low;
-            for (auto [low, high] : groupWrites[*range.descriptor]) {
-              if (low > covered)
-                break;
-              covered = std::max(covered, high);
-            }
-            if (covered >= range.low + range.width)
+          if (found == facts.end() || !found->second.descriptor ||
+              found->second.dynamic)
+            return bail();
+          const auto &range = found->second;
+          uint64_t cursor = range.low, end = range.low + range.width;
+          SmallVector<std::pair<uint64_t, uint64_t>> external;
+          for (auto [low, high] : groupWrites[*range.descriptor]) {
+            if (high <= cursor || low >= end)
               continue;
+            if (cursor < low)
+              external.emplace_back(cursor, low);
+            cursor = std::min(end, std::max(cursor, high));
           }
+          if (cursor < end)
+            external.emplace_back(cursor, end);
+          if (external.empty())
+            continue;
+          Value handle = mapWatchHandle(watch, *mapping, mapWatchHandle);
+          if (!handle)
+            return bail();
+          for (auto [low, high] : external)
+            if (failed(appendWatchRange(builder, candidate.suspend->getLoc(),
+                                        handle, low - range.low, high - low,
+                                        watched, watchBudget)))
+              return bail();
+          continue;
         }
         Value handle = mapWatchHandle(watch, *mapping, mapWatchHandle);
         if (!handle)
@@ -1919,23 +2034,23 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     }
     if (watched.empty())
       return bail();
-    // Exclusive, complete, deterministic assignments make an unchanged-input
-    // activation idempotent: every store writes its existing four-state value
-    // and publishes no transition. It is therefore observationally equivalent
-    // to evaluate this bounded forward segment at each union activation. This
-    // proof removes snapshots and per-member readiness; it does not authorize
-    // extra executions of tasks, coverage, latches or other effects (4.3, 4.6).
+    // Complete deterministic assignments make final values idempotent. The
+    // interleaved certificate additionally excludes outside observers of
+    // repeated publications; those stores can transition even on unchanged
+    // inputs. Preserve every store and source order. No task, coverage, latch
+    // or other effect is authorized by this certificate (4.3, 4.6).
     cf::BranchOp::create(builder, kernel.getLoc(), body);
     Block *tail = body;
     if (interleaving) {
       builder.setInsertionPointToStart(body);
-      DenseMap<Operation *, IRMapping *> mappingForOwner;
+      DenseMap<const analysis::ActivationRegionAnalysis *, IRMapping *>
+          mappingForActivation;
       for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
-        mappingForOwner[candidate.function] = mapping.get();
-      for (Operation *op : *interleaving)
-        if (!hoistedWatchOps.contains(op))
-          builder.clone(
-              *op, *mappingForOwner.at(op->getParentOfType<sim::SimFuncOp>()));
+        mappingForActivation[candidate.combinationalBody->structured] =
+            mapping.get();
+      for (const auto &step : *interleaving)
+        builder.clone(*step.operation,
+                      *mappingForActivation.at(step.activation));
     } else
       for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
         for (Block *source : candidate.combinationalBody->blocks) {
@@ -1966,6 +2081,39 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     sim::SimSuspendAnyOp::create(
         builder, kernel.getLoc(), watched, builder.getDenseI32ArrayAttr(edges),
         schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, body);
+    if (interleaving) {
+      // Simplify the lifter's do-while dispatch before lowering it. This is
+      // the standard SCF guard normalization also used by native loop proofs.
+      RewritePatternSet simplify(design.getContext());
+      arith::TruncIOp::getCanonicalizationPatterns(simplify,
+                                                   design.getContext());
+      arith::SelectOp::getCanonicalizationPatterns(simplify,
+                                                   design.getContext());
+      scf::WhileOp::getCanonicalizationPatterns(simplify, design.getContext());
+      scf::IfOp::getCanonicalizationPatterns(simplify, design.getContext());
+      if (failed(applyPatternsGreedily(kernel, std::move(simplify))))
+        return bail();
+      RewritePatternSet patterns(design.getContext());
+      populateSCFToControlFlowConversionPatterns(patterns);
+      ConversionTarget target(*design.getContext());
+      target.addIllegalDialect<scf::SCFDialect>();
+      target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
+      if (failed(applyPartialConversion(kernel, target, std::move(patterns))))
+        return bail();
+      IRRewriter rewriter(design.getContext());
+      DominanceInfo dominance(kernel);
+      eliminateCommonSubExpressions(rewriter, dominance, kernel);
+      // Initial entry and every union wake execute the identical body. Retain
+      // the independently derived termination certificates after lowering SCF;
+      // the implicit wait edge is not another procedural-loop iteration.
+      for (const auto &loop :
+           analysis::analyzeActivationBoundedLoops(kernel.getBody())) {
+        schedule::set<schedule::metadata::boundedLoopHeader>(
+            loop.condition, builder.getUnitAttr());
+        schedule::set<schedule::metadata::boundedLoopLatch>(
+            loop.latch, builder.getUnitAttr());
+      }
+    }
     builder.setInsertionPoint(insertionSpawn);
     sim::SimSpawnOp::create(builder, kernel.getLoc(), kernel.getSymNameAttr(),
                             operands, ArrayAttr{}, ArrayAttr{});
@@ -3462,6 +3610,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     if (!cloneSupported) {
       symbols.erase(evalBody);
     } else {
+      analysis::propagateActivationValueRoots(evalBody);
       preserveEvalNBASiteOrigins(evalBody);
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBody>(
           fused, FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
@@ -3660,13 +3809,6 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   std::unique_ptr<PrivateStaticAccessIndex> fusionAccessIndex;
   llvm::StringMap<uint64_t> fusionRejections;
   CombinationalFusionAnalysis combinational(design, provenance);
-  std::unique_ptr<analysis::CombinationalDependencyAnalysis> dependencies;
-  if (llvm::any_of(fusions, [](Attribute attr) {
-        auto fusion = dyn_cast<schedule::ComputeFusionAttr>(attr);
-        return fusion && fusion.getInterleaved();
-      }))
-    dependencies =
-        std::make_unique<analysis::CombinationalDependencyAnalysis>(design);
   FusionInputIndex inputIndex(design, graph);
   for (Attribute attribute : fusions) {
     auto fusion = dyn_cast<schedule::ComputeFusionAttr>(attribute);
@@ -3692,7 +3834,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
         (!evalScheduler || primitiveContinuous || fusion.getInterleaved())) {
       fused = materializeStraightLineKernel(
           design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
-          combinational, dependencies.get(), firstResumeTargets, spawnsByCallee);
+          combinational, firstResumeTargets, spawnsByCallee);
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.

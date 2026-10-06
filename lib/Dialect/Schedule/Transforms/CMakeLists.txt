@@ -19,6 +19,8 @@ add_mlir_library(ObeliskScheduleTransforms
   ObeliskScheduleIR
   MLIRArithDialect
   MLIRControlFlowDialect
+  MLIRSCFDialect
+  MLIRSCFToControlFlow
   MLIRPass
   MLIRTransforms
 )

@@ -119,9 +119,14 @@ def PlanCombinationalStatementsPass
     rechecks the proof and preserves every process's statement order. Actual
     feedback and unsupported effects retain their existing scheduler.
   }];
-  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
-  let options = [Option<"maxMembers", "max-members", "unsigned", "64",
-                        "Maximum activations in one statement DAG">];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
+                           "mlir::func::FuncDialect", "mlir::scf::SCFDialect",
+                           "mlir::ub::UBDialect"];
+  let options = [Option<"maxMembers", "max-members", "unsigned", "0",
+                        "Maximum activations in one statement DAG (0: unlimited)">,
+                 Option<"explain", "explain", "bool", "false",
+                        "Report rejected activation and component proofs">];
 }
 
 def ObeliskSimMaterializeComputeFusionPass
@@ -137,7 +142,9 @@ def ObeliskSimMaterializeComputeFusionPass
   }];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
-    "mlir::cf::ControlFlowDialect"
+    "mlir::arith::ArithDialect",
+    "mlir::cf::ControlFlowDialect", "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect", "mlir::ub::UBDialect"
   ];
 }
 

@@ -3,6 +3,7 @@
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "obelisk/Analysis/GraphAlgorithms.h"
 
@@ -159,6 +160,33 @@ SemanticValueRootAnalysis::SemanticValueRootAnalysis(sim::SimFuncOp function) {
       }
     }
   }
+}
+
+bool propagateActivationValueRoots(sim::SimFuncOp function) {
+  if (function
+          .walk([](Operation *op) {
+            return sim::isSuspensionOp(op) ? WalkResult::interrupt()
+                                           : WalkResult::advance();
+          })
+          .wasInterrupted())
+    return false;
+  SemanticValueRootAnalysis forwarding(function);
+  DominanceInfo dominance(function);
+  bool changed = false;
+  function.walk([&](Block *block) {
+    for (BlockArgument argument : block->getArguments()) {
+      Value root = forwarding.lookup(argument);
+      if (root == argument)
+        continue;
+      argument.replaceUsesWithIf(root, [&](OpOperand &use) {
+        if (!dominance.dominates(root, use.getOwner()))
+          return false;
+        changed = true;
+        return true;
+      });
+    }
+  });
+  return changed;
 }
 
 ConstantTimeAnalysis::ConstantTimeAnalysis(sim::SimFuncOp function) {

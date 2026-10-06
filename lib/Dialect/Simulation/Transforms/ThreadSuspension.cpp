@@ -20,8 +20,10 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Support/GenericIteratedDominanceFrontier.h"
 
 #include <optional>
 
@@ -454,6 +456,35 @@ public:
     // coroutine lowering must not leave an SSA definition on only one side of
     // a resume edge.
     DenseMap<Value, llvm::SetVector<Block *>> rootConsumers;
+    // A join can forward a live value without using it locally. Compute the
+    // pruned iterated dominance frontier of original and restored definitions
+    // so those live-through joins receive lanes without adding arguments to
+    // every intervening block.
+    Liveness mergeLiveness(function);
+    llvm::MapVector<Value, llvm::SmallPtrSet<Block *, 8>> definitions;
+    for (Block &block : function.getBody())
+      for (BlockArgument argument : block.getArguments())
+        if (Value root = threadedRoots.lookup(argument)) {
+          definitions[root].insert(root.getParentBlock());
+          definitions[root].insert(&block);
+        }
+    DenseMap<Value, llvm::SmallPtrSet<Block *, 16>> liveInBlocks;
+    for (Block &block : function.getBody())
+      for (Value value : mergeLiveness.getLiveIn(&block)) {
+        Value root = threadedRoots.lookup(value);
+        liveInBlocks[root ? root : value].insert(&block);
+      }
+    DenseMap<Block *, SmallVector<Value>> phiRoots;
+    for (const auto &[root, blocks] : definitions) {
+      llvm::IDFCalculatorBase<Block, false> frontier(
+          dominance.getDomTree(&function.getBody()));
+      frontier.setDefiningBlocks(blocks);
+      frontier.setLiveInBlocks(liveInBlocks[root]);
+      SmallVector<Block *> joins;
+      frontier.calculate(joins);
+      for (Block *join : joins)
+        phiRoots[join].push_back(root);
+    }
     SmallVector<Block *> pendingBlocks;
     DenseSet<Block *> queuedBlocks;
     auto enqueueBlock = [&](Block *block) {
@@ -474,6 +505,7 @@ public:
       queuedBlocks.erase(current);
       Block &block = *current;
       llvm::SetVector<Value> externalRoots;
+      externalRoots.insert(phiRoots[&block].begin(), phiRoots[&block].end());
       for (Operation &operation : block)
         for (Value value : operation.getOperands()) {
           if (value.getParentBlock() == &block)
@@ -609,6 +641,14 @@ public:
         for (IncomingEdge &incoming : incomingEdges)
           incoming.branch.getSuccessorOperands(incoming.successorIndex)
               .append(incoming.value);
+        // Rename uses reached by this join, including live-through paths
+        // whose immediate predecessor has no threaded lane. A definition
+        // inside the join's own subtree is freshly computed state and must
+        // not be replaced with the incoming value.
+        if (dominance.properlyDominates(root.getParentBlock(), &block))
+          root.replaceUsesWithIf(argument, [&](OpOperand &use) {
+            return dominance.dominates(&block, use.getOwner()->getBlock());
+          });
         for (IncomingEdge &incoming : incomingEdges)
           rootConsumers[root].insert(incoming.branch->getBlock());
         for (Block *consumer : rootConsumers[root])

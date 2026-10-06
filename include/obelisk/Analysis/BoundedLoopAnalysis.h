@@ -37,5 +37,11 @@ recognizeBoundedLoop(mlir::Block *header,
 std::optional<mlir::ConstantIntRanges>
 getInductionRange(const BoundedLoop &loop, bool includeExit);
 llvm::SmallVector<BoundedLoop> analyzeBoundedLoops(mlir::Region &region);
+/// Discover loops in the initial nonsuspending activation, cutting suspension
+/// edges on a disposable CFG. Results refer to the original IR. This does not
+/// prove termination or identical induction bounds on subsequent activations;
+/// a caller applying the facts there must separately prove resume equivalence.
+llvm::SmallVector<BoundedLoop>
+analyzeActivationBoundedLoops(mlir::Region &region);
 } // namespace obelisk::analysis
 #endif

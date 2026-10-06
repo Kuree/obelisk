@@ -1,4 +1,6 @@
 add_mlir_library(ObeliskSimulationAnalysis
+  ActivationMemoryAnalysis.cpp
+  ActivationRegionAnalysis.cpp
   AccessFootprintAnalysis.cpp
   BoundedLoopAnalysis.cpp
   ScopedIntegerRangeAnalysis.cpp
@@ -18,6 +20,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   NativeStateLayoutAnalysis.cpp
   NetConnectivityAnalysis.cpp
   PrivateStorageAnalysis.cpp
+  SimulationControlFlowToSCF.cpp
   SimulationCopyProcessAnalysis.cpp
   SimulationEffectAnalysis.cpp
   SimulationProcessFrameAnalysis.cpp
@@ -40,7 +43,12 @@ add_mlir_library(ObeliskSimulationAnalysis
   ObeliskScheduleIR
   MLIRAnalysis
   MLIRControlFlowDialect
+  MLIRControlFlowToSCF
   MLIRControlFlowInterfaces
+  MLIRFuncDialect
+  MLIRSCFDialect
+  MLIRTransforms
+  MLIRUBDialect
   MLIRIR
   LLVMCore
 )

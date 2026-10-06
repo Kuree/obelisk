@@ -3,20 +3,24 @@
 #ifndef OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
 #define OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
 
+#include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseSet.h"
+#include <memory>
 
 namespace obelisk {
 
-/// A finite, idempotent combinational activation. Every read is watched and
-/// every written range is exclusive, disjoint and never read by this actor.
+/// A finite combinational activation with complete, exclusive outputs. Live-in
+/// reads are watched; structured activations may also read their own definite
+/// assignments. Repeated publications need the separate observer certificate.
 /// This is deliberately not an always_latch or arbitrary always certificate.
 struct CombinationalFusionBody {
   mlir::Block *activation;
   mlir::Operation *suspend;
   mlir::SmallVector<mlir::Block *> blocks;
   mlir::SmallVector<mlir::Value> outputs;
+  const analysis::ActivationRegionAnalysis *structured = nullptr;
 };
 
 /// Immutable, revision-local writer inventory for local ranked kernels.
@@ -28,10 +32,19 @@ public:
   std::optional<CombinationalFusionBody>
   analyze(sim::SimFuncOp function,
           const analysis::HandleDataflowAnalysis &provenance,
-          bool interleaved = false) const;
+          bool interleaved = false,
+          llvm::StringRef *failureReason = nullptr) const;
+  /// Internal transitions can be hidden from the union wait only after all
+  /// external watches and toggle observers of repeated writes are excluded.
+  bool canInterleave(llvm::ArrayRef<sim::SimFuncOp> functions,
+                     std::string *failureReason = nullptr) const;
 
 private:
   bool unsupported = false;
+  sim::SimDesignOp design;
+  mutable llvm::DenseMap<mlir::Operation *,
+                         std::unique_ptr<analysis::ActivationRegionAnalysis>>
+      activations;
   using Writer = std::pair<mlir::StringAttr, schedule::ComputeEffectAttr>;
   llvm::DenseMap<uint64_t, mlir::SmallVector<Writer>> storageWriters;
   llvm::DenseSet<mlir::StringAttr> nonNativeOwners;

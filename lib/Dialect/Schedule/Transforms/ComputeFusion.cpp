@@ -317,7 +317,8 @@ private:
 
 CombinationalFusionAnalysis::CombinationalFusionAnalysis(
     sim::SimDesignOp design,
-    const analysis::HandleDataflowAnalysis &provenanceAnalysis) {
+    const analysis::HandleDataflowAnalysis &provenanceAnalysis)
+    : design(design) {
   auto graph = design.getComputeGraphAttr();
   // Full foreign mutation needs a range-scoped invalidation route for this
   // idempotent kernel. Existing externally driven evaluators retain their
@@ -371,9 +372,39 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
   }
 }
 
+namespace {
+using ActivationRange = analysis::ActivationMemoryAnalysis::Range;
+using ActivationRanges = analysis::ActivationMemoryAnalysis::Ranges;
+bool activationRangesOverlap(const ActivationRange &a,
+                             const ActivationRange &b) {
+  return a.root == b.root && a.low < b.low + b.width && b.low < a.low + a.width;
+}
+bool activationRangeCovered(ArrayRef<ActivationRange> ranges,
+                            const ActivationRange &range) {
+  SmallVector<std::pair<uint64_t, uint64_t>> intervals;
+  for (const auto &r : ranges)
+    if (r.root == range.root)
+      intervals.emplace_back(r.low, r.low + r.width);
+  llvm::sort(intervals);
+  uint64_t covered = range.low;
+  for (auto [low, high] : intervals) {
+    if (low > covered)
+      break;
+    covered = std::max(covered, high);
+  }
+  return covered >= range.low + range.width;
+}
+} // namespace
+
 std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     sim::SimFuncOp function, const analysis::HandleDataflowAnalysis &analysis,
-    bool interleaved) const {
+    bool interleaved, StringRef *failureReason) const {
+  auto reject =
+      [&](StringRef reason) -> std::optional<CombinationalFusionBody> {
+    if (failureReason)
+      *failureReason = reason;
+    return std::nullopt;
+  };
   bool kind =
       function && (function.getEntryKind() == sim::EntryKind::AlwaysComb ||
                    (interleaved &&
@@ -384,7 +415,72 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
       function.getHomeRegion() != sim::EventRegion::Active ||
       nonNativeOwners.contains(function.getSymNameAttr()) ||
       !isComputeBodyFusionEligible(function, analysis))
-    return std::nullopt;
+    return reject("owner or unsupported effects");
+  if (interleaved) {
+    auto &activation = activations[function];
+    if (!activation)
+      activation = std::make_unique<analysis::ActivationRegionAnalysis>(
+          function, analysis);
+    if (!activation->isValid())
+      return reject(activation->getFailureReason());
+    const auto &memory = activation->getMemory();
+    if (!memory.hasCompleteWrites() || memory.getMayWrites().empty())
+      return reject("incomplete writes");
+    Operation *suspend = activation->getSuspension();
+    SmallVector<Value> watched;
+    sim::EventRegionAttr region;
+    if (auto change = dyn_cast<sim::SimSuspendChangeOp>(suspend)) {
+      watched.push_back(change.getWatched());
+      region = change.getResumeRegionAttr();
+    } else {
+      auto any = cast<sim::SimSuspendAnyOp>(suspend);
+      llvm::append_range(watched, any.getWatched());
+      region = any.getResumeRegionAttr();
+    }
+    if (watched.empty() ||
+        (region && region.getValue() != sim::EventRegion::Active))
+      return reject("sensitivity region");
+    auto facts = analysis.derive(function);
+    ActivationRanges watches;
+    for (Value watch : watched) {
+      auto found = facts.find(watch);
+      auto span = sim::getProvenanceSpan(watch.getType());
+      if (found == facts.end() || !found->second.descriptor ||
+          found->second.resource != schedule::ComputeResourceKind::Storage ||
+          found->second.dynamic || !span || found->second.width != *span)
+        return reject("imprecise sensitivity");
+      auto &fact = found->second;
+      watches.push_back({*fact.descriptor, fact.low, fact.width});
+    }
+    for (const auto &read : memory.getLiveIns()) {
+      if (!activationRangeCovered(watches, read))
+        return reject("unwatched live-in");
+      if (llvm::any_of(memory.getMayWrites(), [&](const auto &write) {
+            return activationRangesOverlap(read, write);
+          }))
+        return reject("incoming output state");
+    }
+    for (const auto &write : memory.getMayWrites()) {
+      auto writers = storageWriters.find(write.root);
+      if (writers == storageWriters.end())
+        return reject("missing writer inventory");
+      for (auto [owner, effect] : writers->second) {
+        if (owner == function.getSymNameAttr())
+          continue;
+        if (effect.getDynamic() || !effect.getWidth() ||
+            effect.getLow() > UINT64_MAX - effect.getWidth() ||
+            activationRangesOverlap(
+                write, {write.root, effect.getLow(), effect.getWidth()}))
+          return reject("non-exclusive writer");
+      }
+    }
+    auto start =
+        dyn_cast<cf::BranchOp>(function.getBody().front().getTerminator());
+    if (!start)
+      return reject("activation entry");
+    return CombinationalFusionBody{
+        start.getDest(), suspend, {}, {}, activation.get()};
+  }
   auto &entry = function.getBody().front();
   auto start = dyn_cast<cf::BranchOp>(entry.getTerminator());
   if (!start || (!interleaved && !start.getDestOperands().empty()))
@@ -541,6 +637,77 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     return std::nullopt;
   result.blocks = std::move(ready);
   return result;
+}
+
+bool CombinationalFusionAnalysis::canInterleave(
+    ArrayRef<sim::SimFuncOp> functions, std::string *failureReason) const {
+  auto design = this->design;
+  auto reject = [&](const Twine &reason) {
+    if (failureReason)
+      *failureReason = reason.str();
+    return false;
+  };
+  if (unsupported)
+    return reject("unsupported observations");
+  DenseSet<StringAttr> owners;
+  ActivationRanges repeated;
+  for (auto function : functions) {
+    auto found = activations.find(function);
+    if (found == activations.end() || !found->second->isValid())
+      return reject("missing activation proof");
+    owners.insert(function.getSymNameAttr());
+    llvm::append_range(repeated,
+                       found->second->getMemory().getRepeatedWrites());
+  }
+  for (auto storage : design.getOps<sim::SimStorageDeclOp>())
+    if (storage->hasAttr(sim::metadata::coverageToggleObservable) &&
+        llvm::any_of(repeated, [&](const auto &r) {
+          return r.root == static_cast<uint64_t>(storage.getId());
+        }))
+      return reject(Twine("toggle coverage on storage ") +
+                    Twine(storage.getId()));
+  auto graph = design.getComputeGraphAttr();
+  for (Attribute raw : graph.getNodes()) {
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
+    if (!fragment)
+      continue;
+    for (auto effect :
+         fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
+      if (effect.getEffect() != schedule::ComputeEffectKind::Watch)
+        continue;
+      if (effect.getResource() != schedule::ComputeResourceKind::Storage) {
+        if (!repeated.empty() &&
+            effect.getResource() == schedule::ComputeResourceKind::Unknown)
+          return reject("unknown watched resource");
+        continue;
+      }
+      if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
+          !effect.getWidth() ||
+          effect.getLow() > UINT64_MAX - effect.getWidth())
+        return reject("unresolved watched storage");
+      ActivationRange watch{static_cast<uint64_t>(effect.getDescriptor()),
+                            effect.getLow(), effect.getWidth()};
+      if (owners.contains(fragment.getFunction().getAttr())) {
+        // The materializer subtracts the cohort's definite writes and builds
+        // exact reference views for the remaining external sensitivity. A
+        // mixed internal/external aggregate must not retain a self-watch.
+        continue;
+      } else if (llvm::any_of(repeated, [&](const auto &r) {
+                   return activationRangesOverlap(r, watch);
+                 })) {
+        // IEEE 1800-2023 4.5-4.7 permits a nonpreempted source-ordered
+        // activation. Its final values are idempotent, but repeated stores
+        // can still produce transitions on an unchanged-input execution.
+        // No outside wait may observe those extra transitions. Inside the
+        // cohort all consumers execute after their producers' complete
+        // regions and fully internal watches are removed.
+        return reject(Twine("outside watch in ") +
+                      fragment.getFunction().getValue() +
+                      " on repeated storage " + Twine(watch.root));
+      }
+    }
+  }
+  return true;
 }
 
 bool isComputeBodyFusionEligible(

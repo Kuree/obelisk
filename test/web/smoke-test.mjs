@@ -243,6 +243,15 @@ endmodule
     ['native-nba-batch-wide', 'NBA wide batch complete 5000'],
     ['native-nba-unread', 'unread NBA complete 5000 5000'],
     ['native-nba-region-slices', 'slice NBA PASS'],
+    ['native-structured-activation', [
+      'result 0x sample 0x',
+      'result 08 sample 08',
+      'result 0x sample 0x',
+      'result 0x sample 0x',
+      'result 00 sample 00',
+      'result a1 sample a1',
+      'result 31 sample 31',
+    ].join('\n')],
   ]) {
     const periodicSource = await readFile(
       new URL(`../Driver/${fixture}.sv`, import.meta.url), 'utf8',
@@ -287,7 +296,7 @@ endmodule
       }
     }
   }
-  console.log('wasm-periodic-ok (generic and eval O0/O3 delayed initial and private NBA batch)');
+  console.log('wasm-periodic-ok (generic and eval O0/O3 delayed initial, private NBA batch, and structured DAG)');
 } catch (error) {
   if (logs.length) console.error(logs.join('\n'));
   console.error(`web smoke test failed while ${phase}`);

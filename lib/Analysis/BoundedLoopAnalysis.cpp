@@ -1,5 +1,9 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "mlir/Analysis/CFGLoopInfo.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/SmallPtrSet.h"
 using namespace mlir;
@@ -464,6 +468,54 @@ SmallVector<BoundedLoop> analyzeBoundedLoops(Region &region) {
       continue;
     provenBackedges.insert(loop->latch.getOperation());
     loops.push_back(std::move(*loop));
+  }
+  return loops;
+}
+
+SmallVector<BoundedLoop> analyzeActivationBoundedLoops(Region &region) {
+  if (llvm::none_of(region, [](Block &block) {
+        return sim::isSuspensionOp(block.getTerminator());
+      }))
+    return analyzeBoundedLoops(region);
+  IRMapping mapping;
+  OwningOpRef<Operation *> copy(
+      region.getParentOp()->cloneWithoutRegions(mapping));
+  Region &activation = copy->getRegion(region.getRegionNumber());
+  region.cloneInto(&activation, mapping);
+  IRMapping originals;
+  for (auto [from, to] : mapping.getValueMap())
+    originals.map(to, from);
+  for (auto [from, to] : mapping.getBlockMap())
+    originals.map(to, from);
+  for (auto [from, to] : mapping.getOperationMap())
+    originals.map(to, from);
+  for (Block &block : activation) {
+    auto *term = block.getTerminator();
+    if (!sim::isSuspensionOp(term))
+      continue;
+    OpBuilder builder(term);
+    sim::SimReturnOp::create(builder, term->getLoc(), ValueRange{});
+    term->erase();
+  }
+  IRRewriter rewriter(region.getContext());
+  (void)eraseUnreachableBlocks(rewriter, activation);
+  auto loops = analyzeBoundedLoops(activation);
+  for (auto &loop : loops) {
+    loop.header = originals.lookup(loop.header);
+    loop.induction = cast<BlockArgument>(originals.lookup(loop.induction));
+    loop.condition =
+        cast<cf::CondBranchOp>(originals.lookup(loop.condition.getOperation()));
+    if (loop.entry)
+      loop.entry =
+          cast<cf::BranchOp>(originals.lookup(loop.entry.getOperation()));
+    loop.latch =
+        cast<cf::BranchOp>(originals.lookup(loop.latch.getOperation()));
+    loop.exit = originals.lookup(loop.exit);
+    loop.members.clear();
+    for (Block *&block : loop.blocks) {
+      block = originals.lookup(block);
+      loop.members.insert(block);
+    }
   }
   return loops;
 }

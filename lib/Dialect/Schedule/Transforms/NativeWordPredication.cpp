@@ -8,6 +8,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "obelisk/Analysis/NativeWordAnalysis.h"
+#include "obelisk/Analysis/SimulationControlFlowToSCF.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
@@ -55,61 +56,6 @@ struct CompareSelectedCase : OpRewritePattern<arith::CmpIOp> {
     rewriter.replaceOpWithNewOp<arith::SelectOp>(op, select.getCondition(), yes,
                                                  no);
     return success();
-  }
-};
-// Keep join dispatch in the same structured conditional form as source
-// branches. The generic lifter can introduce switches even for an all-cond_br
-// input CFG. Index switches would introduce target-sized selector arithmetic
-// into an otherwise one-bit lane computation.
-struct WordControlFlowToSCF : ControlFlowToSCFTransformation {
-  FailureOr<Operation *>
-  createStructuredBranchRegionOp(OpBuilder &builder, Operation *op,
-                                 TypeRange types,
-                                 MutableArrayRef<Region> regions) override {
-    auto dispatch = dyn_cast<cf::SwitchOp>(op);
-    if (!dispatch)
-      return ControlFlowToSCFTransformation::createStructuredBranchRegionOp(
-          builder, op, types, regions);
-    if (!dispatch.getCaseValues() || dispatch.getCaseValues()->empty()) {
-      auto execute = scf::ExecuteRegionOp::create(builder, op->getLoc(), types);
-      execute.getRegion().takeBody(regions[0]);
-      return execute.getOperation();
-    }
-    OpBuilder::InsertionGuard guard(builder);
-    SmallVector<scf::IfOp> branches;
-    for (auto [i, value] :
-         llvm::enumerate(dispatch.getCaseValues()->getValues<APInt>())) {
-      Value constant = arith::ConstantOp::create(
-          builder, op->getLoc(), dispatch.getFlag().getType(),
-          builder.getIntegerAttr(dispatch.getFlag().getType(), value));
-      Value matches =
-          arith::CmpIOp::create(builder, op->getLoc(), arith::CmpIPredicate::eq,
-                                dispatch.getFlag(), constant);
-      auto branch = scf::IfOp::create(builder, op->getLoc(), types, matches);
-      branch.getThenRegion().takeBody(regions[i + 1]);
-      branches.push_back(branch);
-      builder.createBlock(&branch.getElseRegion());
-    }
-    if (branches.empty())
-      return failure();
-    branches.back().getElseRegion().takeBody(regions[0]);
-    for (unsigned i = 0; i + 1 < branches.size(); ++i) {
-      builder.setInsertionPointToEnd(&branches[i].getElseRegion().front());
-      scf::YieldOp::create(builder, op->getLoc(), branches[i + 1].getResults());
-    }
-    return branches.front().getOperation();
-  }
-  Value getUndefValue(Location loc, OpBuilder &builder, Type type) override {
-    // These values only fill SSA slots on paths on which the original CFG
-    // never defined or observed them. Choose a defined representative before
-    // if-conversion, so speculative four-state operations cannot propagate
-    // LLVM poison out of an inactive arm.
-    if (auto integer = dyn_cast<IntegerType>(type))
-      return arith::ConstantOp::create(builder, loc, type,
-                                       builder.getIntegerAttr(type, 0));
-    if (sim::getPackedWidth(type))
-      return sim::SimAggregateDefaultOp::create(builder, loc, type);
-    return ControlFlowToSCFTransformation::getUndefValue(loc, builder, type);
   }
 };
 } // namespace
@@ -208,7 +154,7 @@ bool predicateNativeWordLoop(analysis::BoundedLoop loop) {
   builder.setInsertionPointToEnd(flat);
   cf::BranchOp::create(builder, loc, loop.header, execute.getResults());
 
-  WordControlFlowToSCF structure;
+  analysis::SimulationControlFlowToSCF structure;
   DominanceInfo dominance(function);
   if (failed(transformCFGToSCF(region, structure, dominance)))
     return false;

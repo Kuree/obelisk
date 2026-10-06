@@ -161,23 +161,35 @@ the original fallback semantics remain encoded under the same function,
 continuation, descriptor, hierarchy, and code-unit identities. Falling back is
 a tier transfer at a safe point, not execution of partially rewritten bytecode.
 
-The opt-in `schedule-plan-combinational-statements` design pass addresses a
+The O3 `schedule-plan-combinational-statements` design pass addresses a
 different source of repeated execution: a process can publish an address and
 consume the result returned by another process in the same activation. The
 process graph then has a cycle even when its individual statements form a DAG.
-`CombinationalDependencyAnalysis` solves transitive direct-call effects with
-MLIR dataflow and canonical reference ranges, then combines cross-process
-memory dependencies with each process's statement order. The planner records
-an interleaved fusion request; the materializer rechecks eligibility and the
-operation order against the current IR. This is not an unchecked execute-once
-attribute. Complete, exclusive, straight-line activations can become one
-ordered kernel with no internal self-wake subscriptions or feedback checks.
-Hierarchy boundaries do not restrict this proof. Source-order cycles, actual
-feedback, incomplete assignments and opaque effects retain their existing
-execution. Full VPI retains individual activation points as described in
-[VPI startup and backdoor access](vpi.md). This pass is not yet enabled by the
-driver: general CFG/loop scheduling, external entry points and performance
-validation remain necessary before broader use.
+`ActivationMemoryAnalysis` uses dense MLIR dataflow for source-ordered definite
+assignments and sparse handle facts for canonical reference ranges. Proven
+induction values partition the analysis; executable loops remain intact.
+`ActivationRegionAnalysis` compares normalized initial and resumed activations,
+checks termination, and uses upstream CFG-to-SCF conversion to represent loops
+and conditionals as scheduling nodes. Cross-process memory edges and each
+process's source order determine the resulting DAG. The whole-design writer
+inventory includes transitive direct-call writes with actual/formal mapping.
+
+The planner records an interleaved fusion request on the existing typed fusion
+plan; the materializer rechecks eligibility and ordering against the current
+IR. Complete, exclusive, finite activations become one ordered kernel. Exact
+range subtraction removes internally produced sensitivity while preserving
+external slices of packed and unpacked aggregates. Repeated writes remain in
+source order: their intermediate transitions require either including every
+eligible observer in the same DAG or rejecting the fusion. Edge observers,
+toggle coverage and opaque observers retain their existing behavior.
+
+Hierarchy boundaries and the legacy 64-bit dirty-mask limit do not restrict a
+proved DAG. Source-order cycles, actual feedback, incomplete assignments and
+unsupported effects retain their existing execution. Full VPI retains
+individual activation points as described in
+[VPI startup and backdoor access](vpi.md). This optimization currently requires
+one worker. It removes internal reactivation within each admitted kernel;
+upstream propagation can still activate separate kernels more than once.
 
 The scheduling proof follows IEEE 1800-2023 4.5 (activation and region
 boundaries), 4.6 (procedural source order and ordered NBAs), and 4.7 (permitted

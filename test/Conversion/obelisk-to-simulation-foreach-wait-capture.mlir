@@ -28,9 +28,17 @@ module {
 }
 
 // CHECK-COUNT-1: [[ITER:%.*]] = simulation.ref.alloc {{.*}} : i32 -> !simulation.ref<i32>
-// CHECK: simulation.ref.store {{.*}} to [[ITER]] : i32, !simulation.ref<i32>
+// The same iterator allocation is restored through the loop header and body;
+// a resumed iteration cannot use the initial activation's scratch register.
+// CHECK: cf.br ^[[HEADER:bb[0-9]+]](%{{.*}}, [[ITER]], %{{.*}} : i64, !simulation.ref<i32>, i64)
+// CHECK: ^[[HEADER]](%{{.*}}: i64, [[HEADER_ITER:%[^, ]+]]: !simulation.ref<i32>,
+// CHECK: cf.cond_br %{{.*}}, ^[[BODY:bb[0-9]+]]([[HEADER_ITER]],
+// CHECK: ^[[BODY]]([[BODY_ITER:%[^, ]+]]: !simulation.ref<i32>,
+// CHECK: simulation.ref.store {{.*}} to [[BODY_ITER]] : i32, !simulation.ref<i32>
+// CHECK: cf.cond_br %{{.*}}, ^{{bb[0-9]+}}({{.*}}), ^[[WAIT:bb[0-9]+]]([[BODY_ITER]],
+// CHECK: ^[[WAIT]]([[WAIT_ITER:%[^, ]+]]: !simulation.ref<i32>,
 // CHECK: simulation.observer.bind @observer_
-// CHECK-SAME: [[ITER]]
+// CHECK-SAME: [[WAIT_ITER]]
 // CHECK-SAME: captures 2 : !simulation.observer<i1>
 // CHECK: simulation.func private @observer_
 // CHECK-SAME: !simulation.ref<i32>

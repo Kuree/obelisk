@@ -6,6 +6,7 @@
 namespace obelisk {
 
 void registerAccessFootprintAnalysisTestPass();
+void registerActivationMemoryAnalysisTestPass();
 void registerClockInferenceAnalysisTestPass();
 void registerCombinationalDependencyAnalysisTestPass();
 void registerManagedClassLayoutAnalysisTestPass();
