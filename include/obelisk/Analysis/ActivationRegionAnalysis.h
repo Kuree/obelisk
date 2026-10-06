@@ -52,7 +52,10 @@ struct ActivationRegionStep {
 /// Topologically order structured regions while preserving each activation's
 /// source order. Cross-activation edges use canonical memory ranges. This is
 /// an ordering query, not an activation or observer certificate.
+/// On failure, optionally return one directed cycle, without repeating its
+/// first step. The steps refer to the input analyses' structured views.
 std::optional<llvm::SmallVector<ActivationRegionStep>> getActivationRegionOrder(
-    llvm::ArrayRef<const ActivationRegionAnalysis *> activations);
+    llvm::ArrayRef<const ActivationRegionAnalysis *> activations,
+    llvm::SmallVectorImpl<ActivationRegionStep> *cycle = nullptr);
 } // namespace obelisk::analysis
 #endif

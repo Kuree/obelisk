@@ -174,13 +174,15 @@ public:
       }
       std::string observerReason;
       StringRef reason;
+      SmallVector<analysis::ActivationRegionStep> cycle;
       if (maxMembers && component.size() > maxMembers)
         reason = "member budget";
       else if (budget && cost > budget)
         reason = "operation budget";
       else if (!eligibility.canInterleave(members, &observerReason))
         reason = observerReason;
-      else if (!analysis::getActivationRegionOrder(memberActivations))
+      else if (!analysis::getActivationRegionOrder(memberActivations,
+                                                   explain ? &cycle : nullptr))
         reason = "structured dependence cycle";
       if (!reason.empty()) {
         if (explain) {
@@ -189,6 +191,38 @@ public:
                      << "; operations=" << cost << "; members=";
           for (auto member : members)
             diagnostic << ' ' << member.getSymName();
+          for (unsigned i = 0; i < cycle.size(); ++i) {
+            const auto &from = cycle[i];
+            const auto &to = cycle[(i + 1) % cycle.size()];
+            if (from.activation == to.activation)
+              continue;
+            auto describe = [&](const analysis::ActivationRegionStep &step) {
+              auto owner = llvm::find(memberActivations, step.activation) -
+                           memberActivations.begin();
+              auto nodes = step.activation->getNodes();
+              auto node = llvm::find_if(nodes, [&](const auto &node) {
+                return node.operation == step.operation;
+              });
+              diagnostic << '@' << members[owner].getSymName() << ':'
+                         << (node - nodes.begin()) << " ("
+                         << step.operation->getName() << ')';
+              return node;
+            };
+            diagnostic << "; cycle edge: ";
+            auto producer = describe(from);
+            diagnostic << " -> ";
+            auto consumer = describe(to);
+            diagnostic << " via";
+            for (const auto &write : producer->writes)
+              for (const auto &read : consumer->reads) {
+                uint64_t low = std::max(write.low, read.low);
+                uint64_t end =
+                    std::min(write.low + write.width, read.low + read.width);
+                if (write.root == read.root && low < end)
+                  diagnostic << " s" << write.root << '[' << low << ',' << end
+                             << ')';
+              }
+          }
         }
         continue;
       }

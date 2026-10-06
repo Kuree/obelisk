@@ -173,6 +173,11 @@ checks termination, and uses upstream CFG-to-SCF conversion to represent loops
 and conditionals as scheduling nodes. Cross-process memory edges and each
 process's source order determine the resulting DAG. The whole-design writer
 inventory includes transitive direct-call writes with actual/formal mapping.
+The planner's `explain` option reports a directed cycle witness for rejected
+statement ordering, including operation positions and exact overlapping storage
+ranges. Source-order paths connect the reported cross-process edges. Such a
+witness can expose a coarse loop scheduling boundary; it does not by itself
+prove electrical combinational feedback.
 
 The planner records an interleaved fusion request on the existing typed fusion
 plan; the materializer rechecks eligibility and ordering against the current

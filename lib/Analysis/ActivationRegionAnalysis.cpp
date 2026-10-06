@@ -325,8 +325,11 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
   reason = {};
 }
 
-std::optional<SmallVector<ActivationRegionStep>> getActivationRegionOrder(
-    ArrayRef<const ActivationRegionAnalysis *> activations) {
+std::optional<SmallVector<ActivationRegionStep>>
+getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
+                         SmallVectorImpl<ActivationRegionStep> *cycle) {
+  if (cycle)
+    cycle->clear();
   using Range = ActivationMemoryAnalysis::Range;
   SmallVector<ActivationRegionStep> steps;
   SmallVector<std::pair<unsigned, unsigned>> edges;
@@ -376,8 +379,44 @@ std::optional<SmallVector<ActivationRegionStep>> getActivationRegionOrder(
       if (!--incoming[next])
         ready.push(next);
   }
-  if (result.size() != steps.size())
+  if (result.size() != steps.size()) {
+    if (cycle) {
+      // An iterative depth-first walk gives a deterministic directed witness,
+      // including the source-order paths between cross-activation accesses.
+      // Do this only when a caller requests cycle information.
+      struct Frame {
+        unsigned node;
+        unsigned successor = 0;
+      };
+      SmallVector<uint8_t> color(steps.size(), 0);
+      SmallVector<Frame> path;
+      for (unsigned root = 0; root < steps.size() && cycle->empty(); ++root) {
+        if (!incoming[root] || color[root])
+          continue;
+        color[root] = 1;
+        path.push_back({root});
+        while (!path.empty() && cycle->empty()) {
+          auto &frame = path.back();
+          if (frame.successor == successors[frame.node].size()) {
+            color[frame.node] = 2;
+            path.pop_back();
+            continue;
+          }
+          unsigned next = successors[frame.node][frame.successor++];
+          if (color[next] == 1) {
+            auto start = llvm::find_if(
+                path, [&](const Frame &entry) { return entry.node == next; });
+            for (auto it = start; it != path.end(); ++it)
+              cycle->push_back(steps[it->node]);
+          } else if (!color[next]) {
+            color[next] = 1;
+            path.push_back({next});
+          }
+        }
+      }
+    }
     return std::nullopt;
+  }
   return result;
 }
 } // namespace obelisk::analysis
