@@ -12,6 +12,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "obelisk/Analysis/ActivationControlFlow.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SimulationControlFlowToSCF.h"
@@ -72,7 +73,8 @@ bool finiteActivation(sim::SimFuncOp function) {
 
 OwningOpRef<sim::SimFuncOp>
 cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
-                IRMapping &mapping, ActivationRegionAnalysis::Trace trace) {
+                IRMapping &mapping, ActivationRegionAnalysis::Trace trace,
+                ActivationRegionAnalysis::ControlFlowPreparation control) {
   auto copy = cast<sim::SimFuncOp>(source->clone(mapping));
   OwningOpRef<sim::SimFuncOp> owner(copy);
   DenseSet<Operation *> initialEffects;
@@ -165,6 +167,15 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
   }
   if (failed(canonicalizeControl(copy)))
     return {};
+  // Normalize lowered break/continue dispatch only when it obstructs the
+  // ordinary induction proof. Already admitted activations keep their CFG.
+  if (control ==
+          ActivationRegionAnalysis::ControlFlowPreparation::ThreadDispatch &&
+      !finiteActivation(copy))
+    while (threadActivationControlFlow(copy.getBody())) {
+      if (failed(canonicalizeControl(copy)))
+        return {};
+    }
   if (trace)
     trace(resume ? ActivationRegionAnalysis::TracePhase::Resume
                  : ActivationRegionAnalysis::TracePhase::Initial,
@@ -244,7 +255,8 @@ stringifyActivationFailure(ActivationRegionAnalysis::FailureReason reason) {
 
 ActivationRegionAnalysis::ActivationRegionAnalysis(
     sim::SimFuncOp function, const HandleDataflowAnalysis &handles, Trace trace,
-    ActivationMemoryAnalysis::DependencyMode mode) {
+    ActivationMemoryAnalysis::DependencyMode mode,
+    ControlFlowPreparation control) {
   if (function.isExternal() || !function.getFunctionType().getResults().empty())
     return;
   unsigned waits = 0;
@@ -265,9 +277,10 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
         }))
       return;
   IRMapping initialMap, resumeMap;
-  auto initial =
-      cloneActivation(function, suspension, false, initialMap, trace);
-  auto resumed = cloneActivation(function, suspension, true, resumeMap, trace);
+  auto initial = cloneActivation(function, suspension, false, initialMap, trace,
+                                 control);
+  auto resumed = cloneActivation(function, suspension, true, resumeMap, trace,
+                                 control);
   if (!initial || !resumed ||
       !equivalentActivations(initial.get(), resumed.get())) {
     reason = FailureReason::InitialResumeEquivalence;

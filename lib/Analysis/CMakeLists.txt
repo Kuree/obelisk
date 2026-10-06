@@ -1,4 +1,5 @@
 add_mlir_library(ObeliskSimulationAnalysis
+  ActivationControlFlow.cpp
   ActivationMemoryAnalysis.cpp
   ActivationRegionAnalysis.cpp
   AccessFootprintAnalysis.cpp

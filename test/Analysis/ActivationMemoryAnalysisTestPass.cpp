@@ -3,7 +3,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "obelisk/Analysis/ActivationControlFlow.h"
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
@@ -11,6 +14,45 @@
 
 using namespace mlir;
 namespace {
+class ActivationControlFlowTestPass
+    : public PassWrapper<ActivationControlFlowTestPass,
+                         OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ActivationControlFlowTestPass)
+  StringRef getArgument() const final {
+    return "test-obelisk-activation-control-flow";
+  }
+  StringRef getDescription() const final {
+    return "print edge-threaded disposable activation CFGs";
+  }
+  void runOnOperation() final {
+    getOperation().walk([&](func::FuncOp function) {
+      if (function.isExternal())
+        return;
+      OwningOpRef<func::FuncOp> copy(cast<func::FuncOp>(function->clone()));
+      bool changed = false;
+      while (obelisk::analysis::threadActivationControlFlow(copy->getBody())) {
+        changed = true;
+        RewritePatternSet patterns(function.getContext());
+        for (RegisteredOperationName name :
+             function.getContext()->getRegisteredOperations())
+          if (name.getDialectNamespace() == "arith" ||
+              name.getDialectNamespace() == "cf")
+            name.getCanonicalizationPatterns(patterns, function.getContext());
+        if (failed(applyPatternsGreedily(*copy, std::move(patterns))) ||
+            failed(verify(*copy))) {
+          signalPassFailure();
+          return;
+        }
+      }
+      llvm::errs() << "control @" << function.getSymName()
+                   << " changed=" << changed << '\n';
+      copy->print(llvm::errs());
+      llvm::errs() << '\n';
+    });
+    markAllAnalysesPreserved();
+  }
+};
 class RegionValueDependencyTestPass
     : public PassWrapper<RegionValueDependencyTestPass,
                          OperationPass<ModuleOp>> {
@@ -138,6 +180,7 @@ public:
     return "print structured activation regions and their memory effects";
   }
   Option<bool> dump{*this, "dump", llvm::cl::init(false)};
+  Option<bool> threadControl{*this, "thread-control", llvm::cl::init(false)};
   Option<bool> publications{*this, "publications", llvm::cl::init(false)};
   Option<bool> regionOrder{*this, "order", llvm::cl::init(false)};
   Option<bool> reachingValues{*this, "reaching-values", llvm::cl::init(false)};
@@ -173,7 +216,11 @@ public:
                 reachingValues ? obelisk::analysis::ActivationMemoryAnalysis::
                                      DependencyMode::ReachingValues
                                : obelisk::analysis::ActivationMemoryAnalysis::
-                                     DependencyMode::Accesses);
+                                     DependencyMode::Accesses,
+                threadControl ? obelisk::analysis::ActivationRegionAnalysis::
+                                    ControlFlowPreparation::ThreadDispatch
+                              : obelisk::analysis::ActivationRegionAnalysis::
+                                    ControlFlowPreparation::Canonical);
         auto &analysis = *proof;
         llvm::errs() << "regions @" << function.getSymName()
                      << " valid=" << analysis.isValid();
@@ -258,6 +305,7 @@ public:
 };
 } // namespace
 void obelisk::registerActivationMemoryAnalysisTestPass() {
+  PassRegistration<ActivationControlFlowTestPass>();
   PassRegistration<RegionValueDependencyTestPass>();
   PassRegistration<ActivationMemoryTestPass>();
   PassRegistration<ActivationRegionTestPass>();

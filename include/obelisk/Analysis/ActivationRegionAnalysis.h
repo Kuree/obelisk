@@ -31,6 +31,9 @@ public:
     UnmappedStructuredMemoryAccess,
   };
   enum class TracePhase { Initial, Resume };
+  /// Clients materializing the structured view may prepare dispatch edges.
+  /// Summary-only clients can retain the existing canonical CFG policy.
+  enum class ControlFlowPreparation { Canonical, ThreadDispatch };
   using Ranges = ActivationMemoryAnalysis::Ranges;
   struct Node {
     mlir::Operation *operation;
@@ -42,7 +45,8 @@ public:
       sim::SimFuncOp function, const HandleDataflowAnalysis &handles,
       Trace trace = {},
       ActivationMemoryAnalysis::DependencyMode mode =
-          ActivationMemoryAnalysis::DependencyMode::Accesses);
+          ActivationMemoryAnalysis::DependencyMode::Accesses,
+      ControlFlowPreparation control = ControlFlowPreparation::Canonical);
   bool isValid() const { return reason == FailureReason::None; }
   FailureReason getFailureReason() const { return reason; }
   llvm::ArrayRef<Node> getNodes() const { return nodes; }
