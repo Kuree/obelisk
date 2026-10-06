@@ -38,9 +38,11 @@ public:
   };
   /// Optional diagnostic views; the callback must not retain their IR.
   using Trace = llvm::function_ref<void(TracePhase, mlir::Operation *)>;
-  ActivationRegionAnalysis(sim::SimFuncOp function,
-                           const HandleDataflowAnalysis &handles,
-                           Trace trace = {});
+  ActivationRegionAnalysis(
+      sim::SimFuncOp function, const HandleDataflowAnalysis &handles,
+      Trace trace = {},
+      ActivationMemoryAnalysis::DependencyMode mode =
+          ActivationMemoryAnalysis::DependencyMode::Accesses);
   bool isValid() const { return reason == FailureReason::None; }
   FailureReason getFailureReason() const { return reason; }
   llvm::ArrayRef<Node> getNodes() const { return nodes; }
@@ -66,9 +68,10 @@ struct ActivationRegionStep {
 
 /// Data inputs of an individual publication, following SSA result/yield lanes.
 /// Unlike a scheduling node, this does not union unrelated computations in the
-/// same structured loop. Memory ranges still conservatively describe physical
-/// reads: reaching definitions and publication/observer order are separate
-/// obligations before this graph can drive executable scheduling.
+/// same structured loop. In ReachingValues mode, reads are incoming value
+/// dependencies of each output lane, following definite local stores. Accesses
+/// mode conservatively uses the physical read ranges of SSA load inputs.
+/// Publication/observer ordering remains a separate scheduling obligation.
 struct ActivationPublication {
   mlir::Operation *operation;
   ActivationMemoryAnalysis::Ranges reads, writes;

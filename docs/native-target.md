@@ -247,12 +247,25 @@ from crossed yields and retains predicate/bound dependencies. The resulting
 publication graph recognizes this example as acyclic. This analysis is read-only;
 the scheduling proof still conservatively retains those actors. The MLIR
 request/response loop regression checks settling, X/Z, overflow and independent
-NBA sampling in eval, generic native and bytecode execution. Admitting this case requires
-dependencies between individual outputs and loop iterations, together with
-source-order and observation proofs for any loop distribution or fusion. Physical
-memory dependencies remain conservative until reaching definitions and overwritten
-aggregate lanes are resolved. Analysis failures and planning decisions use enums;
-text is produced only for diagnostics.
+NBA sampling in eval, generic native and bytecode execution. Executable loop
+distribution or fusion still needs source-order and observation proofs.
+
+The optional reaching-value query separates dense memory definitions from sparse
+SSA lane dependencies. Memory analysis supplies definition-to-load links, using
+strong updates for exact ranges and weak updates for uncertain selectors. Sparse
+lattices follow those links, CFG arguments and aggregate projections. Bounded
+induction contexts preserve cross-iteration correlations without cloning executable
+loops. MLIR liveness connects values across contexts; post-dominance supplies
+control dependencies, including implicit predicate uses. Reads of old SSA snapshots
+remain old reads after later stores. Overwritten aggregate lanes lose only their
+own incoming dependence, and invalid array indices retain the dialect's semantics
+(LRM 7.4.5 and 11.5.1). A monotone widening bounds lane-correlation growth.
+
+Publication diagnostics use the refined facts. Physical accesses, source ordering,
+sensitivity, VPI and NBA boundaries remain separate obligations. A compile-time mux
+configuration can prove a DAG; an unknown runtime configuration retains possible
+feedback. Analysis failures and planning decisions use enums; text is produced
+only for diagnostics.
 Whole-activation input unions and whole-actor graph contraction alone do not
 establish that proof.
 

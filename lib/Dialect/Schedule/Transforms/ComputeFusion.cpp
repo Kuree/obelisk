@@ -317,8 +317,9 @@ private:
 
 CombinationalFusionAnalysis::CombinationalFusionAnalysis(
     sim::SimDesignOp design,
-    const analysis::HandleDataflowAnalysis &provenanceAnalysis)
-    : design(design) {
+    const analysis::HandleDataflowAnalysis &provenanceAnalysis,
+    analysis::ActivationMemoryAnalysis::DependencyMode mode)
+    : design(design), dependencyMode(mode) {
   auto graph = design.getComputeGraphAttr();
   // Full foreign mutation needs a range-scoped invalidation route for this
   // idempotent kernel. Existing externally driven evaluators retain their
@@ -465,7 +466,8 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     auto &activation = activations[function];
     if (!activation)
       activation = std::make_unique<analysis::ActivationRegionAnalysis>(
-          function, analysis);
+          function, analysis, analysis::ActivationRegionAnalysis::Trace{},
+          dependencyMode);
     if (!activation->isValid())
       return reject({Reason::Activation, activation->getFailureReason()});
     const auto &memory = activation->getMemory();

@@ -3,6 +3,7 @@
 // RUN: diff %t %t.quiet
 // RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
 // RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b,c,d publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
+// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b,c,d publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
 // A process SCC can contain both schedulable statement paths and actual
 // feedback. Report a directed witness without weakening the acyclicity guard.
 // The source-order paths between these two cross-owner edges close the cycle.

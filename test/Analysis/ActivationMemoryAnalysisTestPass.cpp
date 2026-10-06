@@ -72,12 +72,17 @@ public:
   }
   Option<unsigned> maximumPartitions{*this, "maximum-partitions",
                                      llvm::cl::init(65536)};
+  Option<bool> values{*this, "values", llvm::cl::init(false)};
   void runOnOperation() final {
     getOperation().walk([&](obelisk::sim::SimDesignOp design) {
       obelisk::analysis::HandleDataflowAnalysis handles(design);
       for (auto function : design.getBody().getOps<obelisk::sim::SimFuncOp>()) {
-        obelisk::analysis::ActivationMemoryAnalysis memory(function, handles,
-                                                           maximumPartitions);
+        obelisk::analysis::ActivationMemoryAnalysis memory(
+            function, handles, maximumPartitions,
+            values ? obelisk::analysis::ActivationMemoryAnalysis::
+                         DependencyMode::ReachingValues
+                   : obelisk::analysis::ActivationMemoryAnalysis::
+                         DependencyMode::Accesses);
         llvm::errs() << "activation @" << function.getSymName()
                      << " valid=" << memory.isValid()
                      << " complete=" << memory.hasCompleteWrites() << '\n';
@@ -92,6 +97,24 @@ public:
         print("must-write", memory.getMustWrites());
         print("may-write", memory.getMayWrites());
         print("repeated", memory.getRepeatedWrites());
+        if (values) {
+          llvm::errs() << "  values valid=" << memory.hasValueDependencies()
+                       << '\n';
+          print("value-input", memory.getValueInputs());
+          function.walk([&](obelisk::sim::SimRefStoreOp store) {
+            auto found = memory.getPublications().find(store);
+            if (found != memory.getPublications().end())
+              for (const auto &lane : found->second) {
+                llvm::errs() << "  output s" << lane.output.root << '['
+                             << lane.output.low << ','
+                             << lane.output.low + lane.output.width << ')';
+                for (auto input : lane.inputs)
+                  llvm::errs() << " s" << input.root << '[' << input.low << ','
+                               << input.low + input.width << ')';
+                llvm::errs() << '\n';
+              }
+          });
+        }
       }
     });
     markAllAnalysesPreserved();
@@ -116,6 +139,7 @@ public:
   }
   Option<bool> dump{*this, "dump", llvm::cl::init(false)};
   Option<bool> publications{*this, "publications", llvm::cl::init(false)};
+  Option<bool> reachingValues{*this, "reaching-values", llvm::cl::init(false)};
   ListOption<std::string> functions{*this, "functions",
                                     llvm::cl::CommaSeparated};
   void runOnOperation() final {
@@ -144,7 +168,11 @@ public:
             };
         auto proof =
             std::make_unique<obelisk::analysis::ActivationRegionAnalysis>(
-                function, handles, trace);
+                function, handles, trace,
+                reachingValues ? obelisk::analysis::ActivationMemoryAnalysis::
+                                     DependencyMode::ReachingValues
+                               : obelisk::analysis::ActivationMemoryAnalysis::
+                                     DependencyMode::Accesses);
         auto &analysis = *proof;
         llvm::errs() << "regions @" << function.getSymName()
                      << " valid=" << analysis.isValid();

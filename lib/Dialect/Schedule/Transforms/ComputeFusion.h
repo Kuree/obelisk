@@ -57,7 +57,9 @@ class CombinationalFusionAnalysis {
 public:
   CombinationalFusionAnalysis(
       sim::SimDesignOp design,
-      const analysis::HandleDataflowAnalysis &provenance);
+      const analysis::HandleDataflowAnalysis &provenance,
+      analysis::ActivationMemoryAnalysis::DependencyMode mode =
+          analysis::ActivationMemoryAnalysis::DependencyMode::Accesses);
   std::optional<CombinationalFusionBody>
   analyze(sim::SimFuncOp function,
           const analysis::HandleDataflowAnalysis &provenance,
@@ -71,6 +73,7 @@ public:
 private:
   bool unsupported = false;
   sim::SimDesignOp design;
+  analysis::ActivationMemoryAnalysis::DependencyMode dependencyMode;
   mutable llvm::DenseMap<mlir::Operation *,
                          std::unique_ptr<analysis::ActivationRegionAnalysis>>
       activations;

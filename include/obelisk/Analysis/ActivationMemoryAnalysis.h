@@ -18,6 +18,7 @@ namespace obelisk::analysis {
 /// separate whole-program observation/activation proof.
 class ActivationMemoryAnalysis {
 public:
+  enum class DependencyMode { Accesses, ReachingValues };
   struct Range {
     uint64_t root, low, width;
     bool operator==(const Range &other) const {
@@ -25,13 +26,29 @@ public:
     }
   };
   using Ranges = llvm::SmallVector<Range>;
+  struct Publication {
+    Range output;
+    Ranges inputs;
+  };
   ActivationMemoryAnalysis() = default;
   ActivationMemoryAnalysis(sim::SimFuncOp function,
                            const HandleDataflowAnalysis &handles,
-                           unsigned maximumPartitions = 65536);
+                           unsigned maximumPartitions = 65536,
+                           DependencyMode mode = DependencyMode::Accesses);
   bool isValid() const { return valid; }
   /// Reads whose values may come from before this activation.
   llvm::ArrayRef<Range> getLiveIns() const { return liveIns; }
+  /// Incoming bits influencing publications, control decisions or returns.
+  /// Available only in ReachingValues mode, on a closed activation CFG.
+  /// Unlike physical live-ins, these follow reaching stores and SSA lanes.
+  llvm::ArrayRef<Range> getValueInputs() const { return valueInputs; }
+  bool hasValueDependencies() const { return valid && valueDependencies; }
+  /// Per-access, per-output-lane dependence. These facts do not authorize
+  /// reordering effects, removing sensitivity, or hiding intermediate writes.
+  const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<Publication>> &
+  getPublications() const {
+    return publications;
+  }
   llvm::ArrayRef<Range> getMayWrites() const { return mayWrites; }
   /// Ranges definitely assigned on every terminating activation path.
   llvm::ArrayRef<Range> getMustWrites() const { return mustWrites; }
@@ -48,9 +65,12 @@ public:
 
 private:
   bool valid = false;
+  bool valueDependencies = false;
   unsigned partitions = 0;
-  Ranges liveIns, mayWrites, mustWrites, repeatedWrites;
+  Ranges liveIns, valueInputs, mayWrites, mustWrites, repeatedWrites;
   llvm::DenseMap<mlir::Operation *, Ranges> reads, writes;
+  llvm::DenseMap<mlir::Operation *, llvm::SmallVector<Publication>>
+      publications;
 };
 } // namespace obelisk::analysis
 #endif

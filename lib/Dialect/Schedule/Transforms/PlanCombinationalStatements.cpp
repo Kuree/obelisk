@@ -70,7 +70,11 @@ public:
     if (schedule::has<schedule::metadata::staticBodyFusion>(design))
       return;
     analysis::HandleDataflowAnalysis handles(design);
-    CombinationalFusionAnalysis eligibility(design, handles);
+    CombinationalFusionAnalysis eligibility(
+        design, handles,
+        explain
+            ? analysis::ActivationMemoryAnalysis::DependencyMode::ReachingValues
+            : analysis::ActivationMemoryAnalysis::DependencyMode::Accesses);
     SymbolTable symbols(design);
     SmallVector<sim::SimFuncOp> candidates;
     SmallVector<int64_t> fragments;

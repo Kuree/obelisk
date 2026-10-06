@@ -241,8 +241,8 @@ stringifyActivationFailure(ActivationRegionAnalysis::FailureReason reason) {
 }
 
 ActivationRegionAnalysis::ActivationRegionAnalysis(
-    sim::SimFuncOp function, const HandleDataflowAnalysis &handles,
-    Trace trace) {
+    sim::SimFuncOp function, const HandleDataflowAnalysis &handles, Trace trace,
+    ActivationMemoryAnalysis::DependencyMode mode) {
   if (function.isExternal() || !function.getFunctionType().getResults().empty())
     return;
   unsigned waits = 0;
@@ -278,7 +278,7 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
   // Canonicalization can merge CFG blocks and change a reference phi's range.
   // Recompute memory facts on this revision; original access-site facts must
   // never be projected through a rewrite that may have merged accesses.
-  memory = ActivationMemoryAnalysis(initial.get(), handles);
+  memory = ActivationMemoryAnalysis(initial.get(), handles, 65536, mode);
   if (!memory.isValid()) {
     reason = FailureReason::MemoryEffects;
     return;
@@ -427,6 +427,17 @@ getActivationPublications(const ActivationRegionAnalysis &activation) {
   if (!activation.isValid())
     return std::nullopt;
   auto function = activation.getStructuredFunction();
+  const auto &memory = activation.getMemory();
+  if (memory.hasValueDependencies()) {
+    SmallVector<ActivationPublication> publications;
+    function.walk([&](sim::SimRefStoreOp store) {
+      auto found = memory.getPublications().find(store);
+      if (found != memory.getPublications().end())
+        for (const auto &lane : found->second)
+          publications.push_back({store, lane.inputs, {lane.output}});
+    });
+    return publications;
+  }
   SmallVector<Value> inputs;
   function.walk(
       [&](sim::SimRefLoadOp load) { inputs.push_back(load.getResult()); });
@@ -434,7 +445,6 @@ getActivationPublications(const ActivationRegionAnalysis &activation) {
   if (!values.isValid())
     return std::nullopt;
   SmallVector<ActivationPublication> publications;
-  const auto &memory = activation.getMemory();
   function.walk([&](sim::SimRefStoreOp store) {
     auto writes = memory.getWrites().find(store);
     // Accesses absent from the validated memory inventory are unreachable for
