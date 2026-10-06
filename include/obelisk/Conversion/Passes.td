@@ -404,7 +404,7 @@ def PrepareNativeProcessFramesPass : Pass<"prepare-native-process-frames", "mlir
     "obelisk::runtime::ObeliskRuntimeDialect",
     "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
     "mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect",
-    "mlir::math::MathDialect", "mlir::scf::SCFDialect"
+    "mlir::math::MathDialect", "mlir::scf::SCFDialect", "mlir::ub::UBDialect"
   ];
 }
 def PrepareNativeManagedRootsPass : Pass<"prepare-native-managed-roots", "mlir::ModuleOp"> {

@@ -135,6 +135,7 @@ struct NativePipelineAnalysis {
   llvm::SmallVector<DeferredDirectFragmentWrapper> deferredDirectWrappers;
   llvm::DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> aotFusionGroups;
   NativeEvalOwnershipPlan evalOwnership;
+  NativeActivationInputs activationInputs;
   llvm::SmallVector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>>
       rankedAOTNodes;
   llvm::SmallVector<obelisk_rt_native_schedule_node> executableNodes;

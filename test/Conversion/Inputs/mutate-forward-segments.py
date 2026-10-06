@@ -42,14 +42,14 @@ if mode == 'external-split':
     print(text)
     sys.exit(0)
 text = '\n'.join(line.strip() for line in text[text.index('!ref ='):].splitlines())
-if mode in ('nba', 'feedback', 'skip'):
+if mode in ('nba', 'feedback', 'boundary-diamond', 'skip'):
     start = text.index('simulation.func @step3(')
     end = text.index('simulation.func @step4(', start)
     body = text[start:end]
     store = 'simulation.ref.store %next to %output : i8, !vref'
     if mode == 'nba':
         body = body.replace(store, 'simulation.nba.enqueue %next to %output : (i8, !vref) -> ()')
-    elif mode == 'feedback':
+    elif mode in ('feedback', 'boundary-diamond'):
         # An actual unchanged store terminates, but the static write-back
         # requires convergence handling; values do not prove acyclicity.
         body = body.replace(store, store + '\nsimulation.ref.store %v to %input : i8, !vref')
@@ -81,6 +81,24 @@ simulation.ref.store %newcount to %count : i8, !vref
         start = text.index('simulation.func @step3(')
         end = text.index('simulation.func @step4(', start)
     text = text[:start] + body + text[end:]
+    if mode == 'boundary-diamond':
+        # A direct producer->consumer edge must not let a helper sweep jump
+        # over the excluded producer in the other arm of this diamond.
+        text = text.replace('@step4(%ctx, %s3, %s4) : !simulation.context, !vref, !vref',
+                            '@step4(%ctx, %s3, %s4, %s2) : !simulation.context, !vref, !vref, !vref')
+        start = text.index('simulation.func @step4(')
+        end = text.index('simulation.func @step5(', start)
+        body = text[start:end].replace(
+            'simulation.descriptor_id = 4 : i64}) attributes',
+            'simulation.descriptor_id = 4 : i64}, %shortcut: !vref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes')
+        body = body.replace('%next = arith.addi %v, %one : i8',
+                            '%other = simulation.ref.load %shortcut : !vref -> i8\n'
+                            '%both = arith.addi %v, %other : i8\n'
+                            '%next = arith.addi %both, %one : i8')
+        body = body.replace(
+            'simulation.suspend.change %input to ^body {site = #schedule.continuation<id = 5>} : !vref',
+            'simulation.suspend.any %input, %shortcut edges [0, 0] to ^body {site = #schedule.continuation<id = 5>} : !vref, !vref')
+        text = text[:start] + body + text[end:]
 elif mode == 'initial-edge':
     start = text.index('simulation.func @step1(')
     end = text.index('simulation.func @step2(', start)

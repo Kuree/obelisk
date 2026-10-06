@@ -4,6 +4,7 @@
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 
 #include "SimulationNBALowering.h"
+#include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
@@ -140,7 +141,8 @@ struct NativeEvalClockKernel {
   auto key() const { return std::tuple{staticState, lowBit, bitWidth, edge}; }
 };
 
-/// A pure, zero-time activation and its possible immediate dependencies.
+/// An eval owner and its possible immediate dependencies. Groupable owners
+/// have pure, zero-time bodies; boundaries retain their original executors.
 /// Selector-dependent edges remain present. Backward publications survive a
 /// ranked sweep and request another group activation; a potential SCC does
 /// not by itself downgrade all of its computations.
@@ -156,7 +158,21 @@ struct NativeRankedEvalNode {
   // A certified edge-triggered activation. Its ready bit remains
   // authoritative; it must never become a speculative dataflow body.
   bool clocked = false;
+  // Non-groupable owners still constrain the whole-program order. Emission
+  // ends a segment here and leaves execution to the original dispatcher.
+  bool boundary = false;
 };
+
+/// Activation-boundary inputs proved on the source revision before native
+/// lowering. The preserved pipeline analysis owns this immutable snapshot;
+/// graph identity ties it to the same actor/effect inventory at resolution.
+struct NativeActivationInputs {
+  schedule::ComputeGraphAttr sourceGraph;
+  llvm::DenseMap<mlir::StringAttr, analysis::ActivationMemoryAnalysis::Ranges>
+      liveIns;
+};
+NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
+                                                     bool explain);
 
 /// Immutable result of eval scheduling analysis.  All identities are resolved
 /// before LLVM CFG construction starts; emission must not infer ownership from
@@ -279,6 +295,7 @@ mlir::FailureOr<ResolvedNativeEvalPlan> resolveNativeEvalPlan(
     mlir::ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
     schedule::ComputeGraphAttr computeGraph,
+    const NativeActivationInputs &activationInputs,
     mlir::ArrayRef<NativePeriodicClock> periodicClocks,
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases);
 struct NativeGroupPromotionReport {

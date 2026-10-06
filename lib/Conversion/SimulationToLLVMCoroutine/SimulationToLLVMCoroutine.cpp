@@ -50,6 +50,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -1315,6 +1316,8 @@ struct PreparedNativeProcessFrame : NativeFunctionFrameResult {
 LogicalResult NativePipelineAnalysis::prepareFrameInputs() {
   if (bytecodeOnly)
     return success();
+  activationInputs =
+      collectNativeActivationInputs(metadataDesign, detailedTiming);
   materializeNativeStatePlanes(module, *stateLayout);
   materializeNativeSchedulerGlobals(module);
   declareNativeRuntimeABI(module);

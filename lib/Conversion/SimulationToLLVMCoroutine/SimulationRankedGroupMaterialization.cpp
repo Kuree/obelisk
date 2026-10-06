@@ -355,6 +355,11 @@ materializeNativeRankedGroups(ModuleOp module,
       finishSegment();
     }
     currentIsland = node.island;
+    if (node.boundary) {
+      emit();
+      finishSegment();
+      continue;
+    }
     uint64_t four = bodyCost(node.body);
     uint64_t two = node.twoStateBody.empty() ? 0 : bodyCost(node.twoStateBody);
     if (!four || (!node.twoStateBody.empty() && !two)) {
@@ -378,16 +383,17 @@ materializeNativeRankedGroups(ModuleOp module,
   emit();
   finishSegment();
   if (module->hasAttr("obelisk.debug.native_timing")) {
-    llvm::errs() << "obelisk ranked groups: candidates="
-                 << plan.rankedNodes.size() << " groups=" << groupID
-                 << " segments=" << segmentCount << " members="
-                 << llvm::count_if(
-                        executors,
-                        [](const auto &name) { return !name.empty(); })
-                 << " clocked_members=" << clockedMembers << '\n';
+    llvm::errs()
+        << "obelisk ranked groups: candidates="
+        << llvm::count_if(plan.rankedNodes,
+                          [](const auto &node) { return !node.boundary; })
+        << " groups=" << groupID << " segments=" << segmentCount << " members="
+        << llvm::count_if(executors,
+                          [](const auto &name) { return !name.empty(); })
+        << " clocked_members=" << clockedMembers << '\n';
     // Tie runtime entry counts back to the actual native ownership plan.
-    // The helper dependency graph excludes boundary actors, so print the
-    // full owner inventory as well; its compute-node IDs retain global rank.
+    // Include owners without direct fragments as well. Their compute-node
+    // IDs retain the source graph's global scheduling rank.
     for (auto [index, record] : llvm::enumerate(plan.fragments))
       llvm::errs() << "obelisk eval owner: bit=" << record.bit
                    << " actor=" << record.actor_slot
@@ -396,9 +402,10 @@ materializeNativeRankedGroups(ModuleOp module,
                    << (executors[index].empty() ? "-" : executors[index])
                    << " executor=" << plan.fourStateExecutors[index] << '\n';
     for (const auto &node : plan.rankedNodes) {
-      llvm::errs() << "obelisk eval dependency: owner=" << node.owner
-                   << " island=" << node.island << " body=" << node.body
-                   << " successors=";
+      llvm::errs() << (node.boundary ? "obelisk eval boundary: owner="
+                                     : "obelisk eval dependency: owner=")
+                   << node.owner << " island=" << node.island
+                   << " body=" << node.body << " successors=";
       llvm::interleaveComma(node.successors, llvm::errs());
       llvm::errs() << '\n';
     }

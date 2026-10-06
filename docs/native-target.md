@@ -191,6 +191,16 @@ individual activation points as described in
 one worker. It removes internal reactivation within each admitted kernel;
 upstream propagation can still activate separate kernels more than once.
 
+The final native eval planner uses these source-level activation inputs to
+distinguish blocking temporaries from state carried between activations. The
+preserved pipeline analysis captures the input ranges before native lowering
+and checks the same compute-graph identity when resolving the eval order.
+All sensitivity edges remain present. Direct owners that cannot join a helper
+still participate in its dependency graph as boundaries: a generated sweep ends
+before such an owner and leaves its execution to the dispatcher. Ordering only
+the eligible helpers could otherwise run a consumer before an excluded producer
+and cause another activation in the same propagation phase.
+
 The scheduling proof follows IEEE 1800-2023 4.5 (activation and region
 boundaries), 4.6 (procedural source order and ordered NBAs), and 4.7 (permitted
 interleaving between processes). A topological order may select a legal

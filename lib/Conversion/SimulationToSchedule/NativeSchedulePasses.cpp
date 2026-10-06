@@ -1690,7 +1690,8 @@ LogicalResult NativePipelineAnalysis::resolveEval() {
       resolvedEval = resolveNativeEvalPlan(
           module, executableNodes, *stateLayout, staticNBAPlan,
           staticFanoutPlan, *directFragments, evalOwnership,
-          threeTierPlan.sourceGraph, periodicClocks, periodicAliases);
+          threeTierPlan.sourceGraph, activationInputs, periodicClocks,
+          periodicAliases);
       if (failed(resolvedEval))
         return failure();
     }
