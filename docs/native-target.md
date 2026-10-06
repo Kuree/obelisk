@@ -206,6 +206,14 @@ before such an owner and leaves its execution to the dispatcher. Ordering only
 the eligible helpers could otherwise run a consumer before an excluded producer
 and cause another activation in the same propagation phase.
 
+Net boundaries consume the whole-program effect solver's canonical net ranges,
+including driver publications through collapsed port connections. Stable net
+and storage handles keep the descriptor namespaces distinct. A known net read
+does not alias unrelated storage, and a drive is an ordering producer even when
+its executor cannot join a helper. Net resolution, strengths, delays and event
+observers still execute through that original boundary. Unknown resources or
+unmapped ranges retain conservative dependencies on every candidate.
+
 The scheduling proof follows IEEE 1800-2023 4.5 (activation and region
 boundaries), 4.6 (procedural source order and ordered NBAs), and 4.7 (permitted
 interleaving between processes). A topological order may select a legal

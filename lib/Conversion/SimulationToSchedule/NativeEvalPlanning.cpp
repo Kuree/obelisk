@@ -259,27 +259,46 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
           auto kind = effect.getEffect();
           if (kind != schedule::ComputeEffectKind::Read &&
               kind != schedule::ComputeEffectKind::Write &&
+              kind != schedule::ComputeEffectKind::Drive &&
               kind != schedule::ComputeEffectKind::Watch)
             continue;
-          if (effect.getResource() != schedule::ComputeResourceKind::Storage ||
+          auto resource = effect.getResource();
+          if ((resource != schedule::ComputeResourceKind::Storage &&
+               resource != schedule::ComputeResourceKind::Net) ||
               effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
               !effect.getWidth()) {
             node.opaqueMemory = true;
             continue;
           }
-          auto handle = stateLayout.storage.find(effect.getDescriptor());
+          // The whole-program effect solver already maps driver publications
+          // to their net and expands collapsed port aliases. A known net is
+          // a distinct address space, not an unknown write to all storage.
+          // Keep its executor as a boundary: ordering does not bypass net
+          // resolution, strengths, delay handling, or transition observers.
+          const auto &handles = resource == schedule::ComputeResourceKind::Net
+                                    ? stateLayout.nets
+                                    : stateLayout.storage;
+          auto handle = handles.find(effect.getDescriptor());
           obelisk_rt_stable_handle_v1 decoded{};
-          if (handle == stateLayout.storage.end() ||
+          if (handle == handles.end() ||
               !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
               decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
               decoded.offset) {
             node.opaqueMemory = true;
             continue;
           }
+          auto width = widths.find(decoded.id);
+          if (width == widths.end() || effect.getLow() >= width->second ||
+              effect.getWidth() > width->second - effect.getLow()) {
+            node.opaqueMemory = true;
+            continue;
+          }
           Range range{decoded.id, effect.getLow(),
                       effect.getLow() + effect.getWidth()};
-          (kind == schedule::ComputeEffectKind::Write ? node.writes
-                                                      : node.reads)
+          (kind == schedule::ComputeEffectKind::Write ||
+                   kind == schedule::ComputeEffectKind::Drive
+               ? node.writes
+               : node.reads)
               .push_back(range);
         }
       }
