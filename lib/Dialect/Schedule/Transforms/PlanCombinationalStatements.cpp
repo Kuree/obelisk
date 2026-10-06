@@ -72,9 +72,7 @@ public:
     analysis::HandleDataflowAnalysis handles(design);
     CombinationalFusionAnalysis eligibility(
         design, handles,
-        explain
-            ? analysis::ActivationMemoryAnalysis::DependencyMode::ReachingValues
-            : analysis::ActivationMemoryAnalysis::DependencyMode::Accesses);
+        analysis::ActivationMemoryAnalysis::DependencyMode::ReachingValues);
     SymbolTable symbols(design);
     SmallVector<sim::SimFuncOp> candidates;
     SmallVector<int64_t> fragments;

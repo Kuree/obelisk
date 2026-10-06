@@ -261,11 +261,18 @@ remain old reads after later stores. Overwritten aggregate lanes lose only their
 own incoming dependence, and invalid array indices retain the dialect's semantics
 (LRM 7.4.5 and 11.5.1). A monotone widening bounds lane-correlation growth.
 
-Publication diagnostics use the refined facts. Physical accesses, source ordering,
-sensitivity, VPI and NBA boundaries remain separate obligations. A compile-time mux
-configuration can prove a DAG; an unknown runtime configuration retains possible
-feedback. Analysis failures and planning decisions use enums; text is produced
-only for diagnostics.
+Statement-fusion eligibility uses the refined facts to check that all publications
+and control decisions are independent of incoming output state. Physical accesses
+still constrain executable scheduling. Fused memory operations retain the existing
+typed source-owner attributes, so scheduling preserves each original process's
+order and SSA dependencies without inventing order between independent processes.
+Incomplete provenance retains the conservative whole-body chain. Source ownership
+is consumed before final LLVM export.
+
+Sensitivity, VPI and NBA boundaries remain separate obligations. A compile-time
+mux configuration can prove a DAG; an unknown runtime configuration retains
+possible feedback. Analysis failures and planning decisions use enums; text is
+produced only for diagnostics.
 Whole-activation input unions and whole-actor graph contraction alone do not
 establish that proof.
 

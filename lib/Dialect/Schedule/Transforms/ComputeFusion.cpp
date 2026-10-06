@@ -499,7 +499,13 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
       auto &fact = found->second;
       watches.push_back({*fact.descriptor, fact.low, fact.width});
     }
-    for (const auto &read : memory.getLiveIns()) {
+    auto inputs = memory.hasValueDependencies() ? memory.getValueInputs()
+                                                : memory.getLiveIns();
+    // Every publication and control decision must be independent of incoming
+    // output state. Reaching values can discharge old snapshots whose lanes
+    // are fully overwritten without hiding an intermediate publication.
+    // Physical accesses still drive executable region ordering.
+    for (const auto &read : inputs) {
       if (!activationRangeCovered(watches, read))
         return reject({Reason::UnwatchedLiveIn});
       if (llvm::any_of(memory.getMayWrites(), [&](const auto &write) {

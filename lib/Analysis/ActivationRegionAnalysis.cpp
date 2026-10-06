@@ -15,6 +15,8 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SimulationControlFlowToSCF.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "llvm/ADT/SetVector.h"
 #include <queue>
 
 using namespace mlir;
@@ -499,32 +501,93 @@ getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
   if (cycle)
     cycle->clear();
   using Range = ActivationMemoryAnalysis::Range;
+  struct Access {
+    unsigned step;
+    Range range;
+    schedule::SourceOwnerAttr owner;
+  };
   SmallVector<ActivationRegionStep> steps;
   SmallVector<std::pair<unsigned, unsigned>> edges;
-  DenseMap<uint64_t, SmallVector<std::pair<unsigned, Range>>> readers, writers;
+  DenseMap<uint64_t, SmallVector<Access>> readers, writers;
   for (const auto *activation : activations) {
     if (!activation->isValid())
       return std::nullopt;
-    std::optional<unsigned> previous;
+    const auto &memory = activation->getMemory();
+    bool hasOwners = true;
+    activation->getStructuredFunction().walk([&](Operation *op) {
+      if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(op) &&
+          !schedule::get<schedule::Field::EvalSourceOwner>(op))
+        hasOwners = false;
+    });
+    DenseMap<Operation *, unsigned> nodeIndices;
+    DenseMap<schedule::SourceOwnerAttr, unsigned> previous;
     for (const auto &node : activation->getNodes()) {
       unsigned id = steps.size();
       steps.push_back({activation, node.operation});
-      if (previous)
-        edges.emplace_back(*previous, id);
-      previous = id;
-      for (const Range &range : node.reads)
-        readers[range.root].emplace_back(id, range);
-      for (const Range &range : node.writes)
-        writers[range.root].emplace_back(id, range);
+      nodeIndices[node.operation] = id;
+      llvm::SetVector<schedule::SourceOwnerAttr> owners;
+      if (!hasOwners)
+        owners.insert({});
+      node.operation->walk([&](Operation *op) {
+        auto owner = hasOwners
+                         ? schedule::get<schedule::Field::EvalSourceOwner>(op)
+                         : schedule::SourceOwnerAttr{};
+        if (owner)
+          owners.insert(owner);
+        auto record = [&](const auto &accesses, auto &inventory) {
+          auto found = accesses.find(op);
+          if (found != accesses.end())
+            for (Range range : found->second)
+              inventory[range.root].push_back({id, range, owner});
+        };
+        record(memory.getReads(), readers);
+        record(memory.getWrites(), writers);
+      });
+      // Fusion does not create source-order relations between the original
+      // processes. Preserve each owner's order, including owners sharing a
+      // structured node. Incomplete provenance keeps the whole-body chain.
+      for (auto owner : owners) {
+        auto found = previous.find(owner);
+        if (found != previous.end())
+          edges.emplace_back(found->second, id);
+        previous[owner] = id;
+      }
+    }
+    // Pure SSA producers may have been shared by CSE or introduced while
+    // structuring CFGs. Their def-use edges are required independently of
+    // publication provenance, including captures of nested regions.
+    for (const auto &node : activation->getNodes()) {
+      unsigned consumer = nodeIndices.at(node.operation);
+      node.operation->walk([&](Operation *op) {
+        for (Value operand : op->getOperands()) {
+          Operation *producer = operand.getDefiningOp();
+          while (producer && !nodeIndices.contains(producer))
+            producer = producer->getParentOp();
+          if (producer && producer != node.operation)
+            edges.emplace_back(nodeIndices.at(producer), consumer);
+        }
+      });
     }
   }
+  auto overlaps = [](Range a, Range b) {
+    return a.low < b.low + b.width && b.low < a.low + a.width;
+  };
   for (const auto &[root, writes] : writers)
-    for (const auto &[producer, write] : writes)
-      for (const auto &[consumer, read] : readers[root])
-        if (steps[producer].activation != steps[consumer].activation &&
-            write.low < read.low + read.width &&
-            read.low < write.low + write.width)
-          edges.emplace_back(producer, consumer);
+    for (const auto &write : writes) {
+      for (const auto &read : readers[root])
+        if (write.step != read.step &&
+            (steps[write.step].activation != steps[read.step].activation ||
+             write.owner != read.owner) &&
+            overlaps(write.range, read.range))
+          edges.emplace_back(write.step, read.step);
+      // If distinct original owners publish overlapping ranges, provenance
+      // alone cannot justify changing their order within an existing kernel.
+      for (const auto &later : writes)
+        if (write.step < later.step && write.owner != later.owner &&
+            steps[write.step].activation == steps[later.step].activation &&
+            overlaps(write.range, later.range))
+          edges.emplace_back(write.step, later.step);
+    }
   return orderSteps(steps, std::move(edges), cycle);
 }
 } // namespace obelisk::analysis

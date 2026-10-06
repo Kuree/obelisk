@@ -139,6 +139,7 @@ public:
   }
   Option<bool> dump{*this, "dump", llvm::cl::init(false)};
   Option<bool> publications{*this, "publications", llvm::cl::init(false)};
+  Option<bool> regionOrder{*this, "order", llvm::cl::init(false)};
   Option<bool> reachingValues{*this, "reaching-values", llvm::cl::init(false)};
   ListOption<std::string> functions{*this, "functions",
                                     llvm::cl::CommaSeparated};
@@ -213,21 +214,43 @@ public:
               llvm::errs() << '\n';
             }
         }
-        if (publications)
+        if (publications || regionOrder)
           owned.push_back(std::move(proof));
       }
-      if (publications) {
+      if (publications || regionOrder) {
         SmallVector<const obelisk::analysis::ActivationRegionAnalysis *> views;
         for (const auto &view : owned)
           views.push_back(view.get());
         SmallVector<obelisk::analysis::ActivationRegionStep> cycle;
-        auto order =
-            obelisk::analysis::getActivationPublicationOrder(views, &cycle);
-        llvm::errs() << "publication graph: "
-                     << (order           ? "acyclic"
-                         : cycle.empty() ? "unavailable"
-                                         : "cyclic")
-                     << '\n';
+        if (publications) {
+          auto order =
+              obelisk::analysis::getActivationPublicationOrder(views, &cycle);
+          llvm::errs() << "publication graph: "
+                       << (order           ? "acyclic"
+                           : cycle.empty() ? "unavailable"
+                                           : "cyclic")
+                       << '\n';
+        }
+        if (regionOrder) {
+          auto order =
+              obelisk::analysis::getActivationRegionOrder(views, &cycle);
+          llvm::errs() << "region order: "
+                       << (order           ? "acyclic"
+                           : cycle.empty() ? "unavailable"
+                                           : "cyclic")
+                       << '\n';
+          if (order)
+            for (const auto &step : *order)
+              step.operation->walk([&](obelisk::sim::SimRefStoreOp store) {
+                auto found =
+                    step.activation->getMemory().getWrites().find(store);
+                if (found != step.activation->getMemory().getWrites().end())
+                  for (auto range : found->second)
+                    llvm::errs()
+                        << "  write s" << range.root << '[' << range.low << ','
+                        << range.low + range.width << ")\n";
+              });
+        }
       }
     });
     markAllAnalysesPreserved();

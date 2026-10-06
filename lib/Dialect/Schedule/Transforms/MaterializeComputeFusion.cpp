@@ -1825,6 +1825,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       kernel, builder.getI32IntegerAttr(fusion.getId()));
   SmallVector<Attribute> sourceOwners;
   sourceOwners.reserve(candidates.size());
+  llvm::SetVector<Attribute> originalOwners;
   for (Candidate &candidate : candidates) {
     schedule::ContinuationSiteAttr site;
     if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend))
@@ -1843,9 +1844,25 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     sourceOwners.push_back(schedule::SourceOwnerAttr::get(
         builder.getContext(), codeUnit,
         builder.getI32IntegerAttr(site.getId())));
+    if (auto inherited = schedule::get<schedule::Field::EvalSourceOwners>(
+            candidate.function))
+      originalOwners.insert(inherited.begin(), inherited.end());
+    else
+      originalOwners.insert(sourceOwners.back());
   }
   ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
-      kernel, builder.getArrayAttr(sourceOwners));
+      kernel, builder.getArrayAttr(originalOwners.getArrayRef()));
+  auto preserveSourceOwner = [&](Operation *cloned, unsigned candidate) {
+    cloned->walk([&](Operation *operation) {
+      // Memory accesses carry process ordering. Pure definitions use SSA
+      // edges and must remain shareable by CSE across original owners.
+      if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(operation) &&
+          !schedule::has<schedule::metadata::evalSourceOwner>(operation))
+        schedule::set<schedule::metadata::evalSourceOwner>(
+            operation,
+            cast<schedule::SourceOwnerAttr>(sourceOwners[candidate]));
+    });
+  };
   sim::SimFuncOp memberHelper;
   sim::SimCodeUnitDeclOp memberHelperDeclaration;
   // The kernel is built incrementally, so any later rejection must remove the
@@ -2045,14 +2062,24 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       builder.setInsertionPointToStart(body);
       DenseMap<const analysis::ActivationRegionAnalysis *, IRMapping *>
           mappingForActivation;
-      for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings))
+      DenseMap<const analysis::ActivationRegionAnalysis *, unsigned>
+          ownerForActivation;
+      for (auto [index, pair] :
+           llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+        auto &[candidate, mapping] = pair;
         mappingForActivation[candidate.combinationalBody->structured] =
             mapping.get();
-      for (const auto &step : *interleaving)
-        builder.clone(*step.operation,
-                      *mappingForActivation.at(step.activation));
+        ownerForActivation[candidate.combinationalBody->structured] = index;
+      }
+      for (const auto &step : *interleaving) {
+        auto *cloned = builder.clone(*step.operation,
+                                     *mappingForActivation.at(step.activation));
+        preserveSourceOwner(cloned, ownerForActivation.at(step.activation));
+      }
     } else
-      for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
+      for (auto [index, pair] :
+           llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
+        auto &[candidate, mapping] = pair;
         for (Block *source : candidate.combinationalBody->blocks) {
           Block *cloned = new Block;
           kernel.getBody().push_back(cloned);
@@ -2068,8 +2095,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         for (Block *source : candidate.combinationalBody->blocks) {
           builder.setInsertionPointToStart(mapping->lookup(source));
           for (Operation &op : *source)
-            if (&op != candidate.suspend && !hoistedWatchOps.contains(&op))
-              builder.clone(op, *mapping);
+            if (&op != candidate.suspend && !hoistedWatchOps.contains(&op)) {
+              auto *cloned = builder.clone(op, *mapping);
+              preserveSourceOwner(cloned, index);
+            }
         }
         tail = mapping->lookup(candidate.suspend->getBlock());
       }
@@ -3808,7 +3837,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   uint64_t promotedStores = 0;
   std::unique_ptr<PrivateStaticAccessIndex> fusionAccessIndex;
   llvm::StringMap<uint64_t> fusionRejections;
-  CombinationalFusionAnalysis combinational(design, provenance);
+  CombinationalFusionAnalysis combinational(
+      design, provenance,
+      analysis::ActivationMemoryAnalysis::DependencyMode::ReachingValues);
   FusionInputIndex inputIndex(design, graph);
   for (Attribute attribute : fusions) {
     auto fusion = dyn_cast<schedule::ComputeFusionAttr>(attribute);

@@ -194,6 +194,15 @@ struct NativeFunctionFinalizationPass
     uint64_t inlineOperationLimit = configuration.inlineOperationLimit;
     bool changed =
         lowerWideNativeBitwiseIntegers(function, configuration.dataLayout);
+    // Source ownership has been consumed by scheduling and publication
+    // proofs. Drop this dialect attribute from remaining runtime calls before
+    // exporting a standalone LLVM module to the upstream LLVM translator.
+    function.walk([&](Operation *operation) {
+      if (schedule::has<schedule::Field::EvalSourceOwner>(operation)) {
+        schedule::remove<schedule::Field::EvalSourceOwner>(operation);
+        changed = true;
+      }
+    });
     // Keep the generated eval loop's hottest call boundaries on an I-cache
     // line regardless of unrelated runtime/string table growth. These bodies
     // are deliberately retained as calls by the large-function policy below;

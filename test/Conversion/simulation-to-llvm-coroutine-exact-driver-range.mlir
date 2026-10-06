@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --split-input-file \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --implicit-check-not="#schedule.source_owner"
 
 // A statically selected slice which exactly equals the declaration's driven
 // range resolves only that logical bit. The resolver still expands a
@@ -36,7 +36,7 @@ module attributes {
 // CHECK-LABEL: llvm.func @exact_slice
 // CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-SAME: schedule.eval.source_owner = #schedule.source_owner<codeUnit = 17 : i64, continuation = 3 : i32>
+// Ownership is consumed by publication proofs before final LLVM export.
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 
 // -----

@@ -86,9 +86,11 @@ std::optional<llvm::SmallVector<ActivationRegionStep>>
 getActivationPublicationOrder(
     llvm::ArrayRef<const ActivationRegionAnalysis *> activations,
     llvm::SmallVectorImpl<ActivationRegionStep> *cycle = nullptr);
-/// Topologically order structured regions while preserving each activation's
-/// source order. Cross-activation edges use canonical memory ranges. This is
-/// an ordering query, not an activation or observer certificate.
+/// Topologically order structured regions while preserving each original
+/// process's source order, SSA dependencies and canonical memory dependencies.
+/// Complete typed source-owner provenance permits independent original owners
+/// in an existing kernel to interleave. Otherwise retain the whole activation's
+/// source order. This is not an activation or observer certificate.
 /// On failure, optionally return one directed cycle, without repeating its
 /// first step. The steps refer to the input analyses' structured views.
 std::optional<llvm::SmallVector<ActivationRegionStep>> getActivationRegionOrder(
