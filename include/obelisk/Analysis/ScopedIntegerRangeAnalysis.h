@@ -1,10 +1,12 @@
-//===- ScopedIntegerRangeAnalysis.h - CFG integer bounds ---------*- C++ -*-===//
+//===- ScopedIntegerRangeAnalysis.h - CFG integer bounds ---------*- C++
+//-*-===//
 #ifndef OBELISK_ANALYSIS_SCOPEDINTEGERRANGEANALYSIS_H
 #define OBELISK_ANALYSIS_SCOPEDINTEGERRANGEANALYSIS_H
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include <memory>
 
 namespace obelisk::analysis {
 /// May ranges at a program point. Missing entries are unconstrained; bottom
@@ -14,12 +16,16 @@ public:
   using AbstractDenseLattice::AbstractDenseLattice;
   using Ranges = llvm::DenseMap<mlir::Value, mlir::ConstantIntRanges>;
   bool reachable = false;
-  Ranges ranges;
-  mlir::ChangeResult merge(const Ranges &incoming);
+  const Ranges &getRanges() const;
+  mlir::ChangeResult merge(Ranges incoming);
   mlir::ChangeResult join(const AbstractDenseLattice &rhs) override;
   void print(llvm::raw_ostream &os) const override;
 
 private:
+  mlir::ChangeResult mergeSnapshot(std::shared_ptr<const Ranges> incoming);
+  // Identity transfers share immutable facts, not lattice anchors. Each
+  // program point must retain its own widening history and dependencies.
+  std::shared_ptr<const Ranges> ranges;
   unsigned expansions = 0;
 };
 /// Dense path-sensitive ranges complement the sparse integer-range analysis.

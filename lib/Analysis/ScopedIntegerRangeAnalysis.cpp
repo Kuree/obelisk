@@ -9,43 +9,53 @@
 
 using namespace mlir;
 namespace obelisk::analysis {
-ChangeResult ScopedRangeLattice::merge(const Ranges &incoming) {
+const ScopedRangeLattice::Ranges &ScopedRangeLattice::getRanges() const {
+  static const Ranges empty;
+  return ranges ? *ranges : empty;
+}
+ChangeResult ScopedRangeLattice::merge(Ranges incoming) {
+  return mergeSnapshot(std::make_shared<const Ranges>(std::move(incoming)));
+}
+ChangeResult
+ScopedRangeLattice::mergeSnapshot(std::shared_ptr<const Ranges> incoming) {
   if (!reachable) {
     reachable = true;
-    ranges = incoming;
+    ranges = std::move(incoming);
     return ChangeResult::Change;
   }
-  bool changed = false;
-  SmallVector<Value> remove;
-  for (auto &entry : ranges) {
-    auto found = incoming.find(entry.first);
-    if (found == incoming.end()) {
-      remove.push_back(entry.first);
+  if (ranges == incoming)
+    return ChangeResult::NoChange;
+  // Most joins are identity transfers. Copy only when this program point's
+  // facts actually change; published snapshots are never modified in place.
+  std::shared_ptr<Ranges> updated;
+  for (const auto &entry : getRanges()) {
+    auto found = incoming->find(entry.first);
+    bool remove = found == incoming->end();
+    auto next = remove ? entry.second : entry.second.rangeUnion(found->second);
+    if (!remove && next == entry.second)
       continue;
-    }
-    auto next = entry.second.rangeUnion(found->second);
-    if (next == entry.second)
-      continue;
-    changed = true;
     // Widen only expanding joins. Independently proved induction caps remain
     // available through getRange, including after a loop-carried range widens.
-    if (expansions >= 8)
-      remove.push_back(entry.first);
+    if (!updated)
+      updated = std::make_shared<Ranges>(getRanges());
+    if (remove || expansions >= 8)
+      updated->erase(entry.first);
     else
-      entry.second = next;
+      updated->find(entry.first)->second = next;
   }
-  for (Value value : remove)
-    ranges.erase(value);
-  changed |= !remove.empty();
-  if (changed)
-    ++expansions;
-  return changed ? ChangeResult::Change : ChangeResult::NoChange;
+  if (!updated)
+    return ChangeResult::NoChange;
+  ranges = std::move(updated);
+  ++expansions;
+  return ChangeResult::Change;
 }
 ChangeResult ScopedRangeLattice::join(const AbstractDenseLattice &rhs) {
   const auto &other = static_cast<const ScopedRangeLattice &>(rhs);
-  return other.reachable ? merge(other.ranges) : ChangeResult::NoChange;
+  return other.reachable ? mergeSnapshot(other.ranges) : ChangeResult::NoChange;
 }
-void ScopedRangeLattice::print(raw_ostream &os) const { os << ranges.size(); }
+void ScopedRangeLattice::print(raw_ostream &os) const {
+  os << getRanges().size();
+}
 
 ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
                                                        Operation *function)
@@ -107,12 +117,12 @@ ScopedIntegerRangeAnalysis::getRange(Value value,
   if (matchPattern(value, m_ConstantInt(&constant)))
     return ConstantIntRanges::constant(constant);
   auto cap = inductionBounds.find(value);
-  auto scoped = state.ranges.find(value);
+  const auto &ranges = state.getRanges();
+  auto scoped = ranges.find(value);
   if (cap != inductionBounds.end())
-    return scoped == state.ranges.end()
-               ? cap->second
-               : cap->second.intersection(scoped->second);
-  if (scoped != state.ranges.end())
+    return scoped == ranges.end() ? cap->second
+                                  : cap->second.intersection(scoped->second);
+  if (scoped != ranges.end())
     return scoped->second;
   // A logic range is also a proof that the selector has no X/Z bits. Missing
   // logic facts cannot be replaced by a two-state maximal interval.
@@ -129,7 +139,12 @@ ScopedIntegerRangeAnalysis::visitOperation(Operation *op,
                                            ScopedRangeLattice *after) {
   if (!before.reachable)
     return success();
-  auto next = before.ranges;
+  if (llvm::none_of(op->getResults(),
+                    [&](Value value) { return relevant.contains(value); })) {
+    propagateIfChanged(after, after->join(before));
+    return success();
+  }
+  auto next = before.getRanges();
   for (Value value : op->getResults())
     next.erase(value);
   if (auto interface = dyn_cast<InferIntRangeInterface>(op)) {
@@ -195,7 +210,7 @@ ScopedIntegerRangeAnalysis::visitOperation(Operation *op,
       }
     }
   }
-  propagateIfChanged(after, after->merge(next));
+  propagateIfChanged(after, after->merge(std::move(next)));
   return success();
 }
 void ScopedIntegerRangeAnalysis::visitCallControlFlowTransfer(
@@ -210,7 +225,7 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
     const ScopedRangeLattice &before, ScopedRangeLattice *after) {
   if (!before.reachable)
     return;
-  auto next = before.ranges;
+  auto next = before.getRanges();
   Operation *terminator = predecessor->getTerminator();
   if (auto branch = dyn_cast<cf::CondBranchOp>(terminator)) {
     // The validated structural certificate is an edge fact, never a global
@@ -222,8 +237,7 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
   }
   auto interface = dyn_cast<BranchOpInterface>(terminator);
   ScopedRangeLattice edge(getProgramPointAfter(terminator));
-  edge.reachable = true;
-  edge.ranges = next;
+  edge.merge(next);
   // Incoming operands refer to the predecessor's SSA bindings. Compute all
   // phi inputs before assigning any successor arguments (including swaps).
   for (Operation &op : *block)
@@ -247,6 +261,6 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
     if (incoming)
       next.insert_or_assign(arg, *incoming);
   }
-  propagateIfChanged(after, after->merge(next));
+  propagateIfChanged(after, after->merge(std::move(next)));
 }
 } // namespace obelisk::analysis
