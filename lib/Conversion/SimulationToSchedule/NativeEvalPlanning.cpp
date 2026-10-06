@@ -19,6 +19,61 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
+/// Change ready-bit identities before any executable tables or NBA taint masks
+/// are emitted. Every owner-indexed fact must follow the same permutation.
+void reorderOwners(ResolvedNativeEvalPlan &plan, ArrayRef<uint32_t> order) {
+  assert(order.size() == plan.mergedFragments.size());
+  assert(plan.recordNBATaintMasks.empty() && plan.nbaTaintedRecords.empty());
+  SmallVector<uint32_t> remap(order.size());
+  for (auto [rank, oldIndex] : llvm::enumerate(order))
+    remap[oldIndex] = rank;
+  auto reorder = [&](auto &values) {
+    if (values.empty())
+      return;
+    assert(values.size() == order.size());
+    auto old = std::move(values);
+    values.clear();
+    values.reserve(order.size());
+    for (uint32_t index : order)
+      values.push_back(std::move(old[index]));
+  };
+  reorder(plan.mergedFragments);
+  reorder(plan.mergedExecutors);
+  reorder(plan.mergedTwoStateExecutors);
+  reorder(plan.mergedPromotionRanges);
+  reorder(plan.ownerSubsumptionMasks);
+  for (auto [rank, fragment] : llvm::enumerate(plan.mergedFragments))
+    fragment.bit = rank;
+  for (auto &mask : plan.ownerSubsumptionMasks) {
+    APInt mapped(mask.getBitWidth(), 0);
+    while (!mask.isZero()) {
+      unsigned bit = mask.countr_zero();
+      mapped.setBit(remap[bit]);
+      mask.clearBit(bit);
+    }
+    mask = std::move(mapped);
+  }
+  for (auto &entry : plan.fanoutEntries)
+    if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
+        OBELISK_RT_FANOUT_DIRECT)
+      entry.merged_bit = remap[entry.merged_bit];
+  for (uint32_t &bit : plan.periodicOwnerBits)
+    if (bit != UINT32_MAX)
+      bit = remap[bit];
+  for (auto *records :
+       {&plan.periodicClosureRecords, &plan.periodicEntryRecords}) {
+    for (unsigned &record : *records)
+      record = remap[record];
+    llvm::sort(*records);
+  }
+  for (auto &node : plan.rankedNodes) {
+    node.owner = remap[node.owner];
+    for (uint32_t &successor : node.successors)
+      successor = remap[successor];
+    llvm::sort(node.successors);
+  }
+}
+
 bool rangesOverlap(schedule::ComputeEffectAttr lhs,
                    schedule::ComputeEffectAttr rhs) {
   if (!lhs || !rhs || lhs.getResource() != rhs.getResource() ||
@@ -595,7 +650,7 @@ resolveNativeEvalPlan(ModuleOp module,
   }
 
   if (!result.mergedFragments.empty()) {
-    SmallVector<unsigned> order(result.mergedFragments.size());
+    SmallVector<uint32_t> order(result.mergedFragments.size());
     std::iota(order.begin(), order.end(), 0u);
     llvm::sort(order, [&](unsigned lhs, unsigned rhs) {
       const auto &left = result.mergedFragments[lhs];
@@ -604,33 +659,7 @@ resolveNativeEvalPlan(ModuleOp module,
              std::tuple{right.compute_node, right.actor_slot,
                         right.continuation};
     });
-    SmallVector<uint32_t> remap(result.mergedFragments.size());
-    decltype(result.mergedFragments) rankedFragments;
-    decltype(result.mergedExecutors) rankedExecutors;
-    decltype(result.mergedTwoStateExecutors) rankedTwoStateExecutors;
-    decltype(result.mergedPromotionRanges) rankedPromotionRanges;
-    for (auto [rank, oldIndex] : llvm::enumerate(order)) {
-      remap[oldIndex] = static_cast<uint32_t>(rank);
-      auto fragment = result.mergedFragments[oldIndex];
-      fragment.bit = static_cast<uint32_t>(rank);
-      rankedFragments.push_back(fragment);
-      rankedExecutors.push_back(std::move(result.mergedExecutors[oldIndex]));
-      rankedTwoStateExecutors.push_back(
-          std::move(result.mergedTwoStateExecutors[oldIndex]));
-      rankedPromotionRanges.push_back(
-          std::move(result.mergedPromotionRanges[oldIndex]));
-    }
-    result.mergedFragments = std::move(rankedFragments);
-    result.mergedExecutors = std::move(rankedExecutors);
-    result.mergedTwoStateExecutors = std::move(rankedTwoStateExecutors);
-    result.mergedPromotionRanges = std::move(rankedPromotionRanges);
-    for (auto &entry : result.fanoutEntries)
-      if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
-          OBELISK_RT_FANOUT_DIRECT)
-        entry.merged_bit = remap[entry.merged_bit];
-    for (uint32_t &bit : result.periodicOwnerBits)
-      if (bit != UINT32_MAX)
-        bit = remap[bit];
+    reorderOwners(result, order);
   }
 
   // Promotion belongs to the exact periodic execution closure. Follow graph
@@ -878,6 +907,26 @@ resolveNativeEvalPlan(ModuleOp module,
   result.rankedNodes =
       collectRankedNodes(module, result, stateLayout, staticFanoutPlan,
                          directFragments, computeGraph, activationInputs);
+
+  // The dispatcher selects the lowest pending bit. Give it the same refined
+  // dependence order as the helpers, including original-executor boundaries.
+  // Otherwise a ready consumer in a later segment can outrank its producers
+  // and force another activation even when the component is acyclic.
+  // Preserve slots of clocked and unrepresented owners; this only permutes
+  // Active combinational work (IEEE 1800-2023 4.5--4.7). SCC backedges remain
+  // live and can republish earlier bits; this is not an execute-once promise.
+  SmallVector<uint32_t> slots, ranked;
+  for (const auto &node : result.rankedNodes)
+    if (!node.clocked) {
+      slots.push_back(node.owner);
+      ranked.push_back(node.owner);
+    }
+  llvm::sort(slots);
+  SmallVector<uint32_t> order(result.mergedFragments.size());
+  std::iota(order.begin(), order.end(), 0u);
+  for (auto [slot, owner] : llvm::zip_equal(slots, ranked))
+    order[slot] = owner;
+  reorderOwners(result, order);
 
   // Project graph-level NBA reachability onto exclusive generated owners.
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;

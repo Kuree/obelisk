@@ -206,6 +206,15 @@ before such an owner and leaves its execution to the dispatcher. Ordering only
 the eligible helpers could otherwise run a consumer before an excluded producer
 and cause another activation in the same propagation phase.
 
+Ready-bit identities follow this same refined order across helpers and boundary
+executors. The dispatcher selects the lowest pending bit, so keeping the earlier
+coarse graph ranks would undo the producer-before-consumer order when a sweep
+returns to dispatch. Owner tables, fanout, promotion ranges, periodic entry and
+closure sets, and coordinator subsumption masks share one permutation before
+NBA taint analysis or executable table emission. Clocked and unrepresented owners
+keep their slots. Possible SCC backedges still publish ready work, including
+configuration-dependent routing loops; ordering never suppresses a later event.
+
 Net boundaries consume the whole-program effect solver's canonical net ranges,
 including driver publications through collapsed port connections. Stable net
 and storage handles keep the descriptor namespaces distinct. A known net read

@@ -6,15 +6,15 @@
 
 // A periodic source feeds continuous copies. The copies share one ranked
 // computation body under the shared dispatcher.
-// TRACE: obelisk eval owner: bit=0 actor=2 continuation=12 compute_node=1 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_2_12.__obelisk_execute
-// TRACE: obelisk eval owner: bit=4 actor=6 continuation=9 compute_node=15 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_6_9.__obelisk_execute
-// TRACE: obelisk eval dependency: owner=4 island=0 body=step1.__obelisk_eval_body_0 successors=0
-// TRACE: obelisk eval dependency: owner=0 island=0 body=step2.__obelisk_eval_body_0 successors=1
+// TRACE: obelisk eval owner: bit=0 actor=6 continuation=9 compute_node=15 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_6_9.__obelisk_execute
+// TRACE: obelisk eval owner: bit=1 actor=2 continuation=12 compute_node=1 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_2_12.__obelisk_execute
+// TRACE: obelisk eval dependency: owner=0 island=0 body=step1.__obelisk_eval_body_0 successors=1
+// TRACE: obelisk eval dependency: owner=1 island=0 body=step2.__obelisk_eval_body_0 successors=2
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.dataflow_fallback = @__obelisk_eval_ranked_group_0.fallback
 // PLAN-SAME: schedule.eval.materialized_group_calls = 5 : i64
 // PLAN-SAME: schedule.eval.predicated_dataflow
-// PLAN-SAME: schedule.eval.ranked_members = array<i32: 4, 0, 1, 2, 3>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
 // PLAN: llvm.cond_br
 // PLAN-NOT: llvm.switch
 // PLAN-NOT: llvm.call %

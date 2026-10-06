@@ -6,7 +6,7 @@
 
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.cache_hint_words = 2 : i64
-// PLAN-SAME: schedule.eval.ranked_members = array<i32: 69, 0, 1, {{.*}}62, 63, 64, 65, 66, 67, 68>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, {{.*}}62, 63, 64, 65, 66, 67, 68, 69>
 // PLAN-NOT: llvm.call %
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // PLAN-SAME: schedule.eval.ssa_ready_words = 3 : i64

@@ -8,7 +8,7 @@
 // captures the new data. The latch shares a ranked helper with its neighbors;
 // its keyword alone must not force an executor downgrade.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 1, 2, 3, 4>
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0
 !ref = !simulation.ref<i1>

@@ -10,7 +10,7 @@
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.materialized_group_calls = 5 : i64
 // PLAN-SAME: schedule.eval.predicated_dataflow
-// PLAN-SAME: schedule.eval.ranked_members = array<i32: 4, 0, 1, 2, 3>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
 // PLAN-NOT: llvm.switch
 // PLAN-NOT: llvm.call %
 // PLAN: llvm.add

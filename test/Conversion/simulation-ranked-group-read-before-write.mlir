@@ -9,7 +9,7 @@
 // Only the two downstream actors form a ranked helper; step3 retains its
 // ordinary executor. The output lags one activation at both O0 and O3.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_1(
-// PLAN-SAME: schedule.eval.ranked_members = array<i32: 2, 3>
+// PLAN-SAME: schedule.eval.ranked_members = array<i32: 3, 4>
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // PLAN: llvm.call @__obelisk_eval_ranked_group_1
 !ref = !simulation.ref<i1>
