@@ -203,6 +203,21 @@ The function pass can run before frame planning. Its native pipeline wrapper,
 nonsuspending eval bodies so original resumable bodies retain their frozen
 frame and rematerialization plans. Function workers own their range solvers.
 
+Simulation canonicalization exposes arithmetic on explicit two-state operands
+as `arith` operations. This includes parameter-offset indices and signed or
+unsigned comparisons between an integer induction value and a known parameter.
+Resizes keep the resolved expression width and signedness; selection operations
+keep their declared-range checks. X/Z operands and division or remainder retain
+their four-state semantics. These local patterns let standard constant
+propagation and integer-range analyses see the expressions before loop proofs;
+a variable induction value still requires a loop proof.
+
+The production pipeline keeps simulation loops intact and leaves unrolling to
+LLVM's target-aware optimizer. Bounded-loop analysis still certifies termination
+for native admission and supplies induction ranges for memory analyses; it does
+not replicate executable IR. The standalone `obelisk-sim-unroll-bounded-loops`
+pass remains available for explicit experiments, outside the driver pipeline.
+
 `schedule-optimize-native-words` recognizes independent packed-element loops in
 native eval bodies before packed conversion. Sparse SSA lane facts combine
 with dense scoped integer ranges and reference bounds to prove consecutive,

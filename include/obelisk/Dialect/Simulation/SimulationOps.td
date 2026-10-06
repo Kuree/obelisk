@@ -4476,6 +4476,7 @@ def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
   let results = (outs I1:$result);
   let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicMuxOp : SimOp<"logic.mux", [

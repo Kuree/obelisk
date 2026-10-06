@@ -306,6 +306,9 @@ OpFoldResult SimLogicClog2Op::fold(FoldAdaptor adaptor) {
 }
 
 OpFoldResult SimLogicIsTrueOp::fold(FoldAdaptor adaptor) {
+  if (auto from = getInput().getDefiningOp<SimLogicFromBitsOp>();
+      from && from.getInput().getType().isInteger(1))
+    return from.getInput();
   auto planes = dyn_cast_or_null<ArrayAttr>(adaptor.getInput());
   if (!planes || planes.size() != 2)
     return {};
@@ -1124,6 +1127,222 @@ struct CollapseResizeChain final : OpRewritePattern<SimLogicResizeOp> {
         rewriter, op.getLoc(), op.getResult().getType(), inner.getInput(),
         rewriter.getBoolAttr(signedResult));
     replaceWithNewOp(rewriter, op, replacement);
+    return success();
+  }
+};
+
+/// Keep two-state computations in arith so standard constant propagation,
+/// integer range analysis and induction recognition can see their operands.
+/// Match only an explicit zero unknown plane; never infer it from a parameter
+/// name, a destination type, or the absence of an X/Z literal in the source.
+static std::optional<OpFoldResult> matchTwoStateValue(Value value) {
+  if (auto from = value.getDefiningOp<SimLogicFromBitsOp>())
+    return from.getInput();
+  Attribute attribute;
+  if (!matchPattern(value, m_Constant(&attribute)))
+    return std::nullopt;
+  auto planes = getLogicPlanes(attribute);
+  if (!planes || !planes->unknown.isZero())
+    return std::nullopt;
+  return IntegerAttr::get(
+      IntegerType::get(value.getContext(), planes->value.getBitWidth()),
+      planes->value);
+}
+
+static Value materializeBits(OpFoldResult bits, Location loc,
+                             PatternRewriter &rewriter) {
+  if (auto value = dyn_cast<Value>(bits))
+    return value;
+  return arith::ConstantOp::create(rewriter, loc,
+                                   cast<IntegerAttr>(cast<Attribute>(bits)));
+}
+
+struct TwoStateBinary final : OpRewritePattern<SimLogicBinaryOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    // IEEE 1800-2023 11.4.3, 11.4.8 and 11.6: these operations preserve
+    // knownness and wrap at the already resolved expression width. Division
+    // and remainder need their SV zero/overflow behavior and stay in logic.
+    switch (op.getKind()) {
+    case BinaryKind::UDiv:
+    case BinaryKind::SDiv:
+    case BinaryKind::UMod:
+    case BinaryKind::SMod:
+      return failure();
+    default:
+      break;
+    }
+    auto left = matchTwoStateValue(op.getLhs());
+    auto right = matchTwoStateValue(op.getRhs());
+    if (!left || !right)
+      return failure();
+    Value lhs = materializeBits(*left, op.getLoc(), rewriter);
+    Value rhs = materializeBits(*right, op.getLoc(), rewriter);
+    Value result;
+    switch (op.getKind()) {
+    case BinaryKind::Add:
+      result = arith::AddIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::Sub:
+      result = arith::SubIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::Mul:
+      result = arith::MulIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::And:
+      result = arith::AndIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::Or:
+      result = arith::OrIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::Xor:
+    case BinaryKind::Xnor:
+      result = arith::XOrIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      if (op.getKind() == BinaryKind::Xnor) {
+        auto type = cast<IntegerType>(lhs.getType());
+        Value ones = arith::ConstantOp::create(
+            rewriter, op.getLoc(),
+            IntegerAttr::get(type, APInt::getAllOnes(type.getWidth())));
+        result = arith::XOrIOp::create(rewriter, op.getLoc(), result, ones);
+      }
+      break;
+    default:
+      llvm_unreachable("non-total operations excluded above");
+    }
+    replaceWithNewOp(rewriter, op,
+                     SimLogicFromBitsOp::create(rewriter, op.getLoc(),
+                                                op.getType(), result));
+    return success();
+  }
+};
+
+struct TwoStateCompare final : OpRewritePattern<SimLogicCompareOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicCompareOp op,
+                                PatternRewriter &rewriter) const override {
+    auto left = matchTwoStateValue(op.getLhs());
+    auto right = matchTwoStateValue(op.getRhs());
+    if (!left || !right)
+      return failure();
+    // IEEE 1800-2023 11.4.4-6: with no X/Z operands all equality variants
+    // compare the same bits. Relational signedness remains explicit.
+    arith::CmpIPredicate predicate;
+    switch (op.getKind()) {
+    case CompareKind::Eq:
+    case CompareKind::CaseEq:
+    case CompareKind::CaseZEq:
+    case CompareKind::CaseXZEq:
+    case CompareKind::WildEq:
+      predicate = arith::CmpIPredicate::eq;
+      break;
+    case CompareKind::Ne:
+    case CompareKind::CaseNe:
+    case CompareKind::WildNe:
+      predicate = arith::CmpIPredicate::ne;
+      break;
+    case CompareKind::ULT:
+      predicate = arith::CmpIPredicate::ult;
+      break;
+    case CompareKind::ULE:
+      predicate = arith::CmpIPredicate::ule;
+      break;
+    case CompareKind::UGT:
+      predicate = arith::CmpIPredicate::ugt;
+      break;
+    case CompareKind::UGE:
+      predicate = arith::CmpIPredicate::uge;
+      break;
+    case CompareKind::SLT:
+      predicate = arith::CmpIPredicate::slt;
+      break;
+    case CompareKind::SLE:
+      predicate = arith::CmpIPredicate::sle;
+      break;
+    case CompareKind::SGT:
+      predicate = arith::CmpIPredicate::sgt;
+      break;
+    case CompareKind::SGE:
+      predicate = arith::CmpIPredicate::sge;
+      break;
+    default:
+      llvm_unreachable("unknown logic comparison kind");
+    }
+    Value lhs = materializeBits(*left, op.getLoc(), rewriter);
+    Value rhs = materializeBits(*right, op.getLoc(), rewriter);
+    auto compare =
+        arith::CmpIOp::create(rewriter, op.getLoc(), predicate, lhs, rhs);
+    if (isa<IntegerType>(op.getType()))
+      replaceWithNewOp(rewriter, op, compare);
+    else
+      replaceWithNewOp(rewriter, op,
+                       SimLogicFromBitsOp::create(rewriter, op.getLoc(),
+                                                  op.getType(), compare));
+    return success();
+  }
+};
+
+struct TwoStateResize final : OpRewritePattern<SimLogicResizeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicResizeOp op,
+                                PatternRewriter &rewriter) const override {
+    auto from = op.getInput().getDefiningOp<SimLogicFromBitsOp>();
+    if (!from)
+      return failure();
+    auto type = rewriter.getIntegerType(op.getType().getWidth());
+    Value bits = from.getInput();
+    unsigned width = from.getInput().getType().getWidth();
+    if (type.getWidth() < width)
+      bits = arith::TruncIOp::create(rewriter, op.getLoc(), type, bits);
+    else if (type.getWidth() > width)
+      bits = op.getIsSigned()
+                 ? arith::ExtSIOp::create(rewriter, op.getLoc(), type, bits)
+                       .getResult()
+                 : arith::ExtUIOp::create(rewriter, op.getLoc(), type, bits)
+                       .getResult();
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicFromBitsOp::create(rewriter, op.getLoc(), op.getType(), bits));
+    return success();
+  }
+};
+
+struct TwoStateTruth final : OpRewritePattern<SimLogicIsTrueOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicIsTrueOp op,
+                                PatternRewriter &rewriter) const override {
+    auto from = op.getInput().getDefiningOp<SimLogicFromBitsOp>();
+    if (!from)
+      return failure();
+    Value zero = arith::ConstantOp::create(
+        rewriter, op.getLoc(),
+        rewriter.getIntegerAttr(from.getInput().getType(), 0));
+    replaceWithNewOp(rewriter, op,
+                     arith::CmpIOp::create(rewriter, op.getLoc(),
+                                           arith::CmpIPredicate::ne,
+                                           from.getInput(), zero));
+    return success();
+  }
+};
+
+/// Selection ops accept integer or logic indices. Remove an explicit
+/// from_bits without narrowing or changing the declared-range interpretation.
+template <typename Op, unsigned IndexOperand>
+struct TwoStateIndex final : OpRewritePattern<Op> {
+  using OpRewritePattern<Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(Op op,
+                                PatternRewriter &rewriter) const override {
+    auto from = op->getOperand(IndexOperand)
+                    .template getDefiningOp<SimLogicFromBitsOp>();
+    if (!from)
+      return failure();
+    rewriter.modifyOpInPlace(
+        op, [&] { op->setOperand(IndexOperand, from.getInput()); });
     return success();
   }
 };
@@ -2564,13 +2783,14 @@ void SimAggregateInsertOp::getCanonicalizationPatterns(
 
 void SimArrayDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
-  results.add<ConstantArrayExtract, DynamicArrayExtractThroughReference>(
-      context);
+  results.add<ConstantArrayExtract, DynamicArrayExtractThroughReference,
+              TwoStateIndex<SimArrayDynExtractOp, 1>>(context);
 }
 
 void SimArrayDynInsertOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
-  results.add<ConstantArrayInsert>(context);
+  results.add<ConstantArrayInsert, TwoStateIndex<SimArrayDynInsertOp, 2>>(
+      context);
 }
 
 void SimUnionConstructOp::getCanonicalizationPatterns(RewritePatternSet &,
@@ -2595,6 +2815,7 @@ void SimRefAllocOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimRefArrayElementOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
+  results.add<TwoStateIndex<SimRefArrayElementOp, 1>>(context);
   results.add<ConstantArrayView<SimRefArrayElementOp, SimRefSubelementOp>>(
       context);
   results.add<PromoteLocalArrayView<SimRefArrayElementOp>>(context);
@@ -2607,6 +2828,7 @@ void SimDriverSubelementOp::getCanonicalizationPatterns(
 
 void SimDriverArrayElementOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
+  results.add<TwoStateIndex<SimDriverArrayElementOp, 1>>(context);
   results
       .add<ConstantArrayView<SimDriverArrayElementOp, SimDriverSubelementOp>>(
           context);
@@ -2614,7 +2836,7 @@ void SimDriverArrayElementOp::getCanonicalizationPatterns(
 
 void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
-  results.add<NormalizeBinaryConstant>(context);
+  results.add<NormalizeBinaryConstant, TwoStateBinary>(context);
 }
 
 void SimStringCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -2634,12 +2856,17 @@ void SimStringToPackedExactOp::getCanonicalizationPatterns(
 
 void SimLogicCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
-  results.add<NormalizeCompareConstant>(context);
+  results.add<NormalizeCompareConstant, TwoStateCompare>(context);
 }
 
 void SimLogicResizeOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
-  results.add<CollapseResizeChain>(context);
+  results.add<CollapseResizeChain, TwoStateResize>(context);
+}
+
+void SimLogicIsTrueOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                   MLIRContext *context) {
+  results.add<TwoStateTruth>(context);
 }
 
 void SimLogicConcatOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -2661,12 +2888,14 @@ void SimLogicExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimLogicDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
+  results.add<TwoStateIndex<SimLogicDynExtractOp, 1>>(context);
   results.add<ConstantDynamicExtract<SimLogicDynExtractOp, SimLogicExtractOp>>(
       context);
 }
 
 void SimLogicDynInsertOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
+  results.add<TwoStateIndex<SimLogicDynInsertOp, 2>>(context);
   results.add<ConstantDynamicInsert<SimLogicDynInsertOp, SimLogicInsertOp>>(
       context);
 }
@@ -2689,6 +2918,7 @@ void SimNetExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimRefDynExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                      MLIRContext *context) {
+  results.add<TwoStateIndex<SimRefDynExtractOp, 1>>(context);
   results.add<ConstantDynamicExtract<SimRefDynExtractOp, SimRefExtractOp>>(
       context);
   results.add<PromotePackedLocalView<SimRefDynExtractOp>>(context);
@@ -2701,6 +2931,7 @@ void SimDriverExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimDriverDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
+  results.add<TwoStateIndex<SimDriverDynExtractOp, 1>>(context);
   results
       .add<ConstantDynamicExtract<SimDriverDynExtractOp, SimDriverExtractOp>>(
           context);

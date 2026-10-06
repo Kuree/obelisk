@@ -450,13 +450,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     if (optLevel > 0) {
-      ObeliskSimUnrollBoundedLoopsPassOptions unrollOptions;
-      // Expose small constant-index loops before sparse state-domain analysis.
-      // Bound replication using the shared state/call-weighted body cost.
-      if (optLevel >= 3)
-        unrollOptions.maximumGrowth = 128;
-      functionManager.addPass(
-          createObeliskSimUnrollBoundedLoopsPass(unrollOptions));
+      // Keep induction loops intact for dataflow and scheduling. Unrolling
+      // belongs to LLVM, where the target costs and final memory operations
+      // are visible. In particular, cheaper canonical forms must not trigger
+      // replication of simulation stores and their publication machinery.
       functionManager.addPass(createCanonicalizerPass());
       functionManager.addPass(createCSEPass());
     }
