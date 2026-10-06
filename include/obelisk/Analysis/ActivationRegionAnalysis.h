@@ -5,6 +5,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace obelisk::analysis {
 
@@ -24,8 +25,11 @@ public:
     mlir::Operation *operation;
     Ranges reads, writes;
   };
+  /// Optional diagnostic views; the callback must not retain their IR.
+  using Trace = llvm::function_ref<void(llvm::StringRef, mlir::Operation *)>;
   ActivationRegionAnalysis(sim::SimFuncOp function,
-                           const HandleDataflowAnalysis &handles);
+                           const HandleDataflowAnalysis &handles,
+                           Trace trace = {});
   bool isValid() const { return reason.empty(); }
   llvm::StringRef getFailureReason() const { return reason; }
   llvm::ArrayRef<Node> getNodes() const { return nodes; }

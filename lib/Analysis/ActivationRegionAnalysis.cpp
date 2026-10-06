@@ -1,5 +1,8 @@
 //===- ActivationRegionAnalysis.cpp - Structured activation regions ------===//
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlow/LivenessAnalysis.h"
 #include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
@@ -65,9 +68,9 @@ bool finiteActivation(sim::SimFuncOp function) {
   return ready.size() == incoming.size();
 }
 
-OwningOpRef<sim::SimFuncOp> cloneActivation(sim::SimFuncOp source,
-                                            Operation *suspend, bool resume,
-                                            IRMapping &mapping) {
+OwningOpRef<sim::SimFuncOp>
+cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
+                IRMapping &mapping, ActivationRegionAnalysis::Trace trace) {
   auto copy = cast<sim::SimFuncOp>(source->clone(mapping));
   OwningOpRef<sim::SimFuncOp> owner(copy);
   DenseSet<Operation *> initialEffects;
@@ -137,18 +140,31 @@ OwningOpRef<sim::SimFuncOp> cloneActivation(sim::SimFuncOp source,
   // headers. Collapse their proven SSA identities before structuring, so a
   // stable reference does not become a loop-carried region result.
   propagateActivationValueRoots(copy);
+  if (!initialEffects.empty()) {
+    // A live one-time snapshot is captured state, not a fresh resume read.
+    // Sparse backward liveness follows CFG forwarding lanes, including dead
+    // phi cycles, before any rewrite can merge loads or recycle op addresses.
+    SymbolTableCollection symbols;
+    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+    solver.load<dataflow::DeadCodeAnalysis>();
+    solver.load<dataflow::SparseConstantPropagation>();
+    solver.load<dataflow::LivenessAnalysis>(symbols);
+    if (failed(solver.initializeAndRun(copy)))
+      return {};
+    for (Operation *effect : initialEffects) {
+      if (!wouldOpBeTriviallyDead(effect))
+        return {};
+      for (Value result : effect->getResults()) {
+        auto *state = solver.lookupState<dataflow::Liveness>(result);
+        if (!state || state->isLive)
+          return {};
+      }
+    }
+  }
   if (failed(canonicalizeControl(copy)))
     return {};
-  // The original entry executes once. A live snapshot loaded there cannot
-  // become a fresh load at every wake merely because both clones share the
-  // same preamble. Dead initial snapshots disappear after routing to resume;
-  // every remaining initial effect rejects equivalence.
-  if (copy.walk([&](Operation *op) {
-            return initialEffects.contains(op) ? WalkResult::interrupt()
-                                               : WalkResult::advance();
-          })
-          .wasInterrupted())
-    return {};
+  if (trace)
+    trace(resume ? "resume" : "initial", copy);
   return owner;
 }
 
@@ -169,10 +185,38 @@ void unionRanges(Ranges &into, ArrayRef<ActivationMemoryAnalysis::Range> from) {
   }
   into = std::move(merged);
 }
+
+bool equivalentActivations(sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
+  // CFG block order is not dominance order. Register corresponding SSA
+  // definitions before comparing operands, including definitions in a loop
+  // header printed after one of its dominated exit blocks.
+  auto definitions = [](sim::SimFuncOp function) {
+    SmallVector<Value> values;
+    function.walk([&](Operation *op) {
+      llvm::append_range(values, op->getResults());
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          llvm::append_range(values, block.getArguments());
+    });
+    return values;
+  };
+  auto left = definitions(lhs), right = definitions(rhs);
+  if (left.size() != right.size())
+    return false;
+  IRMapping mapping;
+  mapping.map(left, right);
+  return OperationEquivalence::isEquivalentTo(
+      lhs, rhs,
+      [&](Value a, Value b) {
+        return success(mapping.lookupOrDefault(a) == b);
+      },
+      nullptr, OperationEquivalence::IgnoreLocations);
+}
 } // namespace
 
 ActivationRegionAnalysis::ActivationRegionAnalysis(
-    sim::SimFuncOp function, const HandleDataflowAnalysis &handles) {
+    sim::SimFuncOp function, const HandleDataflowAnalysis &handles,
+    Trace trace) {
   if (function.isExternal() || !function.getFunctionType().getResults().empty())
     return;
   unsigned waits = 0;
@@ -193,12 +237,11 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
         }))
       return;
   IRMapping initialMap, resumeMap;
-  auto initial = cloneActivation(function, suspension, false, initialMap);
-  auto resumed = cloneActivation(function, suspension, true, resumeMap);
+  auto initial =
+      cloneActivation(function, suspension, false, initialMap, trace);
+  auto resumed = cloneActivation(function, suspension, true, resumeMap, trace);
   if (!initial || !resumed ||
-      !OperationEquivalence::isEquivalentTo(
-          initial.get(), resumed.get(),
-          OperationEquivalence::IgnoreLocations)) {
+      !equivalentActivations(initial.get(), resumed.get())) {
     reason = "initial/resume equivalence";
     return;
   }

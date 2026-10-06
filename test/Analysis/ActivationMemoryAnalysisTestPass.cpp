@@ -76,7 +76,16 @@ public:
         if (!functions.empty() &&
             !llvm::is_contained(functions, function.getSymName().str()))
           continue;
-        obelisk::analysis::ActivationRegionAnalysis analysis(function, handles);
+        auto trace = [&](StringRef phase, Operation *view) {
+          if (!dump)
+            return;
+          llvm::errs() << "activation " << phase << " @"
+                       << function.getSymName() << '\n';
+          view->print(llvm::errs());
+          llvm::errs() << '\n';
+        };
+        obelisk::analysis::ActivationRegionAnalysis analysis(function, handles,
+                                                             trace);
         llvm::errs() << "regions @" << function.getSymName()
                      << " valid=" << analysis.isValid();
         if (!analysis.isValid())
