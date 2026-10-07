@@ -6,6 +6,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
@@ -1226,6 +1227,44 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   bool inspectAll =
       op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique ||
       op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique0;
+  bool disjointConstants =
+      inspectAll && op.getConditionKind() == semantic::SVCaseCondition::Normal;
+  // IEEE 1800-2023 12.5.3 counts matching items, not labels within one item.
+  // Exact equal-width constant labels from different items cannot both match
+  // the same selector, including X/Z. Keep dynamic, wildcard, real, string,
+  // and width-changing cases on the general checked path.
+  auto selectorWidth = sim::getPackedWidth((*selector).getType());
+  DenseMap<std::pair<APInt, APInt>, size_t> constantItems;
+  size_t nextConstant = 0;
+  for (size_t item = 0; disjointConstants && item < itemCount; ++item)
+    for (int64_t index = 0; index < labelCounts[item]; ++index) {
+      Operation *label = labels[nextConstant++];
+      auto labelType = getNormalizedSemanticType(label);
+      auto spelling = getConstantSpelling(label);
+      if (isa<semantic::SVConversionExpressionOp>(label) || failed(labelType) ||
+          !spelling || !selectorWidth ||
+          sim::getPackedWidth(*labelType) != selectorWidth) {
+        disjointConstants = false;
+        break;
+      }
+      auto value =
+          parseSVInteger(*spelling, *selectorWidth, getSemanticLocation(label));
+      if (failed(value) ||
+          (!value->unknown.isZero() &&
+           (isa<IntegerType>(sim::getPackedScalarType(*labelType)) ||
+            isa<IntegerType>(
+                sim::getPackedScalarType((*selector).getType()))))) {
+        disjointConstants = false;
+        break;
+      }
+      auto [found, inserted] = constantItems.try_emplace(
+          std::make_pair(value->value, value->unknown), item);
+      if (!inserted && found->second != item) {
+        disjointConstants = false;
+        break;
+      }
+    }
+  inspectAll &= !disjointConstants;
   if (!inspectAll) {
     size_t nextLabel = 0;
     for (size_t item = 0; item < itemCount; ++item) {
@@ -1258,7 +1297,9 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
       emitBranch(mergeBlock);
       setCurrent(nextItemBlock);
     }
-    if (op.getCheckKind() == semantic::SVUniquePriorityCheck::Priority &&
+    if ((op.getCheckKind() == semantic::SVUniquePriorityCheck::Priority ||
+         (disjointConstants &&
+          op.getCheckKind() == semantic::SVUniquePriorityCheck::Unique)) &&
         !hasDefault)
       emitQualifierWarning(op.getOperation(), location, op.getCheckKind(),
                            "case", "no match");
