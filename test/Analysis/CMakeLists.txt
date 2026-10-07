@@ -12,6 +12,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   StaticSpecializationAnalysisTestPass.cpp
   StateDomainTestPass.cpp
   StorageWriteAnalysisTestPass.cpp
+  ValueInterfacesTestPass.cpp
 
   EXCLUDE_FROM_LIBMLIR
   DISABLE_INSTALL

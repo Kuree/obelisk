@@ -836,7 +836,7 @@ module {
     simulation.scope.decl 0
     simulation.func @bad(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9000001 : i64} {
       %value = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
-      // expected-error @+1 {{result must be a signless builtin integer}}
+      // expected-error @+1 {{operand type '!simulation.logic<8>' and result type 'si8' are cast incompatible}}
       %bad = simulation.logic.to_bits %value : !simulation.logic<8> -> si8
       simulation.return
     }

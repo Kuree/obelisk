@@ -147,7 +147,7 @@ func.func @bad_alloc(%arg: i8) {
 // -----
 
 func.func @bad_flatten(%arg: !simulation.packed_array<1 : 0 x i8>) {
-  // expected-error @+1 {{result must be the aggregate's width- and state-matched scalar}}
+  // expected-error @+1 {{operand type '!simulation.packed_array<1 : 0 x i8>' and result type 'i8' are cast incompatible}}
   %value = simulation.packed.flatten %arg : (!simulation.packed_array<1 : 0 x i8>) -> i8
   return
 }
@@ -155,7 +155,7 @@ func.func @bad_flatten(%arg: !simulation.packed_array<1 : 0 x i8>) {
 // -----
 
 func.func @flatten_unpacked(%arg: !simulation.unpacked_array<1 : 0 x i8>) {
-  // expected-error @+1 {{input must be a packed aggregate}}
+  // expected-error @+1 {{operand type '!simulation.unpacked_array<1 : 0 x i8>' and result type 'i16' are cast incompatible}}
   %value = simulation.packed.flatten %arg : (!simulation.unpacked_array<1 : 0 x i8>) -> i16
   return
 }

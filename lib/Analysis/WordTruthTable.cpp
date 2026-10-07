@@ -1,5 +1,6 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Analysis/NativeWordAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -16,12 +17,11 @@ bool isWordLaneComputation(Operation *op) {
       op->getNumRegions() || op->getNumSuccessors() ||
       isa<CallOpInterface>(op) || !isMemoryEffectFree(op))
     return false;
-  // Only representation identities and the type-agnostic arith.select fold
+  // Only representation identities and type-agnostic selection folds
   // consume wrapped lanes. Other aggregate folds have different constant
   // attribute encodings and cannot be enumerated as scalar logic planes.
-  bool wrapped =
-      isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp, arith::SelectOp>(
-          op);
+  bool wrapped = isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
+                     SelectLikeOpInterface>(op);
   if (!wrapped && !isa<IntegerType, sim::LogicType>(op->getResult(0).getType()))
     return false;
   unsigned planes = 0;

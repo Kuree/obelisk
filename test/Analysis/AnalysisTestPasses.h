@@ -18,6 +18,7 @@ void registerSimulationVPIAnalysisTestPass();
 void registerStaticSpecializationAnalysisTestPass();
 void registerStateDomainTestPasses();
 void registerStorageWriteAnalysisTestPass();
+void registerValueInterfacesTestPass();
 
 } // namespace obelisk
 

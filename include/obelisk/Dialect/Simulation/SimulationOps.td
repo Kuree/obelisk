@@ -11,9 +11,11 @@ include "obelisk/Dialect/Simulation/SimulationTypes.td"
 include "obelisk/Dialect/Runtime/RuntimeTypes.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/Interfaces/CastInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/InferIntRangeInterface.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -3763,7 +3765,8 @@ def SimContextEventOp : SimOp<"context.event", [Pure]> {
 // First-class fixed aggregate values
 //===----------------------------------------------------------------------===//
 
-def SimPackedFlattenOp : SimOp<"packed.flatten", [Pure]> {
+def SimPackedFlattenOp : SimOp<"packed.flatten", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
   let summary = "view a packed aggregate as its scalar bit representation";
   let arguments = (ins AnyType:$input);
   let results = (outs AnyType:$result);
@@ -3772,7 +3775,8 @@ def SimPackedFlattenOp : SimOp<"packed.flatten", [Pure]> {
   let hasCanonicalizer = 1;
 }
 
-def SimPackedUnflattenOp : SimOp<"packed.unflatten", [Pure]> {
+def SimPackedUnflattenOp : SimOp<"packed.unflatten", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
   let summary = "form a packed aggregate from its scalar bit representation";
   let arguments = (ins AnyType:$input);
   let results = (outs AnyType:$result);
@@ -4451,7 +4455,8 @@ def SimLogicConstantOp : SimOp<"logic.constant", [Pure, ConstantLike]> {
   let hasFolder = 1;
 }
 
-def SimLogicFromBitsOp : SimOp<"logic.from_bits", [Pure]> {
+def SimLogicFromBitsOp : SimOp<"logic.from_bits", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
   let arguments = (ins AnyInteger:$input);
   let results = (outs SimLogicType:$result);
   let assemblyFormat = "$input attr-dict `:` type($input) `->` qualified(type($result))";
@@ -4459,7 +4464,8 @@ def SimLogicFromBitsOp : SimOp<"logic.from_bits", [Pure]> {
   let hasFolder = 1;
 }
 
-def SimLogicToBitsOp : SimOp<"logic.to_bits", [Pure]> {
+def SimLogicToBitsOp : SimOp<"logic.to_bits", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
   let summary = "convert four-state logic to two-state bits";
   let description = [{
     Performs the SystemVerilog four-state-to-two-state conversion. Every known
@@ -4507,7 +4513,9 @@ def SimLogicMuxOp : SimOp<"logic.mux", [
   let hasCanonicalizer = 1;
 }
 
-def SimLogicCountBitsOp : SimOp<"logic.count_bits", [Pure]> {
+def SimLogicCountBitsOp : SimOp<"logic.count_bits", [
+    Pure, DeclareOpInterfaceMethods<InferIntRangeInterface,
+                                   ["inferResultRangesFromOptional"]>]> {
   let summary = "count selected four-state symbols in a fixed bitstream";
   let description = [{
     Each one-bit control selects exactly one of 0, 1, X, or Z using the
@@ -4523,7 +4531,9 @@ def SimLogicCountBitsOp : SimOp<"logic.count_bits", [Pure]> {
   let hasFolder = 1;
 }
 
-def SimLogicClog2Op : SimOp<"logic.clog2", [Pure]> {
+def SimLogicClog2Op : SimOp<"logic.clog2", [
+    Pure, DeclareOpInterfaceMethods<InferIntRangeInterface,
+                                   ["inferResultRangesFromOptional"]>]> {
   let summary = "SystemVerilog ceiling base-two logarithm";
   let description = [{
     Converts X and Z bits to zero, then returns the minimum number of bits
@@ -4537,7 +4547,8 @@ def SimLogicClog2Op : SimOp<"logic.clog2", [Pure]> {
   let hasFolder = 1;
 }
 
-def SimLogicResizeOp : SimOp<"logic.resize", [Pure]> {
+def SimLogicResizeOp : SimOp<"logic.resize", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
   let summary = "widen or narrow a four-state value";
   let arguments = (ins SimLogicType:$input, BoolAttr:$is_signed);
   let results = (outs SimLogicType:$result);

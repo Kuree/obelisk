@@ -2,8 +2,9 @@
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 using namespace mlir;
@@ -38,6 +39,21 @@ class SparseDemand final
     : public dataflow::SparseBackwardDataFlowAnalysis<DemandLattice> {
 public:
   using SparseBackwardDataFlowAnalysis::SparseBackwardDataFlowAnalysis;
+  LogicalResult initialize(Operation *top) override {
+    // With a callable as the analysis root, its callers are outside the
+    // solver's scope. Treat every returned bit as observable, including for
+    // private functions. DeadCodeAnalysis discovers callable predecessors
+    // through symbol tables, which are outside this function-local analysis.
+    if (auto callable = dyn_cast<CallableOpInterface>(top))
+      if (Region *region = callable.getCallableRegion())
+        for (Block &block : *region) {
+          Operation *terminator = block.getTerminator();
+          if (terminator->hasTrait<OpTrait::ReturnLike>())
+            for (Value operand : terminator->getOperands())
+              setToExitState(getLatticeElement(operand));
+        }
+    return SparseBackwardDataFlowAnalysis::initialize(top);
+  }
   LogicalResult
   visitOperation(Operation *op, ArrayRef<DemandLattice *> operands,
                  ArrayRef<const DemandLattice *> results) override {
@@ -53,7 +69,7 @@ public:
     bool supported = isa<sim::SimLogicExtractOp, sim::SimLogicConcatOp,
                          sim::SimLogicInsertOp, sim::SimLogicResizeOp,
                          sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
-                         arith::SelectOp>(op);
+                         SelectLikeOpInterface>(op);
     if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op))
       supported = binary.getKind() == sim::BinaryKind::And ||
                   binary.getKind() == sim::BinaryKind::Or ||
@@ -98,12 +114,18 @@ public:
       input.clearBits(low, low + width);
       put(0, input);
       put(1, mask.extractBits(width, low));
-    } else if (isa<arith::SelectOp>(op)) {
+    } else if (auto select = dyn_cast<SelectLikeOpInterface>(op)) {
       // Every demanded result bit demands the same bit in both alternatives.
       // The predicate stays fully observed, including when it selects Z.
-      setToExitState(operands[0]);
-      put(1, mask);
-      put(2, mask);
+      // Interfaces identify values, not operand positions. An implementation
+      // can order its operands differently or reuse a value in several roles.
+      for (auto [index, value] : llvm::enumerate(op->getOperands())) {
+        if (value != select.getCondition() &&
+            (value == select.getTrueValue() || value == select.getFalseValue()))
+          put(index, mask);
+        else
+          setToExitState(operands[index]);
+      }
     } else if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op)) {
       unsigned width = bitWidth(resize.getInput());
       APInt input = mask.zextOrTrunc(width);

@@ -81,8 +81,6 @@ public:
     } else if (auto allocation = dyn_cast<sim::SimRefAllocOp>(op)) {
       if (auto key = ranges.find(allocation.getResult()); key != ranges.end())
         next[key->second] = allocation.getInitialValue();
-    } else if (isa<cf::BranchOp, cf::CondBranchOp>(op)) {
-      // Dense CFG propagation intersects snapshots on every incoming edge.
     } else if (!isMemoryEffectFree(op)) {
       next.clear();
     }

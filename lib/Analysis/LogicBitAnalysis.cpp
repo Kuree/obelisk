@@ -2,8 +2,8 @@
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
@@ -48,6 +48,29 @@ public:
       setToEntryState(results.front());
       return success();
     }
+    // SCCP evaluates dialect fold hooks and forwards constants through region
+    // and CFG interfaces. Consume that shared lattice instead of recognizing
+    // only literal-producing opcodes here. Keep a dependency until it resolves.
+    const auto &constant =
+        getOrCreateFor<dataflow::Lattice<dataflow::ConstantValue>>(
+            getProgramPointAfter(op), value)
+            ->getValue();
+    if (constant.isUninitialized())
+      return success();
+    if (auto planes = dyn_cast_or_null<ArrayAttr>(constant.getConstantValue());
+        planes && planes.size() == 2) {
+      auto bits = dyn_cast<IntegerAttr>(planes[0]);
+      auto unknown = dyn_cast<IntegerAttr>(planes[1]);
+      if (bits && unknown && bits.getValue().getBitWidth() == type.getWidth() &&
+          unknown.getValue().getBitWidth() == type.getWidth()) {
+        LogicBitFacts folded(type.getWidth());
+        folded.known = ~unknown.getValue();
+        folded.one = bits.getValue() & folded.known;
+        folded.zero = ~bits.getValue() & folded.known;
+        propagateIfChanged(results.front(), results.front()->join(folded));
+        return success();
+      }
+    }
     // Wait on sparse dependencies; joins on CFG arguments and loops are
     // managed by the solver. No bounded recursive traversal is used.
     for (const auto *operand : operands)
@@ -72,11 +95,7 @@ public:
         }
       llvm_unreachable("transfer queried a non-operand");
     };
-    if (auto constant = value.getDefiningOp<sim::SimLogicConstantOp>()) {
-      result.known = ~constant.getUnknown();
-      result.one = constant.getValue() & result.known;
-      result.zero = ~constant.getValue() & result.known;
-    } else if (auto from = value.getDefiningOp<sim::SimLogicFromBitsOp>()) {
+    if (auto from = value.getDefiningOp<sim::SimLogicFromBitsOp>()) {
       result.known.setAllBits();
       APInt bits;
       if (matchPattern(from.getInput(), m_ConstantInt(&bits))) {
@@ -148,7 +167,7 @@ public:
         if (unary.getKind() == sim::UnaryKind::BitNot)
           std::swap(result.zero, result.one);
       }
-    } else if (auto select = value.getDefiningOp<arith::SelectOp>()) {
+    } else if (auto select = dyn_cast<SelectLikeOpInterface>(op)) {
       // The predicate is two-state. Preserve facts common to either selected
       // SSA value; unlike logic.mux, selection itself does not merge X/Z bits.
       result = LogicBitFacts::join(operand(select.getTrueValue()),

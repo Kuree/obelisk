@@ -15,6 +15,7 @@ add_mlir_library(ObeliskScheduleIR
   MLIRFunctionInterfaces
   MLIRLLVMDialect
   MLIRSideEffectInterfaces
+  MLIRViewLikeInterface
   MLIRTransformUtils
   MLIRIR
 )

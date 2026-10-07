@@ -1,5 +1,7 @@
 #include "obelisk/Analysis/PrivateStorageAnalysis.h"
 #include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 using namespace mlir;
@@ -75,9 +77,9 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
                      range.width == range.rootWidth &&
                      cast<sim::RefType>(operand.getType()).getElementType() ==
                          access.declaration.getType();
-        bool view = isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
-                        schedule::NativeWordViewOp, sim::SimRefSubelementOp,
-                        sim::SimRefArrayElementOp>(op);
+        auto viewInterface = dyn_cast<ViewLikeOpInterface>(op);
+        bool view = viewInterface && viewInterface.getViewSource() == operand &&
+                    isMemoryEffectFree(op);
         if (view)
           view = llvm::all_of(op->getResults(), [&](Value result) {
             auto selected = facts.facts.find(result);
@@ -85,6 +87,13 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
                    selected->second.descriptor == range.descriptor &&
                    selected->second.resource == range.resource;
           });
+        // The interface identifies alias transport, not a field layout or
+        // reconstruction rule. Promotion still needs one of the supported
+        // geometries; an unknown view may not be rebuilt as a packed cast.
+        if (view && !isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
+                         schedule::NativeWordViewOp, sim::SimRefSubelementOp,
+                         sim::SimRefArrayElementOp>(op))
+          access.promotableViews = false;
         if (auto field = dyn_cast<sim::SimRefSubelementOp>(op)) {
           Type type = field.getInput().getType().getElementType();
           for (int64_t index : field.getIndices()) {

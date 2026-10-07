@@ -2,8 +2,9 @@
 #define OBELISK_DIALECT_SCHEDULE_SCHEDULEOPS_H
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/OpDefinition.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationAttrs.h"

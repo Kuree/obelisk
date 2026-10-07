@@ -7,6 +7,7 @@ include "obelisk/Dialect/Simulation/SimulationResources.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/Interfaces/ViewLikeInterface.td"
 include "obelisk/Dialect/Schedule/ScheduleAttrs.td"
 include "mlir/Dialect/LLVMIR/LLVMTypes.td"
 include "obelisk/Dialect/Runtime/RuntimeTypes.td"
@@ -14,7 +15,10 @@ class ScheduleNativeOp<string mnemonic, list<Trait> traits = []>
     : Op<ScheduleDialect, mnemonic, traits> {
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
-def NativeWordRegionOp : ScheduleNativeOp<"word.region", [RecursiveMemoryEffects]> {
+def NativeWordRegionOp : ScheduleNativeOp<"word.region", [
+    RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+                              ["getRegionInvocationBounds"]>]> {
   let summary = "execute a proven native-width packed computation";
   let description = [{
     Executes the enclosed non-suspending CFG once, in program order. Packed
@@ -37,7 +41,8 @@ def NativeWordRegionOp : ScheduleNativeOp<"word.region", [RecursiveMemoryEffects
   let hasVerifier = 1;
 }
 def NativeWordYieldOp : ScheduleNativeOp<"word.yield",
-    [Terminator, HasParent<"NativeWordRegionOp">, Pure]> {
+    [Terminator, HasParent<"NativeWordRegionOp">, Pure,
+     DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface>]> {
   let assemblyFormat = "attr-dict";
 }
 def NativeWordTableOp : ScheduleNativeOp<"word.table", [Pure]> {
@@ -63,7 +68,7 @@ def NativeWordReverseOp : ScheduleNativeOp<"word.reverse", [Pure]> {
   let results = (outs AnyType:$result);
   let hasVerifier = 1;
 }
-def NativeWordViewOp : ScheduleNativeOp<"word.view", [Pure]> {
+def NativeWordViewOp : ScheduleNativeOp<"word.view", [Pure, ViewLikeOpInterface]> {
   let summary = "view consecutive scalar array storage lanes as one packed word";
   let description = [{
     Selects a packed native word from the canonical storage of a fixed unpacked
@@ -75,6 +80,9 @@ def NativeWordViewOp : ScheduleNativeOp<"word.view", [Pure]> {
   }];
   let arguments = (ins SimRefType:$input, AnySignlessInteger:$low_bit);
   let results = (outs SimRefType:$result);
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
   let hasVerifier = 1;
 }
 def NativeWordExtractOp : ScheduleNativeOp<"word.extract", [Pure]> {

@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
   obelisk::registerSimulationVPIAnalysisTestPass();
   obelisk::registerStaticSpecializationAnalysisTestPass();
   obelisk::registerStateDomainTestPasses();
+  obelisk::registerValueInterfacesTestPass();
 #endif
 
   mlir::DialectRegistry registry;

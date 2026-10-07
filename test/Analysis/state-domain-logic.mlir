@@ -65,7 +65,7 @@ module {
       %dynamic_xz = simulation.logic.dyn_extract %xz from %index : (!simulation.logic<8>, i8) -> !simulation.logic<4>
       %inserted = simulation.logic.insert %extract into %known at 2 : (!simulation.logic<8>, !simulation.logic<4>) -> !simulation.logic<8>
       %inserted_xz = simulation.logic.insert %extract into %xz at 2 : (!simulation.logic<8>, !simulation.logic<4>) -> !simulation.logic<8>
-      %unsupported = builtin.unrealized_conversion_cast %known : !simulation.logic<8> to !simulation.logic<8>
+      %unsupported = builtin.unrealized_conversion_cast %known : !simulation.logic<8> to !simulation.logic<16>
       %local = simulation.ref.alloc %known : !simulation.logic<8> -> !simulation.ref<!simulation.logic<8>>
       %loaded = simulation.ref.load %local : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>
       %net_value = simulation.net.read %net : !simulation.net<!simulation.logic<8>> -> !simulation.logic<8>

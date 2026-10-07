@@ -89,12 +89,12 @@ StateDomainFact joinAlternatives(StateDomainFact lhs, StateDomainFact rhs,
 
 /// Combine dependencies of one transfer. Unlike a control-flow join, every
 /// operand must be resolved before a normal operation result can be resolved.
-StateDomainFact combineOperands(Operation *op,
-                                const DenseMap<Value, StateDomainFact> &facts,
-                                StateDomainReason reason) {
+StateDomainFact combineValues(ValueRange operands,
+                              const DenseMap<Value, StateDomainFact> &facts,
+                              StateDomainReason reason) {
   bool sawLogic = false;
   bool sawBottom = false;
-  for (Value operand : op->getOperands()) {
+  for (Value operand : operands) {
     if (!isLogic(operand.getType()))
       continue;
     sawLogic = true;
@@ -111,6 +111,12 @@ StateDomainFact combineOperands(Operation *op,
   if (!sawLogic)
     return twoState(reason);
   return sawBottom ? bottomFact() : twoState(reason);
+}
+
+StateDomainFact combineOperands(Operation *op,
+                                const DenseMap<Value, StateDomainFact> &facts,
+                                StateDomainReason reason) {
+  return combineValues(op->getOperands(), facts, reason);
 }
 
 bool updateFact(DenseMap<Value, StateDomainFact> &facts, Value value,
@@ -271,8 +277,9 @@ StateDomainFact transferOperation(
       .Case<sim::SimLogicMuxOp>([&](auto) {
         return combineOperands(op, facts, StateDomainReason::LogicMux);
       })
-      .Case<arith::SelectOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::Select);
+      .Case<SelectLikeOpInterface>([&](auto select) {
+        return combineValues({select.getTrueValue(), select.getFalseValue()},
+                             facts, StateDomainReason::Select);
       })
       .Case<sim::SimLogicShiftOp>([&](auto) {
         return combineOperands(op, facts, StateDomainReason::LogicShift);

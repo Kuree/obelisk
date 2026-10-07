@@ -81,6 +81,24 @@ LogicalResult NativeWordTableOp::verify() {
     return emitOpError("integer results cannot have unknown bits");
   return success();
 }
+void NativeWordRegionOp::getSuccessorRegions(
+    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent())
+    regions.emplace_back(&getBody());
+  else
+    regions.emplace_back(getOperation(), getOperation()->getResults());
+}
+
+void NativeWordRegionOp::getRegionInvocationBounds(
+    ArrayRef<Attribute>, SmallVectorImpl<InvocationBounds> &bounds) {
+  bounds.emplace_back(1, 1);
+}
+
+MutableOperandRange
+NativeWordYieldOp::getMutableSuccessorOperands(RegionSuccessor) {
+  return MutableOperandRange(getOperation(), 0, 0);
+}
+
 LogicalResult NativeWordRegionOp::verify() {
   if (getWidth() < 2 || getWidth() > 64)
     return emitOpError("requires a native word width between 2 and 64");
