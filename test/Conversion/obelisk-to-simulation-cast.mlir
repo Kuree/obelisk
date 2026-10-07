@@ -754,11 +754,13 @@ module attributes {
 // CHECK-NEXT: cf.br ^[[SAME_DONE]]
 // CHECK: ^[[SAME_DONE]]:
 // CHECK: %[[OTHER_ENUM:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.logic<4>
+// CHECK-NEXT: %[[OTHER_BITS:.*]] = simulation.logic.to_bits %[[OTHER_ENUM]] : !simulation.logic<4> -> i4
+// CHECK-NEXT: %[[OTHER_INTEGER:.*]] = arith.extui %[[OTHER_BITS]] : i4 to i32
 // CHECK-NEXT: %[[OTHER_WIDE:.*]] = simulation.logic.resize %[[OTHER_ENUM]] signed = false : !simulation.logic<4> -> !simulation.logic<32>
 // CHECK: simulation.logic.compare case_eq %[[OTHER_WIDE]], {{.*}} : (!simulation.logic<32>, !simulation.logic<32>) -> i1
 // CHECK: cf.cond_br {{.*}}, ^[[OTHER_STORE:bb[0-9]+]], ^[[OTHER_DONE:bb[0-9]+]]
 // CHECK: ^[[OTHER_STORE]]:
-// CHECK: simulation.ref.store {{.*}} to %[[ENUM_DEST]]
+// CHECK: simulation.ref.store %[[OTHER_INTEGER]] to %[[ENUM_DEST]]
 // CHECK: cf.br ^[[OTHER_DONE]]
 // CHECK: ^[[OTHER_DONE]]:
 // CHECK: %[[BASE:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.class_handle<@[[BASE_CLASS:[^>]+]]>

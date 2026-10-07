@@ -32,6 +32,7 @@ def ObeliskSimulationDialect : Dialect {
   let useDefaultTypePrinterParser = 1;
   let usePropertiesForAttributes = 0;
   let hasConstantMaterializer = 1;
+  let hasCanonicalizer = 1;
 }
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONDIALECT_TD

@@ -534,3 +534,67 @@ func.func @known(%arg: i8, %other: i8) -> i64 {
   %pack7 = arith.ori %pack6, %p7 : i64
   return %pack7 : i64
 }
+
+// Cross-operation dialect canonicalizations, including dynamic X/Z controls.
+func.func @multiop(%a: i8, %b: i8) -> i64 {
+  %x = func.call @decode(%a) : (i8) -> !simulation.logic<4>
+  %y = func.call @decode(%b) : (i8) -> !simulation.logic<4>
+  %control = simulation.logic.extract %y from 0 : !simulation.logic<4> -> !simulation.logic<1>
+  %low = simulation.logic.extract %x from 0 : !simulation.logic<4> -> !simulation.logic<1>
+  %r0 = simulation.logic.count_bits %x matching %control, %control : (!simulation.logic<4>, !simulation.logic<1>, !simulation.logic<1>) -> i32
+  %repeat = simulation.logic.replicate %x times 3 : !simulation.logic<4> -> !simulation.logic<12>
+  %signed = simulation.logic.resize %x signed = true : !simulation.logic<4> -> !simulation.logic<65>
+  %unsigned = simulation.logic.resize %x signed = false : !simulation.logic<4> -> !simulation.logic<65>
+  %reduce = simulation.logic.reduction or %x : !simulation.logic<4> -> !simulation.logic<1>
+  %r1 = simulation.logic.is_true %repeat : !simulation.logic<12>
+  %r2 = simulation.logic.is_true %signed : !simulation.logic<65>
+  %r3 = simulation.logic.is_true %unsigned : !simulation.logic<65>
+  %r4 = simulation.logic.is_true %reduce : !simulation.logic<1>
+  %r5 = simulation.logic.clog2 %low : !simulation.logic<1>
+  %ext0 = arith.extui %r0 : i32 to i64
+  %shift0 = arith.constant 0 : i64
+  %part0 = arith.shli %ext0, %shift0 : i64
+  %ext1 = arith.extui %r1 : i1 to i64
+  %shift1 = arith.constant 8 : i64
+  %part1 = arith.shli %ext1, %shift1 : i64
+  %sum1 = arith.ori %part0, %part1 : i64
+  %ext2 = arith.extui %r2 : i1 to i64
+  %shift2 = arith.constant 16 : i64
+  %part2 = arith.shli %ext2, %shift2 : i64
+  %sum2 = arith.ori %sum1, %part2 : i64
+  %ext3 = arith.extui %r3 : i1 to i64
+  %shift3 = arith.constant 24 : i64
+  %part3 = arith.shli %ext3, %shift3 : i64
+  %sum3 = arith.ori %sum2, %part3 : i64
+  %ext4 = arith.extui %r4 : i1 to i64
+  %shift4 = arith.constant 32 : i64
+  %part4 = arith.shli %ext4, %shift4 : i64
+  %sum4 = arith.ori %sum3, %part4 : i64
+  %ext5 = arith.extui %r5 : i32 to i64
+  %shift5 = arith.constant 40 : i64
+  %part5 = arith.shli %ext5, %shift5 : i64
+  %sum5 = arith.ori %sum4, %part5 : i64
+  return %sum5 : i64
+}
+
+func.func @resize_conversions(%a: i8) -> i64 {
+  %x = func.call @decode(%a) : (i8) -> !simulation.logic<4>
+  %wide0 = simulation.logic.resize %x signed = true : !simulation.logic<4> -> !simulation.logic<8>
+  %bits0 = simulation.logic.to_bits %wide0 : !simulation.logic<8> -> i8
+  %ext0 = arith.extui %bits0 : i8 to i64
+  %shift0 = arith.constant 0 : i64
+  %part0 = arith.shli %ext0, %shift0 : i64
+  %wide1 = simulation.logic.resize %x signed = false : !simulation.logic<4> -> !simulation.logic<8>
+  %bits1 = simulation.logic.to_bits %wide1 : !simulation.logic<8> -> i8
+  %ext1 = arith.extui %bits1 : i8 to i64
+  %shift1 = arith.constant 8 : i64
+  %part1 = arith.shli %ext1, %shift1 : i64
+  %sum1 = arith.ori %part0, %part1 : i64
+  %wide2 = simulation.logic.resize %x signed = true : !simulation.logic<4> -> !simulation.logic<2>
+  %bits2 = simulation.logic.to_bits %wide2 : !simulation.logic<2> -> i2
+  %ext2 = arith.extui %bits2 : i2 to i64
+  %shift2 = arith.constant 16 : i64
+  %part2 = arith.shli %ext2, %shift2 : i64
+  %sum2 = arith.ori %sum1, %part2 : i64
+  return %sum2 : i64
+}

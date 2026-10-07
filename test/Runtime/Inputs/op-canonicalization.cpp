@@ -12,6 +12,9 @@ UNARY(assoc3);
 UNARY(logical);
 UNARY(reduction2);
 UNARY(reduction3);
+UNARY(resize_conversions);
+extern "C" uint64_t multiop(uint8_t, uint8_t);
+extern "C" uint64_t reference_multiop(uint8_t, uint8_t);
 extern "C" uint64_t mux(uint8_t, uint8_t, uint8_t);
 extern "C" uint64_t reference_mux(uint8_t, uint8_t, uint8_t);
 extern "C" uint64_t known(uint8_t, uint8_t);
@@ -85,6 +88,13 @@ int main() {
                      reference_assoc3};
   unsigned constants[][2] = {{2, 3}, {0, 15}, {0xa3, 0x5c}, {0xf0, 0xff}};
   for (unsigned a = 0; a < 256; ++a) {
+    unsigned converted = (a & 15) & ~(a >> 4);
+    unsigned extended = converted | (converted & 8 ? 0xf0 : 0);
+    uint64_t resizeExpected =
+        extended | (uint64_t(converted) << 8) | (uint64_t(converted & 3) << 16);
+    if (!check("resize-conversion", a, 0, resize_conversions(a),
+               reference_resize_conversions(a), resizeExpected))
+      return 1;
     for (unsigned pair = 0; pair != 4; ++pair) {
       uint64_t expected = 0;
       for (unsigned op = 0; op != 6; ++op)
@@ -110,6 +120,15 @@ int main() {
         return 1;
     }
     for (unsigned b = 0; b != 256; ++b) {
+      unsigned count = 0;
+      for (unsigned bit = 0; bit != 4; ++bit)
+        count += symbol(a, bit) == symbol(b, 0);
+      uint64_t multiopExpected = count;
+      for (unsigned slot = 1; slot != 5; ++slot)
+        multiopExpected = put(multiopExpected, slot, truth(a) == 1);
+      if (!check("multiop", a, b, multiop(a, b), reference_multiop(a, b),
+                 multiopExpected))
+        return 1;
       for (unsigned c = 0; c != 2; ++c) {
         unsigned normalized = (a & 15 & ~(a >> 4)) | (a & 0xf0);
         uint64_t expected = (c ? a : b) | (uint64_t(normalized) << 8) |

@@ -4529,6 +4529,7 @@ def SimLogicCountBitsOp : SimOp<"logic.count_bits", [
       "$input `matching` $controls attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicClog2Op : SimOp<"logic.clog2", [

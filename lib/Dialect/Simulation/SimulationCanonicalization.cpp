@@ -340,6 +340,9 @@ OpFoldResult SimLogicCountBitsOp::fold(FoldAdaptor adaptor) {
 }
 
 OpFoldResult SimLogicClog2Op::fold(FoldAdaptor adaptor) {
+  // After X/Z-to-zero conversion every one-bit argument is zero or one.
+  if (getInput().getType().getWidth() == 1)
+    return IntegerAttr::get(getResult().getType(), 0);
   auto input = getLogicPlanes(adaptor.getInput());
   if (!input)
     return {};
@@ -1399,6 +1402,82 @@ struct TwoStateTruth final : OpRewritePattern<SimLogicIsTrueOp> {
                      arith::CmpIOp::create(rewriter, op.getLoc(),
                                            arith::CmpIPredicate::ne,
                                            from.getInput(), zero));
+    return success();
+  }
+};
+
+// These producer/consumer rules belong to the dialect canonicalizer. They
+// preserve the resolved expression widths and four-state conversion contracts;
+// they do not recursively infer facts about an arbitrary defining expression.
+struct SimplifyTruthSource final : OpRewritePattern<SimLogicIsTrueOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(SimLogicIsTrueOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input;
+    if (auto repeat = op.getInput().getDefiningOp<SimLogicReplicateOp>())
+      input = repeat.getInput();
+    else if (auto resize = op.getInput().getDefiningOp<SimLogicResizeOp>()) {
+      // Zero/sign extension cannot introduce the first known one. Truncation
+      // can discard it, so narrowing must retain the original truth test.
+      if (resize.getType().getWidth() >= resize.getInput().getType().getWidth())
+        input = resize.getInput();
+    } else if (auto reduction =
+                   op.getInput().getDefiningOp<SimLogicReductionOp>()) {
+      if (reduction.getKind() == ReductionKind::Or)
+        input = reduction.getInput();
+    }
+    if (!input)
+      return failure();
+    replaceWithNewOp(rewriter, op,
+                     SimLogicIsTrueOp::create(rewriter, op.getLoc(), input));
+    return success();
+  }
+};
+
+struct ConvertResizedLogicToBits final : OpRewritePattern<SimLogicToBitsOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(SimLogicToBitsOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resize = op.getInput().getDefiningOp<SimLogicResizeOp>();
+    if (!resize || !op.getType().isSignless())
+      return failure();
+    unsigned inputWidth = resize.getInput().getType().getWidth();
+    unsigned outputWidth = op.getType().getWidth();
+    Value bits = SimLogicToBitsOp::create(rewriter, op.getLoc(),
+                                          rewriter.getIntegerType(inputWidth),
+                                          resize.getInput());
+    // Clearing an unknown sign bit before sign extension is equivalent to
+    // extending both planes and then clearing all unknown bits (LRM 6.11,
+    // 11.6, 11.8). This is not a lossless-cast assumption.
+    if (outputWidth < inputWidth)
+      bits = arith::TruncIOp::create(rewriter, op.getLoc(), op.getType(), bits);
+    else if (outputWidth > inputWidth)
+      bits = resize.getIsSigned()
+                 ? arith::ExtSIOp::create(rewriter, op.getLoc(), op.getType(),
+                                          bits)
+                       .getResult()
+                 : arith::ExtUIOp::create(rewriter, op.getLoc(), op.getType(),
+                                          bits)
+                       .getResult();
+    rewriter.replaceOp(op, bits);
+    return success();
+  }
+};
+
+struct DeduplicateCountControls final : OpRewritePattern<SimLogicCountBitsOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(SimLogicCountBitsOp op,
+                                PatternRewriter &rewriter) const override {
+    llvm::SmallDenseSet<Value, 4> seen;
+    SmallVector<Value> controls;
+    for (Value control : op.getControls())
+      if (seen.insert(control).second)
+        controls.push_back(control);
+    if (controls.size() == op.getControls().size())
+      return failure();
+    // Controls select a set of symbols, including dynamic X/Z controls.
+    rewriter.modifyOpInPlace(op,
+                             [&] { op.getControlsMutable().assign(controls); });
     return success();
   }
 };
@@ -3280,6 +3359,16 @@ void SimLogicResizeOp::getCanonicalizationPatterns(RewritePatternSet &results,
 void SimLogicIsTrueOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
   results.add<TwoStateTruth>(context);
+}
+
+void SimLogicCountBitsOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<DeduplicateCountControls>(context);
+}
+
+void ObeliskSimulationDialect::getCanonicalizationPatterns(
+    RewritePatternSet &results) const {
+  results.add<SimplifyTruthSource, ConvertResizedLogicToBits>(getContext());
 }
 
 void SimLogicConcatOp::getCanonicalizationPatterns(RewritePatternSet &results,
