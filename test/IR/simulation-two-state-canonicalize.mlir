@@ -356,10 +356,13 @@ func.func @trunc(%bits: i128) -> i7 {
 }
 
 // CHECK-LABEL: func.func @retain_x(
-// CHECK: simulation.logic.binary add
-// CHECK: simulation.logic.compare slt
-// CHECK: simulation.logic.resize
-// CHECK: return
+// Arithmetic propagates a single X/Z operand to the whole result.
+// CHECK-DAG: %[[X8:.*]] = simulation.logic.constant 0 : i8, -1 : i8
+// CHECK-DAG: %[[X65:.*]] = simulation.logic.constant 0 : i65, -1 : i65
+// CHECK: %[[CMP:.*]] = simulation.logic.compare slt
+// CHECK-NOT: simulation.logic.binary
+// CHECK-NOT: simulation.logic.resize
+// CHECK: return %[[X8]], %[[CMP]], %[[X65]]
 func.func @retain_x(%bits: i8) -> (!simulation.logic<8>, !simulation.logic<1>, !simulation.logic<65>) {
   %logic = simulation.logic.from_bits %bits : i8 -> !simulation.logic<8>
   %unknown = simulation.logic.constant 0 : i8, -1 : i8 : !simulation.logic<8>
@@ -370,10 +373,13 @@ func.func @retain_x(%bits: i8) -> (!simulation.logic<8>, !simulation.logic<1>, !
 }
 
 // CHECK-LABEL: func.func @retain_z(
-// CHECK: simulation.logic.binary add
-// CHECK: simulation.logic.compare slt
-// CHECK: simulation.logic.resize
-// CHECK: return
+// Arithmetic propagates a single X/Z operand to the whole result.
+// CHECK-DAG: %[[X8:.*]] = simulation.logic.constant 0 : i8, -1 : i8
+// CHECK-DAG: %[[X65:.*]] = simulation.logic.constant 0 : i65, -1 : i65
+// CHECK: %[[CMP:.*]] = simulation.logic.compare slt
+// CHECK-NOT: simulation.logic.binary
+// CHECK-NOT: simulation.logic.resize
+// CHECK: return %[[X8]], %[[CMP]], %[[X65]]
 func.func @retain_z(%bits: i8) -> (!simulation.logic<8>, !simulation.logic<1>, !simulation.logic<65>) {
   %logic = simulation.logic.from_bits %bits : i8 -> !simulation.logic<8>
   %unknown = simulation.logic.constant -1 : i8, -1 : i8 : !simulation.logic<8>
@@ -384,10 +390,13 @@ func.func @retain_z(%bits: i8) -> (!simulation.logic<8>, !simulation.logic<1>, !
 }
 
 // CHECK-LABEL: func.func @retain_mixed(
-// CHECK: simulation.logic.binary add
-// CHECK: simulation.logic.compare slt
-// CHECK: simulation.logic.resize
-// CHECK: return
+// Arithmetic propagates a single X/Z operand to the whole result.
+// CHECK-DAG: %[[X8:.*]] = simulation.logic.constant 0 : i8, -1 : i8
+// CHECK-DAG: %[[X65:.*]] = simulation.logic.constant 0 : i65, -1 : i65
+// CHECK: %[[CMP:.*]] = simulation.logic.compare slt
+// CHECK-NOT: simulation.logic.binary
+// CHECK-NOT: simulation.logic.resize
+// CHECK: return %[[X8]], %[[CMP]], %[[X65]]
 func.func @retain_mixed(%bits: i8) -> (!simulation.logic<8>, !simulation.logic<1>, !simulation.logic<65>) {
   %logic = simulation.logic.from_bits %bits : i8 -> !simulation.logic<8>
   %unknown = simulation.logic.constant 3 : i8, 2 : i8 : !simulation.logic<8>

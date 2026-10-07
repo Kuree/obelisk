@@ -611,6 +611,36 @@ public:
   }
 };
 
+/// A known predicate selects the value and unknown planes independently.
+/// This is ordinary SSA selection; unlike an ambiguous logic.mux condition,
+/// it preserves a selected Z bit. Keep 1:N conversion in the type converter.
+class LogicSelectConversion final
+    : public OpConversionPattern<arith::SelectOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(arith::SelectOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!isa<sim::LogicType>(op.getType()))
+      return failure();
+    if (adaptor.getCondition().size() != 1 ||
+        adaptor.getTrueValue().size() != adaptor.getFalseValue().size())
+      return failure();
+    SmallVector<Value> results;
+    for (auto [trueValue, falseValue] :
+         llvm::zip(adaptor.getTrueValue(), adaptor.getFalseValue())) {
+      auto selected = arith::SelectOp::create(rewriter, op.getLoc(),
+                                              adaptor.getCondition().front(),
+                                              trueValue, falseValue);
+      copyDiscardableAttrs(op, selected);
+      results.push_back(selected);
+    }
+    rewriter.replaceOpWithMultiple(op, {results});
+    return success();
+  }
+};
+
 class CondBranchConversion final
     : public OpConversionPattern<cf::CondBranchOp> {
 public:
@@ -1821,8 +1851,8 @@ static void populateSimulationToStandardPatternsImpl(
       ExtractConversion, DynamicExtractConversion, BitsDynamicExtractConversion,
       DynamicInsertConversion, BitsDynamicInsertConversion, InsertConversion>(
       converter, patterns.getContext(), provenTwoStateOperations);
-  patterns.add<BranchConversion, CondBranchConversion, SwitchConversion>(
-      converter, patterns.getContext());
+  patterns.add<BranchConversion, CondBranchConversion, SwitchConversion,
+               LogicSelectConversion>(converter, patterns.getContext());
   patterns.add<FuncConversion, CallConversion, ReturnConversion>(
       converter, patterns.getContext());
   populateBranchOpInterfaceTypeConversionPattern(patterns, converter);

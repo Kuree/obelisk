@@ -299,3 +299,37 @@ func.func @dynamic_extract_keeps_store_order(
   %value = simulation.array.extract_dynamic %array[%index] : (!array, i32) -> i8
   return %value : i8
 }
+
+// IEEE 1800-2023 7.4, 10.9: fixed array assignment-pattern values.
+// CHECK-LABEL: func.func @extract_splat
+// CHECK-NEXT: return %arg0
+func.func @extract_splat(%a: i8) -> i8 {
+  %s = simulation.aggregate.splat %a : (i8) -> !array
+  %r = simulation.aggregate.extract %s[2] : (!array) -> i8
+  return %r : i8
+}
+// CHECK-LABEL: func.func @construct_splat
+// CHECK: %[[S:.*]] = simulation.aggregate.splat %arg0
+// CHECK-NEXT: return %[[S]]
+func.func @construct_splat(%a: i8) -> !array {
+  %s = simulation.aggregate.construct %a, %a, %a : (i8, i8, i8) -> !array
+  return %s : !array
+}
+// CHECK-LABEL: func.func @insert_construct
+// CHECK: simulation.aggregate.construct %arg0, %arg2, %arg0
+// CHECK-NOT: simulation.aggregate.insert
+// CHECK: return
+func.func @insert_construct(%a: i8, %b: i8, %c: i8) -> !array {
+  %s = simulation.aggregate.construct %a, %b, %a : (i8, i8, i8) -> !array
+  %r = simulation.aggregate.insert %c into %s[1] : (!array, i8) -> !array
+  return %r : !array
+}
+// Splat's element restrictions exclude floats and managed handles.
+// CHECK-LABEL: func.func @float_construct
+// CHECK: simulation.aggregate.construct %arg0, %arg0
+// CHECK-NOT: simulation.aggregate.splat
+// CHECK: return
+func.func @float_construct(%a: f64) -> !simulation.unpacked_array<0 : 1 x f64> {
+  %s = simulation.aggregate.construct %a, %a : (f64, f64) -> !simulation.unpacked_array<0 : 1 x f64>
+  return %s : !simulation.unpacked_array<0 : 1 x f64>
+}

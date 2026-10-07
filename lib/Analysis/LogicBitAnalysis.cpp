@@ -2,6 +2,7 @@
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -147,6 +148,11 @@ public:
         if (unary.getKind() == sim::UnaryKind::BitNot)
           std::swap(result.zero, result.one);
       }
+    } else if (auto select = value.getDefiningOp<arith::SelectOp>()) {
+      // The predicate is two-state. Preserve facts common to either selected
+      // SSA value; unlike logic.mux, selection itself does not merge X/Z bits.
+      result = LogicBitFacts::join(operand(select.getTrueValue()),
+                                   operand(select.getFalseValue()));
     } else if (auto mux = value.getDefiningOp<sim::SimLogicMuxOp>()) {
       auto condition = operand(mux.getCondition());
       auto yes = operand(mux.getTrueValue()), no = operand(mux.getFalseValue());

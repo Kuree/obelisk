@@ -703,6 +703,7 @@ def SimChandleEqualOp : SimOp<"chandle.equal", [Pure, Commutative]> {
   let arguments = (ins SimChandleType:$lhs, SimChandleType:$rhs);
   let results = (outs I1:$equal);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+  let hasFolder = 1;
 }
 
 def SimVirtualInterfaceBindOp
@@ -727,6 +728,7 @@ def SimVirtualInterfaceCastOp
     $input attr-dict `:` qualified(type($input)) `to` qualified(type($result))
   }];
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimVirtualInterfaceEqualOp
@@ -740,6 +742,7 @@ def SimVirtualInterfaceEqualOp
     qualified(type($rhs))
   }];
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimVirtualInterfaceScopeOp
@@ -1464,6 +1467,7 @@ def SimManagedIsNullOp : SimOp<"managed.is_null", [Pure]> {
   let arguments = (ins AnyType:$input);
   let results = (outs I1:$result);
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimBoxPackOp : SimOp<"box.pack", [Pure]> {
@@ -1984,6 +1988,7 @@ def SimStringToPackedOp : SimOp<"string.to_packed", [Pure]> {
   let summary = "convert a managed byte string to a two-state packed value";
   let arguments = (ins SimStringType:$input);
   let results = (outs AnyInteger:$result);
+  let hasCanonicalizer = 1;
 }
 
 def SimStringToPackedExactOp : SimOp<"string.to_packed_exact", [Pure]> {
@@ -2018,6 +2023,7 @@ def SimStringGetcOp : SimOp<"string.getc", [Pure]> {
   let summary = "read one byte, returning zero for an invalid index";
   let arguments = (ins SimStringType:$input, I64:$index);
   let results = (outs I8:$result);
+  let hasCanonicalizer = 1;
 }
 
 def SimStringPutcOp
@@ -3341,6 +3347,7 @@ def SimProcessEqualOp : SimOp<"process.equal", [Pure, Commutative]> {
   let arguments = (ins SimProcessType:$lhs, SimProcessType:$rhs);
   let results = (outs I1:$equal);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 def SimProcessStatusOp : SimOp<"process.status", [
@@ -4497,6 +4504,7 @@ def SimLogicMuxOp : SimOp<"logic.mux", [
     functional-type(operands, results)
   }];
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicCountBitsOp : SimOp<"logic.count_bits", [Pure]> {
@@ -4545,6 +4553,7 @@ def SimLogicUnaryOp : SimOp<"logic.unary", [Pure]> {
       "$kind $input attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicReductionOp : SimOp<"logic.reduction", [Pure]> {
@@ -4554,6 +4563,7 @@ def SimLogicReductionOp : SimOp<"logic.reduction", [Pure]> {
   let assemblyFormat = [{$kind $input attr-dict `:` qualified(type($input))
     `->` qualified(type($result))}];
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicBinaryOp
@@ -4593,6 +4603,7 @@ def SimLogicLogicalOp : SimOp<"logic.logical", [Pure, Commutative]> {
   let assemblyFormat =
       "$kind $lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicShiftOp
@@ -4607,6 +4618,7 @@ def SimLogicShiftOp
                        "functional-type(operands, results)";
   let hasVerifier = 1;
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicCompareOp
@@ -4636,6 +4648,8 @@ def SimLogicCaseDifferenceMaskOp
   let assemblyFormat =
       "$lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicConcatOp : SimOp<"logic.concat", [Pure]> {
@@ -4951,6 +4965,7 @@ def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
   let arguments = (ins SimEventType:$lhs, SimEventType:$rhs);
   let results = (outs I1:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 def SimObserverBindOp : SimOp<"observer.bind", [

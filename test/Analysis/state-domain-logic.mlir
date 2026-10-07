@@ -71,6 +71,9 @@ module {
       %net_value = simulation.net.read %net : !simulation.net<!simulation.logic<8>> -> !simulation.logic<8>
       %mux_known = simulation.logic.mux %reduced ? %known : %one : (!simulation.logic<1>, !simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<8>
       %mux_xz = simulation.logic.mux %reduced_xz ? %known : %one : (!simulation.logic<1>, !simulation.logic<8>, !simulation.logic<8>) -> !simulation.logic<8>
+      %predicate = arith.cmpi eq, %dynamic_bits, %bits : i8
+      %selected_known = arith.select %predicate, %known, %runtime_divisor : !simulation.logic<8>
+      %selected_xz = arith.select %predicate, %known, %xz : !simulation.logic<8>
       simulation.return
     }
   }
@@ -131,3 +134,5 @@ module {
 // CHECK-NEXT:   bb0.op54.result0: may-four-state (net-read)
 // CHECK-NEXT:   bb0.op55.result0: two-state (logic-mux)
 // CHECK-NEXT:   bb0.op56.result0: may-four-state (logic-mux)
+// CHECK-NEXT:   bb0.op58.result0: two-state (select)
+// CHECK-NEXT:   bb0.op59.result0: may-four-state (select)

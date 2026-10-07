@@ -2,6 +2,7 @@
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -51,7 +52,8 @@ public:
     // other users conservatively retain their full four-state semantics.
     bool supported = isa<sim::SimLogicExtractOp, sim::SimLogicConcatOp,
                          sim::SimLogicInsertOp, sim::SimLogicResizeOp,
-                         sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp>(op);
+                         sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
+                         arith::SelectOp>(op);
     if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op))
       supported = binary.getKind() == sim::BinaryKind::And ||
                   binary.getKind() == sim::BinaryKind::Or ||
@@ -96,6 +98,12 @@ public:
       input.clearBits(low, low + width);
       put(0, input);
       put(1, mask.extractBits(width, low));
+    } else if (isa<arith::SelectOp>(op)) {
+      // Every demanded result bit demands the same bit in both alternatives.
+      // The predicate stays fully observed, including when it selects Z.
+      setToExitState(operands[0]);
+      put(1, mask);
+      put(2, mask);
     } else if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op)) {
       unsigned width = bitWidth(resize.getInput());
       APInt input = mask.zextOrTrunc(width);

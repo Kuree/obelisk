@@ -21,4 +21,6 @@ module {
 // CHECK: %[[ABC:.*]] = arith.constant 4276803 : i24
 // CHECK: return %[[ABC]] : i24
 // CHECK-LABEL: func.func @ordinary_literal
-// CHECK: simulation.string.to_packed
+// CHECK: %[[ABC:.*]] = arith.constant 4276803 : i24
+// CHECK-NOT: simulation.string.to_packed
+// CHECK: return %[[ABC]] : i24

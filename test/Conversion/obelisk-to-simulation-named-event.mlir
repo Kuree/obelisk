@@ -124,8 +124,11 @@ module {
 // CHECK: %[[EVENT:.*]] = simulation.context.event %{{.*}}[0] : !simulation.event
 // CHECK: simulation.spawn {{.*}}%[[EVENT]]
 // CHECK: simulation.spawn {{.*}}%[[EVENT]]
-// CHECK: simulation.event.equal
-// CHECK: simulation.event.equal
+// The same event handle compares true; the other identity stays dynamic.
+// CHECK: %[[TRUE:.*]] = arith.constant true
+// CHECK: %[[EQ:.*]] = simulation.event.equal
+// CHECK: %[[NE:.*]] = arith.xori %[[EQ]], %[[TRUE]]
+// CHECK: simulation.display {{.*}}(%{{.*}}, %[[TRUE]], %[[NE]])
 // CHECK: simulation.suspend.event %{{.*}} to
 // CHECK: simulation.event.triggered %{{.*}}
 // CHECK: simulation.suspend.event %{{.*}} to
