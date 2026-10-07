@@ -77,8 +77,8 @@ module {
 // CHECK: %[[OUTPUT:.*]] = simulation.context.storage %arg0[3]
 // CHECK: simulation.ref.load %[[INPUT]]
 // CHECK: simulation.ref.store {{.*}} to %[[ADDR]]
-// CHECK: arith.addi
-// CHECK: simulation.ref.store
-// CHECK: simulation.ref.load %[[DATA]]
-// CHECK: simulation.ref.store {{.*}} to %[[OUTPUT]]
+// CHECK: %[[RESULT:.*]] = arith.addi
+// CHECK: simulation.ref.store %[[RESULT]] to %[[DATA]]
+// CHECK-NOT: simulation.ref.load
+// CHECK: simulation.ref.store %[[RESULT]] to %[[OUTPUT]]
 // CHECK: simulation.suspend.any %[[INPUT]] edges [0]

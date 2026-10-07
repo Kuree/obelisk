@@ -4,12 +4,15 @@
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/CSE.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Passes.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "obelisk/Analysis/SourceMemoryAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -189,11 +192,28 @@ public:
   using Base::Base;
   ObeliskSimMaterializeComputeFusionPass(
       const ObeliskSimMaterializeComputeFusionPass &other)
-      : Base(other) {}
+      : Base(other), kernelSimplification(other.kernelSimplification) {}
 
   void runOnOperation() override;
+  static OpPassManager buildKernelSimplification() {
+    OpPassManager pipeline(sim::SimFuncOp::getOperationName());
+    GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Aggressive);
+    pipeline.addPass(createCanonicalizerPass(config));
+    pipeline.addPass(createCSEPass());
+    return pipeline;
+  }
+  LogicalResult initialize(MLIRContext *) override {
+    kernelSimplification = buildKernelSimplification();
+    return success();
+  }
+  void getDependentDialects(DialectRegistry &registry) const override {
+    Base::getDependentDialects(registry);
+    buildKernelSimplification().getDependentDialects(registry);
+  }
 
 private:
+  OpPassManager kernelSimplification;
   Statistic materializedFusions{this, "materialized-fusions",
                                 "verified process-body fusions materialized"};
   Statistic rejectedFusions{
@@ -1635,7 +1655,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     const analysis::HandleDataflowAnalysis &provenance,
     const CombinationalFusionAnalysis &combinational,
     const DenseMap<int64_t, int64_t> &resumeTargets,
-    const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee) {
+    const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
+    llvm::function_ref<LogicalResult(sim::SimFuncOp)> simplifyKernel) {
   struct Candidate {
     sim::SimFuncOp function;
     sim::SimSpawnOp spawn;
@@ -2107,7 +2128,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     builder.setInsertionPointToStart(wait);
     SmallVector<int32_t> edges(watched.size(),
                                static_cast<int32_t>(sim::EdgeKind::Change));
-    sim::SimSuspendAnyOp::create(
+    auto unionWait = sim::SimSuspendAnyOp::create(
         builder, kernel.getLoc(), watched, builder.getDenseI32ArrayAttr(edges),
         schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, body);
     if (interleaving) {
@@ -2129,9 +2150,21 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
       if (failed(applyPartialConversion(kernel, target, std::move(patterns))))
         return bail();
-      IRRewriter rewriter(design.getContext());
-      DominanceInfo dominance(kernel);
-      eliminateCommonSubExpressions(rewriter, dominance, kernel);
+      if (failed(simplifyKernel(kernel)))
+        return bail();
+      if (graph.getVpi() == schedule::ComputeVPIMode::Off) {
+        analysis::forwardSourceMemoryLoads(kernel, /*canonicalWrites=*/true);
+        if (failed(simplifyKernel(kernel)))
+          return bail();
+      }
+      // The activation ABI keeps the union wait in its own block. Standard
+      // CFG simplification may merge it into its unique predecessor.
+      if (&unionWait->getBlock()->front() != unionWait.getOperation()) {
+        Block *tailBlock = unionWait->getBlock();
+        Block *waitBlock = tailBlock->splitBlock(unionWait);
+        builder.setInsertionPointToEnd(tailBlock);
+        cf::BranchOp::create(builder, unionWait.getLoc(), waitBlock);
+      }
       // Initial entry and every union wake execute the identical body. Retain
       // the independently derived termination certificates after lowering SCF;
       // the implicit wait edge is not another procedural-loop iteration.
@@ -3865,7 +3898,10 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
         (!evalScheduler || primitiveContinuous || fusion.getInterleaved())) {
       fused = materializeStraightLineKernel(
           design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
-          combinational, firstResumeTargets, spawnsByCallee);
+          combinational, firstResumeTargets, spawnsByCallee,
+          [&](sim::SimFuncOp kernel) {
+            return runPipeline(kernelSimplification, kernel);
+          });
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.
