@@ -399,35 +399,7 @@ struct ObeliskSimSimplifyBodiesPass
       promotePrivateAggregates(design);
     }
     for (auto function : design.getBody().front().getOps<sim::SimFuncOp>()) {
-      analysis::SourceMemoryAnalysis memory(function, canonicalWrites);
-      DominanceInfo dominance(function);
-      SmallVector<sim::SimRefLoadOp> loads;
-      function.walk([&](sim::SimRefLoadOp load) { loads.push_back(load); });
-      // Freeze all analysis facts before mutation. A forwarding chain is
-      // resolved through replacement Values; no stale operation is queried.
-      DenseMap<Value, Value> replacements;
-      for (auto load : loads) {
-        Value previous = memory.getForwarded(load);
-        if (auto element = memory.getElementSnapshot(load)) {
-          Value aggregate = element->aggregate;
-          while (replacements.contains(aggregate))
-            aggregate = replacements.lookup(aggregate);
-          if (dominance.dominates(aggregate, load)) {
-            OpBuilder builder(load);
-            previous = sim::SimArrayDynExtractOp::create(
-                builder, load.getLoc(), load.getType(), aggregate,
-                element->index);
-          }
-        }
-        while (previous && replacements.contains(previous))
-          previous = replacements.lookup(previous);
-        if (!previous || previous.getType() != load.getType() ||
-            !dominance.dominates(previous, load))
-          continue;
-        replacements.try_emplace(load.getResult(), previous);
-        load.getResult().replaceAllUsesWith(previous);
-        load.erase();
-      }
+      analysis::forwardSourceMemoryLoads(function, canonicalWrites);
       LogicBitAnalysis bits(function);
       analysis::DemandedBitAnalysis demanded(function);
       SmallVector<Operation *> constants;

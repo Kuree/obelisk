@@ -1,7 +1,9 @@
 #ifndef OBELISK_ANALYSIS_SOURCEMEMORYANALYSIS_H
 #define OBELISK_ANALYSIS_SOURCEMEMORYANALYSIS_H
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include <optional>
 namespace obelisk::sim {
 class SimFuncOp;
@@ -16,6 +18,14 @@ public:
   struct ElementSnapshot {
     mlir::Value aggregate, index;
   };
+  struct SubelementSnapshot {
+    mlir::Value aggregate;
+    llvm::SmallVector<int64_t> indices;
+  };
+  struct SliceSnapshot {
+    mlir::Value aggregate;
+    mlir::OpFoldResult offset;
+  };
   SourceMemoryAnalysis(sim::SimFuncOp function, bool canonicalWrites = false);
   mlir::Value getForwarded(mlir::Operation *load) const {
     return forwarded.lookup(load);
@@ -26,10 +36,25 @@ public:
     return found == elements.end() ? std::nullopt
                                    : std::optional(found->second);
   }
+  std::optional<SubelementSnapshot>
+  getSubelementSnapshot(mlir::Operation *load) const {
+    auto found = subelements.find(load);
+    return found == subelements.end() ? std::nullopt
+                                      : std::optional(found->second);
+  }
+  std::optional<SliceSnapshot> getSliceSnapshot(mlir::Operation *load) const {
+    auto found = slices.find(load);
+    return found == slices.end() ? std::nullopt : std::optional(found->second);
+  }
 
 private:
   llvm::DenseMap<mlir::Operation *, mlir::Value> forwarded;
   llvm::DenseMap<mlir::Operation *, ElementSnapshot> elements;
+  llvm::DenseMap<mlir::Operation *, SubelementSnapshot> subelements;
+  llvm::DenseMap<mlir::Operation *, SliceSnapshot> slices;
 };
+/// Apply the frozen dense must-value facts, retaining all canonical stores.
+/// canonicalWrites requires no external mutation or force/release boundary.
+void forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites);
 } // namespace obelisk::analysis
 #endif

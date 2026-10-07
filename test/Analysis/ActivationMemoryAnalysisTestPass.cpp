@@ -10,10 +10,30 @@
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "obelisk/Analysis/SourceMemoryAnalysis.h"
 #include <memory>
 
 using namespace mlir;
 namespace {
+class SourceMemoryForwardingTestPass
+    : public PassWrapper<SourceMemoryForwardingTestPass,
+                         OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SourceMemoryForwardingTestPass)
+  StringRef getArgument() const final {
+    return "test-obelisk-source-memory-forwarding";
+  }
+  StringRef getDescription() const final {
+    return "forward loads using dense source-memory snapshots";
+  }
+  void runOnOperation() final {
+    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+      if (!function.isExternal())
+        obelisk::analysis::forwardSourceMemoryLoads(function, true);
+    });
+  }
+};
+
 class ActivationControlFlowTestPass
     : public PassWrapper<ActivationControlFlowTestPass,
                          OperationPass<ModuleOp>> {
@@ -305,6 +325,7 @@ public:
 };
 } // namespace
 void obelisk::registerActivationMemoryAnalysisTestPass() {
+  PassRegistration<SourceMemoryForwardingTestPass>();
   PassRegistration<ActivationControlFlowTestPass>();
   PassRegistration<RegionValueDependencyTestPass>();
   PassRegistration<ActivationMemoryTestPass>();
