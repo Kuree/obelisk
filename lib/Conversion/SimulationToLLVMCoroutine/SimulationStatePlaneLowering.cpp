@@ -251,8 +251,15 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
                                  guarded, false,        bound->containerWidth};
 }
 
-// Load precisely the bytes touched by a fully contained packed window. A
-// byte-aligned access must not speculatively read the trailing byte of a plane.
+// Canonical planes own an eight-byte guard after their logical extent (see
+// materializeNativeStatePlanes and obelisk_rt_v1_native_state_initialize).
+// A contained or clamped window may therefore use one native scalar access,
+// including at the last byte. At most seven extra bytes are touched, and the
+// logical value/mask still excludes every neighboring bit and guard byte.
+static unsigned getNativePackedWindowWidth(unsigned valueWidth) {
+  return valueWidth <= 57 ? llvm::PowerOf2Ceil(valueWidth + 7) : 0;
+}
+
 Value loadDynamicPackedWindow(ConversionPatternRewriter &rewriter,
                               Location location, StringRef globalName,
                               IntegerType resultType, Value absolute) {
@@ -288,6 +295,11 @@ Value loadDynamicPackedWindow(ConversionPatternRewriter &rewriter,
                : LLVM::TruncOp::create(rewriter, location, resultType, shifted)
                      .getResult();
   };
+  if (globalName == "__obelisk_state_value" ||
+      globalName == "__obelisk_state_unknown")
+    if (unsigned nativeWidth =
+            getNativePackedWindowWidth(resultType.getWidth()))
+      return loadSpan(nativeWidth);
   if (minimumSpanWidth == maximumSpanWidth)
     return loadSpan(minimumSpanWidth);
   {
@@ -803,8 +815,8 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
   if (!range || (range->guarded && (continuous || !assumeClean)))
     return false;
   if (range->rootWidth > 64) {
-    // Touch only the selected byte window, independently of the aggregate
-    // root's size. Clip partial and invalid selects exactly as LRM 11.5.1
+    // Update only the selected bits, independently of the aggregate root's
+    // size. Clip partial and invalid selects exactly as LRM 11.5.1
     // requires, and publish after both planes have been stored (4.6(a)).
     auto i64 = rewriter.getI64Type();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -849,8 +861,12 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
         rewriter, location, absolute, llvmConstant(rewriter, location, i64, 3));
     Value bit = arith::AndIOp::create(rewriter, location, absolute,
                                       llvmConstant(rewriter, location, i64, 7));
+    unsigned nativeWindowWidth =
+        getNativePackedWindowWidth(inputType.getWidth());
     auto windowType = rewriter.getIntegerType(
-        llvm::alignTo(inputType.getWidth() + 7, uint64_t{8}));
+        nativeWindowWidth
+            ? nativeWindowWidth
+            : llvm::alignTo(inputType.getWidth() + 7, uint64_t{8}));
     auto resize = [&](Value value, IntegerType type) -> Value {
       if (value.getType() == type)
         return value;
@@ -918,10 +934,12 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
                    inputType)};
       };
       unsigned minimumWidth = llvm::alignTo(inputType.getWidth(), uint64_t{8});
+      if (nativeWindowWidth)
+        return writeWindow(nativeWindowWidth);
       if (minimumWidth == windowType.getWidth())
         return writeWindow(minimumWidth);
-      // IEEE 1800-2023 11.5.1: touching the selected storage cannot access
-      // beyond the plane. Aligned windows need no speculative trailing byte.
+      // Larger windows retain byte-precise accesses. The native scalar guard
+      // proof does not apply to them.
       Block *head = rewriter.getInsertionBlock();
       Block *join = rewriter.splitBlock(head, rewriter.getInsertionPoint());
       Value old = join->addArgument(inputType, location);
