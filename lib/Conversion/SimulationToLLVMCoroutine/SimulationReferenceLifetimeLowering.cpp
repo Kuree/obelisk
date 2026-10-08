@@ -1,6 +1,7 @@
 //===- SimulationReferenceLifetimeLowering.cpp - Native ref ownership ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/LocalStorageAnalysis.h"
 
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -208,9 +209,11 @@ public:
 } // namespace
 
 LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
+  analysis::LocalStorageAnalysis locals(function);
   SmallVector<sim::SimRefAllocOp> allocations;
   function.walk([&](sim::SimRefAllocOp allocation) {
-    allocations.push_back(allocation);
+    if (!locals.lookup(allocation.getResult()))
+      allocations.push_back(allocation);
   });
   if (allocations.empty())
     return success();

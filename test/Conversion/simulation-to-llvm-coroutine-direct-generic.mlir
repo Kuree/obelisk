@@ -42,8 +42,8 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @process
-// CHECK: llvm.load {{.*}} : !llvm.ptr -> i128
-// CHECK: llvm.store
+// CHECK-NOT: llvm.load {{.*}} : !llvm.ptr -> i128
+// CHECK: llvm.intr.memcpy
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
 // CHECK-LABEL: llvm.func @process.__obelisk_spawn

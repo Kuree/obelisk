@@ -6,6 +6,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
+#include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
@@ -425,6 +426,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         auto [classification, inserted] =
             runtimeStateFunctions.try_emplace(current.getOperation(), false);
         if (inserted) {
+          analysis::LocalStorageAnalysis locals(current);
           analysis::StorageWriteAnalysis writeAnalysis(
               current, provenanceAnalysis.analyze(current), false);
           const auto &provenance = writeAnalysis.getHandles().facts;
@@ -448,6 +450,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                                   bool requireStaticAccess = true,
                                   bool requireStaticNBA = false,
                                   bool allowDirectDynamicStore = false) {
+            if (locals.lookup(destination))
+              return false;
             auto found = provenance.find(destination);
             if (found == provenance.end() || !found->second.descriptor ||
                 (requireStaticAccess && found->second.dynamic &&
@@ -494,11 +498,13 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             // service checkpoint; it is not a bytecode or coroutine
             // requirement. This also preserves notifications from managed field
             // stores.
-            if (isa<sim::SimRefAllocOp, sim::SimClassAllocOp,
-                    sim::SimClassCopyOp, sim::SimManagedLoadOp,
-                    sim::SimManagedStoreOp, sim::SimManagedBitsDynStoreOp,
-                    sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp>(
-                    operation))
+            if (auto allocation = dyn_cast<sim::SimRefAllocOp>(operation))
+              requiresRuntime = !locals.lookup(allocation.getResult());
+            else if (isa<sim::SimClassAllocOp, sim::SimClassCopyOp,
+                         sim::SimManagedLoadOp, sim::SimManagedStoreOp,
+                         sim::SimManagedBitsDynStoreOp,
+                         sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp>(
+                         operation))
               requiresRuntime = true;
             else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
               requiresRuntime =

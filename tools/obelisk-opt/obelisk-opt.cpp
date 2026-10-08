@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
   obelisk::registerCombinationalDependencyAnalysisTestPass();
   obelisk::registerStorageWriteAnalysisTestPass();
   obelisk::registerManagedClassLayoutAnalysisTestPass();
+  obelisk::registerLocalStorageAnalysisTestPass();
   obelisk::registerNativeAOTAnalysisTestPass();
   obelisk::registerNativeStateLayoutAnalysisTestPass();
   obelisk::registerSimulationProcessFrameAnalysisTestPass();

@@ -339,15 +339,8 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createObeliskSimLowerUnitPass());
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
-    // Promote whole local values before scalarization to avoid reconstructing
-    // wide aggregates at every load. Clean up scalarized accesses before
-    // promoting the remaining cells.
-    functionManager.addPass(createMem2Reg());
-    functionManager.addPass(createCanonicalizerPass());
-    functionManager.addPass(createCSEPass());
-    functionManager.addPass(createSROA());
-    functionManager.addPass(createCanonicalizerPass());
-    functionManager.addPass(createCSEPass());
+    // Promote direct local cells. Keep aggregate field accesses addressable;
+    // native lowering exposes them to LLVM's target-aware SROA pipeline.
     functionManager.addPass(createMem2Reg());
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
@@ -377,12 +370,6 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     // changing automatic initialization or lifetime. Expose whole-value
     // updates before promoting newly private cells (7.4.6, 11.5.1).
     functionManager.addPass(createCanonicalizerPass());
-    functionManager.addPass(createMem2Reg());
-    functionManager.addPass(createCanonicalizerPass());
-    functionManager.addPass(createCSEPass());
-    functionManager.addPass(createSROA());
-    functionManager.addPass(createCanonicalizerPass());
-    functionManager.addPass(createCSEPass());
     functionManager.addPass(createMem2Reg());
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());

@@ -5,6 +5,7 @@
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace obelisk::analysis {
 
@@ -22,6 +23,12 @@ public:
   /// across executable CFG and region edges, including loop backedges.
   bool
   areResetBeforeReads(mlir::ArrayRef<sim::SimRefAllocOp> allocations) const;
+  /// Copy-only loads whose source still holds the loaded version at every use.
+  /// Dense must-dataflow intersects versions at CFG/region joins and kills
+  /// them on possible writes. Consumers must not alias the source either:
+  /// lowering may use memcpy, whose source must survive the entire operation.
+  llvm::DenseSet<mlir::Value>
+  getBorrowableLoads(mlir::ArrayRef<sim::SimRefLoadOp> loads) const;
   sim::SimRefAllocOp lookup(mlir::Value reference) const {
     return references.lookup(reference);
   }

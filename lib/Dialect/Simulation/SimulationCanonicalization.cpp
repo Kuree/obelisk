@@ -2129,6 +2129,8 @@ struct PackedLocalSubelement final : OpRewritePattern<SimRefSubelementOp> {
     auto allocation = root.getDefiningOp<SimRefAllocOp>();
     if (!allocation || allocation.getPromotableSlots().empty())
       return failure();
+    if (getProvenanceSpan(allocation.getInitialValue().getType()) > 64)
+      return failure();
     Type type = op.getInput().getType().getElementType();
     if (!getPackedWidth(type))
       return failure();
@@ -2165,8 +2167,12 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
     if (!allocation || allocation.getPromotableSlots().empty())
       return failure();
     Type rootType = allocation.getResult().getType().getElementType();
-    if (!getProvenanceSpan(rootType))
+    // Whole-value promotion is cheap for a word. Larger arrays retain their
+    // indexed accesses for native stack lowering and LLVM scalar replacement.
+    auto width = getProvenanceSpan(rootType);
+    if (!width)
       return failure();
+    bool needsClipping = false;
     SmallVector<Value> pending{allocation.getResult()};
     llvm::SmallDenseSet<Value, 8> visited;
     while (!pending.empty()) {
@@ -2178,6 +2184,7 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
           return failure();
         if (isa<SimRefArrayElementOp, SimRefSubelementOp, SimRefExtractOp,
                 SimRefDynExtractOp>(user)) {
+          needsClipping |= isa<SimRefDynExtractOp>(user);
           if (auto field = dyn_cast<SimRefSubelementOp>(user)) {
             Type type = field.getInput().getType().getElementType();
             for (int64_t index : field.getIndices()) {
@@ -2216,6 +2223,8 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
         return failure();
       }
     }
+    if (*width > 64 && !needsClipping)
+      return failure();
     SmallVector<Operation *> accesses;
     SmallVector<Operation *> selectedViews;
     // All views must become value selections together: keeping constant views
@@ -2599,7 +2608,8 @@ struct SimplifyAggregateExtract final
     if (auto load = op.getInput().getDefiningOp<SimRefLoadOp>()) {
       // Preserve the whole automatic value for mem2reg (LRM 6.21, 7.4.5).
       if (auto allocation = load.getReference().getDefiningOp<SimRefAllocOp>();
-          allocation && !allocation.getPromotableSlots().empty())
+          allocation && !allocation.getPromotableSlots().empty() &&
+          getProvenanceSpan(allocation.getInitialValue().getType()) <= 64)
         return failure();
       Value replacement;
       {
@@ -2997,7 +3007,8 @@ struct DynamicArrayExtractThroughReference final
     // Keep automatic values exposed to mem2reg (LRM 6.21, 7.4.5).
     // Reintroducing a reference here would undo PromoteLocalArrayView.
     if (auto allocation = load.getReference().getDefiningOp<SimRefAllocOp>();
-        allocation && !allocation.getPromotableSlots().empty())
+        allocation && !allocation.getPromotableSlots().empty() &&
+        getProvenanceSpan(allocation.getInitialValue().getType()) <= 64)
       return failure();
     // The index is usually computed after the wide load, so the narrow read is
     // built here rather than in the load's place. Sinking a read past other

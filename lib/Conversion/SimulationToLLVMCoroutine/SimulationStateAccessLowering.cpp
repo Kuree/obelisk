@@ -1,5 +1,6 @@
 //===- SimulationStateAccessLowering.cpp - Native state access patterns --===//
 
+#include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -116,16 +117,71 @@ void storeBulkStatePlane(ConversionPatternRewriter &rewriter, Location location,
                  input, changed});
 }
 
+// Copy a canonical byte buffer directly into a certified state plane. Only
+// the final partial byte needs a read/modify/write; the rest remains memcpy.
+// Continuous roots also retain their contribution for later force/release.
+bool tryStoreBulkDirect(ConversionPatternRewriter &rewriter, Location location,
+                        Value handle, Value input, uint64_t width,
+                        StringRef globalName, const NativeStateLayout *layout,
+                        bool assumeClean, bool continuous) {
+  auto range = resolveDirectStaticStateRange(handle, width, layout);
+  if (!range || range->offset % 8 || (range->guarded && !assumeClean) ||
+      (continuous && range->guarded && !layout->directContinuous))
+    return false;
+  Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+  auto copy = [&](StringRef name, bool mask = false) {
+    Value base = LLVM::AddressOfOp::create(rewriter, location, pointer, name);
+    if (name.starts_with("__obelisk_continuous_"))
+      base = LLVM::LoadOp::create(rewriter, location, pointer, base, 8);
+    Value destination = byteGEP(rewriter, location, base, range->offset / 8);
+    Value bytes =
+        llvmConstant(rewriter, location, rewriter.getI64Type(), width / 8);
+    Value ones = llvmConstant(rewriter, location, rewriter.getI8Type(), 255);
+    if (mask)
+      LLVM::MemsetOp::create(rewriter, location, destination, ones, bytes,
+                             false);
+    else
+      LLVM::MemcpyOp::create(rewriter, location, destination, input, bytes,
+                             false);
+    if (unsigned tail = width % 8) {
+      Value address = byteGEP(rewriter, location, destination, width / 8);
+      Value old = LLVM::LoadOp::create(rewriter, location, rewriter.getI8Type(),
+                                       address, 1);
+      Value value = mask ? ones
+                         : LLVM::LoadOp::create(
+                               rewriter, location, rewriter.getI8Type(),
+                               byteGEP(rewriter, location, input, width / 8), 1)
+                               .getResult();
+      Value bits = llvmConstant(rewriter, location, rewriter.getI8Type(),
+                                (1u << tail) - 1);
+      Value delta = arith::XOrIOp::create(rewriter, location, old, value);
+      delta = arith::AndIOp::create(rewriter, location, delta, bits);
+      Value merged = arith::XOrIOp::create(rewriter, location, old, delta);
+      LLVM::StoreOp::create(rewriter, location, merged, address, 1);
+    }
+  };
+  if (continuous && layout->directContinuous) {
+    copy(globalName == "__obelisk_state_unknown"
+             ? "__obelisk_continuous_unknown"
+             : "__obelisk_continuous_value");
+    if (globalName == "__obelisk_state_value")
+      copy("__obelisk_continuous_mask", true);
+  }
+  copy(globalName);
+  return true;
+}
+
 void notifyBulkSignal(ConversionPatternRewriter &rewriter, Location location,
                       Value handle, uint64_t width, Value oldValue,
-                      Value oldUnknown, Value newValue, Value newUnknown) {
+                      Value oldUnknown, Value newValue, Value newUnknown,
+                      schedule::SourceOwnerAttr sourceOwner = {}) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   auto pointerOrNull = [&](Value value) {
     return value
                ? value
                : LLVM::ZeroOp::create(rewriter, location, pointer).getResult();
   };
-  LLVM::CallOp::create(
+  auto call = LLVM::CallOp::create(
       rewriter, location, TypeRange{},
       SymbolRefAttr::get(rewriter.getContext(),
                          "obelisk_rt_v1_scheduler_signal_transition"),
@@ -133,6 +189,9 @@ void notifyBulkSignal(ConversionPatternRewriter &rewriter, Location location,
                  llvmConstant(rewriter, location, rewriter.getI64Type(), width),
                  oldValue, pointerOrNull(oldUnknown), newValue,
                  pointerOrNull(newUnknown)});
+  if (sourceOwner)
+    ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(call,
+                                                                  sourceOwner);
 }
 
 class BulkRefCopyConversion final
@@ -249,10 +308,11 @@ public:
                     uint64_t stateBitCount,
                     const NativeStateLayout *directLayout,
                     bool experimentalTwoState,
-                    const DenseMap<Operation *, uint32_t> &inBoundsAccesses)
+                    const DenseMap<Operation *, uint32_t> &inBoundsAccesses,
+                    const LocalStorageLowering *locals)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState),
-        inBoundsAccesses(inBoundsAccesses) {}
+        inBoundsAccesses(inBoundsAccesses), locals(locals) {}
 
   LogicalResult
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
@@ -270,6 +330,40 @@ public:
     IntegerType plane = rewriter.getIntegerType(*width);
     bool assumeClean =
         ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
+    if (locals && locals->isMemoryValue(op.getResult())) {
+      auto range = resolveDirectStaticStateRange(adaptor.getReference().front(),
+                                                 *width, directLayout);
+      auto read = [&](StringRef name, bool unknown) {
+        if (locals->canBorrowMemory(op.getResult()) && range &&
+            range->offset % 8 == 0 &&
+            (!range->guarded || assumeClean)) {
+          Value base = LLVM::AddressOfOp::create(
+              rewriter, op.getLoc(),
+              LLVM::LLVMPointerType::get(op.getContext()), name);
+          return byteGEP(rewriter, op.getLoc(), base, range->offset / 8);
+        }
+        return loadBulkStatePlane(
+            rewriter, op.getLoc(), adaptor.getReference().front(), *width, name,
+            unknown, stateBitCount, directLayout, assumeClean);
+      };
+      SmallVector<Value> buffers{read("__obelisk_state_value", false)};
+      if (containsLogic(resultType)) {
+        if (twoState) {
+          Value buffer = allocateBulkPlane(rewriter, op.getLoc(), *width);
+          LLVM::MemsetOp::create(
+              rewriter, op.getLoc(), buffer,
+              llvmConstant(rewriter, op.getLoc(), rewriter.getI8Type(), 0),
+              llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                           (*width + 7) / 8),
+              false);
+          buffers.push_back(buffer);
+        } else {
+          buffers.push_back(read("__obelisk_state_unknown", true));
+        }
+      }
+      rewriter.replaceOpWithMultiple(op, {ValueRange(buffers)});
+      return success();
+    }
     Value guardedPermission;
     if (auto range = resolveDirectStaticStateRange(
             adaptor.getReference().front(), *width, directLayout);
@@ -304,6 +398,7 @@ private:
   const NativeStateLayout *directLayout;
   bool experimentalTwoState;
   const DenseMap<Operation *, uint32_t> &inBoundsAccesses;
+  const LocalStorageLowering *locals;
 };
 
 class RefStoreConversion final
@@ -313,7 +408,8 @@ public:
                      uint64_t stateBitCount,
                      const NativeStateLayout *directLayout,
                      bool experimentalTwoState,
-                     const DenseMap<Operation *, uint32_t> &inBoundsAccesses)
+                     const DenseMap<Operation *, uint32_t> &inBoundsAccesses,
+                     const LocalStorageLowering *)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState),
         inBoundsAccesses(inBoundsAccesses) {
@@ -399,6 +495,54 @@ public:
       if (directRange && (assumeClean || !directRange->guarded))
         needsNotification =
             directLayout->transitionHandles.contains(directRange->staticID);
+    if (isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())) {
+      Location location = op.getLoc();
+      Value handle = adaptor.getReference().front();
+      bool fourState = containsLogic(valueType) && !twoState;
+      auto snapshot = [&](StringRef plane, bool unknown) {
+        return loadBulkStatePlane(rewriter, location, handle, *width, plane,
+                                  unknown, stateBitCount, directLayout,
+                                  assumeClean);
+      };
+      Value oldValue, oldUnknown;
+      if (needsNotification) {
+        oldValue = snapshot("__obelisk_state_value", false);
+        if (fourState)
+          oldUnknown = snapshot("__obelisk_state_unknown", true);
+      }
+      auto store = [&](Value input, StringRef plane) {
+        if (tryStoreBulkDirect(rewriter, location, handle, input, *width, plane,
+                               directLayout, assumeClean, continuous))
+          return true;
+        Value changed =
+            entryAlloca(rewriter, location, rewriter.getI8Type(), 1, 1);
+        storeBulkStatePlane(rewriter, location, handle, input, *width, plane,
+                            stateBitCount, changed, continuous);
+        return false;
+      };
+      Value newValue = adaptor.getValue().front();
+      bool direct = store(newValue, "__obelisk_state_value");
+      Value newUnknown;
+      if (fourState) {
+        newUnknown = adaptor.getValue()[1];
+        direct &= store(newUnknown, "__obelisk_state_unknown");
+      }
+      if (needsNotification) {
+        // Runtime stores may be partially suppressed by an override. Publish
+        // the actual visible value, with the same semantics as scalar stores.
+        if (!direct) {
+          newValue = snapshot("__obelisk_state_value", false);
+          if (fourState)
+            newUnknown = snapshot("__obelisk_state_unknown", true);
+        }
+        notifyBulkSignal(
+            rewriter, location, handle, *width, oldValue, oldUnknown, newValue,
+            newUnknown,
+            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+      }
+      rewriter.eraseOp(op);
+      return success();
+    }
     Value guardedPermission;
     if (directRange && directRange->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
@@ -903,14 +1047,15 @@ void populateStateReadWriteToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState,
-    const DenseMap<Operation *, uint32_t> &inBoundsAccesses) {
+    const DenseMap<Operation *, uint32_t> &inBoundsAccesses,
+    const LocalStorageLowering *locals) {
   patterns.add<KnownValueConversion>(converter, patterns.getContext());
   patterns.add<BulkRefCopyConversion>(converter, patterns.getContext(),
                                       stateBitCount, directLayout,
                                       experimentalTwoState);
   patterns.add<RefLoadConversion, RefStoreConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
-      experimentalTwoState, inBoundsAccesses);
+      experimentalTwoState, inBoundsAccesses, locals);
   patterns.add<NetReadConversion, DriverReadConversion, NetWriteConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);

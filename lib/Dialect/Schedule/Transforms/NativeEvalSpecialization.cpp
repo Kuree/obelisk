@@ -12,6 +12,7 @@
 #include "mlir/Transforms/Mem2Reg.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "obelisk/Analysis/AccessFootprintAnalysis.h"
+#include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -931,18 +932,22 @@ LogicalResult materializeEvalTwoStateVariants(
       });
   // A dry-run predicate may evaluate a value helper only when its complete
   // body is context-free. In particular, an empty effect summary alone is
-  // insufficient: reject state reads, foreign calls, allocation and recursive
-  // cycles. Such calls need neither a state overlay nor a runtime checkpoint.
+  // insufficient: reject state reads, foreign calls, escaping allocations and
+  // recursive cycles. Such calls need neither a state overlay nor a runtime
+  // checkpoint.
   DenseMap<Operation *, bool> pureValueHelpers;
   SmallVector<Operation *> helperNodes, impureWorklist;
   for (sim::SimFuncOp function :
        design.getBody().front().getOps<sim::SimFuncOp>()) {
     helperNodes.push_back(function);
+    analysis::LocalStorageAnalysis locals(function);
     bool pure =
         !function.isExternal() &&
         !function
              .walk([&](Operation *op) {
                if (op == function.getOperation() || isa<sim::SimReturnOp>(op))
+                 return WalkResult::advance();
+               if (locals.isLocalAccess(op))
                  return WalkResult::advance();
                if (auto call = dyn_cast<sim::SimCallOp>(op))
                  return variantSymbols.lookup<sim::SimFuncOp>(call.getCallee())
@@ -1029,6 +1034,7 @@ LogicalResult materializeEvalTwoStateVariants(
     // captures can alias the same storage. Unknown/dynamic references remain
     // conservatively aliasing. No speculative state overlay is needed when
     // all reads are disjoint, or when the publication is terminal.
+    analysis::LocalStorageAnalysis sourceLocals(source);
     auto provenance = analysis::deriveHandleFacts(source);
     using ProbeRange = std::pair<uint64_t, uint64_t>;
     DenseMap<Value, std::optional<ProbeRange>> probeRanges;
@@ -1076,7 +1082,8 @@ LogicalResult materializeEvalTwoStateVariants(
     };
     SmallVector<std::optional<ProbeRange>> readRanges;
     source.walk([&](Operation *operation) {
-      if (!hotProbeBlocks.contains(operation->getBlock()))
+      if (!hotProbeBlocks.contains(operation->getBlock()) ||
+          sourceLocals.isLocalAccess(operation))
         return;
       if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
         readRanges.push_back(rangeFor(load.getReference(), true));
@@ -1088,8 +1095,9 @@ LogicalResult materializeEvalTwoStateVariants(
     for (Block &block : source.getBody()) {
       if (!hotProbeBlocks.contains(&block))
         continue;
-      if (llvm::any_of(block, [](Operation &op) {
-            return isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op);
+      if (llvm::any_of(block, [&](Operation &op) {
+            return isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op) &&
+                   !sourceLocals.isLocalAccess(&op);
           }))
         readWorklist.push_back(&block);
     }
@@ -1102,7 +1110,8 @@ LogicalResult materializeEvalTwoStateVariants(
     }
     llvm::SmallPtrSet<Operation *, 16> terminalStores;
     source.walk([&](sim::SimRefStoreOp store) {
-      if (!hotProbeBlocks.contains(store->getBlock()))
+      if (!hotProbeBlocks.contains(store->getBlock()) ||
+          sourceLocals.isLocalAccess(store))
         return;
       auto written = rangeFor(store.getReference(), true);
       bool independent =
@@ -1116,7 +1125,8 @@ LogicalResult materializeEvalTwoStateVariants(
       bool readsAfter = false;
       for (Operation *next = store->getNextNode(); next;
            next = next->getNextNode())
-        readsAfter |= isa<sim::SimRefLoadOp, sim::SimNetReadOp>(next);
+        readsAfter |= isa<sim::SimRefLoadOp, sim::SimNetReadOp>(next) &&
+                      !sourceLocals.isLocalAccess(next);
       for (Block *successor : store->getBlock()->getSuccessors())
         readsAfter |= reachesRead.contains(successor);
       if (!readsAfter || independent)
@@ -1146,6 +1156,7 @@ LogicalResult materializeEvalTwoStateVariants(
     };
     source.walk([&](sim::SimRefStoreOp store) {
       if (!hotProbeBlocks.contains(store->getBlock()) ||
+          sourceLocals.isLocalAccess(store) ||
           terminalStores.contains(store.getOperation()))
         return;
       Value reference = store.getReference();
@@ -1176,6 +1187,7 @@ LogicalResult materializeEvalTwoStateVariants(
       bool exact = true;
       source.walk([&](Operation *operation) {
         if (!exact || !hotProbeBlocks.contains(operation->getBlock()) ||
+            sourceLocals.isLocalAccess(operation) ||
             terminalStores.contains(operation))
           return;
         Value reference;
@@ -1232,6 +1244,8 @@ LogicalResult materializeEvalTwoStateVariants(
       if (isa<sim::SimCoveragePointHitOp>(operation))
         return;
       if (terminalStores.contains(operation))
+        return;
+      if (sourceLocals.isLocalAccess(operation))
         return;
       if (auto store = dyn_cast<sim::SimRefStoreOp>(operation);
           store && cellFor(store.getReference()))
@@ -1491,9 +1505,12 @@ LogicalResult materializeEvalTwoStateVariants(
     // simulation-time read required by a $finish diagnostic) are not part of
     // the generated Tier-1 closure. Rejecting the source before this pruning
     // lets one cold runtime leaf disable the complete periodic eval group.
+    analysis::LocalStorageAnalysis probeLocals(probe);
     bool probeSupported = true;
     probe.walk([&](Operation *operation) {
       if (!probeSupported || operation == probe.getOperation())
+        return;
+      if (probeLocals.isLocalAccess(operation))
         return;
       if (!netsDirectlyAddressable && isa<sim::SimNetReadOp>(operation)) {
         probeSupported = false;

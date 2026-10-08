@@ -335,7 +335,8 @@ module attributes {
 // CHECK-SAME: obelisk.frame.size = 40 : i64
 // CHECK-LABEL: llvm.func @plain_process
 // CHECK-SAME: obelisk.native_scratch_size = 0 : i64
-// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
+// CHECK: llvm.alloca
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_alloc
 // CHECK-NOT: llvm.intr.coro.
 // CHECK-LABEL: llvm.func @plain_process.__obelisk_native_execute
 // CHECK-LABEL: llvm.func @consume_ref
@@ -351,13 +352,13 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_native_state_retain
 // CHECK: llvm.call @obelisk_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @cfg_ref_lifetime
-// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
-// CHECK: llvm.call @obelisk_rt_v1_native_state_release
-// CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-NEXT: llvm.cond_br
+// CHECK: llvm.alloca
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_
+// CHECK: llvm.cond_br
 // CHECK-LABEL: llvm.func @branched_ref_lifetime
-// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.alloca
+// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_
+// CHECK: llvm.return
 // CHECK-LABEL: llvm.func @wide_handle_indices
 // Every wide index needs a signed-i64 round-trip check. The four-state cases
 // above additionally exercise the unknown-plane guard (constant-folded here).

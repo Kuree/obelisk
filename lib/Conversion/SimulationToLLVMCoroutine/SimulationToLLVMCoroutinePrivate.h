@@ -386,11 +386,13 @@ void populateEventToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                            mlir::TypeConverter &converter);
 void populateSuspensionTypeConversionPatterns(mlir::RewritePatternSet &patterns,
                                               mlir::TypeConverter &converter);
+class LocalStorageLowering;
 void populateNativeHandleConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     const llvm::DenseMap<uint64_t, uint64_t> &storageHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &netHandles,
-    const llvm::DenseMap<uint64_t, uint64_t> &driverHandles);
+    const llvm::DenseMap<uint64_t, uint64_t> &driverHandles,
+    const LocalStorageLowering *locals = nullptr);
 void populateOverrideToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const llvm::DataLayout &dataLayout);
@@ -402,7 +404,8 @@ void populateStateReadWriteToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState,
-    const llvm::DenseMap<mlir::Operation *, uint32_t> &inBoundsAccesses);
+    const llvm::DenseMap<mlir::Operation *, uint32_t> &inBoundsAccesses,
+    const LocalStorageLowering *locals = nullptr);
 void annotateStaticDriverNets(mlir::ModuleOp module,
                               const NativeStateLayout &layout);
 void populateDriverToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,

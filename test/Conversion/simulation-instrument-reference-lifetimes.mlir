@@ -17,6 +17,13 @@ module {
       simulation.return
     }
 
+    simulation.code_unit.decl 5 in 0 function hierarchy "reference_lifetimes.observe"
+    simulation.func @observe(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %reference: !simulation.ref<i64> {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
+      %value = simulation.ref.load %reference : !simulation.ref<i64> -> i64
+      simulation.return
+    }
+
     simulation.func @loop(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %initial: i64 {simulation.capture_kind = 2 : i32},
@@ -26,6 +33,7 @@ module {
     ^allocate:
       %local = simulation.ref.alloc %initial :
           i64 -> !simulation.ref<i64>
+      simulation.call @observe(%ctx, %local) : (!simulation.context, !simulation.ref<i64>) -> ()
       cf.br ^use(%local : !simulation.ref<i64>)
     ^use(%reference: !simulation.ref<i64>):
       %value = simulation.ref.load %reference :
@@ -45,6 +53,8 @@ module {
         attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
       %a = simulation.ref.alloc %initial : i64 -> !simulation.ref<i64>
       %b = simulation.ref.alloc %initial : i64 -> !simulation.ref<i64>
+      simulation.call @observe(%ctx, %a) : (!simulation.context, !simulation.ref<i64>) -> ()
+      simulation.call @observe(%ctx, %b) : (!simulation.context, !simulation.ref<i64>) -> ()
       cf.cond_br %choose, ^use(%a, %b : !simulation.ref<i64>, !simulation.ref<i64>), ^done
     ^use(%ra: !simulation.ref<i64>, %rb: !simulation.ref<i64>):
       %va = simulation.ref.load %ra : !simulation.ref<i64> -> i64
@@ -61,6 +71,7 @@ module {
         attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
       %local = simulation.ref.alloc %initial :
           i64 -> !simulation.ref<i64>
+      simulation.call @observe(%ctx, %local) : (!simulation.context, !simulation.ref<i64>) -> ()
       cf.cond_br %use_reference,
           ^use(%local : !simulation.ref<i64>), ^done
     ^use(%reference: !simulation.ref<i64>):
@@ -75,8 +86,8 @@ module {
 
 // CHECK-LABEL: simulation.func @direct
 // CHECK: simulation.ref.alloc
-// CHECK-SAME: obelisk.owner_release_instrumented
-// CHECK-NEXT: simulation.ref.release_owner
+// CHECK-NOT: obelisk.owner_release_instrumented
+// CHECK-NOT: simulation.ref.release_owner
 // CHECK-NEXT: simulation.return
 
 // CHECK-LABEL: simulation.func @loop

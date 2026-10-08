@@ -181,7 +181,7 @@ module {
 
     // CHECK-LABEL: simulation.func @array_65
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 64 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 64 x i8>>
-    // CHECK: simulation.aggregate.extract
+    // CHECK: simulation.ref.subelement
     simulation.func @array_65(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8
         attributes {entry_kind = 8 : i32, code_unit_id = 9000007 : i64} {
@@ -194,7 +194,7 @@ module {
 
     // CHECK-LABEL: simulation.func @dynamic_blocks_array
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 63 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 63 x i8>>
-    // CHECK: simulation.array.extract_dynamic
+    // CHECK: simulation.ref.array_element
     simulation.func @dynamic_blocks_array(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -207,12 +207,12 @@ module {
     }
 
     // A pure dynamic read of a loaded value also blocks that array's SROA.
-    // Canonicalization keeps the automatic value exposed to later mem2reg
-    // (LRM 6.21, 7.4.5); SROA cannot destructure the dynamic selection.
+    // Canonicalization keeps a narrow reference read (LRM 6.21, 7.4.5);
+    // SROA cannot destructure the dynamic selection.
     // CHECK-LABEL: simulation.func @dynamic_value_blocks_array
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 63 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 63 x i8>>
-    // CHECK: %[[WHOLE:.*]] = simulation.ref.load
-    // CHECK: simulation.array.extract_dynamic %[[WHOLE]]
+    // CHECK: simulation.ref.array_element
+    // CHECK: simulation.ref.load
     simulation.func @dynamic_value_blocks_array(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -228,8 +228,8 @@ module {
     // preserving the dynamic value selection (LRM 7.4.5).
     // CHECK-LABEL: simulation.func @dynamic_value_safe_enclosing
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
-    // CHECK: simulation.ref.alloc {{.*}} : i8 -> !simulation.ref<i8>
-    // CHECK: simulation.array.extract_dynamic
+    // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 63 x i8>
+    // CHECK: simulation.ref.array_element
     simulation.func @dynamic_value_safe_enclosing(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8
@@ -247,7 +247,7 @@ module {
     // CHECK-LABEL: simulation.func @safe_enclosing_dynamic
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
     // CHECK: simulation.ref.alloc {{.*}} : !simulation.unpacked_array<0 : 64 x i8> -> !simulation.ref<!simulation.unpacked_array<0 : 64 x i8>>
-    // CHECK: simulation.array.extract_dynamic
+    // CHECK: simulation.ref.array_element
     simulation.func @safe_enclosing_dynamic(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %index: i64 {simulation.capture_kind = 2 : i32}) -> i8

@@ -1,5 +1,6 @@
 //===- SimulationHandleLowering.cpp - Native handle rewrites ------------===//
 
+#include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -18,7 +19,17 @@ namespace obelisk::detail {
 namespace {
 
 Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
-                         Value offset) {
+                         Value offset, bool local = false) {
+  if (local) {
+    Value invalid =
+        llvmConstant(builder, location, builder.getI64Type(), UINT64_MAX);
+    Value valid = builder.createOrFold<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ne, handle, invalid);
+    Value selected =
+        builder.createOrFold<arith::AddIOp>(location, handle, offset);
+    return builder.createOrFold<arith::SelectOp>(location, valid, selected,
+                                                 invalid);
+  }
   auto handleConstant = handle.getDefiningOp<arith::ConstantOp>();
   auto offsetConstant = offset.getDefiningOp<arith::ConstantOp>();
   auto handleValue = handleConstant
@@ -92,9 +103,32 @@ public:
 };
 
 template <typename Op>
-class StaticHandleExtractConversion final : public OpConversionPattern<Op> {
+class HandleViewConversion : public OpConversionPattern<Op> {
 public:
-  using OpConversionPattern<Op>::OpConversionPattern;
+  HandleViewConversion(const TypeConverter &converter, MLIRContext *context,
+                       const LocalStorageLowering *locals)
+      : OpConversionPattern<Op>(converter, context), locals(locals) {}
+
+protected:
+  bool isLocal(Value reference) const {
+    return locals && locals->lookup(reference);
+  }
+
+  uint64_t getElementOffset(Value reference, Type type, unsigned index) const {
+    return locals->getElementOffset(reference, type, index);
+  }
+  uint64_t getArrayStride(Value reference) const {
+    return locals->getArrayStride(reference);
+  }
+
+private:
+  const LocalStorageLowering *locals;
+};
+
+template <typename Op>
+class StaticHandleExtractConversion final : public HandleViewConversion<Op> {
+public:
+  using HandleViewConversion<Op>::HandleViewConversion;
 
   LogicalResult
   matchAndRewrite(Op op,
@@ -107,15 +141,16 @@ public:
                                   rewriter.getI64IntegerAttr(op.getLowBit()));
     rewriter.replaceOp(op,
                        offsetNativeHandle(rewriter, op.getLoc(),
-                                          adaptor.getInput().front(), offset));
+                                          adaptor.getInput().front(), offset,
+                                          this->isLocal(op.getInput())));
     return success();
   }
 };
 
 template <typename Op>
-class DynamicHandleExtractConversion final : public OpConversionPattern<Op> {
+class DynamicHandleExtractConversion final : public HandleViewConversion<Op> {
 public:
-  using OpConversionPattern<Op>::OpConversionPattern;
+  using HandleViewConversion<Op>::HandleViewConversion;
 
   LogicalResult
   matchAndRewrite(Op op,
@@ -163,7 +198,8 @@ public:
       valid = arith::AndIOp::create(rewriter, location, valid, known);
     }
     Value selected =
-        offsetNativeHandle(rewriter, location, adaptor.getInput().front(), low);
+        offsetNativeHandle(rewriter, location, adaptor.getInput().front(), low,
+                           this->isLocal(op.getInput()));
     Value invalid = arith::ConstantOp::create(
         rewriter, location, rewriter.getI64Type(),
         rewriter.getI64IntegerAttr(static_cast<int64_t>(UINT64_MAX)));
@@ -174,9 +210,9 @@ public:
 };
 
 template <typename Op>
-class SubelementHandleConversion final : public OpConversionPattern<Op> {
+class SubelementHandleConversion final : public HandleViewConversion<Op> {
 public:
-  using OpConversionPattern<Op>::OpConversionPattern;
+  using HandleViewConversion<Op>::HandleViewConversion;
 
   LogicalResult
   matchAndRewrite(Op op,
@@ -195,7 +231,9 @@ public:
       if (!subelement ||
           subelement->first > std::numeric_limits<uint64_t>::max() - offset)
         return failure();
-      offset += subelement->first;
+      offset += this->isLocal(op.getInput())
+                    ? this->getElementOffset(op.getInput(), current, index)
+                    : subelement->first;
       current = sim::getAggregateElementType(current, index);
     }
     Value amount =
@@ -203,15 +241,16 @@ public:
                                   rewriter.getI64IntegerAttr(offset));
     rewriter.replaceOp(op,
                        offsetNativeHandle(rewriter, op.getLoc(),
-                                          adaptor.getInput().front(), amount));
+                                          adaptor.getInput().front(), amount,
+                                          this->isLocal(op.getInput())));
     return success();
   }
 };
 
 template <typename Op>
-class ArrayElementHandleConversion final : public OpConversionPattern<Op> {
+class ArrayElementHandleConversion final : public HandleViewConversion<Op> {
 public:
-  using OpConversionPattern<Op>::OpConversionPattern;
+  using HandleViewConversion<Op>::HandleViewConversion;
 
   LogicalResult
   matchAndRewrite(Op op,
@@ -239,6 +278,8 @@ public:
     }
     std::optional<uint64_t> span = sim::getProvenanceSpan(element);
     uint64_t count = sim::getAggregateNumElements(array);
+    if (this->isLocal(op.getInput()))
+      span = this->getArrayStride(op.getInput());
     if (!span || count == 0)
       return failure();
 
@@ -292,8 +333,9 @@ public:
     Value stride = arith::ConstantOp::create(rewriter, location, i64,
                                              rewriter.getI64IntegerAttr(*span));
     Value offset = arith::MulIOp::create(rewriter, location, ordinal, stride);
-    Value selected = offsetNativeHandle(rewriter, location,
-                                        adaptor.getInput().front(), offset);
+    Value selected =
+        offsetNativeHandle(rewriter, location, adaptor.getInput().front(),
+                           offset, this->isLocal(op.getInput()));
     Value invalid = arith::ConstantOp::create(
         rewriter, location, i64,
         rewriter.getI64IntegerAttr(static_cast<int64_t>(UINT64_MAX)));
@@ -309,7 +351,8 @@ void populateNativeHandleConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     const DenseMap<uint64_t, uint64_t> &storageHandles,
     const DenseMap<uint64_t, uint64_t> &netHandles,
-    const DenseMap<uint64_t, uint64_t> &driverHandles) {
+    const DenseMap<uint64_t, uint64_t> &driverHandles,
+    const LocalStorageLowering *locals) {
   MLIRContext *context = patterns.getContext();
   patterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       converter, context, storageHandles);
@@ -317,8 +360,8 @@ void populateNativeHandleConversionPatterns(
       converter, context, netHandles);
   patterns.add<ContextHandleConversion<sim::SimContextDriverOp>>(
       converter, context, driverHandles);
-  patterns.add<EventHandleConversion,
-               StaticHandleExtractConversion<sim::SimRefExtractOp>,
+  patterns.add<EventHandleConversion>(converter, context);
+  patterns.add<StaticHandleExtractConversion<sim::SimRefExtractOp>,
                StaticHandleExtractConversion<sim::SimNetExtractOp>,
                StaticHandleExtractConversion<sim::SimDriverExtractOp>,
                DynamicHandleExtractConversion<sim::SimRefDynExtractOp>,
@@ -328,7 +371,7 @@ void populateNativeHandleConversionPatterns(
                SubelementHandleConversion<sim::SimDriverSubelementOp>,
                ArrayElementHandleConversion<sim::SimRefArrayElementOp>,
                ArrayElementHandleConversion<sim::SimDriverArrayElementOp>>(
-      converter, context);
+      converter, context, locals);
 }
 
 } // namespace obelisk::detail

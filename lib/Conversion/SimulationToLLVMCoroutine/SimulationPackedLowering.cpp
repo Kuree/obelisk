@@ -1,7 +1,9 @@
 //===- SimulationPackedLowering.cpp - Packed simulation conversion ----===//
 
 #include "SimulationPackedLowering.h"
+#include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -81,6 +83,7 @@ void fuseWideDynamicRefCopies(
     ModuleOp module, DenseSet<Operation *> &nativeTwoStateOperations,
     DenseMap<Operation *, uint32_t> &inBoundsAccesses) {
   SmallVector<std::pair<sim::SimRefLoadOp, sim::SimRefStoreOp>> copies;
+  DenseMap<Operation *, std::unique_ptr<analysis::LocalStorageAnalysis>> locals;
   module.walk([&](sim::SimRefStoreOp store) {
     auto load = store.getValue().getDefiningOp<sim::SimRefLoadOp>();
     std::optional<unsigned> width =
@@ -94,6 +97,14 @@ void fuseWideDynamicRefCopies(
         destination.getOwner() != &function.getBody().front() ||
         function.getArgAttr(destination.getArgNumber(),
                             sim::metadata::descriptorId))
+      return;
+    // Use the same closed-reference proof as lifetime and stack lowering,
+    // including references forwarded through CFG arguments. A private source
+    // has no runtime handle and must remain a value snapshot here.
+    auto &storage = locals[function];
+    if (!storage)
+      storage = std::make_unique<analysis::LocalStorageAnalysis>(function);
+    if (storage->lookup(load.getReference()))
       return;
     copies.emplace_back(load, store);
   });
@@ -283,6 +294,7 @@ LogicalResult lowerPackedSimulationOperations(
   // does not imply that the selected four-state data is known. This snapshot
   // is consumed by the access patterns before their source ops are erased.
   DenseMap<Operation *, uint32_t> inBoundsAccesses;
+  DenseSet<Value> byteAddressableState;
   uint64_t stateDomainFunctionLimit = std::numeric_limits<uint64_t>::max();
   auto optimizationLevel =
       module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
@@ -370,6 +382,12 @@ LogicalResult lowerPackedSimulationOperations(
             fact->second.resource != schedule::ComputeResourceKind::Storage)
           return;
         auto root = stateLayout.storage.find(*fact->second.descriptor);
+        auto offset = stateLayout.storageOffsets.find(*fact->second.descriptor);
+        if (proof->second.constantAddress && !fact->second.dynamic &&
+            !proof->second.clipped &&
+            offset != stateLayout.storageOffsets.end() &&
+            (offset->second + fact->second.low) % 8 == 0)
+          byteAddressableState.insert(reference);
         obelisk_rt_stable_handle_v1 decoded{};
         if (root != stateLayout.storage.end() &&
             obelisk_rt_stable_handle_decode(root->second, &decoded) &&
@@ -909,7 +927,9 @@ LogicalResult lowerPackedSimulationOperations(
   NativeStateLayout cleanEvalLayout = makeCleanEvalStateLayout(stateLayout);
   auto populatePackedPatterns = [&](SimulationToStandardTypeConverter &c,
                                     RewritePatternSet &patterns,
-                                    bool cleanEval = false) {
+                                    bool cleanEval = false,
+                                    const LocalStorageLowering *locals =
+                                        nullptr) {
     const NativeStateLayout &selectedLayout =
         cleanEval ? cleanEvalLayout : stateLayout;
     populateSimulationToStandardPatterns(c, patterns, nativeTwoStateOperations);
@@ -921,14 +941,16 @@ LogicalResult lowerPackedSimulationOperations(
     populateEventToLLVMConversionPatterns(patterns, c);
     populateSuspensionTypeConversionPatterns(patterns, c);
     populateReferenceLifetimeToLLVMConversionPatterns(patterns, c);
+    if (locals)
+      populateLocalStorageConversionPatterns(patterns, c, *locals);
     populateNativeHandleConversionPatterns(patterns, c, stateLayout.storage,
                                            stateLayout.nets,
-                                           stateLayout.drivers);
+                                           stateLayout.drivers, locals);
     populateSchedulerToLLVMConversionPatterns(patterns, c);
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
         enableDirectStaticState ? &selectedLayout : nullptr,
-        experimentalTwoState, inBoundsAccesses);
+        experimentalTwoState, inBoundsAccesses, locals);
     populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
                                              dataLayout);
     populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,
@@ -1119,12 +1141,16 @@ LogicalResult lowerPackedSimulationOperations(
       });
   if (failed(failableParallelForEach(
           context, functionChunks, [&](ArrayRef<Operation *> functions) {
+            LocalStorageLowering locals(functions, dataLayout,
+                                        byteAddressableState);
             SimulationToStandardTypeConverter workerConverter;
             configurePackedConverter(workerConverter);
+            locals.addValueConversions(workerConverter);
             RewritePatternSet workerPatterns(context);
             populatePackedPatterns(
                 workerConverter, workerPatterns,
-                ::obelisk::schedule::has<cleanEvalBodyAttr>(functions.front()));
+                ::obelisk::schedule::has<cleanEvalBodyAttr>(functions.front()),
+                &locals);
             FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
             ConversionTarget workerTarget(*context);
             configurePackedTarget(workerTarget, workerConverter);

@@ -19,6 +19,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationFunctionBodyLowering.cpp
   SimulationFunctionTypeLowering.cpp
   SimulationHandleLowering.cpp
+  SimulationLocalStorageLowering.cpp
   SimulationManagedLowering.cpp
   SimulationManagedAssociativeLowering.cpp
   SimulationManagedContainerLowering.cpp

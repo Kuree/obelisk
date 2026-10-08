@@ -10,6 +10,7 @@ void registerActivationMemoryAnalysisTestPass();
 void registerClockInferenceAnalysisTestPass();
 void registerCombinationalDependencyAnalysisTestPass();
 void registerManagedClassLayoutAnalysisTestPass();
+void registerLocalStorageAnalysisTestPass();
 void registerNativeAOTAnalysisTestPass();
 void registerNativeStateLayoutAnalysisTestPass();
 void registerSimulationProcessFrameAnalysisTestPass();
