@@ -77,16 +77,14 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       return failure();
     for (const sim::ManagedHandleSlot &slot : managedRootSlots)
       managedRootOffsets.push_back(slot.bitOffset);
-    // Keep every independently addressable root byte-aligned. Besides
-    // avoiding cross-root read/modify/write dependencies for scalar state,
-    // this lets generated eval and read-only VPI retain a canonical value with
-    // one plain access. Padding is outside every stable handle's bound, while
-    // managed roots retain their stronger word alignment.
-    uint64_t alignment = 1;
+    // Give register-sized roots a native container, including its tail
+    // padding. Exact-byte i24/i40/i48/i56 accesses otherwise split into several
+    // machine loads/stores. Logical handle bounds still exclude all padding.
+    unsigned containerWidth =
+        *width <= 64 ? llvm::PowerOf2Ceil(std::max(8u, *width)) : 0;
+    uint64_t alignment = containerWidth ? containerWidth : 8;
     if (!managedRootOffsets.empty())
       alignment = 64;
-    else
-      alignment = 8;
     if (alignment != 1) {
       if (layout.bitCount >
           std::numeric_limits<uint64_t>::max() - (alignment - 1))
@@ -94,13 +92,14 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       layout.bitCount = llvm::alignTo(layout.bitCount, alignment);
     }
     offset = layout.bitCount;
-    if (layout.bitCount > std::numeric_limits<uint64_t>::max() - *width)
+    uint64_t allocatedWidth = containerWidth ? containerWidth : *width;
+    if (layout.bitCount > std::numeric_limits<uint64_t>::max() - allocatedWidth)
       return failure();
-    layout.bitCount += *width;
+    layout.bitCount += allocatedWidth;
     handle = encodeStaticHandle(nextHandleID);
     layout.bounds.push_back({nextHandleID++, offset, *width, fourState,
                              std::move(managedRootOffsets),
-                             std::move(managedRootSlots)});
+                             std::move(managedRootSlots), containerWidth});
     return success();
   };
   WalkResult walked = module.walk([&](Operation *operation) {

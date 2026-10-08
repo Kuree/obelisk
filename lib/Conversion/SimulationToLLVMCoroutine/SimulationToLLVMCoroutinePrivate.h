@@ -154,6 +154,7 @@ struct DirectStaticStateRange {
   uint64_t localOffset;
   uint32_t staticID;
   bool guarded;
+  unsigned containerWidth = 0;
 };
 
 bool emitDirectDynamicPackedStore(mlir::ConversionPatternRewriter &rewriter,

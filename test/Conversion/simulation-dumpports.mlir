@@ -261,16 +261,16 @@ module attributes {
 // Direct whole-source ports retain the storage/net record and gain exact
 // direction/order metadata. A sliced alias remains a distinct port record in
 // its declaring module scope and points at the canonical source bit range.
-// DATABASE: object name=top.backing kind=2 vpi_kind=48 caps=0x1 id=1 scope=top width=16 range=[15:0] state=8 type_kind=1 type_flags=0x4 port_ordinal=0
+// DATABASE: object name=top.backing kind=2 vpi_kind=48 caps=0x1 id=1 scope=top width=16 range=[15:0] state=16 type_kind=1 type_flags=0x4 port_ordinal=0
 // DATABASE: object name=top.d.a kind=2 vpi_kind=620 caps=0x9 id=0 scope=top.d width=8 range=[7:0] state=0 type_kind=1 type_flags=0x4 port_ordinal=0
-// DATABASE-NEXT: object name=top.d.io kind=3 vpi_kind=36 caps=0x119 id=0 scope=top.d width=1 range=[0:0] state=24 type_kind=1 type_flags=0x5 port_ordinal=1
+// DATABASE-NEXT: object name=top.d.io kind=3 vpi_kind=36 caps=0x119 id=0 scope=top.d width=1 range=[0:0] state=32 type_kind=1 type_flags=0x5 port_ordinal=1
 // DATABASE-NEXT: object name=top.d.p kind=8 vpi_kind=44 caps=0x319 id=3 scope=top.d width=8 range=[7:0] state=0 type_kind=1 type_flags=0x4 port_ordinal=3
-// DATABASE-NEXT: object name=top.d.slice kind=8 vpi_kind=44 caps=0x211 id=2 scope=top.d width=4 range=[3:0] state=12 type_kind=1 type_flags=0x4 port_ordinal=2
-// DATABASE-NEXT: object name=zzBacking kind=2 vpi_kind=48 caps=0x1 id=2 scope=top.d width=8 range=[7:0] state=32 type_kind=1 type_flags=0x4 port_ordinal=0
-// DATABASE-NEXT: object name=top.e.a kind=2 vpi_kind=620 caps=0x1 id=3 scope=top.e width=8 range=[7:0] state=64 type_kind=1 type_flags=0x4 port_ordinal=0
-// DATABASE-NEXT: object name=top.e.io kind=3 vpi_kind=36 caps=0x1 id=1 scope=top.e width=1 range=[0:0] state=72 type_kind=1 type_flags=0x5 port_ordinal=0
-// DATABASE: object name=top.d.child.q kind=2 vpi_kind=48 caps=0x409 id=4 scope=top.d.child width=8 range=[7:0] state=40 type_kind=1 type_flags=0x4 port_ordinal=4
-// DATABASE-NEXT: object name=top.d.child.zouter kind=2 vpi_kind=48 caps=0x509 id=5 scope=top.d.child width=16 range=[15:0] state=48 type_kind=1 type_flags=0x4 port_ordinal=5
+// DATABASE-NEXT: object name=top.d.slice kind=8 vpi_kind=44 caps=0x211 id=2 scope=top.d width=4 range=[3:0] state=20 type_kind=1 type_flags=0x4 port_ordinal=2
+// DATABASE-NEXT: object name=zzBacking kind=2 vpi_kind=48 caps=0x1 id=2 scope=top.d width=8 range=[7:0] state=40 type_kind=1 type_flags=0x4 port_ordinal=0
+// DATABASE-NEXT: object name=top.e.a kind=2 vpi_kind=620 caps=0x1 id=3 scope=top.e width=8 range=[7:0] state=80 type_kind=1 type_flags=0x4 port_ordinal=0
+// DATABASE-NEXT: object name=top.e.io kind=3 vpi_kind=36 caps=0x1 id=1 scope=top.e width=1 range=[0:0] state=88 type_kind=1 type_flags=0x5 port_ordinal=0
+// DATABASE: object name=top.d.child.q kind=2 vpi_kind=48 caps=0x409 id=4 scope=top.d.child width=8 range=[7:0] state=48 type_kind=1 type_flags=0x4 port_ordinal=4
+// DATABASE-NEXT: object name=top.d.child.zouter kind=2 vpi_kind=48 caps=0x509 id=5 scope=top.d.child width=16 range=[15:0] state=64 type_kind=1 type_flags=0x4 port_ordinal=5
 // DATABASE-NOT: relation
 
 // Static relation records are inferred from the existing scope ownership;

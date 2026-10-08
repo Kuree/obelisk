@@ -119,7 +119,8 @@ resolveDirectStaticStateRange(Value handle, unsigned width,
     return std::nullopt;
   return DirectStaticStateRange{
       bound->offset + static_cast<uint64_t>(decoded.offset),
-      static_cast<uint64_t>(decoded.offset), decoded.id, guarded};
+      static_cast<uint64_t>(decoded.offset), decoded.id, guarded,
+      decoded.offset == 0 && width == bound->width ? bound->containerWidth : 0};
 }
 
 struct DirectPackedPlane {
@@ -131,7 +132,9 @@ struct DirectPackedPlane {
 
 DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
                                         StringRef globalName,
-                                        uint64_t bitOffset, unsigned width);
+                                        uint64_t bitOffset, unsigned width,
+                                        unsigned containerWidth = 0,
+                                        bool read = true);
 Value extractDirectPackedPlane(OpBuilder &builder, Location location,
                                const DirectPackedPlane &plane,
                                IntegerType resultType);
@@ -145,6 +148,7 @@ struct DirectDynamicStateRange {
   uint32_t staticID;
   bool guarded;
   bool inBounds;
+  unsigned containerWidth;
 };
 
 std::optional<DirectDynamicStateRange>
@@ -216,7 +220,8 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
         bound->width,
         decoded.id,
         guarded,
-        true};
+        true,
+        bound->containerWidth};
   }
   Value valid = guards.front();
   for (Value next : ArrayRef<Value>(guards).drop_front())
@@ -243,7 +248,7 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
   }
   return DirectDynamicStateRange{valid,   amount,       bound->offset,
                                  0,       bound->width, decoded.id,
-                                 guarded, false};
+                                 guarded, false,        bound->containerWidth};
 }
 
 // Load precisely the bytes touched by a fully contained packed window. A
@@ -331,7 +336,8 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
       Value root = extractDirectPackedPlane(
           rewriter, location,
           loadDirectPackedPlane(rewriter, location, globalName,
-                                range.rootOffset, range.rootWidth),
+                                range.rootOffset, range.rootWidth,
+                                range.containerWidth),
           rootType);
       Value offset = arith::AddIOp::create(
           rewriter, location, range.bitOffset,
@@ -474,13 +480,17 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
 
 DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
                                         StringRef globalName,
-                                        uint64_t bitOffset, unsigned width) {
+                                        uint64_t bitOffset, unsigned width,
+                                        unsigned containerWidth, bool read) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   IntegerType i8 = builder.getI8Type();
   IntegerType i64 = builder.getI64Type();
   uint64_t firstByte = bitOffset / 8;
   unsigned firstBit = static_cast<unsigned>(bitOffset % 8);
-  unsigned byteCount = (firstBit + width + 7) / 8;
+  assert(!containerWidth ||
+         (firstBit == 0 && containerWidth >= width && containerWidth <= 64));
+  unsigned byteCount =
+      containerWidth ? containerWidth / 8 : (firstBit + width + 7) / 8;
   IntegerType spanType = builder.getIntegerType(byteCount * 8);
   Value base =
       LLVM::AddressOfOp::create(builder, location, pointer, globalName);
@@ -489,7 +499,9 @@ DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
   Value address = LLVM::GEPOp::create(
       builder, location, pointer, i8, base,
       ValueRange{llvmConstant(builder, location, i64, firstByte)});
-  Value span = LLVM::LoadOp::create(builder, location, spanType, address, 1);
+  Value span;
+  if (read)
+    span = LLVM::LoadOp::create(builder, location, spanType, address, 1);
   return {address, spanType, span, firstBit};
 }
 
@@ -508,10 +520,26 @@ Value extractDirectPackedPlane(OpBuilder &builder, Location location,
 
 Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
                              StringRef globalName, uint64_t bitOffset,
-                             bool trackChange) {
+                             bool trackChange, unsigned containerWidth = 0) {
   IntegerType inputType = cast<IntegerType>(input.getType());
   DirectPackedPlane plane = loadDirectPackedPlane(
-      builder, location, globalName, bitOffset, inputType.getWidth());
+      builder, location, globalName, bitOffset, inputType.getWidth(),
+      containerWidth, !containerWidth || trackChange);
+  if (containerWidth) {
+    // A complete logical root owns its allocation padding. Zero-extension
+    // writes that padding without reading and preserving meaningless bits.
+    // Partial views never receive this proof and retain masked updates.
+    Value extended =
+        inputType == plane.spanType
+            ? input
+            : LLVM::ZExtOp::create(builder, location, plane.spanType, input);
+    LLVM::StoreOp::create(builder, location, extended, plane.address, 1);
+    if (!trackChange)
+      return llvmConstant(builder, location, builder.getI1Type(), 0);
+    Value old = extractDirectPackedPlane(builder, location, plane, inputType);
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                 old, input);
+  }
   APInt fieldMask =
       APInt::getBitsSet(plane.spanType.getWidth(), plane.bitOffset,
                         plane.bitOffset + inputType.getWidth());
@@ -562,7 +590,7 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
     return extractDirectPackedPlane(
         rewriter, location,
         loadDirectPackedPlane(rewriter, location, globalName, range->offset,
-                              resultType.getWidth()),
+                              resultType.getWidth(), range->containerWidth),
         resultType);
   std::optional<DirectDynamicStateRange> dynamicRange =
       resolveDirectDynamicStateRange(handle, resultType.getWidth(),
@@ -628,7 +656,8 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
       range ? extractDirectPackedPlane(
                   rewriter, location,
                   loadDirectPackedPlane(rewriter, location, globalName,
-                                        range->offset, resultType.getWidth()),
+                                        range->offset, resultType.getWidth(),
+                                        range->containerWidth),
                   resultType)
             : loadDirectDynamicPackedPlane(rewriter, location, globalName,
                                            resultType, *dynamicRange,
@@ -661,17 +690,19 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                              ? "__obelisk_continuous_unknown"
                              : "__obelisk_continuous_value";
     storeDirectPackedPlane(rewriter, location, input, retained, range->offset,
-                           false);
+                           false, range->containerWidth);
     if (globalName == "__obelisk_state_value") {
       Value mask = arith::ConstantOp::create(
           rewriter, location, inputType,
           rewriter.getIntegerAttr(inputType,
                                   APInt::getAllOnes(inputType.getWidth())));
       storeDirectPackedPlane(rewriter, location, mask,
-                             "__obelisk_continuous_mask", range->offset, false);
+                             "__obelisk_continuous_mask", range->offset, false,
+                             range->containerWidth);
     }
     return storeDirectPackedPlane(rewriter, location, input, globalName,
-                                  range->offset, trackChange);
+                                  range->offset, trackChange,
+                                  range->containerWidth);
   }
   // Unguarded roots can never be forced or procedurally assigned, so they do
   // not need a retained continuous value for release. Guarded continuous
@@ -679,7 +710,8 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
   // the clean publication may precede a later force.
   if (range && (!range->guarded || (!continuous && assumeClean)))
     return storeDirectPackedPlane(rewriter, location, input, globalName,
-                                  range->offset, trackChange);
+                                  range->offset, trackChange,
+                                  range->containerWidth);
 
   auto emitGeneric = [&]() -> Value {
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -740,8 +772,9 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
                                           genericBlock, ValueRange{}));
 
   rewriter.setInsertionPointToEnd(directBlock);
-  Value directChanged = storeDirectPackedPlane(
-      rewriter, location, input, globalName, range->offset, trackChange);
+  Value directChanged =
+      storeDirectPackedPlane(rewriter, location, input, globalName,
+                             range->offset, trackChange, range->containerWidth);
   cf::BranchOp::create(rewriter, location, continuation,
                        ValueRange{directChanged});
 
@@ -994,7 +1027,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     return extractDirectPackedPlane(
         rewriter, location,
         loadDirectPackedPlane(rewriter, location, plane, range->rootOffset,
-                              range->rootWidth),
+                              range->rootWidth, range->containerWidth),
         rootType);
   };
   auto merge = [&](Value old, Value input) -> Value {
@@ -1018,10 +1051,11 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
                               : load("__obelisk_state_unknown");
   Value newUnknown = twoState ? oldUnknown : merge(oldUnknown, unknown);
   storeDirectPackedPlane(rewriter, location, newValue, "__obelisk_state_value",
-                         range->rootOffset, false);
+                         range->rootOffset, false, range->containerWidth);
   if (!twoState)
     storeDirectPackedPlane(rewriter, location, newUnknown,
-                           "__obelisk_state_unknown", range->rootOffset, false);
+                           "__obelisk_state_unknown", range->rootOffset, false,
+                           range->containerWidth);
   if (layout->transitionHandles.contains(range->staticID)) {
     Value rootHandle =
         llvmConstant(rewriter, location, i64,

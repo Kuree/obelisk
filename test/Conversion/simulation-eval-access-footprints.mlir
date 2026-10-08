@@ -90,7 +90,7 @@ module attributes {
 }
 // CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state_0
 // CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0
-// Matrix is at bit 8. Its reached relative intervals are [3,12), [15,24).
-// Output [40,43) remains required, including its unknown-plane store contract.
-// CHECK-DAG: schedule.eval.local_promotion_ranges = array<i64: 11, 9, 23, 9, 40, 3>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[0, 1, -2048, 1048575, 0, 1, -8388608, 4294967295, 0, 1, -1099511627776, 8796093022207]>
+// Matrix is at bit 32. Its reached relative intervals are [3,12), [15,24).
+// Output [64,67) remains required, including its unknown-plane store contract.
+// CHECK-DAG: schedule.eval.local_promotion_ranges = array<i64: 35, 9, 47, 9, 64, 3>
+// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[0, 1, -34359738368, 17592186044415, 0, 1, -140737488355328, 72057594037927935, 1, 2, -1, 7]>

@@ -116,10 +116,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: schedule.eval.discardable_store
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
 // CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// The known net write contributes [1096, 1097) to the promotion scan. Without
+// The known net write contributes [1152, 1153) to the promotion scan. Without
 // analyzing SimNetWriteOp this range was missing, allowing stale X/Z state to
 // enter the two-state helper after an external disturbance.
-// CHECK-SAME: schedule.eval.local_promotion_ranges = array<i64: 0, 1, 1032, 64, 1096, 1, 1104, 1>
+// CHECK-SAME: schedule.eval.local_promotion_ranges = array<i64: 0, 1, 1088, 64, 1152, 1, 1160, 1>
 // CHECK: llvm.call @touch_clock.__obelisk_eval_private_0
 // CHECK: llvm.call @touch_net.__obelisk_eval_private_0
 // CHECK: llvm.call @touch_driver.__obelisk_eval_private_0

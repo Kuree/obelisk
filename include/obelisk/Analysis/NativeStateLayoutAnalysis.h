@@ -31,6 +31,9 @@ struct NativeStateLayoutAnalysis {
     bool fourState;
     mlir::SmallVector<uint64_t, 2> managedRootOffsets;
     mlir::SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
+    // A native-sized allocation owned by this root. Its logical handle bound
+    // remains width; bits above width are padding, never another root's state.
+    unsigned containerWidth = 0;
   };
   struct Net {
     uint64_t id;

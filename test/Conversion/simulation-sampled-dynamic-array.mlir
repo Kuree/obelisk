@@ -7,7 +7,7 @@
 // The selector and array are sampled before the Active writes. The snapshot
 // contains the proven array roots, excluding unrelated storage. An invalid
 // lane is X for four-state data and zero for two-state data (LRM 7.4.5, 16.5.1).
-// PLAN: obelisk.execution.sampled_ranges = array<i64: 0, 40, 168, 8>
+// PLAN: obelisk.execution.sampled_ranges = array<i64: 0, 8, 32, 32, 192, 8>
 !word = !simulation.logic<4>
 !array = !simulation.unpacked_array<1 : 2 x !word>
 !two = !simulation.unpacked_array<1 : 2 x i4>
