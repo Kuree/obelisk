@@ -63,6 +63,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Mem2Reg.h"
+#include "mlir/Transforms/Passes.h"
 #include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -3887,6 +3888,16 @@ public:
     if (*partitionInventory)
       functions.addPass(detail::createInventoryNativeFunctionSymbolsPass());
     functions.addPass(detail::createNativeFunctionFinalizationPass());
+    // Compact generated addresses, masks and repeated loads before LLVM IR
+    // export. Scheduling, continuation frames and size-based inlining policy
+    // must be finalized first: moving constants across a suspension earlier
+    // would introduce live values missing from the canonical frame plan.
+    if (auto optimization = module->getAttrOfType<IntegerAttr>(
+            "obelisk.native.optimization_level");
+        optimization && optimization.getInt() > 0) {
+      functions.addPass(createCanonicalizerPass());
+      functions.addPass(createCSEPass());
+    }
     if (failed(runPipeline(finalization, module))) {
       signalPassFailure();
       return;

@@ -153,5 +153,7 @@ module attributes {
 // BUDGET-NOT: obelisk.native.max_state_domain_functions
 // BUDGET-NOT: obelisk.native.optimization_level
 // BUDGET-LABEL: llvm.func @add_known(
-// BUDGET-SAME: %[[VALUE:.*]]: i64, %[[UNKNOWN:.*]]: i64)
-// BUDGET: llvm.icmp "ne" %[[UNKNOWN]],
+// BUDGET-SAME: %[[VALUE:[a-zA-Z0-9_]+]]: i64, %[[UNKNOWN:[a-zA-Z0-9_]+]]: i64)
+// BUDGET: llvm.br ^bb1(%[[VALUE]], %[[UNKNOWN]] : i64, i64)
+// BUDGET: ^bb1(%{{.*}}: i64, %[[BLOCK_UNKNOWN:.*]]: i64):
+// BUDGET: llvm.icmp "ne" %[[BLOCK_UNKNOWN]],

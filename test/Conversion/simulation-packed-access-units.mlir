@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -S | FileCheck %s --check-prefix=OPT
+// RUN: sed 's/module attributes {/module attributes {obelisk.native.optimization_level = 3 : i32,/' %s | obelisk-opt --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=COMPACT
 
 // Clang's packed bit-field access units: these fields share bytes all the
 // way across a 95-bit record, so each uses the same i96 unit. The untouched
@@ -96,6 +97,24 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: llvm.store {{.*}} : i96, !llvm.ptr
 // CHECK: llvm.load {{.*}} -> i96
 // CHECK: llvm.return
+// Fold the field masks and share each storage-unit load before LLVM export.
+// Publication is a memory barrier: the second field and final return still
+// need fresh loads, and neither write may be removed or reordered.
+// COMPACT-LABEL: llvm.func @state_fields(
+// COMPACT: llvm.mlir.constant(-8589934591 : i96)
+// COMPACT: %[[STATE:.*]] = llvm.mlir.addressof @__obelisk_state_value
+// COMPACT: llvm.load %[[STATE]] {{.*}} -> i96
+// COMPACT-NOT: llvm.load {{.*}} -> i96
+// COMPACT-NOT: llvm.xor
+// COMPACT: llvm.store {{.*}}, %[[STATE]] {{.*}} : i96, !llvm.ptr
+// COMPACT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// COMPACT: llvm.load %[[STATE]] {{.*}} -> i96
+// COMPACT-NOT: llvm.load {{.*}} -> i96
+// COMPACT-NOT: llvm.xor
+// COMPACT: llvm.store {{.*}}, %[[STATE]] {{.*}} : i96, !llvm.ptr
+// COMPACT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// COMPACT: llvm.load %[[STATE]] {{.*}} -> i96
+// COMPACT: llvm.return
 // Whole words use i32 accesses even when the index needs a validity guard.
 // CHECK-LABEL: llvm.func @word_elements(
 // CHECK-NOT: !llvm.ptr -> i64
