@@ -10,6 +10,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Runtime/ClockKernelReadySet.h"
+#include <map>
 
 namespace obelisk::detail {
 
@@ -129,6 +130,80 @@ inline void materializeEvalReadyWord(mlir::OpBuilder &builder,
   mlir::Value next = updateOwnerWord(builder, loc, base, word, mask, clear);
   materializeEvalReadyIndexes(builder, loc, base, layout, word, next,
                               clear ? mlir::Value{} : mask);
+}
+
+struct EvalReadyWordChange {
+  unsigned word;
+  mlir::Value remove, add;
+};
+
+// Compose typed pending-set actions in source order, then write each final leaf
+// and shared index once. These actions carry no event history (LRM 4.5--4.7).
+// The caller must stop at reads, aliases, callbacks and selection boundaries.
+inline void
+materializeEvalReadyWords(mlir::OpBuilder &builder, mlir::Location loc,
+                          mlir::Value base,
+                          const runtime::ReadySetLayout &layout,
+                          llvm::ArrayRef<EvalReadyWordChange> changes) {
+  using namespace mlir;
+  auto i64 = builder.getI64Type();
+  Value zero = llvmConstant(builder, loc, i64, 0);
+  Value ones = llvmConstant(builder, loc, i64, UINT64_MAX);
+  Value minimum;
+  std::map<unsigned, Value> leaves;
+  for (const auto &change : changes) {
+    Value previous = leaves.count(change.word)
+                         ? leaves.at(change.word)
+                         : loadOwnerWord(builder, loc, base, change.word);
+    Value inverse =
+        builder.createOrFold<arith::XOrIOp>(loc, change.remove, ones);
+    Value retained =
+        builder.createOrFold<arith::AndIOp>(loc, previous, inverse);
+    leaves[change.word] =
+        builder.createOrFold<arith::OrIOp>(loc, retained, change.add);
+    if (layout.hasCache()) {
+      if (!minimum)
+        minimum = loadOwnerWord(builder, loc, base, layout.cacheOffset());
+      Value published = builder.createOrFold<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::ne, change.add, zero);
+      Value candidate = builder.createOrFold<arith::SelectOp>(
+          loc, published, llvmConstant(builder, loc, i64, change.word),
+          minimum);
+      minimum = builder.createOrFold<arith::MinUIOp>(loc, minimum, candidate);
+    }
+  }
+  for (auto [word, next] : leaves)
+    LLVM::StoreOp::create(builder, loc, next,
+                          ownerWordAddress(builder, loc, base, word), 8);
+  if (minimum)
+    LLVM::StoreOp::create(
+        builder, loc, minimum,
+        ownerWordAddress(builder, loc, base, layout.cacheOffset()), 8);
+  for (unsigned level = 1; level != layout.levels; ++level) {
+    std::map<unsigned, Value> parents;
+    for (auto [child, next] : leaves) {
+      unsigned parent = child / 64;
+      uint64_t bit = uint64_t{1} << (child % 64);
+      Value previous = parents.count(parent)
+                           ? parents.at(parent)
+                           : loadOwnerWord(builder, loc, base,
+                                           layout.offsets[level] + parent);
+      Value nonempty = builder.createOrFold<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::ne, next, zero);
+      Value without = builder.createOrFold<arith::AndIOp>(
+          loc, previous, llvmConstant(builder, loc, i64, ~bit));
+      Value with = builder.createOrFold<arith::OrIOp>(
+          loc, previous, llvmConstant(builder, loc, i64, bit));
+      parents[parent] =
+          builder.createOrFold<arith::SelectOp>(loc, nonempty, with, without);
+    }
+    for (auto [parent, next] : parents)
+      LLVM::StoreOp::create(
+          builder, loc, next,
+          ownerWordAddress(builder, loc, base, layout.offsets[level] + parent),
+          8);
+    leaves = std::move(parents);
+  }
 }
 
 inline void updateEvalReadyWord(mlir::OpBuilder &builder, mlir::Location loc,

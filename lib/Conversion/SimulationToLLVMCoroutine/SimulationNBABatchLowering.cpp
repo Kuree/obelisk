@@ -68,6 +68,11 @@ public:
         eligible |= uint64_t{1} << (root.getRoot() % 64);
       Value dirtyAddress = byteGEP(b, loc, dirty, uint64_t(word) * 8);
       Value pending = band(load(dirtyAddress), c(eligible));
+      // No admitted root in this word has an update at this barrier. Leave
+      // both the leaf and its summary alone, including non-batch owners.
+      Block *wordBody = block(), *wordDone = block();
+      cf::CondBranchOp::create(b, loc, ne(pending, c(0)), wordBody, wordDone);
+      b.setInsertionPointToStart(wordBody);
       Value consumed = scratch();
       store(c(0), consumed);
       // Avoid an indirect branch through a potentially large commit body for
@@ -117,6 +122,8 @@ public:
       store(select(ne(load(dirtyAddress), c(0)), previous,
                    band(previous, c(~(uint64_t{1} << (word % 64))))),
             summaryAddress);
+      cf::BranchOp::create(b, loc, wordDone);
+      b.setInsertionPointToStart(wordDone);
     }
     Value pending = c(0);
     if (!ready.empty()) {

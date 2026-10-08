@@ -166,6 +166,22 @@ int main(void) {
   assert(unknown[28] == (0x8 << 3));
   assert(!constant_valid && commits == 1 && stages == 1 && notifications == 1);
   assert(changed == 1 && dirty[0] == (1ull << 9) && !dirty[1]);
+  // Entire words can be empty for this batch while a different owner keeps
+  // their summary alive. Stale valid payloads must remain untouched.
+  reset();
+  memcpy(expected, value, sizeof(value));
+  dirty[0] = 1ull << 9;
+  dirty[1] = 0;
+  summary = 1;
+  accumulator.valid = aux2.valid = aux63.valid = valid = 1;
+  accumulator.region = aux2.region = aux63.region = 2;
+  accumulator.mask[0] = aux2.mask[0] = aux63.mask[0] = 0xff;
+  changed = 8;
+  specialized(0, 2, &changed);
+  assert(!memcmp(value, expected, sizeof(value)));
+  assert(accumulator.valid && aux2.valid && aux63.valid && valid);
+  assert(dirty[0] == (1ull << 9) && !dirty[1] && summary == 1);
+  assert(changed == 8 && !stages && !commits && !notifications && !pending);
   // Guard failure consumes neither a payload nor its dirty/summary bits.
   reset();
   allowed = 0;

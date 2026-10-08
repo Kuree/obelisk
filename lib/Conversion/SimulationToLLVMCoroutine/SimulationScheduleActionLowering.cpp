@@ -2,11 +2,13 @@
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace mlir;
 
@@ -15,7 +17,86 @@ namespace detail {
 void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op);
 void lowerNativeReadyRegion(schedule::NativeReadyRegionOp op,
                             SymbolTableCollection &symbols);
+} // namespace detail
+namespace {
+// Keep readiness semantic until conversion. Only speculatable, effect-free
+// operations may separate actions sharing one proven base and ready universe.
+// In particular a ready read, ordinary load, transition, call or alias action
+// ends a batch, even when its result is unused.
+void materializeReadyBatches(Operation *operation,
+                             SymbolTableCollection &symbols) {
+  SmallVector<SmallVector<Operation *>> batches;
+  SmallVector<Block *> blocks;
+  llvm::SmallPtrSet<Block *, 16> seen;
+  operation->walk([&](Operation *op) {
+    if (isa<schedule::NativeReadyUpdateOp, schedule::NativeReadyCommitOp>(op) &&
+        seen.insert(op->getBlock()).second)
+      blocks.push_back(op->getBlock());
+  });
+  auto baseAndCapacity = [](Operation *op) -> std::pair<Value, uint64_t> {
+    if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op))
+      return {update.getBase(), update.getCapacity()};
+    if (auto commit = dyn_cast<schedule::NativeReadyCommitOp>(op))
+      return {commit.getBase(), commit.getCapacity()};
+    return {};
+  };
+  auto sameBase = [&](Value a, Value b) {
+    if (a == b)
+      return true;
+    auto lhs = a.getDefiningOp<LLVM::AddressOfOp>();
+    auto rhs = b.getDefiningOp<LLVM::AddressOfOp>();
+    // Distinct aliases or opaque pointers do not prove a shared base.
+    return lhs && rhs && lhs.getGlobal(symbols) &&
+           lhs.getGlobal(symbols) == rhs.getGlobal(symbols);
+  };
+  for (Block *block : blocks) {
+    SmallVector<Operation *> pending;
+    Value base;
+    uint64_t capacity = 0;
+    auto flush = [&]() {
+      if (pending.size() > 1)
+        batches.push_back(std::move(pending));
+      pending.clear();
+      base = {};
+    };
+    for (Operation &op : *block) {
+      auto [current, count] = baseAndCapacity(&op);
+      if (current) {
+        if (base && (capacity != count || !sameBase(base, current)))
+          flush();
+        base = current;
+        capacity = count;
+        pending.push_back(&op);
+      } else if (!isMemoryEffectFree(&op) || !isSpeculatable(&op)) {
+        flush();
+      }
+    }
+    flush();
+  }
+  for (const auto &batch : batches) {
+    OpBuilder builder(batch.back());
+    auto loc = batch.back()->getLoc();
+    auto [base, capacity] = baseAndCapacity(batch.back());
+    Value zero = detail::llvmConstant(builder, loc, builder.getI64Type(), 0);
+    SmallVector<detail::EvalReadyWordChange> changes;
+    for (Operation *op : batch) {
+      if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op))
+        changes.push_back({unsigned(update.getWord()),
+                           update.getConsume() ? update.getMask() : zero,
+                           update.getConsume() ? zero : update.getMask()});
+      else {
+        auto commit = cast<schedule::NativeReadyCommitOp>(op);
+        changes.push_back({unsigned(commit.getWord()), commit.getRemoveMask(),
+                           commit.getAddMask()});
+      }
+    }
+    detail::materializeEvalReadyWords(
+        builder, loc, base, runtime::ReadySetLayout(capacity), changes);
+    for (Operation *op : batch)
+      op->erase();
+  }
 }
+} // namespace
 void materializeNativeScheduleActions(Operation *operation, bool coalesce,
                                       bool preserveReadiness) {
   SmallVector<schedule::NativeNBABatchOp> batches;
@@ -69,6 +150,8 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
   SymbolTableCollection symbols;
   for (auto region : readyRegions)
     detail::lowerNativeReadyRegion(region, symbols);
+  if (coalesce && !preserveReadiness)
+    materializeReadyBatches(operation, symbols);
   SmallVector<schedule::NativeReadyUpdateOp> updates;
   SmallVector<schedule::NativeTransitionOp> transitions;
   SmallVector<schedule::NativeReadyCommitOp> commits;
