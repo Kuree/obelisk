@@ -2746,8 +2746,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             continue;
           }
           semanticVPIType = *mappedVPIType;
-          FailureOr<Type> type = normalizeSemanticType(semanticType.getValue(),
-                                                       getSemanticLocation(op));
+          FailureOr<Type> type = normalizeSemanticType(
+              semanticType.getValue(), getSemanticLocation(op), op);
           if (failed(type)) {
             invalid = true;
             continue;

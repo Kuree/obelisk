@@ -76,7 +76,10 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       auto bits = sim::getPackedWidth(store.getValue().getType());
       if (!bits || *bits > 32 || !*bits)
         return reject("store element too wide for two native lanes", store);
-      elementWidth = std::max<unsigned>(elementWidth, *bits);
+      uint64_t stride = analysis::getWordLaneStorageWidth(store.getReference());
+      if (!stride || stride > 32)
+        return reject("store stride too wide for two native lanes", store);
+      elementWidth = std::max(elementWidth, unsigned(stride));
     }
   if (!elementWidth)
     return reject("no packed store");
@@ -84,6 +87,8 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
   analysis::NativeWordAnalysis lanesAnalysis(function, loop, elementWidth);
   DenseMap<Operation *, analysis::WordTruthTable> tables;
   DenseMap<uint64_t, SmallVector<Value>> reads, writes;
+  SmallVector<std::pair<unsigned, unsigned>> geometries;
+  SmallVector<unsigned> valueWidths;
   unsigned stores = 0;
   for (Block *block : loop.blocks) {
     auto escapes = [&](Value value) {
@@ -160,6 +165,14 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
           if (!bits || !*bits || *bits > 32)
             return reject("lane element too wide for two native lanes", &op);
           elementWidth = std::max<unsigned>(elementWidth, *bits);
+          valueWidths.push_back(*bits);
+          if (isLaneReference(kind) || isa<sim::SimArrayDynExtractOp>(op)) {
+            uint64_t stride = analysis::getWordLaneStorageWidth(value);
+            if (!stride || stride > 32)
+              return reject("lane stride too wide for two native lanes", &op);
+            geometries.emplace_back(*bits, stride);
+            elementWidth = std::max(elementWidth, unsigned(stride));
+          }
         }
         if (kind == Kind::Logic && !canWidenDirectly(&op)) {
           auto table = analysis::computeWordTruthTable(&op);
@@ -185,6 +198,22 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
   }
   if (!stores)
     return reject("no lane store");
+  unsigned paddedWidth = 0, paddedStride = 0;
+  for (auto [bits, stride] : geometries)
+    if (bits != stride) {
+      paddedWidth = bits;
+      paddedStride = stride;
+    }
+  // Bitwise operations commute with embedding each value in its ABI slot.
+  // Mixed physical strides need a gather/scatter representation; retain the
+  // scalar loop rather than treating their lanes as contiguous packed bits.
+  if (paddedStride &&
+      (llvm::any_of(geometries, [&](auto geometry) {
+         return geometry != std::pair{paddedWidth, paddedStride};
+       }) || llvm::any_of(valueWidths, [&](unsigned bits) {
+         return bits != paddedWidth;
+       })))
+    return reject("incompatible padded lane geometry");
   bool nestedArguments = llvm::any_of(loop.blocks, [&](Block *block) {
     return block != loop.header && block->getNumArguments() != 0;
   });
@@ -356,7 +385,8 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     if (argument != loop.induction)
       mapping.map(argument, wrapper->getArgument(argument.getArgNumber()));
   auto wordType = [&](Type scalar) -> Type {
-    unsigned bits = *sim::getPackedWidth(scalar) * groupSize;
+    unsigned bits =
+        (paddedStride ? paddedStride : *sim::getPackedWidth(scalar)) * groupSize;
     return isa<IntegerType>(sim::getPackedScalarType(scalar))
                ? Type(builder.getIntegerType(bits))
                : Type(sim::LogicType::get(function.getContext(), bits));
@@ -378,6 +408,18 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     if (sim::getPackedWidth(value.getType()) == targetWidth)
       return value;
     unsigned scalarWidth = targetWidth / groupSize;
+    if (paddedStride && sim::getPackedWidth(value.getType()) == paddedWidth &&
+        scalarWidth == paddedStride) {
+      if (isa<IntegerType>(value.getType()))
+        value = arith::ExtUIOp::create(
+            builder, original.getLoc(), builder.getIntegerType(paddedStride),
+            value);
+      else
+        value = sim::SimLogicResizeOp::create(
+            builder, original.getLoc(),
+            sim::LogicType::get(function.getContext(), paddedStride), value,
+            false);
+    }
     assert(sim::getPackedWidth(value.getType()) == scalarWidth &&
            "a broadcast must preserve the complete scalar element");
     if (scalarWidth > 1) {
@@ -437,6 +479,7 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       Type type = op.getOperand(0).getType();
       if (auto reference = dyn_cast<sim::RefType>(type))
         type = reference.getElementType();
+      scalarWidth = *sim::getArrayElementStorageStride(type);
       int64_t base;
       bool reversed;
       if (auto array = dyn_cast<sim::PackedArrayType>(type)) {
@@ -582,7 +625,9 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
         if (lanesAnalysis.get(store.getReference()) == Kind::ReverseReference)
           reversedStores.try_emplace(
-              copy, *sim::getPackedWidth(store.getValue().getType()));
+              copy, paddedStride
+                        ? paddedStride
+                        : *sim::getPackedWidth(store.getValue().getType()));
       for (auto [from, to] : llvm::zip(op.getResults(), copy->getResults()))
         mapping.map(from, to);
       cloned.push_back(copy);
@@ -590,7 +635,8 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
         auto reverse = schedule::NativeWordReverseOp::create(
             builder, op.getLoc(), copy->getResult(0).getType(),
             copy->getResult(0),
-            *sim::getPackedWidth(op.getResult(0).getType()));
+            paddedStride ? paddedStride
+                         : *sim::getPackedWidth(op.getResult(0).getType()));
         mapping.map(op.getResult(0), reverse.getResult());
         cloned.push_back(reverse);
       }
@@ -614,6 +660,37 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
             builder, store.getLoc(), store.getValue().getType(),
             store.getValue(), reversedStores.lookup(op)));
       }
+      if (paddedStride) {
+        builder.setInsertionPoint(store);
+        Value value = store.getValue();
+        if (isa<IntegerType>(value.getType())) {
+          APInt mask(storeWidth, 0);
+          for (unsigned lane = 0; lane != groupSize; ++lane)
+            mask.setBits(lane * paddedStride,
+                         lane * paddedStride + paddedWidth);
+          value = arith::AndIOp::create(
+              builder, store.getLoc(), value,
+              arith::ConstantOp::create(
+                  builder, store.getLoc(),
+                  builder.getIntegerAttr(value.getType(), mask)));
+        } else {
+          // Inserting known zero preserves Z in logical lanes. Four-state
+          // AND would turn Z into X, even at positions with a one mask bit.
+          auto zero = sim::SimLogicConstantOp::create(
+              builder, store.getLoc(),
+              sim::LogicType::get(function.getContext(),
+                                  paddedStride - paddedWidth),
+              builder.getIntegerAttr(
+                  builder.getIntegerType(paddedStride - paddedWidth), 0),
+              builder.getIntegerAttr(
+                  builder.getIntegerType(paddedStride - paddedWidth), 0));
+          for (unsigned lane = 0; lane != groupSize; ++lane)
+            value = sim::SimLogicInsertOp::create(
+                builder, store.getLoc(), value.getType(), value, zero,
+                lane * paddedStride + paddedWidth);
+        }
+        store.getValueMutable().assign(value);
+      }
     } else if (widenedComputations.contains(op)) {
       builder.setInsertionPoint(op);
       unsigned resultWidth = *sim::getPackedWidth(op->getResult(0).getType());
@@ -622,7 +699,9 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     } else if (auto table = dyn_cast<schedule::NativeWordTableOp>(op)) {
       builder.setInsertionPoint(table);
       for (OpOperand &operand : table->getOpOperands())
-        operand.set(wideValue(operand.get(), groupSize));
+        operand.set(wideValue(operand.get(),
+                              paddedStride ? groupSize * paddedStride
+                                           : groupSize));
     }
   }
   if (!hasTail) {

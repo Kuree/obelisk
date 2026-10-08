@@ -1950,7 +1950,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (failed(elementABI))
       return failure();
     FailureOr<Type> normalizedElement =
-        normalizeSemanticType(element, location);
+        normalizeSemanticType(element, location, function);
     if (failed(normalizedElement))
       return failure();
     FailureOr<sim::DPIAggregateABIAttr> elementLayout =
@@ -2065,13 +2065,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         hasRuntimeShape = true;
         simpleRootRuntime &= formalUnsized;
       } else {
-        std::optional<uint64_t> alignment = sim::getProvenanceAlignment(child);
-        if (!alignment || *alignment == 0 ||
-            *childSpan > UINT64_MAX - (*alignment - 1))
+        auto storageStride = sim::getArrayElementStorageStride(sourceType);
+        if (!storageStride)
           return emitError(location)
                      << "DPI open-array fixed dimension has no bounded stride",
                  failure();
-        uint64_t stride = (*childSpan + *alignment - 1) & ~(*alignment - 1);
+        uint64_t stride = *storageStride;
         if (stride == 0 || stride > INT64_MAX ||
             (*actualExtent - 1) > UINT64_MAX / stride)
           return emitError(location)

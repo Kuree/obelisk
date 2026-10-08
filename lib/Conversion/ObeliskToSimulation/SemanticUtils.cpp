@@ -1,6 +1,7 @@
 //===- SemanticUtils.cpp - Shared semantic-to-simulation helpers --------===//
 
 #include "Detail.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 
 #include "obelisk/Runtime/StableHash.h"
 
@@ -1736,17 +1737,21 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
       if (failed(elementType))
         return failure();
       FailureOr<Type> normalized =
-          normalizeType(*elementType, getSemanticLocation(op));
+          normalizeSemanticType(*elementType, getSemanticLocation(op), op);
       return failed(normalized) ? FailureOr<Type>(failure())
                                 : FailureOr<Type>(sim::MailboxType::get(
                                       semanticType.getContext(), *normalized));
     }
   }
-  return normalizeType(semanticType, getSemanticLocation(op));
+  return normalizeSemanticType(semanticType, getSemanticLocation(op), op);
 }
 
-FailureOr<Type> normalizeSemanticType(Type type, Location location) {
-  return normalizeType(type, location);
+FailureOr<Type> normalizeSemanticType(Type type, Location location,
+                                      Operation *scope) {
+  FailureOr<Type> normalized = normalizeType(type, location);
+  if (failed(normalized))
+    return failure();
+  return analysis::encodeNativeStorageLayout(*normalized, scope);
 }
 
 FailureOr<DPIABIKind> getDPIABIKind(Type type, Location location) {

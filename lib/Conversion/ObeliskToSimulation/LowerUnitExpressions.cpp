@@ -3127,7 +3127,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceReceiverMembers(
     }
     Type semanticType = semantic::VirtualInterfaceType::get(
         builder.getContext(), identity, builder.getStringAttr(""));
-    FailureOr<Type> normalized = normalizeSemanticType(semanticType, location);
+    FailureOr<Type> normalized =
+        normalizeSemanticType(semanticType, location, function);
     auto selected = succeeded(normalized)
                         ? dyn_cast<sim::VirtualInterfaceType>(*normalized)
                         : sim::VirtualInterfaceType{};
@@ -4279,7 +4280,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
         return failure();
       }
       FailureOr<Type> type =
-          normalizeSemanticType(typeAttr.getValue(), location);
+          normalizeSemanticType(typeAttr.getValue(), location, function);
       Operation *source = children[cursor++];
       FailureOr<Value> value = lowerExpression(source);
       if (failed(type) || failed(value))

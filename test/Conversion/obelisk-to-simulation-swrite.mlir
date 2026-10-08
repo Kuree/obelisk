@@ -127,7 +127,7 @@ module attributes {
 // CHECK-NEXT: %[[PACKED:.*]] = simulation.string.to_packed %[[HEX]] : (!simulation.string) -> i128
 // CHECK: %[[BYTES:.*]] = simulation.string.output_format {{.*}} radix = <decimal> flags = [0, 0] {library_cell = "work.swrite_test", scope = "swrite_test"
 // CHECK: %[[BYTE0:.*]] = simulation.string.getc %[[BYTES]], {{.*}} : (!simulation.string, i64) -> i8
-// CHECK: simulation.aggregate.construct %[[BYTE0]], {{.*}} -> !simulation.unpacked_array<0 : 15 x i8>
+// CHECK: simulation.aggregate.construct %[[BYTE0]], {{.*}} -> !simulation.unpacked_array<0 : 15 x i8, #simulation.storage_layout<size = 16, alignment = 1, stride = 1, offsets = []>>
 // CHECK: %[[ARRAY_REF0:.*]] = simulation.ref.subelement {{.*}}{{\[\[0\]\]}}
 // CHECK-NEXT: %[[ARRAY_BYTE0:.*]] = simulation.ref.load %[[ARRAY_REF0]] : !simulation.ref<i8> -> i8
 // CHECK: %[[ARRAY_LOGIC0:.*]] = simulation.logic.from_bits %[[ARRAY_BYTE0]] : i8 -> !simulation.logic<8>

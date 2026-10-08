@@ -153,6 +153,14 @@ static std::optional<uint64_t> getElementStorageSpan(Type type) {
   return *span + tagBits;
 }
 
+static StorageLayoutAttr getStorageLayout(Type type) {
+  if (auto array = dyn_cast<UnpackedArrayType>(type))
+    return dyn_cast_or_null<StorageLayoutAttr>(array.getLayout());
+  if (auto record = dyn_cast<UnpackedStructType>(type))
+    return dyn_cast_or_null<StorageLayoutAttr>(record.getLayout());
+  return {};
+}
+
 std::optional<uint64_t> getProvenanceSpan(Type type) {
   if (auto reference = dyn_cast<RefType>(type))
     return getProvenanceSpan(reference.getElementType());
@@ -160,6 +168,8 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return getProvenanceSpan(net.getElementType());
   if (auto driver = dyn_cast<DriverType>(type))
     return getProvenanceSpan(driver.getElementType());
+  if (auto layout = getStorageLayout(type))
+    return layout.getSize() * 8;
   // An event value is the 64-bit identity of its synchronization object, the
   // same handle width every other simulation handle stores. IEEE 1800-2017
   // 6.17 gives each event variable its own object, so an array or struct of
@@ -256,6 +266,8 @@ std::optional<uint64_t> getProvenanceAlignment(Type type) {
     return getProvenanceAlignment(net.getElementType());
   if (auto driver = dyn_cast<DriverType>(type))
     return getProvenanceAlignment(driver.getElementType());
+  if (auto layout = getStorageLayout(type))
+    return layout.getAlignment() * 8;
   if (type.isF32())
     return uint64_t{32};
   if (type.isF64())
@@ -284,6 +296,11 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
   std::optional<uint64_t> span = getElementStorageSpan(element);
   if (!element || !span)
     return std::nullopt;
+  if (auto layout = getStorageLayout(type)) {
+    uint64_t offset = isa<UnpackedArrayType>(type) ? index * layout.getStride()
+                                                   : layout.getOffsets()[index];
+    return std::pair<uint64_t, uint64_t>{offset * 8, *span};
+  }
   uint64_t offset = 0;
   if (isa<PackedStructType, PackedUnionType>(type)) {
     auto field = cast<FieldAttr>(getAggregateFields(type)[index]);
@@ -332,6 +349,16 @@ getAggregateProvenanceSubelement(Type type, unsigned index) {
   return std::pair<uint64_t, uint64_t>{offset, *span};
 }
 
+std::optional<uint64_t> getArrayElementStorageStride(Type type) {
+  if (!isa<PackedArrayType, UnpackedArrayType>(type))
+    return std::nullopt;
+  uint64_t count = getAggregateNumElements(type);
+  auto span = getProvenanceSpan(type);
+  if (!count || !span || *span % count)
+    return std::nullopt;
+  return *span / count;
+}
+
 static std::optional<SmallVector<uint64_t>>
 getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
   if (!isa<UnpackedArrayType, UnpackedStructType>(type))
@@ -376,23 +403,13 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
       Type element = count ? getAggregateElementType(array, 0) : Type{};
       if (!count || !element)
         return std::nullopt;
-      uint64_t firstOffset = 0;
-      uint64_t stride = 0;
-      uint64_t provenanceSpan = 0;
-      if (provenanceLayout) {
-        auto first = getAggregateProvenanceSubelement(array, 0);
-        auto second = count > 1
-                          ? getAggregateProvenanceSubelement(array, 1)
-                          : std::optional<std::pair<uint64_t, uint64_t>>{};
-        if (!first)
-          return std::nullopt;
-        firstOffset = first->first;
-        stride = second ? second->first - first->first : first->second;
-        provenanceSpan = first->second;
-      }
+      auto first = getAggregateProvenanceSubelement(array, 0);
+      auto stride = getArrayElementStorageStride(array);
+      if (!first || !stride)
+        return std::nullopt;
       size_t record = records.size();
       records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT},
-                      offset + firstOffset, count, stride, provenanceSpan, 0});
+                      offset + first->first, count, *stride, first->second, 0});
       size_t bodyStart = records.size();
       std::optional<uint64_t> childWidth = append(element, 0, depth + 1);
       if (!childWidth)
@@ -403,10 +420,6 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
           *childWidth > std::numeric_limits<uint64_t>::max() / count)
         return std::nullopt;
       records[record] |= bodyRecords << 32;
-      if (!provenanceLayout) {
-        records[record + 3] = *childWidth;
-        records[record + 4] = *childWidth;
-      }
       records[record + 5] = *childWidth;
       return *childWidth * count;
     }
@@ -416,13 +429,10 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
     uint64_t total = 0;
     for (unsigned ordinal = 0, end = getAggregateNumElements(structure);
          ordinal != end; ++ordinal) {
-      uint64_t childOffset = total;
-      if (provenanceLayout) {
-        auto provenance = getAggregateProvenanceSubelement(structure, ordinal);
-        if (!provenance)
-          return std::nullopt;
-        childOffset = provenance->first;
-      }
+      auto provenance = getAggregateProvenanceSubelement(structure, ordinal);
+      if (!provenance)
+        return std::nullopt;
+      uint64_t childOffset = provenance->first;
       if (childOffset > UINT64_MAX - offset)
         return std::nullopt;
       std::optional<uint64_t> child =
@@ -438,8 +448,7 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
   if (!outputWidth)
     return std::nullopt;
   std::optional<uint64_t> sourceSpan = getProvenanceSpan(type);
-  if (!sourceSpan || (!provenanceLayout && *outputWidth != *sourceSpan) ||
-      records.empty() ||
+  if (!sourceSpan || records.empty() ||
       records.size() % OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS != 0)
     return std::nullopt;
   uint64_t recordCount =
@@ -468,12 +477,10 @@ std::optional<SmallVector<uint64_t>> getFixedArrayPatternPlan(Type type) {
     if (count == 0)
       return std::nullopt;
     Type child = array.getElementType();
-    std::optional<uint64_t> span = getElementStorageSpan(child);
-    std::optional<uint64_t> alignment = getProvenanceAlignment(child);
-    if (!span || !alignment || *alignment == 0 ||
-        *span > std::numeric_limits<uint64_t>::max() - (*alignment - 1))
+    auto stride = getArrayElementStorageStride(array);
+    if (!stride)
       return std::nullopt;
-    uint64_t strideBits = (*span + *alignment - 1) & ~(*alignment - 1);
+    uint64_t strideBits = *stride;
     if ((strideBits & 7) != 0)
       return std::nullopt;
     dimensions.emplace_back(count, strideBits / 8);
@@ -1232,7 +1239,7 @@ static LogicalResult verifyFixedContainerTransfer(Operation *operation,
                                                   UnpackedArrayType array,
                                                   uint64_t elementSpan) {
   Type element = getContainerElement(containerType);
-  std::optional<uint64_t> expected = getProvenanceSpan(array.getElementType());
+  std::optional<uint64_t> expected = getArrayElementStorageStride(array);
   if (!element || element != array.getElementType())
     return operation->emitOpError(
         "container and fixed array element types must match");

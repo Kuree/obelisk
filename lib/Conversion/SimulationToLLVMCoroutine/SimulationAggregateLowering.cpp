@@ -1,6 +1,7 @@
 //===- SimulationAggregateLowering.cpp - Aggregate rewrite patterns --===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -246,10 +247,11 @@ public:
     std::optional<unsigned> elementWidth =
         nativeStateWidth(op.getInput().getType());
     uint64_t count = sim::getAggregateNumElements(op.getResult().getType());
+    auto stride = sim::getArrayElementStorageStride(op.getResult().getType());
     if (!resultWidth || !elementWidth || count == 0 || *elementWidth == 0 ||
-        count > std::numeric_limits<uint64_t>::max() / *elementWidth ||
-        uint64_t{*elementWidth} * count != *resultWidth ||
-        adaptor.getInput().empty())
+        !stride || *stride < *elementWidth ||
+        count > std::numeric_limits<uint64_t>::max() / *stride ||
+        *stride * count != *resultWidth || adaptor.getInput().empty())
       return failure();
 
     IntegerType outputType = rewriter.getIntegerType(*resultWidth);
@@ -276,9 +278,8 @@ public:
         if (remaining & 1) {
           Value placed = block;
           if (resultElements != 0)
-            placed = arith::ShLIOp::create(
-                rewriter, op.getLoc(), block,
-                constant(resultElements * uint64_t{*elementWidth}));
+            placed = arith::ShLIOp::create(rewriter, op.getLoc(), block,
+                                           constant(resultElements * *stride));
           result = arith::OrIOp::create(rewriter, op.getLoc(), result, placed);
           resultElements += blockElements;
         }
@@ -286,8 +287,7 @@ public:
         if (remaining == 0)
           break;
         Value shifted = arith::ShLIOp::create(
-            rewriter, op.getLoc(), block,
-            constant(blockElements * uint64_t{*elementWidth}));
+            rewriter, op.getLoc(), block, constant(blockElements * *stride));
         block = arith::OrIOp::create(rewriter, op.getLoc(), block, shifted);
         blockElements *= 2;
       }
@@ -349,7 +349,7 @@ lowerDynamicArrayAddress(ConversionPatternRewriter &rewriter, Location location,
     return std::nullopt;
   }
   std::optional<unsigned> resultWidth = nativeStateWidth(element);
-  std::optional<uint64_t> span = sim::getProvenanceSpan(element);
+  std::optional<uint64_t> span = sim::getArrayElementStorageStride(array);
   uint64_t count = sim::getAggregateNumElements(array);
   if (!resultWidth || !span || count == 0)
     return std::nullopt;
@@ -439,7 +439,7 @@ public:
               : arith::TruncIOp::create(rewriter, location, outputType, shifted)
                     .getResult();
       APInt fallback = planeIndex == 1 && containsLogic(element)
-                           ? APInt::getAllOnes(resultWidth)
+                           ? analysis::getDefaultUnknownMask(element)
                            : APInt::getZero(resultWidth);
       Value defaultValue = arith::ConstantOp::create(
           rewriter, location, outputType,
@@ -598,7 +598,8 @@ public:
     if (containsLogic(op.getResult().getType()))
       results.push_back(arith::ConstantOp::create(
           rewriter, op.getLoc(), plane,
-          rewriter.getIntegerAttr(plane, APInt::getAllOnes(*width))));
+          rewriter.getIntegerAttr(plane, analysis::getDefaultUnknownMask(
+                                             op.getResult().getType()))));
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();

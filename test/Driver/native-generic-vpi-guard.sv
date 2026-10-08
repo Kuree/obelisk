@@ -38,13 +38,15 @@
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_bind_continuous
 // GUARD-DAG: call i32 @obelisk_rt_v1_native_state_bind_specialization
 // WASM-DAG: target triple = "wasm32-unknown-emscripten"
-// The dynamic packed element uses its owning word in both planes, with the
-// VPI guard and invalid-index value retained.
+// Each unpacked element owns an LLVM byte slot in both planes, with the VPI
+// guard and invalid-index value retained. The index directly addresses it.
 // DYNAMIC: icmp ult i32 {{.*}}, 4
-// DYNAMIC: [[VALUE:%.*]] = load i16, ptr getelementptr {{.*}}@__obelisk_state_value
-// DYNAMIC: lshr i16 [[VALUE]], %
-// DYNAMIC: [[UNKNOWN:%.*]] = load i16, ptr getelementptr {{.*}}@__obelisk_state_unknown
-// DYNAMIC: lshr i16 [[UNKNOWN]], %
+// DYNAMIC: getelementptr i8, ptr @__obelisk_state_value, i64 %
+// DYNAMIC: [[VALUE:%.*]] = load i8, ptr
+// DYNAMIC: trunc i8 [[VALUE]] to i4
+// DYNAMIC: getelementptr i8, ptr @__obelisk_state_unknown, i64 %
+// DYNAMIC: [[UNKNOWN:%.*]] = load i8, ptr
+// DYNAMIC: trunc i8 [[UNKNOWN]] to i4
 
 //--- design.sv
 module generic_vpi_guard;

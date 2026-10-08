@@ -2012,13 +2012,13 @@ bool appendIndexedSelection(
     selectedWidth = selectedType.bit_width;
   }
   uint64_t storageOrdinal = packed ? extent - 1 - ordinal : ordinal;
+  uint64_t stride = isArray ? type.bit_width / extent : selectedWidth;
   if (selectedWidth == 0 ||
-      storageOrdinal > (std::numeric_limits<uint64_t>::max() /
-                        static_cast<uint64_t>(selectedWidth))) {
+      storageOrdinal > (std::numeric_limits<uint64_t>::max() / stride)) {
     setError(source->owner, "indexed VPI bit offset overflow", vpiInternal);
     return false;
   }
-  uint64_t delta = storageOrdinal * selectedWidth;
+  uint64_t delta = storageOrdinal * stride;
   uint64_t previousOffset = steps.empty() ? 0 : steps.back().bitOffset;
   if (delta > std::numeric_limits<uint64_t>::max() - previousOffset) {
     setError(source->owner, "indexed VPI cumulative offset overflow",
@@ -6972,6 +6972,7 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
                         : baseSteps.back().physicalType.offset};
   obelisk_rt_design_type_info_v1 elementType{};
   uint64_t elementCount = 1;
+  uint64_t elementStride = 0;
   OBELISK_RT_TRY {
     for (;;) {
       if (obelisk_rt_cached_design_type_info(state->context, physical,
@@ -6993,6 +6994,7 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
       }
       dimensions.push_back(
           {elementType.range_left, elementType.range_right, extent});
+      elementStride = elementType.bit_width / extent;
       elementCount *= extent;
       physical = elementType.element_type;
     }
@@ -7168,14 +7170,17 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
     return;
   }
 
-  if (firstInfo.bit_width > UINT64_MAX / static_cast<uint64_t>(num)) {
+  if (!elementStride || firstInfo.bit_width > elementStride ||
+      static_cast<uint64_t>(num - 1) >
+          (UINT64_MAX - firstInfo.bit_width) / elementStride) {
     failArrayValueQuery(state, destination, "VPI array read width overflows",
                         vpiSystem);
     return;
   }
-  const uint64_t readWidth = firstInfo.bit_width * static_cast<uint64_t>(num);
+  const uint64_t readWidth =
+      elementStride * static_cast<uint64_t>(num - 1) + firstInfo.bit_width;
   if (firstElement.selectionBitOffset >
-      UINT64_MAX - firstInfo.bit_width * static_cast<uint64_t>(num - 1)) {
+      UINT64_MAX - elementStride * static_cast<uint64_t>(num - 1)) {
     failArrayValueQuery(state, destination, "VPI array read offset overflows",
                         vpiSystem);
     return;
@@ -7207,8 +7212,7 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
   const size_t bytesPerElement =
       destination->format == vpiRawFourStateVal ? groups / 2 : groups;
   for (size_t element = 0; element != static_cast<size_t>(num); ++element) {
-    const uint64_t firstBit =
-        static_cast<uint64_t>(element) * firstInfo.bit_width;
+    const uint64_t firstBit = static_cast<uint64_t>(element) * elementStride;
     const size_t output = element * groups;
     auto valueBit = [&](uint64_t bit) {
       return logicBit(value, firstBit + bit);

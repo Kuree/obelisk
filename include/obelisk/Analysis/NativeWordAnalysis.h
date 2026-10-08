@@ -12,7 +12,7 @@ class SimFuncOp;
 namespace obelisk::analysis {
 /// Dependence on one independently bounded unit-stride induction variable.
 /// Index/ReverseIndex mean base +/- induction without integer wrap; Reference
-/// selects consecutive packed elements in either direction. Logic is a
+/// selects consecutive storage slots in either direction. Logic is a
 /// lane-wise two- or four-state computation, including packed wrappers. Uniform
 /// is invariant across this lane dimension, not necessarily constant.
 enum class WordLaneKind {
@@ -37,6 +37,8 @@ bool isWordLaneType(mlir::Type type);
 bool isWordLaneComputation(mlir::Operation *op);
 bool isWordBitwiseComputation(mlir::Operation *op);
 bool isWordReferenceIdentity(mlir::Operation *op);
+/// Physical bits between adjacent selected lanes, including array padding.
+uint64_t getWordLaneStorageWidth(mlir::Value value);
 std::optional<WordTruthTable> computeWordTruthTable(mlir::Operation *op);
 class NativeWordAnalysis {
 public:

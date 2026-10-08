@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
@@ -163,6 +164,8 @@ Encoder::Encoder(sim::SimDesignOp design,
     : design(design), options(options), dataLayout(dataLayout) {}
 
 FailureOr<EncodedSimulationDesign> Encoder::encode() {
+  if (failed(analysis::verifyNativeStorageLayouts(design, dataLayout)))
+    return failure();
   ModuleOp module = design->getParentOfType<ModuleOp>();
   bool hasClassBitstreamSource =
       module && module->hasAttr(sim::metadata::classBitstreamSourceFeature);

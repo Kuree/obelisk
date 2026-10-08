@@ -267,8 +267,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
           emitError(location) << "runtime foreach iterator metadata is missing";
           return failure();
         }
-        FailureOr<Type> iteratorType =
-            normalizeSemanticType(semanticIteratorType.getValue(), location);
+        FailureOr<Type> iteratorType = normalizeSemanticType(
+            semanticIteratorType.getValue(), location, function);
         if (failed(iteratorType))
           return failure();
         lowered.iteratorPath = path.getValue().str();
@@ -568,8 +568,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
       emitError(location) << "malformed foreach dimension metadata";
       return failure();
     }
-    FailureOr<Type> iteratorType =
-        normalizeSemanticType(semanticIteratorType.getValue(), location);
+    FailureOr<Type> iteratorType = normalizeSemanticType(
+        semanticIteratorType.getValue(), location, function);
     if (failed(iteratorType))
       return failure();
 

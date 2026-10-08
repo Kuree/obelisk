@@ -132,6 +132,11 @@ public:
 /// backend or LLD driver, so availability is a build-time property.
 std::unique_ptr<TargetBackend> createTargetBackend(TargetKind target);
 
+/// Make target layout available during semantic type normalization, before
+/// references, bytecode descriptors and bit-stream plans acquire offsets.
+mlir::LogicalResult configureTargetLayout(mlir::ModuleOp module,
+                                          TargetKind target);
+
 /// Compiles `module` all the way to the requested output.
 mlir::LogicalResult emitTargetOutput(mlir::ModuleOp module,
                                      const NativeOutputOptions &options);

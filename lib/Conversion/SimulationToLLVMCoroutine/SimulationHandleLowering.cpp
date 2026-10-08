@@ -276,7 +276,7 @@ public:
     } else {
       return failure();
     }
-    std::optional<uint64_t> span = sim::getProvenanceSpan(element);
+    std::optional<uint64_t> span = sim::getArrayElementStorageStride(array);
     uint64_t count = sim::getAggregateNumElements(array);
     if (this->isLocal(op.getInput()))
       span = this->getArrayStride(op.getInput());

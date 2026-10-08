@@ -20,6 +20,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   WordTruthTable.cpp
   NBAInfluenceAnalysis.cpp
   NativeStateLayoutAnalysis.cpp
+  NativeStorageLayout.cpp
   NetConnectivityAnalysis.cpp
   PrivateStorageAnalysis.cpp
   SimulationControlFlowToSCF.cpp

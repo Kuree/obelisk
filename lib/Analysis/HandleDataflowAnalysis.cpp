@@ -228,13 +228,19 @@ public:
         // require the whole-root proof because they can overlap a boundary.
         bool boundedArray = array && !p.dynamic && c.constantAddress &&
                             c.laneKnown && !c.clipped;
-        bool lane = !p.dynamic && c.laneKnown && *width &&
-                    (!array || c.width % *width == 0);
+        Type parentType =
+            llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
+                .Case<sim::RefType, sim::DriverType>(
+                    [](auto type) { return type.getElementType(); });
+        auto stride = array ? sim::getArrayElementStorageStride(parentType)
+                            : std::optional<uint64_t>{1};
+        bool lane = !p.dynamic && c.laneKnown && *width && stride &&
+                    (!array || c.width % *stride == 0);
         c.constantAddress = false;
         c.laneKnown = lane;
         if (lane) {
           c.width = *width;
-          c.stride = array ? *width : 1;
+          c.stride = *stride;
           c.clipped = !array;
         } else {
           c.low = c.width = c.stride = 0;

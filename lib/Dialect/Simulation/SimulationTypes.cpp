@@ -402,7 +402,21 @@ PackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 UnpackedArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                          Type elementType, int64_t left, int64_t right) {
+                          Type elementType, int64_t left, int64_t right,
+                          Attribute layout) {
+  if (layout) {
+    auto storage = dyn_cast<StorageLayoutAttr>(layout);
+    if (!storage || !storage.getStride() || !storage.getOffsets().empty())
+      return emitError() << "array requires an array storage layout";
+    uint64_t count = left >= right ? uint64_t(left) - uint64_t(right) + 1
+                                   : uint64_t(right) - uint64_t(left) + 1;
+    auto span = analysis::getSimulationStorageBitWidth(elementType);
+    if (!count || !span || *span > storage.getStride() * 8 ||
+        storage.getSize() / storage.getStride() != count ||
+        storage.getSize() % storage.getStride())
+      return emitError()
+             << "array storage layout does not contain its elements";
+  }
   return verifyArrayType(emitError, elementType, left, right, false);
 }
 
@@ -493,7 +507,27 @@ PackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 UnpackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                           ArrayAttr fields) {
+                           ArrayAttr fields, Attribute layout) {
+  if (layout) {
+    auto storage = dyn_cast<StorageLayoutAttr>(layout);
+    if (!storage || storage.getStride() ||
+        storage.getOffsets().size() != fields.size())
+      return emitError() << "struct requires a record storage layout";
+    uint64_t end = 0;
+    for (auto [fieldAttr, offset] :
+         llvm::zip(fields, storage.getOffsets().asArrayRef())) {
+      auto field = dyn_cast<FieldAttr>(fieldAttr);
+      auto span = field
+                      ? analysis::getSimulationStorageBitWidth(field.getType())
+                      : std::nullopt;
+      if (!span || offset < 0 || uint64_t(offset) * 8 < end ||
+          uint64_t(offset) > storage.getSize() ||
+          *span > (storage.getSize() - offset) * 8)
+        return emitError()
+               << "struct storage layout overlaps or truncates a field";
+      end = uint64_t(offset) * 8 + *span;
+    }
+  }
   return verifyRecordType(emitError, fields, false, false, false, 0);
 }
 

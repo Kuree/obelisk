@@ -2403,7 +2403,7 @@ LogicalResult SimReferencePathAggregateElementOp::verify() {
   if (static_cast<int64_t>(getLeft()) != array.getLeft() ||
       static_cast<int64_t>(getRight()) != array.getRight())
     return emitOpError("declared bounds do not match the owner array");
-  std::optional<uint64_t> span = getProvenanceSpan(array.getElementType());
+  std::optional<uint64_t> span = getArrayElementStorageStride(array);
   if (!span || getElementSpan() != *span || getElementSpan() == 0)
     return emitOpError("element span does not match the owner array layout");
   if (getTypeId() == 0 || getValueSize() == 0 || getAlignment() == 0 ||

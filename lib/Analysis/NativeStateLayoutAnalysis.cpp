@@ -83,6 +83,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     unsigned containerWidth =
         *width <= 64 ? llvm::PowerOf2Ceil(std::max(8u, *width)) : 0;
     uint64_t alignment = containerWidth ? containerWidth : 8;
+    if (auto elementAlignment = sim::getProvenanceAlignment(type))
+      alignment = std::max(alignment, *elementAlignment);
     if (!managedRootOffsets.empty())
       alignment = 64;
     if (alignment != 1) {

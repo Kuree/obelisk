@@ -72,15 +72,15 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimRefLoadOp>(operation)) {
     emit({LoadState, 0, reg(plan, op.getResult()),
           reg(plan, op.getReference())});
-    return success();
+    return normalizeAggregateRegister(plan, op.getResult());
   }
   if (auto op = dyn_cast<sim::SimNetReadOp>(operation)) {
     emit({LoadState, 0, reg(plan, op.getResult()), reg(plan, op.getNet())});
-    return success();
+    return normalizeAggregateRegister(plan, op.getResult());
   }
   if (auto op = dyn_cast<sim::SimDriverReadOp>(operation)) {
     emit({LoadState, 0, reg(plan, op.getResult()), reg(plan, op.getDriver())});
-    return success();
+    return normalizeAggregateRegister(plan, op.getResult());
   }
   if (auto op = dyn_cast<sim::SimRefStoreOp>(operation)) {
     uint32_t reference = reg(plan, op.getReference());

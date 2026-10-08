@@ -2,6 +2,7 @@
 
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -25,6 +26,20 @@ constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
     "obelisk.native.bulk_copy_source_assume_clean";
 constexpr StringLiteral guardedRefStoreAttr =
     "obelisk.native.guarded_ref_store";
+
+// Canonical padding is not a language value. Invalid aggregate reads also
+// need the per-member defaults from IEEE 1800-2023 Table 7-1.
+Value maskStoragePlane(OpBuilder &builder, Location location, Value bits,
+                       Type type, bool unknown) {
+  APInt mask = unknown ? analysis::getDefaultUnknownMask(type)
+                       : analysis::getLogicalStorageMask(type);
+  if (mask.isAllOnes())
+    return bits;
+  return arith::AndIOp::create(
+      builder, location, bits,
+      arith::ConstantOp::create(builder, location,
+                                builder.getIntegerAttr(bits.getType(), mask)));
+}
 
 Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
                                 Location location) {
@@ -372,6 +387,7 @@ public:
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                        plane, "__obelisk_state_value", false, stateBitCount,
                        directLayout, guardedPermission, assumeClean, access);
+    value = maskStoragePlane(rewriter, op.getLoc(), value, resultType, false);
     if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
@@ -383,7 +399,8 @@ public:
                          rewriter, op.getLoc(), adaptor.getReference().front(),
                          plane, "__obelisk_state_unknown", true, stateBitCount,
                          directLayout, guardedPermission, assumeClean, access);
-      converted.push_back(unknown);
+      converted.push_back(
+          maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
@@ -724,6 +741,7 @@ public:
     Value value = loadStatePlane(
         rewriter, op.getLoc(), adaptor.getNet().front(), plane,
         "__obelisk_state_value", false, stateBitCount, directLayout);
+    value = maskStoragePlane(rewriter, op.getLoc(), value, resultType, false);
     if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
@@ -734,7 +752,8 @@ public:
                                                 adaptor.getNet().front(), plane,
                                                 "__obelisk_state_unknown", true,
                                                 stateBitCount, directLayout);
-      converted.push_back(unknown);
+      converted.push_back(
+          maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);
@@ -770,6 +789,7 @@ public:
     Value value = loadStatePlane(
         rewriter, op.getLoc(), adaptor.getDriver().front(), plane,
         "__obelisk_state_value", false, stateBitCount, directLayout);
+    value = maskStoragePlane(rewriter, op.getLoc(), value, resultType, false);
     if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
@@ -781,7 +801,8 @@ public:
                                            adaptor.getDriver().front(), plane,
                                            "__obelisk_state_unknown", true,
                                            stateBitCount, directLayout);
-      converted.push_back(unknown);
+      converted.push_back(
+          maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
     rewriter.replaceOpWithMultiple(op, replacements);

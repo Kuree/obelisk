@@ -390,7 +390,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     auto normalize = [&](Type source) -> FailureOr<Type> {
       if (isa<semantic::VoidType>(source))
         return source;
-      return normalizeSemanticType(source, getSemanticLocation(subroutine));
+      return normalizeSemanticType(source, getSemanticLocation(subroutine),
+                                   subroutine);
     };
     for (Type source : signature.getInputs()) {
       FailureOr<Type> normalized = normalize(source);

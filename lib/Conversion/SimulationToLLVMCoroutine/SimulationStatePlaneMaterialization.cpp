@@ -1,9 +1,12 @@
 //===- SimulationStatePlaneMaterialization.cpp - Native state globals -===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/IR/DataLayout.h"
 
 #include <map>
@@ -55,6 +58,32 @@ void materializeNativeStatePlanes(ModuleOp module,
   // four-state variables start at X, independently of their packed width.
   for (const auto &bound : layout.bounds)
     roots[bound.offset] = {bound.width, 0, bound.fourState};
+  // Variable defaults are part of allocating the state image, before either
+  // execution tier starts. Do not express them as process stores: that would
+  // introduce fictitious writers and change scheduling/observation proofs.
+  llvm::DenseSet<uint64_t> storageOffsets;
+  for (const auto &[id, offset] : layout.storageOffsets)
+    storageOffsets.insert(offset);
+  for (const auto &bound : layout.bounds) {
+    if (!bound.fourState || !storageOffsets.contains(bound.offset))
+      continue;
+    APInt mask = analysis::getDefaultUnknownMask(bound.type);
+    if (mask.isAllOnes())
+      continue;
+    roots.erase(bound.offset);
+    // Enumerate set runs word by word. Shifting the entire APInt for every
+    // narrow array element would make initialization planning quadratic.
+    for (unsigned wordIndex = 0; wordIndex < mask.getNumWords(); ++wordIndex) {
+      uint64_t word = mask.getRawData()[wordIndex];
+      while (word) {
+        unsigned low = llvm::countr_zero(word);
+        unsigned width = llvm::countr_one(word >> low);
+        roots.emplace(bound.offset + uint64_t(wordIndex) * 64 + low,
+                      Initial{width, 0, 1});
+        word &= width == 64 ? 0 : ~(((uint64_t{1} << width) - 1) << low);
+      }
+    }
+  }
   for (const auto &driver : layout.driverLayouts)
     roots.at(driver.offset).value = !driver.initialX;
   auto resolve = [](Initial state, sim::NetResolutionKind resolution) {

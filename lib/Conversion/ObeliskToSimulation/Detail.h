@@ -591,8 +591,9 @@ struct SemanticDimension {
 /// Normalized type of a semantic node's `semantic_type` attribute.
 ::mlir::FailureOr<::mlir::Type>
 getNormalizedSemanticType(::mlir::Operation *op);
-::mlir::FailureOr<::mlir::Type>
-normalizeSemanticType(::mlir::Type type, ::mlir::Location location);
+::mlir::FailureOr<::mlir::Type> normalizeSemanticType(::mlir::Type type,
+                                                      ::mlir::Location location,
+                                                      ::mlir::Operation *scope);
 /// Lossless source-semantic type inventory used only by VPI reflection.
 ::mlir::FailureOr<::obelisk::sim::VPITypeSemanticsAttr>
 makeVPITypeSemantics(::mlir::Type type, ::mlir::Location location,

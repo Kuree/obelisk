@@ -13,6 +13,7 @@
 
 #include "Detail.h"
 #include "LowerUnit.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -2880,8 +2881,15 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 pending.targets.push_back(
                     {itemID, targetID, static_cast<uint32_t>(ordinal)});
               }
-              auto tupleType = sim::UnpackedStructType::get(
-                  &getContext(), builder.getArrayAttr(tupleFields));
+              auto encodedTuple = analysis::encodeNativeStorageLayout(
+                  sim::UnpackedStructType::get(
+                      &getContext(), builder.getArrayAttr(tupleFields)),
+                  cross);
+              if (failed(encodedTuple)) {
+                signalPassFailure();
+                return;
+              }
+              Type tupleType = *encodedTuple;
               FailureOr<simlowering::ContainerElementDescriptor>
                   tupleDescriptor = simlowering::describeContainerElement(
                       tupleType, simlowering::getSemanticLocation(cross));

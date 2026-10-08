@@ -3,6 +3,7 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -655,9 +656,28 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                         &unknown);
   }
   if (auto op = dyn_cast<sim::SimLogicCountBitsOp>(operation)) {
-    SmallVector<Value> inputs{op.getInput()};
-    llvm::append_range(inputs, op.getControls());
-    return emitIntrinsic(plan, kIntrinsicCountBits, inputs, {op.getResult()});
+    uint32_t input = reg(plan, op.getInput());
+    if (auto stream = sim::getFixedBitStreamPlan(op.getInput().getType());
+        stream && (*stream)[2] != (*stream)[3]) {
+      uint32_t packed =
+          temporary(plan, sim::LogicType::get(op.getContext(), (*stream)[3]));
+      if (packed == kInvalidRegister)
+        return failure();
+      SmallVector<uint8_t> bytes;
+      for (uint64_t word : *stream)
+        append64(bytes, word);
+      requiresContainerBitstreamFeature = true;
+      if (failed(emitIntrinsicRegisters(
+              plan, kIntrinsicAggregateExportBitstream,
+              {input, emitBytesConstant(plan, bytes)}, {packed})))
+        return failure();
+      input = packed;
+    }
+    SmallVector<uint32_t> inputs{input};
+    for (Value control : op.getControls())
+      inputs.push_back(reg(plan, control));
+    return emitIntrinsicRegisters(plan, kIntrinsicCountBits, inputs,
+                                  {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimLogicClog2Op>(operation))
     return emitIntrinsic(plan, kIntrinsicClog2, {op.getInput()},
@@ -846,8 +866,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t destination = reg(plan, op.getResult());
     Layout layout = plan.layouts[destination];
     APInt value = APInt::getZero(layout.width);
-    APInt unknown = layout.kind == Logic ? APInt::getAllOnes(layout.width)
-                                         : APInt::getZero(layout.width);
+    APInt unknown = layout.kind == Logic
+                        ? analysis::getDefaultUnknownMask(op.getType())
+                        : APInt::getZero(layout.width);
     return emitConstant(plan, op.getResult(), value,
                         layout.kind == Logic ? &unknown : nullptr);
   }

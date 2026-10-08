@@ -79,8 +79,8 @@ module attributes {
 }
 
 // CHECK: simulation.func private @unit_0(
-// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.unpacked_array<2 : 1 x !simulation.packed_array<1 : 0 x !simulation.logic<1>>>>
-// CHECK: %[[ONE:.*]] = simulation.net.extract %[[NET]] from 2
+// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.unpacked_array<2 : 1 x !simulation.packed_array<1 : 0 x !simulation.logic<1>>, #simulation.storage_layout<size = 2, alignment = 1, stride = 1, offsets = []>>>
+// CHECK: %[[ONE:.*]] = simulation.net.extract %[[NET]] from 8
 // CHECK-SAME: -> !simulation.net<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>
 // CHECK: simulation.override %[[ONE]] = {{.*}} assign false
 // CHECK: simulation.release_override %[[ONE]] assign false

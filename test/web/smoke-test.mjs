@@ -24,6 +24,14 @@ try {
 module web_smoke;
   logic value = 0;
   logic other = 0;
+  typedef struct {
+    logic flag;
+    logic [23:0] payload;
+    bit [6:0] known;
+  } record_t;
+  typedef logic [31:0] stream_t;
+  record_t records[3], copy;
+  logic [31:0] stream;
 
   covergroup cg;
     value_point: coverpoint value {
@@ -39,6 +47,17 @@ module web_smoke;
   initial begin
     int covered, total;
     real percentage;
+    int index;
+    index = 1;
+    records[index] = '{1'b1, 24'h123456, 7'h55};
+    copy = records[index];
+    stream = stream_t'(copy);
+    if ($bits(copy) != 32 || stream !== {1'b1, 24'h123456, 7'h55})
+      $fatal(1, "target aggregate layout or bitstream mismatch");
+    index = -1;
+    copy = records[index];
+    if (copy.known !== 0 || $countbits(copy, 1'bx) != 25)
+      $fatal(1, "invalid aggregate read crossed padding");
     coverage = new;
     $dumpfile("web-smoke.vcd");
     $dumpvars(0, web_smoke);

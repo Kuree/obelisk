@@ -1692,7 +1692,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       return failure();
     }
     FailureOr<Type> type =
-        normalizeSemanticType(semanticType.getValue(), location);
+        normalizeSemanticType(semanticType.getValue(), location, function);
     if (failed(type))
       return failure();
     Value initial;

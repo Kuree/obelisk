@@ -6519,8 +6519,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               << "runtime foreach constraint metadata is malformed";
           return failure();
         }
-        FailureOr<Type> iteratorType = normalizeSemanticType(
-            semanticIteratorType.getValue(), getSemanticLocation(constraint));
+        FailureOr<Type> iteratorType =
+            normalizeSemanticType(semanticIteratorType.getValue(),
+                                  getSemanticLocation(constraint), function);
         FailureOr<Value> collection = lowerExpression(nested.front());
         if (failed(iteratorType) || failed(collection))
           return failure();

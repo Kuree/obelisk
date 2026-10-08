@@ -56,7 +56,7 @@ module attributes {
 }
 
 // CHECK: simulation.func private @unit_0(
-// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.unpacked_array<1 : 0 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>>>
+// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.unpacked_array<1 : 0 x !simulation.packed_array<3 : 0 x !simulation.logic<1>>, #simulation.storage_layout<size = 2, alignment = 1, stride = 1, offsets = []>>>
 // CHECK: %[[OBSERVER:.*]] = simulation.observer.bind @observer_
 // CHECK-SAME: values(%[[NET]]
 // CHECK: simulation.suspend.observe %[[OBSERVER]],

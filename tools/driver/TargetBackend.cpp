@@ -1022,6 +1022,23 @@ LogicalResult writeBitcode(llvm::Module &module, StringRef path) {
 
 } // namespace
 
+LogicalResult configureTargetLayout(ModuleOp module, TargetKind target) {
+  auto backend = createTargetBackend(target);
+  if (!backend)
+    return module.emitError("requested code-generation target is unavailable");
+  std::string error;
+  auto machine = backend->createTargetMachine(error, 0);
+  if (!machine)
+    return module.emitError() << "cannot obtain target data layout: " << error;
+  module->setAttr("llvm.target_triple",
+                  StringAttr::get(module.getContext(), backend->getTriple()));
+  module->setAttr(
+      "llvm.data_layout",
+      StringAttr::get(module.getContext(),
+                      machine->createDataLayout().getStringRepresentation()));
+  return success();
+}
+
 LogicalResult emitTargetOutput(ModuleOp module,
                                const NativeOutputOptions &options) {
   std::unique_ptr<TargetBackend> backend = createTargetBackend(options.target);

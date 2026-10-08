@@ -160,7 +160,7 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
         builder.getDenseI32ArrayAttr(descriptor->traceKinds),
         sim::ContainerKind::DynamicArray, 0);
     std::optional<uint64_t> elementSpan =
-        sim::getProvenanceSpan(fixed.getElementType());
+        sim::getArrayElementStorageStride(fixed);
     if (!elementSpan || *elementSpan == 0)
       return failure();
     sim::SimContainerImportFixedOp::create(builder, location, temporary,

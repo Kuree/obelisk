@@ -65,6 +65,13 @@ def SimPackedArrayType
 def SimUnpackedArrayType
     : SimFixedArrayType<"UnpackedArray", "unpacked_array"> {
   let summary = "fixed-size unpacked array with its declared source range";
+  let parameters = (ins "::mlir::Type":$elementType, "int64_t":$left,
+      "int64_t":$right, OptionalParameter<"::mlir::Attribute">:$layout);
+  let builders = [TypeBuilder<(ins "::mlir::Type":$elementType,
+      "int64_t":$left, "int64_t":$right), [{
+    return $_get($_ctxt, elementType, left, right, ::mlir::Attribute{});
+  }]>];
+  let assemblyFormat = "`<` $left `:` $right `x` $elementType (`,` $layout^)? `>`";
 }
 
 class SimRecordType<string name, string typeMnemonic>
@@ -85,6 +92,12 @@ def SimPackedStructType
 def SimUnpackedStructType
     : SimRecordType<"UnpackedStruct", "unpacked_struct"> {
   let summary = "ordered fixed unpacked struct";
+  let parameters = (ins "::mlir::ArrayAttr":$fields,
+      OptionalParameter<"::mlir::Attribute">:$layout);
+  let builders = [TypeBuilder<(ins "::mlir::ArrayAttr":$fields), [{
+    return $_get($_ctxt, fields, ::mlir::Attribute{});
+  }]>];
+  let assemblyFormat = "`<` $fields (`,` $layout^)? `>`";
 }
 
 class SimUnionType<string name, string typeMnemonic>

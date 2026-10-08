@@ -1930,8 +1930,10 @@ bool validateDatabaseImpl(const Database &database) {
         uint32_t elementKind = read32(elementRecord + 4) & UINT32_C(0xff);
         uint32_t elementFlags = read32(elementRecord + 4) >> 8;
         if (elementKind == OBELISK_RT_DESIGN_TYPE_FIELD || elementWidth == 0 ||
-            extent > UINT64_MAX / elementWidth ||
-            extent * elementWidth != width ||
+            extent == 0 || width % extent != 0 ||
+            elementWidth > width / extent ||
+            ((flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
+             elementWidth != width / extent) ||
             ((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) !=
                 ((elementFlags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0))
           return false;

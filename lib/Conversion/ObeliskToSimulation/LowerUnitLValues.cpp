@@ -2168,8 +2168,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           toArgumentReference(base.reference, base.type, location);
       FailureOr<ContainerElementDescriptor> descriptor =
           describeContainerElement(array.getElementType(), location);
-      std::optional<uint64_t> span =
-          sim::getProvenanceSpan(array.getElementType());
+      std::optional<uint64_t> span = sim::getArrayElementStorageStride(array);
       if (failed(owner) || failed(descriptor) || !span)
         return failure();
       uint64_t elementSpan = *span;
@@ -4524,7 +4523,7 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
     if (!pull || op.getDirection() != semantic::SVArgumentDirection::In)
       return success();
     FailureOr<Type> formalType =
-        normalizeSemanticType(op.getFormalType(), location);
+        normalizeSemanticType(op.getFormalType(), location, function);
     if (failed(formalType))
       return failure();
     Type scalarType = sim::getPackedScalarType(*formalType);

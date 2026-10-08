@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToStandard.h"
 
+#include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -906,6 +907,16 @@ public:
                             zero(rewriter, loc, type));
         selected = arith::OrIOp::create(rewriter, loc, selected, mask);
       }
+    }
+    // Counting does not require a packed copy of the aggregate. Mask ABI
+    // padding before popcount, leaving both native planes in their storage
+    // representation throughout the hot path.
+    APInt logicalMask =
+        analysis::getLogicalStorageMask(op.getInput().getType());
+    if (!logicalMask.isAllOnes()) {
+      Value mask = arith::ConstantOp::create(
+          rewriter, loc, rewriter.getIntegerAttr(type, logicalMask));
+      selected = arith::AndIOp::create(rewriter, loc, selected, mask);
     }
     Value count =
         math::CtPopOp::create(rewriter, loc, type, selected).getResult();

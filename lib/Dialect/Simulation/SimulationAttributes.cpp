@@ -42,6 +42,20 @@ using namespace mlir;
 namespace obelisk::sim {
 
 LogicalResult
+StorageLayoutAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                          uint64_t size, uint64_t alignment, uint64_t stride,
+                          DenseI64ArrayAttr offsets) {
+  if (!size || size > UINT64_MAX / 8 || !llvm::isPowerOf2_64(alignment) ||
+      alignment > size || size % alignment || !offsets ||
+      (stride && (stride > size || size % stride || !offsets.empty())))
+    return emitError() << "invalid aggregate storage size, alignment or stride";
+  for (int64_t offset : offsets.asArrayRef())
+    if (offset < 0 || uint64_t(offset) >= size)
+      return emitError() << "record field offset exceeds its storage size";
+  return success();
+}
+
+LogicalResult
 VPIPropertyAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                         IntegerAttr selector, Attribute value) {
   if (!selector || !selector.getType().isSignlessInteger(32) ||

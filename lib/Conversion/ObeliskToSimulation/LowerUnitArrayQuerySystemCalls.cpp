@@ -200,7 +200,7 @@ UnitLowering::lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op) {
       if (dimension.kind == SemanticDimensionKind::AssociativeArray &&
           dimensionIndex == 0) {
         FailureOr<Type> normalizedIndex =
-            normalizeSemanticType(dimension.indexType, location);
+            normalizeSemanticType(dimension.indexType, location, function);
         if (failed(normalizedIndex))
           return failure();
         if (isa<sim::StringType>(*normalizedIndex)) {

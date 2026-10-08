@@ -14,6 +14,21 @@ class SimAttr<string name, string attrMnemonic, list<Trait> traits = []>
   let mnemonic = attrMnemonic;
 }
 
+def SimStorageLayoutAttr : SimAttr<"StorageLayout", "storage_layout"> {
+  let summary = "LLVM DataLayout geometry of one unpacked aggregate plane";
+  let description = [{
+    Sizes, ABI alignment, array stride and declaration-order struct offsets
+    are in bytes. Semantic normalization obtains these from the target LLVM
+    array/struct type. Native and bytecode backends share this layout; packed
+    leaves retain their exact SystemVerilog bit width. An absent encoding
+    denotes the legacy, target-independent Simulation IR layout.
+  }];
+  let parameters = (ins "uint64_t":$size, "uint64_t":$alignment,
+      "uint64_t":$stride, "::mlir::DenseI64ArrayAttr":$offsets);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def SimVPIPropertyAttr : SimAttr<"VPIProperty", "vpi_property"> {
   let summary = "one typed immutable VPI property value";
   let parameters = (ins "::mlir::IntegerAttr":$selector,

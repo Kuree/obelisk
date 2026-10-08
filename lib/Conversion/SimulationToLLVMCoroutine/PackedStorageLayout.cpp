@@ -79,15 +79,14 @@ PackedStorageLayout::get(Type type, uint64_t physicalOffset, uint64_t offset,
     if (!count)
       return std::nullopt;
     auto first = sim::getAggregateProvenanceSubelement(type, 0);
-    uint64_t stride = first->second;
-    if (count > 1) {
-      auto second = sim::getAggregateProvenanceSubelement(type, 1);
-      stride = std::max(first->first, second->first) -
-               std::min(first->first, second->first);
-    }
+    uint64_t stride = *sim::getArrayElementStorageStride(type);
     if (!stride)
       return std::nullopt;
     uint64_t base = offset / stride * stride;
+    if (isa<sim::UnpackedArrayType>(type) && offset == base &&
+        width == first->second && stride <= 64 && stride % 8 == 0 &&
+        (physicalOffset + base) % 8 == 0)
+      return PackedAccessUnit{0, static_cast<unsigned>(stride), true};
     return get(sim::getAggregateElementType(type, 0), physicalOffset + base,
                offset - base, width);
   }
@@ -111,6 +110,15 @@ std::optional<PackedAccessUnit> PackedStorageLayout::get(
   uint64_t offset = 0;
   while (reference) {
     Type type = cast<sim::RefType>(reference.getType()).getElementType();
+    if (!offset && type == selected && *width <= 64)
+      if (auto element = reference.getDefiningOp<sim::SimRefArrayElementOp>()) {
+        Type parent = element.getInput().getType().getElementType();
+        auto stride = sim::getArrayElementStorageStride(parent);
+        if (isa<sim::UnpackedArrayType>(parent) && stride && *stride <= 64 &&
+            *stride >= *width && *stride % 8 == 0 &&
+            isByteAddressable(reference))
+          return PackedAccessUnit{0, static_cast<unsigned>(*stride), true};
+      }
     if (isa<sim::PackedStructType>(type))
       return isByteAddressable(reference) ? get(type, 0, offset, *width)
                                           : std::nullopt;

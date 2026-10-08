@@ -23,6 +23,9 @@ namespace obelisk::detail {
 struct PackedAccessUnit {
   unsigned bitOffset;
   unsigned width;
+  // A complete unpacked element owns its slot's tail padding. A packed field
+  // shares its unit with siblings and must preserve all non-field bits.
+  bool ownsPadding = false;
 };
 
 class PackedStorageLayout {

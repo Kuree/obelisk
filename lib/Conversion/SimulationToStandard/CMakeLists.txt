@@ -9,6 +9,7 @@ add_mlir_library(ObeliskSimulationToStandard
   ObeliskScheduleOpsIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskSimulationAnalysis
   ObeliskSimulationIR
   ObeliskScheduleIR
   MLIRArithDialect

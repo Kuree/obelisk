@@ -97,6 +97,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRSCFDialect
   MLIRSCFToControlFlow
   MLIRTransforms
+  MLIRTargetLLVMIRImport
   MLIRTargetLLVMIRExport
 )
 

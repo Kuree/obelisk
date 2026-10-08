@@ -5,9 +5,10 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/Target/LLVMIR/TypeToLLVM.h"
+#include "mlir/Target/LLVMIR/TypeFromLLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/IR/DataLayout.h"
@@ -27,36 +28,29 @@ LocalStorageLowering::LocalStorageLowering(
   llvm::DataLayout dataLayout(targetLayout);
   // Unpacked aggregates use the target's ordinary array/record layout. Packed
   // values remain indivisible bitfields, preserving their source bit order.
-  llvm::LLVMContext llvmContext;
-  LLVM::TypeToLLVMIRTranslator translator(llvmContext);
+  if (functions.empty())
+    return;
+  analysis::NativeStorageLayout nativeLayout(dataLayout);
+  LLVM::TypeFromLLVMIRTranslator translator(*functions.front()->getContext(),
+                                            /*importStructsAsLiterals=*/true);
   auto buildLayout = [&](Type type, auto &buildLayout) -> Type {
     if (auto found = layouts.find(type); found != layouts.end())
       return found->second.type;
-    Type storage;
+    llvm::Type *backend = nativeLayout.getType(type);
+    Type storage = translator.translateType(backend);
     SmallVector<uint64_t> offsets;
     if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
-      auto child = buildLayout(array.getElementType(), buildLayout);
-      auto count = sim::getAggregateNumElements(type);
-      storage = LLVM::LLVMArrayType::get(child, count);
-      uint64_t stride = getLayout(array.getElementType()).bytes;
-      for (unsigned i = 0; i != count; ++i)
+      buildLayout(array.getElementType(), buildLayout);
+      uint64_t stride = nativeLayout.getEncoding(type).getStride();
+      for (unsigned i = 0; i != sim::getAggregateNumElements(type); ++i)
         offsets.push_back(i * stride);
     } else if (isa<sim::UnpackedStructType>(type)) {
-      SmallVector<Type> fieldTypes;
-      for (unsigned i = 0; i != sim::getAggregateNumElements(type); ++i) {
-        Type child = sim::getAggregateElementType(type, i);
-        fieldTypes.push_back(buildLayout(child, buildLayout));
-      }
-      storage = LLVM::LLVMStructType::getLiteral(type.getContext(), fieldTypes);
-      const llvm::StructLayout *recordLayout = dataLayout.getStructLayout(
-          cast<llvm::StructType>(translator.translateType(storage)));
-      for (unsigned i = 0; i != fieldTypes.size(); ++i)
-        offsets.push_back(recordLayout->getElementOffset(i));
-    } else {
-      unsigned width = *nativeStateWidth(type);
-      storage = IntegerType::get(type.getContext(), width);
+      for (unsigned i = 0; i != sim::getAggregateNumElements(type); ++i)
+        buildLayout(sim::getAggregateElementType(type, i), buildLayout);
+      for (int64_t offset :
+           nativeLayout.getEncoding(type).getOffsets().asArrayRef())
+        offsets.push_back(offset);
     }
-    llvm::Type *backend = translator.translateType(storage);
     layouts.try_emplace(
         type,
         Layout{
@@ -279,7 +273,7 @@ uint64_t LocalStorageLowering::getArrayStride(Value reference) const {
   Type child = sim::getAggregateElementType(type, 0);
   if (lookup(reference)->nativeLayout && isa<sim::UnpackedArrayType>(type))
     return getLayout(child).bytes * 8;
-  return *sim::getProvenanceSpan(child);
+  return *sim::getArrayElementStorageStride(type);
 }
 
 namespace {
@@ -652,7 +646,8 @@ public:
     if (containsLogic(type)) {
       Value fallback = arith::ConstantOp::create(
           rewriter, location, plane,
-          rewriter.getIntegerAttr(plane, APInt::getAllOnes(plane.getWidth())));
+          rewriter.getIntegerAttr(plane,
+                                  analysis::getDefaultUnknownMask(type)));
       values.push_back(arith::SelectOp::create(rewriter, location, window.valid,
                                                unknown, fallback));
     }

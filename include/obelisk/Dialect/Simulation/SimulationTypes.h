@@ -64,6 +64,10 @@ bool containsFourStateLeaf(::mlir::Type type);
 std::optional<std::pair<uint64_t, uint64_t>>
 getAggregateProvenanceSubelement(::mlir::Type type, unsigned index);
 
+/// Distance in canonical storage bits between successive fixed array elements.
+/// Unlike an element's value width, an unpacked stride includes tail padding.
+std::optional<uint64_t> getArrayElementStorageStride(::mlir::Type type);
+
 /// Build the compact, versioned runtime plan for one legal fixed aggregate
 /// bit-stream source. Array extents are represented by REPEAT records.
 std::optional<::llvm::SmallVector<uint64_t>>

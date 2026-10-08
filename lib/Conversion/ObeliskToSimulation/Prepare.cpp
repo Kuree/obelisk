@@ -2209,8 +2209,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         return;
       }
       FailureOr<Type> previous = normalizeSemanticType(
-          leaves[id].candidate, *leaves[id].candidateLocation);
-      FailureOr<Type> next = normalizeSemanticType(candidate, location);
+          leaves[id].candidate, *leaves[id].candidateLocation, module);
+      FailureOr<Type> next = normalizeSemanticType(candidate, location, module);
       if (failed(previous) || failed(next) || *previous != *next) {
         emitError(location) << "interconnect leaf '" << leaves[id].path
                             << "' has incompatible connected net-port types";
@@ -9645,7 +9645,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             semanticResultType = signature.getResult(0);
             if (!isa<semantic::VoidType>(semanticResultType))
               resultType = normalizeSemanticType(
-                  semanticResultType, getSemanticLocation(unit.source));
+                  semanticResultType, getSemanticLocation(unit.source), module);
           }
           bool voidResult =
               isa_and_nonnull<semantic::VoidType>(semanticResultType);

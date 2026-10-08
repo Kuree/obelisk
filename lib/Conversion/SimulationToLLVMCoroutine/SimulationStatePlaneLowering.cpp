@@ -389,7 +389,7 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
     rewriter.setInsertionPointToStart(join);
     return result;
   }
-  if (unit && range.rootWidth > 64) {
+  if (unit) {
     // The typed record field and its byte-address certificate determine
     // a fixed unit before lowering erases the type. Sibling fields share
     // one address, integer width and constant field shift, as in Clang.
@@ -623,7 +623,8 @@ Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
   IntegerType inputType = cast<IntegerType>(input.getType());
   bool wholeUnit =
       containerWidth ||
-      (unit ? unit->bitOffset == 0 && unit->width == inputType.getWidth()
+      (unit ? unit->bitOffset == 0 &&
+                  (unit->width == inputType.getWidth() || unit->ownsPadding)
             : bitOffset % 8 == 0 && inputType.getWidth() % 8 == 0);
   DirectPackedPlane plane = loadDirectPackedPlane(
       builder, location, globalName, bitOffset, inputType.getWidth(),
@@ -914,7 +915,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     return false;
   if (!access || access->root != range->staticID || !range->wholeOrInvalid)
     accessUnit.reset();
-  if (range->rootWidth > 64) {
+  if (range->rootWidth > 64 || accessUnit) {
     Block *guardContinuation = nullptr;
     if (range->wholeOrInvalid && !range->inBounds) {
       // A typed array access denotes a complete element or no storage. Emit
@@ -1037,7 +1038,8 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
       auto writeWindow = [&](unsigned width) {
         auto spanType = rewriter.getIntegerType(width);
         bool wholeUnit = accessUnit && accessUnit->bitOffset == 0 &&
-                         inputType.getWidth() == accessUnit->width;
+                         (inputType.getWidth() == accessUnit->width ||
+                          accessUnit->ownsPadding);
         bool readOld =
             !wholeUnit || layout->transitionHandles.contains(range->staticID);
         Value old = readOld ? resize(LLVM::LoadOp::create(rewriter, location,

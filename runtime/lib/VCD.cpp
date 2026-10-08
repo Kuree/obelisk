@@ -680,8 +680,8 @@ struct PlanBuilder {
     int64_t right = typeRight(database, typeOffset);
     uint64_t extent = left >= right ? static_cast<uint64_t>(left - right) + 1
                                     : static_cast<uint64_t>(right - left) + 1;
-    if (elementWidth == 0 || extent == 0 || extent > width / elementWidth ||
-        extent * elementWidth != width) {
+    if (elementWidth == 0 || extent == 0 || width % extent != 0 ||
+        elementWidth > width / extent) {
       count = 1;
       return true;
     }
@@ -768,8 +768,8 @@ struct PlanBuilder {
     int64_t right = typeRight(database, typeOffset);
     uint64_t extent = left >= right ? static_cast<uint64_t>(left - right) + 1
                                     : static_cast<uint64_t>(right - left) + 1;
-    if (elementWidth == 0 || extent == 0 || extent > width / elementWidth ||
-        extent * elementWidth != width)
+    if (elementWidth == 0 || extent == 0 || width % extent != 0 ||
+        elementWidth > width / extent)
       return declareLeaf(typeOffset, sourceBit, width, name, isNet);
     int64_t step = right >= left ? 1 : -1;
     for (uint64_t ordinal = 0; ordinal != extent; ++ordinal) {
@@ -778,7 +778,7 @@ struct PlanBuilder {
       elementName.append(
           std::to_string(left + step * static_cast<int64_t>(ordinal)));
       elementName.push_back(']');
-      declareType(element, sourceBit + ordinal * elementWidth, elementWidth,
+      declareType(element, sourceBit + ordinal * (width / extent), elementWidth,
                   elementName, isNet, depth + 1);
     }
   }

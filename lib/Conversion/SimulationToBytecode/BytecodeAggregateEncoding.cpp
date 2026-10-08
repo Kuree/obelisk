@@ -2,6 +2,7 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -27,6 +28,47 @@ std::optional<uint64_t> unionPayloadSpan(Type type) {
 }
 
 } // namespace
+
+LogicalResult Encoder::normalizeAggregateRegister(FunctionPlan &plan,
+                                                  Value value) {
+  Type type = value.getType();
+  if (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type))
+    return success();
+  APInt logical = analysis::getLogicalStorageMask(type);
+  APInt unknown = analysis::getDefaultUnknownMask(type);
+  uint32_t destination = reg(plan, value);
+  bool fourState = plan.layouts[destination].kind == Logic;
+  if (logical.isAllOnes() && (!fourState || unknown.isAllOnes()))
+    return success();
+  // The existing aggregate transport preserves X and Z independently and
+  // converts two-state leaves without exposing padding to the interpreter.
+  auto exportPlan = sim::getDPIAggregateBitStreamPlan(type);
+  auto importPlan = sim::getDPIAggregateBitStreamImportPlan(type);
+  if (!exportPlan || !importPlan)
+    return value.getDefiningOp()->emitOpError(
+        "aggregate has no bytecode normalization plan");
+  uint32_t packed = temporary(
+      plan, fourState
+                ? Type(sim::LogicType::get(type.getContext(), (*exportPlan)[3]))
+                : Type(IntegerType::get(type.getContext(), (*exportPlan)[3])));
+  if (packed == kInvalidRegister)
+    return failure();
+  auto encodePlan = [&](ArrayRef<uint64_t> words) {
+    SmallVector<uint8_t> bytes;
+    for (uint64_t word : words)
+      append64(bytes, word);
+    return emitBytesConstant(plan, bytes);
+  };
+  requiresContainerBitstreamFeature = true;
+  if (failed(emitIntrinsicRegisters(plan, kIntrinsicAggregateExportBitstream,
+                                    {destination, encodePlan(*exportPlan)},
+                                    {packed})) ||
+      failed(emitIntrinsicRegisters(plan, kIntrinsicAggregateImportBitstream,
+                                    {packed, encodePlan(*importPlan)},
+                                    {destination})))
+    return failure();
+  return success();
+}
 
 LogicalResult Encoder::encodeLogicBinary(FunctionPlan &plan,
                                          sim::SimLogicBinaryOp op) {
@@ -152,11 +194,23 @@ LogicalResult Encoder::encodeAggregateSplat(FunctionPlan &plan,
     return op.emitOpError("aggregate splat has no bytecode register");
   Layout destinationLayout = plan.layouts[destination];
   Layout sourceLayout = plan.layouts[source];
+  auto stride = sim::getArrayElementStorageStride(op.getResult().getType());
   if ((sourceLayout.kind != Bits && sourceLayout.kind != Logic) ||
       destinationLayout.kind != sourceLayout.kind || sourceLayout.width == 0 ||
-      count > UINT32_MAX / sourceLayout.width ||
-      uint64_t{sourceLayout.width} * count != destinationLayout.width)
+      !stride || *stride < sourceLayout.width || *stride > UINT32_MAX ||
+      count > UINT32_MAX / *stride ||
+      *stride * count != destinationLayout.width)
     return op.emitOpError("aggregate splat has incompatible bytecode layouts");
+  if (*stride != sourceLayout.width) {
+    Type type = sourceLayout.kind == Logic
+                    ? Type(sim::LogicType::get(op.getContext(), *stride))
+                    : Type(IntegerType::get(op.getContext(), *stride));
+    uint32_t padded = temporary(plan, type);
+    if (padded == kInvalidRegister)
+      return failure();
+    emit({Extract, 0, padded, source, kInvalidRegister});
+    source = padded;
+  }
   emit({Replicate, 0, destination, source, 0, 0, 0, count});
   return success();
 }
@@ -197,7 +251,7 @@ LogicalResult Encoder::encodeAggregateExtractTo(FunctionPlan &plan,
   emit({Extract, flags, extracted, source, dynamicOffset, 0, 0, staticOffset});
   if (extracted != destination)
     emit({Bitcast, 0, destination, extracted});
-  return success();
+  return normalizeAggregateRegister(plan, result);
 }
 
 FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
@@ -219,7 +273,7 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
     anchor->emitOpError("dynamic extraction requires a fixed array");
     return failure();
   }
-  std::optional<uint64_t> span = sim::getProvenanceSpan(element);
+  std::optional<uint64_t> span = sim::getArrayElementStorageStride(array);
   uint64_t count = sim::getAggregateNumElements(array);
   if (!span || count == 0) {
     anchor->emitOpError("array element has no fixed packed span");

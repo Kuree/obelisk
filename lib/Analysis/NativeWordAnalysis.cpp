@@ -29,6 +29,23 @@ bool isWordReferenceIdentity(Operation *op) {
   }
   return true;
 }
+uint64_t getWordLaneStorageWidth(Value value) {
+  Operation *op = value.getDefiningOp();
+  while (op && isWordReferenceIdentity(op)) {
+    value = op->getOperand(0);
+    op = value.getDefiningOp();
+  }
+  if (isa_and_nonnull<sim::SimRefArrayElementOp, sim::SimArrayDynExtractOp>(op)) {
+    Type parent = op->getOperand(0).getType();
+    if (auto reference = dyn_cast<sim::RefType>(parent))
+      parent = reference.getElementType();
+    return sim::getArrayElementStorageStride(parent).value_or(0);
+  }
+  Type type = value.getType();
+  if (auto reference = dyn_cast<sim::RefType>(type))
+    type = reference.getElementType();
+  return sim::getPackedWidth(type).value_or(0);
+}
 bool isWordBitwiseComputation(Operation *op) {
   if (isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(op))
     return true;
@@ -214,8 +231,7 @@ public:
         base = unpacked.getLeft();
         reverse = unpacked.getLeft() > unpacked.getRight();
       }
-      auto span =
-          sim::getProvenanceSpan(select.getResult().getType().getElementType());
+      auto span = sim::getArrayElementStorageStride(parent);
       if (span) {
         auto index =
             add(inputs[1], AddressResidue::affine(0, -uint64_t(base) & mask));
@@ -404,8 +420,11 @@ public:
           descendingStorage = array.getLeft() > array.getRight();
         }
         auto width = element ? sim::getPackedWidth(element) : std::nullopt;
-        if (width && *width > 0 && *width <= 32 && inputs[0] == Kind::Uniform &&
-            isIndex(inputs[1])) {
+        // The word rewriter retains this physical lane stride and clears ABI
+        // padding on stores. Lane values still have their source bit widths.
+        auto stride = sim::getArrayElementStorageStride(parent);
+        if (width && stride && *stride >= *width && *width > 0 &&
+            *stride <= 32 && inputs[0] == Kind::Uniform && isIndex(inputs[1])) {
           bool reversed =
               (inputs[1] == Kind::ReverseIndex) != descendingStorage;
           result = reversed ? Kind::ReverseReference : Kind::Reference;
@@ -422,8 +441,11 @@ public:
         auto unpacked =
             dyn_cast<sim::UnpackedArrayType>(select.getInput().getType());
         auto width = sim::getPackedWidth(select.getResult().getType());
-        if ((array || unpacked) && width && *width > 0 && *width <= 32 &&
-            inputs[0] == Kind::Uniform && isIndex(inputs[1])) {
+        auto stride =
+            sim::getArrayElementStorageStride(select.getInput().getType());
+        if ((array || unpacked) && width && stride && *stride >= *width &&
+            *width > 0 && *stride <= 32 && inputs[0] == Kind::Uniform &&
+            isIndex(inputs[1])) {
           auto *scope = getOrCreateFor<ScopedRangeLattice>(
               point, getProgramPointBefore(op));
           if (!scope->reachable)
@@ -515,8 +537,9 @@ NativeWordAnalysis::NativeWordAnalysis(sim::SimFuncOp function,
       auto reference = dyn_cast<sim::RefType>(value.getType());
       auto width = reference ? sim::getPackedWidth(reference.getElementType())
                              : std::nullopt;
-      if (width && *width && fact.known &&
-          (fact.scale == *width || fact.scale == (-uint64_t(*width) & mask)))
+      uint64_t stride = reference ? getWordLaneStorageWidth(value) : 0;
+      if (width && *width && stride >= *width && fact.known &&
+          (fact.scale == stride || fact.scale == (-stride & mask)))
         disjointIterations.insert(value);
     }
   };

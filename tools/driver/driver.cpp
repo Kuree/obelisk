@@ -1408,6 +1408,11 @@ static int executeCompilation(
                        ArrayAttr::get(&context, prefixMaps));
 
   if (native) {
+    if (failed(obelisk::driver::configureTargetLayout(
+            *module, targetName == "wasm32"
+                         ? obelisk::driver::TargetKind::Wasm
+                         : obelisk::driver::TargetKind::Native)))
+      return 1;
     obelisk::schedule::NativeSchedulerMode pipelineScheduler =
         *obelisk::schedule::symbolizeNativeSchedulerMode(nativeScheduler);
     if (pipelineScheduler == obelisk::schedule::NativeSchedulerMode::Auto) {

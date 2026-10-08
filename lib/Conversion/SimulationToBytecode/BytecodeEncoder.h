@@ -59,6 +59,8 @@ private:
   uint32_t temporary(FunctionPlan &plan, mlir::Type type);
   uint32_t temporaryLike(FunctionPlan &plan, mlir::Type type,
                          mlir::Value model);
+  mlir::LogicalResult normalizeAggregateRegister(FunctionPlan &plan,
+                                                 mlir::Value value);
   uint64_t addConstant(const Layout &layout, const llvm::APInt &value,
                        const llvm::APInt *unknown = nullptr);
   uint64_t addZeroConstant(const Layout &layout);

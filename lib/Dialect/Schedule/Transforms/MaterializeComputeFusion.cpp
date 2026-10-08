@@ -1701,8 +1701,9 @@ uint64_t shareStableBranchConditions(sim::SimFuncOp function,
 
 /// Represent an exact external sensitivity interval with existing typed views.
 /// Unpacked aggregate offsets use the same structural layout as provenance;
-/// packed leaves use bit extracts. Padding and unsupported layouts reject the
-/// transaction instead of widening a watch back across internal publications.
+/// packed leaves use bit extracts. Explicit ABI padding has no logical value
+/// to watch. Unsupported layouts reject the transaction instead of widening a
+/// watch back across internal publications.
 LogicalResult appendWatchRange(OpBuilder &builder, Location loc, Value handle,
                                uint64_t low, uint64_t width,
                                SmallVectorImpl<Value> &watched,
@@ -1761,7 +1762,14 @@ LogicalResult appendWatchRange(OpBuilder &builder, Location loc, Value handle,
       return failure();
     covered += end - begin;
   }
-  return success(covered == width);
+  Attribute layout = isa<sim::UnpackedArrayType>(type)
+                         ? cast<sim::UnpackedArrayType>(type).getLayout()
+                         : cast<sim::UnpackedStructType>(type).getLayout();
+  // The verified encoding accounts for the holes between child spans and the
+  // trailing padding. Watching the children covers every logical bit without
+  // reintroducing an internally published field into the sensitivity list.
+  return success(covered == width ||
+                 isa_and_nonnull<sim::StorageLayoutAttr>(layout));
 }
 
 FailureOr<sim::SimFuncOp> materializeStraightLineKernel(

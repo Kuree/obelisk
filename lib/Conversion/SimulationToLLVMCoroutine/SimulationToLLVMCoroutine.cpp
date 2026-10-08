@@ -21,6 +21,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
@@ -1148,6 +1149,8 @@ LogicalResult NativePipelineAnalysis::initialize() {
     return failure();
   }
   dataLayout = *parsed;
+  if (failed(analysis::verifyNativeStorageLayouts(module, dataLayout)))
+    return failure();
   if (failed(validateRuntimeToLLVMPreconditions(module, *parsed)))
     return failure();
   FailureOr<analysis::NativeStateLayoutAnalysis> embeddedStateLayout =

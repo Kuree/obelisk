@@ -956,7 +956,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
             describeContainerElement(elementType,
                                      getSemanticLocation(expression));
         std::optional<uint64_t> elementSpan =
-            sim::getProvenanceSpan(elementType);
+            sim::getArrayElementStorageStride(fixed);
         if (failed(descriptor) || !elementSpan || !*elementSpan) {
           expression->emitError("fixed coverage set does not have a "
                                 "representable element layout");
