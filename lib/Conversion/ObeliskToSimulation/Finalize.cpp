@@ -492,7 +492,13 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     primitiveFusionOptions.maxStraightLineMembers = 16;
     designManager.addPass(createObeliskSimFuseComputeFragmentsPass(
         std::move(primitiveFusionOptions)));
-    designManager.addPass(createObeliskSimMaterializeComputeFusionPass());
+    // Early evaluator copies retain accesses from actors subsequently fused
+    // away, preventing private-state proofs on the final kernel. Clone only
+    // after the last fusion round; O0 has no later round.
+    ObeliskSimMaterializeComputeFusionPassOptions materializeOptions;
+    materializeOptions.materializeEvalBodies = optLevel == 0;
+    designManager.addPass(createObeliskSimMaterializeComputeFusionPass(
+        std::move(materializeOptions)));
     ObeliskSimBuildComputeGraphPassOptions primitiveGraphOptions;
     primitiveGraphOptions.workers = workers;
     primitiveGraphOptions.vpi = vpiMode.str();
@@ -502,7 +508,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   if (optLevel > 0) {
     if (optLevel >= 3) {
       designManager.addPass(createPlanCombinationalStatementsPass());
-      designManager.addPass(createObeliskSimMaterializeComputeFusionPass());
+      ObeliskSimMaterializeComputeFusionPassOptions materializeOptions;
+      materializeOptions.materializeEvalBodies = false;
+      designManager.addPass(createObeliskSimMaterializeComputeFusionPass(
+          std::move(materializeOptions)));
       ObeliskSimBuildComputeGraphPassOptions statementGraphOptions;
       statementGraphOptions.workers = workers;
       statementGraphOptions.vpi = vpiMode.str();

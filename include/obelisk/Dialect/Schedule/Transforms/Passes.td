@@ -146,6 +146,10 @@ def ObeliskSimMaterializeComputeFusionPass
     "mlir::cf::ControlFlowDialect", "mlir::func::FuncDialect",
     "mlir::scf::SCFDialect", "mlir::ub::UBDialect"
   ];
+  let options = [
+    Option<"materializeEvalBodies", "materialize-eval-bodies", "bool", "true",
+           "Clone native evaluators after the final body-fusion round">
+  ];
 }
 
 def ObeliskSimOptimizeNativeRegionsPass

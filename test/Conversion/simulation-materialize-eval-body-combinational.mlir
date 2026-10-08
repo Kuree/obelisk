@@ -27,6 +27,11 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       %marker = simulation.context.storage %ctx[4] : !simulation.ref<i8>
       %a = simulation.spawn @comb(%ctx, %data, %enable, %out, %marker) : !simulation.context, !simulation.ref<i8>, !simulation.ref<i1>, !simulation.ref<i8>, !simulation.ref<i8> -> !simulation.process
       %b = simulation.spawn @latch(%ctx, %data, %enable, %held) : !simulation.context, !simulation.ref<i8>, !simulation.ref<i1>, !simulation.ref<i8> -> !simulation.process
+      // Keep outputs observable so this fixture checks conditional stores
+      // through evaluator cloning rather than eliminating unread state.
+      %levels = arith.constant 0 : i64
+      %scope = simulation.bytes.constant ""
+      simulation.dump.vars %ctx, %levels, %scope : (!simulation.context, i64, !simulation.bytes) -> ()
       simulation.return
     }
     // CHECK-LABEL: simulation.func @comb(

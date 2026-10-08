@@ -1,0 +1,31 @@
+// RUN: sed 's/^module {/module attributes {schedule.native_scheduler = 3 : i32} {/' %S/simulation-statement-fusion.mlir > %t.mlir
+// RUN: obelisk-opt %t.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion{materialize-eval-bodies=false},schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion{materialize-eval-bodies=false}))' -o %t.fused.mlir
+// RUN: FileCheck %s --check-prefix=EARLY --implicit-check-not=__obelisk_eval_body < %t.fused.mlir
+// RUN: obelisk-opt %t.fused.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=LATE --implicit-check-not=producer_and_consumer.__obelisk_eval_body --implicit-check-not=transform.__obelisk_eval_body
+
+// Match the driver's early and final fusion rounds. Cloning an evaluator in
+// the first round leaves old actor reads alive after statement fusion, hiding
+// the fact that both intermediate port values now travel entirely through SSA.
+// The separate clocked consumer keeps the final output observable.
+
+// EARLY-LABEL: simulation.func private @__obelisk_region_kernel_
+// EARLY: %[[INPUT:.*]] = simulation.context.storage %arg0[0]
+// EARLY: %[[OUTPUT:.*]] = simulation.context.storage %arg0[3]
+// EARLY: simulation.ref.load %[[INPUT]]
+// EARLY-NOT: simulation.ref.store
+// EARLY: %[[RESULT:.*]] = arith.addi
+// EARLY-NOT: simulation.ref.store
+// EARLY: simulation.ref.store %[[RESULT]] to %[[OUTPUT]]
+// EARLY-NOT: simulation.ref.store
+// EARLY: simulation.suspend.any %[[INPUT]] edges [0]
+
+// LATE-LABEL: simulation.func private @__obelisk_region_kernel_{{.*}}.__obelisk_eval_body_
+// LATE: %[[INPUT:.*]] = simulation.context.storage %arg0[0]
+// LATE: %[[OUTPUT:.*]] = simulation.context.storage %arg0[3]
+// LATE: simulation.ref.load %[[INPUT]]
+// LATE-NOT: simulation.ref.store
+// LATE: %[[RESULT:.*]] = arith.addi
+// LATE-NOT: simulation.ref.store
+// LATE: simulation.ref.store %[[RESULT]] to %[[OUTPUT]]
+// LATE-NOT: simulation.ref.store
+// LATE: simulation.return

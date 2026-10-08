@@ -986,8 +986,22 @@ struct PrivateStaticAccessIndex {
   DenseMap<uint64_t, DenseMap<StringAttr, unsigned>> spawnTargets;
   DenseMap<uint64_t, unsigned> unsupportedUses;
   DenseMap<Operation *, FunctionFacts> contributions;
+  bool hasWaveformObservers = false;
 
   explicit PrivateStaticAccessIndex(sim::SimDesignOp design) {
+    // Dump operations select canonical state through scope/depth operands,
+    // without consuming a reference. Until those selections are resolved,
+    // every root may be observed, even with VPI disabled (LRM 21.7).
+    hasWaveformObservers =
+        design
+            .walk([](Operation *op) {
+              return isa<sim::SimDumpVarsOp, sim::SimDumpAllOp,
+                         sim::SimDumpControlOp, sim::SimDumpPortsOp,
+                         sim::SimDumpPortsControlOp>(op)
+                         ? WalkResult::interrupt()
+                         : WalkResult::advance();
+            })
+            .wasInterrupted();
     for (sim::SimStorageDeclOp declaration :
          design.getBody().front().getOps<sim::SimStorageDeclOp>())
       declarations.try_emplace(declaration.getId(), declaration);
@@ -1081,7 +1095,8 @@ struct PrivateStaticAccessIndex {
   }
 };
 
-/// Promote a static procedure temporary when this fused function is its sole
+/// Remove invisible write-only storage, then promote a static procedure
+/// temporary when this fused function is its sole
 /// executable accessor and one store dominates every read. Such a declaration
 /// is state only because its source-level lifetime spans activations; if every
 /// activation overwrites it before use, retaining the canonical store would
@@ -1090,6 +1105,8 @@ uint64_t
 promotePrivateStaticTemporaries(sim::SimFuncOp function,
                                 const PrivateStaticAccessIndex &accessIndex,
                                 bool markDormantTier1 = false) {
+  if (accessIndex.hasWaveformObservers)
+    return 0;
   // A recursive or foreign reentry can overwrite a static temporary in this
   // same function. A dominating store and exclusive accessor identity alone
   // do not prove that its value survives a call. Retry after inlining rather
@@ -1137,10 +1154,7 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
   for (auto &[descriptor, rootStores] : stores) {
     auto declaration = accessIndex.declarations.lookup(descriptor);
     auto rootLoads = loads.find(descriptor);
-    if (!declaration || rootLoads == loads.end() || rootStores.size() != 1 ||
-        rootLoads->second.empty() ||
-        !accessIndex.isPrivateTo(descriptor, function) ||
-        declaration.getLifetime() != sim::Lifetime::Static ||
+    if (!declaration || !accessIndex.isPrivateTo(descriptor, function) ||
         declaration->hasAttr(sim::metadata::coverageToggleObservable))
       continue;
     std::optional<schedule::ComputeObservabilityKind> observability =
@@ -1148,6 +1162,26 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
     if (!observability ||
         *observability ==
             schedule::ComputeObservabilityKind::ExternallyWritable)
+      continue;
+    // Source-memory forwarding can remove the final read of an intermediate
+    // port or temporary. Its stores then have no consumer, including a change
+    // waiter: the access index rejects every non-load/store reference use.
+    // Keep readable VPI state and all roots whose identity can escape. This
+    // removes whole logical writes before packed value/mask and publication
+    // lowering, without changing any remaining event (LRM 4.5--4.7).
+    if (rootLoads == loads.end() || rootLoads->second.empty()) {
+      if (*observability == schedule::ComputeObservabilityKind::Invisible &&
+          llvm::all_of(rootStores, [](sim::SimRefStoreOp store) {
+            return sim::getPackedWidth(store.getValue().getType()).has_value();
+          })) {
+        promoted += rootStores.size();
+        for (sim::SimRefStoreOp store : rootStores)
+          store.erase();
+      }
+      continue;
+    }
+    if (rootStores.size() != 1 ||
+        declaration.getLifetime() != sim::Lifetime::Static)
       continue;
     sim::SimRefStoreOp store = rootStores.front();
     Value rootReference = store.getReference();
@@ -3573,6 +3607,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       ::obelisk::schedule::get<schedule::metadata::staticBodyFusion>(design);
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   bool evalScheduler = useEvalBodyFusion(design);
+  bool cloneEvaluators = evalScheduler && materializeEvalBodies;
   // Inventory NBA transient observers while every process still has its
   // source shape. Fusion merges bodies and their waits, which would hide an
   // idempotent observer inside a larger activation.
@@ -3620,7 +3655,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       preserveEvalNBASiteOrigins(function);
   analysis::SimulationVPIAnalysis vpi =
       analysis::SimulationVPIAnalysis::compute(design);
-  bool prepareTier1Promotion = evalScheduler && !vpi.allowsWrite();
+  bool prepareTier1Promotion =
+      evalScheduler && !vpi.allowsWrite() &&
+      (cloneEvaluators || vpi.getMode() == schedule::ComputeVPIMode::Off);
   bool prepareDormantTier1 =
       prepareTier1Promotion && vpi.getMode() == schedule::ComputeVPIMode::Read;
   uint64_t preparedPrivateStores = 0;
@@ -3641,7 +3678,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       preparedPrivateStores += promotePrivateStaticTemporaries(
           function, accessIndex, prepareDormantTier1);
   }
-  if ((!fusions || !graph || graph.getWorkers() != 1) && evalScheduler) {
+  if ((!fusions || !graph || graph.getWorkers() != 1) && cloneEvaluators) {
     // Standalone activation cloning is not conditional on finding a profitable
     // multi-actor fusion.  Keeping it behind the fusion-inventory early return
     // made explicit eval plans depend on an unrelated optimization decision.
@@ -3721,6 +3758,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   uint64_t sharedConditions = 0;
   uint64_t promotedStores = 0;
   std::unique_ptr<PrivateStaticAccessIndex> fusionAccessIndex;
+  SmallVector<sim::SimFuncOp> newKernels;
   llvm::StringMap<uint64_t> fusionRejections;
   CombinationalFusionAnalysis combinational(
       design, provenance,
@@ -3737,7 +3775,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       fused = materializeFusion(
           design, symbols, codeUnits, inputIndex, fusion, graph, provenance,
           scheduleOrder, resumeTargets, entryOrder, spawnsByCallee,
-          evalScheduler, removedPolls, convertedNBAs, sharedConditions,
+          cloneEvaluators, removedPolls, convertedNBAs, sharedConditions,
           promotedStores, fusionAccessIndex, fusionRejections);
     // The model-wide eval coordinator already owns a fine dirty bit for each
     // ordinary activation, so keep its general straight-line region fusion in
@@ -3757,14 +3795,27 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.
-      if (succeeded(fused))
+      if (succeeded(fused)) {
         fusionAccessIndex.reset();
+        newKernels.push_back(*fused);
+      }
     }
     changed |= succeeded(fused);
     if (succeeded(fused))
       ++materializedFusions;
     else
       ++rejectedFusions;
+  }
+  // Kernel load forwarding and removal of the original actors can establish
+  // new exclusive storage ownership. Recompute that proof before cloning the
+  // evaluator; counting its fallback clone as another accessor hides it.
+  if (prepareTier1Promotion && !newKernels.empty()) {
+    PrivateStaticAccessIndex accessIndex(design);
+    for (sim::SimFuncOp kernel : newKernels) {
+      preparedPrivateStores += promotePrivateStaticTemporaries(
+          kernel, accessIndex, prepareDormantTier1);
+      accessIndex.refresh(kernel);
+    }
   }
   // A planned cohort that fails to materialize is Tier-1 work lost after
   // planning already accepted it, and the reason was previously discarded.
@@ -3786,7 +3837,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   // Materialize every eligible actor body: selectively retaining coroutine
   // actors here recreates the fine-grained runtime dispatch that this mode is
   // intended to measure without.
-  if (evalScheduler) {
+  if (cloneEvaluators) {
     SmallVector<sim::SimFuncOp> actors;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>())
