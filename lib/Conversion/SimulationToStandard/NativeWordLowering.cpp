@@ -167,10 +167,43 @@ public:
     return success();
   }
 };
+class WordResizeLanesConversion final
+    : public OpConversionPattern<schedule::NativeWordResizeLanesOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(schedule::NativeWordResizeLanesOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    unsigned from = op.getInputLaneWidth(), to = op.getResultLaneWidth();
+    unsigned width = *sim::getPackedWidth(op.getInput().getType());
+    auto inputType =
+        VectorType::get({width / from}, rewriter.getIntegerType(from));
+    auto resultType =
+        VectorType::get({width / from}, rewriter.getIntegerType(to));
+    SmallVector<Value> planes;
+    for (Value value : adaptor.getInput()) {
+      if (from != to) {
+        value = LLVM::BitcastOp::create(rewriter, op.getLoc(), inputType, value);
+        value = from < to
+                    ? LLVM::ZExtOp::create(rewriter, op.getLoc(), resultType,
+                                           value).getResult()
+                    : LLVM::TruncOp::create(rewriter, op.getLoc(), resultType,
+                                            value).getResult();
+        value = LLVM::BitcastOp::create(
+            rewriter, op.getLoc(), rewriter.getIntegerType(width / from * to),
+            value);
+      }
+      planes.push_back(value);
+    }
+    rewriter.replaceOpWithMultiple(op, {ValueRange(planes)});
+    return success();
+  }
+};
 } // namespace
 void populateNativeWordValuePatterns(const TypeConverter &converter,
                                      RewritePatternSet &patterns) {
-  patterns.add<WordTableConversion, WordReverseConversion>(
+  patterns.add<WordTableConversion, WordReverseConversion,
+               WordResizeLanesConversion>(
       converter, patterns.getContext());
 }
 } // namespace obelisk

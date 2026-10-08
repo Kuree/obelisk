@@ -204,16 +204,16 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       paddedWidth = bits;
       paddedStride = stride;
     }
-  // Bitwise operations commute with embedding each value in its ABI slot.
-  // Mixed physical strides need a gather/scatter representation; retain the
-  // scalar loop rather than treating their lanes as contiguous packed bits.
-  if (paddedStride &&
+  // Equal geometries can compute directly in their physical slots. Otherwise
+  // compute on packed logical lanes and resize lanes at storage boundaries.
+  bool mixedGeometry = paddedStride &&
       (llvm::any_of(geometries, [&](auto geometry) {
          return geometry != std::pair{paddedWidth, paddedStride};
        }) || llvm::any_of(valueWidths, [&](unsigned bits) {
          return bits != paddedWidth;
-       })))
-    return reject("incompatible padded lane geometry");
+       }));
+  if (mixedGeometry)
+    paddedWidth = paddedStride = 0;
   bool nestedArguments = llvm::any_of(loop.blocks, [&](Block *block) {
     return block != loop.header && block->getNumArguments() != 0;
   });
@@ -391,6 +391,14 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
                ? Type(builder.getIntegerType(bits))
                : Type(sim::LogicType::get(function.getContext(), bits));
   };
+  auto storageWordType = [&](Value selected, Type scalar) -> Type {
+    if (!mixedGeometry)
+      return wordType(scalar);
+    unsigned bits = analysis::getWordLaneStorageWidth(selected) * groupSize;
+    return isa<IntegerType>(sim::getPackedScalarType(scalar))
+               ? Type(builder.getIntegerType(bits))
+               : Type(sim::LogicType::get(function.getContext(), bits));
+  };
   auto mappedValue = [&](Value value) {
     while (Value next = mapping.lookupOrNull(value)) {
       if (next == value)
@@ -448,6 +456,7 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
   // remap after every definition exists, just as for the bounded CFG unroller.
   SmallVector<Operation *> cloned;
   DenseMap<Operation *, unsigned> reversedStores;
+  DenseMap<Operation *, unsigned> storeLogicalWidths;
   DenseSet<Operation *> widenedComputations;
   auto lowIndex = [&](Operation &op, bool reverse) -> Value {
     Type result = op.getResult(0).getType();
@@ -540,7 +549,8 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
           mapping.map(op.getResult(0), op.getOperand(0));
           continue;
         }
-        Type word = wordType(
+        Type word = storageWordType(
+            op.getResult(0),
             cast<sim::RefType>(op.getResult(0).getType()).getElementType());
         auto resultType = sim::RefType::get(function.getContext(), word);
         Value low = lowIndex(op, kind == Kind::ReverseReference);
@@ -587,7 +597,8 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
         reverseResult = (lanesAnalysis.get(op.getOperand(1)) ==
                          Kind::ReverseIndex) != descendingStorage;
         Value low = lowIndex(op, reverseResult);
-        Type wideType = wordType(op.getResult(0).getType());
+        Type wideType =
+            storageWordType(op.getResult(0), op.getResult(0).getType());
         if (!array) {
           copy = schedule::NativeWordExtractOp::create(
               builder, op.getLoc(), wideType, op.getOperand(0), low);
@@ -607,8 +618,18 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
         copy = op.clone();
         builder.insert(copy);
       }
-      if (kind == Kind::Logic)
-        copy->getResult(0).setType(wordType(op.getResult(0).getType()));
+      Type logicalType;
+      if (kind == Kind::Logic) {
+        logicalType = wordType(op.getResult(0).getType());
+        Type accessType = logicalType;
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(op))
+          accessType =
+              storageWordType(load.getReference(), op.getResult(0).getType());
+        else if (isa<sim::SimArrayDynExtractOp>(op))
+          accessType =
+              storageWordType(op.getResult(0), op.getResult(0).getType());
+        copy->getResult(0).setType(accessType);
+      }
       if (kind == Kind::Logic && analysis::isWordBitwiseComputation(&op))
         widenedComputations.insert(copy);
       if (auto load = dyn_cast<sim::SimRefLoadOp>(op))
@@ -622,19 +643,30 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
         copy->setOperand(1, lowIndex(op, reverseResult));
         builder.setInsertionPointAfter(copy);
       }
-      if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
+      if (auto store = dyn_cast<sim::SimRefStoreOp>(op)) {
+        storeLogicalWidths[copy] =
+            *sim::getPackedWidth(store.getValue().getType());
         if (lanesAnalysis.get(store.getReference()) == Kind::ReverseReference)
           reversedStores.try_emplace(
               copy, paddedStride
                         ? paddedStride
                         : *sim::getPackedWidth(store.getValue().getType()));
+      }
       for (auto [from, to] : llvm::zip(op.getResults(), copy->getResults()))
         mapping.map(from, to);
       cloned.push_back(copy);
+      Value result = kind == Kind::Logic ? copy->getResult(0) : Value{};
+      if (result && result.getType() != logicalType) {
+        result = schedule::NativeWordResizeLanesOp::create(
+            builder, op.getLoc(), logicalType, result,
+            *sim::getPackedWidth(result.getType()) / groupSize,
+            *sim::getPackedWidth(logicalType) / groupSize);
+        mapping.map(op.getResult(0), result);
+        cloned.push_back(result.getDefiningOp());
+      }
       if (reverseResult) {
         auto reverse = schedule::NativeWordReverseOp::create(
-            builder, op.getLoc(), copy->getResult(0).getType(),
-            copy->getResult(0),
+            builder, op.getLoc(), result.getType(), result,
             paddedStride ? paddedStride
                          : *sim::getPackedWidth(op.getResult(0).getType()));
         mapping.map(op.getResult(0), reverse.getResult());
@@ -650,15 +682,26 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     if (auto store = dyn_cast<sim::SimRefStoreOp>(op)) {
       unsigned storeWidth =
           *sim::getPackedWidth(store.getReference().getType().getElementType());
-      if (sim::getPackedWidth(store.getValue().getType()) != storeWidth) {
+      unsigned logicalWidth = mixedGeometry
+                                  ? storeLogicalWidths.lookup(op) * groupSize
+                                  : storeWidth;
+      if (sim::getPackedWidth(store.getValue().getType()) != logicalWidth) {
         builder.setInsertionPoint(store);
-        store.getValueMutable().assign(wideValue(store.getValue(), storeWidth));
+        store.getValueMutable().assign(
+            wideValue(store.getValue(), logicalWidth));
       }
       if (reversedStores.contains(op)) {
         builder.setInsertionPoint(store);
         store.getValueMutable().assign(schedule::NativeWordReverseOp::create(
             builder, store.getLoc(), store.getValue().getType(),
             store.getValue(), reversedStores.lookup(op)));
+      }
+      if (mixedGeometry && logicalWidth != storeWidth) {
+        builder.setInsertionPoint(store);
+        store.getValueMutable().assign(schedule::NativeWordResizeLanesOp::create(
+            builder, store.getLoc(),
+            store.getReference().getType().getElementType(),
+            store.getValue(), logicalWidth / groupSize, storeWidth / groupSize));
       }
       if (paddedStride) {
         builder.setInsertionPoint(store);

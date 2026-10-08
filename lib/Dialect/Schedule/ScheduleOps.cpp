@@ -56,6 +56,26 @@ LogicalResult NativeWordReverseOp::verify() {
     return emitOpError("requires a lane width dividing the native word width");
   return success();
 }
+LogicalResult NativeWordResizeLanesOp::verify() {
+  auto wordWidth = [](Type type) -> unsigned {
+    if (auto integer = dyn_cast<IntegerType>(type))
+      return integer.isSignless() ? integer.getWidth() : 0;
+    if (auto logic = dyn_cast<sim::LogicType>(type))
+      return logic.getWidth();
+    return 0;
+  };
+  unsigned input = wordWidth(getInput().getType());
+  unsigned result = wordWidth(getResult().getType());
+  unsigned from = getInputLaneWidth(), to = getResultLaneWidth();
+  if (input < 2 || input > 64 || result < 2 || result > 64 ||
+      isa<sim::LogicType>(getInput().getType()) !=
+          isa<sim::LogicType>(getResult().getType()))
+    return emitOpError("requires native words with the same state domain");
+  if (!from || !to || input % from || result % to || input / from < 2 ||
+      input / from != result / to)
+    return emitOpError("requires matching counts of complete lanes");
+  return success();
+}
 LogicalResult NativeWordTableOp::verify() {
   auto laneWidth = [](Type type) -> unsigned {
     if (auto integer = dyn_cast<IntegerType>(type))

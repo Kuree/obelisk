@@ -1815,7 +1815,8 @@ public:
 
     ConversionTarget target(context);
     target.addIllegalOp<schedule::NativeWordTableOp,
-                        schedule::NativeWordReverseOp>();
+                        schedule::NativeWordReverseOp,
+                        schedule::NativeWordResizeLanesOp>();
     target.addIllegalOp<
         sim::SimLogicConstantOp, sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
         sim::SimLogicIsTrueOp, sim::SimLogicMuxOp, sim::SimLogicCountBitsOp,

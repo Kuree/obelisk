@@ -33,6 +33,10 @@ module native_unpacked_layout;
   narrow_t lanes[64], transformed[64];
   narrow_t copied[63:0];
   narrow_t rows[2][11], reduced[11];
+  logic [66:0][2:0] packed_lanes, packed_result;
+  narrow_t from_packed[66:0];
+  logic [66:0] packed_flags, packed_flags_result, packed_flags_xor;
+  logic unpacked_flags[67];
   always_comb selected = a[index];
   always_comb begin
     for (int i = 0; i < 64; ++i) transformed[i] = lanes[i] ^ 3'b101;
@@ -44,6 +48,19 @@ module native_unpacked_layout;
     for (int i = 0; i < 11; ++i) begin
       reduced[i] = 0;
       for (int j = 0; j < 2; ++j) reduced[i] ^= rows[j][i];
+    end
+  end
+  always_comb begin
+    for (int i = 0; i < 67; ++i) begin
+      from_packed[i] = packed_lanes[i];
+      unpacked_flags[i] = packed_flags[i];
+    end
+  end
+  always_comb begin
+    for (int i = 0; i < 67; ++i) begin
+      packed_result[i] = from_packed[i];
+      packed_flags_result[i] = unpacked_flags[i];
+      packed_flags_xor[i] = unpacked_flags[i] ^ packed_flags[i];
     end
   end
 
@@ -73,6 +90,14 @@ module native_unpacked_layout;
     end
     rows[0][7] = 3'bx1z;
     rows[1][10] = 3'bz0x;
+    for (int i = 0; i < 67; ++i) packed_lanes[i] = 3'(i);
+    packed_lanes[7] = 3'bx1z;
+    packed_lanes[63] = 3'bz0x;
+    packed_lanes[66] = 3'b1zx;
+    packed_flags = 64'hfa62_11c3_5198_be0d;
+    packed_flags[7] = 'x;
+    packed_flags[63] = 'z;
+    packed_flags[66] = 'x;
     #1;
     for (int i = 0; i < 64; ++i)
       if (transformed[i] !== (lanes[i] ^ 3'b101) || copied[i] !== lanes[i])
@@ -80,6 +105,12 @@ module native_unpacked_layout;
     for (int i = 0; i < 11; ++i)
       if (reduced[i] !== (rows[0][i] ^ rows[1][i]))
         $fatal(1, "nested word loop crossed array padding");
+    if (packed_result !== packed_lanes || packed_flags_result !== packed_flags ||
+        packed_flags_xor !== (packed_flags ^ packed_flags))
+      $fatal(1, "mixed packed/unpacked word lanes");
+    for (int i = 0; i < 67; ++i)
+      if (from_packed[i] !== packed_lanes[i] || unpacked_flags[i] !== packed_flags[i])
+        $fatal(1, "mixed word lane reversal or padding");
     if (selected !== 3'b101) $fatal(1, "descending array address");
     copy = records[index];
     stream = stream_t'(copy);

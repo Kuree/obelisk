@@ -989,6 +989,7 @@ LogicalResult lowerPackedSimulationOperations(
                                    SimulationToStandardTypeConverter &c) {
     target.addIllegalOp<schedule::NativeWordTableOp,
                         schedule::NativeWordReverseOp,
+                        schedule::NativeWordResizeLanesOp,
                         schedule::NativeWordExtractOp>();
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,

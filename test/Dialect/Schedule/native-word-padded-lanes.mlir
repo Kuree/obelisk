@@ -10,9 +10,11 @@
 // CHECK: simulation.logic.insert {{.*}} at 59
 // CHECK: simulation.ref.store {{.*}} : !simulation.logic<64>
 // CHECK-LABEL: simulation.func @mixed
-// CHECK-NOT: schedule.word.region
-// CHECK: simulation.array.extract_dynamic
-// CHECK-NOT: schedule.word.region
+// CHECK: schedule.word.region 64
+// CHECK: simulation.logic.dyn_extract {{.*}} -> !simulation.logic<24>
+// CHECK: schedule.word.reverse {{.*}}lane_width = 3
+// CHECK: schedule.word.resize_lanes {{.*}}input_lane_width = 3{{.*}}result_lane_width = 8
+// CHECK: simulation.ref.store {{.*}}!simulation.logic<64>
 // CHECK-LABEL: simulation.func @nested
 // CHECK: schedule.word.region 64
 // CHECK: simulation.logic.binary xor {{.*}}!simulation.logic<64>
@@ -72,7 +74,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     ^exit:
       simulation.return
     }
-    // Equal logical widths do not permit mixing packed and byte strides.
+    // Pack and unpack logical lanes at their physical storage boundaries.
     simulation.func @mixed(
       %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
       %src: !packedref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64},

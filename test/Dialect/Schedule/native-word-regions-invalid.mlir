@@ -167,3 +167,19 @@ module {
     return
   }
 }
+// -----
+module {
+  func.func @bad(%arg: i8) {
+    // expected-error @+1 {{requires matching counts of complete lanes}}
+    %v = schedule.word.resize_lanes %arg {input_lane_width = 1 : i32, result_lane_width = 7 : i32} : (i8) -> i64
+    return
+  }
+}
+// -----
+module {
+  func.func @bad(%arg: i8) {
+    // expected-error @+1 {{requires native words with the same state domain}}
+    %v = schedule.word.resize_lanes %arg {input_lane_width = 1 : i32, result_lane_width = 8 : i32} : (i8) -> !simulation.logic<64>
+    return
+  }
+}

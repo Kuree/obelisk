@@ -68,6 +68,20 @@ def NativeWordReverseOp : ScheduleNativeOp<"word.reverse", [Pure]> {
   let results = (outs AnyType:$result);
   let hasVerifier = 1;
 }
+def NativeWordResizeLanesOp : ScheduleNativeOp<"word.resize_lanes", [Pure]> {
+  let summary = "resize each native storage lane without changing its bit order";
+  let description = [{
+    Treats the input and result as equal-length sequences of integer lanes.
+    Each lane is independently truncated or zero-extended. Four-state value
+    and unknown planes undergo the same transformation, preserving X and Z.
+    This bridges packed logical lanes and padded physical array slots without
+    scalar memory accesses. Lowering uses LLVM vector integer conversions.
+  }];
+  let arguments = (ins AnyType:$input, I32Attr:$input_lane_width,
+                       I32Attr:$result_lane_width);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
 def NativeWordViewOp : ScheduleNativeOp<"word.view", [Pure, ViewLikeOpInterface]> {
   let summary = "view consecutive scalar array storage lanes as one packed word";
   let description = [{
