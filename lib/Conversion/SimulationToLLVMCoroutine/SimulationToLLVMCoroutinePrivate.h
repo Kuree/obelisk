@@ -3,6 +3,7 @@
 #ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 #define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
+#include "PackedStorageLayout.h"
 #include "SimulationProcessRuntimeABI.h"
 #include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
@@ -134,6 +135,7 @@ struct SignedI64Index {
 };
 
 struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
+  std::shared_ptr<const PackedStorageLayout> packedStorage;
   llvm::DenseSet<uint32_t> directHandles;
   llvm::DenseSet<uint32_t> guardedHandles;
   llvm::DenseSet<uint32_t> nbaHandles;
@@ -155,16 +157,23 @@ struct DirectStaticStateRange {
   uint32_t staticID;
   bool guarded;
   unsigned containerWidth = 0;
+  std::optional<PackedAccessUnit> accessUnit;
 };
 
-bool emitDirectDynamicPackedStore(mlir::ConversionPatternRewriter &rewriter,
-                                  mlir::Location location, mlir::Value handle,
-                                  mlir::Value value, mlir::Value unknown,
-                                  const NativeStateLayout *layout,
-                                  bool assumeClean, bool continuous,
-                                  bool twoState,
-                                  schedule::SourceOwnerAttr sourceOwner,
-                                  std::optional<uint32_t> inBoundsRoot = {});
+struct NativeStateAccessInfo {
+  uint32_t root;
+  bool inBounds;
+  // A typed element is contained whenever its enclosing index guards pass.
+  bool wholeOrInvalid;
+  std::optional<PackedAccessUnit> accessUnit;
+};
+
+bool emitDirectDynamicPackedStore(
+    mlir::ConversionPatternRewriter &rewriter, mlir::Location location,
+    mlir::Value handle, mlir::Value value, mlir::Value unknown,
+    const NativeStateLayout *layout, bool assumeClean, bool continuous,
+    bool twoState, schedule::SourceOwnerAttr sourceOwner,
+    const NativeStateAccessInfo *access = nullptr);
 
 /// Compiler-side field indices for obelisk_rt_native_schedule_plan. Keep all
 /// LLVM literal construction and aggregate access tied to one named layout.
@@ -405,7 +414,8 @@ void populateStateReadWriteToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState,
-    const llvm::DenseMap<mlir::Operation *, uint32_t> &inBoundsAccesses,
+    const llvm::DenseMap<mlir::Operation *, NativeStateAccessInfo>
+        &stateAccesses,
     const LocalStorageLowering *locals = nullptr);
 void annotateStaticDriverNets(mlir::ModuleOp module,
                               const NativeStateLayout &layout);
@@ -435,7 +445,7 @@ mlir::Value loadStatePlane(mlir::ConversionPatternRewriter &rewriter,
                            const NativeStateLayout *directLayout = nullptr,
                            mlir::Value guardedPermission = {},
                            bool assumeClean = false,
-                           std::optional<uint32_t> inBoundsRoot = {});
+                           const NativeStateAccessInfo *access = nullptr);
 mlir::Value storeStatePlane(mlir::ConversionPatternRewriter &rewriter,
                             mlir::Location location, mlir::Value handle,
                             mlir::Value input, llvm::StringRef globalName,
@@ -498,7 +508,8 @@ mlir::LogicalResult makeSchedulerMain(mlir::ModuleOp module,
                                       bool hasObserver);
 void declareNativeRuntimeABI(mlir::ModuleOp module);
 mlir::FailureOr<NativeStateLayout>
-buildNativeStateLayout(mlir::ModuleOp module);
+buildNativeStateLayout(mlir::ModuleOp module,
+                       const llvm::DataLayout &dataLayout);
 void materializeNativeStatePlanes(mlir::ModuleOp module,
                                   const NativeStateLayout &layout);
 

@@ -99,7 +99,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     handle = encodeStaticHandle(nextHandleID);
     layout.bounds.push_back({nextHandleID++, offset, *width, fourState,
                              std::move(managedRootOffsets),
-                             std::move(managedRootSlots), containerWidth});
+                             std::move(managedRootSlots), containerWidth,
+                             type});
     return success();
   };
   WalkResult walked = module.walk([&](Operation *operation) {

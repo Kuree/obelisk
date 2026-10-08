@@ -3,6 +3,7 @@
 #ifndef OBELISK_CONVERSION_SIMULATIONLOCALSTORAGELOWERING_H
 #define OBELISK_CONVERSION_SIMULATIONLOCALSTORAGELOWERING_H
 
+#include "PackedStorageLayout.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -39,6 +40,11 @@ public:
   bool isWholeAllocation(mlir::Value reference) const {
     return wholeAllocations.contains(reference);
   }
+  /// A complete native element owns its allocation padding. Packed field
+  /// views and references crossing unpacked elements do not have this proof.
+  bool isNativeObject(mlir::Value reference) const {
+    return nativeObjects.contains(reference);
+  }
   bool isMemoryValue(mlir::Value value) const {
     return memoryValues.contains(value);
   }
@@ -55,6 +61,11 @@ public:
   uint64_t getElementOffset(mlir::Value reference, mlir::Type type,
                             unsigned index) const;
   uint64_t getArrayStride(mlir::Value reference) const;
+  std::optional<PackedAccessUnit> getAccessUnit(mlir::Value reference) const {
+    auto found = accessUnits.find(reference);
+    return found == accessUnits.end() ? std::nullopt
+                                      : std::optional(found->second);
+  }
 
   const Slot *lookup(mlir::Value reference) const {
     auto found = references.find(reference);
@@ -63,11 +74,13 @@ public:
 
 private:
   llvm::DenseSet<mlir::Value> wholeAllocations;
+  llvm::DenseSet<mlir::Value> nativeObjects;
   llvm::DenseSet<mlir::Value> memoryValues;
   llvm::DenseSet<mlir::Value> borrowedValues;
   llvm::DenseSet<mlir::Value> nativeMemoryValues;
   llvm::DenseMap<mlir::Type, Layout> layouts;
   llvm::DenseMap<mlir::Value, unsigned> references;
+  llvm::DenseMap<mlir::Value, PackedAccessUnit> accessUnits;
   llvm::SmallVector<Slot> slots;
 };
 

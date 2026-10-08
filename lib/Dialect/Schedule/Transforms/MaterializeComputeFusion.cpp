@@ -44,6 +44,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMMATERIALIZECOMPUTEFUSIONPASS
+#define GEN_PASS_DEF_LOCALIZEPRIVATEEVALSTORAGEPASS
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
@@ -980,11 +981,13 @@ struct PrivateStaticAccessIndex {
     llvm::SmallDenseSet<uint64_t, 8> accesses;
     llvm::SmallDenseSet<uint64_t, 8> unsupported;
     SmallVector<std::pair<uint64_t, StringAttr>> spawns;
+    DenseMap<uint64_t, SmallVector<Value>> watches;
   };
   DenseMap<uint64_t, sim::SimStorageDeclOp> declarations;
   DenseMap<uint64_t, llvm::SmallPtrSet<Operation *, 2>> accessors;
   DenseMap<uint64_t, DenseMap<StringAttr, unsigned>> spawnTargets;
   DenseMap<uint64_t, unsigned> unsupportedUses;
+  DenseMap<uint64_t, DenseMap<Operation *, SmallVector<Value>>> watches;
   DenseMap<Operation *, FunctionFacts> contributions;
   bool hasWaveformObservers = false;
 
@@ -1025,6 +1028,12 @@ struct PrivateStaticAccessIndex {
       if (--uses->second == 0)
         unsupportedUses.erase(uses);
     }
+    for (const auto &[root, references] : found->second.watches) {
+      auto owners = watches.find(root);
+      owners->second.erase(function.getOperation());
+      if (owners->second.empty())
+        watches.erase(owners);
+    }
     for (auto [root, target] : found->second.spawns) {
       auto targets = spawnTargets.find(root);
       auto count = targets->second.find(target);
@@ -1053,12 +1062,25 @@ struct PrivateStaticAccessIndex {
                 sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(operation))
           return;
         auto spawn = dyn_cast<sim::SimSpawnOp>(operation);
-        for (Value operand : operation->getOperands()) {
+        for (OpOperand &use : operation->getOpOperands()) {
+          Value operand = use.get();
           if (!isa<sim::RefType>(operand.getType()))
             continue;
           auto root = resolveStorageRoot(operand);
           if (!root)
             continue;
+          // Watches of untouched bits need not prevent localizing disjoint
+          // writes. Record their references for a range proof at the use site;
+          // continuation operands and other identity consumers still escape.
+          bool watch =
+              isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation) &&
+              use.getOperandNumber() == 0;
+          if (auto any = dyn_cast<sim::SimSuspendAnyOp>(operation))
+            watch = use.getOperandNumber() < any.getWatched().size();
+          if (watch) {
+            facts.watches[*root].push_back(operand);
+            continue;
+          }
           if (!spawn) {
             facts.unsupported.insert(*root);
             continue;
@@ -1077,21 +1099,229 @@ struct PrivateStaticAccessIndex {
       accessors[root].insert(function.getOperation());
     for (uint64_t root : facts.unsupported)
       ++unsupportedUses[root];
+    for (const auto &[root, references] : facts.watches)
+      watches[root][function.getOperation()] = references;
     for (auto [root, target] : facts.spawns)
       ++spawnTargets[root][target];
     contributions.try_emplace(function.getOperation(), std::move(facts));
   }
 
-  bool isPrivateTo(uint64_t root, sim::SimFuncOp function) const {
+  bool isPrivateTo(uint64_t root, sim::SimFuncOp function,
+                   sim::SimFuncOp canonical = {},
+                   bool allowWatches = false) const {
     auto owners = accessors.find(root);
-    if (unsupportedUses.contains(root) || owners == accessors.end() ||
-        owners->second.size() != 1 ||
-        !owners->second.contains(function.getOperation()))
+    if (unsupportedUses.contains(root) ||
+        (!allowWatches && watches.contains(root)) ||
+        owners == accessors.end() ||
+        !owners->second.contains(function.getOperation()) ||
+        llvm::any_of(owners->second, [&](Operation *owner) {
+          return owner != function.getOperation() &&
+                 (!canonical || owner != canonical.getOperation());
+        }))
       return false;
     auto spawn = spawnTargets.find(root);
     return spawn == spawnTargets.end() ||
            (spawn->second.size() == 1 &&
-            spawn->second.contains(function.getSymNameAttr()));
+            spawn->second.contains(canonical ? canonical.getSymNameAttr()
+                                             : function.getSymNameAttr()));
+  }
+};
+
+/// Give activation-private aggregates typed local storage. The source may
+/// initialize elements in bounded loops, so a single dominating store is not
+/// sufficient to recognize these temporaries. Keep array/field views typed so
+/// local-storage lowering and LLVM SROA can use native element containers.
+uint64_t localizePrivateActivationStorage(
+    sim::SimFuncOp function, sim::SimFuncOp canonical,
+    const PrivateStaticAccessIndex &accessIndex,
+    DenseMap<Operation *, analysis::HandleFacts> &watchFacts) {
+  if (function.isExternal() || canonical.isExternal() ||
+      function
+          .walk([](Operation *op) {
+            return sim::isSuspensionOp(op) ||
+                           isa<sim::SimCallOp, sim::SimTaskCallOp,
+                               sim::SimClassDirectCallOp,
+                               sim::SimClassVirtualCallOp,
+                               sim::SimClassVirtualTaskCallOp,
+                               sim::SimDPICallOp, sim::SimSpawnOp>(op)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted())
+    return 0;
+  SmallVector<uint64_t> candidates;
+  DenseMap<uint64_t, SmallVector<Value>> references;
+  auto collect = [&](Value reference) {
+    auto root = resolveStorageRoot(reference);
+    if (!root || !isa<sim::RefType>(reference.getType()))
+      return;
+    auto declaration = accessIndex.declarations.lookup(*root);
+    if (!declaration ||
+        !accessIndex.isPrivateTo(*root, function, canonical, true) ||
+        (declaration.getLifetime() != sim::Lifetime::Static &&
+         declaration.getLifetime() != sim::Lifetime::Design) ||
+        declaration.getObservability() !=
+            schedule::ComputeObservabilityKind::Invisible ||
+        declaration->hasAttr(sim::metadata::coverageToggleObservable) ||
+        cast<sim::RefType>(reference.getType()).getElementType() !=
+            declaration.getType())
+      return;
+    auto width = sim::getProvenanceSpan(declaration.getType());
+    SmallVector<sim::ManagedHandleSlot> managed;
+    if (!sim::isAggregateType(declaration.getType()) || !width || !*width ||
+        *width > 32768 ||
+        !sim::getManagedHandleSlots(declaration.getType(), managed) ||
+        !managed.empty())
+      return;
+    if (!references.contains(*root))
+      candidates.push_back(*root);
+    references[*root].push_back(reference);
+  };
+  for (BlockArgument argument : function.getBody().front().getArguments())
+    collect(argument);
+  function.walk(
+      [&](sim::SimContextStorageOp storage) { collect(storage.getResult()); });
+  if (candidates.empty())
+    return 0;
+
+  analysis::HandleDataflowAnalysis handles(function);
+  analysis::ActivationMemoryAnalysis activation(function, handles);
+  if (!activation.isValid())
+    return 0;
+  // A later process instantiation can execute the canonical initial path
+  // again. Its reads must not depend on values whose stores the evaluator
+  // omits. The resumed evaluator accounts for the sole suspension edge.
+  unsigned suspensions = 0;
+  canonical.walk(
+      [&](Operation *op) { suspensions += sim::isSuspensionOp(op); });
+  if (suspensions != 1)
+    return 0;
+  analysis::HandleDataflowAnalysis canonicalHandles(canonical);
+  analysis::ActivationMemoryAnalysis initial(canonical, canonicalHandles);
+  if (!initial.isValid())
+    return 0;
+  DenseSet<uint64_t> liveIns;
+  for (const auto &range : activation.getLiveIns())
+    liveIns.insert(range.root);
+  for (const auto &range : initial.getLiveIns())
+    liveIns.insert(range.root);
+  DenseSet<uint64_t> written;
+  for (const auto &range : activation.getMayWrites())
+    written.insert(range.root);
+  auto facts = handles.derive(function);
+  uint64_t localized = 0;
+  for (uint64_t root : candidates) {
+    if (liveIns.contains(root) || !written.contains(root))
+      continue;
+    // Keep every existing watch. No canonical bit it can observe may be
+    // written by the localized activation. In particular, a fused matrix
+    // may watch its untouched diagonal while using only off-diagonal cells.
+    bool disjoint = true;
+    if (auto watched = accessIndex.watches.find(root);
+        watched != accessIndex.watches.end())
+      for (const auto &[owner, references] : watched->second) {
+        auto [it, inserted] = watchFacts.try_emplace(owner);
+        if (inserted)
+          it->second = analysis::deriveHandleFacts(cast<sim::SimFuncOp>(owner));
+        for (Value reference : references) {
+          auto fact = it->second.find(reference);
+          if (fact == it->second.end() || !fact->second.descriptor ||
+              *fact->second.descriptor != root || fact->second.dynamic ||
+              fact->second.resource != schedule::ComputeResourceKind::Storage ||
+              !fact->second.width ||
+              fact->second.low > fact->second.rootWidth ||
+              fact->second.width > fact->second.rootWidth - fact->second.low) {
+            disjoint = false;
+            break;
+          }
+          for (const auto &write : activation.getMayWrites())
+            if (write.root == root &&
+                write.low < fact->second.low + fact->second.width &&
+                fact->second.low < write.low + write.width)
+              disjoint = false;
+        }
+      }
+    if (!disjoint)
+      continue;
+    if (!llvm::all_of(references[root], [&](Value reference) {
+          auto fact = facts.find(reference);
+          return fact != facts.end() && !fact->second.dynamic &&
+                 fact->second.low == 0 &&
+                 fact->second.width == fact->second.rootWidth;
+        }))
+      continue;
+    auto declaration = accessIndex.declarations.lookup(root);
+    OpBuilder builder(function.getContext());
+    builder.setInsertionPointToStart(&function.getBody().front());
+    Value initial = sim::SimAggregateDefaultOp::create(
+        builder, declaration.getLoc(), declaration.getType());
+    auto local = sim::SimRefAllocOp::create(
+        builder, declaration.getLoc(),
+        sim::RefType::get(function.getContext(), declaration.getType()),
+        initial);
+    SmallVector<std::pair<OpOperand *, Value>> uses;
+    for (Value reference : references[root])
+      for (OpOperand &use : reference.getUses())
+        uses.emplace_back(&use, reference);
+    for (auto [use, original] : uses)
+      use->set(local.getResult());
+    // Use the lowering's reference-family proof as well as the memory proof.
+    // A tagged-union view or clipped dynamic slice may require runtime-owned
+    // storage even when the value is activation-private.
+    analysis::LocalStorageAnalysis locals(function);
+    if (!locals.lookup(local.getResult())) {
+      for (auto [use, original] : uses)
+        use->set(original);
+      local.erase();
+      if (initial.use_empty())
+        initial.getDefiningOp()->erase();
+      continue;
+    }
+    ++localized;
+  }
+  return localized;
+}
+
+uint64_t localizePrivateEvalStorage(sim::SimDesignOp design) {
+  PrivateStaticAccessIndex accessIndex(design);
+  if (accessIndex.hasWaveformObservers)
+    return 0;
+  SymbolTable symbols(design);
+  DenseMap<Operation *, analysis::HandleFacts> watchFacts;
+  uint64_t localized = 0;
+  for (sim::SimFuncOp canonical :
+       design.getBody().front().getOps<sim::SimFuncOp>())
+    if (auto body = schedule::get<schedule::Field::EvalBody>(canonical))
+      if (auto function = symbols.lookup<sim::SimFuncOp>(body.getValue());
+          function &&
+          schedule::has<schedule::Field::EvalBorrowedCaptures>(function))
+        localized += localizePrivateActivationStorage(function, canonical,
+                                                      accessIndex, watchFacts);
+  return localized;
+}
+
+class LocalizePrivateEvalStoragePass final
+    : public impl::LocalizePrivateEvalStoragePassBase<
+          LocalizePrivateEvalStoragePass> {
+  Statistic localizedRoots{this, "localized-roots",
+                           "Private roots moved to invocation storage"};
+
+  void runOnOperation() final {
+    uint64_t changed = localizePrivateEvalStorage(getOperation());
+    localizedRoots += changed;
+    if (!changed) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    // The canonical actor and its continuation identity are unchanged. Only
+    // the evaluator's storage effects need to be recomputed.
+    getOperation().walk([](sim::SimFuncOp function) {
+      if (schedule::has<schedule::Field::EvalBorrowedCaptures>(function)) {
+        function.removeEffectSummaryAttr();
+        function.removeFragmentAbiAttr();
+      }
+    });
+    getOperation().removeComputeGraphAttr();
   }
 };
 

@@ -4,6 +4,7 @@
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/DataLayout.h"
 
 #include <map>
 
@@ -11,7 +12,8 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
-FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
+FailureOr<NativeStateLayout>
+buildNativeStateLayout(ModuleOp module, const llvm::DataLayout &dataLayout) {
   FailureOr<analysis::NativeStateLayoutAnalysis> analyzed =
       analysis::NativeStateLayoutAnalysis::compute(module);
   if (failed(analyzed))
@@ -19,6 +21,8 @@ FailureOr<NativeStateLayout> buildNativeStateLayout(ModuleOp module) {
   NativeStateLayout layout;
   static_cast<analysis::NativeStateLayoutAnalysis &>(layout) =
       std::move(*analyzed);
+  layout.packedStorage =
+      std::make_shared<PackedStorageLayout>(module, dataLayout);
   return layout;
 }
 

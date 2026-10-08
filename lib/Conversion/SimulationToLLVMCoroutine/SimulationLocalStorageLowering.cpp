@@ -5,6 +5,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Target/LLVMIR/TypeToLLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
@@ -20,54 +21,49 @@ namespace obelisk::detail {
 LocalStorageLowering::LocalStorageLowering(
     ArrayRef<Operation *> functions, const llvm::DataLayout &targetLayout,
     const DenseSet<Value> &byteAddressableState) {
-  llvm::DataLayout dataLayout(targetLayout.getStringRepresentation());
+  // LLVM caches StructLayouts by LLVM type identity. Each conversion worker
+  // owns its LLVMContext, so give it a private cache as well; copy the already
+  // validated target layout rather than reparsing its string representation.
+  llvm::DataLayout dataLayout(targetLayout);
   // Unpacked aggregates use the target's ordinary array/record layout. Packed
   // values remain indivisible bitfields, preserving their source bit order.
   llvm::LLVMContext llvmContext;
-  DenseMap<Type, llvm::Type *> backendTypes;
-  auto buildLayout = [&](Type type, auto &buildLayout) -> llvm::Type * {
-    if (auto found = backendTypes.find(type); found != backendTypes.end())
-      return found->second;
-    llvm::Type *backend;
+  LLVM::TypeToLLVMIRTranslator translator(llvmContext);
+  auto buildLayout = [&](Type type, auto &buildLayout) -> Type {
+    if (auto found = layouts.find(type); found != layouts.end())
+      return found->second.type;
     Type storage;
     SmallVector<uint64_t> offsets;
     if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
       auto child = buildLayout(array.getElementType(), buildLayout);
       auto count = sim::getAggregateNumElements(type);
-      backend = llvm::ArrayType::get(child, count);
-      storage = LLVM::LLVMArrayType::get(getLayout(array.getElementType()).type,
-                                         count);
-      uint64_t stride = dataLayout.getTypeAllocSize(child).getFixedValue();
+      storage = LLVM::LLVMArrayType::get(child, count);
+      uint64_t stride = getLayout(array.getElementType()).bytes;
       for (unsigned i = 0; i != count; ++i)
         offsets.push_back(i * stride);
     } else if (isa<sim::UnpackedStructType>(type)) {
-      SmallVector<llvm::Type *> fields;
       SmallVector<Type> fieldTypes;
       for (unsigned i = 0; i != sim::getAggregateNumElements(type); ++i) {
         Type child = sim::getAggregateElementType(type, i);
-        fields.push_back(buildLayout(child, buildLayout));
-        fieldTypes.push_back(getLayout(child).type);
+        fieldTypes.push_back(buildLayout(child, buildLayout));
       }
-      auto record = llvm::StructType::get(llvmContext, fields);
-      backend = record;
       storage = LLVM::LLVMStructType::getLiteral(type.getContext(), fieldTypes);
-      const llvm::StructLayout *recordLayout =
-          dataLayout.getStructLayout(record);
-      for (unsigned i = 0; i != fields.size(); ++i)
+      const llvm::StructLayout *recordLayout = dataLayout.getStructLayout(
+          cast<llvm::StructType>(translator.translateType(storage)));
+      for (unsigned i = 0; i != fieldTypes.size(); ++i)
         offsets.push_back(recordLayout->getElementOffset(i));
     } else {
       unsigned width = *nativeStateWidth(type);
-      backend = llvm::IntegerType::get(llvmContext, width);
       storage = IntegerType::get(type.getContext(), width);
     }
+    llvm::Type *backend = translator.translateType(storage);
     layouts.try_emplace(
         type,
         Layout{
             storage, dataLayout.getTypeAllocSize(backend).getFixedValue(),
             static_cast<unsigned>(dataLayout.getABITypeAlign(backend).value()),
             std::move(offsets)});
-    backendTypes.try_emplace(type, backend);
-    return backend;
+    return storage;
   };
   for (Operation *operation : functions) {
     auto function = cast<sim::SimFuncOp>(operation);
@@ -184,8 +180,76 @@ LocalStorageLowering::LocalStorageLowering(
       slots.push_back({allocate(), containsLogic(type) ? allocate() : Value{},
                        bytes * 8, native});
     });
-    for (auto [reference, allocation] : analysis.getReferences())
+    for (auto [reference, allocation] : analysis.getReferences()) {
       references.try_emplace(reference, allocations.lookup(allocation));
+      if (flatViews.contains(allocation))
+        continue;
+      Value current = roots.lookup(reference);
+      llvm::SmallDenseSet<Value, 8> visited;
+      while (current != allocation.getResult() &&
+             visited.insert(current).second) {
+        if (auto element = current.getDefiningOp<sim::SimRefArrayElementOp>()) {
+          if (!isa<sim::UnpackedArrayType>(
+                  element.getInput().getType().getElementType()))
+            break;
+          current = roots.lookup(element.getInput());
+          continue;
+        }
+        if (auto field = current.getDefiningOp<sim::SimRefSubelementOp>()) {
+          Type type = field.getInput().getType().getElementType();
+          bool unpacked = true;
+          for (int64_t index : field.getIndices()) {
+            unpacked &=
+                isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type);
+            type = sim::getAggregateElementType(type, index);
+          }
+          if (!unpacked)
+            break;
+          current = roots.lookup(field.getInput());
+          continue;
+        }
+        break;
+      }
+      if (current == allocation.getResult())
+        nativeObjects.insert(reference);
+    }
+    PackedStorageLayout packed(function->getParentOfType<ModuleOp>(),
+                               dataLayout);
+    for (auto [reference, allocation] : analysis.getReferences()) {
+      if (flatViews.contains(allocation))
+        continue;
+      // Plan against the typed reference graph before conversion erases it.
+      // A native packed object starts at a byte boundary, including a dynamic
+      // element of an unpacked array. Constant packed subviews share its units.
+      Value current = roots.lookup(reference);
+      uint64_t offset = 0;
+      unsigned width = *nativeStateWidth(
+          cast<sim::RefType>(reference.getType()).getElementType());
+      llvm::SmallDenseSet<Value, 8> visited;
+      while (current && visited.insert(current).second) {
+        Type type = cast<sim::RefType>(current.getType()).getElementType();
+        if (isNativeObject(current)) {
+          if (isa<sim::PackedStructType>(type))
+            if (auto unit = packed.get(type, 0, offset, width))
+              accessUnits.try_emplace(reference, *unit);
+          break;
+        }
+        if (auto field = current.getDefiningOp<sim::SimRefSubelementOp>()) {
+          Type parent = field.getInput().getType().getElementType();
+          for (int64_t index : field.getIndices()) {
+            offset += getElementOffset(field.getInput(), parent, index);
+            parent = sim::getAggregateElementType(parent, index);
+          }
+          current = roots.lookup(field.getInput());
+        } else if (auto extract =
+                       current.getDefiningOp<sim::SimRefExtractOp>()) {
+          offset += extract.getLowBit();
+          current = roots.lookup(extract.getInput());
+        } else {
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -226,16 +290,30 @@ struct Window {
   IntegerType spanType;
 };
 Window getWindow(ConversionPatternRewriter &rewriter, Location location,
-                 Value offset, unsigned width) {
+                 Value offset, unsigned width, unsigned containerWidth = 0,
+                 std::optional<PackedAccessUnit> unit = {}) {
   auto i64 = rewriter.getI64Type();
   Value zero = llvmConstant(rewriter, location, i64, 0);
   Value valid = rewriter.createOrFold<arith::CmpIOp>(
       location, arith::CmpIPredicate::ne, offset,
       llvmConstant(rewriter, location, i64, UINT64_MAX));
+  if (unit && !containerWidth)
+    offset = rewriter.createOrFold<arith::SubIOp>(
+        location, offset,
+        llvmConstant(rewriter, location, i64, unit->bitOffset));
   offset =
       rewriter.createOrFold<arith::SelectOp>(location, valid, offset, zero);
   Value byte = arith::ShRUIOp::create(rewriter, location, offset,
                                       llvmConstant(rewriter, location, i64, 3));
+  if (containerWidth) {
+    auto span = rewriter.getIntegerType(containerWidth);
+    return {byte, llvmConstant(rewriter, location, span, 0), valid, span};
+  }
+  if (unit) {
+    auto span = rewriter.getIntegerType(unit->width);
+    return {byte, llvmConstant(rewriter, location, span, unit->bitOffset),
+            valid, span};
+  }
   Value bit = arith::AndIOp::create(rewriter, location, offset,
                                     llvmConstant(rewriter, location, i64, 7));
   APInt knownOffset;
@@ -296,7 +374,9 @@ Value addOffset(ConversionPatternRewriter &rewriter, Location location,
 
 Value loadPlane(ConversionPatternRewriter &rewriter, Location location,
                 Value base, Value offset, Type type,
-                const LocalStorageLowering &locals, bool native) {
+                const LocalStorageLowering &locals, bool native,
+                bool wholeObject = false,
+                std::optional<PackedAccessUnit> unit = {}) {
   auto resultType = rewriter.getIntegerType(*nativeStateWidth(type));
   Value result = llvmConstant(rewriter, location, resultType, 0);
   visitLeaves(
@@ -305,7 +385,12 @@ Value loadPlane(ConversionPatternRewriter &rewriter, Location location,
         auto plane = rewriter.getIntegerType(*nativeStateWidth(leaf));
         Window window = getWindow(
             rewriter, location, addOffset(rewriter, location, offset, physical),
-            plane.getWidth());
+            plane.getWidth(),
+            native && wholeObject && plane.getWidth() <= 64 &&
+                    locals.getLayout(leaf).bytes <= 8
+                ? locals.getLayout(leaf).bytes * 8
+                : 0,
+            unit);
         Value value = loadWindow(rewriter, location, base, window, plane);
         value = resizeNativeInteger(rewriter, location, value, resultType);
         if (logical)
@@ -319,7 +404,9 @@ Value loadPlane(ConversionPatternRewriter &rewriter, Location location,
 
 void storePlane(ConversionPatternRewriter &rewriter, Location location,
                 Value base, Value offset, Type type, Value input,
-                const LocalStorageLowering &locals, bool native) {
+                const LocalStorageLowering &locals, bool native,
+                bool wholeObject = false,
+                std::optional<PackedAccessUnit> unit = {}) {
   if (isa<FloatType>(input.getType()))
     input = arith::BitcastOp::create(
         rewriter, location, rewriter.getIntegerType(*nativeStateWidth(type)),
@@ -328,9 +415,13 @@ void storePlane(ConversionPatternRewriter &rewriter, Location location,
       type, locals, native, 0, 0,
       [&](Type leaf, uint64_t logical, uint64_t physical) {
         unsigned width = *nativeStateWidth(leaf);
-        Window window =
-            getWindow(rewriter, location,
-                      addOffset(rewriter, location, offset, physical), width);
+        unsigned containerWidth = native && wholeObject && width <= 64 &&
+                                          locals.getLayout(leaf).bytes <= 8
+                                      ? locals.getLayout(leaf).bytes * 8
+                                      : 0;
+        Window window = getWindow(
+            rewriter, location, addOffset(rewriter, location, offset, physical),
+            width, containerWidth, unit);
         Value value = input;
         if (logical)
           value = rewriter.createOrFold<arith::ShRUIOp>(
@@ -339,6 +430,20 @@ void storePlane(ConversionPatternRewriter &rewriter, Location location,
         value = resizeNativeInteger(rewriter, location, value,
                                     rewriter.getIntegerType(width));
         value = resizeNativeInteger(rewriter, location, value, window.spanType);
+        if (containerWidth) {
+          // This is the complete native element, including its owned padding.
+          // A packed field view cannot use this path. Preserve invalid-index
+          // semantics; LLVM removes the old load when validity is proved.
+          Value address = windowAddress(rewriter, location, base, window);
+          if (!matchPattern(window.valid, m_One())) {
+            Value old = LLVM::LoadOp::create(rewriter, location,
+                                             window.spanType, address, 1);
+            value = rewriter.createOrFold<arith::SelectOp>(
+                location, window.valid, value, old);
+          }
+          LLVM::StoreOp::create(rewriter, location, value, address, 1);
+          return;
+        }
         Value mask = arith::ConstantOp::create(
             rewriter, location, window.spanType,
             rewriter.getIntegerAttr(
@@ -452,7 +557,7 @@ public:
       }
       storePlane(rewriter, op.getLoc(), address, zero,
                  op.getInitialValue().getType(), value, locals,
-                 slot->nativeLayout);
+                 slot->nativeLayout, true);
     };
     initialize(slot->value, adaptor.getInitialValue().front());
     if (slot->unknown)
@@ -518,14 +623,18 @@ public:
     auto plane = rewriter.getIntegerType(*nativeStateWidth(type));
     auto window = getWindow(rewriter, location, adaptor.getReference().front(),
                             plane.getWidth());
-    Value value = loadPlane(rewriter, location, slot->value,
-                            adaptor.getReference().front(), type, locals,
-                            slot->nativeLayout);
+    Value value = loadPlane(
+        rewriter, location, slot->value, adaptor.getReference().front(), type,
+        locals, slot->nativeLayout, locals.isNativeObject(op.getReference()),
+        locals.getAccessUnit(op.getReference()));
     Value zero = llvmConstant(rewriter, location, plane, 0);
-    Value unknown = slot->unknown ? loadPlane(rewriter, location, slot->unknown,
-                                              adaptor.getReference().front(),
-                                              type, locals, slot->nativeLayout)
-                                  : zero;
+    Value unknown = slot->unknown
+                        ? loadPlane(rewriter, location, slot->unknown,
+                                    adaptor.getReference().front(), type,
+                                    locals, slot->nativeLayout,
+                                    locals.isNativeObject(op.getReference()),
+                                    locals.getAccessUnit(op.getReference()))
+                        : zero;
     if (!containsLogic(type) && slot->unknown) {
       Value known = arith::XOrIOp::create(
           rewriter, location, unknown,
@@ -585,7 +694,9 @@ public:
       return success();
     }
     storePlane(rewriter, location, slot->value, adaptor.getReference().front(),
-               type, adaptor.getValue().front(), locals, slot->nativeLayout);
+               type, adaptor.getValue().front(), locals, slot->nativeLayout,
+               locals.isNativeObject(op.getReference()),
+               locals.getAccessUnit(op.getReference()));
     if (slot->unknown) {
       Value unknown =
           adaptor.getValue().size() == 2
@@ -595,7 +706,8 @@ public:
                              0);
       storePlane(rewriter, location, slot->unknown,
                  adaptor.getReference().front(), type, unknown, locals,
-                 slot->nativeLayout);
+                 slot->nativeLayout, locals.isNativeObject(op.getReference()),
+                 locals.getAccessUnit(op.getReference()));
     }
     rewriter.eraseOp(op);
     return success();

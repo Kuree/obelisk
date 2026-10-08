@@ -1195,7 +1195,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
   }
   if (failed(prepareManagedLowering(module, dataLayout)))
     return failure();
-  stateLayout = buildNativeStateLayout(module);
+  stateLayout = buildNativeStateLayout(module, dataLayout);
   if (failed(stateLayout))
     return failure();
   auto embeddedStateBits =

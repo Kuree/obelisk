@@ -2167,12 +2167,15 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
     if (!allocation || allocation.getPromotableSlots().empty())
       return failure();
     Type rootType = allocation.getResult().getType().getElementType();
-    // Whole-value promotion is cheap for a word. Larger arrays retain their
-    // indexed accesses for native stack lowering and LLVM scalar replacement.
+    // Whole-value promotion is cheap for a word with static selections.
+    // Dynamic unpacked elements should retain native element storage: turning
+    // an array of small elements into an integer recreates bit packing on
+    // every indexed update, even when the complete array fits in a word.
     auto width = getProvenanceSpan(rootType);
     if (!width)
       return failure();
     bool needsClipping = false;
+    bool dynamicUnpackedElement = false;
     SmallVector<Value> pending{allocation.getResult()};
     llvm::SmallDenseSet<Value, 8> visited;
     while (!pending.empty()) {
@@ -2185,6 +2188,11 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
         if (isa<SimRefArrayElementOp, SimRefSubelementOp, SimRefExtractOp,
                 SimRefDynExtractOp>(user)) {
           needsClipping |= isa<SimRefDynExtractOp>(user);
+          if (auto element = dyn_cast<SimRefArrayElementOp>(user))
+            dynamicUnpackedElement |=
+                isa<UnpackedArrayType>(
+                    element.getInput().getType().getElementType()) &&
+                !matchPattern(element.getIndex(), m_Constant());
           if (auto field = dyn_cast<SimRefSubelementOp>(user)) {
             Type type = field.getInput().getType().getElementType();
             for (int64_t index : field.getIndices()) {
@@ -2223,7 +2231,7 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
         return failure();
       }
     }
-    if (*width > 64 && !needsClipping)
+    if ((*width > 64 || dynamicUnpackedElement) && !needsClipping)
       return failure();
     SmallVector<Operation *> accesses;
     SmallVector<Operation *> selectedViews;

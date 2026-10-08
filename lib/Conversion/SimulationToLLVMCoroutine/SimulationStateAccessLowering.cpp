@@ -304,26 +304,24 @@ public:
 
 class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
 public:
-  RefLoadConversion(const TypeConverter &converter, MLIRContext *context,
-                    uint64_t stateBitCount,
-                    const NativeStateLayout *directLayout,
-                    bool experimentalTwoState,
-                    const DenseMap<Operation *, uint32_t> &inBoundsAccesses,
-                    const LocalStorageLowering *locals)
+  RefLoadConversion(
+      const TypeConverter &converter, MLIRContext *context,
+      uint64_t stateBitCount, const NativeStateLayout *directLayout,
+      bool experimentalTwoState,
+      const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
+      const LocalStorageLowering *locals)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState),
-        inBoundsAccesses(inBoundsAccesses), locals(locals) {}
+        stateAccesses(stateAccesses), locals(locals) {}
 
   LogicalResult
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = op.getResult().getType();
     bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
-    auto proof = inBoundsAccesses.find(op);
-    std::optional<uint32_t> inBoundsRoot =
-        proof == inBoundsAccesses.end()
-            ? std::nullopt
-            : std::optional<uint32_t>(proof->second);
+    auto proof = stateAccesses.find(op);
+    const NativeStateAccessInfo *access =
+        proof == stateAccesses.end() ? nullptr : &proof->second;
     std::optional<unsigned> width = nativeStateWidth(resultType);
     if (!width || adaptor.getReference().size() != 1)
       return failure();
@@ -370,22 +368,21 @@ public:
         range && range->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
           rewriter, op.getLoc(), range->staticID, OBELISK_RT_STATIC_ROOT_READ);
-    Value value = loadStatePlane(
-        rewriter, op.getLoc(), adaptor.getReference().front(), plane,
-        "__obelisk_state_value", false, stateBitCount, directLayout,
-        guardedPermission, assumeClean, inBoundsRoot);
+    Value value =
+        loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
+                       plane, "__obelisk_state_value", false, stateBitCount,
+                       directLayout, guardedPermission, assumeClean, access);
     if (isa<FloatType>(resultType))
       value =
           arith::BitcastOp::create(rewriter, op.getLoc(), resultType, value);
     SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
       Value unknown =
-          twoState
-              ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-              : loadStatePlane(
-                    rewriter, op.getLoc(), adaptor.getReference().front(),
-                    plane, "__obelisk_state_unknown", true, stateBitCount,
-                    directLayout, guardedPermission, assumeClean, inBoundsRoot);
+          twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                   : loadStatePlane(
+                         rewriter, op.getLoc(), adaptor.getReference().front(),
+                         plane, "__obelisk_state_unknown", true, stateBitCount,
+                         directLayout, guardedPermission, assumeClean, access);
       converted.push_back(unknown);
     }
     SmallVector<ValueRange> replacements{ValueRange(converted)};
@@ -397,22 +394,22 @@ private:
   uint64_t stateBitCount;
   const NativeStateLayout *directLayout;
   bool experimentalTwoState;
-  const DenseMap<Operation *, uint32_t> &inBoundsAccesses;
+  const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses;
   const LocalStorageLowering *locals;
 };
 
 class RefStoreConversion final
     : public OpConversionPattern<sim::SimRefStoreOp> {
 public:
-  RefStoreConversion(const TypeConverter &converter, MLIRContext *context,
-                     uint64_t stateBitCount,
-                     const NativeStateLayout *directLayout,
-                     bool experimentalTwoState,
-                     const DenseMap<Operation *, uint32_t> &inBoundsAccesses,
-                     const LocalStorageLowering *)
+  RefStoreConversion(
+      const TypeConverter &converter, MLIRContext *context,
+      uint64_t stateBitCount, const NativeStateLayout *directLayout,
+      bool experimentalTwoState,
+      const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
+      const LocalStorageLowering *)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState),
-        inBoundsAccesses(inBoundsAccesses) {
+        stateAccesses(stateAccesses) {
     setHasBoundedRewriteRecursion();
   }
 
@@ -423,11 +420,9 @@ public:
       return failure();
     Type valueType = op.getValue().getType();
     bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
-    auto proof = inBoundsAccesses.find(op);
-    std::optional<uint32_t> inBoundsRoot =
-        proof == inBoundsAccesses.end()
-            ? std::nullopt
-            : std::optional<uint32_t>(proof->second);
+    auto proof = stateAccesses.find(op);
+    const NativeStateAccessInfo *access =
+        proof == stateAccesses.end() ? nullptr : &proof->second;
     std::optional<unsigned> width = nativeStateWidth(valueType);
     if (!width)
       return failure();
@@ -560,7 +555,7 @@ public:
             adaptor.getValue().size() == 2 ? adaptor.getValue()[1] : Value{},
             directLayout, assumeClean, continuous, twoState,
             ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op),
-            inBoundsRoot)) {
+            access)) {
       rewriter.eraseOp(op);
       return success();
     }
@@ -584,15 +579,16 @@ public:
     Value oldValue =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                        plane, "__obelisk_state_value", false, stateBitCount,
-                       directLayout, guardedPermission, assumeClean);
+                       directLayout, guardedPermission, assumeClean, access);
     Value oldUnknown;
     if (containsLogic(valueType))
-      oldUnknown = twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                            : loadStatePlane(rewriter, op.getLoc(),
-                                             adaptor.getReference().front(),
-                                             plane, "__obelisk_state_unknown",
-                                             true, stateBitCount, directLayout,
-                                             guardedPermission, assumeClean);
+      oldUnknown = twoState
+                       ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                       : loadStatePlane(rewriter, op.getLoc(),
+                                        adaptor.getReference().front(), plane,
+                                        "__obelisk_state_unknown", true,
+                                        stateBitCount, directLayout,
+                                        guardedPermission, assumeClean, access);
     Value notificationValue = storedValue;
     Value notificationUnknown = adaptor.getValue().size() == 2 && !twoState
                                     ? adaptor.getValue()[1]
@@ -650,15 +646,15 @@ public:
       notificationValue =
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
                          plane, "__obelisk_state_value", false, stateBitCount,
-                         directLayout, guardedPermission, assumeClean);
+                         directLayout, guardedPermission, assumeClean, access);
       if (containsLogic(valueType))
         notificationUnknown =
-            twoState
-                ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                : loadStatePlane(rewriter, op.getLoc(),
-                                 adaptor.getReference().front(), plane,
-                                 "__obelisk_state_unknown", true, stateBitCount,
-                                 directLayout, guardedPermission, assumeClean);
+            twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
+                     : loadStatePlane(rewriter, op.getLoc(),
+                                      adaptor.getReference().front(), plane,
+                                      "__obelisk_state_unknown", true,
+                                      stateBitCount, directLayout,
+                                      guardedPermission, assumeClean, access);
     }
     if (isa<FloatType>(valueType)) {
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -703,7 +699,7 @@ private:
   uint64_t stateBitCount;
   const NativeStateLayout *directLayout;
   bool experimentalTwoState;
-  const DenseMap<Operation *, uint32_t> &inBoundsAccesses;
+  const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses;
 };
 
 class NetReadConversion final : public OpConversionPattern<sim::SimNetReadOp> {
@@ -1047,7 +1043,7 @@ void populateStateReadWriteToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState,
-    const DenseMap<Operation *, uint32_t> &inBoundsAccesses,
+    const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
     const LocalStorageLowering *locals) {
   patterns.add<KnownValueConversion>(converter, patterns.getContext());
   patterns.add<BulkRefCopyConversion>(converter, patterns.getContext(),
@@ -1055,7 +1051,7 @@ void populateStateReadWriteToLLVMConversionPatterns(
                                       experimentalTwoState);
   patterns.add<RefLoadConversion, RefStoreConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
-      experimentalTwoState, inBoundsAccesses, locals);
+      experimentalTwoState, stateAccesses, locals);
   patterns.add<NetReadConversion, DriverReadConversion, NetWriteConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);

@@ -541,6 +541,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     }
     designManager.addPass(
         createObeliskSimInlinePass(std::move(fusedInlineOptions)));
+    designManager.addPass(createLocalizePrivateEvalStoragePass());
     ObeliskSimBuildComputeGraphPassOptions fusedGraphOptions;
     fusedGraphOptions.workers = workers;
     fusedGraphOptions.vpi = vpiMode.str();

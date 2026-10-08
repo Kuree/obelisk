@@ -222,7 +222,9 @@ module attributes {
 // CHECK: llvm.icmp "sge"
 // CHECK: llvm.icmp "sle"
 // CHECK: llvm.and
-// CHECK: llvm.load {{.*}} : !llvm.ptr -> i16
+// A complete element can select from the native word owning this 64-bit root.
+// CHECK: llvm.load {{.*}} : !llvm.ptr -> i64
+// CHECK: llvm.lshr
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_handle_offset
 // CHECK: llvm.return

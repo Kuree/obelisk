@@ -16,7 +16,8 @@
 // beneath an invalid/unknown outer selection must retain their fallbacks.
 // CHECK: copied=1 narrow=1 exit=xxxxxxxxxxxxxxxx unchanged=1
 // Bounds proofs remove handle-overflow checks on the body read and both wide
-// and narrow writes. The loop exit still needs the checked fallback.
+// and narrow writes. At loop exit, retain the array index guard and invalid
+// read value, without duplicating clipped-slice/handle-overflow checks.
 // BOUNDS-LABEL: llvm.func @copy(
 // BOUNDS-NOT: 2147483647
 // BOUNDS: llvm.load {{.*}} -> i8
@@ -24,7 +25,11 @@
 // BOUNDS: llvm.store {{.*}} : i8, !llvm.ptr
 // BOUNDS-NOT: 2147483647
 // BOUNDS: llvm.store {{.*}} : i64, !llvm.ptr
-// BOUNDS: 2147483647
+// BOUNDS-NOT: 2147483647
+// BOUNDS: llvm.cond_br
+// BOUNDS-NOT: 2147483647
+// BOUNDS: llvm.load {{.*}} -> i64
+// BOUNDS: llvm.return
 // BOUNDS-LABEL: llvm.func @invalid_parent(
 // BOUNDS: 2147483647
 !word = !simulation.packed_array<63 : 0 x !simulation.logic<1>>

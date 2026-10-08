@@ -152,6 +152,20 @@ def ObeliskSimMaterializeComputeFusionPass
   ];
 }
 
+def LocalizePrivateEvalStoragePass
+    : Pass<"schedule-localize-private-eval-storage",
+           "obelisk::sim::SimDesignOp"> {
+  let summary = "Localize private evaluator storage with no incoming values";
+  let description = [{
+    After evaluator cloning and inlining, prove exclusive storage ownership and
+    write-before-read coverage within each invocation. Replace eligible roots
+    with typed local allocations while retaining canonical coroutine storage.
+    Rebuild the compute graph after changing evaluator memory effects.
+  }];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                          "mlir::arith::ArithDialect"];
+}
+
 def ObeliskSimOptimizeNativeRegionsPass
     : Pass<"obelisk-sim-optimize-native-regions",
            "obelisk::sim::SimDesignOp"> {

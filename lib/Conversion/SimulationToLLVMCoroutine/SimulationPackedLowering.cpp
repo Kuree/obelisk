@@ -81,7 +81,7 @@ bool hasNoLogic(Operation *operation) {
 
 void fuseWideDynamicRefCopies(
     ModuleOp module, DenseSet<Operation *> &nativeTwoStateOperations,
-    DenseMap<Operation *, uint32_t> &inBoundsAccesses) {
+    DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses) {
   SmallVector<std::pair<sim::SimRefLoadOp, sim::SimRefStoreOp>> copies;
   DenseMap<Operation *, std::unique_ptr<analysis::LocalStorageAnalysis>> locals;
   module.walk([&](sim::SimRefStoreOp store) {
@@ -117,8 +117,8 @@ void fuseWideDynamicRefCopies(
     if (::obelisk::schedule::has<assumeCleanSpecializationAttr>(load))
       copy->setAttr(bulkCopySourceAssumeCleanAttr, rewriter.getUnitAttr());
     nativeTwoStateOperations.erase(load.getOperation());
-    inBoundsAccesses.erase(load);
-    inBoundsAccesses.erase(store);
+    stateAccesses.erase(load);
+    stateAccesses.erase(store);
     rewriter.eraseOp(store);
     rewriter.eraseOp(load);
   }
@@ -293,7 +293,7 @@ LogicalResult lowerPackedSimulationOperations(
   // Keep selector proofs separate from value-domain proofs: a known index
   // does not imply that the selected four-state data is known. This snapshot
   // is consumed by the access patterns before their source ops are erased.
-  DenseMap<Operation *, uint32_t> inBoundsAccesses;
+  DenseMap<Operation *, NativeStateAccessInfo> stateAccesses;
   DenseSet<Value> byteAddressableState;
   uint64_t stateDomainFunctionLimit = std::numeric_limits<uint64_t>::max();
   auto optimizationLevel =
@@ -378,21 +378,43 @@ LogicalResult lowerPackedSimulationOperations(
         auto fact = provenance.find(reference);
         auto proof = handles.certificates.find(reference);
         if (fact == provenance.end() || proof == handles.certificates.end() ||
-            !fact->second.descriptor || !proof->second.inBounds ||
+            !fact->second.descriptor ||
             fact->second.resource != schedule::ComputeResourceKind::Storage)
           return;
         auto root = stateLayout.storage.find(*fact->second.descriptor);
         auto offset = stateLayout.storageOffsets.find(*fact->second.descriptor);
-        if (proof->second.constantAddress && !fact->second.dynamic &&
-            !proof->second.clipped &&
+        if (proof->second.inBounds && proof->second.constantAddress &&
+            !fact->second.dynamic && !proof->second.clipped &&
             offset != stateLayout.storageOffsets.end() &&
             (offset->second + fact->second.low) % 8 == 0)
           byteAddressableState.insert(reference);
         obelisk_rt_stable_handle_v1 decoded{};
         if (root != stateLayout.storage.end() &&
             obelisk_rt_stable_handle_decode(root->second, &decoded) &&
-            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
-          inBoundsAccesses.try_emplace(operation, decoded.id);
+            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+          auto isByteAddressable = [&](Value parent) {
+            auto proof = handles.certificates.find(parent);
+            return proof != handles.certificates.end() &&
+                   proof->second.laneKnown && !proof->second.clipped &&
+                   proof->second.low % 8 == 0 &&
+                   (proof->second.constantAddress ||
+                    proof->second.stride % 8 == 0);
+          };
+          auto unit =
+              stateLayout.packedStorage->get(reference, isByteAddressable);
+          // An ordinary byte-addressed scalar fills its LLVM memory unit.
+          // Preserve runtime index guards, but do not read neighboring bytes
+          // merely to store a complete element (Clang EmitStoreThroughLValue).
+          auto width = nativeStateWidth(
+              cast<sim::RefType>(reference.getType()).getElementType());
+          if (!unit && width && *width % 8 == 0 && isByteAddressable(reference))
+            unit = PackedAccessUnit{0, *width};
+          stateAccesses.try_emplace(
+              operation,
+              NativeStateAccessInfo{
+                  decoded.id, proof->second.inBounds,
+                  proof->second.laneKnown && !proof->second.clipped, unit});
+        }
       });
       auto isValidSelection = [&](Value handle) {
         auto root = provenance.find(handle);
@@ -478,7 +500,7 @@ LogicalResult lowerPackedSimulationOperations(
   // facts have been attached, keep dynamic whole-vector copies byte-backed:
   // representing their payload as one giant LLVM integer makes SelectionDAG
   // scheduling superlinear.
-  fuseWideDynamicRefCopies(module, nativeTwoStateOperations, inBoundsAccesses);
+  fuseWideDynamicRefCopies(module, nativeTwoStateOperations, stateAccesses);
 
   // Record the net driven by each operation before dialect conversion starts
   // rewriting function signatures and their block arguments.  Conversion
@@ -950,7 +972,7 @@ LogicalResult lowerPackedSimulationOperations(
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
         enableDirectStaticState ? &selectedLayout : nullptr,
-        experimentalTwoState, inBoundsAccesses, locals);
+        experimentalTwoState, stateAccesses, locals);
     populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
                                              dataLayout);
     populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,

@@ -34,6 +34,8 @@ struct NativeStateLayoutAnalysis {
     // A native-sized allocation owned by this root. Its logical handle bound
     // remains width; bits above width are padding, never another root's state.
     unsigned containerWidth = 0;
+    // Retain the source field boundaries for native packed access units.
+    mlir::Type type;
   };
   struct Net {
     uint64_t id;

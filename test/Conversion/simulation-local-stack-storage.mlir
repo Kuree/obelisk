@@ -12,7 +12,8 @@
 // OPT-NOT: alloca
 // OPT: ret i213
 
-// A seven-bit indexed field update must remain a narrow memory operation.
+// Fields sharing a byte use the containing packed access unit. LLVM can
+// narrow an isolated update or merge it with neighboring field updates.
 // Whole input/output snapshots still have the language's value semantics.
 // REF-LABEL: simulation.func @dynamic_update
 // REF: simulation.ref.alloc
@@ -24,8 +25,8 @@
 // LLVM: llvm.alloca
 // LLVM-NOT: llvm.call @obelisk_rt_v1_native_state_alloc
 // LLVM: llvm.getelementptr
-// LLVM: llvm.load {{.*}} -> i16
-// LLVM: llvm.store {{.*}} : i16, !llvm.ptr
+// LLVM: llvm.load {{.*}} -> i216
+// LLVM: llvm.store {{.*}} : i216, !llvm.ptr
 // LLVM-NOT: llvm.call
 // LLVM: llvm.return
 // REF-LABEL: simulation.func @static_update
@@ -35,7 +36,7 @@
 // LLVM-LABEL: llvm.func @static_update
 // LLVM: llvm.alloca
 // LLVM-NOT: llvm.call
-// LLVM: llvm.store {{.*}} : i8, !llvm.ptr
+// LLVM: llvm.store {{.*}} : i216, !llvm.ptr
 // LLVM-NOT: llvm.call
 // LLVM: llvm.return
 
@@ -127,7 +128,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // LLVM-LABEL: llvm.func @forwarded_update
 // LLVM: llvm.alloca
 // LLVM-NOT: llvm.call
-// LLVM: llvm.store {{.*}} : i16, !llvm.ptr
+// LLVM: llvm.store {{.*}} : i216, !llvm.ptr
 // LLVM-NOT: llvm.call
 // LLVM: llvm.return
 

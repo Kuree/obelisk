@@ -1,6 +1,7 @@
 add_mlir_library(ObeliskSimulationToLLVMCoroutine
   NativePipeline.cpp
   NativeWordRegionLowering.cpp
+  PackedStorageLayout.cpp
   SimulationAggregateLowering.cpp
   SimulationEvalDispatchMaterialization.cpp
   SimulationAOTMaterialization.cpp
@@ -96,6 +97,7 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRSCFDialect
   MLIRSCFToControlFlow
   MLIRTransforms
+  MLIRTargetLLVMIRExport
 )
 
 target_include_directories(ObeliskSimulationToLLVMCoroutine PRIVATE
