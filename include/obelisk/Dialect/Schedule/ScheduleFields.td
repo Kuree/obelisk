@@ -31,6 +31,10 @@ def EvalConditionallyTwoState : ScheduleField<"EvalConditionallyTwoState", "sche
     "::mlir::UnitAttr">;
 def EvalContinuation : ScheduleField<"EvalContinuation", "schedule.eval.continuation",
     "::mlir::IntegerAttr">;
+// Forwarded values are reconstructed from immutable captures or private scratch
+// reset on every path before any read; no actor frame state is required.
+def EvalReconstructsContinuation : ScheduleField<"EvalReconstructsContinuation", "schedule.eval.reconstructs_continuation",
+    "::mlir::UnitAttr">;
 def EvalDataflowCandidate : ScheduleField<"EvalDataflowCandidate", "schedule.eval.dataflow_candidate",
     "::mlir::FlatSymbolRefAttr">;
 def EvalDataflowExecutor : ScheduleField<"EvalDataflowExecutor", "schedule.eval.dataflow_executor",

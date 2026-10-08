@@ -13,6 +13,7 @@
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "obelisk/Dialect/Slang/SlangDialect.h"
 
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
@@ -27,6 +28,7 @@ int main(int argc, char **argv) {
   // The core transforms are part of the lowering pipeline, so tests need to
   // be able to run them directly on simulation IR.
   mlir::registerTransformsPasses();
+  mlir::registerPass([] { return mlir::createSCFToControlFlowPass(); });
   obelisk::registerObeliskConversionPasses();
   obelisk::registerRuntimeToLLVMPipeline();
   obelisk::registerSimulationToLLVMCoroutinePipeline();

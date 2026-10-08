@@ -10,6 +10,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SourceMemoryAnalysis.h"
@@ -306,11 +307,9 @@ bool isTypedSuspend(Operation *operation) {
       operation);
 }
 
-/// Build an AOT-only, non-suspending activation body while the original CFG
-/// and its typed wait are still intact.  The original actor remains the
-/// coroutine/fallback identity.  This is deliberately broad in eval mode: it
-/// is the experiment's Verilator-shaped executable body, not a production
-/// profitability decision.
+/// Extract a nonsuspending resumed activation at a typed wait. The original
+/// actor retains bootstrap and coroutine semantics; immutable capture values
+/// and private scratch are reconstructed only with explicit dataflow proofs.
 LogicalResult
 materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
                               CodeUnitIndex &codeUnits, sim::SimFuncOp function,
@@ -358,82 +357,6 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
       return success();
   }
   Block &sourceEntry = function.getBody().front();
-  bool clockedControl =
-      ::obelisk::schedule::has<schedule::metadata::clockedControl>(function);
-  SmallVector<Block *> preambleBlocks;
-  llvm::SmallPtrSet<Block *, 8> preambleSeen;
-  Block *preamble = &sourceEntry;
-  // An always_comb procedure runs its activation once at time zero (IEEE
-  // 1800-2023 9.2.2.2, 9.2.2.2.2), so its entry path leads into that
-  // activation. Canonicalization folds an argument-free activation block that
-  // only forwards constants (`^activation: br ^loop(%c0)`) out of the entry
-  // path, leaving the entry to branch to `^loop(%c0)` directly. That branch
-  // executes exactly what a branch to the forwarding block would, so it
-  // reaches the activation. The eval body repeats the preamble on every
-  // activation, so its initial and resumed inputs must be equivalent. A
-  // canonical snapshot loaded from the same immutable capture is also an
-  // equivalent input: the evaluator reloads it on every activation. This
-  // never assumes that its contents stay equal across a suspension.
-  auto sameActivationInput = [&](Value lhs, Value rhs) {
-    if (lhs == rhs)
-      return true;
-    auto left = lhs.getDefiningOp<arith::ConstantOp>();
-    auto right = rhs.getDefiningOp<arith::ConstantOp>();
-    if (left && right && left.getValue() == right.getValue())
-      return true;
-    auto first = lhs.getDefiningOp<sim::SimRefLoadOp>();
-    auto second = rhs.getDefiningOp<sim::SimRefLoadOp>();
-    if (!combinationalProcedure || !first || !second ||
-        first.getType() != second.getType() ||
-        first.getReference() != second.getReference())
-      return false;
-    auto capture = dyn_cast<BlockArgument>(first.getReference());
-    return capture && capture.getOwner() == &sourceEntry;
-  };
-  auto isSnapshotPreambleOp = [&](Operation &operation) {
-    if (isMemoryEffectFree(&operation) ||
-        isa<sim::SimCoveragePointHitOp>(operation))
-      return true;
-    auto load = dyn_cast<sim::SimRefLoadOp>(operation);
-    auto capture =
-        load ? dyn_cast<BlockArgument>(load.getReference()) : BlockArgument{};
-    return combinationalProcedure && capture &&
-           capture.getOwner() == &sourceEntry;
-  };
-  auto forwardsLikeActivation = [&](cf::BranchOp branch) {
-    auto forward = dyn_cast<cf::BranchOp>(activation->getTerminator());
-    if (!forward || activation->getNumArguments() != 0 ||
-        forward.getDest() != branch.getDest() ||
-        !llvm::all_of(activation->without_terminator(), isSnapshotPreambleOp))
-      return false;
-    return llvm::all_of(
-        llvm::zip_equal(branch.getDestOperands(), forward.getDestOperands()),
-        [&](auto pair) {
-          return sameActivationInput(std::get<0>(pair), std::get<1>(pair));
-        });
-  };
-  Block *forwardedPreamble = nullptr;
-  bool purePreamble = true;
-  while (!clockedControl && preamble != wait && preamble != activation) {
-    if (!preambleSeen.insert(preamble).second)
-      return success();
-    auto branch = dyn_cast<cf::BranchOp>(preamble->getTerminator());
-    if (!branch || branch.getDest()->getNumArguments() !=
-                       branch.getDestOperands().size()) {
-      return success();
-    }
-    preambleBlocks.push_back(preamble);
-    purePreamble &=
-        llvm::all_of(preamble->without_terminator(), isSnapshotPreambleOp);
-    if (purePreamble && forwardsLikeActivation(branch)) {
-      forwardedPreamble = preamble;
-      preamble = activation;
-      break;
-    }
-    preamble = branch.getDest();
-  }
-  bool startsAtActivation = preamble == activation;
-
   SmallString<48> evalBase;
   (function.getSymName() + ".__obelisk_eval_body").toVector(evalBase);
   unsigned evalCounter = 0;
@@ -513,100 +436,23 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
   for (auto [source, destination] :
        llvm::zip_equal(sourceEntry.getArguments(), evalEntry.getArguments()))
     mapping.map(source, destination);
-  builder.setInsertionPointToStart(&evalEntry);
-  if (clockedControl) {
-    // Startup can branch and perform cold services (plusargs, dump setup).
-    // Only rematerialize pure capture-derived entry values. Clock-control
-    // phase and counters have already been made canonical storage, so their
-    // contents must be loaded by the activation, never recomputed at entry.
-    for (Operation &operation : sourceEntry.without_terminator())
-      if (operation.getNumRegions() == 0 && isMemoryEffectFree(&operation) &&
-          llvm::all_of(operation.getOperands(),
-                       [&](Value value) { return mapping.contains(value); }))
-        builder.clone(operation, mapping);
-  }
-  SmallVector<Value> activationEntryOperands;
-  auto appendMappedValues = [&](ValueRange values,
-                                SmallVectorImpl<Value> &mappedValues) {
-    for (Value value : values) {
-      Value mapped = mapping.lookupOrNull(value);
-      if (!mapped)
-        return failure();
-      mappedValues.push_back(mapped);
-    }
-    return success();
-  };
-  for (Block *source : preambleBlocks) {
-    for (Operation &operation : source->without_terminator())
-      if (!isa<sim::SimCoveragePointHitOp>(operation))
-        builder.clone(operation, mapping);
-    // The activation block itself is cloned and entered below; it takes no
-    // arguments.
-    if (source == forwardedPreamble)
-      continue;
-    auto branch = cast<cf::BranchOp>(source->getTerminator());
-    if (startsAtActivation && branch.getDest() == activation) {
-      if (failed(appendMappedValues(branch.getDestOperands(),
-                                    activationEntryOperands))) {
-        abandon();
-        return success();
-      }
-    } else {
-      for (auto [argument, value] : llvm::zip_equal(
-               branch.getDest()->getArguments(), branch.getDestOperands())) {
-        Value mapped = mapping.lookupOrNull(value);
-        if (!mapped) {
-          abandon();
-          return success();
-        }
-        mapping.map(argument, mapped);
-      }
-    }
-  }
-  bool cloneTerminalWait =
-      function.getEntryKind() == sim::EntryKind::Continuous || portMethod ||
-      combinationalProcedure;
+  // This body implements a resumed activation. Ordinary actors execute their
+  // initial path in the runtime bootstrap (initialActivation=false), so no
+  // equivalence between the initial and resume CFG shapes is required.
   SmallVector<Block *> activationBlocks;
   SmallVector<Block *> pending{activation};
   llvm::SmallPtrSet<Block *, 32> seen;
   while (!pending.empty()) {
     Block *source = pending.pop_back_val();
-    if ((!cloneTerminalWait && source == wait) || source == &sourceEntry ||
-        !seen.insert(source).second)
+    if (source == &sourceEntry || !seen.insert(source).second)
       continue;
     activationBlocks.push_back(source);
-    // The suspension block is part of the activation: continuous assignments
-    // commonly compute and drive their result immediately before suspend.any.
-    // Clone those operations below, but do not follow the resume edge back
-    // into the next activation.
-    if (source == wait)
-      continue;
-    for (Block *successor : source->getSuccessors())
-      pending.push_back(successor);
+    if (source != wait)
+      llvm::append_range(pending, source->getSuccessors());
   }
   if (activationBlocks.empty()) {
     abandon();
     return success();
-  }
-  if (clockedControl) {
-    // Reject any startup-produced value that was not explicitly lifted or
-    // safely rematerialized. Never leave an operand pointing into the actor.
-    for (Block *block : activationBlocks)
-      for (Operation &operation : *block) {
-        bool capturesStartup = false;
-        operation.walk([&](Operation *nested) {
-          for (Value operand : nested->getOperands()) {
-            Block *owner = operand.getParentBlock();
-            if (owner->getParent() == &function.getBody() &&
-                !seen.contains(owner) && !mapping.contains(operand))
-              capturesStartup = true;
-          }
-        });
-        if (capturesStartup) {
-          abandon();
-          return success();
-        }
-      }
   }
   for (Block *source : activationBlocks) {
     Block *destination = new Block;
@@ -617,124 +463,24 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
                                                      argument.getLoc()));
   }
 
-  SmallVector<Value> entryOperands;
-  if (startsAtActivation) {
-    entryOperands = std::move(activationEntryOperands);
-  } else {
-    auto forwarded = cast<BranchOpInterface>(wait->getTerminator())
-                         .getSuccessorOperands(0)
-                         .getForwardedOperands();
-    // Values produced in the suspension block represent coroutine state that
-    // was sampled before the wait (for example an intra-assignment event
-    // control RHS). Recomputing them in the zero-time activation body would
-    // sample after the event and change SystemVerilog semantics. Such actors
-    // retain their coroutine identity instead of receiving an eval clone.
-    if (failed(appendMappedValues(forwarded, entryOperands))) {
-      abandon();
-      return success();
-    }
-  }
-  if (!startsAtActivation && !cloneTerminalWait)
-    for (Operation &operation : wait->without_terminator())
-      if (!isa<sim::SimCoveragePointHitOp>(operation))
-        builder.clone(operation, mapping);
-  builder.setInsertionPointToEnd(&evalEntry);
-  cf::BranchOp::create(builder, function.getLoc(), mapping.lookup(activation),
-                       entryOperands);
-
+  analysis::SemanticValueRootAnalysis valueRoots(function);
+  analysis::LocalStorageAnalysis sourceLocals(
+      function, analysis::LocalStorageAnalysis::Lifetime::Coroutine);
+  // Clone the complete activation CFG before resolving operands. Block order
+  // must not affect SSA forwarding, and a definition that dominates a use in
+  // the coroutine may stop dominating it once the suspension edge is cut.
   bool supported = true;
-  auto cloneWaitCoverage = [&](OpBuilder &atReturn) {
-    for (auto hit : wait->getOps<sim::SimCoveragePointHitOp>())
-      atReturn.clone(*hit.getOperation(), mapping);
-  };
   for (Block *source : activationBlocks) {
     builder.setInsertionPointToEnd(mapping.lookup(source));
     for (Operation &operation : *source) {
-      if (isTypedSuspend(&operation) && &operation != source->getTerminator()) {
-        supported = false;
-        break;
+      if (isTypedSuspend(&operation)) {
+        sim::SimReturnOp::create(builder, operation.getLoc(), ValueRange{});
+        continue;
       }
-      // IEEE 1800-2017 13.2: a task may contain time-controlling statements,
-      // and a function cannot enable a task. The eval body is a zero-time
-      // function entry, so an activation that calls a task keeps its
-      // coroutine identity instead.
+      // LRM 13.2: a function activation cannot enable a time-controlling task.
       if (isa<sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(operation)) {
         supported = false;
         break;
-      }
-      if (&operation == source->getTerminator()) {
-        if (isTypedSuspend(&operation)) {
-          sim::SimReturnOp::create(builder, operation.getLoc(), ValueRange{});
-          continue;
-        }
-        if (auto branch = dyn_cast<cf::BranchOp>(operation);
-            branch && branch.getDest() == wait) {
-          if (!cloneTerminalWait) {
-            cloneWaitCoverage(builder);
-            sim::SimReturnOp::create(builder, branch.getLoc(), ValueRange{});
-            continue;
-          }
-          SmallVector<Value> operands;
-          for (Value value : branch.getDestOperands())
-            operands.push_back(mapping.lookup(value));
-          cf::BranchOp::create(builder, branch.getLoc(), mapping.lookup(wait),
-                               operands);
-          continue;
-        }
-        if (auto branch = dyn_cast<cf::CondBranchOp>(operation)) {
-          bool trueWait = branch.getTrueDest() == wait;
-          bool falseWait = branch.getFalseDest() == wait;
-          if (trueWait || falseWait) {
-            if (!cloneTerminalWait) {
-              if (trueWait && falseWait) {
-                cloneWaitCoverage(builder);
-                sim::SimReturnOp::create(builder, branch.getLoc(),
-                                         ValueRange{});
-                continue;
-              }
-              Block *returnBlock = new Block;
-              evalBody.getBody().push_back(returnBlock);
-              OpBuilder returnBuilder = OpBuilder::atBlockEnd(returnBlock);
-              cloneWaitCoverage(returnBuilder);
-              sim::SimReturnOp::create(returnBuilder, branch.getLoc(),
-                                       ValueRange{});
-              SmallVector<Value> trueOperands;
-              SmallVector<Value> falseOperands;
-              for (Value value : branch.getTrueDestOperands())
-                trueOperands.push_back(mapping.lookup(value));
-              for (Value value : branch.getFalseDestOperands())
-                falseOperands.push_back(mapping.lookup(value));
-              cf::CondBranchOp::create(
-                  builder, branch.getLoc(),
-                  mapping.lookup(branch.getCondition()),
-                  trueWait ? returnBlock : mapping.lookup(branch.getTrueDest()),
-                  trueWait ? ValueRange{} : ValueRange{trueOperands},
-                  falseWait ? returnBlock
-                            : mapping.lookup(branch.getFalseDest()),
-                  falseWait ? ValueRange{} : ValueRange{falseOperands});
-              continue;
-            }
-            SmallVector<Value> trueOperands;
-            SmallVector<Value> falseOperands;
-            for (Value value : branch.getTrueDestOperands())
-              trueOperands.push_back(mapping.lookup(value));
-            for (Value value : branch.getFalseDestOperands())
-              falseOperands.push_back(mapping.lookup(value));
-            cf::CondBranchOp::create(
-                builder, branch.getLoc(), mapping.lookup(branch.getCondition()),
-                trueWait ? mapping.lookup(wait)
-                         : mapping.lookup(branch.getTrueDest()),
-                ValueRange{trueOperands},
-                falseWait ? mapping.lookup(wait)
-                          : mapping.lookup(branch.getFalseDest()),
-                ValueRange{falseOperands});
-            continue;
-          }
-        }
-        if (llvm::is_contained(operation.getSuccessors(), wait)) {
-          supported = false;
-          break;
-        }
       }
       builder.clone(operation, mapping);
     }
@@ -744,6 +490,104 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
   if (!supported) {
     abandon();
     return success();
+  }
+  auto forwarded = cast<BranchOpInterface>(wait->getTerminator())
+                       .getSuccessorOperands(0)
+                       .getForwardedOperands();
+  builder.setInsertionPointToEnd(&evalEntry);
+  auto entryBranch = cf::BranchOp::create(
+      builder, function.getLoc(), mapping.lookup(activation), forwarded);
+  DominanceInfo dominance(evalBody);
+  SmallVector<std::pair<OpOperand *, Value>> liveIns;
+  for (OpOperand &operand : entryBranch->getOpOperands())
+    liveIns.emplace_back(&operand, operand.get());
+  for (Block *source : activationBlocks)
+    for (Operation &operation : *source) {
+      if (isTypedSuspend(&operation))
+        continue;
+      operation.walk([&](Operation *nested) {
+        Operation *cloned = mapping.lookup(nested);
+        for (auto [original, operand] :
+             llvm::zip_equal(nested->getOperands(), cloned->getOpOperands())) {
+          Value mapped = mapping.lookupOrDefault(original);
+          operand.set(mapped);
+          if (!mapping.contains(original) ||
+              !dominance.properlyDominates(mapped, cloned))
+            liveIns.emplace_back(&operand, original);
+        }
+      });
+    }
+
+  DenseMap<Value, Value> rematerialized;
+  DenseSet<Value> visiting;
+  SmallVector<sim::SimRefAllocOp> recreated;
+  builder.setInsertionPointToStart(&evalEntry);
+  auto materialize = [&](Value value, auto &materialize) -> Value {
+    value = valueRoots.lookup(value);
+    if (auto argument = dyn_cast<BlockArgument>(value))
+      return argument.getOwner() == &sourceEntry ? mapping.lookup(argument)
+                                                 : Value{};
+    if (Value existing = rematerialized.lookup(value))
+      return existing;
+    if (!visiting.insert(value).second)
+      return {};
+    Operation *definition = value.getDefiningOp();
+    if (!definition)
+      return {};
+    if (auto allocation = dyn_cast<sim::SimRefAllocOp>(definition)) {
+      if (!sourceLocals.lookup(value))
+        return {};
+      Type type = allocation.getInitialValue().getType();
+      Value initial;
+      if (isa<IntegerType, FloatType>(type))
+        initial = arith::ConstantOp::create(builder, allocation.getLoc(), type,
+                                            builder.getZeroAttr(type));
+      else if (auto logic = dyn_cast<sim::LogicType>(type)) {
+        auto zero =
+            builder.getIntegerAttr(builder.getIntegerType(logic.getWidth()), 0);
+        initial = sim::SimLogicConstantOp::create(builder, allocation.getLoc(),
+                                                  logic, zero, zero);
+      } else if (sim::isAggregateType(type))
+        initial = sim::SimAggregateDefaultOp::create(builder,
+                                                     allocation.getLoc(), type);
+      else
+        return {};
+      // The initializer is deliberately unrelated to pre-suspension state.
+      // Dense must-definition analysis below proves it unobservable.
+      auto local = sim::SimRefAllocOp::create(builder, allocation.getLoc(),
+                                              allocation.getType(), initial);
+      recreated.push_back(local);
+      rematerialized[value] = local.getResult();
+      visiting.erase(value);
+      return local.getResult();
+    }
+    // Only immutable capture-derived values may cross the cut. In particular,
+    // reloading a pre-suspension snapshot would sample at the wrong time.
+    if (definition->getNumRegions() || !isMemoryEffectFree(definition) ||
+        !isSpeculatable(definition))
+      return {};
+    IRMapping operands;
+    for (Value operand : definition->getOperands()) {
+      Value mapped = materialize(operand, materialize);
+      if (!mapped)
+        return {};
+      operands.map(operand, mapped);
+    }
+    Operation *cloned = builder.clone(*definition, operands);
+    for (auto [from, to] :
+         llvm::zip_equal(definition->getResults(), cloned->getResults())) {
+      rematerialized[from] = to;
+    }
+    visiting.erase(value);
+    return rematerialized.lookup(value);
+  };
+  for (auto [operand, original] : liveIns) {
+    Value mapped = materialize(original, materialize);
+    if (!mapped) {
+      abandon();
+      return success();
+    }
+    operand->set(mapped);
   }
   // The canonical actor keeps its named-block activations for runtime
   // execution. In a zero-time eval body, an enter/leave-only activation is
@@ -767,6 +611,14 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     }
   }
   analysis::propagateActivationValueRoots(evalBody);
+  analysis::LocalStorageAnalysis locals(evalBody);
+  if (!locals.areResetBeforeReads(recreated)) {
+    abandon();
+    return success();
+  }
+  if (!forwarded.empty())
+    schedule::set<schedule::Field::EvalReconstructsContinuation>(
+        evalBody, builder.getUnitAttr());
   preserveEvalNBASiteOrigins(evalBody);
   ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBody>(
       function, FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));

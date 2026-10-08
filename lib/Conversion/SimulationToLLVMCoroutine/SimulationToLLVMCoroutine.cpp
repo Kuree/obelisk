@@ -21,6 +21,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
@@ -595,11 +596,14 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           continuationHasArguments |=
               operation->getSuccessor(0)->getNumArguments() != 0;
       });
-      // Only a producer-certified generated region may reconstruct actor-side
+      // Only a producer-certified generated region or scratch reset proof
+      // may reconstruct actor-side
       // continuation arguments from canonical state on every activation.
       // Ordinary or externally authored regions require their coroutine frame
       // to preserve such loop-carried values and cannot be claimed here.
-      if (continuationHasArguments && !isGeneratedRegionActor(actor))
+      if (continuationHasArguments && !isGeneratedRegionActor(actor) &&
+          !schedule::has<schedule::Field::EvalReconstructsContinuation>(
+              evalBody))
         continue;
       SmallString<96> wrapperName;
       (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
@@ -857,6 +861,11 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
             builder.clone(operation, mapping);
         }
       }
+
+      // Cutting the wait makes invariant forwarded captures available across
+      // the entire activation. Preserve their roots for state-access lowering
+      // just as for eval bodies extracted before schedule conversion.
+      analysis::propagateActivationValueRoots(body);
 
       std::string wrapper = (Twine(bodyName) + ".__obelisk_execute").str();
       ContinuationFragmentCoverage coverage =

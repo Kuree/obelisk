@@ -1,14 +1,9 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
 
-// IEEE 1800-2023 9.2.2.2: an always_comb procedure runs its activation once
-// at time zero, then after each change of its inputs. Canonicalization folds
-// the argument-free activation block that only restarts a for-loop out of the
-// time-zero path, so the entry branches to the loop header with the same
-// constant. That entry still reaches the activation and the process keeps its
-// standalone eval body. A forwarding block that passes a different value is
-// a different activation and gets no body, and so does an entry that stores
-// before it branches: the eval body would repeat that time-zero store on every
-// activation.
+// IEEE 1800-2023 9.2.2.2: the original always_comb actor executes its
+// time-zero path during bootstrap. The eval body executes only the resumed
+// activation. Different entry CFGs, initial loop values and initial effects
+// therefore do not prevent extraction or get repeated on subsequent events.
 module attributes {schedule.native_scheduler = 3 : i32} {
   simulation.design @forwarded {
     simulation.scope.decl 0
@@ -54,8 +49,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @different(
-    // CHECK-NOT: schedule.eval.body
-    // CHECK: simulation.suspend.any
+    // CHECK-SAME: schedule.eval.body = @[[DIFFERENT:different.__obelisk_eval_body_[0-9]+]]
     simulation.func @different(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %in: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -81,8 +75,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @effectful(
-    // CHECK-NOT: schedule.eval.body
-    // CHECK: simulation.suspend.any
+    // CHECK-SAME: schedule.eval.body = @[[EFFECTFUL:effectful.__obelisk_eval_body_[0-9]+]]
     simulation.func @effectful(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %in: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -119,7 +112,15 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     // CHECK-NEXT: cf.br ^{{bb[0-9]+}}(%[[ZERO]] : i32)
     // CHECK: arith.cmpi slt
     // CHECK: simulation.return
-    // CHECK-NOT: different.__obelisk_eval_body
-    // CHECK-NOT: effectful.__obelisk_eval_body
+    // CHECK: simulation.func private @[[DIFFERENT]](
+    // CHECK: %[[ONE:.*]] = arith.constant 1 : i32
+    // CHECK-NEXT: cf.br ^{{bb[0-9]+}}(%[[ONE]] : i32)
+    // CHECK: simulation.return
+    // CHECK: simulation.func private @[[EFFECTFUL]](
+    // CHECK-NOT: simulation.ref.store
+    // CHECK: %[[INPUT:.*]] = simulation.ref.load
+    // CHECK-NEXT: simulation.ref.store %[[INPUT]]
+    // CHECK-NOT: simulation.ref.store
+    // CHECK: cf.br
   }
 }

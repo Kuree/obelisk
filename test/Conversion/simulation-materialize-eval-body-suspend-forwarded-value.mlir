@@ -35,8 +35,8 @@ module attributes {schedule.native_scheduler = 3 : i32} {
         attributes {entry_kind = 3 : i32, code_unit_id = 1 : i64} {
       cf.br ^wait
     ^wait:
-      %sampled = simulation.logic.constant 5 : i4, 0 : i4 :
-          !simulation.logic<4>
+      %sampled = simulation.ref.load %dst :
+          !simulation.ref<!simulation.logic<4>> -> !simulation.logic<4>
       simulation.suspend.change %event to ^activation(
           %sampled : !simulation.logic<4>)
           {site = #schedule.continuation<id = 1>} :

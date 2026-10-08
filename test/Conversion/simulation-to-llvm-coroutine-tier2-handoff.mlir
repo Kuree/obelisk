@@ -6,12 +6,12 @@
 // RUN:   | FileCheck %s --check-prefix=PUBLICATION
 // RUN: sed -e 's/code_unit.decl 4 in 0 initial/code_unit.decl 4 in 0 always/' \
 // RUN:   -e 's/attributes {entry_kind = 1 : i32, code_unit_id = 4/attributes {entry_kind = 3 : i32, code_unit_id = 4/' %s \
-// RUN:   | not obelisk-opt - \
+// RUN:   | obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=LIVE-ARG
 // RUN: sed -e 's/schedule.native.region_body,/schedule.native.region_body/' \
 // RUN:   -e '/schedule.eval.reconstructs_continuation_args/d' %s \
-// RUN:   | not obelisk-opt - \
+// RUN:   | obelisk-opt - \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=UNCERTIFIED-REGION
 // RUN: sed 's/{site = #schedule.continuation<id = 1>}/{schedule.procedural_event_wait, site = #schedule.continuation<id = 1>}/' %s \
@@ -246,9 +246,13 @@ module attributes {
 // CHECK: llvm.cond_br
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.return
-// LIVE-ARG: eval exact owner miss: actor=3 continuation=3 function=reset
-// LIVE-ARG-SAME: candidates=
-// UNCERTIFIED-REGION: a Tier-2 SCC has no direct eval owner
+// Immutable forwarded captures need no coroutine state, even without a
+// previously supplied certificate. Extraction proves their reconstruction.
+// LIVE-ARG-LABEL: llvm.func @reset.__obelisk_eval_body_0(
+// LIVE-ARG: llvm.return
+// UNCERTIFIED-REGION-LABEL: llvm.func @loop.__obelisk_eval_body_0(
+// UNCERTIFIED-REGION: llvm.xor
+// UNCERTIFIED-REGION: llvm.return
 
 // The ordinary writer retains the direct static call.
 // PUBLICATION-LABEL: llvm.func @clock.__obelisk_coro_ramp

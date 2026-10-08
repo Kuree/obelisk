@@ -32,6 +32,7 @@ target_link_libraries(obelisk-opt
     ObeliskToSimulation
     MLIROptLib
     MLIRTransforms
+    MLIRSCFToControlFlow
     MLIRRegisterAllDialects
 )
 

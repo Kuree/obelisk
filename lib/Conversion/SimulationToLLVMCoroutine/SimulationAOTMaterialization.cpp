@@ -2746,9 +2746,11 @@ FailureOr<bool> makeNativeEvalPlan(
             ::obelisk::schedule::has<schedule::metadata::evalTwoStateVariant>(
                 owner)));
       auto offsetCall = handle.getDefiningOp<LLVM::CallOp>();
-      if (!offsetCall || !offsetCall.getCallee() ||
-          *offsetCall.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
-          offsetCall.getArgOperands().size() != 2) {
+      bool hasOffset =
+          offsetCall && offsetCall.getCallee() &&
+          *offsetCall.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+          offsetCall.getArgOperands().size() == 2;
+      if (!hasOffset && !constantU64(handle)) {
         if (deferColdReference)
           continue;
         if (module->hasAttr("obelisk.debug.native_timing")) {
@@ -2767,8 +2769,13 @@ FailureOr<bool> makeNativeEvalPlan(
       // sentinel whose read yields the IEEE 1800-2023 11.5.1 out-of-range
       // value.
       OpBuilder chainBuilder(call);
-      Value chainBase = offsetCall.getArgOperands()[0];
-      Value dynamicOffset = offsetCall.getArgOperands()[1];
+      // SSA forwarding can expose a fixed handle after state-access lowering
+      // has already emitted the general ABI. It is the zero-offset case of
+      // the same certified root, independent of its original CFG position.
+      Value chainBase = hasOffset ? offsetCall.getArgOperands()[0] : handle;
+      Value dynamicOffset =
+          hasOffset ? offsetCall.getArgOperands()[1]
+                    : llvmConstant(chainBuilder, call.getLoc(), i64, 0);
       auto requireValid = [&](Value guard) {
         sourceValid = sourceValid
                           ? arith::AndIOp::create(chainBuilder, call.getLoc(),
