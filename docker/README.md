@@ -7,8 +7,8 @@ layout Obelisk's top-level `CMakeLists.txt` already validates. This is the
 dependency the in-browser compiler needs; there is no upstream prebuilt
 LLVM/MLIR wasm distribution to consume.
 
-The SDK is wasm32 because no Safari release implements the Memory64 proposal;
-a wasm64 module cannot load on any iPhone or Mac.
+The SDK uses wasm32 for broad browser compatibility, including Safari builds
+without WebAssembly Memory64 support.
 
 The image carries **two** LLVM distributions, because a cross build needs host
 tools and those can never be the wasm build's own binaries:
@@ -70,8 +70,8 @@ The image provides:
 
 | Setting | Reason |
 | --- | --- |
-| wasm32 (no `-sMEMORY64`) | The only width Safari runs; Memory64 has shipped in no Safari release. |
-| `-fexceptions` | Not `-fwasm-exceptions`. Native wasm exceptions tie the module to one Safari generation — 26 implements exnref, earlier releases only the superseded encoding. LLVM is built without exceptions but `libLLVMSupport` can still contribute exception opcodes, so CI disassembles the SDK and final modules. |
+| wasm32 (no `-sMEMORY64`) | Keeps the compiler usable in browsers without Memory64 support. |
+| `-fexceptions` rather than `-fwasm-exceptions` | Avoids depending on one WebAssembly exception encoding across browser versions. LLVM is built without exceptions but `libLLVMSupport` can still contribute exception opcodes, so CI disassembles the SDK and final modules. |
 | `LLVM_TARGETS_TO_BUILD=WebAssembly` | The in-browser compiler only ever emits wasm. Drops every other backend. |
 | `LLVM_ENABLE_THREADS=OFF` | Simulations do not need pthreads, so the page avoids SharedArrayBuffer and therefore the COOP/COEP headers that static hosts cannot set. |
 | `MinSizeRel` / `-Oz` | Free: designs are compiled to a *separate* module at `-O3` at runtime, so shrinking this SDK costs no simulation throughput — only compile latency. |

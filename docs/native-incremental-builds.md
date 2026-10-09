@@ -114,21 +114,7 @@ cache miss falls back to ordinary ThinLTO backend compilation without changing
 generated behavior. Caching earlier frontend and semantic IR remains future
 work.
 
-## Delivery order
-
-1. Introduce and verify deterministic partition manifests in MLIR, including
-   SCC ownership, exported/imported symbols, and stable IDs.
-2. Emit multiple non-LTO objects from that manifest and link them with the
-   existing prebuilt runtime archive.
-3. Build a Full-LTO-prelinked runtime archive and link generated partition
-   bitcode through ThinLTO, retaining the unsplit fallback. (Implemented.)
-4. Add the local content-addressed ThinLTO backend cache. (Implemented; opt-in
-   hit/miss statistics remain future work.)
-5. Cache earlier semantic and simulation IR artifacts once their serialization
-   and dependency summaries are stable.
-
-Regression coverage for the partition contract belongs in fast MLIR tests:
-stable membership under reordered input, SCC co-location, deterministic
-exports/imports, collision handling, and threaded-versus-serial identity.
-Driver benchmarks measure cold and warm UVM compilation but are not correctness
-tests.
+Partitioning, ThinLTO runtime prelinking, and the LLD backend cache are
+implemented. Earlier frontend and semantic IR caching is outside the current
+build path. The partition contract has MLIR regression coverage for membership,
+SCC ownership, exports/imports, and worker-count-independent semantic IDs.

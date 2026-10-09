@@ -18,10 +18,10 @@ maps to `$fullskew`, and each LABEL value carries its enclosing ABSOLUTE or
 INCREMENT mode for ordered specparam application.
 
 Decimal attributes preserve exact source spelling. The SDF annotation
-consumer—not the parser—performs unit conversion and checked rounding to the
+consumer performs unit conversion and checked rounding to the
 annotated design scope's precision. Empty and sparse min:typ:max fields remain
 explicit and retain distinct `empty` and `triple` forms, as required by Clause
-32.3, so later ordered ABSOLUTE and INCREMENT application can retain
+32.3, so ordered ABSOLUTE and INCREMENT application can retain
 preannotation values correctly.
 
 Production frontend code must consume and erase every `obelisk_sdf` operation

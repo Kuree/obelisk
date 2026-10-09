@@ -20,7 +20,7 @@ obelisk -c design.sv -o design.o # writes an ELF object
 obelisk -emit-llvm design.sv     # writes textual LLVM IR to stdout
 ```
 
-Native executables accept `--native-scheduler=auto|generic|aot`. `auto` is
+Native executables accept `--native-scheduler=auto|generic|aot|eval`. `auto` is
 the default hybrid mode: it emits a versioned static schedule for every
 proven-unique actor and uses embedded bytecode only for continuation fragments
 that cannot be scheduled statically. A bytecode fragment returns to AOT/native
@@ -29,6 +29,9 @@ canonical frame. If no actor is statically schedulable, `auto` uses the generic
 scheduler. `generic` explicitly forces that correctness oracle for the whole
 design. `aot` requires every fragment to be statically schedulable and reports
 the exact unsupported metadata or language feature during compilation.
+`eval` requires a verified direct evaluation schedule and diagnoses designs
+that cannot enter it. Default native `auto` selects this mode where its
+admission proof succeeds; an explicit bytecode tier keeps the generic scheduler.
 
 The default command also bounds native code growth for generated gate
 netlists. When at least 32 continuous built-in primitive actors would become
@@ -168,11 +171,36 @@ process graph then has a cycle even when its individual statements form a DAG.
 `ActivationMemoryAnalysis` uses dense MLIR dataflow for source-ordered definite
 assignments and sparse handle facts for canonical reference ranges. Proven
 induction values partition the analysis; executable loops remain intact.
-`ActivationRegionAnalysis` compares normalized initial and resumed activations,
-checks termination, and uses upstream CFG-to-SCF conversion to represent loops
-and conditionals as scheduling nodes. Cross-process memory edges and each
-process's source order determine the resulting DAG. The whole-design writer
-inventory includes transitive direct-call writes with actual/formal mapping.
+`ActivationRegionAnalysis` compares normalized initial and resumed activations
+on disposable CFG views. Exit dominators outside CFG cycles form chain blocks;
+the intervening blocks form region units. Dedicated loop entry and landing
+blocks keep adjacent loops independently schedulable. Cross-process memory
+edges and each process's source order determine the first scheduling order.
+The whole-design writer inventory includes transitive direct-call writes with
+actual/formal mapping. Analyses describe an immutable IR revision and are rebuilt
+after rewriting it.
+
+`BoundedLoopAnalysis` supplies the shared induction proof: invariant initializer
+and bound ranges, constant stride, comparison, and absence of fixed-width wrap
+before exit. It recognizes enclosing induction variables and pure expressions
+through MLIR integer-range interfaces. Initializers such as `i` and `i - 1`
+include zero-trip entries and all possible stride residue classes. Parallel
+entry edges may carry different data when their induction initializers agree.
+A second traversal validates nested termination;
+natural-loop structure alone is insufficient. Early breaks may bypass the normal
+exit block; the complete activation must still contain no unproved cycle,
+including cycles on those exit paths. Partitioned memory analysis uses
+the actual enclosing induction value when available and preserves live control
+operands across loop exit and landing blocks. A worst-case bound proves
+termination, not an exact trip count: unrolling and native word coalescing
+explicitly refuse variable initializers and bounds.
+Known packed four-state counters also qualify for the termination and memory
+proofs when constant initialization, add/sub, and width-preserving wrappers
+keep their unknown plane empty. Unsigned comparisons may widen the counter,
+but the wrap check uses its actual storage width. X/Z bounds or strides,
+lossy comparisons and a wrapping last step remain unproved. Native word
+coalescing and exact replication retain their integer-induction requirement.
+
 The planner's `explain` option reports a directed cycle witness for rejected
 statement ordering, including operation positions and exact overlapping storage
 ranges. Source-order paths connect the reported cross-process edges. Such a
@@ -188,18 +216,122 @@ source order: their intermediate transitions require either including every
 eligible observer in the same DAG or rejecting the fusion. Edge observers,
 toggle coverage and opaque observers retain their existing behavior.
 
+After fusion, the storage-access index can prove that a root is exclusively
+accessed by the kernel and has become write-only through SSA forwarding.
+Invisible stores to such roots are removed even if the kernel calls functions:
+there is no reader in any invocation, and reference escapes and watches still
+prevent deletion. Forwarding a stored value across a call retains its separate
+reentry restriction. VPI-readable state, dumps, and toggle coverage keep their
+canonical publications.
+
+When source order remains cyclic, the planner may split an activation into
+publication slices and shuffle independent slices. Each slice keeps its original
+CFG and source-local read/write dependencies, including saved intermediate
+values. A source-written temporary with no incoming reads can be reconstructed
+in private storage in each slice; only the selected stores publish to the
+design. Unneeded private stores and control flow are removed on a disposable
+slice before refining its dependencies. The activation's termination certificate
+permits removing empty loops and exit paths, including loops rotated by CFG
+canonicalization, when all paths forward the same available values to a common
+postdominator. Escaping SSA values and retained effects prevent removal.
+Finite read-only calls are removed when their results are unused. SSA successor
+operands remain separate lanes; a branch condition
+does not depend on every value it forwards.
+
+IEEE 1800-2023 4.3 permits a different simulation algorithm only when its
+“user-visible effect is consistent with the reference algorithm.” Section 4.6(a)
+still requires source order in a reference execution; a value DAG alone is not
+an equivalence proof. The data-dependence path therefore requires invisible
+storage and a transitive certificate that transition observers are finite,
+fully assigned, side-effect-free combinational activations. The observer
+closure uses final reaching lane versions: an overwritten early publication
+may depend on old state only when no final output does and all output observers
+remain in the same closure. Ordinary fusion admission still checks every
+intermediate publication. An outside observer may also retain exclusively owned
+state when `ActivationIdempotenceAnalysis` proves that repeating it with unchanged
+inputs leaves every final output and state cell unchanged. On each CFG path,
+incoming state used by a branch or final output must be copied back unchanged on
+that path. Conditional holds satisfy this rule; counters, old-state snapshots,
+and state-dependent updates do not. The bounded proof currently requires an
+acyclic CFG and exact, disjoint canonical stores. The observer retains its
+original activation, storage and updates, and all its output observers must
+still satisfy the transitive certificate. Opaque and edge
+waits (9.4.2), assertions (16.4), VPI callbacks (4.4.3), force/release (10.6),
+dumps (21.7), and toggle coverage prevent that certificate. Sensitivity exclusions
+for variables written by `always_comb` (9.2.2.2.1) remain part of admission.
+Frontend write tracking includes function output/inout copy-back stores and
+their indexed actuals. These stores exclude the written declaration from
+implicit sensitivity just like a direct assignment, preserving snapshots taken
+before the call instead of overwriting them in a spurious second activation.
+
+Private slots preserve source snapshots. Exclusive, invisible aggregate lanes
+that are never assigned retain their two-state zero or four-state X defaults
+(6.8); a proof of definition before reading permits resetting other scratch
+lanes at each activation. Only source-written lanes are flushed. Read-only
+function calls contribute mapped memory reads and require a finite call closure.
+Storage, resolved nets, and local slots occupy distinct analysis namespaces.
+Activation ranges retain target-native aggregate offsets while excluding ABI
+padding from language-value dependencies and assignment coverage (7.2.1).
+The same logical-lane masks apply to whole-value SSA, nested aggregates and
+conservative dynamic element ranges. Missing logical fields still retain their
+incoming state; differing whole-root layouts keep conservative ranges.
+A selected reference may mix private and canonical roots; loads follow every
+possible reaching version and the selector. Ambiguous stores cannot establish
+definite assignment. A store that may target both private and canonical storage
+currently prevents publication slicing, since the two updates must remain
+coupled in source order.
+After bytecode freezing, selected reference accesses in borrowed native bodies
+become `scf.if` operations at the original statement position; reads return
+their value through the region. Each arm reconstructs pure projections and
+accesses only its selected address, preserving intervening stores and the
+original selector values (4.6(a)).
+Keeping the addresses separate until native lowering allows a private slot
+and canonical storage to use their own representations without a runtime
+checkpoint. Small blocks that merge different reference arguments are
+specialized for each incoming edge, preserving statement order and forwarding
+the original unconditional or conditional continuation. Escaping scalar values
+merge through explicit continuation arguments; escaping addresses remain
+unsupported. Duplication is bounded. Later aggregate and word-predication
+cleanup uses normal region simplification, avoiding identical-block merging
+that would recreate those reference phis. Structured choices lower to CFG in
+the packed conversion before access guards can split their blocks. These
+native rewrites leave the actor CFG and its activation proof unchanged.
+Scoped selector ranges discard dead SSA facts at CFG edges after
+mapping successor operands, so independent loops do not accumulate unrelated
+range state; an unknown parallel edge still invalidates a known-only range.
+Only isolated full-width strong single-driver wires can treat a driver
+publication as the resolved net value; connected, delayed, resolved, or competing
+drivers retain their original scheduling.
+
 Hierarchy boundaries and the legacy 64-bit dirty-mask limit do not restrict a
-proved DAG. Source-order cycles, actual feedback, incomplete assignments and
-unsupported effects retain their existing execution. Full VPI retains
-individual activation points as described in
-[VPI startup and backdoor access](vpi.md). This optimization currently requires
-one worker. It removes internal reactivation within each admitted kernel;
-upstream propagation can still activate separate kernels more than once.
+proved DAG. Genuine value feedback, incomplete assignments, state-dependent
+resumption, or unproved termination retain their existing execution. The
+`schedule.native.max_statement_ops` budget defaults to 73728 for data-dependence
+plans, separately from the ordinary inline budget, and charges each reduced
+executable slice, including reconstructed private versions. These are compile-time certificates and transformations: no runtime
+checkpoint, rollback, or speculative recovery is introduced. Full VPI retains
+individual activation points as described in [VPI startup and backdoor access](vpi.md).
+This optimization currently requires one worker.
 
 The final native eval planner uses these source-level activation inputs to
 distinguish blocking temporaries from state carried between activations. The
-preserved pipeline analysis captures the input ranges before native lowering
-and checks the same compute-graph identity when resolving the eval order.
+preserved pipeline analysis captures input and may-write ranges before native
+lowering and checks the same compute-graph identity when resolving the eval
+order. Certified boundaries retain these ranges too: a reference that selects
+between private scratch and canonical storage must not become unknown shared
+memory in the ordering graph. Their original publication behavior stays intact.
+Input-dependency mode follows the used SSA lanes of loads, including bounded
+extracts from wider values. It collects dependencies of every canonical store
+and control decision, so a later read of definitely written lanes adds no new
+incoming dependency. Only private scratch needs reaching versions across the
+CFG; conditional and partial canonical definitions still expose unwritten
+lanes. This avoids constructing a per-publication dependency matrix for a large
+native kernel. Fusion's individual publication proofs remain separate.
+Selected stores weakly update every possible private destination and expose
+every possible canonical publication; they never establish a definite write.
+Entry-defined SSA values share one sparse node across blocks and induction
+contexts. Other live values retain context-specific proxies. The dense memory
+lattice is released before solving the sparse value graph.
 All sensitivity edges remain present. Direct owners that cannot join a helper
 still participate in its dependency graph as boundaries: a generated sweep ends
 before such an owner and leaves its execution to the dispatcher. Ordering only
@@ -244,11 +376,13 @@ A sparse SSA input lattice now follows individual result and argument lanes
 through `RegionBranchOpInterface`, including `scf.yield`, `scf.condition` and
 both arms of `scf.if`. Its fixed point distinguishes independent recurrences
 from crossed yields and retains predicate/bound dependencies. The resulting
-publication graph recognizes this example as acyclic. This analysis is read-only;
-the scheduling proof still conservatively retains those actors. The MLIR
-request/response loop regression checks settling, X/Z, overflow and independent
-NBA sampling in eval, generic native and bytecode execution. Executable loop
-distribution or fusion still needs source-order and observation proofs.
+publication graph recognizes this example as acyclic. The analysis is read-only.
+When the activation and transition-observer certificates also hold, the planner
+can order executable publication slices, reconstruct their private temporaries,
+and remove finite computation that no retained publication uses. The MLIR
+request/response regressions check the resulting fusion and settling, X/Z,
+overflow and independent NBA sampling in eval, generic native and bytecode
+execution. Cases with visible intermediate transitions retain their source order.
 
 The optional reaching-value query separates dense memory definitions from sparse
 SSA lane dependencies. Memory analysis supplies definition-to-load links, using
@@ -261,8 +395,24 @@ remain old reads after later stores. Overwritten aggregate lanes lose only their
 own incoming dependence, and invalid array indices retain the dialect's semantics
 (LRM 7.4.5 and 11.5.1). A monotone widening bounds lane-correlation growth.
 
-Statement-fusion eligibility uses the refined facts to check that all publications
-and control decisions are independent of incoming output state. Physical accesses
+Statement-fusion eligibility normally uses the refined facts to check that all
+publications and control decisions are independent of incoming output state.
+If an old value affects only intermediate publications, admission additionally
+requires final-output independence and the transitive transition-observer proof
+under 4.3. Such a member must use publication slicing, even when a whole-body
+order appears possible. Retained state also requires the path-sensitive
+idempotence certificate described above. Its old snapshots, writers, and every
+publication using those snapshots stay in the same source-ordered slice. The
+extra union-watch triggers cannot advance this state when its inputs are
+unchanged. A counter or a snapshot of overwritten state still fails admission.
+Cohort cycle discovery includes sensitivity edges, including watches of unused
+aggregate fields, so a watch cannot hide a cycle around a contracted cohort.
+Observer closure also closes cycles in the graph of contracted cohorts. If it
+joins A and C on a path A -> B -> C, B must join too; otherwise that contraction
+introduces a new scheduling cycle. Newly absorbed members contribute their own
+observer obligations until both closures stabilize. The complete merged cohort
+still needs its publication order, observer certificate, and executable budget.
+Physical accesses
 still constrain executable scheduling. Fused memory operations retain the existing
 typed source-owner attributes, so scheduling preserves each original process's
 order and SSA dependencies without inventing order between independent processes.
@@ -308,7 +458,18 @@ native eval bodies before packed conversion. Sparse SSA lane facts combine
 with dense scoped integer ranges and reference bounds to prove consecutive,
 nonwrapping accesses. MLIR `CFGLoopInfo` (LLVM generic LoopInfo) discovers
 natural loops and orders nested termination proofs without repeated CFG scans.
-Dominance-based CSE identifies equivalent address maps.
+Dominance-based CSE identifies equivalent address maps once per input function.
+Only eligible conditional loops whose lane proof can benefit from predication
+are retried in disposable bodies; CSE alone does not clone the function.
+`predication-operation-budget` limits the total cloned operations per function
+(262,144 by default). This bounds optional optimization work, not the loop's
+termination proof: when exhausted, the scalar loop remains. Direct word
+formation still runs, including with a zero predication budget.
+Canonical storage and observer eligibility are checked before lane analysis
+or candidate cloning. Integer-range proofs are shared across loop queries in
+an unchanged function, while lane and address-congruence states cover only
+the queried loop and its incoming operands. Every committed rewrite and
+candidate predication invalidates the corresponding range proof.
 The module entry point snapshots design-wide observer and driver facts once,
 then runs a nested `simulation.func` pass. MLIR's pass manager can optimize
 independent eval bodies concurrently using the driver's compiler thread pool;
@@ -340,15 +501,13 @@ storage lookups rematerialized within the loop remain provable without
 mistaking a multiple of the address modulus for an invariant value. Equal
 nested access maps can retain ordered per-lane read/modify/write sequences
 once their outer iterations are proved disjoint.
-Lane-dependent control is converted transactionally to path masks and selected
-values using upstream MLIR `transformCFGToSCF`. Structured `scf.if` regions
-expose joins, including conditionals around or within bounded nested loops.
-`scf.while` retains the original signed or unsigned comparison and fixed-width
-induction; the pass does not uplift it to `scf.for`. Arithmetic and SCF
-canonicalization place loop guards in `scf.condition` before predication, so
-an extra out-of-range iteration is never accepted. Synthetic switch dispatch
-uses `scf.if` chains, avoiding target-sized `scf.index_switch` selectors. CFG
-conversion follows predication before rerunning the complete dataflow proof.
+Lane-dependent control is converted on a disposable CFG to path masks and
+selected values. Inner loop components are handled before their enclosing
+iteration; their original comparisons and fixed-width inductions remain intact.
+The loop guard retains control of entry, so predication cannot add an
+out-of-range iteration. Switches become ordinary two-way branch chains.
+Predicated stores select the previous value on an inactive path. The complete
+dataflow proof is rerun on the resulting CFG before installing the rewrite.
 No speculative transformation is retained unless the full
 bounds, independence and private-observer proofs pass. Unselected stores keep
 the previous value; procedural X/Z conditions follow the false edge.
@@ -370,7 +529,7 @@ element width; grouping never introduces padding or cross-field arithmetic.
 `schedule.word.reverse` reverses element order while preserving the bits within
 each element, using LLVM bit-reverse for one-bit lanes.
 
-The implementation was reviewed against IEEE 1800-2023 (`build/lrm-2023.txt`):
+The admitted word patterns preserve these IEEE 1800-2023 rules:
 
 | LRM clauses | Admitted pattern and required semantics |
 | --- | --- |

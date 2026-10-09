@@ -1400,6 +1400,16 @@ force/release, and bytecode mutation invalidate the clean guard and hand the
 same fine-fragment identities back to stabilization before native execution
 resumes.
 
+Combinational statement planning uses immutable CFG activation views and shared
+fixed-width induction proofs. It first preserves source order; when that order
+creates a coarse cycle, an LRM 4.3 observer certificate can authorize independent
+publication slices. Saved intermediate values and local read/write dependence
+remain together, and scratch defaults are reconstructed at compile time.
+No runtime checkpoint or recovery mechanism is added. See
+[activation planning](docs/native-target.md) for the CFG, slice, sensitivity,
+private-lane, and isolated-net contracts. A value-dependence DAG alone does not
+authorize reordering LRM 4.6(a) statements.
+
 The first executable coarsening step reuses compute-body fusion rather than
 adding a second inliner. It clones certified same-trigger native bodies into one
 function before LLVM lowering, including CFG block arguments, while retaining
@@ -2045,108 +2055,7 @@ improving. Large designs use compiler-guided coarsening and heuristic global
 partitioning, reserving exact SMT refinement for hot components and ambiguous
 IPO choices.
 
-The implementation roadmap is:
-
-- ~~Pin the LLVM/MLIR and slang toolchains and implement exhaustive Slang and
-  Obelisk semantic boundaries.~~
-- ~~Lower the currently supported simulation subset to isolated `simulation`
-  SSA using `arith` and `cf`.~~
-- ~~Complete RTL port connection and aggregate conversion, native and bytecode
-  two-state specialization, and the first executable procedural-timing slice:
-  integral and literal-real delays, direct events and event lists, `@*`,
-  repeated controls, directly watchable `wait`, named events, intra-assignment
-  timing, and design-domain Active/Inactive ordering.~~
-- ~~Lower the supported zero-time DPI-C function and synchronous-task subset
-  through shared native and bytecode thunks, with generated headers and
-  in-process object, archive, and shared-library linking.~~
-- ~~Complete procedural concurrency with `fork...join`, `join_any`,
-  `join_none`, `wait fork`, `disable fork`, and resolved named-block disable,
-  plus direct static and automatic suspendable tasks with recursion and
-  value/reference formals in both native and bytecode execution.~~
-- ~~Complete occurrence-accurate computed timing observers for `wait`,
-  computed edges and `iff`, mixed event lists, dynamic selections, and
-  named-event reads in native and whole-design bytecode execution.~~
-- ~~Complete executable integral `case`, `casez`, `casex`, `inside`, and
-  structural matching for fixed structs and tagged unions, including
-  activation-local captures and runtime `unique`, `unique0`, and `priority`
-  checks in native and whole-design bytecode execution.~~
-- ~~Complete executable associative arrays with signed and unsigned integral
-  keys up to 64 bits and string keys: typed creation, assignment patterns and
-  hidden defaults, indexing, deletion, equality, value-copy and exact-reference
-  call semantics, deterministic traversal, mixed-container `foreach`, array
-  queries, every Slang-registered associative method, recursive formatting,
-  scheduler notification, precise GC tracing, and native/bytecode execution in
-  both supported language modes.~~
-- ~~Implement executable classes with inheritance, interface and abstract
-  classes, construction and copy, static and instance fields, direct and
-  virtual methods, casts, timed class tasks, nonblocking field updates,
-  precise non-moving collection, and `std::weak_reference` in native and
-  bytecode execution.~~
-- Complete constrained randomization. Hierarchical PCG process streams,
-  system random functions, inline object-stream layout/lifecycle, dynamic mode
-  masks, lifecycle hooks, `randc`, soft priorities, distribution and solve
-  ordering, compiler-only Z3 planning, and exact enum/tagged semantic domains
-  are implemented. The executable slice compiles total, side-effect-free hard
-  integral constraints and inline `with` constraints to pointer-free SSA,
-  emits generated proposal samplers where the compiler can prove them exact,
-  retains a bounded semantic-domain fallback, expands side-effect-free
-  expression constraint functions with bit-range-precise LRM argument
-  ordering and state semantics, and commits class fields transactionally in
-  both native and bytecode execution. The remaining gate is broader
-  procedural/system constraint functions and wider/decomposed plans. The exact
-  current boundary is recorded in `docs/randomization-support.md`.
-- Extend executable lowering across the remaining broad UVM gate: complete
-  the remaining dynamic-array and queue surface, mailboxes, semaphores,
-  synchronization, concurrent assertions, advanced and event-driven functional
-  coverage, clocking blocks and checkers, VPI, and the remaining DPI types and
-  behaviors.
-- ~~Run canonicalization, CSE, and memory promotion before late graph
-  derivation.~~
-- ~~Add SROA, interprocedural SCCP, simulation-aware inlining, and dead capture
-  and private-boundary elimination before final graph derivation.~~
-- Add class-hierarchy analysis, devirtualization, specialization, escape
-  analysis, object SROA, load forwarding, DSE, and state-layout optimization.
-- ~~Define typed class handles, object layout, direct and polymorphic dispatch,
-  explicit managed roots, and automatic-memory-management semantics in
-  `simulation`.~~
-- ~~Derive descriptor provenance, interprocedural descriptor-range effects,
-  VPI-profile observability annotations, and four-state knownness facts.~~
-- ~~Extract block-level static fragments, assign a uniform fragment ABI and
-  continuation IDs, and annotate timing and NBA staging policies.~~
-- ~~Thread suspension-live SSA state before final graph derivation, with
-  constant rematerialization excluded from persistent graph cost.~~
-- ~~Fully convert the supported serial simulation boundary to the MLIR LLVM
-  dialect with deterministic switched-resume process frames, translate it to
-  LLVM IR, emit native ELF objects, and link standalone PIE
-  simulators with `libobelisk_rt.a`.~~
-- Materialize optimized continuation frames, timing slots, NBA storage and
-  ordered commit code, and the genuinely unbounded dynamic frontier.
-- Replace the serial reference scheduler path with optimized native fragments
-  and generated schedule drivers through `func`, `arith`, `cf`, and `ptr`, with
-  `scf` and `vector` used only when profitable as temporary compiler IR.
-- ~~Build and independently verify deterministic dependency, SCC, feedback-cut,
-  five-bucket region, and preliminary cost-balanced lane metadata.~~
-- ~~Materialize bounded acyclic macro tasks from verified region groups, retain
-  their fine-fragment identities, preserve convergence/control-loop and dynamic
-  handoff boundaries, and place whole kernels on deterministic worker lanes.~~
-- ~~Complete IEEE event-region lowering for the currently supported language:
-  execute Active/Inactive/NBA/Observed/Reactive/Re-Inactive/Re-NBA/Postponed
-  with explicit process homes, region barriers, a Preponed slot hook, and
-  Postponed `$strobe`/`$monitor` services.~~ Generate direct acyclic and
-  convergence drivers from the materialized macro tasks; assertions and
-  clocking blocks will populate the reserved Observed/Preponed hooks.
-- Represent parallel regions in MLIR and lower them to fixed persistent lane
-  functions with generated epoch and barrier dependencies.
-- ~~Implement the static runtime's shared native/bytecode fragment ABI and
-  checked typed-register interpreter.~~
-- ~~Encode the complete supported executable design into deterministic checked
-  bytecode and an embedded pointer-free design database.~~
-- Add per-fragment native/bytecode AOT tier selection, mixed-tier schedule
-  execution, and profile-guided promotion.
-- ~~Implement the precise non-moving class heap, weak-reference processing,
-  explicit native and bytecode root maps, and worker safe points.~~ Evaluate
-  LLVM statepoint integration only if later frame optimization or a moving
-  collector justifies replacing the current explicit transient-root ranges.
+Executable language boundaries are tracked in the [LRM support matrix](docs/lrm-support-roadmap.md) and the focused documents under [docs](docs/). The architecture above describes the current pipeline and its remaining design constraints.
 
 ## Driver and tools
 

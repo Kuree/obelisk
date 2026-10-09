@@ -3,8 +3,7 @@
 See [Managed strings and containers](../docs/managed-values.md) for the
 variable-sized managed-object ABI and its current implementation status.
 See [Randomization support](../docs/randomization-support.md) for the
-process-stream ABI and the boundary between executable random draws and
-pending constraint solving.
+process-stream ABI and the executable constrained-randomization boundary.
 
 The native target build produces three forms of the same support code for the
 configured host-native Linux triple. `libobelisk_rt.a` contains native ELF
@@ -85,7 +84,7 @@ A backward branch is well-formed, so validation cannot reject a fragment that
 never terminates — `while (1)` is legal SystemVerilog. Differential and fuzzing
 harnesses can use `obelisk_rt_v1_bytecode_execute_bounded`, which reports
 `OBELISK_RT_STEP_LIMIT` after a caller-supplied instruction limit. The ordinary
-production dispatch remains unbounded. Bytecode v1 now also carries validated
+production dispatch remains unbounded. Bytecode v1 also carries validated
 constant-pool and service-site metadata for format, display, and file calls.
 
 This bytecode is the cold-fragment execution substrate, not a second scheduler.
@@ -115,7 +114,8 @@ The formatter supports scalar binary, octal, decimal, hexadecimal, character,
 string, real, scaled time, hierarchical scope/library-cell, raw two-state and
 raw four-state, and pattern formats. Arbitrary-width decimal conversion is
 performed directly on the word array, without truncating through a host
-integer. Aggregate `%p` and strength-aware `%v` remain future work.
+integer. Aggregate `%p` formatting and strength-aware `%v` use the typed
+formatting paths shared by native and bytecode execution.
 
 ## Files and descriptors
 

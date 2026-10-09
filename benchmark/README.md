@@ -6,8 +6,6 @@ hermetic and gates the build; this one is a measurement instrument that answers
 two questions: *how much of real-world SystemVerilog does Obelisk run today*, and
 *what should be built next*.
 
-Missing features get discovered here. `$finish` was found this way.
-
 ## How it works
 
 The harness owns its run loop — it does **not** invoke the upstream test drivers
