@@ -65,24 +65,32 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
   // generated native address and therefore must never be persisted in the
   // pointer-free canonical frame.
   for (Block &block : llvm::drop_begin(function.getBody())) {
+    // The predecessor set does not change when argument lanes are erased.
+    // Avoid scanning the whole function for every lane, and visit a block
+    // with parallel incoming edges only once (each edge is inspected below).
+    SmallVector<Block *> predecessors;
+    llvm::SmallPtrSet<Block *, 4> seenPredecessors;
+    for (Block *predecessor : block.getPredecessors())
+      if (seenPredecessors.insert(predecessor).second)
+        predecessors.push_back(predecessor);
     for (int64_t argumentIndex =
              static_cast<int64_t>(block.getNumArguments()) - 1;
          argumentIndex >= 0; --argumentIndex) {
       Value incomingValue;
       SmallVector<std::pair<Operation *, unsigned>> incomingEdges;
       bool canRematerialize = true;
-      for (Block &predecessor : function.getBody()) {
-        Operation *terminator = predecessor.getTerminator();
+      for (Block *predecessor : predecessors) {
+        Operation *terminator = predecessor->getTerminator();
         auto branch = dyn_cast<BranchOpInterface>(terminator);
         if (!branch) {
-          if (llvm::is_contained(predecessor.getSuccessors(), &block)) {
+          if (llvm::is_contained(predecessor->getSuccessors(), &block)) {
             canRematerialize = false;
             break;
           }
           continue;
         }
         for (auto [successorIndex, successor] :
-             llvm::enumerate(predecessor.getSuccessors())) {
+             llvm::enumerate(predecessor->getSuccessors())) {
           if (successor != &block)
             continue;
           SuccessorOperands operands =

@@ -5,6 +5,8 @@
 
 // Forwarding can leave several writes and no reads of a private design root.
 // Its value may be discarded only when neither state nor change is observable.
+// A call in the writer must not prevent this dead-store proof. Its other root
+// is read by the callee, so that root must still retain its canonical store.
 module attributes {schedule.native_scheduler = 3 : i32} {
   simulation.design @write_only {
     simulation.scope.decl 0
@@ -49,6 +51,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       %dead = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       simulation.ref.store %value to %dead : i8, !simulation.ref<i8>
       simulation.ref.store %value to %dead : i8, !simulation.ref<i8>
+      %called = simulation.call @read(%ctx) : (!simulation.context) -> i8
       %read = simulation.context.storage %ctx[1] : !simulation.ref<i8>
       simulation.ref.store %value to %read : i8, !simulation.ref<i8>
       %watch = simulation.context.storage %ctx[2] : !simulation.ref<i8>

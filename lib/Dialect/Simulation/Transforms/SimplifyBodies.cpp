@@ -7,6 +7,7 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/DemandedBitAnalysis.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Analysis/LogicBitAnalysis.h"
@@ -49,12 +50,33 @@ public:
   }
   void print(raw_ostream &os) const override { os << mayTerminate; }
 };
+/// Event-triggered processes start, and resume from a wait, only while the
+/// finish latch is clear: the scheduler stops dispatching once $finish, $stop,
+/// $fatal or program completion latches it (IEEE 1800-2023 20.2, 9.2.3).
+/// Final procedures, subroutines and observers may run with it set; time-zero
+/// initializers keep their conservative entry poll.
+bool startsWithClearTermination(sim::SimFuncOp function) {
+  switch (function.getEntryKind()) {
+  case sim::EntryKind::Always:
+  case sim::EntryKind::AlwaysComb:
+  case sim::EntryKind::AlwaysFF:
+  case sim::EntryKind::AlwaysLatch:
+  case sim::EntryKind::Continuous:
+  case sim::EntryKind::PortInput:
+  case sim::EntryKind::PortOutput:
+    return true;
+  default:
+    return false;
+  }
+}
 class TerminationDataflow final
     : public dataflow::DenseForwardDataFlowAnalysis<TerminationLattice> {
 public:
   TerminationDataflow(DataFlowSolver &solver,
-                      const analysis::SimulationEffectAnalysis &effects)
-      : DenseForwardDataFlowAnalysis(solver), effects(effects) {}
+                      const analysis::SimulationEffectAnalysis &effects,
+                      const analysis::HandleFacts &handles, bool clearEntry)
+      : DenseForwardDataFlowAnalysis(solver), effects(effects),
+        handles(handles), clearEntry(clearEntry) {}
   LogicalResult visitOperation(Operation *op, const TerminationLattice &before,
                                TerminationLattice *after) override {
     if (!before.reachable)
@@ -70,8 +92,14 @@ public:
         may = true;
         poll = {};
       }
+    } else if (clearEntry &&
+               isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp,
+                   sim::SimSuspendEdgeOp, sim::SimSuspendDelayOp,
+                   sim::SimSuspendEventOp, sim::SimSuspendForeverOp>(op)) {
+      may = false;
+      poll = {};
     } else if (!isa<cf::BranchOp, cf::CondBranchOp>(op) &&
-               !isMemoryEffectFree(op)) {
+               !isMemoryEffectFree(op) && !cannotFail(op)) {
       may = true;
       poll = {};
     }
@@ -98,26 +126,49 @@ public:
   }
 
 private:
+  /// Accesses to static storage, nets and plain local slots have no runtime
+  /// failure path, so they cannot request termination.
+  bool cannotFail(Operation *op) const {
+    if (auto alloc = dyn_cast<sim::SimRefAllocOp>(op))
+      return analysis::isPlainValueType(alloc.getType().getElementType());
+    Value reference;
+    if (auto load = dyn_cast<sim::SimRefLoadOp>(op))
+      reference = load.getReference();
+    else if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
+      reference = store.getReference();
+    else if (auto read = dyn_cast<sim::SimNetReadOp>(op))
+      reference = read.getNet();
+    if (!reference)
+      return false;
+    auto fact = handles.find(reference);
+    return fact != handles.end() &&
+           (fact->second.resource == schedule::ComputeResourceKind::Storage ||
+            fact->second.resource == schedule::ComputeResourceKind::Net ||
+            fact->second.resource == schedule::ComputeResourceKind::Local);
+  }
   void setToEntryState(TerminationLattice *state) override {
-    // Entry does not assume the latch is clear. Only an executed false poll
-    // edge proves that, and every hazardous call invalidates the proof.
-    propagateIfChanged(state, state->merge(true, {}));
+    // Only scheduled processes may assume a clear latch at entry. Otherwise an
+    // executed false poll edge proves it, and every hazard invalidates it.
+    propagateIfChanged(state, state->merge(!clearEntry, {}));
   }
   const analysis::SimulationEffectAnalysis &effects;
+  const analysis::HandleFacts &handles;
+  bool clearEntry;
   SymbolTableCollection symbols;
 };
 void simplifyTerminationPolls(
-    sim::SimFuncOp function,
-    const analysis::SimulationEffectAnalysis &effects) {
+    sim::SimFuncOp function, const analysis::SimulationEffectAnalysis &effects,
+    const analysis::HandleDataflowAnalysis &provenance, bool clearEntry) {
   SmallVector<sim::SimTerminationRequestedOp> polls;
   function.walk(
       [&](sim::SimTerminationRequestedOp poll) { polls.push_back(poll); });
-  if (polls.size() < 2)
+  if (polls.size() < (clearEntry ? 1u : 2u))
     return;
+  analysis::HandleFacts handles = provenance.derive(function);
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
-  solver.load<TerminationDataflow>(effects);
+  solver.load<TerminationDataflow>(effects, handles, clearEntry);
   if (failed(solver.initializeAndRun(function)))
     return;
   SmallVector<sim::SimTerminationRequestedOp> redundant;
@@ -134,6 +185,79 @@ void simplifyTerminationPolls(
     poll.replaceAllUsesWith(clear);
     poll.erase();
   }
+}
+
+/// A private subroutine may inherit the scheduler's clear finish latch only
+/// when every symbol use is a direct call and every call site proves it clear.
+/// Propagate this must fact along the call graph; unresolved uses and recursive
+/// cycles without an established entry proof retain their polls.
+DenseSet<Operation *> getClearTerminationEntries(
+    sim::SimDesignOp design, const analysis::SimulationEffectAnalysis &effects,
+    const analysis::HandleDataflowAnalysis &provenance, bool closedCalls) {
+  DenseSet<Operation *> clearEntries;
+  SmallVector<sim::SimFuncOp> pending;
+  DenseMap<Operation *, SmallVector<sim::SimCallOp>> callsTo;
+  DenseMap<Operation *, sim::SimFuncOp> targets;
+  SymbolTableCollection symbols;
+  // Check that symbol traversal is complete before using the indexed users.
+  closedCalls &= bool(SymbolTable::getSymbolUses(design));
+  SymbolUserMap users(symbols, design);
+  for (auto function : design.getOps<sim::SimFuncOp>()) {
+    if (startsWithClearTermination(function))
+      clearEntries.insert(function);
+    if (!closedCalls)
+      continue;
+    bool hasCalls = false;
+    function.walk([&](sim::SimCallOp call) { hasCalls = true; });
+    if (hasCalls)
+      pending.push_back(function);
+    if (!function.isPrivate() || function.isExternal() ||
+        function.getEntryKind() != sim::EntryKind::Function)
+      continue;
+    auto uses = users.getUsers(function);
+    if (uses.empty() || llvm::any_of(uses, [&](Operation *use) {
+          auto call = dyn_cast<sim::SimCallOp>(use);
+          return !call || symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
+                              call, call.getCalleeAttr()) != function;
+        }))
+      continue;
+    for (Operation *use : uses) {
+      auto call = cast<sim::SimCallOp>(use);
+      callsTo[function].push_back(call);
+      targets[call] = function;
+    }
+  }
+  DenseSet<Operation *> clearCalls;
+  for (unsigned index = 0; index < pending.size(); ++index) {
+    auto function = pending[index];
+    auto handles = provenance.derive(function);
+    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+    solver.load<dataflow::DeadCodeAnalysis>();
+    solver.load<dataflow::SparseConstantPropagation>();
+    solver.load<TerminationDataflow>(effects, handles,
+                                     clearEntries.contains(function));
+    if (failed(solver.initializeAndRun(function)))
+      continue;
+    function.walk([&](sim::SimCallOp call) {
+      auto target = targets.find(call);
+      if (target == targets.end())
+        return;
+      auto *state = solver.lookupState<TerminationLattice>(
+          solver.getProgramPointBefore(call));
+      if (!state || !state->reachable || state->mayTerminate)
+        return;
+      clearCalls.insert(call);
+      auto callee = target->second;
+      if (!clearEntries.contains(callee) &&
+          llvm::all_of(callsTo.lookup(callee), [&](auto incoming) {
+            return clearCalls.contains(incoming);
+          })) {
+        clearEntries.insert(callee);
+        pending.push_back(callee);
+      }
+    });
+  }
+  return clearEntries;
 }
 void removeDeadPrivateStores(sim::SimDesignOp design) {
   DenseSet<uint64_t> candidates;
@@ -274,10 +398,15 @@ void promotePrivateReductions(sim::SimDesignOp design) {
 }
 void promotePrivateAggregates(sim::SimDesignOp design) {
   analysis::PrivateStorageAnalysis storage(design);
+  analysis::HandleDataflowAnalysis handles(design);
+  analysis::SimulationEffectAnalysis effects(design);
+  SymbolTable symbols(design);
+  DenseMap<Operation *, std::unique_ptr<analysis::ActivationRegionAnalysis>>
+      activations;
   DenseMap<Operation *, bool> allowed;
   for (const auto &[id, access] : storage.getRoots()) {
-    if (!access.owner || !access.promotableViews ||
-        access.bases.empty() || access.stores.size() < 2)
+    if (!access.owner || !access.promotableViews || access.bases.empty() ||
+        access.stores.size() < 2)
       continue;
     auto declaration = access.declaration;
     auto width = sim::getProvenanceSpan(declaration.getType());
@@ -292,6 +421,13 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
       safe->second =
           !function
                .walk([&](Operation *op) {
+                 if (auto call = dyn_cast<sim::SimCallOp>(op)) {
+                   auto callee =
+                       symbols.lookup<sim::SimFuncOp>(call.getCallee());
+                   return callee && effects.isHarmless(callee)
+                              ? WalkResult::advance()
+                              : WalkResult::interrupt();
+                 }
                  return op == function || isMemoryEffectFree(op) ||
                                 isa<sim::SimRefLoadOp, sim::SimRefStoreOp,
                                     sim::SimReturnOp, cf::BranchOp,
@@ -340,6 +476,41 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
     // fallback frame, offsetting the representation saving.
     if (!canonical && !resumptions.empty())
       continue;
+    // IEEE 1800-2023 6.8/6.11 and 4.3: an exclusive lane with no write keeps
+    // its default value. If every other lane is defined before each read in
+    // equivalent initial/resumed activations, a fresh default slot recreates
+    // all observable values. In particular, aggregate copy-out must not turn
+    // an unwritten field into artificial state carried between activations.
+    bool defaultSlot = false;
+    analysis::ActivationMemoryAnalysis::Ranges written;
+    auto observability = declaration.getObservability();
+    if (function.getEntryKind() == sim::EntryKind::AlwaysComb &&
+        llvm::none_of(access.stores,
+                      [&](auto store) {
+                        return llvm::is_contained(access.bases,
+                                                  store.getReference());
+                      }) &&
+        (!observability ||
+         *observability == schedule::ComputeObservabilityKind::Invisible)) {
+      auto [found, fresh] = activations.try_emplace(function);
+      if (fresh)
+        found->second = std::make_unique<analysis::ActivationRegionAnalysis>(
+            function, handles);
+      if (found->second->isValid()) {
+        const auto &memory = found->second->getMemory();
+        for (const auto &range : memory.getMayWrites())
+          if (range.root == id)
+            written.push_back(range);
+        defaultSlot =
+            !written.empty() &&
+            llvm::none_of(memory.getLiveIns(), [&](const auto &read) {
+              return read.root == id && llvm::any_of(written, [&](auto write) {
+                       return read.low < write.low + write.width &&
+                              write.low < read.low + read.width;
+                     });
+            });
+      }
+    }
     SmallVector<OpOperand *> originalUses;
     for (Value base : access.bases)
       for (OpOperand &use : base.getUses())
@@ -351,14 +522,78 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
     if (!canonical)
       canonical = sim::SimContextStorageOp::create(builder, function.getLoc(),
                                                    ref, context, id);
-    Value initial =
-        sim::SimRefLoadOp::create(builder, function.getLoc(), type, canonical);
+    Value initial;
+    if (defaultSlot) {
+      if (sim::isAggregateType(type))
+        initial = sim::SimAggregateDefaultOp::create(builder, function.getLoc(),
+                                                     type);
+      else if (isa<IntegerType>(type))
+        initial = arith::ConstantOp::create(builder, function.getLoc(), type,
+                                            builder.getIntegerAttr(type, 0));
+      else if (auto logic = dyn_cast<sim::LogicType>(type)) {
+        auto plane = builder.getIntegerType(logic.getWidth());
+        initial = sim::SimLogicConstantOp::create(
+            builder, function.getLoc(), type,
+            builder.getIntegerAttr(plane, APInt(logic.getWidth(), 0)),
+            builder.getIntegerAttr(plane, APInt::getAllOnes(logic.getWidth())));
+      }
+    }
+    if (!initial) {
+      defaultSlot = false;
+      initial = sim::SimRefLoadOp::create(builder, function.getLoc(), type,
+                                          canonical);
+    }
     auto local =
         sim::SimRefAllocOp::create(builder, function.getLoc(), ref, initial);
+    // The slot is flushed to its exclusive canonical root at every boundary,
+    // so reloading the root at any resumption recreates the same contents.
+    local->setAttr(sim::metadata::flushedPrivateSlot, builder.getUnitAttr());
+    if (defaultSlot)
+      local->setAttr(sim::metadata::activationDefaultSlot,
+                     builder.getUnitAttr());
     for (OpOperand *use : originalUses)
       use->set(local);
     for (Operation *boundary : boundaries) {
       builder.setInsertionPoint(boundary);
+      if (defaultSlot) {
+        // Flush only subtrees that contain a source write. The untouched
+        // fields retain their canonical defaults and create no publications.
+        auto flush = [&](Value slot, Value root, Type type, uint64_t low,
+                         auto &flush) -> void {
+          auto span = sim::getProvenanceSpan(type);
+          if (!span || llvm::none_of(written, [&](auto range) {
+                return low < range.low + range.width && range.low < low + *span;
+              }))
+            return;
+          bool covered = llvm::any_of(written, [&](auto range) {
+            return range.low <= low && low + *span <= range.low + range.width;
+          });
+          if (!covered &&
+              isa<sim::UnpackedArrayType, sim::UnpackedStructType,
+                  sim::PackedArrayType, sim::PackedStructType>(type)) {
+            for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+                 index < count; ++index) {
+              auto child = sim::getAggregateProvenanceSubelement(type, index);
+              Type childType = sim::getAggregateElementType(type, index);
+              assert(child && "promotable aggregate has a fixed layout");
+              auto project = [&](Value reference) -> Value {
+                return sim::SimRefSubelementOp::create(
+                    builder, boundary->getLoc(),
+                    sim::RefType::get(design.getContext(), childType),
+                    reference, builder.getDenseI64ArrayAttr({int64_t(index)}));
+              };
+              flush(project(slot), project(root), childType, low + child->first,
+                    flush);
+            }
+            return;
+          }
+          Value value = sim::SimRefLoadOp::create(builder, boundary->getLoc(),
+                                                  type, slot);
+          sim::SimRefStoreOp::create(builder, boundary->getLoc(), value, root);
+        };
+        flush(local, canonical, type, 0, flush);
+        continue;
+      }
       Value value =
           sim::SimRefLoadOp::create(builder, boundary->getLoc(), type, local);
       auto flush = sim::SimRefStoreOp::create(builder, boundary->getLoc(),
@@ -373,8 +608,13 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
     // carries an equality or ownership assumption across that boundary.
     for (Block *block : resumptions) {
       builder.setInsertionPointToStart(block);
-      Value value = sim::SimRefLoadOp::create(builder, function.getLoc(), type,
-                                              canonical);
+      // Reset certified scratch explicitly. Besides making the lifetime
+      // visible to mem2reg, this prevents an aggregate insert loop from
+      // acquiring a spurious previous-activation SSA input.
+      Value value = defaultSlot
+                        ? initial
+                        : sim::SimRefLoadOp::create(builder, function.getLoc(),
+                                                    type, canonical);
       sim::SimRefStoreOp::create(builder, function.getLoc(), value, local);
     }
   }
@@ -388,6 +628,13 @@ struct ObeliskSimSimplifyBodiesPass
       design.emitError("invalid VPI body simplification contract");
       return signalPassFailure();
     }
+    analysis::SimulationEffectAnalysis effects(design);
+    analysis::HandleDataflowAnalysis provenance(design);
+    auto clearEntries =
+        getClearTerminationEntries(design, effects, provenance, vpi == "off");
+    for (auto function : design.getBody().front().getOps<sim::SimFuncOp>())
+      simplifyTerminationPolls(function, effects, provenance,
+                               clearEntries.contains(function));
     bool canonicalWrites = vpi == "off";
     design.walk([&](Operation *op) {
       if (isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
@@ -428,9 +675,6 @@ struct ObeliskSimSimplifyBodiesPass
         op->erase();
       }
     }
-    analysis::SimulationEffectAnalysis effects(design);
-    for (auto function : design.getBody().front().getOps<sim::SimFuncOp>())
-      simplifyTerminationPolls(function, effects);
     if (canonicalWrites)
       removeDeadPrivateStores(design);
   }

@@ -146,7 +146,8 @@ const NativeStateLayout::Net *getBulkCapturedIsolatedDriverNet(
     unsigned width, const NetByID &netByID, const DriversByNet &driversByNet,
     const ConnectedNets &connectedNets,
     unsigned minimumWidth = bulkConnectedDriverMinWidth) {
-  if (width < minimumWidth || layout.hasPassSwitch || driver.drivenLow != 0 ||
+  if (!layout.isolatedSingleDriverNets.contains(driver.netId) ||
+      width < minimumWidth || layout.hasPassSwitch || driver.drivenLow != 0 ||
       driver.drivenWidth != width || driver.width != width ||
       driver.strength0 != sim::Strength::Strong ||
       driver.strength1 != sim::Strength::Strong ||

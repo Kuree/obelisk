@@ -1,8 +1,11 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -11,8 +14,13 @@ namespace obelisk::analysis {
 std::optional<ConstantIntRanges> getInductionRange(const BoundedLoop &loop,
                                                    bool includeExit) {
   if (!arith::applyCmpPredicate(loop.predicate, loop.init, loop.limit))
-    return includeExit ? std::optional(ConstantIntRanges::constant(loop.init))
-                       : std::nullopt;
+    return includeExit
+               ? std::optional(
+                     loop.initValue
+                         ? ConstantIntRanges::range(loop.initMin, loop.initMax,
+                                                    loop.signedCompare)
+                         : ConstantIntRanges::constant(loop.init))
+               : std::nullopt;
   if (loop.stride.isZero())
     return std::nullopt;
   bool increasing;
@@ -53,6 +61,34 @@ std::optional<ConstantIntRanges> getInductionRange(const BoundedLoop &loop,
   if (delta.isNegative() == increasing)
     return std::nullopt;
   APInt stride = increasing ? delta : -delta;
+  APInt minimum = loop.signedCompare
+                      ? APInt::getSignedMinValue(width).sext(proofWidth)
+                      : APInt::getZero(proofWidth);
+  APInt maximum = loop.signedCompare
+                      ? APInt::getSignedMaxValue(width).sext(proofWidth)
+                      : APInt::getMaxValue(width).zext(proofWidth);
+  if (loop.initValue && loop.initMin != loop.initMax) {
+    // Different initializers may occupy different stride residue classes.
+    // Bound the final step from the last possible body value, rather than
+    // extrapolating the sequence of just one endpoint. Include zero-trip
+    // initializers in the header range, but not in the body range.
+    APInt bodyEnd = limit;
+    if (!inclusive)
+      bodyEnd += increasing ? -APInt(proofWidth, 1) : APInt(proofWidth, 1);
+    APInt exitEnd = increasing ? bodyEnd + stride : bodyEnd - stride;
+    if (!exitEnd.sge(minimum) || !exitEnd.sle(maximum))
+      return std::nullopt;
+    APInt low = increasing ? extend(loop.initMin) : bodyEnd;
+    APInt high = increasing ? bodyEnd : extend(loop.initMax);
+    if (includeExit) {
+      low = increasing ? low
+                       : llvm::APIntOps::smin(extend(loop.initMin), exitEnd);
+      high = increasing ? llvm::APIntOps::smax(extend(loop.initMax), exitEnd)
+                        : high;
+    }
+    return ConstantIntRanges::range(low.trunc(width), high.trunc(width),
+                                    loop.signedCompare);
+  }
   APInt distance = increasing ? limit - start : start - limit;
   if (inclusive)
     ++distance;
@@ -60,12 +96,6 @@ std::optional<ConstantIntRanges> getInductionRange(const BoundedLoop &loop,
   if (!distance.urem(stride).isZero())
     ++trips;
   APInt last = increasing ? start + trips * stride : start - trips * stride;
-  APInt minimum = loop.signedCompare
-                      ? APInt::getSignedMinValue(width).sext(proofWidth)
-                      : APInt::getZero(proofWidth);
-  APInt maximum = loop.signedCompare
-                      ? APInt::getSignedMaxValue(width).sext(proofWidth)
-                      : APInt::getMaxValue(width).zext(proofWidth);
   if (!last.sge(minimum) || !last.sle(maximum))
     return std::nullopt;
   if (!includeExit)
@@ -140,6 +170,98 @@ bool terminatesInFiniteSteps(const BoundedLoop &loop) {
   return getInductionRange(loop, true).has_value();
 }
 
+/// Packed wrappers preserve both planes. Widening an unsigned known counter
+/// preserves its integer value; narrowing before the comparison does not.
+static Value unwrapUnsignedInduction(Value value) {
+  while (Operation *op = value.getDefiningOp()) {
+    if (isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(op)) {
+      value = op->getOperand(0);
+      continue;
+    }
+    if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op)) {
+      if (resize.getIsSigned() ||
+          cast<sim::LogicType>(resize.getResult().getType()).getWidth() <
+              cast<sim::LogicType>(resize.getInput().getType()).getWidth())
+        return {};
+      value = resize.getInput();
+      continue;
+    }
+    break;
+  }
+  return value;
+}
+
+static bool matchInductionConstant(Value value, APInt &bits) {
+  if (matchPattern(value, m_ConstantInt(&bits)))
+    return true;
+  if (auto constant = value.getDefiningOp<sim::SimLogicConstantOp>()) {
+    if (!constant.getUnknown().isZero())
+      return false;
+    bits = constant.getValue();
+    return true;
+  }
+  Operation *op = value.getDefiningOp();
+  if (!op)
+    return false;
+  if (isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
+          sim::SimLogicFromBitsOp>(op))
+    return matchInductionConstant(op->getOperand(0), bits);
+  if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op)) {
+    if (!matchInductionConstant(resize.getInput(), bits))
+      return false;
+    unsigned width = cast<sim::LogicType>(resize.getType()).getWidth();
+    bits = resize.getIsSigned() ? bits.sextOrTrunc(width)
+                                : bits.zextOrTrunc(width);
+    return true;
+  }
+  return false;
+}
+
+/// Infer invariant expressions through dialect interfaces. Only constants and
+/// enclosing inductions are leaves: neither mutable design state nor a value
+/// carried by the current loop can establish a finite recurrence.
+static std::optional<ConstantIntRanges>
+inferInvariantRange(Value value, Block *header, ArrayRef<BoundedLoop> enclosing,
+                    DominanceInfo &dominance) {
+  DenseMap<Value, ConstantIntRanges> ranges;
+  DenseSet<Value> visiting;
+  auto infer = [&](Value value,
+                   auto &infer) -> std::optional<ConstantIntRanges> {
+    if (auto found = ranges.find(value); found != ranges.end())
+      return found->second;
+    APInt constant;
+    if (matchPattern(value, m_ConstantInt(&constant)))
+      return ConstantIntRanges::constant(constant);
+    for (const auto &outer : enclosing)
+      if (outer.induction == value &&
+          (outer.members.contains(header) ||
+           dominance.dominates(outer.condition->getSuccessor(0), header)))
+        return getInductionRange(outer, false);
+    Operation *definition = value.getDefiningOp();
+    auto interface = dyn_cast_or_null<InferIntRangeInterface>(definition);
+    if (!interface || !isMemoryEffectFree(definition) ||
+        !isSpeculatable(definition) || !visiting.insert(value).second)
+      return std::nullopt;
+    SmallVector<ConstantIntRanges> inputs;
+    for (Value operand : definition->getOperands()) {
+      auto input = infer(operand, infer);
+      if (!input)
+        return std::nullopt;
+      inputs.push_back(*input);
+    }
+    interface.inferResultRanges(
+        inputs, [&](Value result, const ConstantIntRanges &range) {
+          ranges.try_emplace(result, range);
+        });
+    visiting.erase(value);
+    auto found = ranges.find(value);
+    return found == ranges.end()
+               ? std::nullopt
+               : std::optional<ConstantIntRanges>(found->second);
+  };
+  return infer(value, infer);
+}
+
 /// Structural recognition shared by the marking and unrolling consumers.
 /// `provenBackedges` names latch branches already proven to terminate, so an
 /// enclosing loop can be recognized once its inner loops are: the DAG check
@@ -156,10 +278,11 @@ bool terminatesInFiniteSteps(const BoundedLoop &loop) {
 /// can change how often the induction test passes. Replication also supports
 /// loop-carried accumulators when their results leave via exit block arguments;
 /// direct uses outside the loop still require a separate SSA repair.
-std::optional<BoundedLoop>
-recognizeBoundedLoop(Block *header,
-                     const llvm::DenseSet<Operation *> &provenBackedges,
-                     bool forMarking) {
+static std::optional<BoundedLoop>
+recognizeBoundedLoopImpl(Block *header,
+                         const llvm::DenseSet<Operation *> &provenBackedges,
+                         bool forMarking, ArrayRef<BoundedLoop> enclosing,
+                         DominanceInfo &dominance) {
   if (header->getNumArguments() == 0)
     return std::nullopt;
   auto condition = dyn_cast<cf::CondBranchOp>(header->getTerminator());
@@ -169,19 +292,28 @@ recognizeBoundedLoop(Block *header,
   // reads; any other argument is a loop-carried value.
   Value tested;
   if (auto compare = condition.getCondition().getDefiningOp<arith::CmpIOp>())
-    tested = isa<BlockArgument>(compare.getLhs()) ? compare.getLhs()
-                                                  : compare.getRhs();
+    tested = isa<BlockArgument>(compare.getLhs()) &&
+                     cast<BlockArgument>(compare.getLhs()).getOwner() == header
+                 ? compare.getLhs()
+                 : compare.getRhs();
   else if (auto isTrue =
                condition.getCondition().getDefiningOp<sim::SimLogicIsTrueOp>())
     if (auto compare =
-            isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>())
+            isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>()) {
       if (auto fromBits =
               compare.getLhs().getDefiningOp<sim::SimLogicFromBitsOp>())
         tested = fromBits.getInput();
+      else if (forMarking)
+        tested = unwrapUnsignedInduction(compare.getLhs());
+    }
   auto induction = dyn_cast_or_null<BlockArgument>(tested);
-  if (!induction || induction.getOwner() != header ||
-      !isa<IntegerType>(induction.getType()))
+  if (!induction || induction.getOwner() != header)
     return std::nullopt;
+  bool fourState = !isa<IntegerType>(induction.getType());
+  auto packedWidth = sim::getPackedWidth(induction.getType());
+  if (!packedWidth || (fourState && !forMarking))
+    return std::nullopt;
+  unsigned inductionWidth = *packedWidth;
   unsigned inductionIndex = induction.getArgNumber();
 
   // The continuation test appears in two equivalent shapes. A two-state
@@ -194,15 +326,37 @@ recognizeBoundedLoop(Block *header,
   llvm::SmallPtrSet<Operation *, 4> testOperations;
   std::optional<arith::CmpIPredicate> predicate;
   APInt limit;
+  Value limitValue;
+  APInt limitMin, limitMax;
   if (auto compare = condition.getCondition().getDefiningOp<arith::CmpIOp>()) {
     bool reversed = compare.getRhs() == induction;
-    auto bound = (reversed ? compare.getLhs() : compare.getRhs())
-                     .getDefiningOp<arith::ConstantIntOp>();
-    if (compare->getBlock() != header || !bound)
+    Value bound = reversed ? compare.getLhs() : compare.getRhs();
+    if (compare->getBlock() != header)
       return std::nullopt;
     predicate = reversed ? swapPredicate(compare.getPredicate())
                          : compare.getPredicate();
-    limit = cast<IntegerAttr>(bound.getValue()).getValue();
+    if (!matchPattern(bound, m_ConstantInt(&limit))) {
+      if (!forMarking)
+        return std::nullopt;
+      bool signedBound = *predicate == arith::CmpIPredicate::slt ||
+                         *predicate == arith::CmpIPredicate::sgt;
+      bool increasing = *predicate == arith::CmpIPredicate::slt ||
+                        *predicate == arith::CmpIPredicate::ult;
+      if (!signedBound && *predicate != arith::CmpIPredicate::ult &&
+          *predicate != arith::CmpIPredicate::ugt)
+        return std::nullopt;
+      // Use dialect range interfaces for invariant expressions such as
+      // `1 << i`. Their leaves must be constants or enclosing inductions;
+      // neither a design load nor this loop's recurrence is an invariant.
+      // Expressions may be rematerialized in the header by CFG threading.
+      auto range = inferInvariantRange(bound, header, enclosing, dominance);
+      if (!range)
+        return std::nullopt;
+      limitValue = bound;
+      limitMin = signedBound ? range->smin() : range->umin();
+      limitMax = signedBound ? range->smax() : range->umax();
+      limit = increasing ? limitMax : limitMin;
+    }
     testOperations.insert(compare.getOperation());
   } else if (auto isTrue = condition.getCondition()
                                .getDefiningOp<sim::SimLogicIsTrueOp>()) {
@@ -212,8 +366,9 @@ recognizeBoundedLoop(Block *header,
       return std::nullopt;
     auto fromBits = compare.getLhs().getDefiningOp<sim::SimLogicFromBitsOp>();
     auto bound = compare.getRhs().getDefiningOp<sim::SimLogicConstantOp>();
-    if (!fromBits || fromBits.getInput() != induction || !bound ||
-        !bound.getUnknown().isZero())
+    if ((!fourState && (!fromBits || fromBits.getInput() != induction)) ||
+        (fourState && unwrapUnsignedInduction(compare.getLhs()) != induction) ||
+        !bound || !bound.getUnknown().isZero())
       return std::nullopt;
     switch (compare.getKind()) {
     case sim::CompareKind::SLT:
@@ -251,14 +406,28 @@ recognizeBoundedLoop(Block *header,
       return std::nullopt;
     }
     limit = bound.getValue();
-    testOperations.insert({isTrue.getOperation(), compare.getOperation(),
-                           fromBits.getOperation()});
+    if (fourState) {
+      // The comparison sees a zero-extended unsigned counter. Retain the
+      // recurrence's storage width, rather than proving a wider nonwrapping
+      // sequence while its packed backedge actually wraps.
+      if ((*predicate != arith::CmpIPredicate::ult &&
+           *predicate != arith::CmpIPredicate::ule &&
+           *predicate != arith::CmpIPredicate::ugt &&
+           *predicate != arith::CmpIPredicate::uge &&
+           *predicate != arith::CmpIPredicate::eq &&
+           *predicate != arith::CmpIPredicate::ne) ||
+          !limit.isIntN(inductionWidth))
+        return std::nullopt;
+    }
+    testOperations.insert({isTrue.getOperation(), compare.getOperation()});
+    if (fromBits)
+      testOperations.insert(fromBits.getOperation());
   } else {
     return std::nullopt;
   }
   // The induction variable and the limit are compared as one width.
-  if (limit.getBitWidth() != induction.getType().getIntOrFloatBitWidth())
-    limit = limit.zextOrTrunc(induction.getType().getIntOrFloatBitWidth());
+  if (limit.getBitWidth() != inductionWidth)
+    limit = limit.zextOrTrunc(inductionWidth);
   if (!forMarking)
     for (Operation &op : header->without_terminator())
       if (!testOperations.contains(&op) &&
@@ -269,50 +438,48 @@ recognizeBoundedLoop(Block *header,
   // conditional branch whenever the loop is nested inside another sweep or
   // guarded by an `if` -- the two shapes RTL reset and initialization loops
   // actually take. Folding an empty `if` join into the header leaves several
-  // entry edges; they are one entry when all start the induction at the same
-  // constant. The latch must stay a plain branch: a conditional backedge
-  // would be a second exit that the termination argument does not cover.
+  // entry edges; they are one entry when all start at the same SSA value or
+  // constant. Identify the latch structurally, since an invariant initializer
+  // need not be a constant. The latch must stay a plain branch: a conditional
+  // backedge would be a second exit that the termination argument does not
+  // cover.
   SmallVector<Operation *, 2> entryOps;
   Value entryValue;
   cf::BranchOp entry, latch;
-  for (Block *pred : header->getPredecessors()) {
+  for (auto edge = header->pred_begin(); edge != header->pred_end(); ++edge) {
+    Block *pred = *edge;
     Operation *terminator = pred->getTerminator();
     Value incoming;
     if (auto branch = dyn_cast<cf::BranchOp>(terminator)) {
       if (branch.getDestOperands().size() != header->getNumArguments())
         return std::nullopt;
       incoming = branch.getDestOperands()[inductionIndex];
-      if (!incoming.getDefiningOp<arith::ConstantIntOp>()) {
+      if (dominance.dominates(header, pred)) {
         if (latch)
           return std::nullopt;
         latch = branch;
         continue;
       }
     } else if (auto branch = dyn_cast<cf::CondBranchOp>(terminator)) {
-      bool trueEdge = branch.getTrueDest() == header;
-      bool falseEdge = branch.getFalseDest() == header;
-      // A predicate that reaches the header on both edges gives no single
-      // initial value.
-      if (trueEdge == falseEdge)
+      if (dominance.dominates(header, pred))
         return std::nullopt;
-      OperandRange operands = trueEdge ? branch.getTrueDestOperands()
-                                       : branch.getFalseDestOperands();
+      // Both edges may reach this header with different carried state. Only
+      // their induction initializers must agree; inspect each actual edge.
+      OperandRange operands = edge.getSuccessorIndex() == 0
+                                  ? branch.getTrueDestOperands()
+                                  : branch.getFalseDestOperands();
       if (operands.size() != header->getNumArguments())
         return std::nullopt;
       incoming = operands[inductionIndex];
-      if (!incoming.getDefiningOp<arith::ConstantIntOp>())
-        return std::nullopt;
     } else {
       return std::nullopt;
     }
-    if (entryValue &&
-        cast<IntegerAttr>(
-            entryValue.getDefiningOp<arith::ConstantIntOp>().getValue())
-                .getValue() !=
-            cast<IntegerAttr>(
-                incoming.getDefiningOp<arith::ConstantIntOp>().getValue())
-                .getValue())
-      return std::nullopt;
+    if (entryValue && entryValue != incoming) {
+      APInt previous, current;
+      if (!matchInductionConstant(entryValue, previous) ||
+          !matchInductionConstant(incoming, current) || previous != current)
+        return std::nullopt;
+    }
     entryOps.push_back(terminator);
     entryValue = incoming;
   }
@@ -322,20 +489,56 @@ recognizeBoundedLoop(Block *header,
   if (entryOps.size() == 1)
     entry = dyn_cast<cf::BranchOp>(entryOps.front());
   Value increment = latch.getDestOperands()[inductionIndex];
-  auto add = increment.getDefiningOp<arith::AddIOp>();
-  auto sub = increment.getDefiningOp<arith::SubIOp>();
-  Value step;
-  if (add && add.getLhs() == induction)
-    step = add.getRhs();
-  else if (add && add.getRhs() == induction)
-    step = add.getLhs();
-  else if (sub && sub.getLhs() == induction)
-    step = sub.getRhs();
-  else
-    return std::nullopt;
-  auto constantStep = step.getDefiningOp<arith::ConstantIntOp>();
-  if (!constantStep)
-    return std::nullopt;
+  APInt stride;
+  bool isAdd;
+  if (fourState) {
+    Value arithmetic = increment;
+    while (Operation *op = arithmetic.getDefiningOp()) {
+      if (isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(op)) {
+        arithmetic = op->getOperand(0);
+        continue;
+      }
+      if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op)) {
+        if (cast<sim::LogicType>(resize.getInput().getType()).getWidth() <
+                inductionWidth ||
+            cast<sim::LogicType>(resize.getType()).getWidth() < inductionWidth)
+          return std::nullopt;
+        arithmetic = resize.getInput();
+        continue;
+      }
+      break;
+    }
+    auto binary = arithmetic.getDefiningOp<sim::SimLogicBinaryOp>();
+    if (!binary || (binary.getKind() != sim::BinaryKind::Add &&
+                    binary.getKind() != sim::BinaryKind::Sub))
+      return std::nullopt;
+    isAdd = binary.getKind() == sim::BinaryKind::Add;
+    Value step;
+    if (unwrapUnsignedInduction(binary.getLhs()) == induction)
+      step = binary.getRhs();
+    else if (isAdd && unwrapUnsignedInduction(binary.getRhs()) == induction)
+      step = binary.getLhs();
+    else
+      return std::nullopt;
+    if (!matchInductionConstant(step, stride))
+      return std::nullopt;
+    stride = stride.zextOrTrunc(inductionWidth);
+  } else {
+    auto add = increment.getDefiningOp<arith::AddIOp>();
+    auto sub = increment.getDefiningOp<arith::SubIOp>();
+    Value step;
+    if (add && add.getLhs() == induction)
+      step = add.getRhs();
+    else if (add && add.getRhs() == induction)
+      step = add.getLhs();
+    else if (sub && sub.getLhs() == induction)
+      step = sub.getRhs();
+    else
+      return std::nullopt;
+    if (!matchPattern(step, m_ConstantInt(&stride)))
+      return std::nullopt;
+    isAdd = static_cast<bool>(add);
+  }
 
   BoundedLoop loop;
   loop.header = header;
@@ -344,29 +547,68 @@ recognizeBoundedLoop(Block *header,
   loop.entry = entry;
   loop.latch = latch;
   loop.exit = condition.getFalseDest();
-  loop.init = cast<IntegerAttr>(
-                  entryValue.getDefiningOp<arith::ConstantIntOp>().getValue())
-                  .getValue();
   loop.limit = limit;
-  loop.stride = cast<IntegerAttr>(constantStep.getValue()).getValue();
+  loop.limitValue = limitValue;
+  loop.limitMin = limitValue ? limitMin : limit;
+  loop.limitMax = limitValue ? limitMax : limit;
+  loop.stride = stride;
   loop.predicate = *predicate;
-  loop.isAdd = static_cast<bool>(add);
+  loop.isAdd = isAdd;
   loop.signedCompare = loop.predicate == arith::CmpIPredicate::slt ||
                        loop.predicate == arith::CmpIPredicate::sle ||
                        loop.predicate == arith::CmpIPredicate::sgt ||
                        loop.predicate == arith::CmpIPredicate::sge;
+  if (!matchInductionConstant(entryValue, loop.init)) {
+    if (fourState || !forMarking ||
+        loop.predicate == arith::CmpIPredicate::eq ||
+        loop.predicate == arith::CmpIPredicate::ne)
+      return std::nullopt;
+    auto range = inferInvariantRange(entryValue, header, enclosing, dominance);
+    if (!range || llvm::any_of(entryOps, [&](Operation *entryOp) {
+          return !dominance.dominates(entryValue, entryOp);
+        }))
+      return std::nullopt;
+    loop.initValue = entryValue;
+    loop.initMin = loop.signedCompare ? range->smin() : range->umin();
+    loop.initMax = loop.signedCompare ? range->smax() : range->umax();
+    bool increasing = loop.predicate == arith::CmpIPredicate::slt ||
+                      loop.predicate == arith::CmpIPredicate::sle ||
+                      loop.predicate == arith::CmpIPredicate::ult ||
+                      loop.predicate == arith::CmpIPredicate::ule;
+    loop.init = increasing ? loop.initMin : loop.initMax;
+  } else {
+    loop.initMin = loop.initMax = loop.init;
+  }
 
+  DenseSet<Block *> naturalMembers{header};
+  if (forMarking) {
+    // A break can bypass the header's normal exit block and join a later
+    // continuation. Bound the natural recurrence, not that continuation (it
+    // may belong to an enclosing loop). Every residual cycle, including a
+    // nonterminating exit path, is checked separately by hasFiniteControlFlow.
+    SmallVector<Block *> reverse{latch->getBlock()};
+    while (!reverse.empty()) {
+      Block *block = reverse.pop_back_val();
+      if (!naturalMembers.insert(block).second)
+        continue;
+      if (!dominance.dominates(header, block))
+        return std::nullopt;
+      llvm::append_range(reverse, block->getPredecessors());
+    }
+  }
   loop.members.insert(header);
   loop.blocks.push_back(header);
   SmallVector<Block *> pending{condition.getTrueDest()};
   loop.operations = header->getOperations().size();
   while (!pending.empty()) {
     Block *block = pending.pop_back_val();
-    if (forMarking && block == loop.exit)
-      continue;
-    if (block == loop.exit || llvm::any_of(entryOps, [&](Operation *entryOp) {
+    if (llvm::any_of(entryOps, [&](Operation *entryOp) {
           return entryOp->getBlock() == block;
         }))
+      return std::nullopt;
+    if (forMarking && !naturalMembers.contains(block))
+      continue;
+    if (block == loop.exit)
       return std::nullopt;
     if (!loop.members.insert(block).second)
       continue;
@@ -388,6 +630,10 @@ recognizeBoundedLoop(Block *header,
   if (!loop.members.contains(latch->getBlock()) ||
       loop.members.contains(loop.exit))
     return std::nullopt;
+  if (limitValue) {
+    if (!dominance.dominates(limitValue, header->getTerminator()))
+      return std::nullopt;
+  }
   llvm::DenseMap<Block *, unsigned> indegree;
   for (Block *block : loop.blocks) {
     if (block == header)
@@ -445,11 +691,22 @@ recognizeBoundedLoop(Block *header,
   return loop;
 }
 
-SmallVector<BoundedLoop> analyzeBoundedLoops(Region &region) {
-  SmallVector<BoundedLoop> loops;
+std::optional<BoundedLoop>
+recognizeBoundedLoop(Block *header,
+                     const llvm::DenseSet<Operation *> &provenBackedges,
+                     bool forMarking, ArrayRef<BoundedLoop> enclosing) {
+  DominanceInfo dominance;
+  return recognizeBoundedLoopImpl(header, provenBackedges, forMarking,
+                                  enclosing, dominance);
+}
+
+SmallVector<BoundedLoop, 0> analyzeBoundedLoops(Region &region) {
+  SmallVector<BoundedLoop, 0> loops;
   if (region.empty() || region.hasOneBlock())
     return loops;
   DominanceInfo dominance;
+  // Neither proof sweep mutates the CFG. Share this tree across every loop
+  // and invariant expression instead of rebuilding it for each recurrence.
   CFGLoopInfo loopInfo(dominance.getDomTree(&region));
   llvm::DenseSet<Operation *> provenBackedges;
   // LLVM's generic LoopInfo supplies natural-loop headers and nesting. Visit
@@ -459,11 +716,34 @@ SmallVector<BoundedLoop> analyzeBoundedLoops(Region &region) {
   // Its loop membership also excludes terminating side paths, which the
   // recognizer must still check for unsupported control or residual cycles.
   auto preorder = loopInfo.getLoopsInPreorder();
+  // A finishing sweep on a break path is a sibling natural loop, but its
+  // initializer may still use the enclosing iteration's true-edge range.
+  // Dominator depth visits every such defining header before its consumers.
+  llvm::stable_sort(preorder, [&](CFGLoop *a, CFGLoop *b) {
+    return dominance.getNode(a->getHeader())->getLevel() <
+           dominance.getNode(b->getHeader())->getLevel();
+  });
+  // Discover induction envelopes from the outside in. Cutting natural inner
+  // latches here establishes only each envelope, not termination of a body.
+  // The second, inside-out pass validates every nested cycle before exposing
+  // a termination certificate. This avoids circular termination assumptions
+  // for triangular loops such as `for (k = 0; k < i; ++k)`.
+  DenseSet<Operation *> naturalBackedges;
+  for (CFGLoop *natural : preorder)
+    if (Block *latch = natural->getLoopLatch())
+      naturalBackedges.insert(latch->getTerminator());
+  SmallVector<BoundedLoop, 0> envelopes;
+  for (CFGLoop *natural : preorder)
+    if (natural->getLoopLatch())
+      if (auto loop =
+              recognizeBoundedLoopImpl(natural->getHeader(), naturalBackedges,
+                                       true, envelopes, dominance))
+        envelopes.push_back(std::move(*loop));
   for (CFGLoop *natural : llvm::reverse(preorder)) {
     if (!natural->getLoopLatch())
       continue;
-    auto loop =
-        recognizeBoundedLoop(natural->getHeader(), provenBackedges, true);
+    auto loop = recognizeBoundedLoopImpl(natural->getHeader(), provenBackedges,
+                                         true, envelopes, dominance);
     if (!loop)
       continue;
     provenBackedges.insert(loop->latch.getOperation());
@@ -472,7 +752,7 @@ SmallVector<BoundedLoop> analyzeBoundedLoops(Region &region) {
   return loops;
 }
 
-SmallVector<BoundedLoop> analyzeActivationBoundedLoops(Region &region) {
+SmallVector<BoundedLoop, 0> analyzeActivationBoundedLoops(Region &region) {
   if (llvm::none_of(region, [](Block &block) {
         return sim::isSuspensionOp(block.getTerminator());
       }))
@@ -503,6 +783,10 @@ SmallVector<BoundedLoop> analyzeActivationBoundedLoops(Region &region) {
   for (auto &loop : loops) {
     loop.header = originals.lookup(loop.header);
     loop.induction = cast<BlockArgument>(originals.lookup(loop.induction));
+    if (loop.initValue)
+      loop.initValue = originals.lookup(loop.initValue);
+    if (loop.limitValue)
+      loop.limitValue = originals.lookup(loop.limitValue);
     loop.condition =
         cast<cf::CondBranchOp>(originals.lookup(loop.condition.getOperation()));
     if (loop.entry)
@@ -518,6 +802,37 @@ SmallVector<BoundedLoop> analyzeActivationBoundedLoops(Region &region) {
     }
   }
   return loops;
+}
+
+bool hasFiniteControlFlow(Region &region) {
+  DenseSet<Operation *> latches;
+  for (const auto &loop : analyzeBoundedLoops(region))
+    latches.insert(loop.latch);
+  DenseMap<Block *, unsigned> incoming;
+  for (Block &block : region)
+    incoming[&block] = 0;
+  for (Block &block : region) {
+    Operation *term = block.getTerminator();
+    if (isa<sim::SimReturnOp>(term) || latches.contains(term))
+      continue;
+    if (!isa<cf::BranchOp, cf::CondBranchOp, cf::SwitchOp>(term))
+      return false;
+    for (Block *next : block.getSuccessors())
+      ++incoming[next];
+  }
+  SmallVector<Block *> ready;
+  for (Block &block : region)
+    if (!incoming[&block])
+      ready.push_back(&block);
+  for (size_t i = 0; i < ready.size(); ++i) {
+    Operation *term = ready[i]->getTerminator();
+    if (isa<sim::SimReturnOp>(term) || latches.contains(term))
+      continue;
+    for (Block *next : ready[i]->getSuccessors())
+      if (!--incoming[next])
+        ready.push_back(next);
+  }
+  return ready.size() == incoming.size();
 }
 
 } // namespace obelisk::analysis

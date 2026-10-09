@@ -119,6 +119,36 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     uint32_t state;
     uint64_t low, high;
   };
+  auto normalizeRanges = [](SmallVectorImpl<Range> &ranges) {
+    llvm::sort(ranges, [](const Range &a, const Range &b) {
+      return std::tie(a.state, a.low, a.high) <
+             std::tie(b.state, b.low, b.high);
+    });
+    size_t kept = 0;
+    for (Range range : ranges) {
+      if (kept && ranges[kept - 1].state == range.state &&
+          ranges[kept - 1].high >= range.low)
+        ranges[kept - 1].high = std::max(ranges[kept - 1].high, range.high);
+      else
+        ranges[kept++] = range;
+    }
+    ranges.resize(kept);
+  };
+  auto overlap = [](ArrayRef<Range> reads, ArrayRef<Range> writes) {
+    size_t r = 0, w = 0;
+    while (r < reads.size() && w < writes.size()) {
+      const auto &read = reads[r];
+      const auto &write = writes[w];
+      if (read.state < write.state ||
+          (read.state == write.state && read.high <= write.low))
+        ++r;
+      else if (write.state < read.state || write.high <= read.low)
+        ++w;
+      else
+        return true;
+    }
+    return false;
+  };
   struct Node {
     NativeRankedEvalNode plan;
     SmallVector<Range> reads, writes;
@@ -167,6 +197,7 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     });
     if (clocked && (!clocks[record.bit] || multipleClocks.contains(record.bit)))
       continue;
+    DenseSet<StringAttr> summarizedActivations;
     bool safe = llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
       auto fragment = fragments.find(id);
       if (fragment == fragments.end() ||
@@ -194,8 +225,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
       // Sensitivity remains independent: every watch stays an ordering edge.
       auto effects = fragment->second.getEffects();
       auto inputs = activationInputs.liveIns.find(function.getSymNameAttr());
+      auto outputs = activationInputs.mayWrites.find(function.getSymNameAttr());
       bool activation = !clocked && activationInputs.sourceGraph == graph &&
-                        inputs != activationInputs.liveIns.end();
+                        inputs != activationInputs.liveIns.end() &&
+                        outputs != activationInputs.mayWrites.end();
       bool effectsSafe = llvm::all_of(effects, [&](Attribute raw) {
         auto effect = cast<schedule::ComputeEffectAttr>(raw);
         // IEEE 1800-2023 4.5-4.7, 10.4.2: consecutive Active evaluations
@@ -255,7 +288,7 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
             if (decoded.id == state && range.low < low + width &&
                 low < range.high)
               return false;
-          } else
+          } else if (!activation)
             node.writes.push_back(range);
         } else if (!clocked &&
                    (!activation ||
@@ -265,31 +298,43 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
       });
       if (!effectsSafe)
         return false;
-      if (activation)
-        for (auto range : inputs->second) {
-          auto handle = stateLayout.storage.find(range.root);
-          obelisk_rt_stable_handle_v1 decoded{};
-          if (handle == stateLayout.storage.end() ||
-              !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-              decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset)
-            return false;
-          auto width = widths.find(decoded.id);
-          if (width == widths.end() || range.low >= width->second ||
-              range.width > width->second - range.low)
-            return false;
-          node.reads.push_back(
-              {decoded.id, range.low, range.low + range.width});
-        }
+      if (activation &&
+          summarizedActivations.insert(function.getSymNameAttr()).second) {
+        auto appendRanges = [&](auto ranges, SmallVectorImpl<Range> &dest) {
+          for (auto range : ranges) {
+            constexpr uint64_t netTag =
+                analysis::ActivationMemoryAnalysis::netRootTag;
+            const auto &handles =
+                range.root & netTag ? stateLayout.nets : stateLayout.storage;
+            auto handle = handles.find(range.root & ~netTag);
+            obelisk_rt_stable_handle_v1 decoded{};
+            if (handle == handles.end() ||
+                !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+                decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+                decoded.offset)
+              return false;
+            auto width = widths.find(decoded.id);
+            if (width == widths.end() || range.low >= width->second ||
+                range.width > width->second - range.low)
+              return false;
+            dest.push_back({decoded.id, range.low, range.low + range.width});
+          }
+          return true;
+        };
+        return appendRanges(inputs->second, node.reads) &&
+               appendRanges(outputs->second, node.writes);
+      }
       return true;
     });
     // IEEE 1800-2023 9.2.2.2.1 excludes written expressions from always_comb
     // sensitivity. A read-before-write source therefore cannot be treated as
     // an algebraic feedback equation and iterated to a fixed point. Keep
     // self-dependent processes on their existing executor for now.
-    for (const auto &write : node.writes)
-      for (const auto &read : node.reads)
-        safe &= write.state != read.state || write.low >= read.high ||
-                read.low >= write.high;
+    if (safe) {
+      normalizeRanges(node.reads);
+      normalizeRanges(node.writes);
+      safe = !overlap(node.reads, node.writes);
+    }
     if (safe && clocked) {
       node.plan.clocked = true;
       clockedNodes.emplace_back(std::move(node.plan), *clocks[record.bit]);
@@ -303,11 +348,46 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
       node.plan.boundary = true;
       node.reads.clear();
       node.writes.clear();
+      DenseSet<StringAttr> summarizedOwners;
       for (uint32_t id : direct.fragmentIDs) {
         auto fragment = fragments.lookup(id);
         if (!fragment) {
           node.opaqueMemory = true;
           continue;
+        }
+        auto owner = fragment.getFunction().getAttr();
+        auto inputs = activationInputs.liveIns.find(owner);
+        auto outputs = activationInputs.mayWrites.find(owner);
+        bool activation = activationInputs.sourceGraph == graph &&
+                          inputs != activationInputs.liveIns.end() &&
+                          outputs != activationInputs.mayWrites.end();
+        if (activation && summarizedOwners.insert(owner).second) {
+          auto appendRanges = [&](auto ranges, SmallVectorImpl<Range> &dest) {
+            for (auto range : ranges) {
+              constexpr uint64_t netTag =
+                  analysis::ActivationMemoryAnalysis::netRootTag;
+              const auto &handles =
+                  range.root & netTag ? stateLayout.nets : stateLayout.storage;
+              auto handle = handles.find(range.root & ~netTag);
+              obelisk_rt_stable_handle_v1 decoded{};
+              if (handle == handles.end() ||
+                  !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+                  decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+                  decoded.offset) {
+                node.opaqueMemory = true;
+                continue;
+              }
+              auto width = widths.find(decoded.id);
+              if (width == widths.end() || range.low >= width->second ||
+                  range.width > width->second - range.low) {
+                node.opaqueMemory = true;
+                continue;
+              }
+              dest.push_back({decoded.id, range.low, range.low + range.width});
+            }
+          };
+          appendRanges(inputs->second, node.reads);
+          appendRanges(outputs->second, node.writes);
         }
         for (auto effect :
              fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
@@ -316,6 +396,13 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
               kind != schedule::ComputeEffectKind::Write &&
               kind != schedule::ComputeEffectKind::Drive &&
               kind != schedule::ComputeEffectKind::Watch)
+            continue;
+          // A certified activation accounts for every canonical access and
+          // excludes its private scratch storage. Keep that precision even
+          // when net publication or another emission restriction requires an
+          // executor boundary. Unknown local effects must not invent edges to
+          // every other actor. Sensitivity remains an independent constraint.
+          if (activation && kind != schedule::ComputeEffectKind::Watch)
             continue;
           auto resource = effect.getResource();
           if ((resource != schedule::ComputeResourceKind::Storage &&
@@ -357,6 +444,8 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
               .push_back(range);
         }
       }
+      normalizeRanges(node.reads);
+      normalizeRanges(node.writes);
       nodes.push_back(std::move(node));
     }
   }
@@ -364,6 +453,11 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     uint64_t low, high, prefixHigh;
     uint32_t owner;
   };
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    for (const auto &node : nodes)
+      llvm::errs() << "obelisk ranked memory: body=" << node.plan.body
+                   << " reads=" << node.reads.size()
+                   << " writes=" << node.writes.size() << '\n';
   DenseMap<uint32_t, SmallVector<Reader>> readers;
   for (const auto &node : nodes)
     for (const auto &read : node.reads)
@@ -499,18 +593,27 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
     auto function = symbols.lookup<sim::SimFuncOp>(owner.getValue());
     if (!function)
       continue;
-    analysis::ActivationRegionAnalysis activation(function, handles);
+    analysis::ActivationRegionAnalysis activation(
+        function, handles, {},
+        analysis::ActivationMemoryAnalysis::DependencyMode::Inputs);
     if (explain)
-      llvm::errs() << "obelisk ranked activation: " << function.getSymName()
-                   << " valid=" << activation.isValid()
-                   << " complete=" << activation.getMemory().hasCompleteWrites()
-                   << " reason="
-                   << analysis::stringifyActivationFailure(
-                          activation.getFailureReason())
-                   << '\n';
-    if (activation.isValid() && activation.getMemory().hasCompleteWrites())
+      llvm::errs()
+          << "obelisk ranked activation: " << function.getSymName()
+          << " valid=" << activation.isValid()
+          << " complete=" << activation.getMemory().hasCompleteWrites()
+          << " inputs=" << activation.getMemory().hasInputDependencies()
+          << " input_reason=" << activation.getMemory().getDependencyFailure()
+          << " reason="
+          << analysis::stringifyActivationFailure(activation.getFailureReason())
+          << '\n';
+    if (activation.isValid() && activation.getMemory().hasCompleteWrites()) {
       llvm::append_range(result.liveIns[function.getSymNameAttr()],
-                         activation.getMemory().getLiveIns());
+                         activation.getMemory().hasInputDependencies()
+                             ? activation.getMemory().getValueInputs()
+                             : activation.getMemory().getLiveIns());
+      llvm::append_range(result.mayWrites[function.getSymNameAttr()],
+                         activation.getMemory().getMayWrites());
+    }
   }
   return result;
 }

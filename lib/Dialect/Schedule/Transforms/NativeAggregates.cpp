@@ -144,7 +144,12 @@ private:
                                                          &getContext());
     sim::SimPackedUnflattenOp::getCanonicalizationPatterns(patterns,
                                                            &getContext());
-    if (failed(applyPatternsGreedily(function, std::move(patterns))))
+    // Native admission has separated conditional storage identities. Merging
+    // identical blocks here can recreate reference phis that packed lowering
+    // cannot represent as a fixed root plus a dynamic offset.
+    GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
+    if (failed(applyPatternsGreedily(function, std::move(patterns), config)))
       signalPassFailure();
   }
 };

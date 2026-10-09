@@ -8,7 +8,7 @@
 // The bound and modular arithmetic still require the ordinary termination
 // proof: changing the stride to zero must reject the activation.
 // CHECK: regions @break_dispatch valid=1
-// CHECK: node scf.while
+// CHECK: node cf.br
 // NO-PROGRESS: regions @break_dispatch valid=0 reason=termination
 module {
   simulation.design @shared_latch {

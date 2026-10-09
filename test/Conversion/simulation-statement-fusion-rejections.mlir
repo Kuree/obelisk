@@ -1,9 +1,11 @@
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --implicit-check-not=__obelisk_region_kernel_
 
-// A data DAG still cannot violate procedural statement order (LRM 4.6).
+// A data DAG cannot drop procedural statement order (LRM 4.6(a)) when an
+// outside wait can count the transitions of `result` that the reorder removes.
 // CHECK-LABEL: simulation.design @source_order_cycle
 // CHECK-DAG: simulation.spawn @producer_and_consumer
 // CHECK-DAG: simulation.spawn @transform
+// CHECK-DAG: simulation.spawn @sample
 module {
   simulation.design @source_order_cycle {
     simulation.scope.decl 0
@@ -20,6 +22,7 @@ module {
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
       %a = simulation.spawn @producer_and_consumer(%ctx) : !simulation.context -> !simulation.process
       %b = simulation.spawn @transform(%ctx) : !simulation.context -> !simulation.process
+      %c = simulation.spawn @sample(%ctx) : !simulation.context -> !simulation.process
       simulation.return
     }
     simulation.func @producer_and_consumer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 1 : i64} {
@@ -46,8 +49,22 @@ module {
       simulation.ref.store %r to %result : i8, !simulation.ref<i8>
       simulation.suspend.change %address to ^body : !simulation.ref<i8>
     }
+    simulation.func @sample(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 3 : i32, code_unit_id = 3 : i64} {
+      %result = simulation.context.storage %ctx[3] : !simulation.ref<i8>
+      %count = simulation.context.storage %ctx[5] : !simulation.ref<i8>
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.change %result to ^body : !simulation.ref<i8>
+    ^body:
+      %c = simulation.ref.load %count : !simulation.ref<i8> -> i8
+      %one = arith.constant 1 : i8
+      %next = arith.addi %c, %one : i8
+      simulation.ref.store %next to %count : i8, !simulation.ref<i8>
+      cf.br ^wait
+    }
   }
 }
+
 
 // -----
 

@@ -1,6 +1,7 @@
 #include "AnalysisTestPasses.h"
 #include "obelisk/Analysis/DemandedBitAnalysis.h"
 #include "obelisk/Analysis/LogicBitAnalysis.h"
+#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -152,9 +153,63 @@ public:
     markAllAnalysesPreserved();
   }
 };
+
+class ScopedIntegerRangesTestPass final
+    : public PassWrapper<ScopedIntegerRangesTestPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ScopedIntegerRangesTestPass)
+  StringRef getArgument() const final {
+    return "test-obelisk-scoped-integer-ranges";
+  }
+  StringRef getDescription() const final {
+    return "query selector ranges and bound retained scoped facts";
+  }
+  void runOnOperation() final {
+    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+      DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+      solver.load<dataflow::DeadCodeAnalysis>();
+      solver.load<dataflow::SparseConstantPropagation>();
+      solver.load<dataflow::IntegerRangeAnalysis>();
+      auto *analysis =
+          solver.load<obelisk::analysis::ScopedIntegerRangeAnalysis>(function);
+      if (failed(solver.initializeAndRun(function))) {
+        signalPassFailure();
+        return;
+      }
+      size_t largest = 0;
+      function.walk([&](Operation *op) {
+        auto *state = solver.lookupState<obelisk::analysis::ScopedRangeLattice>(
+            solver.getProgramPointBefore(op));
+        if (!state || !state->reachable)
+          return;
+        largest = std::max<size_t>(largest, state->getRanges().size());
+        auto label = op->getAttrOfType<StringAttr>("test.scoped");
+        if (!label)
+          return;
+        llvm::errs() << label.getValue();
+        if (auto range = analysis->getRange(op->getOperand(1), *state)) {
+          llvm::errs() << " umin=";
+          range->umin().print(llvm::errs(), false);
+          llvm::errs() << " umax=";
+          range->umax().print(llvm::errs(), false);
+        } else
+          llvm::errs() << " unknown";
+        llvm::errs() << '\n';
+      });
+      if (auto limit = function->getAttrOfType<IntegerAttr>("test.scoped_max"))
+        if (largest > limit.getUInt()) {
+          function.emitError() << "retained " << largest
+                               << " scoped facts; limit is " << limit.getUInt();
+          signalPassFailure();
+        }
+    });
+    markAllAnalysesPreserved();
+  }
+};
 } // namespace
 
 void obelisk::registerValueInterfacesTestPass() {
   PassRegistration<ValueInterfacesTestPass>();
   PassRegistration<IntegerInterfacesTestPass>();
+  PassRegistration<ScopedIntegerRangesTestPass>();
 }

@@ -120,7 +120,10 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK-SAME: schedule.eval.continuation = 1 : i32
 // CHECK-SAME: schedule.eval.raw_captures
 // CHECK: simulation.ref.load
-// CHECK: simulation.ref.store
+// The unobserved output is write-only even though this body calls helpers.
+// Coverage remains in the callee; deleting this store must not delete calls.
+// CHECK: simulation.call @forward_coverage
+// CHECK-NOT: simulation.ref.store
 // CHECK: simulation.return
 // OFF-LABEL: simulation.func private @forward_static(
 // OFF-NOT: simulation.ref.store

@@ -1,24 +1,27 @@
-//===- ActivationRegionAnalysis.cpp - Structured activation regions ------===//
+//===- ActivationRegionAnalysis.cpp - CFG activation regions -------------===//
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
+#include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/LivenessAnalysis.h"
-#include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/Verifier.h"
+#include "mlir/IR/RegionGraphTraits.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "obelisk/Analysis/ActivationControlFlow.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/SimulationControlFlowToSCF.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include <queue>
+#include <set>
 
 using namespace mlir;
 namespace obelisk::analysis {
@@ -32,43 +35,91 @@ LogicalResult canonicalizeControl(Operation *operation) {
   for (RegisteredOperationName name :
        operation->getContext()->getRegisteredOperations())
     if (name.getDialectNamespace() == "arith" ||
-        name.getDialectNamespace() == "cf" ||
-        name.getDialectNamespace() == "scf")
+        name.getDialectNamespace() == "cf")
       name.getCanonicalizationPatterns(patterns, operation->getContext());
   return applyPatternsGreedily(operation, std::move(patterns));
 }
 
-bool finiteActivation(sim::SimFuncOp function) {
-  DenseSet<Operation *> latches;
-  for (auto &loop : analyzeActivationBoundedLoops(function.getBody()))
-    latches.insert(loop.latch);
-  // Kahn's algorithm after cutting only validated loop latches and the wait.
-  // A procedural or irreducible cycle without a proof is not a DAG region.
-  DenseMap<Block *, unsigned> incoming;
-  for (Block &block : function.getBody())
-    incoming[&block] = 0;
-  for (Block &block : function.getBody()) {
-    auto *term = block.getTerminator();
-    if (isa<sim::SimReturnOp>(term) || latches.contains(term))
+/// An activation creates each flushed private slot from its root and may then
+/// execute the slot's resumption refresh, a store of the same root load into
+/// the fresh slot. Without an intervening access of the root or the slot that
+/// store rewrites the initial contents; drop it so the initial and resumed
+/// views match.
+void dropRedundantSlotRefreshes(sim::SimFuncOp function) {
+  Block &entry = function.getBody().front();
+  SmallVector<Operation *> redundant;
+  for (Operation &op : entry) {
+    auto alloc = dyn_cast<sim::SimRefAllocOp>(op);
+    if (!alloc || !alloc->hasAttr(sim::metadata::flushedPrivateSlot))
       continue;
-    if (!isa<cf::BranchOp, cf::CondBranchOp, cf::SwitchOp>(term))
-      return false;
-    for (Block *successor : block.getSuccessors())
-      ++incoming[successor];
+    auto initial = alloc.getInitialValue().getDefiningOp<sim::SimRefLoadOp>();
+    Value root = initial ? initial.getReference() : Value{};
+    for (Operation *next = alloc->getNextNode(); next;
+         next = next->getNextNode()) {
+      auto store = dyn_cast<sim::SimRefStoreOp>(next);
+      auto load = store ? store.getValue().getDefiningOp<sim::SimRefLoadOp>()
+                        : sim::SimRefLoadOp{};
+      if (store && store.getReference() == alloc.getResult() &&
+          (store.getValue() == alloc.getInitialValue() ||
+           (root && load && load.getReference() == root))) {
+        redundant.push_back(store);
+        break;
+      }
+      // Pure computations, loads, fresh slots and stores into other fresh
+      // slots touch neither this slot nor its root.
+      auto otherSlot = [&](Value reference) {
+        auto slot = reference.getDefiningOp<sim::SimRefAllocOp>();
+        return slot && slot != alloc;
+      };
+      if (!isMemoryEffectFree(next) &&
+          !isa<sim::SimRefLoadOp, sim::SimRefAllocOp>(next) &&
+          !(store && otherSlot(store.getReference())))
+        break;
+    }
   }
-  SmallVector<Block *> ready;
-  for (Block &block : function.getBody())
-    if (!incoming[&block])
-      ready.push_back(&block);
-  for (size_t i = 0; i < ready.size(); ++i) {
-    auto *term = ready[i]->getTerminator();
-    if (isa<sim::SimReturnOp>(term) || latches.contains(term))
+  for (Operation *store : redundant) {
+    auto load = cast<sim::SimRefStoreOp>(store).getValue().getDefiningOp();
+    store->erase();
+    if (load && load->use_empty())
+      load->erase();
+  }
+  // Place every slot, with its root load, immediately before its first use in
+  // the entry block, so slot creation order does not distinguish the views.
+  // Nothing in between writes the exclusive root or the fresh slot.
+  SmallVector<sim::SimRefAllocOp> slots;
+  for (Operation &op : entry)
+    if (auto alloc = dyn_cast<sim::SimRefAllocOp>(op);
+        alloc && alloc->hasAttr(sim::metadata::flushedPrivateSlot))
+      slots.push_back(alloc);
+  for (auto alloc : slots) {
+    auto initial = alloc.getInitialValue().getDefiningOp<sim::SimRefLoadOp>();
+    Operation *first = entry.getTerminator();
+    for (Operation *user : alloc->getUsers())
+      if (Operation *ancestor = entry.findAncestorOpInBlock(*user);
+          ancestor && ancestor->isBeforeInBlock(first))
+        first = ancestor;
+    if (alloc->hasAttr(sim::metadata::activationDefaultSlot)) {
+      // Fresh default scratch does not read canonical state. Sinking its
+      // allocation past unrelated pure initializers gives both views the
+      // same placement even when several slots share an aggregate default.
+      alloc->moveBefore(first);
       continue;
-    for (Block *successor : ready[i]->getSuccessors())
-      if (!--incoming[successor])
-        ready.push_back(successor);
+    }
+    if (!initial || initial->getBlock() != &entry || !initial->hasOneUse())
+      continue;
+    bool clear = true;
+    for (Operation *op = alloc->getNextNode(); op && op != first && clear;
+         op = op->getNextNode())
+      if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
+        clear = store.getReference() != initial.getReference();
+      else
+        clear = isMemoryEffectFree(op) ||
+                isa<sim::SimRefLoadOp, sim::SimRefAllocOp>(op);
+    if (!clear)
+      continue;
+    initial->moveBefore(first);
+    alloc->moveBefore(first);
   }
-  return ready.size() == incoming.size();
 }
 
 OwningOpRef<sim::SimFuncOp>
@@ -106,9 +157,18 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
       if (Value found = rematerialized.lookup(value))
         return found;
       auto *definition = value.getDefiningOp();
+      // A flushed private slot equals a fresh copy of its exclusive root at
+      // every resumption: recreate it together with the root load.
+      auto flushed = [](Operation *op) {
+        return op && op->hasAttr(sim::metadata::flushedPrivateSlot);
+      };
+      bool slotInitializer = isa_and_nonnull<sim::SimRefLoadOp>(definition) &&
+                             definition->hasOneUse() &&
+                             flushed(*definition->getUsers().begin());
       if (!definition || !visiting.insert(value).second ||
-          definition->getNumRegions() || !isMemoryEffectFree(definition) ||
-          !isSpeculatable(definition))
+          definition->getNumRegions() ||
+          (!flushed(definition) && !slotInitializer &&
+           (!isMemoryEffectFree(definition) || !isSpeculatable(definition))))
         return {};
       IRMapping operands;
       for (Value operand : definition->getOperands()) {
@@ -117,7 +177,18 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
           return {};
         operands.map(operand, mapped);
       }
-      auto *cloned = builder.clone(*definition, operands);
+      // Immutable entry definitions already dominate the new resume edge.
+      // Reuse them when their operands are unchanged, retaining canonical
+      // definition order (including aggregate defaults shared by slots).
+      // A snapshot load is never reused by this rule.
+      bool reuse = definition->getBlock() == &source.getBody().front() &&
+                   isMemoryEffectFree(definition) &&
+                   isSpeculatable(definition) &&
+                   llvm::all_of(definition->getOperands(), [&](Value operand) {
+                     return operands.lookup(operand) == mapping.lookup(operand);
+                   });
+      auto *cloned = reuse ? mapping.lookup(definition)
+                           : builder.clone(*definition, operands);
       cloned->removeAttr("simulation.rematerialized");
       for (auto [from, to] :
            llvm::zip_equal(definition->getResults(), cloned->getResults()))
@@ -125,6 +196,12 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
       visiting.erase(value);
       return rematerialized.lookup(value);
     };
+    // Recreate flushed private slots in entry order so both activations
+    // allocate them identically.
+    for (Operation &op : source.getBody().front().without_terminator())
+      if (op.hasAttr(sim::metadata::flushedPrivateSlot) &&
+          !materialize(op.getResult(0), materialize))
+        return {};
     auto branch = cast<BranchOpInterface>(suspend);
     SmallVector<Value> arguments;
     for (Value argument :
@@ -134,6 +211,13 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
         return {};
       arguments.push_back(mapped);
     }
+    // Unthreaded CFGs may use an entry slot directly instead of passing its
+    // reference on the suspension edge. Rebind those uses to the recreated
+    // slot too; otherwise the clone keeps an artificial bootstrap live-in.
+    for (auto [original, recreated] : rematerialized)
+      if (auto alloc = original.getDefiningOp<sim::SimRefAllocOp>();
+          alloc && alloc->hasAttr(sim::metadata::flushedPrivateSlot))
+        mapping.lookup(original).replaceAllUsesWith(recreated);
     cf::BranchOp::create(builder, source.getLoc(),
                          mapping.lookup(suspend->getSuccessor(0)), arguments);
     entryTerminator->erase();
@@ -167,11 +251,12 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
   }
   if (failed(canonicalizeControl(copy)))
     return {};
+  dropRedundantSlotRefreshes(copy);
   // Normalize lowered break/continue dispatch only when it obstructs the
   // ordinary induction proof. Already admitted activations keep their CFG.
   if (control ==
           ActivationRegionAnalysis::ControlFlowPreparation::ThreadDispatch &&
-      !finiteActivation(copy))
+      !hasFiniteControlFlow(copy.getBody()))
     while (threadActivationControlFlow(copy.getBody())) {
       if (failed(canonicalizeControl(copy)))
         return {};
@@ -181,6 +266,51 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
                  : ActivationRegionAnalysis::TracePhase::Initial,
           copy);
   return owner;
+}
+
+/// Give every top-level loop a dedicated entry block and one landing block
+/// per exit edge, so the blocks around a loop bound it as a unit. Canonical
+/// pass-through forwarding otherwise lets a loop exit straight into the next
+/// loop's header, fusing both loops into one scheduling unit. Entry operands
+/// pass through unchanged, keeping a constant induction start visible.
+void separateTopLevelLoops(sim::SimFuncOp function) {
+  Region &body = function.getBody();
+  SmallVector<SmallVector<Block *>> loops;
+  for (auto scc = llvm::scc_begin(&body); !scc.isAtEnd(); ++scc)
+    if (scc.hasCycle())
+      loops.emplace_back(scc->begin(), scc->end());
+  OpBuilder builder(function.getContext());
+  auto splitEdge = [&](Block *from, unsigned successor) {
+    auto branch = cast<BranchOpInterface>(from->getTerminator());
+    Block *to = from->getTerminator()->getSuccessor(successor);
+    SmallVector<Value> operands(
+        branch.getSuccessorOperands(successor).getForwardedOperands());
+    auto *landing = new Block;
+    body.getBlocks().insert(to->getIterator(), landing);
+    builder.setInsertionPointToEnd(landing);
+    cf::BranchOp::create(builder, from->getTerminator()->getLoc(), to,
+                         operands);
+    branch.getSuccessorOperands(successor).erase(0, operands.size());
+    from->getTerminator()->setSuccessor(landing, successor);
+  };
+  for (const auto &loop : loops) {
+    DenseSet<Block *> members(loop.begin(), loop.end());
+    SmallVector<std::pair<Block *, unsigned>> entries, exits;
+    for (Block *block : loop) {
+      for (auto it = block->pred_begin(); it != block->pred_end(); ++it)
+        if (!members.contains(*it))
+          entries.push_back({*it, it.getSuccessorIndex()});
+      for (auto [index, next] : llvm::enumerate(block->getSuccessors()))
+        if (!members.contains(next))
+          exits.push_back({block, unsigned(index)});
+    }
+    // A loop already entered by the sole edge of a straight-line block has
+    // its boundary; several entries would need a merged entry block.
+    if (entries.size() == 1 && entries.front().first->getNumSuccessors() > 1)
+      splitEdge(entries.front().first, entries.front().second);
+    for (auto [block, index] : exits)
+      splitEdge(block, index);
+  }
 }
 
 void unionRanges(Ranges &into, ArrayRef<ActivationMemoryAnalysis::Range> from) {
@@ -243,12 +373,8 @@ stringifyActivationFailure(ActivationRegionAnalysis::FailureReason reason) {
     return "termination";
   case FailureReason::MemoryEffects:
     return "memory effects";
-  case FailureReason::CFGStructuring:
-    return "CFG structuring";
-  case FailureReason::UnsupportedRegionSSASlot:
-    return "unsupported region SSA slot";
-  case FailureReason::UnmappedStructuredMemoryAccess:
-    return "unmapped structured memory access";
+  case FailureReason::UnmappedMemoryAccess:
+    return "unmapped memory access";
   }
   llvm_unreachable("unknown activation failure");
 }
@@ -277,24 +403,28 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
         }))
       return;
   IRMapping initialMap, resumeMap;
-  auto initial = cloneActivation(function, suspension, false, initialMap, trace,
-                                 control);
-  auto resumed = cloneActivation(function, suspension, true, resumeMap, trace,
-                                 control);
+  auto initial =
+      cloneActivation(function, suspension, false, initialMap, trace, control);
+  auto resumed =
+      cloneActivation(function, suspension, true, resumeMap, trace, control);
   if (!initial || !resumed ||
       !equivalentActivations(initial.get(), resumed.get())) {
     reason = FailureReason::InitialResumeEquivalence;
     return;
   }
-  if (!finiteActivation(initial.get())) {
+  if (!hasFiniteControlFlow(initial->getBody())) {
     reason = FailureReason::Termination;
     return;
   }
+  separateTopLevelLoops(*initial);
   // Canonicalization can merge CFG blocks and change a reference phi's range.
   // Recompute memory facts on this revision; original access-site facts must
   // never be projected through a rewrite that may have merged accesses.
-  memory = ActivationMemoryAnalysis(initial.get(), handles, 65536, mode);
+  memory = ActivationMemoryAnalysis(initial.get(), handles, 65536, mode,
+                                    function->getParentOp());
   if (!memory.isValid()) {
+    // Failure diagnostics retain the unsupported operation as well.
+    view = std::move(initial);
     reason = FailureReason::MemoryEffects;
     return;
   }
@@ -302,52 +432,98 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
   const auto &writes = memory.getWrites();
   // The dense solver visits every feasible activation path. Frontend slice
   // lowering may retain out-of-bounds arms that no proven induction value
-  // reaches. Record those exact source sites before structuring; a newly
-  // introduced or cloned access must still have its own effect mapping.
+  // reaches. Record those exact source sites; a newly introduced or cloned
+  // access must still have its own effect mapping.
   DenseSet<Operation *> unreachableAccesses;
   initial->walk([&](Operation *op) {
-    if ((isa<sim::SimRefLoadOp>(op) && !reads.contains(op)) ||
-        (isa<sim::SimRefStoreOp>(op) && !writes.contains(op)))
+    if ((isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op) &&
+         !reads.contains(op)) ||
+        (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp>(op) &&
+         !writes.contains(op)))
       unreachableAccesses.insert(op);
   });
-  auto view = func::FuncOp::create(function.getLoc(), "activation",
-                                   function.getFunctionType());
-  OwningOpRef<func::FuncOp> structuredView(view);
-  view.getBody().takeBody(initial->getBody());
-  for (Block &block : view.getBody()) {
-    auto *term = block.getTerminator();
-    if (!isa<sim::SimReturnOp>(term))
-      continue;
-    OpBuilder builder(term);
-    func::ReturnOp::create(builder, term->getLoc());
-    term->erase();
+  Region &body = initial->getBody();
+  Block *exit = nullptr;
+  for (Block &block : body)
+    if (isa<sim::SimReturnOp>(block.getTerminator())) {
+      if (exit)
+        return;
+      exit = &block;
+    }
+  if (!exit)
+    return;
+  // A block on a CFG cycle executes a variable number of times, so it never
+  // bounds a top-level statement. Every remaining dominator of the exit runs
+  // exactly once on every path through the activation.
+  DenseSet<Block *> cyclic;
+  for (auto scc = llvm::scc_begin(&body); !scc.isAtEnd(); ++scc)
+    if (scc.hasCycle())
+      cyclic.insert(scc->begin(), scc->end());
+  SmallVector<Block *> chain;
+  if (body.hasOneBlock()) {
+    chain.push_back(exit);
+  } else {
+    DominanceInfo dominance(*initial);
+    for (auto *node = dominance.getNode(exit); node; node = node->getIDom())
+      if (Block *block = node->getBlock(); block && !cyclic.contains(block))
+        chain.push_back(block);
+    std::reverse(chain.begin(), chain.end());
   }
-  // Upstream structuring moves memory operations and repairs their SSA uses;
-  // it does not clone/merge their executions. Do not run another canonicalizer
-  // between this step and summarizing the moved access operations.
-  SimulationControlFlowToSCF conversion;
-  DominanceInfo dominance(view);
-  if (failed(transformCFGToSCF(view.getBody(), conversion, dominance)) ||
-      !llvm::hasSingleElement(view.getBody()) || failed(verify(view))) {
-    reason = FailureReason::CFGStructuring;
+  if (chain.empty() || chain.front() != &body.front())
+    return;
+  DenseSet<Block *> covered(chain.begin(), chain.end());
+  auto addNode = [&](Node node) {
+    unsigned id = nodes.size();
+    nodes.push_back(std::move(node));
+    nodes.back().walk([&](Operation *op) { nodeIndices[op] = id; });
+    return id;
+  };
+  for (auto [index, block] : llvm::enumerate(chain)) {
+    for (Operation &op : block->without_terminator())
+      addNode({&op, {}, nullptr, {}, {}});
+    if (block == exit)
+      break;
+    // Every block strictly between two chain blocks belongs to the region
+    // entered by the first block's branch; the next chain block is its join.
+    Block *join = chain[index + 1];
+    Node region{block->getTerminator(), {}, join, {}, {}};
+    SmallVector<Block *> pending(block->getSuccessors());
+    DenseSet<Block *> inside;
+    while (!pending.empty()) {
+      Block *next = pending.pop_back_val();
+      if (next == join || !inside.insert(next).second)
+        continue;
+      if (covered.contains(next))
+        return;
+      llvm::append_range(pending, next->getSuccessors());
+    }
+    for (Block &candidate : body)
+      if (inside.contains(&candidate)) {
+        region.blocks.push_back(&candidate);
+        covered.insert(&candidate);
+      }
+    unsigned id = addNode(std::move(region));
+    for (Block *inner : nodes[id].blocks)
+      argumentNodes[inner] = id;
+    argumentNodes[join] = id;
+  }
+  if (covered.size() != body.getBlocks().size()) {
+    nodes.clear();
+    nodeIndices.clear();
+    argumentNodes.clear();
     return;
   }
-  if (view.walk([](ub::PoisonOp) { return WalkResult::interrupt(); })
-          .wasInterrupted()) {
-    reason = FailureReason::UnsupportedRegionSSASlot;
-    return;
-  }
-  for (Operation &op : view.getBody().front().without_terminator()) {
-    Node node{&op, {}, {}};
+  for (Node &node : nodes) {
     bool accounted = true;
-    op.walk([&](Operation *nested) {
-      if (isa<sim::SimRefLoadOp>(nested)) {
+    node.walk([&](Operation *nested) {
+      if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimCallOp>(nested)) {
         auto found = reads.find(nested);
         if (found == reads.end())
-          accounted &= unreachableAccesses.contains(nested);
+          accounted &= isa<sim::SimCallOp>(nested) ||
+                       unreachableAccesses.contains(nested);
         else
           unionRanges(node.reads, found->second);
-      } else if (isa<sim::SimRefStoreOp>(nested)) {
+      } else if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp>(nested)) {
         auto found = writes.find(nested);
         if (found == writes.end())
           accounted &= unreachableAccesses.contains(nested);
@@ -357,13 +533,36 @@ ActivationRegionAnalysis::ActivationRegionAnalysis(
     });
     if (!accounted) {
       nodes.clear();
-      reason = FailureReason::UnmappedStructuredMemoryAccess;
+      nodeIndices.clear();
+      argumentNodes.clear();
+      reason = FailureReason::UnmappedMemoryAccess;
       return;
     }
-    nodes.push_back(std::move(node));
   }
-  structured = std::move(structuredView);
+  view = std::move(initial);
   reason = FailureReason::None;
+}
+
+void ActivationRegionAnalysis::Node::walk(
+    function_ref<void(Operation *)> callback) const {
+  operation->walk(callback);
+  for (Block *block : blocks)
+    for (Operation &op : *block)
+      op.walk(callback);
+}
+
+const ActivationRegionAnalysis::Node *
+ActivationRegionAnalysis::getNode(Operation *operation) const {
+  auto found = nodeIndices.find(operation);
+  return found == nodeIndices.end() ? nullptr : &nodes[found->second];
+}
+
+const ActivationRegionAnalysis::Node *
+ActivationRegionAnalysis::getDefiningNode(Value value) const {
+  if (Operation *definition = value.getDefiningOp())
+    return getNode(definition);
+  auto found = argumentNodes.find(cast<BlockArgument>(value).getOwner());
+  return found == argumentNodes.end() ? nullptr : &nodes[found->second];
 }
 
 namespace {
@@ -437,15 +636,337 @@ orderSteps(ArrayRef<ActivationRegionStep> steps,
 }
 } // namespace
 
+namespace {
+/// Loads an operation depends on through SSA values, CFG block arguments and
+/// the branches that decide whether it executes. Block arguments depend on
+/// every incoming operand and on the branches selecting the incoming edge.
+class ActivationLoadSlice {
+public:
+  ActivationLoadSlice(sim::SimFuncOp function,
+                      const ActivationMemoryAnalysis &memory)
+      : ActivationLoadSlice(function, memory.getReads(), memory.getWrites(),
+                            &memory.getPrivateReads()) {}
+  ActivationLoadSlice(sim::SimFuncOp function,
+                      const DenseMap<Operation *, Ranges> &reads,
+                      const DenseMap<Operation *, Ranges> &writes,
+                      const DenseSet<Operation *> *privateReads = nullptr)
+      : reads(reads), privateReads(privateReads), locals(function) {
+    // Accesses outside the design inventory are private slots (or dead
+    // arms). A private load may observe any private store of the activation.
+    function.walk([&](sim::SimRefStoreOp store) {
+      if (!writes.contains(store))
+        privateStores.push_back(store);
+    });
+    if (function.getBody().hasOneBlock())
+      return;
+    PostDominanceInfo postDominance(function);
+    for (Block &block : function.getBody()) {
+      Operation *term = block.getTerminator();
+      if (!isa<cf::CondBranchOp, cf::SwitchOp>(term))
+        continue;
+      auto *node = postDominance.getNode(&block);
+      auto *stop = node ? node->getIDom() : nullptr;
+      for (Block *successor : block.getSuccessors())
+        for (auto *runner = postDominance.getNode(successor);
+             runner && runner != stop; runner = runner->getIDom())
+          if (Block *controlled = runner->getBlock())
+            controllers[controlled].insert(term);
+    }
+  }
+  void collect(Operation *root, SmallVectorImpl<Operation *> &loads,
+               DenseSet<Operation *> *required = nullptr) const {
+    SmallVector<Operation *> pendingOps{root};
+    SmallVector<Value> pendingValues;
+    DenseSet<Operation *> seenOps{root};
+    DenseSet<Value> seenValues;
+    DenseSet<Block *> seenBlocks;
+    auto visitBlock = [&](Block *block) {
+      if (!seenBlocks.insert(block).second)
+        return;
+      for (Operation *term : controllers.lookup(block))
+        if (seenOps.insert(term).second)
+          pendingOps.push_back(term);
+    };
+    while (!pendingOps.empty() || !pendingValues.empty()) {
+      if (!pendingOps.empty()) {
+        Operation *op = pendingOps.pop_back_val();
+        if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimCallOp>(op) &&
+            reads.contains(op))
+          loads.push_back(op);
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(op);
+            load && (!reads.contains(op) ||
+                     (privateReads && privateReads->contains(op)))) {
+          auto root = locals.lookup(load.getReference());
+          for (Operation *store : privateStores)
+            if ((!root ||
+                 locals.lookup(
+                     cast<sim::SimRefStoreOp>(store).getReference()) == root) &&
+                seenOps.insert(store).second)
+              pendingOps.push_back(store);
+        }
+        if (isa<sim::SimCallOp>(op) &&
+            llvm::any_of(op->getOperandTypes(),
+                         [](Type type) { return isa<sim::RefType>(type); }))
+          for (Operation *store : privateStores)
+            if (seenOps.insert(store).second)
+              pendingOps.push_back(store);
+        visitBlock(op->getBlock());
+        op->walk([&](Operation *nested) {
+          // Successor operands are separate SSA lanes. Visiting a branch as
+          // a control dependency must not import every other forwarded lane.
+          auto visit = [&](Value operand) {
+            if (seenValues.insert(operand).second)
+              pendingValues.push_back(operand);
+          };
+          if (auto branch = dyn_cast<cf::CondBranchOp>(nested))
+            visit(branch.getCondition());
+          else if (auto branch = dyn_cast<cf::SwitchOp>(nested))
+            visit(branch.getFlag());
+          else if (!isa<cf::BranchOp>(nested))
+            for (Value operand : nested->getOperands())
+              visit(operand);
+        });
+        continue;
+      }
+      Value value = pendingValues.pop_back_val();
+      if (Operation *definition = value.getDefiningOp()) {
+        if (seenOps.insert(definition).second)
+          pendingOps.push_back(definition);
+        continue;
+      }
+      Block *block = cast<BlockArgument>(value).getOwner();
+      visitBlock(block);
+      unsigned index = cast<BlockArgument>(value).getArgNumber();
+      for (auto it = block->pred_begin(); it != block->pred_end(); ++it) {
+        Operation *term = (*it)->getTerminator();
+        if (seenOps.insert(term).second)
+          pendingOps.push_back(term);
+        auto branch = dyn_cast<BranchOpInterface>(term);
+        if (!branch)
+          continue;
+        Value incoming = branch.getSuccessorOperands(it.getSuccessorIndex())
+                             .getForwardedOperands()[index];
+        if (seenValues.insert(incoming).second)
+          pendingValues.push_back(incoming);
+      }
+    }
+    if (required)
+      required->insert(seenOps.begin(), seenOps.end());
+  }
+
+private:
+  const DenseMap<Operation *, Ranges> &reads;
+  const DenseSet<Operation *> *privateReads;
+  LocalStorageAnalysis locals;
+  SmallVector<Operation *> privateStores;
+  DenseMap<Block *, llvm::SetVector<Operation *>> controllers;
+};
+
+/// Source-written temporaries can be reconstructed independently in each
+/// slice when every read follows a definition in this activation. Keep their
+/// source-ordered versions in private SSA-promotable storage, and publish only
+/// the selected stores. This permits a temporary to feed independent outputs
+/// without merging them into one unit, while preserving saved snapshots.
+DenseMap<Value, uint64_t>
+getActivationTemporaryRoots(sim::SimFuncOp function,
+                            const ActivationMemoryAnalysis &memory) {
+  DenseSet<uint64_t> roots, readRoots;
+  for (auto range : memory.getMayWrites())
+    if (range.root < ActivationMemoryAnalysis::netRootTag)
+      roots.insert(range.root);
+  for (const auto &[op, ranges] : memory.getReads())
+    for (auto range : ranges)
+      readRoots.insert(range.root);
+  for (auto range : memory.getLiveIns())
+    roots.erase(range.root);
+  for (const auto &[op, ranges] : memory.getReads())
+    if (!isa<sim::SimRefLoadOp>(op))
+      for (auto range : ranges)
+        roots.erase(range.root);
+  for (auto root : llvm::make_early_inc_range(roots))
+    if (!readRoots.contains(root))
+      roots.erase(root);
+  DenseMap<Value, uint64_t> bases;
+  if (roots.empty())
+    return bases;
+  auto facts = deriveHandleFacts(function);
+  DenseMap<uint64_t, Type> rootTypes;
+  for (auto [value, fact] : facts) {
+    auto ref = dyn_cast<sim::RefType>(value.getType());
+    bool entry =
+        isa<BlockArgument>(value)
+            ? cast<BlockArgument>(value).getOwner() ==
+                  &function.getBody().front()
+            : isa_and_nonnull<sim::SimContextStorageOp>(value.getDefiningOp());
+    if (ref && entry && fact.descriptor && roots.contains(*fact.descriptor) &&
+        !fact.dynamic && fact.low == 0 && fact.width == fact.rootWidth &&
+        (sim::isAggregateType(ref.getElementType()) ||
+         isa<IntegerType, sim::LogicType>(ref.getElementType()))) {
+      auto [found, inserted] = rootTypes.try_emplace(*fact.descriptor, ref);
+      if (!inserted && found->second != ref)
+        roots.erase(*fact.descriptor);
+      bases[value] = *fact.descriptor;
+    }
+  }
+  auto reconstructible = [&](Value reference, uint64_t root,
+                             auto &reconstructible) -> bool {
+    if (auto found = bases.find(reference); found != bases.end())
+      return found->second == root;
+    Operation *definition = reference.getDefiningOp();
+    if (!definition || !isMemoryEffectFree(definition) ||
+        definition->getNumRegions())
+      return false;
+    bool hasReference = false;
+    for (Value operand : definition->getOperands())
+      if (isa<sim::RefType>(operand.getType())) {
+        hasReference = true;
+        if (!reconstructible(operand, root, reconstructible))
+          return false;
+      }
+    return hasReference;
+  };
+  for (const auto *accesses : {&memory.getReads(), &memory.getWrites()})
+    for (const auto &[op, ranges] : *accesses)
+      for (auto range : ranges)
+        if (roots.contains(range.root)) {
+          Value reference;
+          if (auto load = dyn_cast<sim::SimRefLoadOp>(op))
+            reference = load.getReference();
+          else if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
+            reference = store.getReference();
+          if (!reference ||
+              !reconstructible(reference, range.root, reconstructible))
+            roots.erase(range.root);
+        }
+  for (auto [value, root] : llvm::make_early_inc_range(bases))
+    if (!roots.contains(root))
+      bases.erase(value);
+  return bases;
+}
+
+OwningOpRef<sim::SimFuncOp>
+cloneSliceWithTemporaries(const ActivationSlice &slice, IRMapping &mapping,
+                          const DenseMap<Value, uint64_t> &temporaries);
+
+/// The source activation already has a termination certificate. Slicing and
+/// dialect canonicalization preserve it, even when they rotate a dead loop
+/// into a different recurrence shape. A loop and its exit paths can therefore
+/// be bypassed when they have no effects or escaping values and all paths
+/// forward the same available values to their common postdominator.
+bool removeEmptyFiniteLoop(sim::SimFuncOp function) {
+  if (function.getBody().hasOneBlock())
+    return false;
+  DominanceInfo dominance;
+  PostDominanceInfo postDominance;
+  CFGLoopInfo loopInfo(dominance.getDomTree(&function.getBody()));
+  auto preorder = loopInfo.getLoopsInPreorder();
+  for (auto *loop : llvm::reverse(preorder)) {
+    SmallVector<Block *> exits;
+    loop->getExitBlocks(exits);
+    if (exits.empty())
+      continue;
+    Block *join = exits.front();
+    for (Block *exit : llvm::drop_begin(exits)) {
+      join = postDominance.findNearestCommonDominator(join, exit);
+      if (!join)
+        break;
+    }
+    Block *header = loop->getHeader();
+    if (!join || loop->contains(join))
+      continue;
+    DenseSet<Block *> members;
+    SmallVector<Block *> blocks, pending{header};
+    while (!pending.empty()) {
+      Block *block = pending.pop_back_val();
+      if (block == join || !members.insert(block).second)
+        continue;
+      blocks.push_back(block);
+      llvm::append_range(pending, block->getSuccessors());
+    }
+    bool removable = true;
+    std::optional<SmallVector<Value>> exitValues;
+    for (Block *block : blocks) {
+      auto escapes = [&](Value value) {
+        return llvm::any_of(value.getUsers(), [&](Operation *user) {
+          return !members.contains(user->getBlock());
+        });
+      };
+      for (Operation &op : *block) {
+        if (!isa<cf::BranchOp, cf::CondBranchOp, cf::SwitchOp>(op) &&
+            !wouldOpBeTriviallyDead(&op))
+          removable = false;
+        if (llvm::any_of(op.getResults(), escapes))
+          removable = false;
+      }
+      if (llvm::any_of(block->getArguments(), escapes))
+        removable = false;
+      auto branch = dyn_cast<BranchOpInterface>(block->getTerminator());
+      if (!branch || block->getNumSuccessors() == 0) {
+        removable = false;
+        continue;
+      }
+      for (auto [index, successor] : llvm::enumerate(block->getSuccessors())) {
+        if (successor != join)
+          continue;
+        SmallVector<Value> operands(
+            branch.getSuccessorOperands(index).getForwardedOperands());
+        if (!llvm::all_of(operands, [&](Value value) {
+              return !members.contains(value.getParentBlock()) &&
+                     dominance.dominates(value, header->getTerminator());
+            }))
+          removable = false;
+        if (exitValues && *exitValues != operands)
+          removable = false;
+        else
+          exitValues = std::move(operands);
+      }
+    }
+    if (!removable || !exitValues)
+      continue;
+    Operation *terminator = header->getTerminator();
+    OpBuilder builder(terminator);
+    cf::BranchOp::create(builder, terminator->getLoc(), join, *exitValues);
+    terminator->erase();
+    IRRewriter rewriter(function.getContext());
+    (void)eraseUnreachableBlocks(rewriter, function.getBody());
+    return true;
+  }
+  return false;
+}
+
+std::optional<Ranges>
+getSliceReads(const ActivationSlice &slice,
+              const DenseMap<Value, uint64_t> *temporaries = nullptr) {
+  IRMapping mapping;
+  auto copy = temporaries
+                  ? cloneSliceWithTemporaries(slice, mapping, *temporaries)
+                  : cloneActivationSlice(slice, &mapping);
+  if (!copy)
+    return std::nullopt;
+  DenseMap<Operation *, Ranges> mappedReads;
+  for (const auto &[op, ranges] : slice.activation->getMemory().getReads())
+    mappedReads[mapping.lookup(op)] = ranges;
+  LocalStorageAnalysis locals(*copy);
+  Ranges reads;
+  copy->walk([&](Operation *op) {
+    if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimCallOp>(op) &&
+        !locals.isLocalAccess(op))
+      if (auto found = mappedReads.find(op); found != mappedReads.end())
+        unionRanges(reads, found->second);
+  });
+  return reads;
+}
+} // namespace
+
 std::optional<SmallVector<ActivationPublication>>
 getActivationPublications(const ActivationRegionAnalysis &activation) {
-  if (!activation.isValid())
+  if (!activation.isValid() || activation.getMemory().hasMixedPrivateWrites())
     return std::nullopt;
-  auto function = activation.getStructuredFunction();
+  auto function = activation.getActivationFunction();
   const auto &memory = activation.getMemory();
   if (memory.hasValueDependencies()) {
     SmallVector<ActivationPublication> publications;
-    function.walk([&](sim::SimRefStoreOp store) {
+    function.walk([&](Operation *store) {
       auto found = memory.getPublications().find(store);
       if (found != memory.getPublications().end())
         for (const auto &lane : found->second)
@@ -453,22 +974,19 @@ getActivationPublications(const ActivationRegionAnalysis &activation) {
     });
     return publications;
   }
-  SmallVector<Value> inputs;
-  function.walk(
-      [&](sim::SimRefLoadOp load) { inputs.push_back(load.getResult()); });
-  RegionValueDependencyAnalysis values(function, inputs);
-  if (!values.isValid())
-    return std::nullopt;
+  ActivationLoadSlice slice(function, memory);
   SmallVector<ActivationPublication> publications;
-  function.walk([&](sim::SimRefStoreOp store) {
+  function.walk([&](Operation *store) {
     auto writes = memory.getWrites().find(store);
     // Accesses absent from the validated memory inventory are unreachable for
-    // every proven induction context. Structuring retains their dead arms.
+    // every proven induction context. The CFG retains their dead arms.
     if (writes == memory.getWrites().end())
       return;
     ActivationPublication publication{store, {}, writes->second};
-    for (Value input : values.getInputs(store)) {
-      auto reads = memory.getReads().find(input.getDefiningOp());
+    SmallVector<Operation *> loads;
+    slice.collect(store, loads);
+    for (Operation *load : loads) {
+      auto reads = memory.getReads().find(load);
       if (reads != memory.getReads().end())
         unionRanges(publication.reads, reads->second);
     }
@@ -527,21 +1045,20 @@ getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
       return std::nullopt;
     const auto &memory = activation->getMemory();
     bool hasOwners = true;
-    activation->getStructuredFunction().walk([&](Operation *op) {
-      if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(op) &&
+    activation->getActivationFunction().walk([&](Operation *op) {
+      if ((memory.getReads().contains(op) || memory.getWrites().contains(op)) &&
           !schedule::get<schedule::Field::EvalSourceOwner>(op))
         hasOwners = false;
     });
-    DenseMap<Operation *, unsigned> nodeIndices;
+    unsigned first = steps.size();
     DenseMap<schedule::SourceOwnerAttr, unsigned> previous;
     for (const auto &node : activation->getNodes()) {
       unsigned id = steps.size();
       steps.push_back({activation, node.operation});
-      nodeIndices[node.operation] = id;
       llvm::SetVector<schedule::SourceOwnerAttr> owners;
       if (!hasOwners)
         owners.insert({});
-      node.operation->walk([&](Operation *op) {
+      node.walk([&](Operation *op) {
         auto owner = hasOwners
                          ? schedule::get<schedule::Field::EvalSourceOwner>(op)
                          : schedule::SourceOwnerAttr{};
@@ -558,7 +1075,7 @@ getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
       });
       // Fusion does not create source-order relations between the original
       // processes. Preserve each owner's order, including owners sharing a
-      // structured node. Incomplete provenance keeps the whole-body chain.
+      // unit. Incomplete provenance keeps the whole-body chain.
       for (auto owner : owners) {
         auto found = previous.find(owner);
         if (found != previous.end())
@@ -566,19 +1083,19 @@ getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
         previous[owner] = id;
       }
     }
-    // Pure SSA producers may have been shared by CSE or introduced while
-    // structuring CFGs. Their def-use edges are required independently of
-    // publication provenance, including captures of nested regions.
+    // Pure SSA producers may have been shared by CSE. Their def-use edges are
+    // required independently of publication provenance, including a region's
+    // join arguments and values captured by nested operations.
+    auto nodeIndex = [&](const ActivationRegionAnalysis::Node *node) {
+      return first + unsigned(node - activation->getNodes().data());
+    };
     for (const auto &node : activation->getNodes()) {
-      unsigned consumer = nodeIndices.at(node.operation);
-      node.operation->walk([&](Operation *op) {
-        for (Value operand : op->getOperands()) {
-          Operation *producer = operand.getDefiningOp();
-          while (producer && !nodeIndices.contains(producer))
-            producer = producer->getParentOp();
-          if (producer && producer != node.operation)
-            edges.emplace_back(nodeIndices.at(producer), consumer);
-        }
+      unsigned consumer = nodeIndex(&node);
+      node.walk([&](Operation *op) {
+        for (Value operand : op->getOperands())
+          if (const auto *producer = activation->getDefiningNode(operand);
+              producer && producer != &node)
+            edges.emplace_back(nodeIndex(producer), consumer);
       });
     }
   }
@@ -602,5 +1119,347 @@ getActivationRegionOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
           edges.emplace_back(write.step, later.step);
     }
   return orderSteps(steps, std::move(edges), cycle);
+}
+std::optional<SmallVector<ActivationSlice>>
+getActivationSliceOrder(ArrayRef<const ActivationRegionAnalysis *> activations,
+                        SmallVectorImpl<ActivationRegionStep> *cycle) {
+  if (cycle)
+    cycle->clear();
+  struct StoreNode {
+    const ActivationRegionAnalysis *activation;
+    SmallVector<Operation *> stores;
+    Ranges reads, writes;
+  };
+  auto overlaps = [](const Ranges &a, const Ranges &b) {
+    for (const auto &x : a)
+      for (const auto &y : b)
+        if (x.root == y.root && x.low < y.low + y.width &&
+            y.low < x.low + x.width)
+          return true;
+    return false;
+  };
+  SmallVector<StoreNode> nodes;
+  for (const auto *activation : activations) {
+    if (!activation->isValid())
+      return std::nullopt;
+    const auto &memory = activation->getMemory();
+    // IEEE 1800-2023 4.6 preserves source-local store/load ordering. A store
+    // selecting between a private slot and canonical storage participates in
+    // both dependency graphs. Until slicing models that coupling, retain the
+    // whole activation instead of dropping the private update in another slice.
+    if (memory.hasMixedPrivateWrites())
+      return std::nullopt;
+    ActivationLoadSlice slice(activation->getActivationFunction(), memory);
+    auto temporaries = getActivationTemporaryRoots(
+        activation->getActivationFunction(), memory);
+    DenseMap<uint64_t, SmallVector<Operation *>> temporaryWriters;
+    for (auto [base, root] : temporaries)
+      temporaryWriters.try_emplace(root);
+    DenseMap<Operation *, Ranges> sourceReads;
+    activation->getActivationFunction().walk([&](Operation *store) {
+      auto writes = memory.getWrites().find(store);
+      if (writes == memory.getWrites().end())
+        return;
+      SmallVector<Operation *> loads;
+      slice.collect(store, loads);
+      for (Operation *load : loads)
+        if (auto reads = memory.getReads().find(load);
+            reads != memory.getReads().end())
+          unionRanges(sourceReads[store], reads->second);
+      for (auto range : writes->second)
+        if (auto found = temporaryWriters.find(range.root);
+            found != temporaryWriters.end())
+          found->second.push_back(store);
+    });
+    SmallVector<StoreNode> local;
+    activation->getActivationFunction().walk([&](Operation *store) {
+      auto writes = memory.getWrites().find(store);
+      if (writes == memory.getWrites().end())
+        return;
+      StoreNode node{activation, {store}, {}, writes->second};
+      // Follow reconstructed temporary definitions in the immutable summary.
+      // Only cycle witnesses need executable clones and CFG simplification;
+      // cloning every publication would make planning quadratic in body size.
+      SmallVector<Operation *> pending{store};
+      DenseSet<Operation *> seen{store};
+      while (!pending.empty()) {
+        Operation *definition = pending.pop_back_val();
+        for (auto read : sourceReads.lookup(definition)) {
+          auto temporary = temporaryWriters.find(read.root);
+          if (temporary == temporaryWriters.end()) {
+            unionRanges(node.reads, {read});
+            continue;
+          }
+          for (Operation *writer : temporary->second)
+            if (overlaps({read}, memory.getWrites().lookup(writer)) &&
+                seen.insert(writer).second)
+              pending.push_back(writer);
+        }
+      }
+      // Keep all remaining source-local memory dependence in one slice.
+      // Reconstructed private versions have no canonical read dependency;
+      // all other snapshots still need their source stores in the same slice.
+      // Restart after merging, since a newly included range can connect a
+      // previously disjoint group.
+      for (bool changed = true; changed;) {
+        changed = false;
+        for (auto it = local.begin(); it != local.end();) {
+          if (!overlaps(it->writes, node.writes) &&
+              !overlaps(it->writes, node.reads) &&
+              !overlaps(it->reads, node.writes)) {
+            ++it;
+            continue;
+          }
+          llvm::append_range(node.stores, it->stores);
+          unionRanges(node.reads, it->reads);
+          unionRanges(node.writes, it->writes);
+          it = local.erase(it);
+          changed = true;
+        }
+      }
+      local.push_back(std::move(node));
+    });
+    for (auto &node : local)
+      nodes.push_back(std::move(node));
+  }
+  SmallVector<ActivationRegionStep> steps;
+  for (const auto &node : nodes)
+    steps.push_back({node.activation, node.stores.front()});
+  SmallVector<std::pair<unsigned, unsigned>> edges;
+  DenseMap<uint64_t, SmallVector<unsigned>> readers;
+  for (auto [id, node] : llvm::enumerate(nodes))
+    for (const auto &read : node.reads)
+      readers[read.root].push_back(id);
+  for (auto [id, node] : llvm::enumerate(nodes))
+    for (const auto &write : node.writes)
+      for (unsigned reader : readers.lookup(write.root))
+        if (reader != id && overlaps({write}, nodes[reader].reads))
+          edges.emplace_back(id, reader);
+  DenseSet<unsigned> refined;
+  while (true) {
+    SmallVector<ActivationRegionStep> witness;
+    if (orderSteps(steps, edges, &witness))
+      break;
+    bool changed = false;
+    for (const auto &step : witness) {
+      auto found = llvm::find_if(nodes, [&](const StoreNode &node) {
+        return node.activation == step.activation &&
+               node.stores.front() == step.operation;
+      });
+      unsigned index = found - nodes.begin();
+      if (!refined.insert(index).second)
+        continue;
+      auto reads = getSliceReads({found->activation, found->stores});
+      if (!reads)
+        continue;
+      found->reads = std::move(*reads);
+      changed = true;
+    }
+    if (!changed) {
+      if (cycle)
+        llvm::append_range(*cycle, witness);
+      return std::nullopt;
+    }
+    // Rebuild only dependencies. Store grouping protects source-local
+    // snapshots and is never weakened by control-flow simplification.
+    edges.clear();
+    readers.clear();
+    for (auto [id, node] : llvm::enumerate(nodes))
+      for (const auto &read : node.reads)
+        readers[read.root].push_back(id);
+    for (auto [id, node] : llvm::enumerate(nodes))
+      for (const auto &write : node.writes)
+        for (unsigned reader : readers.lookup(write.root))
+          if (reader != id && overlaps({write}, nodes[reader].reads))
+            edges.emplace_back(id, reader);
+  }
+  // Topological order that continues with the previous activation whenever
+  // possible, so each process is split into as few slices as possible.
+  llvm::sort(edges);
+  edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+  SmallVector<SmallVector<unsigned>> successors(nodes.size());
+  SmallVector<unsigned> incoming(nodes.size(), 0);
+  for (auto [from, to] : edges) {
+    successors[from].push_back(to);
+    ++incoming[to];
+  }
+  std::set<unsigned> ready;
+  for (unsigned id = 0; id < nodes.size(); ++id)
+    if (!incoming[id])
+      ready.insert(id);
+  SmallVector<ActivationSlice> slices;
+  while (!ready.empty()) {
+    auto next = ready.begin();
+    if (!slices.empty())
+      for (auto it = ready.begin(); it != ready.end(); ++it)
+        if (nodes[*it].activation == slices.back().activation) {
+          next = it;
+          break;
+        }
+    unsigned id = *next;
+    ready.erase(next);
+    if (slices.empty() || slices.back().activation != nodes[id].activation)
+      slices.push_back({nodes[id].activation, {}});
+    llvm::append_range(slices.back().stores, nodes[id].stores);
+    for (unsigned successor : successors[id])
+      if (!--incoming[successor])
+        ready.insert(successor);
+  }
+  return slices;
+}
+
+namespace {
+OwningOpRef<sim::SimFuncOp>
+cloneSliceWithTemporaries(const ActivationSlice &slice,
+                          IRMapping &mappingStorage,
+                          const DenseMap<Value, uint64_t> &temporaries) {
+  IRMapping *mapping = &mappingStorage;
+  auto function = slice.activation->getActivationFunction();
+  const auto &memory = slice.activation->getMemory();
+  OwningOpRef<sim::SimFuncOp> copy(
+      cast<sim::SimFuncOp>(function->clone(*mapping)));
+  DenseMap<Value, Value> privateReferences;
+  DenseMap<uint64_t, Value> slots;
+  OpBuilder entry(&copy->getBody().front(), copy->getBody().front().begin());
+  // Iterate source order, never DenseMap order: stable slot order matters to
+  // deterministic planning and generated IR.
+  auto allocate = [&](Value base) {
+    auto found = temporaries.find(base);
+    if (found == temporaries.end())
+      return;
+    auto ref = cast<sim::RefType>(base.getType());
+    Value &slot = slots[found->second];
+    if (!slot) {
+      Type type = ref.getElementType();
+      Value initial;
+      if (sim::isAggregateType(type))
+        initial =
+            sim::SimAggregateDefaultOp::create(entry, base.getLoc(), type);
+      else if (isa<IntegerType>(type))
+        initial = arith::ConstantOp::create(entry, base.getLoc(), type,
+                                            entry.getIntegerAttr(type, 0));
+      else {
+        auto logic = cast<sim::LogicType>(type);
+        auto plane = entry.getIntegerType(logic.getWidth());
+        initial = sim::SimLogicConstantOp::create(
+            entry, base.getLoc(), type,
+            entry.getIntegerAttr(plane, APInt(logic.getWidth(), 0)),
+            entry.getIntegerAttr(plane, APInt::getAllOnes(logic.getWidth())));
+      }
+      slot = sim::SimRefAllocOp::create(entry, base.getLoc(), ref, initial);
+    }
+    privateReferences[base] = slot;
+  };
+  for (BlockArgument argument : function.getArguments())
+    allocate(argument);
+  function.walk(
+      [&](sim::SimContextStorageOp storage) { allocate(storage.getResult()); });
+  auto privateReference = [&](Value reference,
+                              auto &privateReference) -> Value {
+    if (Value found = privateReferences.lookup(reference))
+      return found;
+    Operation *definition = reference.getDefiningOp();
+    assert(definition && "temporary reference was validated");
+    IRMapping operands;
+    for (Value operand : definition->getOperands())
+      operands.map(operand, isa<sim::RefType>(operand.getType())
+                                ? privateReference(operand, privateReference)
+                                : mapping->lookup(operand));
+    OpBuilder builder(mapping->lookup(definition));
+    Operation *cloned = builder.clone(*definition, operands);
+    for (auto [from, to] :
+         llvm::zip_equal(definition->getResults(), cloned->getResults()))
+      privateReferences[from] = to;
+    return privateReferences.lookup(reference);
+  };
+  DenseSet<Operation *> kept;
+  for (Operation *store : slice.stores)
+    kept.insert(mapping->lookup(store));
+  DenseMap<Operation *, Ranges> reads, writes;
+  DenseSet<Operation *> privateReads;
+  for (Operation *read : memory.getPrivateReads())
+    privateReads.insert(mapping->lookup(read));
+  for (const auto &[op, ranges] : memory.getReads()) {
+    auto load = dyn_cast<sim::SimRefLoadOp>(op);
+    if (load && !ranges.empty() && slots.contains(ranges.front().root)) {
+      cast<sim::SimRefLoadOp>(mapping->lookup(op))
+          .getReferenceMutable()
+          .assign(privateReference(load.getReference(), privateReference));
+    } else
+      reads[mapping->lookup(op)] = ranges;
+  }
+  function.walk([&](Operation *op) {
+    auto found = memory.getWrites().find(op);
+    if (found == memory.getWrites().end())
+      return;
+    Operation *cloned = mapping->lookup(op);
+    if (auto store = dyn_cast<sim::SimRefStoreOp>(op);
+        store && !found->second.empty() &&
+        slots.contains(found->second.front().root)) {
+      OpBuilder builder(cloned);
+      sim::SimRefStoreOp::create(
+          builder, store.getLoc(), mapping->lookup(store.getValue()),
+          privateReference(store.getReference(), privateReference));
+    }
+    if (kept.contains(cloned))
+      writes[cloned] = found->second;
+    else
+      cloned->erase();
+  });
+  auto removeDeadStores = [&] {
+    ActivationLoadSlice dependencies(*copy, reads, writes, &privateReads);
+    DenseSet<Operation *> required;
+    SmallVector<Operation *> loads;
+    copy->walk([&](Operation *op) {
+      if (isa<sim::SimRefStoreOp, sim::SimDriverDriveOp>(op) &&
+          writes.contains(op))
+        dependencies.collect(op, loads, &required);
+    });
+    SmallVector<Operation *> deadStores;
+    copy->walk([&](sim::SimRefStoreOp store) {
+      if (!writes.contains(store) && !required.contains(store))
+        deadStores.push_back(store);
+    });
+    for (Operation *store : deadStores)
+      store->erase();
+    return !deadStores.empty();
+  };
+  removeDeadStores();
+  if (failed(canonicalizeControl(*copy)))
+    return {};
+  while (true) {
+    // Removing a branch can make a private load dead; its reaching stores
+    // must then be sliced again before their own inputs can disappear.
+    bool removedStores = removeDeadStores();
+    // Admission proved every call finite and read-only. Its generic call
+    // interface remains conservative, so ordinary DCE cannot remove it when
+    // slicing discards all results. Retaining it would retain its input reads
+    // and could keep an otherwise empty loop alive.
+    SmallVector<sim::SimCallOp> deadCalls;
+    copy->walk([&](sim::SimCallOp call) {
+      if (call->use_empty())
+        deadCalls.push_back(call);
+    });
+    for (auto call : deadCalls)
+      call.erase();
+    bool removedLoop = removeEmptyFiniteLoop(*copy);
+    if (deadCalls.empty() && !removedLoop && !removedStores)
+      break;
+    if (failed(canonicalizeControl(*copy)))
+      return {};
+  }
+  return copy;
+}
+} // namespace
+
+OwningOpRef<sim::SimFuncOp> cloneActivationSlice(const ActivationSlice &slice,
+                                                 IRMapping *mapping) {
+  if (slice.activation->getMemory().hasMixedPrivateWrites())
+    return {};
+  IRMapping localMapping;
+  auto temporaries = getActivationTemporaryRoots(
+      slice.activation->getActivationFunction(), slice.activation->getMemory());
+  return cloneSliceWithTemporaries(slice, mapping ? *mapping : localMapping,
+                                   temporaries);
 }
 } // namespace obelisk::analysis

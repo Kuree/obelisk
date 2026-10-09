@@ -1,0 +1,2 @@
+// RUN: %python %S/Inputs/check-activation-input-dependencies.py obelisk-opt %S | FileCheck %s
+// CHECK: Compared {{[0-9]+}} activation input proofs with full publication analysis

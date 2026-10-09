@@ -3,10 +3,43 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 namespace obelisk::analysis {
+bool isPlainValueType(Type type) {
+  if (isa<IntegerType, sim::LogicType>(type))
+    return true;
+  if (auto packed = dyn_cast<sim::PackedArrayType>(type))
+    return isPlainValueType(packed.getElementType());
+  if (auto unpacked = dyn_cast<sim::UnpackedArrayType>(type))
+    return isPlainValueType(unpacked.getElementType());
+  if (isa<sim::PackedStructType, sim::PackedUnionType, sim::UnpackedStructType>(
+          type)) {
+    for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+         index != count; ++index)
+      if (!isPlainValueType(sim::getAggregateElementType(type, index)))
+        return false;
+    return true;
+  }
+  return false;
+}
+Operation *getLocalSlot(Value reference) {
+  while (Operation *definition = reference.getDefiningOp()) {
+    if (auto alloc = dyn_cast<sim::SimRefAllocOp>(definition))
+      return isPlainValueType(alloc.getType().getElementType()) ? alloc
+                                                                : nullptr;
+    if (!isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
+             sim::SimRefArrayElementOp, sim::SimRefSubelementOp>(definition))
+      return nullptr;
+    reference = definition->getOperand(0);
+  }
+  return nullptr;
+}
+bool isLocalSlotReference(Value reference) {
+  return getLocalSlot(reference) != nullptr;
+}
 namespace {
 constexpr unsigned allEffects =
     SimulationEffectAnalysis::Write | SimulationEffectAnalysis::Terminate |
@@ -38,6 +71,7 @@ public:
       auto &summary = local[function];
       if (function.isExternal())
         summary.effects = allEffects;
+      auto handles = deriveHandleFacts(function);
       function.walk([&](Operation *op) {
         if (op == function ||
             isa<sim::SimReturnOp, cf::BranchOp, cf::CondBranchOp,
@@ -56,13 +90,30 @@ public:
           auto allocation =
               store.getReference().getDefiningOp<sim::SimRefAllocOp>();
           bool privateSlot =
-              allocation &&
-              llvm::all_of(allocation->getUsers(), [](Operation *user) {
-                return isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(user);
-              });
+              (allocation &&
+               llvm::all_of(allocation->getUsers(),
+                            [](Operation *user) {
+                              return isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(
+                                  user);
+                            })) ||
+              isLocalSlotReference(store.getReference());
           if (!privateSlot)
             summary.effects |= Write | Terminate;
           return;
+        }
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(op);
+            load && isLocalSlotReference(load.getReference()))
+          return;
+        if (auto alloc = dyn_cast<sim::SimRefAllocOp>(op);
+            alloc && isPlainValueType(alloc.getType().getElementType()))
+          return;
+        if (isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op)) {
+          auto found = handles.find(op->getOperand(0));
+          if (found != handles.end() && found->second.descriptor &&
+              (found->second.resource ==
+                   schedule::ComputeResourceKind::Storage ||
+               found->second.resource == schedule::ComputeResourceKind::Net))
+            return;
         }
         if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimRefAllocOp,
                 sim::SimStatusCheckOp>(op)) {

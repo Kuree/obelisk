@@ -120,9 +120,7 @@ def PlanCombinationalStatementsPass
     feedback and unsupported effects retain their existing scheduler.
   }];
   let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
-                           "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect",
-                           "mlir::func::FuncDialect", "mlir::scf::SCFDialect",
-                           "mlir::ub::UBDialect"];
+                           "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect"];
   let options = [Option<"maxMembers", "max-members", "unsigned", "0",
                         "Maximum activations in one statement DAG (0: unlimited)">,
                  Option<"explain", "explain", "bool", "false",
@@ -143,13 +141,44 @@ def ObeliskSimMaterializeComputeFusionPass
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::arith::ArithDialect",
-    "mlir::cf::ControlFlowDialect", "mlir::func::FuncDialect",
-    "mlir::scf::SCFDialect", "mlir::ub::UBDialect"
+    "mlir::cf::ControlFlowDialect", "mlir::ub::UBDialect"
   ];
   let options = [
     Option<"materializeEvalBodies", "materialize-eval-bodies", "bool", "true",
            "Clone native evaluators after the final body-fusion round">
   ];
+}
+
+def SpecializeReferenceJoinsPass
+    : Pass<"schedule-specialize-reference-joins", "obelisk::sim::SimFuncOp"> {
+  let summary = "Specialize small reference joins along their incoming edges";
+  let description = [{
+    Expose storage identities hidden by CFG block merging. Clone small blocks
+    that receive different references, without moving statements or creating
+    runtime recovery. The total duplicated work is bounded per function.
+  }];
+  let options = [Option<"nativeBodiesOnly", "native-bodies-only", "bool",
+                        "false", "Only rewrite borrowed native evaluator bodies">];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
+def LowerConditionalReferenceAccessesPass
+    : Pass<"schedule-lower-conditional-reference-accesses",
+           "obelisk::sim::SimFuncOp"> {
+  let summary = "Lower selected reference accesses to conditional regions";
+  let description = [{
+    Access the selected reference at the original statement, preserving source
+    snapshots and effects between reference selection and use. Pure reference
+    views are rebuilt in the selected branch. This removes mixed local and
+    canonical reference families from generated native kernels without
+    speculative loads or runtime handoff.
+  }];
+  let options = [Option<"nativeBodiesOnly", "native-bodies-only", "bool",
+                        "false", "Only rewrite borrowed native evaluator bodies">];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
 }
 
 def LocalizePrivateEvalStoragePass
@@ -187,10 +216,12 @@ def ObeliskSimOptimizeNativeRegionsPass
 def OptimizeNativeWordsPass
     : Pass<"schedule-optimize-native-words", "mlir::ModuleOp"> {
   let summary = "Prove independent packed lanes and form native word regions";
+  let options = [Option<"predicationOperationBudget",
+      "predication-operation-budget", "uint64_t", "262144",
+      "Maximum operations cloned for predication retries per function">];
   let dependentDialects = ["obelisk::schedule::ScheduleDialect",
     "obelisk::sim::ObeliskSimulationDialect", "mlir::arith::ArithDialect",
-    "mlir::cf::ControlFlowDialect", "mlir::scf::SCFDialect",
-    "mlir::ub::UBDialect"];
+    "mlir::cf::ControlFlowDialect", "mlir::ub::UBDialect"];
 }
 
 def OptimizeNativeAggregatesPass

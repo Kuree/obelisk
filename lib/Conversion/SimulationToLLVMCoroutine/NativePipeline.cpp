@@ -2,10 +2,25 @@
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
 namespace obelisk {
 void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
                                             bool nativeWords,
                                             bool nativeAggregates) {
+  // Bytecode and the actor CFG stay canonical. Lower address selections only
+  // in their borrowed invocation bodies, before native storage admission.
+  SpecializeReferenceJoinsPassOptions joins;
+  joins.nativeBodiesOnly = true;
+  manager.nest<sim::SimDesignOp>().nest<sim::SimFuncOp>().addPass(
+      createSpecializeReferenceJoinsPass(joins));
+  manager.nest<sim::SimFuncOp>().addPass(
+      createSpecializeReferenceJoinsPass(joins));
+  LowerConditionalReferenceAccessesPassOptions reads;
+  reads.nativeBodiesOnly = true;
+  manager.nest<sim::SimDesignOp>().nest<sim::SimFuncOp>().addPass(
+      createLowerConditionalReferenceAccessesPass(reads));
+  manager.nest<sim::SimFuncOp>().addPass(
+      createLowerConditionalReferenceAccessesPass(reads));
   manager.addPass(createPrepareNativeScheduleInputsPass());
   manager.addPass(createPlanNativeStatePass());
   manager.addPass(createPrepareNativeProcessFramesPass());
@@ -48,7 +63,7 @@ void registerSimulationToLLVMCoroutinePipeline() {
       "Plan, specialize, and lower native simulation processes",
       [](mlir::OpPassManager &manager, const Options &options) {
         buildSimulationToLLVMCoroutinePipeline(manager, options.nativeWords,
-                                                options.nativeAggregates);
+                                               options.nativeAggregates);
       });
 }
 } // namespace obelisk

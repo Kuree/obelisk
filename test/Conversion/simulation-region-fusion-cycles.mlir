@@ -6,8 +6,9 @@
 // RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b,c,d publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
 // A process SCC can contain both schedulable statement paths and actual
 // feedback. Report a directed witness without weakening the acyclicity guard.
-// The source-order paths between these two cross-owner edges close the cycle.
-// REASON: statement component rejected: structured dependence cycle
+// The data cycle between these two cross-owner edges also rules out a
+// data-dependence order.
+// REASON: statement component rejected: data dependence cycle
 // REASON-SAME: SSA publication graph: cyclic
 // REASON-SAME: cycle edge: @c:{{[0-9]+}} (simulation.ref.store) -> @d:{{[0-9]+}} (simulation.ref.load) via s7[0,8)
 // REASON-SAME: cycle edge: @d:{{[0-9]+}} (simulation.ref.store) -> @c:{{[0-9]+}} (simulation.ref.load) via s6[0,8)

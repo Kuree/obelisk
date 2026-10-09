@@ -170,6 +170,8 @@ struct NativeActivationInputs {
   schedule::ComputeGraphAttr sourceGraph;
   llvm::DenseMap<mlir::StringAttr, analysis::ActivationMemoryAnalysis::Ranges>
       liveIns;
+  llvm::DenseMap<mlir::StringAttr, analysis::ActivationMemoryAnalysis::Ranges>
+      mayWrites;
 };
 NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
                                                      bool explain);

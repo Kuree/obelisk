@@ -1,0 +1,4 @@
+# RUN: %python %S/Inputs/gen-scoped-range-chain.py > %t.mlir
+# RUN: obelisk-opt %t.mlir --test-obelisk-scoped-integer-ranges -o /dev/null
+# The generator sets a generous constant live-fact budget. This catches
+# quadratic snapshot growth independently of wall time or machine memory.

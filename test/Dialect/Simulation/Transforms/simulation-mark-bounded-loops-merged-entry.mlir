@@ -56,5 +56,49 @@ module {
     ^exit:
       simulation.return
     }
+
+    // Same predecessor, separate successor lanes; only the induction matters.
+    simulation.code_unit.decl 3 in 0 initial hierarchy "parallel_entries"
+    // CHECK-LABEL: simulation.func @parallel_entries
+    // CHECK: cf.cond_br %{{.*}}, ^{{.*}}, ^{{.*}} {schedule.bounded_loop_header}
+    // CHECK: cf.br ^{{.*}}(%{{.*}}, %{{.*}} : i32, i32) {schedule.bounded_loop_latch}
+    simulation.func @parallel_entries(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %flag: !simulation.ref<i1> {simulation.capture_kind = 1 : i32}, %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+      %zero = arith.constant 0 : i32
+      %one = arith.constant 1 : i32
+      %en = simulation.ref.load %flag : !simulation.ref<i1> -> i1
+      cf.cond_br %en, ^head(%zero, %one : i32, i32), ^head(%zero, %zero : i32, i32)
+    ^head(%i: i32, %state: i32):
+      %limit = arith.constant 81 : i32
+      %test = arith.cmpi slt, %i, %limit : i32
+      cf.cond_br %test, ^body, ^exit
+    ^body:
+      simulation.ref.store %state to %out : i32, !simulation.ref<i32>
+      %next = arith.addi %i, %one : i32
+      cf.br ^head(%next, %state : i32, i32)
+    ^exit:
+      simulation.return
+    }
+
+    // Same predecessor, separate successor lanes; only the induction matters.
+    simulation.code_unit.decl 4 in 0 initial hierarchy "parallel_different"
+    // CHECK-LABEL: simulation.func @parallel_different
+    // CHECK-NOT: bounded_loop
+    // CHECK: simulation.return
+    simulation.func @parallel_different(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %flag: !simulation.ref<i1> {simulation.capture_kind = 1 : i32}, %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %zero = arith.constant 0 : i32
+      %one = arith.constant 1 : i32
+      %en = simulation.ref.load %flag : !simulation.ref<i1> -> i1
+      cf.cond_br %en, ^head(%zero, %one : i32, i32), ^head(%one, %zero : i32, i32)
+    ^head(%i: i32, %state: i32):
+      %limit = arith.constant 81 : i32
+      %test = arith.cmpi slt, %i, %limit : i32
+      cf.cond_br %test, ^body, ^exit
+    ^body:
+      simulation.ref.store %state to %out : i32, !simulation.ref<i32>
+      %next = arith.addi %i, %one : i32
+      cf.br ^head(%next, %state : i32, i32)
+    ^exit:
+      simulation.return
+    }
   }
 }

@@ -21,10 +21,12 @@
 #include "obelisk/Runtime/StableHandle.h"
 #include "obelisk/Runtime/StableHash.h"
 
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -1164,6 +1166,19 @@ LogicalResult lowerPackedSimulationOperations(
       });
   if (failed(failableParallelForEach(
           context, functionChunks, [&](ArrayRef<Operation *> functions) {
+            // Access guards can split blocks. Expose CFG before reference
+            // lowering and before signature conversion records block-indexed
+            // two-state metadata. Keep access operations themselves intact so
+            // the frozen selector proofs still describe those same accesses.
+            RewritePatternSet controlPatterns(context);
+            populateSCFToControlFlowConversionPatterns(controlPatterns);
+            ConversionTarget controlTarget(*context);
+            controlTarget.addIllegalDialect<scf::SCFDialect>();
+            controlTarget.markUnknownOpDynamicallyLegal(
+                [](Operation *) { return true; });
+            if (failed(applyPartialConversion(functions, controlTarget,
+                                              std::move(controlPatterns))))
+              return failure();
             LocalStorageLowering locals(functions, dataLayout,
                                         byteAddressableState);
             SimulationToStandardTypeConverter workerConverter;

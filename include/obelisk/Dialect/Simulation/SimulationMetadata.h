@@ -17,7 +17,6 @@
 
 namespace obelisk::sim::metadata {
 
-
 /// Transient function attribute containing ArgumentBindingAttr,
 /// LocalBindingAttr, and ConstantBindingAttr entries.
 inline constexpr llvm::StringLiteral bindings = "simulation.bindings";
@@ -35,6 +34,10 @@ inline constexpr llvm::StringLiteral delayScale = "simulation.delay_scale";
 inline constexpr llvm::StringLiteral delayQuantum = "simulation.delay_quantum";
 inline constexpr llvm::StringLiteral captureKind = "simulation.capture_kind";
 inline constexpr llvm::StringLiteral descriptorId = "simulation.descriptor_id";
+/// An exclusive slot whose initializer can be recreated at every activation:
+/// mutable lanes are defined before reads, and all other lanes keep defaults.
+inline constexpr llvm::StringLiteral activationDefaultSlot =
+    "simulation.activation_default_slot";
 inline constexpr llvm::StringLiteral descriptorRootType =
     "simulation.descriptor_root_type";
 inline constexpr llvm::StringLiteral descriptorLow =
@@ -182,6 +185,11 @@ inline constexpr llvm::StringLiteral coverageToggleBindings =
 /// Marks canonical state whose committed transitions are coverage-observable.
 inline constexpr llvm::StringLiteral coverageToggleObservable =
     "obelisk.coverage.toggle_observable";
+/// Marks a process-lifetime `simulation.ref.alloc` copy of an exclusive root
+/// that is flushed back to that root at every suspension and return. Its
+/// contents at any resumption equal a fresh load of the root.
+inline constexpr llvm::StringLiteral flushedPrivateSlot =
+    "simulation.flushed_private_slot";
 /// Number of flattened toggle bits expected by the embedded schema.
 inline constexpr llvm::StringLiteral coverageToggleBitCount =
     "obelisk.coverage.toggle_bit_count";
@@ -236,7 +244,6 @@ inline constexpr llvm::StringLiteral nativePartitionManifests =
 /// than the pre-lowering semantic inventory.
 inline constexpr llvm::StringLiteral nativePhysicalPartitionManifest =
     "obelisk.native.physical_partition_manifest";
-
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   if (auto field = schedule::symbolizeField(name))

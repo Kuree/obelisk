@@ -12,13 +12,13 @@ module {
     simulation.storage.decl 4 in 0 : i1 design
 
     // One process produces addresses and consumes the resulting bank data.
-    // Each loop is one structured scheduling node. Its iterations and all
+    // Each loop is one CFG region unit. Its iterations and all
     // intermediate reduction writes remain inside the node. The initial and
     // resumed induction zeros are different SSA values but equivalent.
     // CHECK: regions @address_then_reduction valid=1
-    // CHECK-NEXT: node scf.while read:s0[0,24) write:s1[0,24)
+    // CHECK-NEXT: node cf.br read:s0[0,24) write:s1[0,24)
     // CHECK-NEXT: node simulation.ref.store write:s3[0,8)
-    // CHECK-NEXT: node scf.while read:s2[0,24) read:s3[0,8) write:s3[0,8)
+    // CHECK-NEXT: node cf.br read:s2[0,24) read:s3[0,8) write:s3[0,8)
     simulation.code_unit.decl 1 in 0 always_comb hierarchy "address_then_reduction"
     simulation.func @address_then_reduction(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 1 : i64} {
       %addresses = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.unpacked_array<0 : 2 x i8>>
@@ -146,10 +146,10 @@ module {
       simulation.suspend.change %in to ^body : !simulation.ref<i1>
     }
     // A retained bounds arm is unreachable for every induction partition.
-    // Its exact original access sites may be ignored after CFG structuring;
+    // Its exact original access sites may be ignored in the CFG view;
     // reachable sites still require their dense memory facts.
     // CHECK: regions @infeasible_bounds_arm valid=1
-    // CHECK-NEXT: node scf.while read:s0[0,24) write:s1[0,24)
+    // CHECK-NEXT: node cf.br read:s0[0,24) write:s1[0,24)
     simulation.code_unit.decl 7 in 0 always_comb hierarchy "infeasible_bounds_arm"
     simulation.func @infeasible_bounds_arm(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 7 : i64} {
       %src = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.unpacked_array<0 : 2 x i8>>

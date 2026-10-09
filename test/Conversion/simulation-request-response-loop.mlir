@@ -1,20 +1,17 @@
 // RUN: obelisk-opt %S/../Runtime/Inputs/request-response-loop.mlir --mlir-print-op-on-diagnostic=false --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=PROOF
-// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
+// RUN: FileCheck %s --check-prefix=FUSED < %t
 // RUN: obelisk-opt %S/../Runtime/Inputs/request-response-loop.mlir --test-obelisk-activation-regions='functions=producer_and_consumer,transform publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
 // RUN: obelisk-opt %S/../Runtime/Inputs/request-response-loop.mlir --test-obelisk-activation-regions='functions=producer_and_consumer,transform publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=LANES
 // Value equations are acyclic: q0=v, q1=v+1, r0=q0, r1=q0+q1.
-// Whole loops are indivisible in the current scheduling proof. The producer
-// reads responses between request stores; the consumer publishes the complete
-// response after its loop. A safe single sweep needs a finer dependence proof.
-// PROOF: statement component rejected: structured dependence cycle
-// PROOF-SAME: SSA publication graph: acyclic
-// PROOF-SAME: cycle edge:
-// PROOF-SAME: via s1[0,16)
-// PROOF-SAME: cycle edge:
-// PROOF-SAME: via s2[0,16)
-// KEEP: simulation.spawn @producer_and_consumer
-// KEEP: simulation.spawn @transform
-// KEEP: simulation.spawn @sample
+// The producer reads responses between request stores, so statement order is
+// cyclic. Each store depends only on earlier data, and `sample` reads the
+// response only at a clock edge, never waiting on it. The cohort therefore
+// runs once in data-dependence order (IEEE 1800-2023 4.3); loops stay loops.
+// PROOF: 1 plans (1 data-dependence order)
+// FUSED-NOT: simulation.spawn @producer_and_consumer
+// FUSED-NOT: simulation.spawn @transform
+// FUSED: simulation.spawn @__obelisk_region_kernel_0_0
+// FUSED: simulation.spawn @sample
 // Following SSA yields separates independent publications within one loop.
 // The value graph alone does not authorize reordering source publications.
 // VALUES-LABEL: regions @producer_and_consumer valid=1

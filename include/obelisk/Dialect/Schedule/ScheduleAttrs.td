@@ -98,11 +98,14 @@ def SimComputeGroupAttr : ScheduleAttr<"ComputeGroup", "group"> {
 }
 
 def SimComputeFusionAttr : ScheduleAttr<"ComputeFusion", "fusion"> {
-  // interleaved requests statement-order materialization. It is a plan, not
-  // an execute-once assertion: the materializer re-derives the dependence DAG
+  // interleaved requests statement-order materialization. dataflow further
+  // requests data-dependence order with each process split into slices
+  // (IEEE 1800-2023 4.3); it implies interleaved. Both are plans, not
+  // execute-once assertions: the materializer re-derives the dependence DAG
   // and the complete activation/observation certificate before rewriting.
   let parameters = (ins "uint32_t":$id, "::mlir::DenseI64ArrayAttr":$fragments,
-      DefaultValuedParameter<"bool", "false">:$interleaved);
+      DefaultValuedParameter<"bool", "false">:$interleaved,
+      DefaultValuedParameter<"bool", "false">:$dataflow);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }

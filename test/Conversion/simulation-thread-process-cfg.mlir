@@ -185,6 +185,21 @@ module {
           (!simulation.context, i32) -> ()
       simulation.return
     }
+
+    // Constant argument removal must edit each parallel edge exactly once.
+    simulation.code_unit.decl 3 in 0 initial hierarchy "duplicate_successor.constants"
+    simulation.func @duplicate_successor_constants(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %condition: i1 {simulation.capture_kind = 2 : i32})
+        attributes {code_unit_id = 3 : i64, entry_kind = 1 : i32} {
+      %one = arith.constant 1 : i32
+      %two = arith.constant 2 : i32
+      cf.cond_br %condition, ^use(%one, %two : i32, i32), ^use(%one, %two : i32, i32)
+    ^use(%a: i32, %b: i32):
+      %sum = arith.addi %a, %b : i32
+      simulation.file.flush %ctx, %sum : (!simulation.context, i32) -> ()
+      simulation.return
+    }
   }
 }
 
@@ -269,3 +284,10 @@ module {
 // CHECK: cf.cond_br %{{.*}}, ^[[DUP_USE:.*]](%[[DUP_LIVE]] : i32), ^[[DUP_USE]](%[[DUP_LIVE]] : i32)
 // CHECK: ^[[DUP_USE]](%[[DUP_THREADED:.*]]: i32):
 // CHECK: simulation.file.flush %{{.*}}, %[[DUP_THREADED]]
+
+// CHECK-LABEL: simulation.func @duplicate_successor_constants
+// CHECK: cf.cond_br %{{.*}}, ^[[CONST_USE:.*]], ^[[CONST_USE]]
+// CHECK: ^[[CONST_USE]]:
+// CHECK: %[[CONST_ONE:.*]] = arith.constant 1 : i32
+// CHECK: %[[CONST_TWO:.*]] = arith.constant 2 : i32
+// CHECK: arith.addi %[[CONST_ONE]], %[[CONST_TWO]]

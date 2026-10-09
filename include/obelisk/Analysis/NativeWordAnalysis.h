@@ -2,9 +2,11 @@
 //-*-===//
 #ifndef OBELISK_ANALYSIS_NATIVEWORDANALYSIS_H
 #define OBELISK_ANALYSIS_NATIVEWORDANALYSIS_H
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include <memory>
 #include <optional>
 namespace obelisk::sim {
 class SimFuncOp;
@@ -40,9 +42,24 @@ bool isWordReferenceIdentity(mlir::Operation *op);
 /// Physical bits between adjacent selected lanes, including array padding.
 uint64_t getWordLaneStorageWidth(mlir::Value value);
 std::optional<WordTruthTable> computeWordTruthTable(mlir::Operation *op);
+/// Function-wide range proof shared by independent loop queries. Recreate
+/// after any IR mutation; lane facts remain specific to each induction value.
+class NativeWordRangeAnalysis {
+public:
+  explicit NativeWordRangeAnalysis(sim::SimFuncOp function);
+  ~NativeWordRangeAnalysis();
+  bool isReachable(mlir::Operation *op);
+  std::optional<mlir::ConstantIntRanges> getRange(mlir::Operation *op,
+                                                  mlir::Value value);
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl;
+};
 class NativeWordAnalysis {
 public:
   NativeWordAnalysis(sim::SimFuncOp function, const BoundedLoop &loop,
+                     NativeWordRangeAnalysis &ranges,
                      unsigned elementWidth = 1);
   WordLaneKind get(mlir::Value value) const {
     auto found = kinds.find(value);

@@ -68,6 +68,7 @@ struct NativeStateLayoutAnalysis {
   llvm::DenseMap<uint64_t, uint64_t> storage;
   llvm::DenseMap<uint64_t, uint64_t> nets;
   llvm::DenseMap<uint64_t, uint64_t> drivers;
+  llvm::DenseSet<uint64_t> isolatedSingleDriverNets;
   llvm::DenseMap<uint64_t, uint64_t> storageOffsets;
   llvm::DenseMap<uint64_t, uint64_t> netOffsets;
   llvm::DenseMap<uint64_t, uint64_t> driverOffsets;

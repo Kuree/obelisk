@@ -60,6 +60,39 @@ bool isWordBitwiseComputation(Operation *op) {
   return isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op);
 }
 namespace {
+// Only these values can be queried by the loop-local lane solvers. External
+// incoming phi operands are included even when no operation in the loop uses
+// them directly. Seeding every value in a fused function for every loop would
+// turn independent loop queries into quadratic work.
+void forEachLoopValue(const BoundedLoop &loop,
+                      function_ref<void(Value)> callback) {
+  DenseSet<Value> seen;
+  auto visit = [&](Value value) {
+    if (seen.insert(value).second)
+      callback(value);
+  };
+  for (Block *block : loop.blocks) {
+    for (Value argument : block->getArguments())
+      visit(argument);
+    for (Operation &op : *block) {
+      for (Value value : op.getOperands())
+        visit(value);
+      for (Value value : op.getResults())
+        visit(value);
+    }
+    if (block->getNumArguments())
+      for (Block *predecessor : block->getPredecessors())
+        if (auto branch =
+                dyn_cast<BranchOpInterface>(predecessor->getTerminator()))
+          for (unsigned edge = 0; edge < predecessor->getNumSuccessors();
+               ++edge)
+            if (predecessor->getSuccessor(edge) == block)
+              for (Value value :
+                   branch.getSuccessorOperands(edge).getForwardedOperands())
+                visit(value);
+  }
+}
+
 using Kind = WordLaneKind;
 bool isIndex(Kind kind) {
   return kind == Kind::Index || kind == Kind::ReverseIndex;
@@ -140,7 +173,7 @@ public:
             true);
     return AddressResidue::unknown();
   }
-  LogicalResult initialize(Operation *function) override {
+  LogicalResult initialize(Operation *) override {
     auto seed = [&](Value value) {
       bool outside = !loop.members.contains(value.getParentBlock());
       if (!outside && !isa<BlockArgument>(value))
@@ -161,14 +194,7 @@ public:
       auto *state = getOrCreate<AddressLattice>(value);
       propagateIfChanged(state, state->join(residue));
     };
-    function->walk([&](Operation *op) {
-      for (Value value : op->getResults())
-        seed(value);
-      for (Region &region : op->getRegions())
-        for (Block &block : region)
-          for (Value value : block.getArguments())
-            seed(value);
-    });
+    forEachLoopValue(loop, seed);
     for (Block *block : loop.blocks)
       for (Operation &op : *block)
         if (failed(visit(getProgramPointAfter(&op))))
@@ -286,9 +312,9 @@ private:
 class LaneDataflow final : public DataFlowAnalysis {
 public:
   LaneDataflow(DataFlowSolver &solver, const BoundedLoop &loop,
-               ScopedIntegerRangeAnalysis *ranges)
+               NativeWordRangeAnalysis &ranges)
       : DataFlowAnalysis(solver), loop(loop), ranges(ranges) {}
-  LogicalResult initialize(Operation *function) override {
+  LogicalResult initialize(Operation *) override {
     auto seed = [&](Value value) {
       Block *block = value.getParentBlock();
       if (value == loop.induction || !loop.members.contains(block)) {
@@ -298,14 +324,7 @@ public:
                                                            : Kind::Uniform)));
       }
     };
-    function->walk([&](Operation *op) {
-      for (Value value : op->getResults())
-        seed(value);
-      for (Region &region : op->getRegions())
-        for (Block &block : region)
-          for (Value value : block.getArguments())
-            seed(value);
-    });
+    forEachLoopValue(loop, seed);
     for (Block *block : loop.blocks) {
       if (failed(visit(getProgramPointBefore(block))))
         return failure();
@@ -368,12 +387,10 @@ public:
            (isIndex(inputs[1]) && inputs[0] == Kind::Uniform))) {
         // Unit-stride geometry must hold in mathematical integers, not just
         // modulo the index type. Wrapping indices can remain in array bounds.
-        auto *scope = getOrCreateFor<ScopedRangeLattice>(
-            point, getProgramPointBefore(op));
-        if (!scope->reachable)
+        if (!ranges.isReachable(op))
           return success();
-        auto a = ranges->getRange(op->getOperand(0), *scope);
-        auto b = ranges->getRange(op->getOperand(1), *scope);
+        auto a = ranges.getRange(op, op->getOperand(0));
+        auto b = ranges.getRange(op, op->getOperand(1));
         if (a && b) {
           unsigned width = a->smax().getBitWidth();
           bool subtract = isa<arith::SubIOp>(op);
@@ -394,11 +411,9 @@ public:
                  isIndex(inputs.front())) {
         result = inputs.front();
       } else if (isa<arith::ExtUIOp>(op) && isIndex(inputs.front())) {
-        auto *scope = getOrCreateFor<ScopedRangeLattice>(
-            point, getProgramPointBefore(op));
-        if (!scope->reachable)
+        if (!ranges.isReachable(op))
           return success();
-        auto range = ranges->getRange(op->getOperand(0), *scope);
+        auto range = ranges.getRange(op, op->getOperand(0));
         // Zero extension preserves affine order on either side of the signed
         // boundary, but not across it (e.g. -1,0 becomes 255,0).
         if (range && range->smin().isNegative() == range->smax().isNegative())
@@ -446,11 +461,9 @@ public:
         if ((array || unpacked) && width && stride && *stride >= *width &&
             *width > 0 && *stride <= 32 && inputs[0] == Kind::Uniform &&
             isIndex(inputs[1])) {
-          auto *scope = getOrCreateFor<ScopedRangeLattice>(
-              point, getProgramPointBefore(op));
-          if (!scope->reachable)
+          if (!ranges.isReachable(op))
             return success();
-          auto range = ranges->getRange(select.getIndex(), *scope);
+          auto range = ranges.getRange(op, select.getIndex());
           if (range) {
             unsigned bits = std::max(65u, range->smin().getBitWidth());
             int64_t left = array ? array.getLeft() : unpacked.getLeft();
@@ -465,11 +478,9 @@ public:
       } else if (isa<sim::SimLogicDynExtractOp, sim::SimBitsDynExtractOp>(op) &&
                  isWordLaneType(op->getResult(0).getType()) &&
                  inputs[0] == Kind::Uniform && isIndex(inputs[1])) {
-        auto *scope = getOrCreateFor<ScopedRangeLattice>(
-            point, getProgramPointBefore(op));
-        if (!scope->reachable)
+        if (!ranges.isReachable(op))
           return success();
-        auto range = ranges->getRange(op->getOperand(1), *scope);
+        auto range = ranges.getRange(op, op->getOperand(1));
         auto width = sim::getPackedWidth(op->getOperand(0).getType());
         if (range && width && !range->smin().isNegative() &&
             range->umax().ult(*width))
@@ -497,21 +508,48 @@ public:
 
 private:
   const BoundedLoop &loop;
-  ScopedIntegerRangeAnalysis *ranges;
+  NativeWordRangeAnalysis &ranges;
 };
 } // namespace
 
+struct NativeWordRangeAnalysis::Impl {
+  DataFlowSolver solver{DataFlowConfig().setInterprocedural(false)};
+  ScopedIntegerRangeAnalysis *ranges;
+  bool valid;
+  explicit Impl(sim::SimFuncOp function) {
+    solver.load<dataflow::DeadCodeAnalysis>();
+    solver.load<dataflow::SparseConstantPropagation>();
+    ranges = solver.load<ScopedIntegerRangeAnalysis>(function.getOperation());
+    valid = succeeded(solver.initializeAndRun(function));
+  }
+  const ScopedRangeLattice *lookup(Operation *op) {
+    return valid ? solver.lookupState<ScopedRangeLattice>(
+                       solver.getProgramPointBefore(op))
+                 : nullptr;
+  }
+};
+NativeWordRangeAnalysis::NativeWordRangeAnalysis(sim::SimFuncOp function)
+    : impl(std::make_unique<Impl>(function)) {}
+NativeWordRangeAnalysis::~NativeWordRangeAnalysis() = default;
+bool NativeWordRangeAnalysis::isReachable(Operation *op) {
+  auto *scope = impl->lookup(op);
+  return scope && scope->reachable;
+}
+std::optional<ConstantIntRanges>
+NativeWordRangeAnalysis::getRange(Operation *op, Value value) {
+  auto *scope = impl->lookup(op);
+  return scope && scope->reachable ? impl->ranges->getRange(value, *scope)
+                                   : std::nullopt;
+}
+
 NativeWordAnalysis::NativeWordAnalysis(sim::SimFuncOp function,
                                        const BoundedLoop &loop,
+                                       NativeWordRangeAnalysis &ranges,
                                        unsigned elementWidth) {
   // Native eval functions are independent pass-manager work items. Never
   // inspect a callee body while another worker may be rewriting it; calls
   // remain explicit eligibility barriers and supply no lane/range proof.
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
-  solver.load<dataflow::DeadCodeAnalysis>();
-  solver.load<dataflow::SparseConstantPropagation>();
-  auto *ranges =
-      solver.load<ScopedIntegerRangeAnalysis>(function.getOperation());
   solver.load<LaneDataflow>(loop, ranges);
   unsigned residueBits = 0;
   if (llvm::any_of(loop.blocks, [&](Block *block) {
@@ -543,13 +581,6 @@ NativeWordAnalysis::NativeWordAnalysis(sim::SimFuncOp function,
         disjointIterations.insert(value);
     }
   };
-  function.walk([&](Operation *op) {
-    for (Value value : op->getResults())
-      record(value);
-    for (Region &region : op->getRegions())
-      for (Block &block : region)
-        for (Value value : block.getArguments())
-          record(value);
-  });
+  forEachLoopValue(loop, record);
 }
 } // namespace obelisk::analysis

@@ -2,12 +2,14 @@ add_mlir_library(ObeliskScheduleTransforms
   PARTIAL_SOURCES_INTENDED
   ComputeFusion.cpp
   FuseComputeFragments.cpp
+  LowerConditionalReferenceAccesses.cpp
   MaterializeComputeFusion.cpp
   MaterializeGraphRegions.cpp
   PlanCombinationalStatements.cpp
   PlanStaticSuperstep.cpp
   SimulationNativeRegionOptimization.cpp
   SpecializeStaticStateNBA.cpp
+  SpecializeReferenceJoins.cpp
   VerifyComputeGraph.cpp
 
   DEPENDS
@@ -20,7 +22,6 @@ add_mlir_library(ObeliskScheduleTransforms
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRSCFDialect
-  MLIRSCFToControlFlow
   MLIRPass
   MLIRTransforms
 )
@@ -44,10 +45,8 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   ObeliskSimulationAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect
-  MLIRControlFlowToSCF
   MLIRLLVMDialect
   MLIRSCFDialect
-  MLIRSCFToControlFlow
   MLIRUBDialect
   MLIRTransforms
 )

@@ -142,9 +142,12 @@ module {
 // FUSE: simulation.spawn @__obelisk_region_kernel_
 // FUSE-LABEL: simulation.func private @__obelisk_region_kernel_
 // FUSE-SAME: schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 1 : i64, continuation = 1 : i32>, #schedule.source_owner<codeUnit = 2 : i64, continuation = 2 : i32>, #schedule.source_owner<codeUnit = 3 : i64,
+// Statement order stays cyclic in @same and @incomplete. Without an outside
+// observer of their writes, both still run once in data-dependence order
+// (IEEE 1800-2023 4.3).
 // FUSE-LABEL: simulation.design @same
-// FUSE: simulation.spawn @fused
-// FUSE: simulation.spawn @middle
+// FUSE-NOT: simulation.spawn @fused
+// FUSE: simulation.spawn @__obelisk_region_kernel_
 // FUSE-LABEL: simulation.design @incomplete
-// FUSE: simulation.spawn @fused
-// FUSE: simulation.spawn @middle
+// FUSE-NOT: simulation.spawn @fused
+// FUSE: simulation.spawn @__obelisk_region_kernel_

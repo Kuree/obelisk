@@ -2831,9 +2831,26 @@ FailureOr<bool> makeNativeEvalPlan(
            !stateLayout.guardedHandles.contains(decoded.id))) {
         if (deferColdReference)
           continue;
-        return call.emitError(
-                   "dynamic state load root is not direct-state certified"),
-               failure();
+        auto diagnostic = call.emitError(
+            "dynamic state load root is not direct-state certified");
+        if (module->hasAttr("obelisk.debug.native_timing")) {
+          diagnostic.attachNote(call.getLoc())
+              << "evaluator " << (owner ? owner.getSymName() : StringRef("?"))
+              << ", width " << *width << ", root " << chainBase;
+          if (auto argument = dyn_cast<BlockArgument>(chainBase)) {
+            unsigned shown = 0;
+            for (BlockOperand &use : argument.getOwner()->getUses()) {
+              auto branch = dyn_cast<BranchOpInterface>(use.getOwner());
+              if (!branch || ++shown > 4)
+                continue;
+              auto operands = branch.getSuccessorOperands(use.getOperandNumber());
+              if (!operands.isOperandProduced(argument.getArgNumber()))
+                diagnostic.attachNote(branch->getLoc())
+                    << "incoming root " << operands[argument.getArgNumber()];
+            }
+          }
+        }
+        return failure();
       }
       auto bound = llvm::find_if(
           stateLayout.bounds, [&](const NativeStateLayout::Bound &candidate) {

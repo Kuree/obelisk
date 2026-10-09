@@ -941,6 +941,10 @@ FailureOr<Value> UnitLowering::loadReference(Value reference,
 
 LogicalResult UnitLowering::storeReference(Value reference, Value value,
                                            Location location) {
+  // Function output/inout copy-back uses this path without a CapturedLValue.
+  // It is still a write for implicit sensitivity (IEEE 1800-2023 9.2.2.2.1),
+  // including when the actual is an indexed view of a captured declaration.
+  recordImplicitWrite(reference);
   value = cloneSequentialValue(value, location);
   if (isa<sim::RefType>(reference.getType()))
     sim::SimRefStoreOp::create(builder, location, value, reference);

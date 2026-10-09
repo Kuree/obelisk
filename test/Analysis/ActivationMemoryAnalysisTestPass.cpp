@@ -1,5 +1,7 @@
 #include "AnalysisTestPasses.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -7,6 +9,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "obelisk/Analysis/ActivationControlFlow.h"
+#include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
@@ -197,13 +200,21 @@ public:
     return "test-obelisk-activation-regions";
   }
   StringRef getDescription() const final {
-    return "print structured activation regions and their memory effects";
+    return "print activation units and their memory effects";
   }
   Option<bool> dump{*this, "dump", llvm::cl::init(false)};
   Option<bool> threadControl{*this, "thread-control", llvm::cl::init(false)};
   Option<bool> publications{*this, "publications", llvm::cl::init(false)};
   Option<bool> regionOrder{*this, "order", llvm::cl::init(false)};
+  Option<bool> sliceOrder{*this, "slice-order", llvm::cl::init(false)};
   Option<bool> reachingValues{*this, "reaching-values", llvm::cl::init(false)};
+  Option<bool> inputDependencies{*this, "input-dependencies",
+                                 llvm::cl::init(false)};
+  Option<bool> inputs{*this, "inputs", llvm::cl::init(false)};
+  Option<bool> idempotence{*this, "idempotence", llvm::cl::init(false)};
+  Option<unsigned> idempotenceMaximumOperations{
+      *this, "idempotence-maximum-operations", llvm::cl::init(500000)};
+  Option<int64_t> sliceRoot{*this, "slice-root", llvm::cl::init(-1)};
   ListOption<std::string> functions{*this, "functions",
                                     llvm::cl::CommaSeparated};
   void runOnOperation() final {
@@ -233,15 +244,30 @@ public:
         auto proof =
             std::make_unique<obelisk::analysis::ActivationRegionAnalysis>(
                 function, handles, trace,
-                reachingValues ? obelisk::analysis::ActivationMemoryAnalysis::
-                                     DependencyMode::ReachingValues
-                               : obelisk::analysis::ActivationMemoryAnalysis::
-                                     DependencyMode::Accesses,
+                inputDependencies
+                    ? obelisk::analysis::ActivationMemoryAnalysis::
+                          DependencyMode::Inputs
+                : reachingValues ? obelisk::analysis::ActivationMemoryAnalysis::
+                                       DependencyMode::ReachingValues
+                                 : obelisk::analysis::ActivationMemoryAnalysis::
+                                       DependencyMode::Accesses,
                 threadControl ? obelisk::analysis::ActivationRegionAnalysis::
                                     ControlFlowPreparation::ThreadDispatch
                               : obelisk::analysis::ActivationRegionAnalysis::
                                     ControlFlowPreparation::Canonical);
         auto &analysis = *proof;
+        if (auto maximum = function->getAttrOfType<IntegerAttr>(
+                "test.activation_max_value_nodes")) {
+          const auto &memory = analysis.getMemory();
+          if (!memory.hasInputDependencies() ||
+              memory.getValueNodeCount() > maximum.getInt()) {
+            function.emitError(
+                "activation value graph exceeded its node budget: ")
+                << memory.getValueNodeCount() << " ("
+                << memory.getDependencyFailure() << ')';
+            signalPassFailure();
+          }
+        }
         llvm::errs() << "regions @" << function.getSymName()
                      << " valid=" << analysis.isValid();
         if (!analysis.isValid())
@@ -249,6 +275,36 @@ public:
                        << obelisk::analysis::stringifyActivationFailure(
                               analysis.getFailureReason());
         llvm::errs() << '\n';
+        if (idempotence && analysis.isValid())
+          llvm::errs() << "  idempotent="
+                       << obelisk::analysis::hasIdempotentStateTransition(
+                              analysis.getActivationFunction(),
+                              analysis.getMemory(), handles,
+                              idempotenceMaximumOperations)
+                       << '\n';
+        if (inputs) {
+          const auto &memory = analysis.getMemory();
+          auto print = [&](StringRef label, auto ranges) {
+            llvm::errs() << "  " << label;
+            for (auto range : ranges)
+              llvm::errs() << " s" << range.root << '[' << range.low << ','
+                           << range.low + range.width << ')';
+            llvm::errs() << '\n';
+          };
+          print("live-in", memory.getLiveIns());
+          llvm::errs() << "  values valid=" << memory.hasValueDependencies()
+                       << '\n';
+          if (inputDependencies)
+            llvm::errs() << "  inputs valid=" << memory.hasInputDependencies()
+                         << '\n';
+          if (inputDependencies && !memory.hasInputDependencies())
+            llvm::errs() << "  input reason=" << memory.getDependencyFailure()
+                         << '\n';
+          print("value-input", memory.getValueInputs());
+          print("final-input", memory.getFinalInputs());
+          print("must-write", memory.getMustWrites());
+          print("may-write", memory.getMayWrites());
+        }
         for (const auto &node : analysis.getNodes()) {
           if (node.reads.empty() && node.writes.empty())
             continue;
@@ -264,7 +320,25 @@ public:
           llvm::errs() << '\n';
         }
         if (dump && analysis.isValid())
-          analysis.getStructuredFunction().print(llvm::errs());
+          analysis.getActivationFunction().print(llvm::errs());
+        if (sliceRoot >= 0 && analysis.isValid()) {
+          obelisk::analysis::ActivationSlice slice{&analysis, {}};
+          analysis.getActivationFunction().walk([&](Operation *op) {
+            auto found = analysis.getMemory().getWrites().find(op);
+            if (found != analysis.getMemory().getWrites().end() &&
+                llvm::any_of(found->second, [&](auto range) {
+                  return range.root == uint64_t(sliceRoot);
+                }))
+              slice.stores.push_back(op);
+          });
+          if (!slice.stores.empty())
+            if (auto view = obelisk::analysis::cloneActivationSlice(slice)) {
+              llvm::errs() << "activation slice @" << function.getSymName()
+                           << '\n';
+              view->print(llvm::errs());
+              llvm::errs() << '\n';
+            }
+        }
         if (publications && analysis.isValid()) {
           auto values = obelisk::analysis::getActivationPublications(analysis);
           if (values)
@@ -281,14 +355,22 @@ public:
               llvm::errs() << '\n';
             }
         }
-        if (publications || regionOrder)
+        if (publications || regionOrder || sliceOrder)
           owned.push_back(std::move(proof));
       }
-      if (publications || regionOrder) {
+      if (publications || regionOrder || sliceOrder) {
         SmallVector<const obelisk::analysis::ActivationRegionAnalysis *> views;
         for (const auto &view : owned)
           views.push_back(view.get());
         SmallVector<obelisk::analysis::ActivationRegionStep> cycle;
+        if (sliceOrder) {
+          auto order = obelisk::analysis::getActivationSliceOrder(views, &cycle);
+          llvm::errs() << "slice graph: "
+                       << (order           ? "acyclic"
+                           : cycle.empty() ? "unavailable"
+                                           : "cyclic")
+                       << '\n';
+        }
         if (publications) {
           auto order =
               obelisk::analysis::getActivationPublicationOrder(views, &cycle);
@@ -308,15 +390,19 @@ public:
                        << '\n';
           if (order)
             for (const auto &step : *order)
-              step.operation->walk([&](obelisk::sim::SimRefStoreOp store) {
-                auto found =
-                    step.activation->getMemory().getWrites().find(store);
-                if (found != step.activation->getMemory().getWrites().end())
-                  for (auto range : found->second)
-                    llvm::errs()
-                        << "  write s" << range.root << '[' << range.low << ','
-                        << range.low + range.width << ")\n";
-              });
+              step.activation->getNode(step.operation)
+                  ->walk([&](Operation *op) {
+                    auto store = dyn_cast<obelisk::sim::SimRefStoreOp>(op);
+                    if (!store)
+                      return;
+                    auto found =
+                        step.activation->getMemory().getWrites().find(store);
+                    if (found != step.activation->getMemory().getWrites().end())
+                      for (auto range : found->second)
+                        llvm::errs()
+                            << "  write s" << range.root << '[' << range.low
+                            << ',' << range.low + range.width << ")\n";
+                  });
         }
       }
     });

@@ -13,6 +13,40 @@ using namespace mlir;
 
 namespace obelisk::analysis {
 
+DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design) {
+  DenseSet<uint64_t> connected, result;
+  DenseMap<uint64_t, SmallVector<sim::SimDriverDeclOp>> drivers;
+  for (Operation &op : design.getBody().front()) {
+    if (isa<sim::SimPassSwitchDeclOp>(op))
+      return {};
+    if (auto connection = dyn_cast<sim::SimNetConnectDeclOp>(op)) {
+      connected.insert(connection.getLhsNetId());
+      connected.insert(connection.getRhsNetId());
+    }
+    if (auto driver = dyn_cast<sim::SimDriverDeclOp>(op))
+      drivers[driver.getNetId()].push_back(driver);
+  }
+  for (auto net : design.getOps<sim::SimNetDeclOp>()) {
+    auto width = sim::getProvenanceSpan(net.getType());
+    auto found = drivers.find(net.getId());
+    if (!width || connected.contains(net.getId()) || net.getNettypeAttr() ||
+        net.getResolutionKind() != sim::NetResolutionKind::Wire ||
+        found == drivers.end() || found->second.size() != 1)
+      continue;
+    if (auto delays = net.getPropagationDelays())
+      if (llvm::any_of(*delays, [](int64_t delay) { return delay != -1; }))
+        continue;
+    auto driver = found->second.front();
+    if (sim::getProvenanceSpan(driver.getType()) == width &&
+        driver.getDrivenLow().value_or(0) == 0 &&
+        uint64_t(driver.getDrivenWidth().value_or(*width)) == *width &&
+        driver.getStrength0() == sim::Strength::Strong &&
+        driver.getStrength1() == sim::Strength::Strong)
+      result.insert(net.getId());
+  }
+  return result;
+}
+
 NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {
   DenseSet<uint64_t> connectedNets;
   for (Operation &operation : design.getBody().front())

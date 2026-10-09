@@ -10,6 +10,11 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines="native-words=false" | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.scalar.o
 // RUN: %llvm_dist/bin/clang++ %t.scalar.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.scalar.exe
 // RUN: %t.scalar.exe | FileCheck %s
+// RUN: obelisk-opt %s --schedule-optimize-native-words='predication-operation-budget=1' -o %t.budget.mlir
+// RUN: FileCheck %s --check-prefix=BUDGET < %t.budget.mlir
+// RUN: obelisk-opt %t.budget.mlir --convert-obelisk-sim-processes-to-llvm-coroutines='native-words=false' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.budget.o
+// RUN: %llvm_dist/bin/clang++ %t.budget.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.budget.exe
+// RUN: %t.budget.exe | FileCheck %s
 // Every triple of 0,1,X,Z appears in one of the 64 lanes.
 // LRM 12.4: procedural X/Z conditions select the false edge. A packed phi
 // preserves Z exactly; this differs from the ambiguous ?: expression rule.
@@ -18,6 +23,14 @@
 // WORDS: schedule.word.region 64
 // WORDS-NOT: cf.cond_br
 // WORDS: schedule.word.yield
+// Exhausting speculative compile work retains the scalar loop and its X/Z
+// behavior. It introduces no runtime recovery or alternate execution path.
+// BUDGET-LABEL: simulation.func @control
+// BUDGET-NOT: schedule.word.region
+// BUDGET: cf.cond_br
+// BUDGET: simulation.ref.store
+// BUDGET-NOT: schedule.word.region
+// BUDGET: simulation.return
 // CHECK: control exit 1 1
 // CHECK: control 1 1 1
 !bit = !simulation.logic<1>

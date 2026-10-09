@@ -13,7 +13,9 @@ namespace obelisk {
 
 /// A finite combinational activation with complete, exclusive outputs. Live-in
 /// reads are watched; structured activations may also read their own definite
-/// assignments. Repeated publications need the separate observer certificate.
+/// assignments. The explicit reordering/observer contracts additionally permit
+/// path-proven idempotent state. Repeated publications need the separate
+/// observer certificate.
 /// This is deliberately not an always_latch or arbitrary always certificate.
 struct CombinationalFusionBody {
   mlir::Block *activation;
@@ -42,12 +44,16 @@ struct CombinationalFusionFailure {
     UnknownWatchedResource,
     UnresolvedWatchedStorage,
     OutsideWatch,
+    ObservableState,
+    OutsideObserver,
   };
   Reason reason = Reason::None;
   analysis::ActivationRegionAnalysis::FailureReason activation =
       analysis::ActivationRegionAnalysis::FailureReason::None;
   uint64_t storage = 0;
   mlir::StringAttr owner;
+  /// The operation an activation proof could not summarize, if known.
+  std::optional<mlir::OperationName> unsupported;
   /// Format only when emitting a diagnostic; decisions use the enum above.
   std::string getMessage() const;
 };
@@ -64,15 +70,41 @@ public:
   analyze(sim::SimFuncOp function,
           const analysis::HandleDataflowAnalysis &provenance,
           bool interleaved = false,
-          CombinationalFusionFailure *failureReason = nullptr) const;
+          CombinationalFusionFailure *failureReason = nullptr,
+          bool finalValuesOnly = false) const;
+  /// Admit overwritten incoming state or a path-proven idempotent transition
+  /// only with the full 4.3 observer proof. Such a member must use publication
+  /// slicing, which keeps source-local snapshots and their writers together.
+  std::optional<CombinationalFusionBody>
+  analyzeForReordering(sim::SimFuncOp function,
+                       const analysis::HandleDataflowAnalysis &provenance,
+                       CombinationalFusionFailure *failureReason = nullptr) const;
   /// Internal transitions can be hidden from the union wait only after all
   /// external watches and toggle observers of repeated writes are excluded.
   bool canInterleave(llvm::ArrayRef<sim::SimFuncOp> functions,
                      CombinationalFusionFailure *failureReason = nullptr) const;
+  /// IEEE 1800-2023 4.3: executing the activations once in data-dependence
+  /// order, without each process's statement order, has the user-visible
+  /// effect of a reference execution when nothing outside the cohort can
+  /// observe any of their writes in transition. Requires VPI off, invisible
+  /// storage/nets without toggle coverage, and a closed transitive cone of
+  /// transparent combinational observers for every written range.
+  bool canReorder(llvm::ArrayRef<sim::SimFuncOp> functions,
+                  CombinationalFusionFailure *failureReason = nullptr) const;
 
 private:
+  /// Storage roots whose intermediate values no user-visible observer can
+  /// see: invisible state whose every waiting process is a side-effect-free
+  /// combinational activation (complete writes, final-output independence or
+  /// a path-proven idempotent transition) writing only such roots. Greatest
+  /// fixpoint, computed on first use.
+  const llvm::DenseSet<uint64_t> &getGlitchInsensitiveStorage() const;
   bool unsupported = false;
   sim::SimDesignOp design;
+  const analysis::HandleDataflowAnalysis *provenance = nullptr;
+  mutable std::optional<llvm::DenseSet<uint64_t>> glitchInsensitive;
+  /// For a sensitive root: the observer outside the closure that exposes it.
+  mutable llvm::DenseMap<uint64_t, mlir::StringAttr> glitchObservers;
   analysis::ActivationMemoryAnalysis::DependencyMode dependencyMode;
   mutable llvm::DenseMap<mlir::Operation *,
                          std::unique_ptr<analysis::ActivationRegionAnalysis>>

@@ -1,6 +1,8 @@
 //===- ComputeFusion.cpp - Static process-body fusion helpers ------------===//
 
 #include "ComputeFusion.h"
+#include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
+#include "obelisk/Analysis/SimulationEffectAnalysis.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
@@ -77,6 +79,18 @@ bool hasConcreteHandleValues(Operation *operation,
     Type type = value.getType();
     if (!isa<sim::RefType, sim::NetType, sim::DriverType>(type))
       return true;
+    // A private slot of the activation is concrete without a descriptor.
+    if (auto found = provenance.find(value);
+        found != provenance.end() &&
+        found->second.resource == schedule::ComputeResourceKind::Local)
+      return true;
+    // A callee's reference formal is instantiated at each call site, where
+    // the actual handles must independently satisfy this check.
+    if (auto found = provenance.find(value);
+        found != provenance.end() && found->second.formal)
+      if (auto function = operation->getParentOfType<sim::SimFuncOp>())
+        if (function.getEntryKind() == sim::EntryKind::Function)
+          return true;
     return hasConcreteDescriptor(value, provenance);
   };
   return llvm::all_of(operation->getOperands(), check) &&
@@ -175,6 +189,13 @@ bool isComputeBodyFusionEligibleImpl(
 
     if (primitiveDriverOps && isa<sim::SimDriverDriveInertialOp>(operation)) {
       eligible = hasOnlyStaticDigitalOrTimeValues(operation) &&
+                 hasConcreteHandleValues(operation, provenance);
+      return;
+    }
+
+    if (auto alloc = dyn_cast<sim::SimRefAllocOp>(operation)) {
+      eligible = analysis::isPlainValueType(alloc.getType().getElementType()) &&
+                 hasOnlyStaticDigitalValues(operation) &&
                  hasConcreteHandleValues(operation, provenance);
       return;
     }
@@ -319,7 +340,7 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
     sim::SimDesignOp design,
     const analysis::HandleDataflowAnalysis &provenanceAnalysis,
     analysis::ActivationMemoryAnalysis::DependencyMode mode)
-    : design(design), dependencyMode(mode) {
+    : design(design), provenance(&provenanceAnalysis), dependencyMode(mode) {
   auto graph = design.getComputeGraphAttr();
   // Full foreign mutation needs a range-scoped invalidation route for this
   // idempotent kernel. Existing externally driven evaluators retain their
@@ -352,9 +373,11 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
     for (Attribute attr : fragment.getEffects()) {
       auto effect = cast<schedule::ComputeEffectAttr>(attr);
       if (effect.getEffect() != schedule::ComputeEffectKind::Write &&
-          effect.getEffect() != schedule::ComputeEffectKind::NBA)
+          effect.getEffect() != schedule::ComputeEffectKind::NBA &&
+          effect.getEffect() != schedule::ComputeEffectKind::Drive)
         continue;
       if (effect.getResource() != schedule::ComputeResourceKind::Storage &&
+          effect.getResource() != schedule::ComputeResourceKind::Net &&
           effect.getResource() != schedule::ComputeResourceKind::Unknown)
         continue;
       if (effect.getResource() == schedule::ComputeResourceKind::Storage &&
@@ -367,7 +390,13 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
         unsupported = true;
         continue;
       }
-      storageWriters[effect.getDescriptor()].push_back(
+      auto root = analysis::ActivationMemoryAnalysis::getRoot(
+          effect.getResource(), effect.getDescriptor());
+      if (!root) {
+        unsupported = true;
+        continue;
+      }
+      storageWriters[*root].push_back(
           {fragment.getFunction().getAttr(), effect});
     }
   }
@@ -402,6 +431,10 @@ std::string CombinationalFusionFailure::getMessage() const {
   case Reason::None:
     return {};
   case Reason::Activation:
+    if (unsupported)
+      return (analysis::stringifyActivationFailure(activation) + " (" +
+              unsupported->getStringRef() + ")")
+          .str();
     return analysis::stringifyActivationFailure(activation).str();
   case Reason::UnsupportedOwner:
     return "owner or unsupported effects";
@@ -412,7 +445,7 @@ std::string CombinationalFusionFailure::getMessage() const {
   case Reason::ImpreciseSensitivity:
     return "imprecise sensitivity";
   case Reason::UnwatchedLiveIn:
-    return "unwatched live-in";
+    return (Twine("unwatched live-in on storage ") + Twine(storage)).str();
   case Reason::IncomingOutputState:
     return "incoming output state";
   case Reason::MissingWriterInventory:
@@ -435,13 +468,22 @@ std::string CombinationalFusionFailure::getMessage() const {
     return (Twine("outside watch in ") + owner.getValue() +
             " on repeated storage " + Twine(storage))
         .str();
+  case Reason::ObservableState:
+    return (Twine("observable storage ") + Twine(storage) +
+            (owner ? Twine(" via ") + owner.getValue() : Twine()))
+        .str();
+  case Reason::OutsideObserver:
+    return (Twine("outside watch in ") + owner.getValue() + " on storage " +
+            Twine(storage))
+        .str();
   }
   llvm_unreachable("unknown combinational fusion failure");
 }
 
 std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
     sim::SimFuncOp function, const analysis::HandleDataflowAnalysis &analysis,
-    bool interleaved, CombinationalFusionFailure *failureReason) const {
+    bool interleaved, CombinationalFusionFailure *failureReason,
+    bool finalValuesOnly) const {
   using Reason = CombinationalFusionFailure::Reason;
   if (failureReason)
     *failureReason = {};
@@ -468,8 +510,13 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
       activation = std::make_unique<analysis::ActivationRegionAnalysis>(
           function, analysis, analysis::ActivationRegionAnalysis::Trace{},
           dependencyMode);
-    if (!activation->isValid())
-      return reject({Reason::Activation, activation->getFailureReason()});
+    if (!activation->isValid()) {
+      CombinationalFusionFailure failure{Reason::Activation,
+                                         activation->getFailureReason()};
+      if (Operation *op = activation->getMemory().getUnsupportedOperation())
+        failure.unsupported = op->getName();
+      return reject(failure);
+    }
     const auto &memory = activation->getMemory();
     if (!memory.hasCompleteWrites() || memory.getMayWrites().empty())
       return reject({Reason::IncompleteWrites});
@@ -493,21 +540,45 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
       auto found = facts.find(watch);
       auto span = sim::getProvenanceSpan(watch.getType());
       if (found == facts.end() || !found->second.descriptor ||
-          found->second.resource != schedule::ComputeResourceKind::Storage ||
           found->second.dynamic || !span || found->second.width != *span)
         return reject({Reason::ImpreciseSensitivity});
       auto &fact = found->second;
-      watches.push_back({*fact.descriptor, fact.low, fact.width});
+      auto root = analysis::ActivationMemoryAnalysis::getRoot(fact.resource,
+                                                              *fact.descriptor);
+      if (!root)
+        return reject({Reason::ImpreciseSensitivity});
+      watches.push_back({*root, fact.low, fact.width});
     }
     auto inputs = memory.hasValueDependencies() ? memory.getValueInputs()
                                                 : memory.getLiveIns();
+    // The transitive observer and publication-slicing certificates may ignore
+    // overwritten publications. Ordinary fusion keeps every intermediate input.
+    if (finalValuesOnly && memory.hasValueDependencies())
+      inputs = memory.getFinalInputs();
+    std::optional<bool> idempotent;
     // Every publication and control decision must be independent of incoming
     // output state. Reaching values can discharge old snapshots whose lanes
     // are fully overwritten without hiding an intermediate publication.
     // Physical accesses still drive executable region ordering.
     for (const auto &read : inputs) {
+      if (finalValuesOnly &&
+          activationRangeCovered(memory.getMayWrites(), read)) {
+        if (!idempotent)
+          idempotent = analysis::hasIdempotentStateTransition(
+              activation->getActivationFunction(), memory, analysis);
+        // The activation keeps every state update. Publication slicing groups
+        // all source-local snapshots with their writers in the same slice.
+        // A retained value is a stable parameter on precisely the paths that
+        // use it. Repeating the observer with unchanged inputs cannot count
+        // transitions or expose an earlier state version. Writer exclusivity
+        // and the transitive output-observer closure are still checked below.
+        if (*idempotent)
+          continue;
+      }
       if (!activationRangeCovered(watches, read))
-        return reject({Reason::UnwatchedLiveIn});
+        return reject({Reason::UnwatchedLiveIn,
+                       analysis::ActivationRegionAnalysis::FailureReason::None,
+                       read.root});
       if (llvm::any_of(memory.getMayWrites(), [&](const auto &write) {
             return activationRangesOverlap(read, write);
           }))
@@ -692,6 +763,32 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
   return result;
 }
 
+std::optional<CombinationalFusionBody>
+CombinationalFusionAnalysis::analyzeForReordering(
+    sim::SimFuncOp function, const analysis::HandleDataflowAnalysis &provenance,
+    CombinationalFusionFailure *failureReason) const {
+  auto body = analyze(function, provenance, /*interleaved=*/true,
+                      failureReason, /*finalValuesOnly=*/true);
+  if (!body || !body->structured)
+    return std::nullopt;
+  const auto &memory = body->structured->getMemory();
+  // analyze() has proved that every incoming output cell used on a path is
+  // copied back unchanged on that path. Thus an extra union-watch activation
+  // with unchanged inputs cannot advance retained state. getActivationSliceOrder
+  // keeps source-local read/write dependencies together, including the old
+  // cell and every publication using it; this is not a license to drop state
+  // dependencies or to reorder those stores within the slice. The closed
+  // observer certificate below still excludes observable intermediate values.
+  if (!memory.hasValueDependencies()) {
+    if (failureReason)
+      *failureReason = {CombinationalFusionFailure::Reason::IncomingOutputState};
+    return std::nullopt;
+  }
+  if (!canReorder({function}, failureReason))
+    return std::nullopt;
+  return body;
+}
+
 bool CombinationalFusionAnalysis::canInterleave(
     ArrayRef<sim::SimFuncOp> functions,
     CombinationalFusionFailure *failureReason) const {
@@ -723,6 +820,13 @@ bool CombinationalFusionAnalysis::canInterleave(
         }))
       return reject(
           {Reason::ToggleCoverage, {}, static_cast<uint64_t>(storage.getId())});
+  for (auto net : design.getOps<sim::SimNetDeclOp>())
+    if (net->hasAttr(sim::metadata::coverageToggleObservable))
+      if (auto root = analysis::ActivationMemoryAnalysis::getRoot(
+              schedule::ComputeResourceKind::Net, net.getId());
+          root && llvm::any_of(repeated,
+                               [&](const auto &r) { return r.root == *root; }))
+        return reject({Reason::ToggleCoverage, {}, *root});
   auto graph = design.getComputeGraphAttr();
   for (Attribute raw : graph.getNodes()) {
     auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
@@ -732,7 +836,8 @@ bool CombinationalFusionAnalysis::canInterleave(
          fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
       if (effect.getEffect() != schedule::ComputeEffectKind::Watch)
         continue;
-      if (effect.getResource() != schedule::ComputeResourceKind::Storage) {
+      if (effect.getResource() != schedule::ComputeResourceKind::Storage &&
+          effect.getResource() != schedule::ComputeResourceKind::Net) {
         if (!repeated.empty() &&
             effect.getResource() == schedule::ComputeResourceKind::Unknown)
           return reject({Reason::UnknownWatchedResource});
@@ -742,8 +847,11 @@ bool CombinationalFusionAnalysis::canInterleave(
           !effect.getWidth() ||
           effect.getLow() > UINT64_MAX - effect.getWidth())
         return reject({Reason::UnresolvedWatchedStorage});
-      ActivationRange watch{static_cast<uint64_t>(effect.getDescriptor()),
-                            effect.getLow(), effect.getWidth()};
+      auto root = analysis::ActivationMemoryAnalysis::getRoot(
+          effect.getResource(), effect.getDescriptor());
+      if (!root)
+        return reject({Reason::UnresolvedWatchedStorage});
+      ActivationRange watch{*root, effect.getLow(), effect.getWidth()};
       if (owners.contains(fragment.getFunction().getAttr())) {
         // The materializer subtracts the cohort's definite writes and builds
         // exact reference views for the remaining external sensitivity. A
@@ -766,6 +874,148 @@ bool CombinationalFusionAnalysis::canInterleave(
     }
   }
   return true;
+}
+
+bool CombinationalFusionAnalysis::canReorder(
+    ArrayRef<sim::SimFuncOp> functions,
+    CombinationalFusionFailure *failureReason) const {
+  using Reason = CombinationalFusionFailure::Reason;
+  if (failureReason)
+    *failureReason = {};
+  auto reject = [&](CombinationalFusionFailure reason) {
+    if (failureReason)
+      *failureReason = reason;
+    return false;
+  };
+  auto design = this->design;
+  auto graph = design.getComputeGraphAttr();
+  if (unsupported || !graph || graph.getVpi() != schedule::ComputeVPIMode::Off)
+    return reject({Reason::UnsupportedObservations});
+  DenseSet<StringAttr> owners;
+  ActivationRanges writes;
+  for (auto function : functions) {
+    auto found = activations.find(function);
+    if (found == activations.end() || !found->second->isValid())
+      return reject({Reason::MissingActivationProof});
+    owners.insert(function.getSymNameAttr());
+    llvm::append_range(writes, found->second->getMemory().getMayWrites());
+  }
+  // A reference execution may publish intermediate values of every write.
+  // They must stay invisible to every observer (9.4.2 waits, 4.10 callbacks,
+  // 10.6 force, 21.7 dumps, toggle coverage) except side-effect-free
+  // combinational processes, which only republish their own transitions.
+  const auto &insensitive = getGlitchInsensitiveStorage();
+  for (const auto &write : writes)
+    if (!insensitive.contains(write.root))
+      return reject({Reason::ObservableState,
+                     {},
+                     write.root,
+                     glitchObservers.lookup(write.root)});
+  return true;
+}
+
+const DenseSet<uint64_t> &
+CombinationalFusionAnalysis::getGlitchInsensitiveStorage() const {
+  if (glitchInsensitive)
+    return *glitchInsensitive;
+  glitchInsensitive.emplace();
+  auto &result = *glitchInsensitive;
+  auto design = this->design;
+  auto graph = design.getComputeGraphAttr();
+  if (unsupported || !graph || graph.getVpi() != schedule::ComputeVPIMode::Off)
+    return result;
+  for (auto storage : design.getOps<sim::SimStorageDeclOp>()) {
+    auto observability = storage.getObservability();
+    if ((!observability ||
+         *observability == schedule::ComputeObservabilityKind::Invisible) &&
+        !storage->hasAttr(sim::metadata::coverageToggleObservable))
+      result.insert(static_cast<uint64_t>(storage.getId()));
+  }
+  for (auto net : design.getOps<sim::SimNetDeclOp>()) {
+    auto observability = net.getObservability();
+    if ((!observability ||
+         *observability == schedule::ComputeObservabilityKind::Invisible) &&
+        !net->hasAttr(sim::metadata::coverageToggleObservable))
+      if (auto root = analysis::ActivationMemoryAnalysis::getRoot(
+              schedule::ComputeResourceKind::Net, net.getId()))
+        result.insert(*root);
+  }
+  // Waiting processes per root; a wait on an unresolved resource could
+  // observe any storage.
+  DenseMap<uint64_t, SmallVector<StringAttr>> watchers;
+  for (Attribute raw : graph.getNodes()) {
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
+    if (!fragment)
+      continue;
+    for (auto effect :
+         fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
+      if (effect.getEffect() != schedule::ComputeEffectKind::Watch)
+        continue;
+      if (effect.getResource() == schedule::ComputeResourceKind::Unknown) {
+        result.clear();
+        return result;
+      }
+      if (effect.getResource() != schedule::ComputeResourceKind::Storage &&
+          effect.getResource() != schedule::ComputeResourceKind::Net)
+        continue;
+      if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor) {
+        result.clear();
+        return result;
+      }
+      auto root = analysis::ActivationMemoryAnalysis::getRoot(
+          effect.getResource(), effect.getDescriptor());
+      if (!root) {
+        result.clear();
+        return result;
+      }
+      watchers[*root].push_back(fragment.getFunction().getAttr());
+    }
+  }
+  // A transparent watcher reaches an idempotent state on watched inputs.
+  // Its intermediate publications may depend on overwritten old output lanes,
+  // but every output must remain inside this same transition-insensitive
+  // closure. This weaker contract never admits an ordinary fusion by itself.
+  SymbolTable symbols(design);
+  DenseMap<StringAttr, std::optional<SmallVector<uint64_t>>> transparent;
+  auto writesOf = [&](StringAttr owner) -> const auto & {
+    auto [found, inserted] = transparent.try_emplace(owner);
+    if (inserted) {
+      auto function = symbols.lookup<sim::SimFuncOp>(owner);
+      if (function && analyze(function, *provenance, /*interleaved=*/true,
+                              nullptr, /*finalValuesOnly=*/true)) {
+        SmallVector<uint64_t> roots;
+        for (const auto &write :
+             activations.at(function)->getMemory().getMayWrites())
+          roots.push_back(write.root);
+        found->second = std::move(roots);
+      }
+    }
+    return found->second;
+  };
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (uint64_t root : llvm::to_vector(result)) {
+      for (StringAttr owner : watchers.lookup(root)) {
+        const auto &roots = writesOf(owner);
+        std::optional<uint64_t> exposed;
+        if (roots)
+          for (uint64_t written : *roots)
+            if (!result.contains(written)) {
+              exposed = written;
+              break;
+            }
+        if (roots && !exposed)
+          continue;
+        // Remember the first opaque observer along the propagation path.
+        glitchObservers[root] =
+            exposed ? glitchObservers.lookup(*exposed) : owner;
+        result.erase(root);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 bool isComputeBodyFusionEligible(

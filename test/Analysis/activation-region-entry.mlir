@@ -21,7 +21,7 @@ module {
     // CHECK-NEXT: node simulation.ref.load read:s0[0,16)
     // CHECK-NEXT: node simulation.ref.load read:s2[0,8)
     // CHECK-NEXT: node simulation.ref.store write:s3[0,8)
-    // CHECK-NEXT: node scf.while write:s1[0,16)
+    // CHECK-NEXT: node cf.br write:s1[0,16)
     simulation.func @fresh_snapshot(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 1 : i64} {
       %source = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.unpacked_array<0 : 1 x i8>>
       %out = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.unpacked_array<0 : 1 x i8>>

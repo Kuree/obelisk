@@ -4,7 +4,6 @@
 #include "NativeWordPredication.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -38,12 +37,47 @@ bool canWidenDirectly(Operation *op) {
   return analysis::isWordBitwiseComputation(op);
 }
 
+// CSE and predication can expose lane geometry, but word regions still need
+// canonical storage descriptors and the observer certificate. Check this
+// before cloning a function: fused functions can contain many unrelated
+// loops over invocation-local arrays, which cannot become word regions.
+bool hasWordStorageRoots(const analysis::BoundedLoop &loop,
+                         const analysis::HandleDataflowResult &handles,
+                         const analysis::NBAMergeSafety &observers,
+                         const DenseSet<uint64_t> &privateRoots) {
+  for (Block *block : loop.blocks)
+    for (Operation &op : *block) {
+      auto load = dyn_cast<sim::SimRefLoadOp>(op);
+      auto store = dyn_cast<sim::SimRefStoreOp>(op);
+      if (!load && !store)
+        continue;
+      Value reference = load ? load.getReference() : store.getReference();
+      auto fact = handles.facts.find(reference);
+      if (fact == handles.facts.end() || !fact->second.descriptor ||
+          fact->second.resource != schedule::ComputeResourceKind::Storage)
+        return false;
+      uint64_t root = *fact->second.descriptor;
+      if (store && (!privateRoots.contains(root) ||
+                    (!observers.storageMayMerge(root) &&
+                     !observers.storageNeedsTransients(root))))
+        return false;
+    }
+  return true;
+}
+
 bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
                   const analysis::HandleDataflowResult &handles,
                   const analysis::NBAMergeSafety &observers,
                   const DenseSet<uint64_t> &privateRoots,
-                  std::string *diagnostic = nullptr) {
-  auto reject = [&](StringRef reason, Operation *op = nullptr) {
+                  std::unique_ptr<analysis::NativeWordRangeAnalysis> &ranges,
+                  std::string *diagnostic = nullptr,
+                  bool *retryPredication = nullptr) {
+  if (retryPredication)
+    *retryPredication = false;
+  auto reject = [&](StringRef reason, Operation *op = nullptr,
+                    bool predicate = false) {
+    if (retryPredication)
+      *retryPredication = predicate;
     if (diagnostic) {
       diagnostic->clear();
       llvm::raw_string_ostream os(*diagnostic);
@@ -55,6 +89,10 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     }
     return false;
   };
+  if (loop.initValue || loop.limitValue)
+    return reject("variable induction bound");
+  if (!isa<IntegerType>(loop.induction.getType()))
+    return reject("four-state induction");
   if (!loop.stride.isOne() && !loop.stride.isAllOnes())
     return reject("nonunit stride");
   // Additional header arguments may be unchanged captures forwarded through
@@ -83,8 +121,13 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     }
   if (!elementWidth)
     return reject("no packed store");
+  if (!hasWordStorageRoots(loop, handles, observers, privateRoots))
+    return reject("unproved storage roots or observers");
 
-  analysis::NativeWordAnalysis lanesAnalysis(function, loop, elementWidth);
+  if (!ranges)
+    ranges = std::make_unique<analysis::NativeWordRangeAnalysis>(function);
+  analysis::NativeWordAnalysis lanesAnalysis(function, loop, *ranges,
+                                             elementWidth);
   DenseMap<Operation *, analysis::WordTruthTable> tables;
   DenseMap<uint64_t, SmallVector<Value>> reads, writes;
   SmallVector<std::pair<unsigned, unsigned>> geometries;
@@ -111,11 +154,11 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       }
       if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
         if (lanesAnalysis.get(branch.getCondition()) != Kind::Uniform)
-          return reject("lane-dependent branch", &op);
+          return reject("lane-dependent branch", &op, true);
       }
       if (auto branch = dyn_cast<cf::SwitchOp>(op)) {
         if (lanesAnalysis.get(branch.getFlag()) != Kind::Uniform)
-          return reject("lane-dependent branch", &op);
+          return reject("lane-dependent branch", &op, true);
       }
       if (auto branch = dyn_cast<BranchOpInterface>(op)) {
         for (Block *successor : op.getSuccessors())
@@ -139,10 +182,11 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
               !privateRoots.contains(root) ||
               (!observers.storageMayMerge(root) &&
                !observers.storageNeedsTransients(root)))
-            return reject("unproved destination geometry or observer", &op);
+            return reject("unproved destination geometry or observer", &op,
+                          true);
           Kind value = lanesAnalysis.get(store.getValue());
           if (value != Kind::Logic && value != Kind::Uniform)
-            return reject("non-lane store value", &op);
+            return reject("non-lane store value", &op, true);
           writes[root].push_back(reference);
           ++stores;
         } else {
@@ -154,7 +198,7 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       for (Value value : op.getResults()) {
         Kind kind = lanesAnalysis.get(value);
         if (kind == Kind::Unknown)
-          return reject("unknown lane dataflow", &op);
+          return reject("unknown lane dataflow", &op, true);
         if (kind == Kind::Logic || isLaneReference(kind)) {
           Type type = value.getType();
           if (auto reference = dyn_cast<sim::RefType>(type))
@@ -261,7 +305,7 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
     for (BlockArgument argument : block->getArguments())
       if (argument != loop.induction &&
           lanesAnalysis.get(argument) != Kind::Uniform)
-        return reject("lane-dependent phi");
+        return reject("lane-dependent phi", nullptr, true);
 
   unsigned groupSize = 64 / elementWidth;
   while (groupSize > 1 && (lanes.ult(groupSize) || lanes.urem(groupSize) != 0))
@@ -765,14 +809,17 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
 
 struct WordFunctionResult {
   uint64_t formed = 0;
+  uint64_t predicationCandidates = 0, predicationSkipped = 0;
   SmallVector<std::string> messages;
 };
 
 // Prepared before the nested pipeline. Workers read immutable design facts
 // and own distinct result slots; they never inspect or mutate sibling bodies.
 struct WordDesignState {
-  WordDesignState(sim::SimDesignOp design, bool diagnostics)
-      : observers(design), handles(design), diagnostics(diagnostics) {
+  WordDesignState(sim::SimDesignOp design, bool diagnostics,
+                 uint64_t predicationOperationBudget)
+      : observers(design), handles(design), diagnostics(diagnostics),
+        predicationOperationBudget(predicationOperationBudget) {
     for (int64_t root :
          schedule::get<schedule::Field::NbaPrivateInfluence>(design)
              .asArrayRef())
@@ -789,6 +836,7 @@ struct WordDesignState {
   analysis::HandleDataflowAnalysis handles;
   DenseSet<uint64_t> privateRoots;
   bool diagnostics;
+  uint64_t predicationOperationBudget;
   SmallVector<sim::SimFuncOp> order;
   DenseMap<Operation *, std::unique_ptr<WordFunctionResult>> results;
 };
@@ -819,13 +867,29 @@ public:
     const auto &observers = state->observers;
     const auto &privateRoots = state->privateRoots;
     bool diagnostics = state->diagnostics;
+    if (analysis::analyzeBoundedLoops(function.getBody()).empty()) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    // CSE is independently legal and exposes congruent addresses for every
+    // loop at once. Only predication needs a disposable candidate and a new
+    // handle/range proof; cloning for CSE per loop scales quadratically in a
+    // fused body.
+    {
+      IRRewriter rewriter(function.getContext());
+      DominanceInfo dominance(function);
+      eliminateCommonSubExpressions(rewriter, dominance, function);
+    }
     bool changed;
+    uint64_t remainingPredicationWork = state->predicationOperationBudget;
     do {
       changed = false;
       auto loops = analysis::analyzeBoundedLoops(function.getBody());
       if (loops.empty())
         break;
       auto handles = handleAnalysis.analyze(function);
+      std::unique_ptr<analysis::NativeWordRangeAnalysis> ranges;
+      std::optional<uint64_t> candidateOperations;
       SmallVector<std::string> rejections;
       for (const auto &loop : llvm::reverse(loops)) {
         std::string reason;
@@ -839,25 +903,35 @@ public:
             result.messages.push_back(std::move(message));
           }
         };
+        bool retryPredication = false;
         bool success =
             coalesceWord(function, loop, handles, observers, privateRoots,
-                         diagnostics ? &reason : nullptr);
+                         ranges, diagnostics ? &reason : nullptr,
+                         &retryPredication);
         if (success) {
           reportFormed();
           ++result.formed;
           changed = true;
           break;
         }
-        auto bounds = analysis::getInductionRange(loop, false);
-        bool hasPackedStore = llvm::any_of(loop.blocks, [&](Block *block) {
-          return llvm::any_of(block->getOps<sim::SimRefStoreOp>(),
-                              [](sim::SimRefStoreOp store) {
-                                auto width = sim::getPackedWidth(
-                                    store.getValue().getType());
-                                return width && *width <= 32;
-                              });
+        bool hasConditionalBody = llvm::any_of(loop.blocks, [&](Block *block) {
+          return block != loop.header &&
+                 isa<cf::CondBranchOp, cf::SwitchOp>(block->getTerminator());
         });
-        if (hasPackedStore && bounds && bounds->smax() != bounds->smin()) {
+        if (retryPredication && hasConditionalBody) {
+          if (!candidateOperations) {
+            candidateOperations = 0;
+            function.walk([&](Operation *) { ++*candidateOperations; });
+          }
+          if (*candidateOperations > remainingPredicationWork) {
+            ++result.predicationSkipped;
+            retryPredication = false;
+          } else {
+            remainingPredicationWork -= *candidateOperations;
+            ++result.predicationCandidates;
+          }
+        }
+        if (retryPredication && hasConditionalBody) {
           // Speculate only in a disposable body. No change reaches the
           // program unless the complete lane/bounds/observer proof passes.
           IRMapping mapping;
@@ -871,7 +945,6 @@ public:
             DominanceInfo dominance(*candidate);
             eliminateCommonSubExpressions(rewriter, dominance, *candidate);
           };
-          numberValues();
           auto findCopy = [&]() -> std::optional<analysis::BoundedLoop> {
             // Rebuild the nested termination proofs after CSE. Asking
             // the single-loop recognizer with no proven inner backedges
@@ -883,17 +956,15 @@ public:
             return std::nullopt;
           };
           auto copy = findCopy();
-          if (copy)
-            success = coalesceWord(
-                *candidate, *copy, handleAnalysis.analyze(*candidate),
-                observers, privateRoots, diagnostics ? &reason : nullptr);
-          if (!success && copy && predicateNativeWordLoop(*copy)) {
+          if (copy && predicateNativeWordLoop(*copy)) {
             numberValues();
             copy = findCopy();
-            success = copy && coalesceWord(*candidate, *copy,
-                                           handleAnalysis.analyze(*candidate),
-                                           observers, privateRoots,
-                                           diagnostics ? &reason : nullptr);
+            std::unique_ptr<analysis::NativeWordRangeAnalysis> candidateRanges;
+            success =
+                copy && coalesceWord(*candidate, *copy,
+                                     handleAnalysis.analyze(*candidate),
+                                     observers, privateRoots, candidateRanges,
+                                     diagnostics ? &reason : nullptr);
           }
           if (success)
             function.getBody().takeBody(candidate->getBody());
@@ -923,15 +994,21 @@ private:
 
 class OptimizeNativeWordsPass final
     : public impl::OptimizeNativeWordsPassBase<OptimizeNativeWordsPass> {
+public:
+  using OptimizeNativeWordsPassBase::OptimizeNativeWordsPassBase;
+
+private:
   void runOnOperation() override {
     uint64_t formed = 0;
+    uint64_t predicationCandidates = 0, predicationSkipped = 0;
     bool diagnostics = getOperation()->hasAttr("obelisk.debug.native_timing");
     WalkResult status = getOperation().walk([&](sim::SimDesignOp design) {
       auto graph = design.getComputeGraphAttr();
       if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off ||
           !schedule::has<schedule::Field::NbaPrivateInfluence>(design))
         return WalkResult::advance();
-      auto state = std::make_shared<WordDesignState>(design, diagnostics);
+      auto state = std::make_shared<WordDesignState>(
+          design, diagnostics, predicationOperationBudget);
       OpPassManager pipeline(sim::SimDesignOp::getOperationName());
       pipeline.addNestedPass<sim::SimFuncOp>(
           std::make_unique<OptimizeNativeWordFunctionPass>(state));
@@ -941,6 +1018,8 @@ class OptimizeNativeWordsPass final
       for (auto function : state->order) {
         const auto &result = *state->results.find(function)->second;
         formed += result.formed;
+        predicationCandidates += result.predicationCandidates;
+        predicationSkipped += result.predicationSkipped;
         for (const auto &message : result.messages)
           llvm::errs() << message;
       }
@@ -951,7 +1030,10 @@ class OptimizeNativeWordsPass final
       return;
     }
     if (diagnostics)
-      llvm::errs() << "obelisk native word regions: formed=" << formed << '\n';
+      llvm::errs() << "obelisk native word regions: formed=" << formed
+                   << " predication-candidates=" << predicationCandidates
+                   << " predication-budget-skipped=" << predicationSkipped
+                   << '\n';
     // Only the nonsuspending eval implementation changes. Actor identity,
     // capture ABI, canonical storage and the frozen bytecode stay valid.
     markAnalysesPreserved<detail::NativePipelineAnalysis>();

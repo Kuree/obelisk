@@ -218,6 +218,8 @@ def ExactDriverId : ScheduleField<"ExactDriverId", "schedule.exact_driver_id", "
 def ExactDriverLow : ScheduleField<"ExactDriverLow", "schedule.exact_driver_low", "::mlir::IntegerAttr">;
 def ComputedEventStartup : ScheduleField<"ComputedEventStartup", "schedule.computed_event_startup", "::mlir::UnitAttr">;
 def MaxInlineOps : ScheduleField<"MaxInlineOps", "schedule.native.max_inline_ops", "::mlir::IntegerAttr">;
+// Charge every emitted CFG slice independently of ordinary call inlining.
+def MaxStatementOps : ScheduleField<"MaxStatementOps", "schedule.native.max_statement_ops", "::mlir::IntegerAttr">;
 def EvalTwoStateWrapper : ScheduleField<"EvalTwoStateWrapper", "schedule.eval.two_state_wrapper", "::mlir::UnitAttr">;
 def StartsWithoutWaiting : ScheduleField<"StartsWithoutWaiting", "schedule.starts_without_waiting", "::mlir::UnitAttr">;
 def PrimeOnSpawn : ScheduleField<"PrimeOnSpawn", "schedule.prime_on_spawn", "::mlir::UnitAttr">;

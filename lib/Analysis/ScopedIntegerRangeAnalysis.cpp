@@ -59,7 +59,7 @@ void ScopedRangeLattice::print(raw_ostream &os) const {
 
 ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
                                                        Operation *function)
-    : DenseForwardDataFlowAnalysis(solver) {
+    : DenseForwardDataFlowAnalysis(solver), liveness(function) {
   SmallVector<Value> pending;
   function->walk([&](Operation *op) {
     if (isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
@@ -252,14 +252,35 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
       if (predecessor->getSuccessor(i) != block)
         continue;
       auto operands = interface.getSuccessorOperands(i);
-      if (arg.getArgNumber() < operands.getProducedOperandCount())
-        continue;
+      if (arg.getArgNumber() < operands.getProducedOperandCount()) {
+        incoming.reset();
+        break;
+      }
       auto range = getRange(operands[arg.getArgNumber()], edge);
-      if (range)
-        incoming = incoming ? incoming->rangeUnion(*range) : *range;
+      // Two successor edges of the same terminator may carry different
+      // values. An unknown logic input on either edge must keep X/Z possible;
+      // taking only the other edge's known range would invent a proof.
+      if (!range) {
+        incoming.reset();
+        break;
+      }
+      incoming = incoming ? incoming->rangeUnion(*range) : *range;
     }
     if (incoming)
       next.insert_or_assign(arg, *incoming);
+  }
+  // A fused activation can contain thousands of independent selector loops.
+  // Keeping every preceding loop's SSA facts in each immutable block state
+  // makes both memory and joins quadratic in the activation's length. Only
+  // values live into this block and its freshly mapped arguments can be
+  // queried here. Map all predecessor operands first: parallel phi copies
+  // may consume values that are dead on entry to the successor.
+  const auto &liveIn = liveness.getLiveIn(block);
+  for (const auto &entry : llvm::make_early_inc_range(next)) {
+    auto argument = dyn_cast<BlockArgument>(entry.first);
+    if (!(argument && argument.getOwner() == block) &&
+        !liveIn.contains(entry.first))
+      next.erase(entry.first);
   }
   propagateIfChanged(after, after->merge(std::move(next)));
 }

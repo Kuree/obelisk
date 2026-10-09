@@ -1,8 +1,6 @@
 //===- MaterializeComputeFusion.cpp - Fuse static process bodies ----------===//
 
 #include "ComputeFusion.h"
-#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/CSE.h"
@@ -48,6 +46,102 @@ namespace obelisk {
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
+
+/// Splice one activation unit after `tail`, inserting new blocks before
+/// `before`, and return the block where the next unit continues. A region unit
+/// clones its entry branch, its inner blocks and a fresh join block carrying
+/// the region's results. Inner blocks need not be in dominance order: operands
+/// are remapped once every block of the unit has been cloned.
+Block *emitActivationNode(OpBuilder &builder, Block *before, Block *tail,
+                          const analysis::ActivationRegionAnalysis::Node &node,
+                          IRMapping &mapping,
+                          llvm::function_ref<void(Operation *)> cloned) {
+  builder.setInsertionPointToEnd(tail);
+  if (!node.isRegion()) {
+    cloned(builder.clone(*node.operation, mapping));
+    return tail;
+  }
+  Region &region = *tail->getParent();
+  auto addBlock = [&](Block *source) {
+    auto *copy = new Block;
+    region.getBlocks().insert(before->getIterator(), copy);
+    mapping.map(source, copy);
+    for (BlockArgument argument : source->getArguments())
+      mapping.map(argument,
+                  copy->addArgument(argument.getType(), argument.getLoc()));
+    return copy;
+  };
+  for (Block *block : node.blocks)
+    addBlock(block);
+  Block *join = addBlock(node.join);
+  SmallVector<Operation *> copies{builder.clone(*node.operation, mapping)};
+  for (Block *block : node.blocks) {
+    builder.setInsertionPointToEnd(mapping.lookup(block));
+    for (Operation &op : *block)
+      copies.push_back(builder.clone(op, mapping));
+  }
+  for (Operation *copy : copies) {
+    copy->walk([&](Operation *nested) {
+      for (OpOperand &operand : nested->getOpOperands())
+        operand.set(mapping.lookupOrDefault(operand.get()));
+    });
+    cloned(copy);
+  }
+  return join;
+}
+
+/// Splice one data-dependence slice after `tail`: a clone of the complete
+/// activation CFG that keeps only the slice's design stores, entered from
+/// `tail` and leaving through a fresh block that is returned. Loops stay loops.
+/// The computation feeding dropped stores is dead and left to kernel
+/// simplification; every slice recomputes its own values from current state.
+Block *emitActivationSlice(OpBuilder &builder, Block *before, Block *tail,
+                           const analysis::ActivationSlice &slice,
+                           IRMapping mapping,
+                           llvm::function_ref<void(Operation *)> cloned) {
+  auto reduced = analysis::cloneActivationSlice(slice);
+  // The planner and materializer use the same reduction on immutable views.
+  if (!reduced)
+    return nullptr;
+  sim::SimFuncOp source = slice.activation->getActivationFunction();
+  sim::SimFuncOp view = reduced.get();
+  for (auto [original, argument] :
+       llvm::zip_equal(source.getArguments(), view.getArguments()))
+    mapping.map(argument, mapping.lookup(original));
+  Region &region = *tail->getParent();
+  Block *entry = &view.getBody().front();
+  for (Block &block : view.getBody()) {
+    if (&block == entry)
+      continue;
+    auto *copy = new Block;
+    region.getBlocks().insert(before->getIterator(), copy);
+    mapping.map(&block, copy);
+    for (BlockArgument argument : block.getArguments())
+      mapping.map(argument,
+                  copy->addArgument(argument.getType(), argument.getLoc()));
+  }
+  auto *join = new Block;
+  region.getBlocks().insert(before->getIterator(), join);
+  SmallVector<Operation *> copies;
+  for (Block &block : view.getBody()) {
+    builder.setInsertionPointToEnd(&block == entry ? tail
+                                                   : mapping.lookup(&block));
+    for (Operation &op : block) {
+      if (isa<sim::SimReturnOp>(op))
+        copies.push_back(cf::BranchOp::create(builder, op.getLoc(), join));
+      else
+        copies.push_back(builder.clone(op, mapping));
+    }
+  }
+  for (Operation *copy : copies) {
+    copy->walk([&](Operation *nested) {
+      for (OpOperand &operand : nested->getOpOperands())
+        operand.set(mapping.lookupOrDefault(operand.get()));
+    });
+    cloned(copy);
+  }
+  return join;
+}
 
 // Watch snapshots and driver values may be either value domain. A two-state
 // packed value has no unknown plane and must use integer comparison after
@@ -538,6 +632,16 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     if (auto allocation = dyn_cast<sim::SimRefAllocOp>(definition)) {
       if (!sourceLocals.lookup(value))
         return {};
+      if (allocation->hasAttr(sim::metadata::activationDefaultSlot)) {
+        Value initial = materialize(allocation.getInitialValue(), materialize);
+        if (!initial)
+          return {};
+        Value local = sim::SimRefAllocOp::create(builder, allocation.getLoc(),
+                                                 allocation.getType(), initial);
+        rematerialized[value] = local;
+        visiting.erase(value);
+        return local;
+      }
       Type type = allocation.getInitialValue().getType();
       Value initial;
       if (isa<IntegerType, FloatType>(type))
@@ -1337,11 +1441,12 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
                                 bool markDormantTier1 = false) {
   if (accessIndex.hasWaveformObservers)
     return 0;
-  // A recursive or foreign reentry can overwrite a static temporary in this
-  // same function. A dominating store and exclusive accessor identity alone
-  // do not prove that its value survives a call. Retry after inlining rather
-  // than forwarding across a call without an interprocedural reentry proof.
-  if (function
+  // Reentry prevents forwarding a stored value across calls. It cannot make
+  // an exclusively accessed, invisible, write-only root observable: there is
+  // no read even in another invocation, and escaped references are excluded
+  // by the design-wide index. Keep these two proofs separate.
+  bool mayReenter =
+      function
           .walk([](Operation *operation) {
             return isa<sim::SimCallOp, sim::SimTaskCallOp,
                        sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
@@ -1350,8 +1455,7 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
                        ? WalkResult::interrupt()
                        : WalkResult::advance();
           })
-          .wasInterrupted())
-    return 0;
+          .wasInterrupted();
 
   DenseMap<uint64_t, SmallVector<sim::SimRefLoadOp>> loads;
   DenseMap<uint64_t, SmallVector<sim::SimRefStoreOp>> stores;
@@ -1410,7 +1514,10 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
       }
       continue;
     }
-    if (rootStores.size() != 1 ||
+    // A dominating store and exclusive accessor identity alone do not prove
+    // that its value survives recursive or foreign reentry. Retry forwarding
+    // after inlining rather than assuming a call cannot overwrite the cell.
+    if (mayReenter || rootStores.size() != 1 ||
         declaration.getLifetime() != sim::Lifetime::Static)
       continue;
     sim::SimRefStoreOp store = rootStores.front();
@@ -1708,6 +1815,26 @@ LogicalResult appendWatchRange(OpBuilder &builder, Location loc, Value handle,
                                uint64_t low, uint64_t width,
                                SmallVectorImpl<Value> &watched,
                                uint64_t &budget) {
+  if (isa<sim::NetType>(handle.getType())) {
+    auto span = sim::getProvenanceSpan(handle.getType());
+    if (!span || low > *span || !width || width > *span - low || !budget)
+      return failure();
+    --budget;
+    if (low || width != *span) {
+      Type scalar = sim::getPackedScalarType(
+          cast<sim::NetType>(handle.getType()).getElementType());
+      if (!scalar || width > UINT_MAX)
+        return failure();
+      Type slice = isa<IntegerType>(scalar)
+                       ? Type(builder.getIntegerType(width))
+                       : Type(sim::LogicType::get(builder.getContext(), width));
+      handle = sim::SimNetExtractOp::create(
+          builder, loc, sim::NetType::get(builder.getContext(), slice), handle,
+          low);
+    }
+    watched.push_back(handle);
+    return success();
+  }
   Type type = cast<sim::RefType>(handle.getType()).getElementType();
   auto span = sim::getProvenanceSpan(type);
   if (!span || low > *span || !width || width > *span - low || !budget)
@@ -1780,7 +1907,12 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     const CombinationalFusionAnalysis &combinational,
     const DenseMap<int64_t, int64_t> &resumeTargets,
     const DenseMap<StringAttr, SmallVector<sim::SimSpawnOp>> &spawnsByCallee,
-    llvm::function_ref<LogicalResult(sim::SimFuncOp)> simplifyKernel) {
+    llvm::function_ref<LogicalResult(sim::SimFuncOp)> simplifyKernel,
+    llvm::StringMap<uint64_t> &rejections) {
+  auto reject = [&](StringRef reason) -> FailureOr<sim::SimFuncOp> {
+    ++rejections[reason];
+    return failure();
+  };
   struct Candidate {
     sim::SimFuncOp function;
     sim::SimSpawnOp spawn;
@@ -1796,11 +1928,11 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   SmallVector<Candidate, 4> candidates;
   for (int64_t member : fusion.getFragments().asArrayRef()) {
     if (member < 0 || static_cast<uint64_t>(member) >= graph.getNodes().size())
-      return failure();
+      return reject("region: invalid fragment index");
     auto fragment =
         dyn_cast<schedule::ComputeFragmentAttr>(graph.getNodes()[member]);
     if (!fragment)
-      return failure();
+      return reject("region: missing fragment");
     sim::SimFuncOp function =
         symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
     auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
@@ -1810,6 +1942,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
             function);
     auto combinationalBody =
         combinational.analyze(function, provenance, fusion.getInterleaved());
+    if (!combinationalBody && fusion.getDataflow())
+      combinationalBody =
+          combinational.analyzeForReordering(function, provenance);
     if (!function || (fusion.getInterleaved() && !combinationalBody) ||
         (!combinationalBody &&
          function.getEntryKind() != sim::EntryKind::Continuous) ||
@@ -1818,17 +1953,17 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         (!combinationalBody && function.getBody().getBlocks().size() != 2) ||
         spawns == spawnsByCallee.end() || spawns->second.size() != 1 ||
         !spawns->second.front()->getResult(0).use_empty())
-      return failure();
+      return reject("region: ineligible activation or spawn");
     if (combinationalBody &&
         spawns->second.front()
                 ->getParentOfType<sim::SimFuncOp>()
                 .getEntryKind() != sim::EntryKind::RootInitializer)
-      return failure();
+      return reject("region: spawn outside root initializer");
     Block &entry = function.getBody().front();
     Block &body = combinationalBody ? *combinationalBody->activation
                                     : function.getBody().back();
     if (!primitive && !fusion.getInterleaved() && body.getNumArguments() != 0)
-      return failure();
+      return reject("region: unsupported continuation arguments");
     auto branch = dyn_cast<cf::BranchOp>(entry.getTerminator());
     Operation *suspend =
         combinationalBody ? combinationalBody->suspend : body.getTerminator();
@@ -1839,12 +1974,12 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         return edge == static_cast<int32_t>(sim::EdgeKind::Change);
       });
     if (!isa<sim::SimSuspendChangeOp, sim::SimSuspendAnyOp>(suspend))
-      return failure();
+      return reject("region: unsupported wait");
     auto successorOperands = cast<BranchOpInterface>(suspend)
                                  .getSuccessorOperands(0)
                                  .getForwardedOperands();
     if (!changeWait || resume == resumeTargets.end())
-      return failure();
+      return reject("region: missing change-wait resume");
     if (!fusion.getInterleaved() &&
         (!branch || branch.getDest() != &body ||
          branch.getDestOperands().size() != body.getNumArguments() ||
@@ -1859,7 +1994,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                        }) ||
          suspend->getSuccessor(0) != &body || !changeWait ||
          resume == resumeTargets.end()))
-      return failure();
+      return reject("region: inconsistent continuation state");
     // The local dirty mask must observe every immediate publication made by
     // the body. Plain and changed driver drives have an exact transition
     // result, but ref stores and transitive calls currently do not. Keep those
@@ -1872,7 +2007,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
           isa<sim::SimRefStoreOp, sim::SimCallOp>(operation);
     });
     if (hasUntrackedPublication && !combinationalBody)
-      return failure();
+      return reject("region: untracked publication");
     Candidate candidate{function,
                         spawns->second.front(),
                         &body,
@@ -1891,23 +2026,23 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   }
   if (candidates.size() < 2 ||
       (!fusion.getInterleaved() && candidates.size() > 64))
-    return failure();
+    return reject("region: unsupported cohort size");
   bool rankedCombinational = candidates.front().combinationalBody.has_value();
   if (llvm::any_of(candidates, [&](const Candidate &candidate) {
         return candidate.combinationalBody.has_value() != rankedCombinational;
       }))
-    return failure();
+    return reject("region: mixed activation kinds");
   for (Candidate &candidate : candidates) {
     if (!candidate.combinationalBody)
       continue;
     auto first = candidates.front().function;
     if (candidate.function.getDomain() != first.getDomain() ||
         candidate.function.getHomeRegion() != first.getHomeRegion())
-      return failure();
+      return reject("region: inconsistent activation domain");
     if (!fusion.getInterleaved() &&
         (candidate.function.getEntryKind() != first.getEntryKind() ||
          codeUnits.getScope(candidate.function) != codeUnits.getScope(first)))
-      return failure();
+      return reject("region: inconsistent activation scope");
   }
 
   SmallVector<Value> operands;
@@ -1917,7 +2052,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   sim::SimSpawnOp insertionSpawn = candidates.front().spawn;
   for (Candidate &candidate : candidates) {
     if (candidate.spawn->getBlock() != insertionSpawn->getBlock())
-      return failure();
+      return reject("region: spawns in different blocks");
     if (insertionSpawn->isBeforeInBlock(candidate.spawn))
       insertionSpawn = candidate.spawn;
     Block &entry = candidate.function.getBody().front();
@@ -1934,7 +2069,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         argumentAttrs.push_back(attrs);
       } else if (inputTypes[index] != argument.getType() ||
                  argumentAttrs[index] != attrs) {
-        return failure();
+        return reject("region: inconsistent shared argument attributes");
       }
       candidate.fusedArguments.push_back(index);
     }
@@ -1984,7 +2119,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                                : source->second;
     if (!site || !codeUnit) {
       symbols.erase(kernel);
-      return failure();
+      return reject("region: missing source owner");
     }
     sourceOwners.push_back(schedule::SourceOwnerAttr::get(
         builder.getContext(), codeUnit,
@@ -2001,7 +2136,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     cloned->walk([&](Operation *operation) {
       // Memory accesses carry process ordering. Pure definitions use SSA
       // edges and must remain shareable by CSE across original owners.
-      if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp>(operation) &&
+      if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,
+              sim::SimDriverDriveOp, sim::SimCallOp>(operation) &&
           !schedule::has<schedule::metadata::evalSourceOwner>(operation))
         schedule::set<schedule::metadata::evalSourceOwner>(
             operation,
@@ -2013,7 +2149,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   // The kernel is built incrementally, so any later rejection must remove the
   // partially populated symbol again. Leaving it behind would publish a
   // terminator-less function to a caller that only checks for success.
-  auto bail = [&]() -> FailureOr<sim::SimFuncOp> {
+  auto bail =
+      [&](StringRef reason =
+              "region: kernel construction") -> FailureOr<sim::SimFuncOp> {
     if (memberHelper)
       symbols.erase(memberHelper);
     if (memberHelperDeclaration) {
@@ -2021,7 +2159,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       memberHelperDeclaration.erase();
     }
     symbols.erase(kernel);
-    return failure();
+    return reject(reason);
   };
   Block &entry = kernel.getBody().front();
   Block *body = new Block;
@@ -2039,11 +2177,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
                          candidate.fusedArguments))
       mapping->map(argument, entry.getArgument(index));
     if (fusion.getInterleaved()) {
-      auto structured =
-          candidate.combinationalBody->structured->getStructuredFunction();
-      for (auto [argument, index] :
-           llvm::zip_equal(structured.getBody().front().getArguments(),
-                           candidate.fusedArguments))
+      auto view =
+          candidate.combinationalBody->structured->getActivationFunction();
+      for (auto [argument, index] : llvm::zip_equal(
+               view.getBody().front().getArguments(), candidate.fusedArguments))
         mapping->map(argument, entry.getArgument(index));
     } else {
       for (Operation &operation :
@@ -2114,7 +2251,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         backward = true;
     }
     if (backward && !fusion.getInterleaved())
-      return bail();
+      return bail("region: backward unsliced dependence");
+    std::optional<SmallVector<analysis::ActivationSlice>> slices;
     if (fusion.getInterleaved()) {
       SmallVector<sim::SimFuncOp> members;
       SmallVector<const analysis::ActivationRegionAnalysis *> activations;
@@ -2123,13 +2261,24 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         activations.push_back(candidate.combinationalBody->structured);
       }
       if (!combinational.canInterleave(members))
-        return bail();
-      interleaving = analysis::getActivationRegionOrder(activations);
-      if (!interleaving)
-        return bail();
+        return bail("region: interleaving certificate");
+      if (fusion.getDataflow()) {
+        // IEEE 1800-2023 4.3: only a cohort whose transitions no outside
+        // observer can see may drop each process's statement order.
+        if (!combinational.canReorder(members))
+          return bail("region: reordering certificate");
+        slices = analysis::getActivationSliceOrder(activations);
+        if (!slices)
+          return bail("region: slice ordering");
+      } else {
+        interleaving = analysis::getActivationRegionOrder(activations);
+        if (!interleaving)
+          return bail("region: region ordering");
+      }
     }
+    bool ordered = interleaving || slices;
     DenseMap<uint64_t, SmallVector<std::pair<uint64_t, uint64_t>>> groupWrites;
-    if (interleaving) {
+    if (ordered) {
       for (Candidate &producer : candidates)
         for (const auto &range :
              producer.combinationalBody->structured->getMemory()
@@ -2146,8 +2295,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     if (!watchBudget)
       watchBudget = UINT64_MAX;
     for (auto [candidate, mapping] : llvm::zip_equal(candidates, mappings)) {
-      auto facts = interleaving ? provenance.derive(candidate.function)
-                                : analysis::HandleFacts{};
+      auto facts = ordered ? provenance.derive(candidate.function)
+                           : analysis::HandleFacts{};
       SmallVector<Value> memberWatches;
       if (auto change = dyn_cast<sim::SimSuspendChangeOp>(candidate.suspend))
         memberWatches.push_back(change.getWatched());
@@ -2156,18 +2305,22 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
             memberWatches,
             cast<sim::SimSuspendAnyOp>(candidate.suspend).getWatched());
       for (Value watch : memberWatches) {
-        if (interleaving) {
+        if (ordered) {
           // Subtract only definite, exclusively owned writes. Retaining the
           // original whole-aggregate watch for partial coverage would cause
           // self-reactivation even though its data dependence graph is a DAG.
           auto found = facts.find(watch);
           if (found == facts.end() || !found->second.descriptor ||
               found->second.dynamic)
-            return bail();
+            return bail("region: inexact watch provenance");
           const auto &range = found->second;
+          auto root = analysis::ActivationMemoryAnalysis::getRoot(
+              range.resource, *range.descriptor);
+          if (!root)
+            return bail("region: unknown watch root");
           uint64_t cursor = range.low, end = range.low + range.width;
           SmallVector<std::pair<uint64_t, uint64_t>> external;
-          for (auto [low, high] : groupWrites[*range.descriptor]) {
+          for (auto [low, high] : groupWrites[*root]) {
             if (high <= cursor || low >= end)
               continue;
             if (cursor < low)
@@ -2180,22 +2333,22 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
             continue;
           Value handle = mapWatchHandle(watch, *mapping, mapWatchHandle);
           if (!handle)
-            return bail();
+            return bail("region: unhoistable watch handle");
           for (auto [low, high] : external)
             if (failed(appendWatchRange(builder, candidate.suspend->getLoc(),
                                         handle, low - range.low, high - low,
                                         watched, watchBudget)))
-              return bail();
+              return bail("region: watch range budget or layout");
           continue;
         }
         Value handle = mapWatchHandle(watch, *mapping, mapWatchHandle);
         if (!handle)
-          return bail();
+          return bail("region: unhoistable watch handle");
         watched.push_back(handle);
       }
     }
     if (watched.empty())
-      return bail();
+      return bail("region: empty external watch set");
     // Complete deterministic assignments make final values idempotent. The
     // interleaved certificate additionally excludes outside observers of
     // repeated publications; those stores can transition even on unchanged
@@ -2203,7 +2356,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     // or other effect is authorized by this certificate (4.3, 4.6).
     cf::BranchOp::create(builder, kernel.getLoc(), body);
     Block *tail = body;
-    if (interleaving) {
+    if (ordered) {
       builder.setInsertionPointToStart(body);
       DenseMap<const analysis::ActivationRegionAnalysis *, IRMapping *>
           mappingForActivation;
@@ -2216,11 +2369,24 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
             mapping.get();
         ownerForActivation[candidate.combinationalBody->structured] = index;
       }
-      for (const auto &step : *interleaving) {
-        auto *cloned = builder.clone(*step.operation,
-                                     *mappingForActivation.at(step.activation));
-        preserveSourceOwner(cloned, ownerForActivation.at(step.activation));
-      }
+      if (slices)
+        for (const auto &slice : *slices) {
+          unsigned owner = ownerForActivation.at(slice.activation);
+          tail = emitActivationSlice(
+              builder, wait, tail, slice,
+              *mappingForActivation.at(slice.activation),
+              [&](Operation *cloned) { preserveSourceOwner(cloned, owner); });
+          if (!tail)
+            return bail("region: slice emission");
+        }
+      else
+        for (const auto &step : *interleaving) {
+          unsigned owner = ownerForActivation.at(step.activation);
+          tail = emitActivationNode(
+              builder, wait, tail, *step.activation->getNode(step.operation),
+              *mappingForActivation.at(step.activation),
+              [&](Operation *cloned) { preserveSourceOwner(cloned, owner); });
+        }
     } else
       for (auto [index, pair] :
            llvm::enumerate(llvm::zip_equal(candidates, mappings))) {
@@ -2255,31 +2421,13 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     auto unionWait = sim::SimSuspendAnyOp::create(
         builder, kernel.getLoc(), watched, builder.getDenseI32ArrayAttr(edges),
         schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, body);
-    if (interleaving) {
-      // Simplify the lifter's do-while dispatch before lowering it. This is
-      // the standard SCF guard normalization also used by native loop proofs.
-      RewritePatternSet simplify(design.getContext());
-      arith::TruncIOp::getCanonicalizationPatterns(simplify,
-                                                   design.getContext());
-      arith::SelectOp::getCanonicalizationPatterns(simplify,
-                                                   design.getContext());
-      scf::WhileOp::getCanonicalizationPatterns(simplify, design.getContext());
-      scf::IfOp::getCanonicalizationPatterns(simplify, design.getContext());
-      if (failed(applyPatternsGreedily(kernel, std::move(simplify))))
-        return bail();
-      RewritePatternSet patterns(design.getContext());
-      populateSCFToControlFlowConversionPatterns(patterns);
-      ConversionTarget target(*design.getContext());
-      target.addIllegalDialect<scf::SCFDialect>();
-      target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
-      if (failed(applyPartialConversion(kernel, target, std::move(patterns))))
-        return bail();
+    if (ordered) {
       if (failed(simplifyKernel(kernel)))
-        return bail();
+        return bail("region: kernel simplification");
       if (graph.getVpi() == schedule::ComputeVPIMode::Off) {
         analysis::forwardSourceMemoryLoads(kernel, /*canonicalWrites=*/true);
         if (failed(simplifyKernel(kernel)))
-          return bail();
+          return bail("region: kernel forwarding simplification");
       }
       // The activation ABI keeps the union wait in its own block. Standard
       // CFG simplification may merge it into its unique predecessor.
@@ -2290,8 +2438,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         cf::BranchOp::create(builder, unionWait.getLoc(), waitBlock);
       }
       // Initial entry and every union wake execute the identical body. Retain
-      // the independently derived termination certificates after lowering SCF;
-      // the implicit wait edge is not another procedural-loop iteration.
+      // the independently derived termination certificates after splicing the
+      // units; the implicit wait edge is not another procedural-loop iteration.
       for (const auto &loop :
            analysis::analyzeActivationBoundedLoops(kernel.getBody())) {
         schedule::set<schedule::metadata::boundedLoopHeader>(
@@ -4029,7 +4177,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
           combinational, firstResumeTargets, spawnsByCallee,
           [&](sim::SimFuncOp kernel) {
             return runPipeline(kernelSimplification, kernel);
-          });
+          },
+          fusionRejections);
       // This path can also outline shared member helpers. Rebuild lazily if a
       // later clocked cohort needs storage proofs; do not retain erased owners
       // or overlook accessors introduced by a different transformation.

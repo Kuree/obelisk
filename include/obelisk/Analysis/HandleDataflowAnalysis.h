@@ -1,4 +1,5 @@
-//===- HandleDataflowAnalysis.h - SSA handles ---------------------*- C++ -*-===//
+//===- HandleDataflowAnalysis.h - SSA handles ---------------------*- C++
+//-*-===//
 #ifndef OBELISK_ANALYSIS_HANDLEDATAFLOWANALYSIS_H
 #define OBELISK_ANALYSIS_HANDLEDATAFLOWANALYSIS_H
 
@@ -6,6 +7,7 @@
 #include "mlir/Support/LLVM.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include <cstdint>
 #include <optional>
 
@@ -71,9 +73,13 @@ public:
   explicit HandleDataflowAnalysis(sim::SimFuncOp function);
   HandleDataflowResult analyze(sim::SimFuncOp function) const;
   HandleFacts derive(sim::SimFuncOp function) const;
+  bool hasIsolatedSingleDriver(uint64_t net) const {
+    return isolatedDrivenNets.contains(net);
+  }
 
 private:
   llvm::DenseMap<uint64_t, uint64_t> driverNets;
+  llvm::DenseSet<uint64_t> isolatedDrivenNets;
 };
 HandleFacts deriveHandleFacts(sim::SimFuncOp function);
 } // namespace obelisk::analysis

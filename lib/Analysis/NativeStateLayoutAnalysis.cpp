@@ -223,7 +223,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         initialXDrivers.insert(*id);
     } else if (auto drive =
                    dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
-                        operation)) {
+                       operation)) {
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getLowDriver()))
         initialXDrivers.insert(*id);
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
@@ -298,6 +298,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     return failure();
   }
   if (!designs.empty()) {
+    layout.isolatedSingleDriverNets =
+        getIsolatedSingleDriverNets(designs.front());
     NetConnectivityAnalysis connectivity(designs.front());
     DenseMap<uint64_t, SmallVector<std::optional<std::array<uint64_t, 3>>>>
         declaredDelays;

@@ -48,15 +48,23 @@ class StorageWriteAnalysisTestPass
                          OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(StorageWriteAnalysisTestPass)
+  StorageWriteAnalysisTestPass() = default;
+  StorageWriteAnalysisTestPass(const StorageWriteAnalysisTestPass &other)
+      : PassWrapper(other) {}
+  Option<std::string> functions{*this, "functions", llvm::cl::init("")};
+  Option<bool> execution{*this, "execution", llvm::cl::init(true)};
   StringRef getArgument() const final { return "test-obelisk-storage-writes"; }
   StringRef getDescription() const final {
     return "print storage-write lattice facts";
   }
   void runOnOperation() final {
     getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+      if (!functions.empty() && function.getSymName() != functions)
+        return;
       obelisk::analysis::HandleDataflowAnalysis handles(
           function->getParentOfType<obelisk::sim::SimDesignOp>());
-      obelisk::analysis::StorageWriteAnalysis analysis(function, handles);
+      obelisk::analysis::StorageWriteAnalysis analysis(
+          function, handles.analyze(function), execution);
       llvm::errs() << "function " << function.getSymName() << '\n';
       SmallVector<Operation *> writes;
       function.walk([&](Operation *op) {
@@ -85,6 +93,8 @@ public:
         llvm::errs() << '\n';
         writes.push_back(op);
       });
+      if (!execution)
+        return;
       for (auto [i, lhs] : llvm::enumerate(writes))
         for (auto [j, rhs] : llvm::enumerate(writes))
           if (i < j)

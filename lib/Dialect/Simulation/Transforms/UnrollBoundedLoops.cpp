@@ -33,7 +33,7 @@ bool unrollLoop(Block *header, size_t &budget, uint64_t &growthBudget) {
   constexpr unsigned maxTrips = 64;
   llvm::DenseSet<Operation *> noProvenBackedges;
   auto recognized = recognizeBoundedLoop(header, noProvenBackedges);
-  if (!recognized)
+  if (!recognized || recognized->initValue || recognized->limitValue)
     return false;
   BoundedLoop &loop = *recognized;
   cf::BranchOp entry = loop.entry, latch = loop.latch;

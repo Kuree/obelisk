@@ -5,6 +5,7 @@
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/IntegerRangeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -387,9 +388,11 @@ static sim::SimDesignOp getDriverDesign(sim::SimFuncOp function) {
 
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
   // Build the immutable normalization snapshot before parallel consumers run.
-  if (design)
+  if (design) {
+    isolatedDrivenNets = getIsolatedSingleDriverNets(design);
     for (auto driver : design.getOps<sim::SimDriverDeclOp>())
       driverNets[driver.getId()] = driver.getNetId();
+  }
 }
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimFuncOp function)
     : HandleDataflowAnalysis(getDriverDesign(function)) {}

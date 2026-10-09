@@ -7,6 +7,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
@@ -17,6 +18,11 @@ class SimDesignOp;
 }
 
 namespace obelisk::analysis {
+
+/// Plain, undelayed wire nets with one full-width strong driver, no collapsed
+/// connections, user resolution or pass switches. Their resolved value is the
+/// driver's value (IEEE 1800-2023 6.6.1). Shared by scheduling and lowering.
+llvm::DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design);
 
 struct NetBit {
   uint64_t net = 0;
