@@ -204,8 +204,11 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK: simulation.ref.load
 // CHECK: simulation.return
 // CHECK-LABEL: simulation.func private @shared.__obelisk_eval_body_
-// CHECK-NOT: simulation.ref.alloc
-// CHECK: simulation.ref.load
+// Unwatched shared storage retains its final canonical value for other actors.
+// CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
+// CHECK: %[[SHARED:.*]] = simulation.ref.alloc
+// CHECK: %[[FINAL:.*]] = simulation.ref.load %[[SHARED]]
+// CHECK-NEXT: simulation.ref.store %[[FINAL]] to %[[CANON]]
 // CHECK: simulation.return
 // CHECK-LABEL: simulation.func private @disjoint_watch.__obelisk_eval_body_
 // CHECK: simulation.ref.alloc

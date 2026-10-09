@@ -71,9 +71,10 @@ public:
       auto &summary = local[function];
       if (function.isExternal())
         summary.effects = allEffects;
-      auto handles = deriveHandleFacts(function);
+      auto handleResult = HandleDataflowAnalysis(function).analyze(function);
+      const auto &handles = handleResult.facts;
       function.walk([&](Operation *op) {
-        if (op == function ||
+        if (op == function || !handleResult.isExecutable(op->getBlock()) ||
             isa<sim::SimReturnOp, cf::BranchOp, cf::CondBranchOp,
                 sim::SimTerminationRequestedOp>(op))
           return;

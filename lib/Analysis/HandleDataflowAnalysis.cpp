@@ -447,9 +447,14 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
     for (Value value : op->getResults())
       record(value);
     for (auto &region : op->getRegions())
-      for (auto &block : region)
+      for (auto &block : region) {
+        if (auto *state = solver.lookupState<dataflow::Executable>(
+                solver.getProgramPointBefore(&block));
+            state && !state->isLive())
+          result.nonExecutableBlocks.insert(&block);
         for (Value value : block.getArguments())
           record(value);
+      }
   });
   return result;
 }

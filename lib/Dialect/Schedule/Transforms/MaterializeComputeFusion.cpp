@@ -28,6 +28,7 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -43,6 +44,7 @@ namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMMATERIALIZECOMPUTEFUSIONPASS
 #define GEN_PASS_DEF_LOCALIZEPRIVATEEVALSTORAGEPASS
+#define GEN_PASS_DEF_PROMOTEEVALSTORAGEPASS
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
@@ -1231,20 +1233,23 @@ struct PrivateStaticAccessIndex {
   }
 };
 
-/// Give activation-private aggregates typed local storage. The source may
+/// Give activation storage typed local slots. The source may
 /// initialize elements in bounded loops, so a single dominating store is not
 /// sufficient to recognize these temporaries. Keep array/field views typed so
 /// local-storage lowering and LLVM SROA can use native element containers.
-uint64_t localizePrivateActivationStorage(
+uint64_t localizeActivationStorage(
     sim::SimFuncOp function, sim::SimFuncOp canonical,
     const PrivateStaticAccessIndex &accessIndex,
     DenseMap<Operation *, analysis::HandleFacts> &watchFacts) {
+  // Ordinary function calls cannot suspend. A callee that reaches a candidate
+  // through its own capture or a reference operand makes that root shared in
+  // the access index, and one that writes canonical state invalidates the
+  // activation summaries below. Tasks, methods, DPI and spawns stay opaque.
   if (function.isExternal() || canonical.isExternal() ||
       function
           .walk([](Operation *op) {
             return sim::isSuspensionOp(op) ||
-                           isa<sim::SimCallOp, sim::SimTaskCallOp,
-                               sim::SimClassDirectCallOp,
+                           isa<sim::SimTaskCallOp, sim::SimClassDirectCallOp,
                                sim::SimClassVirtualCallOp,
                                sim::SimClassVirtualTaskCallOp,
                                sim::SimDPICallOp, sim::SimSpawnOp>(op)
@@ -1254,6 +1259,7 @@ uint64_t localizePrivateActivationStorage(
           .wasInterrupted())
     return 0;
   SmallVector<uint64_t> candidates;
+  DenseSet<uint64_t> shared;
   DenseMap<uint64_t, SmallVector<Value>> references;
   auto collect = [&](Value reference) {
     auto root = resolveStorageRoot(reference);
@@ -1261,7 +1267,6 @@ uint64_t localizePrivateActivationStorage(
       return;
     auto declaration = accessIndex.declarations.lookup(*root);
     if (!declaration ||
-        !accessIndex.isPrivateTo(*root, function, canonical, true) ||
         (declaration.getLifetime() != sim::Lifetime::Static &&
          declaration.getLifetime() != sim::Lifetime::Design) ||
         declaration.getObservability() !=
@@ -1270,10 +1275,22 @@ uint64_t localizePrivateActivationStorage(
         cast<sim::RefType>(reference.getType()).getElementType() !=
             declaration.getType())
       return;
+    if (!accessIndex.isPrivateTo(*root, function, canonical, true)) {
+      // The native evaluator executes synchronously. Coalescing publications
+      // is allowed only when no event, identity or external observer can see
+      // an intermediate value (LRM 4.6/4.7, 9.4.2, 10.6 and 21.7).
+      if (accessIndex.unsupportedUses.contains(*root) ||
+          accessIndex.watches.contains(*root))
+        return;
+      shared.insert(*root);
+    }
     auto width = sim::getProvenanceSpan(declaration.getType());
     SmallVector<sim::ManagedHandleSlot> managed;
-    if (!sim::isAggregateType(declaration.getType()) || !width || !*width ||
-        *width > 32768 ||
+    // Scalars take a known initializer below. Other non-aggregate value
+    // kinds (strings, reals, handles) keep canonical storage.
+    if (!(sim::isAggregateType(declaration.getType()) ||
+          isa<sim::LogicType, IntegerType>(declaration.getType())) ||
+        !width || !*width || *width > 32768 ||
         !sim::getManagedHandleSlots(declaration.getType(), managed) ||
         !managed.empty())
       return;
@@ -1312,10 +1329,29 @@ uint64_t localizePrivateActivationStorage(
   DenseSet<uint64_t> written;
   for (const auto &range : activation.getMayWrites())
     written.insert(range.root);
+  DenseSet<uint64_t> calleeReads, readRoots, repeated;
+  DenseMap<uint64_t, unsigned> storeCounts;
+  for (const auto &[op, ranges] : activation.getReads())
+    for (const auto &range : ranges) {
+      readRoots.insert(range.root);
+      if (isa<sim::SimCallOp>(op))
+        calleeReads.insert(range.root);
+    }
+  for (const auto &[op, ranges] : activation.getWrites())
+    for (const auto &range : ranges)
+      ++storeCounts[range.root];
+  for (const auto &range : activation.getRepeatedWrites())
+    repeated.insert(range.root);
   auto facts = handles.derive(function);
   uint64_t localized = 0;
+  DenseSet<uint64_t> forwardOnly;
   for (uint64_t root : candidates) {
-    if (liveIns.contains(root) || !written.contains(root))
+    bool writeBack = shared.contains(root);
+    if (!written.contains(root) || (!writeBack && liveIns.contains(root)) ||
+        (writeBack &&
+         (calleeReads.contains(root) ||
+          (!readRoots.contains(root) && storeCounts.lookup(root) <= 1 &&
+           !repeated.contains(root)))))
       continue;
     // Keep every existing watch. No canonical bit it can observe may be
     // written by the localized activation. In particular, a fused matrix
@@ -1355,18 +1391,65 @@ uint64_t localizePrivateActivationStorage(
         }))
       continue;
     auto declaration = accessIndex.declarations.lookup(root);
+    Type type = declaration.getType();
+    uint64_t width = *sim::getProvenanceSpan(type);
+    bool fullyWritten =
+        llvm::any_of(activation.getMustWrites(), [&](const auto &range) {
+          return range.root == root && range.low == 0 && range.width == width;
+        });
+    if (writeBack && width > 512 && !fullyWritten) {
+      // A sparse update must not acquire a whole-memory load and write-back.
+      // The dense must-value analysis can still remove redundant loads while
+      // retaining every canonical store in source order.
+      forwardOnly.insert(root);
+      continue;
+    }
+    SmallVector<std::pair<OpOperand *, Value>> uses;
+    Value canonicalReference, context;
+    for (Value argument : function.getBody().front().getArguments())
+      if (isa<sim::ContextType>(argument.getType()))
+        context = argument;
+    for (Value reference : references[root]) {
+      if (auto argument = dyn_cast<BlockArgument>(reference);
+          argument && argument.getOwner() == &function.getBody().front())
+        canonicalReference = reference;
+      for (OpOperand &use : reference.getUses())
+        uses.emplace_back(&use, reference);
+    }
+    if (writeBack && !canonicalReference && !context)
+      continue;
     OpBuilder builder(function.getContext());
     builder.setInsertionPointToStart(&function.getBody().front());
-    Value initial = sim::SimAggregateDefaultOp::create(
-        builder, declaration.getLoc(), declaration.getType());
+    Operation *createdReference = nullptr;
+    if (writeBack && !canonicalReference) {
+      auto reference = sim::SimContextStorageOp::create(
+          builder, declaration.getLoc(),
+          sim::RefType::get(function.getContext(), type), context, root);
+      canonicalReference = reference;
+      createdReference = reference;
+    }
+    // A shared root needs its incoming value unless every bit is overwritten
+    // on every exit and no earlier read observes it. Private initializers are
+    // unobservable under the write-before-read proof above.
+    Value initial;
+    if (writeBack && (liveIns.contains(root) || !fullyWritten))
+      initial = sim::SimRefLoadOp::create(builder, declaration.getLoc(), type,
+                                          canonicalReference);
+    else if (isa<IntegerType>(type))
+      initial = arith::ConstantOp::create(builder, declaration.getLoc(), type,
+                                          builder.getZeroAttr(type));
+    else if (auto logic = dyn_cast<sim::LogicType>(type)) {
+      auto zero =
+          builder.getIntegerAttr(builder.getIntegerType(logic.getWidth()), 0);
+      initial = sim::SimLogicConstantOp::create(builder, declaration.getLoc(),
+                                                logic, zero, zero);
+    } else
+      initial = sim::SimAggregateDefaultOp::create(builder,
+                                                   declaration.getLoc(), type);
     auto local = sim::SimRefAllocOp::create(
         builder, declaration.getLoc(),
         sim::RefType::get(function.getContext(), declaration.getType()),
         initial);
-    SmallVector<std::pair<OpOperand *, Value>> uses;
-    for (Value reference : references[root])
-      for (OpOperand &use : reference.getUses())
-        uses.emplace_back(&use, reference);
     for (auto [use, original] : uses)
       use->set(local.getResult());
     // Use the lowering's reference-family proof as well as the memory proof.
@@ -1379,9 +1462,27 @@ uint64_t localizePrivateActivationStorage(
       local.erase();
       if (initial.use_empty())
         initial.getDefiningOp()->erase();
+      if (createdReference)
+        createdReference->erase();
       continue;
     }
+    if (writeBack)
+      function.walk([&](sim::SimReturnOp exit) {
+        builder.setInsertionPoint(exit);
+        Value final =
+            sim::SimRefLoadOp::create(builder, exit.getLoc(), type, local);
+        sim::SimRefStoreOp::create(builder, exit.getLoc(), final,
+                                   canonicalReference);
+      });
     ++localized;
+  }
+  if (!forwardOnly.empty()) {
+    localized += analysis::forwardSourceMemoryLoads(
+        function, /*canonicalWrites=*/true, [&](Operation *operation) {
+          auto root = resolveStorageRoot(
+              cast<sim::SimRefLoadOp>(operation).getReference());
+          return root && forwardOnly.contains(*root);
+        });
   }
   return localized;
 }
@@ -1399,8 +1500,8 @@ uint64_t localizePrivateEvalStorage(sim::SimDesignOp design) {
       if (auto function = symbols.lookup<sim::SimFuncOp>(body.getValue());
           function &&
           schedule::has<schedule::Field::EvalBorrowedCaptures>(function))
-        localized += localizePrivateActivationStorage(function, canonical,
-                                                      accessIndex, watchFacts);
+        localized += localizeActivationStorage(function, canonical, accessIndex,
+                                               watchFacts);
   return localized;
 }
 
@@ -1408,7 +1509,7 @@ class LocalizePrivateEvalStoragePass final
     : public impl::LocalizePrivateEvalStoragePassBase<
           LocalizePrivateEvalStoragePass> {
   Statistic localizedRoots{this, "localized-roots",
-                           "Private roots moved to invocation storage"};
+                           "Activation storage and load rewrites"};
 
   void runOnOperation() final {
     uint64_t changed = localizePrivateEvalStorage(getOperation());
@@ -1427,6 +1528,197 @@ class LocalizePrivateEvalStoragePass final
     });
     getOperation().removeComputeGraphAttr();
   }
+};
+
+/// Destructure closed slots accessed exclusively through static fields. Whole
+/// aggregate accesses should first use whole-value mem2reg; mixed accesses keep
+/// their native storage instead of reconstructing an aggregate from field phis.
+class DestructureEvalFieldsPass final
+    : public PassWrapper<DestructureEvalFieldsPass,
+                         OperationPass<sim::SimFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(DestructureEvalFieldsPass)
+
+  void runOnOperation() final {
+    auto function = getOperation();
+    DataLayout layout = DataLayout::closest(function);
+    OpBuilder builder(&getContext());
+    bool changed = false, progress;
+    do {
+      progress = false;
+      analysis::LocalStorageAnalysis locals(function);
+      SmallVector<sim::SimRefAllocOp> allocations;
+      function.walk([&](sim::SimRefAllocOp op) { allocations.push_back(op); });
+      for (auto allocation : allocations) {
+        if (!locals.lookup(allocation.getResult()))
+          continue;
+        SmallVector<sim::SimRefSubelementOp> views;
+        bool fieldOnly = true;
+        for (Operation *user : allocation.getResult().getUsers()) {
+          auto view = dyn_cast<sim::SimRefSubelementOp>(user);
+          if (!view) {
+            fieldOnly = false;
+            break;
+          }
+          views.push_back(view);
+        }
+        if (!fieldOnly || views.empty())
+          continue;
+        // Splitting a field forwarded through a reference phi can turn one
+        // local root into several possible roots. Keep such families intact,
+        // as well as dynamically selected fields and other address users.
+        SmallVector<Value> references{allocation.getResult()};
+        bool staticAccesses = true;
+        while (!references.empty() && staticAccesses) {
+          Value reference = references.pop_back_val();
+          for (Operation *user : reference.getUsers()) {
+            if (isa<sim::SimRefSubelementOp, sim::SimRefExtractOp>(user)) {
+              references.push_back(user->getResult(0));
+              continue;
+            }
+            if (auto load = dyn_cast<sim::SimRefLoadOp>(user);
+                load && load.getReference() == reference)
+              continue;
+            if (auto store = dyn_cast<sim::SimRefStoreOp>(user);
+                store && store.getReference() == reference)
+              continue;
+            staticAccesses = false;
+            break;
+          }
+        }
+        if (!staticAccesses)
+          continue;
+        auto slots = allocation.getDestructurableSlots();
+        if (slots.size() != 1)
+          continue;
+        auto &slot = slots.front();
+        llvm::SmallPtrSet<Attribute, 8> usedIndices;
+        SmallVector<MemorySlot> safeUses;
+        if (llvm::any_of(views, [&](auto view) {
+              return !view.canRewire(slot, usedIndices, safeUses, layout);
+            }))
+          continue;
+        // canRewire reports descendant slots whose accessor contracts must
+        // also be checked. Privacy and the static-field policy do not replace
+        // those type/layout checks. Copy the slot before interfaces append to
+        // safeUses, which can reallocate its storage.
+        bool safeAccesses = true;
+        for (size_t index = 0; index < safeUses.size() && safeAccesses;
+             ++index) {
+          MemorySlot use = safeUses[index];
+          for (Operation *user : use.ptr.getUsers()) {
+            auto accessor = dyn_cast<SafeMemorySlotAccessOpInterface>(user);
+            if (!accessor || failed(accessor.ensureOnlySafeAccesses(
+                                 use, safeUses, layout))) {
+              safeAccesses = false;
+              break;
+            }
+          }
+        }
+        if (!safeAccesses)
+          continue;
+        // Reuse the slot interfaces for initialization, layout and rewiring.
+        builder.setInsertionPoint(allocation);
+        SmallVector<DestructurableAllocationOpInterface> children;
+        auto subslots =
+            allocation.destructure(slot, usedIndices, builder, children);
+        for (auto view : views) {
+          builder.setInsertionPoint(view);
+          view.rewire(slot, subslots, builder, layout);
+          view.erase();
+        }
+        allocation.handleDestructuringComplete(slot, builder);
+        progress = changed = true;
+      }
+      // Recheck the policy on newly created children rather than recursively
+      // decomposing children that now have whole-value users.
+    } while (progress);
+    if (!changed)
+      markAllAnalysesPreserved();
+  }
+};
+
+class PromoteEvalStoragePass final
+    : public impl::PromoteEvalStoragePassBase<PromoteEvalStoragePass> {
+public:
+  using Base = impl::PromoteEvalStoragePassBase<PromoteEvalStoragePass>;
+  using Base::Base;
+  PromoteEvalStoragePass(const PromoteEvalStoragePass &other)
+      : Base(other), promotion(other.promotion) {}
+
+  static OpPassManager buildPromotionPipeline() {
+    OpPassManager pipeline(sim::SimFuncOp::getOperationName());
+    // Expose concrete roots while joined aggregate loads are still compact.
+    // SROA can expand one whole load into many field loads, making a reference
+    // join too expensive for the bounded native specialization pass.
+    SpecializeReferenceJoinsPassOptions joins;
+    joins.nativeBodiesOnly = true;
+    pipeline.addPass(createSpecializeReferenceJoinsPass(joins));
+    // Preserve separate static reference identities. Aggressive block merging
+    // can introduce reference phis that later NBA lowering cannot resolve.
+    GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
+    pipeline.addPass(createCanonicalizerPass(config));
+    // Promote whole values before splitting slots. Packed words and aggregate
+    // copies can already be SSA; decomposing them first creates field phis and
+    // reconstructs values that were available as one reaching definition.
+    pipeline.addPass(createMem2Reg());
+    pipeline.addPass(std::make_unique<DestructureEvalFieldsPass>());
+    pipeline.addPass(createMem2Reg());
+    pipeline.addPass(createCanonicalizerPass(config));
+    pipeline.addPass(createCSEPass());
+    return pipeline;
+  }
+
+  LogicalResult initialize(MLIRContext *) override {
+    promotion = buildPromotionPipeline();
+    return success();
+  }
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    Base::getDependentDialects(registry);
+    buildPromotionPipeline().getDependentDialects(registry);
+  }
+
+  void runOnOperation() final {
+    bool changed = false;
+    uint64_t before = 0, after = 0;
+    for (sim::SimFuncOp function :
+         getOperation().getBody().front().getOps<sim::SimFuncOp>()) {
+      if (!schedule::has<schedule::Field::EvalBorrowedCaptures>(function))
+        continue;
+      uint64_t slots = 0;
+      function.walk([&](sim::SimRefAllocOp) { ++slots; });
+      if (!slots)
+        continue;
+      before += slots;
+      if (failed(runPipeline(promotion, function))) {
+        signalPassFailure();
+        return;
+      }
+      function.walk([&](sim::SimRefAllocOp) { ++after; });
+      function.removeEffectSummaryAttr();
+      function.removeFragmentAbiAttr();
+      changed = true;
+    }
+    inputSlots += before;
+    remainingSlots += after;
+    if (getOperation()->getParentOfType<ModuleOp>()->hasAttr(
+            "obelisk.debug.native_timing"))
+      llvm::errs() << "obelisk eval storage promotion: slots-before=" << before
+                   << " slots-after=" << after << '\n';
+    if (changed)
+      getOperation().removeComputeGraphAttr();
+    else
+      markAllAnalysesPreserved();
+  }
+
+private:
+  OpPassManager promotion;
+  Statistic inputSlots{this, "slots-before",
+                       "Local evaluator slots before SSA promotion"};
+  Statistic remainingSlots{this, "slots-after",
+                           "Local evaluator slots after SSA promotion"};
 };
 
 /// Remove invisible write-only storage, then promote a static procedure

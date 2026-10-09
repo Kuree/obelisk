@@ -531,27 +531,31 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         // synchronously. Prefer the closest restored lane when the hidden
         // resume edge can reach this body; otherwise ordinary SSA dominance
         // is sufficient and no frame slot is needed.
-        bool restoredPath = resumeReachable[root].contains(&block);
-        Value dominating =
-            !restoredPath && dominance.dominates(root, &block.front())
-                ? root
-                : Value{};
-        Block *dominatingBlock = dominating ? root.getParentBlock() : nullptr;
-        for (auto &[candidateBlock, candidates] : threadedValues) {
-          auto found = candidates.find(root);
-          if (found == candidates.end() ||
-              !dominance.dominates(candidateBlock, &block))
-            continue;
-          if (!dominatingBlock ||
-              dominance.dominates(dominatingBlock, candidateBlock)) {
-            dominating = found->second;
-            dominatingBlock = candidateBlock;
+        if (controlBoundaryBody) {
+          // Only synchronous control bodies use a dominating restored lane.
+          // Scanning all threaded blocks for ordinary CFG uses is quadratic
+          // in large replicated activations, and its result is unused there.
+          bool restoredPath = resumeReachable[root].contains(&block);
+          Value dominating =
+              !restoredPath && dominance.dominates(root, &block.front())
+                  ? root
+                  : Value{};
+          Block *dominatingBlock = dominating ? root.getParentBlock() : nullptr;
+          for (auto &[candidateBlock, candidates] : threadedValues) {
+            auto found = candidates.find(root);
+            if (found == candidates.end() ||
+                !dominance.dominates(candidateBlock, &block))
+              continue;
+            if (!dominatingBlock ||
+                dominance.dominates(dominatingBlock, candidateBlock)) {
+              dominating = found->second;
+              dominatingBlock = candidateBlock;
+            }
           }
-        }
-        if (controlBoundaryBody && dominating &&
-            (!restoredPath || controlBoundaryEntryBody)) {
-          replaceExternalUses(dominating);
-          continue;
+          if (dominating && (!restoredPath || controlBoundaryEntryBody)) {
+            replaceExternalUses(dominating);
+            continue;
+          }
         }
         auto existing = threadedValues[&block].find(root);
         if (existing != threadedValues[&block].end()) {

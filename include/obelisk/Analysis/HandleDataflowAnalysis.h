@@ -58,6 +58,12 @@ struct HandleCertificate {
 struct HandleDataflowResult {
   HandleFacts facts;
   llvm::DenseMap<mlir::Value, HandleCertificate> certificates;
+  /// Only blocks proved dead by the solver are excluded. Missing facts or a
+  /// failed analysis never constitute a proof that a block cannot execute.
+  llvm::DenseSet<mlir::Block *> nonExecutableBlocks;
+  bool isExecutable(mlir::Block *block) const {
+    return !nonExecutableBlocks.contains(block);
+  }
 };
 
 /// MLIR sparse forward dataflow over SSA, CFG and region interfaces. The

@@ -37,7 +37,8 @@ struct BoundedLoop {
 };
 /// Validate the CFG, invariant induction and finite fixed-width termination.
 /// Marking admits early exits; replication requires all values to be
-/// repairable.
+/// repairable. Either mode may return invariant initValue/limitValue envelopes;
+/// replication must resolve them to exact constants before removing any test.
 std::optional<BoundedLoop>
 recognizeBoundedLoop(mlir::Block *header,
                      const llvm::DenseSet<mlir::Operation *> &provenBackedges,

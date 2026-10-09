@@ -308,7 +308,8 @@ proved DAG. Genuine value feedback, incomplete assignments, state-dependent
 resumption, or unproved termination retain their existing execution. The
 `schedule.native.max_statement_ops` budget defaults to 73728 for data-dependence
 plans, separately from the ordinary inline budget, and charges each reduced
-executable slice, including reconstructed private versions. These are compile-time certificates and transformations: no runtime
+executable slice, including reconstructed private versions. These are compile-time
+certificates and transformations: no runtime
 checkpoint, rollback, or speculative recovery is introduced. Full VPI retains
 individual activation points as described in [VPI startup and backdoor access](vpi.md).
 This optimization currently requires one worker.
@@ -426,6 +427,33 @@ produced only for diagnostics.
 Whole-activation input unions and whole-actor graph contraction alone do not
 establish that proof.
 
+`schedule-localize-private-eval-storage` runs after evaluator cloning and the
+late inliner. Activation memory proofs move exclusive roots with no incoming
+values into typed local slots. Unwatched shared roots can also use slots, with
+one canonical write-back at every return. The slot loads the incoming root
+unless every bit is definitely written on every exit and no read needs its old
+value. This preserves conditional assignments, untouched aggregate fields,
+and both four-state planes. Canonical coroutine storage remains persistent.
+
+`schedule-promote-eval-storage` converts eligible evaluator locals to SSA,
+using whole-value promotion and scalar replacement of static fields. Reference
+identity, automatic initialization, and shared packed values are preserved.
+Escaped and dynamically indexed slots remain addressable. Canonical actors keep
+their frozen continuation operands. The pipeline rebuilds the compute graph
+after changing evaluator memory effects; canonical storage reads and final
+shared write-backs remain explicit.
+
+Shared publication coalescing requires invisible storage with no escaped
+reference, callee read, event watcher, toggle coverage, or waveform observer.
+The generated native evaluator executes synchronously; IEEE 1800-2023 4.7
+permits that schedule, without requiring source blocks to be atomic. Local
+accesses preserve the blocking assignment order required by 4.6 and 10.4.1.
+Section 9.4.2 says an implicit event is detected "on any change in the value",
+so watched roots keep every publication. Force/release and external observation
+remain excluded under 10.6 and 21.7. Large partial updates retain their canonical
+stores and forward eligible loads, avoiding whole-memory copies for sparse
+writes.
+
 `schedule-optimize-native-aggregates` forwards SSA array reads from preceding
 updates at the same selector when dense scoped ranges prove that selector known
 and in bounds. It also removes overwritten updates and read/write identities;
@@ -447,11 +475,32 @@ their four-state semantics. These local patterns let standard constant
 propagation and integer-range analyses see the expressions before loop proofs;
 a variable induction value still requires a loop proof.
 
-The production pipeline keeps simulation loops intact and leaves unrolling to
-LLVM's target-aware optimizer. Bounded-loop analysis still certifies termination
-for native admission and supplies induction ranges for memory analyses; it does
-not replicate executable IR. The standalone `obelisk-sim-unroll-bounded-loops`
-pass remains available for explicit experiments, outside the driver pipeline.
+At `-O3`, `obelisk-sim-unroll-bounded-loops` replicates small, finite loop
+nests before four-state expansion and compute-graph construction. Its
+`maximum-loop-size` option limits simplified weighted simulation cost per nest;
+zero disables replication. Admission evaluates a disposable expansion with
+sparse constant propagation, dead-branch elimination,
+array-index folding, SROA, mem2reg, and CSE. The charge is the original nest's
+weighted cost plus the difference between the normalized candidate and baseline
+function costs, so it credits simplifications caused by unrolling without
+crediting unrelated existing dead code. A separate construction ceiling bounds
+intermediate copies as well as the final expansion. The pass skips root
+initializers, initial/final blocks, and port initialization. It validates the
+whole nest, replicates outer loops first, folds dependent inner bounds, and
+commits only if every inner copy can be replicated. SCCP, canonicalization,
+and CSE then remove dead branches and expose constant array ordinals for SROA
+and mem2reg. Remaining loops retain their bounded-loop termination and range
+certificates.
+
+IEEE 1800-2023 4.6 requires statements to execute "in the order in which they
+appear"; 12.7.1 specifies initialization, test, body, and step order and says an
+unknown test "shall be treated as zero." Replication enumerates the proven
+fixed-width recurrence, including the final test, and never removes a test
+using only a bound on the number of iterations. Section 4.7 permits
+"the interleaving of process execution"; the proof does not assume language
+level atomicity. Index folding preserves the declared array range and keeps
+invalid references checked: 7.4.5 says an out-of-bounds or X/Z index "shall be
+invalid" and a write with such an index "shall perform no operation."
 
 `schedule-optimize-native-words` recognizes independent packed-element loops in
 native eval bodies before packed conversion. Sparse SSA lane facts combine

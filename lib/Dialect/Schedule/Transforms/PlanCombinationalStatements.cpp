@@ -426,6 +426,10 @@ public:
         ++dataflowPlans;
         ++dataflowCount;
       }
+      if (trace)
+        llvm::errs() << "obelisk statement cohort planned: members="
+                     << members.size() << " operations=" << cost
+                     << " dataflow=" << dataflow << '\n';
       // This requests materialization, not permission to assume acyclicity.
       // The materializer consumes a fresh revision-local analysis and checks
       // exclusive writers, complete assignments and spawn/observation rules.

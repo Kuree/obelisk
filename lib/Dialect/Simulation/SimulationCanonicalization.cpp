@@ -2614,6 +2614,13 @@ struct SimplifyAggregateExtract final
       return success();
     }
     if (auto load = op.getInput().getDefiningOp<SimRefLoadOp>()) {
+      // Keep a shared packed word as a value. Narrowing several extracts into
+      // separate reference loads duplicates reads and prevents whole-word SSA
+      // sharing after local promotion (LRM 7.4.1). A sole extract can still
+      // narrow its read, and large aggregates retain field-address lowering.
+      if (auto width = getPackedWidth(load.getResult().getType());
+          width && *width <= 64 && !load.getResult().hasOneUse())
+        return failure();
       // Preserve the whole automatic value for mem2reg (LRM 6.21, 7.4.5).
       if (auto allocation = load.getReference().getDefiningOp<SimRefAllocOp>();
           allocation && !allocation.getPromotableSlots().empty() &&

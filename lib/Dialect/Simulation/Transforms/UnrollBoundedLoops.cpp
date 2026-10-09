@@ -9,13 +9,24 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
+#include "mlir/Analysis/CFGLoopInfo.h"
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Transforms/CSE.h"
+#include "mlir/Transforms/FoldUtils.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Mem2Reg.h"
+#include "mlir/Transforms/SROA.h"
 #include "llvm/ADT/DenseSet.h"
 
 #include <optional>
+#include <vector>
 
 using namespace mlir;
 
@@ -29,50 +40,76 @@ namespace {
 using analysis::BoundedLoop;
 using analysis::recognizeBoundedLoop;
 
-bool unrollLoop(Block *header, size_t &budget, uint64_t &growthBudget) {
-  constexpr unsigned maxTrips = 64;
-  llvm::DenseSet<Operation *> noProvenBackedges;
-  auto recognized = recognizeBoundedLoop(header, noProvenBackedges);
-  if (!recognized || recognized->initValue || recognized->limitValue)
-    return false;
-  BoundedLoop &loop = *recognized;
-  cf::BranchOp entry = loop.entry, latch = loop.latch;
-  ArrayRef<Block *> blocks = loop.blocks;
-  bool add = loop.isAdd;
-
-  // Replication needs the exact iteration count, so enumerate it here under the
-  // policy cap. Termination itself was already proven in closed form.
+// The closed-form proof establishes termination; replication additionally
+// needs an exact count of at most 64 fixed-width steps. For a dependent inner
+// loop, the envelope gives a conservative count for budgeting the whole nest.
+std::optional<unsigned> countTrips(const BoundedLoop &loop) {
   APInt value = loop.init;
   unsigned trips = 0;
   while (arith::applyCmpPredicate(loop.predicate, value, loop.limit)) {
-    if (trips++ == maxTrips)
-      return false;
-    // The proof above handles fixed-width arithmetic, including modular
-    // equality loops. Enumerate those same bit patterns for replication.
-    value = add ? value + loop.stride : value - loop.stride;
+    if (trips == 64)
+      return std::nullopt;
+    ++trips;
+    value = loop.isAdd ? value + loop.stride : value - loop.stride;
   }
-  size_t entryCost = entry ? 0 : header->getNumArguments() + 1;
-  if ((trips + 1) * loop.operations + entryCost > budget)
-    return false;
-  uint64_t originalCost = 0;
-  uint64_t replicatedCost = 0;
-  for (Block *block : blocks) {
-    uint64_t cost = 0;
+  return trips;
+}
+
+struct LoopNest {
+  Block *header;
+  uint64_t operations;
+  uint64_t construction;
+  uint64_t originalCost;
+  std::vector<LoopNest> children;
+};
+
+std::optional<LoopNest> planNest(CFGLoop *natural, ArrayRef<BoundedLoop> bounds,
+                                 const DenseSet<Operation *> &latches,
+                                 uint64_t maximumSize) {
+  auto loop = recognizeBoundedLoop(natural->getHeader(), latches,
+                                   /*forMarking=*/false, bounds);
+  if (!loop)
+    return std::nullopt;
+  auto trips = countTrips(*loop);
+  if (!trips)
+    return std::nullopt;
+  LoopNest nest{loop->header, loop->operations, 0, 0, {}};
+  for (Block *block : loop->blocks)
     for (Operation &op : *block)
-      cost += analysis::getSimulationOperationCost(op);
-    originalCost += cost;
-    replicatedCost += cost * (trips + (block == header));
+      nest.originalCost += analysis::getSimulationOperationCost(op);
+  // Each replicated header also gets an explicit induction constant.
+  uint64_t body = loop->operations + 1;
+  for (CFGLoop *child : natural->getSubLoops()) {
+    auto inner = planNest(child, bounds, latches, maximumSize);
+    if (!inner || inner->operations > body)
+      return std::nullopt;
+    body -= inner->operations;
+    // Outer-first replication initially copies the original child, before
+    // expanding it. A zero-trip child can shrink dramatically; budgeting only
+    // its final expansion would miss that intermediate construction. Bound
+    // both forms, including descendants, before addition/multiplication.
+    uint64_t childSize = std::max(inner->operations, inner->construction);
+    if (childSize > maximumSize || body > maximumSize - childSize)
+      return std::nullopt;
+    body += childSize;
+    nest.children.push_back(std::move(*inner));
   }
-  uint64_t growth =
-      replicatedCost > originalCost ? replicatedCost - originalCost : 0;
-  // The operation cap bounds construction; the growth cap controls footprint.
-  // Charge the same state/call-weighted cost as the inliner, after early
-  // memory/value simplification. A termination certificate alone never
-  // justifies replicating hundreds of state accesses and their publications.
-  if (growth > growthBudget)
-    return false;
-  growthBudget -= growth;
-  budget -= (trips + 1) * loop.operations + entryCost;
+  // Source blocks coexist with their copies until remapping is complete. A
+  // conditional entry needs a funnel, and replacing the test briefly retains
+  // both terminators. Include those operations in the construction ceiling.
+  uint64_t overhead = loop->operations + loop->header->getOperations().size() +
+                      1 + static_cast<unsigned>(!loop->entry) + 1;
+  if (overhead > maximumSize ||
+      (*trips && body > (maximumSize - overhead) / *trips))
+    return std::nullopt;
+  nest.construction = *trips * body + overhead;
+  return nest;
+}
+
+SmallVector<IRMapping> replicateLoop(BoundedLoop &loop, unsigned trips) {
+  Block *header = loop.header;
+  cf::BranchOp entry = loop.entry, latch = loop.latch;
+  ArrayRef<Block *> blocks = loop.blocks;
   // Recognition already proved every external entry's induction value and
   // all exits/wrap semantics. Funnel only the selected edges; an untaken
   // conditional entry must never execute even the zero-trip header effects.
@@ -98,6 +135,7 @@ bool unrollLoop(Block *header, size_t &budget, uint64_t &growthBudget) {
       terminator->setSuccessor(funnel, index);
   }
   SmallVector<IRMapping> mappings(trips + 1);
+  APInt induction = loop.init;
   Region *region = header->getParent();
   for (unsigned iteration = 0; iteration <= trips; ++iteration) {
     IRMapping &mapping = mappings[iteration];
@@ -110,6 +148,15 @@ bool unrollLoop(Block *header, size_t &budget, uint64_t &growthBudget) {
       for (BlockArgument arg : block->getArguments())
         mapping.map(arg, copy->addArgument(arg.getType(), arg.getLoc()));
     }
+    // Make each induction binding explicit before cloning uses. This exposes
+    // dependent inner bounds without relying on block layout or CFG cleanup.
+    OpBuilder constants(header->getParent()->getContext());
+    constants.setInsertionPointToStart(mapping.lookup(header));
+    auto constant = arith::ConstantOp::create(
+        constants, loop.induction.getLoc(), loop.induction.getType(),
+        constants.getIntegerAttr(loop.induction.getType(), induction));
+    mapping.map(loop.induction, constant.getResult());
+    induction = loop.isAdd ? induction + loop.stride : induction - loop.stride;
     for (Block *block : blocks) {
       if (iteration == trips && block != header)
         continue;
@@ -153,25 +200,222 @@ bool unrollLoop(Block *header, size_t &budget, uint64_t &growthBudget) {
     block->dropAllDefinedValueUses();
   for (Block *block : blocks)
     block->erase();
+  return mappings;
+}
+
+// Work on a disposable function so a nest is either completely replicated or
+// left intact. This also covers dependent bounds that fail to become constants
+// after outer replication; a termination envelope alone never removes a test.
+bool unrollNest(sim::SimFuncOp function, const LoopNest &nest,
+                const IRMapping &mapping) {
+  // Fold only expressions whose operands are all constants. General
+  // canonicalization can change the recurrence shape (e.g. i + 0) or merge a
+  // pending child header. Keep those structures until the whole nest commits.
+  OperationFolder folder(function.getContext());
+  bool changed;
+  do {
+    changed = false;
+    for (Block &block : function.getBody())
+      for (Operation &op : llvm::make_early_inc_range(block))
+        if (op.getNumResults() && op.getNumOperands() &&
+            llvm::all_of(op.getOperands(), [](Value operand) {
+              auto *definition = operand.getDefiningOp();
+              return definition &&
+                     definition->hasTrait<OpTrait::ConstantLike>();
+            }))
+          changed |= succeeded(folder.tryToFold(&op));
+  } while (changed);
+  auto bounds = analysis::analyzeBoundedLoops(function.getBody());
+  DenseSet<Operation *> latches;
+  for (const auto &bound : bounds)
+    latches.insert(bound.latch);
+  auto loop = recognizeBoundedLoop(mapping.lookup(nest.header), latches);
+  if (!loop || loop->initValue || loop->limitValue)
+    return false;
+  auto trips = countTrips(*loop);
+  if (!trips)
+    return false;
+  // Save all descendant header mappings before erasing this copy of the nest.
+  std::vector<LoopNest> children = nest.children;
+  auto remap = [&](LoopNest &node, const auto &self) -> void {
+    node.header = mapping.lookup(node.header);
+    for (auto &child : node.children)
+      self(child, self);
+  };
+  for (auto &child : children)
+    remap(child, remap);
+  auto copies = replicateLoop(*loop, *trips);
+  for (unsigned iteration = 0; iteration < *trips; ++iteration)
+    for (const auto &child : children)
+      if (!unrollNest(function, child, copies[iteration]))
+        return false;
   return true;
+}
+
+// Evaluate the actual simplifications enabled by replication: sparse CFG
+// constants, dead guards, declared-index views, scalar replacement, promotion,
+// and CSE. Both the baseline and candidate use this same normalization, so
+// unrelated pre-existing dead code cannot subsidize an expensive nest.
+LogicalResult simplifyCandidate(sim::SimFuncOp function,
+                                const FrozenRewritePatternSet &patterns,
+                                const DataLayout &layout) {
+  {
+    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+    solver.load<dataflow::DeadCodeAnalysis>();
+    solver.load<dataflow::SparseConstantPropagation>();
+    if (failed(solver.initializeAndRun(function)))
+      return failure();
+    SmallVector<std::pair<Value, dataflow::ConstantValue>> constants;
+    auto record = [&](Value value) {
+      auto *state =
+          solver.lookupState<dataflow::Lattice<dataflow::ConstantValue>>(value);
+      if (state && !state->getValue().isUninitialized() &&
+          state->getValue().getConstantValue())
+        constants.emplace_back(value, state->getValue());
+    };
+    function.walk([&](Block *block) {
+      for (Value argument : block->getArguments())
+        record(argument);
+      for (Operation &op : *block)
+        if (!op.hasTrait<OpTrait::ConstantLike>())
+          for (Value result : op.getResults())
+            record(result);
+    });
+    OperationFolder folder(function.getContext());
+    for (auto &[value, fact] : constants) {
+      Value constant = folder.getOrCreateConstant(
+          value.getParentBlock(), fact.getConstantDialect(),
+          fact.getConstantValue(), value.getType());
+      if (constant)
+        value.replaceAllUsesWith(constant);
+    }
+  }
+  // Match the production canonicalizer. Aggressive block merging can replace
+  // distinct static reference accesses with a reference phi, obscuring their
+  // roots from scheduling and undoing the purpose of exposing static indices.
+  GreedyRewriteConfig config;
+  config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
+  if (failed(applyPatternsGreedily(function, patterns, config)))
+    return failure();
+  OpBuilder builder(function.getContext());
+  SmallVector<DestructurableAllocationOpInterface> aggregates;
+  function.walk([&](DestructurableAllocationOpInterface op) {
+    aggregates.push_back(op);
+  });
+  (void)tryToDestructureMemorySlots(aggregates, builder, layout);
+  SmallVector<PromotableAllocationOpInterface> slots;
+  function.walk(
+      [&](PromotableAllocationOpInterface op) { slots.push_back(op); });
+  DominanceInfo dominance(function);
+  (void)tryToPromoteMemorySlots(slots, builder, layout, dominance);
+  if (failed(applyPatternsGreedily(function, patterns, config)))
+    return failure();
+  IRRewriter rewriter(function.getContext());
+  dominance.invalidate();
+  eliminateCommonSubExpressions(rewriter, dominance, function);
+  return success();
 }
 
 class ObeliskSimUnrollBoundedLoopsPass
     : public impl::ObeliskSimUnrollBoundedLoopsPassBase<
           ObeliskSimUnrollBoundedLoopsPass> {
   using Base::Base;
+  Statistic unrolledNests{this, "unrolled-nests", "Complete nests replicated"};
+  Statistic simplifiedCost{this, "simplified-cost",
+                           "Weighted operation cost removed after replication"};
   void runOnOperation() override {
-    size_t budget = 4096;
-    uint64_t growthBudget = maximumGrowth;
-    bool changed;
-    do {
-      changed = false;
-      for (Block &block : getOperation().getBody())
-        if (unrollLoop(&block, budget, growthBudget)) {
-          changed = true;
-          break;
+    sim::SimFuncOp function = getOperation();
+    if (!maximumLoopSize || function.isExternal() ||
+        function.getBody().hasOneBlock() ||
+        llvm::is_contained({sim::EntryKind::RootInitializer,
+                            sim::EntryKind::Initial, sim::EntryKind::Final,
+                            sim::EntryKind::PortInitialize},
+                           function.getEntryKind()))
+      return;
+    RewritePatternSet canonical(function.getContext());
+    for (RegisteredOperationName name :
+         function.getContext()->getRegisteredOperations())
+      if (name.getDialectNamespace() == "arith" ||
+          name.getDialectNamespace() == "cf" ||
+          name.getDialectNamespace() == "simulation")
+        name.getCanonicalizationPatterns(canonical, function.getContext());
+    FrozenRewritePatternSet patterns(std::move(canonical));
+    DataLayout layout = DataLayout::closest(function);
+    DenseSet<Block *> refused;
+    while (!function.getBody().hasOneBlock()) {
+      auto bounds = analysis::analyzeBoundedLoops(function.getBody());
+      DenseSet<Operation *> latches;
+      for (const auto &loop : bounds)
+        latches.insert(loop.latch);
+      DominanceInfo dominance(function);
+      CFGLoopInfo loops(dominance.getDomTree(&function.getBody()));
+      SmallVector<CFGLoop *> roots;
+      auto collect = [&](CFGLoop *loop, const auto &self) -> void {
+        // A process resume cycle contains separate activations. Its nested
+        // procedural loops are independent decisions; an ordinary unbounded
+        // outer loop remains a single refused nest.
+        if (llvm::any_of(loop->getBlocks(), [](Block *block) {
+              return sim::isSuspensionOp(block->getTerminator());
+            })) {
+          for (CFGLoop *child : loop->getSubLoops())
+            self(child, self);
+        } else
+          roots.push_back(loop);
+      };
+      for (CFGLoop *loop : loops)
+        collect(loop, collect);
+      // Construction has a separate hard ceiling, not a profitability cutoff.
+      // It bounds a disposable expansion even if all of it could fold away.
+      constexpr uint64_t maximumConstruction = 16384;
+      std::optional<uint64_t> baselineCost;
+      bool changed = false;
+      for (CFGLoop *root : roots) {
+        if (refused.contains(root->getHeader()))
+          continue;
+        auto nest = planNest(root, bounds, latches, maximumConstruction);
+        if (!nest) {
+          refused.insert(root->getHeader());
+          continue;
         }
-    } while (changed && budget != 0);
+        if (!baselineCost) {
+          OwningOpRef<sim::SimFuncOp> baseline(
+              cast<sim::SimFuncOp>(function->clone()));
+          if (failed(simplifyCandidate(*baseline, patterns, layout)))
+            return signalPassFailure();
+          baselineCost = analysis::getSimulationOperationCost(*baseline);
+        }
+        IRMapping mapping;
+        OwningOpRef<sim::SimFuncOp> copy(
+            cast<sim::SimFuncOp>(function->clone(mapping)));
+        if (!unrollNest(*copy, *nest, mapping)) {
+          refused.insert(root->getHeader());
+          continue;
+        }
+        uint64_t expandedCost = analysis::getSimulationOperationCost(*copy);
+        if (failed(simplifyCandidate(*copy, patterns, layout)))
+          return signalPassFailure();
+        uint64_t reducedCost = analysis::getSimulationOperationCost(*copy);
+        uint64_t cost = nest->originalCost;
+        if (reducedCost >= *baselineCost)
+          cost += reducedCost - *baselineCost;
+        else
+          cost -= std::min(cost, *baselineCost - reducedCost);
+        if (cost > maximumLoopSize) {
+          refused.insert(root->getHeader());
+          continue;
+        }
+        ++unrolledNests;
+        simplifiedCost += expandedCost - std::min(expandedCost, reducedCost);
+        function.getBody().takeBody(copy->getBody());
+        // Cleanup may fold a sibling header or expose another dependent bound.
+        // All decisions refer to this new revision of the body.
+        refused.clear();
+        changed = true;
+        break;
+      }
+      if (!changed)
+        break;
+    }
   }
 };
 

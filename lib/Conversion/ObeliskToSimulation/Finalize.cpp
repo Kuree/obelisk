@@ -437,13 +437,25 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     if (optLevel > 0) {
-      // Keep induction loops intact for dataflow and scheduling. Unrolling
-      // belongs to LLVM, where the target costs and final memory operations
-      // are visible. In particular, cheaper canonical forms must not trigger
-      // replication of simulation stores and their publication machinery.
+      // Replicate small complete nests before four-state expansion inflates
+      // their size. IEEE 1800-2023 4.6/12.7.1: preserve every statement and
+      // induction step in order; only a proved finite recurrence is eligible.
+      if (optLevel >= 3)
+        functionManager.addPass(createObeliskSimUnrollBoundedLoopsPass());
       functionManager.addPass(createCanonicalizerPass());
       functionManager.addPass(createCSEPass());
     }
+  }
+  if (optLevel >= 3) {
+    // Replication can expose constants through CFG arguments that ordinary
+    // canonicalization cannot propagate. Remove the resulting dead branches
+    // before effect summaries and compute-fusion admission inspect the body.
+    ObeliskSimSCCPPassOptions cleanupOptions;
+    cleanupOptions.vpi = vpiMode.str();
+    designManager.addPass(createObeliskSimSCCPPass(std::move(cleanupOptions)));
+    auto &functions = designManager.nest<sim::SimFuncOp>();
+    functions.addPass(createCanonicalizerPass());
+    functions.addPass(createCSEPass());
   }
   if (optLevel > 0) {
     ObeliskSimSimplifyBodiesPassOptions simplifyOptions;
@@ -542,6 +554,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     designManager.addPass(
         createObeliskSimInlinePass(std::move(fusedInlineOptions)));
     designManager.addPass(createLocalizePrivateEvalStoragePass());
+    // Localization creates slots after the early mem2reg passes. Destructure
+    // and promote them before rebuilding effects and the final compute graph;
+    // canonical actors must retain their frozen continuation operands.
+    designManager.addPass(createPromoteEvalStoragePass());
     ObeliskSimBuildComputeGraphPassOptions fusedGraphOptions;
     fusedGraphOptions.workers = workers;
     fusedGraphOptions.vpi = vpiMode.str();

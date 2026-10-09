@@ -145,7 +145,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-SAME: simulation.expect_bounded_horizon = 19 : i64
 // CHECK-SAME: simulation.expect_bounded_state_words = 2 : i64
 // CHECK: %[[HIGH_RETAIN_MASK:.*]] = arith.constant {simulation.rematerialized} -9223372036854775808 : i64
-// CHECK-NEXT: %{{.*}} = arith.select {{.*}}, %[[HIGH_RETAIN_MASK]], {{.*}} : i64
+// CHECK: %{{.*}} = arith.select {{.*}}, %[[HIGH_RETAIN_MASK]], {{.*}} : i64
 // CHECK: simulation.suspend.edge posedge {{.*}} to ^[[WIDE_RESUME:bb[0-9]+]]({{.*}}, %[[SECOND_NEXT:.*]], %[[FIRST_NEXT:.*]] : !simulation.ref<i1>, i64, i64)
 // CHECK: ^[[WIDE_RESUME]]({{.*}}: !simulation.ref<i1>, %[[SECOND_WORD:.*]]: i64, %[[FIRST_WORD:.*]]: i64)
 // CHECK: %[[HIGH_TEST_MASK:.*]] = arith.constant {simulation.rematerialized} -9223372036854775808 : i64

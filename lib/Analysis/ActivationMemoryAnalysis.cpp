@@ -1017,7 +1017,8 @@ summarizeReadOnlyCall(sim::SimFuncOp function, Operation *symbols,
   if (!function || function.isExternal() ||
       !hasFiniteControlFlow(function.getBody()))
     return {};
-  auto handles = provenance.derive(function);
+  auto handleResult = provenance.analyze(function);
+  const auto &handles = handleResult.facts;
   ReadOnlyCallSummary summary;
   summary.valid = true;
   auto add = [&](HandleFact fact) {
@@ -1035,6 +1036,7 @@ summarizeReadOnlyCall(sim::SimFuncOp function, Operation *symbols,
   };
   function.walk([&](Operation *op) {
     if (!summary.valid || op == function.getOperation() ||
+        !handleResult.isExecutable(op->getBlock()) ||
         isa<sim::SimReturnOp, cf::BranchOp, cf::CondBranchOp, cf::SwitchOp>(op))
       return;
     if (op->getNumRegions()) {
@@ -1083,15 +1085,15 @@ summarizeReadOnlyCall(sim::SimFuncOp function, Operation *symbols,
 class ActivationDataflow final : public DataFlowAnalysis {
 public:
   ActivationDataflow(DataFlowSolver &solver, sim::SimFuncOp function,
-                     const HandleFacts &handles,
+                     const HandleDataflowResult &handleResult,
                      const HandleDataflowAnalysis &provenance,
                      unsigned maximumPartitions, ActivationValueGraph *values,
                      Operation *symbols, bool inputsOnly,
                      const Liveness &liveness)
       : DataFlowAnalysis(solver), function(function), liveness(liveness),
-        handles(handles), provenance(provenance),
-        maximumPartitions(maximumPartitions), values(values), symbols(symbols),
-        inputsOnly(inputsOnly),
+        handleResult(handleResult), handles(handleResult.facts),
+        provenance(provenance), maximumPartitions(maximumPartitions),
+        values(values), symbols(symbols), inputsOnly(inputsOnly),
         loops(analyzeActivationBoundedLoops(function.getBody())) {
     // A dependent loop can begin on a break path, outside the natural loop
     // that computed its initializer or bound. Preserve live control operands
@@ -1258,6 +1260,8 @@ private:
   LogicalResult propagate(Block *block, const Memory &state,
                           std::optional<ValueRange> operands = std::nullopt,
                           Value condition = {}) {
+    if (!handleResult.isExecutable(block))
+      return success();
     SmallVector<Attribute> key;
     for (const auto &loop : loops) {
       Attribute value = UnitAttr::get(function.getContext());
@@ -1837,6 +1841,7 @@ private:
   sim::SimFuncOp function;
   const Liveness &liveness;
   LogicalLanes logical;
+  const HandleDataflowResult &handleResult;
   const HandleFacts &handles;
   const HandleDataflowAnalysis &provenance;
   unsigned maximumPartitions;
@@ -1856,7 +1861,8 @@ ActivationMemoryAnalysis::ActivationMemoryAnalysis(
     return;
   if (!symbols)
     symbols = function->getParentOp();
-  auto handles = handleAnalysis.derive(function);
+  auto handleResult = handleAnalysis.analyze(function);
+  const auto &handles = handleResult.facts;
   LogicalLanes layout;
   DenseMap<uint64_t, ArrayRef<Range>> rootLanes;
   DenseSet<uint64_t> conflictingLayouts;
@@ -1917,7 +1923,7 @@ ActivationMemoryAnalysis::ActivationMemoryAnalysis(
   }
   auto solver = std::make_unique<DataFlowSolver>();
   auto *analysis = solver->load<ActivationDataflow>(
-      function, handles, handleAnalysis, maximumPartitions, values.get(),
+      function, handleResult, handleAnalysis, maximumPartitions, values.get(),
       symbols, mode == DependencyMode::Inputs, liveness);
   if (failed(solver->initializeAndRun(function)) || !analysis->exit) {
     unsupported = analysis->unsupported;

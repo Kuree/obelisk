@@ -136,10 +136,12 @@ bool isComputeBodyFusionEligibleImpl(
     return false;
 
   sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
-  analysis::HandleFacts provenance = provenanceAnalysis.derive(function);
+  auto handles = provenanceAnalysis.analyze(function);
+  const auto &provenance = handles.facts;
   bool eligible = true;
   function.walk([&](Operation *operation) {
-    if (!eligible || operation == function.getOperation())
+    if (!eligible || operation == function.getOperation() ||
+        !handles.isExecutable(operation->getBlock()))
       return;
 
     // These operations define the only control and scheduler interaction that
@@ -615,10 +617,11 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
   CombinationalFusionBody result{start.getDest(), nullptr, {}, {}};
   SmallVector<Value> reads, watches;
   SmallVector<Operation *> stores;
-  auto provenance = analysis.derive(function);
+  auto handles = analysis.analyze(function);
+  const auto &provenance = handles.facts;
   bool valid = true;
   function.walk([&](Operation *op) {
-    if (op == function.getOperation())
+    if (op == function.getOperation() || !handles.isExecutable(op->getBlock()))
       return;
     if (auto change = dyn_cast<sim::SimSuspendChangeOp>(op)) {
       valid &= !result.suspend;

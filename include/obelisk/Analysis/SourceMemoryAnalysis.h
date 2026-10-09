@@ -3,7 +3,9 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include <cstdint>
 #include <optional>
 namespace obelisk::sim {
 class SimFuncOp;
@@ -55,6 +57,10 @@ private:
 };
 /// Apply the frozen dense must-value facts, retaining all canonical stores.
 /// canonicalWrites requires no external mutation or force/release boundary.
-void forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites);
+/// An optional filter limits rewrites to loads whose mutation contract the
+/// caller has proved. Return the number of forwarded loads.
+uint64_t forwardSourceMemoryLoads(
+    sim::SimFuncOp function, bool canonicalWrites,
+    llvm::function_ref<bool(mlir::Operation *)> canForward = {});
 } // namespace obelisk::analysis
 #endif

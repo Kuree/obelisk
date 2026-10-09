@@ -263,7 +263,9 @@ SourceMemoryAnalysis::SourceMemoryAnalysis(sim::SimFuncOp function,
       elements.try_emplace(load, ElementSnapshot{snapshot, element.getIndex()});
   });
 }
-void forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites) {
+uint64_t
+forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites,
+                         llvm::function_ref<bool(Operation *)> canForward) {
   SourceMemoryAnalysis memory(function, canonicalWrites);
   DominanceInfo dominance(function);
   SmallVector<sim::SimRefLoadOp> loads;
@@ -276,6 +278,8 @@ void forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites) {
     return value;
   };
   for (auto load : loads) {
+    if (canForward && !canForward(load))
+      continue;
     Value previous = resolve(memory.getForwarded(load));
     OpBuilder builder(load);
     if (auto field = memory.getSubelementSnapshot(load)) {
@@ -348,5 +352,6 @@ void forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites) {
   // would then follow the stale entry to an unrelated value.
   for (auto load : forwarded)
     load.erase();
+  return forwarded.size();
 }
 } // namespace obelisk::analysis

@@ -184,12 +184,30 @@ def LowerConditionalReferenceAccessesPass
 def LocalizePrivateEvalStoragePass
     : Pass<"schedule-localize-private-eval-storage",
            "obelisk::sim::SimDesignOp"> {
-  let summary = "Localize private evaluator storage with no incoming values";
+  let summary = "Localize evaluator storage using activation memory proofs";
   let description = [{
     After evaluator cloning and inlining, prove exclusive storage ownership and
     write-before-read coverage within each invocation. Replace eligible roots
     with typed local allocations while retaining canonical coroutine storage.
+    Unwatched shared roots with no callee or external observer use local slots
+    with incoming-value preservation and one write-back per return. Large
+    partially written roots retain their stores and only forward loads.
     Rebuild the compute graph after changing evaluator memory effects.
+  }];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                          "mlir::arith::ArithDialect"];
+}
+
+def PromoteEvalStoragePass
+    : Pass<"schedule-promote-eval-storage", "obelisk::sim::SimDesignOp"> {
+  let summary = "Promote local evaluator storage to SSA";
+  let description = [{
+    After activation storage localization, expose compact reference joins,
+    canonicalize constant views, promote whole values, then destructure closed
+    slots accessed through static fields and promote their loads and stores.
+    Only borrowed evaluators are rewritten: resumable
+    actors retain their frozen continuation operands. Escaped and dynamically
+    indexed slots stay addressable. Rebuild the compute graph afterward.
   }];
   let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
                           "mlir::arith::ArithDialect"];

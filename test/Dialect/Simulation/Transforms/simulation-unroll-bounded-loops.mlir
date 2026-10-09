@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-growth=64},canonicalize)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops,canonicalize)))' | FileCheck %s --check-prefix=COMPACT
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=1000},canonicalize)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=0},canonicalize)))' | FileCheck %s --check-prefix=COMPACT
 
 // The induction loop is finite within one activation, even with a conditional
 // body. Its exact sequence of publications must survive unrolling. Dynamic
@@ -7,15 +7,15 @@
 module {
   simulation.design @loops {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 initial hierarchy "ascending"
-    simulation.code_unit.decl 2 in 0 initial hierarchy "descending"
-    simulation.code_unit.decl 3 in 0 initial hierarchy "zero_trip"
-    simulation.code_unit.decl 4 in 0 initial hierarchy "dynamic"
-    simulation.code_unit.decl 5 in 0 initial hierarchy "wrap"
-    simulation.code_unit.decl 6 in 0 initial hierarchy "conditional"
-    simulation.code_unit.decl 7 in 0 initial hierarchy "timed"
-    simulation.code_unit.decl 8 in 0 initial hierarchy "side_exit"
-    simulation.code_unit.decl 9 in 0 initial hierarchy "large"
+    simulation.code_unit.decl 1 in 0 function hierarchy "ascending"
+    simulation.code_unit.decl 2 in 0 function hierarchy "descending"
+    simulation.code_unit.decl 3 in 0 function hierarchy "zero_trip"
+    simulation.code_unit.decl 4 in 0 function hierarchy "dynamic"
+    simulation.code_unit.decl 5 in 0 function hierarchy "wrap"
+    simulation.code_unit.decl 6 in 0 function hierarchy "conditional"
+    simulation.code_unit.decl 7 in 0 task hierarchy "timed"
+    simulation.code_unit.decl 8 in 0 function hierarchy "side_exit"
+    simulation.code_unit.decl 9 in 0 function hierarchy "large"
     // CHECK-LABEL: simulation.func @ascending
     // COMPACT-LABEL: simulation.func @ascending
     // COMPACT: cf.cond_br
@@ -27,7 +27,7 @@ module {
     // CHECK: simulation.ref.store %{{.*}} to %{{.*}}
     // CHECK-NOT: cf.
     // CHECK: simulation.return
-    simulation.func @ascending(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
+    simulation.func @ascending(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):
@@ -52,7 +52,7 @@ module {
     // CHECK: simulation.ref.store %[[ZERO]]
     // CHECK-NOT: cf.
     // CHECK: simulation.return
-    simulation.func @descending(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+    simulation.func @descending(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
       %two = arith.constant 2 : i32
       cf.br ^head(%two : i32)
     ^head(%i: i32):
@@ -72,7 +72,7 @@ module {
     // CHECK-NOT: simulation.ref.store
     // CHECK-NOT: cf.
     // CHECK: simulation.return
-    simulation.func @zero_trip(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+    simulation.func @zero_trip(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):
@@ -91,7 +91,7 @@ module {
     // CHECK-LABEL: simulation.func @dynamic
     // CHECK: arith.cmpi ult
     // CHECK: cf.cond_br
-    simulation.func @dynamic(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}, %limit: i32 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+    simulation.func @dynamic(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}, %limit: i32 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):
@@ -109,7 +109,7 @@ module {
     // CHECK-LABEL: simulation.func @wrap
     // CHECK: arith.cmpi ule
     // CHECK: cf.cond_br
-    simulation.func @wrap(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i8> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
+    simulation.func @wrap(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i8> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
       %start = arith.constant 254 : i8
       cf.br ^head(%start : i8)
     ^head(%i: i8):
@@ -129,7 +129,7 @@ module {
     // CHECK-NOT: arith.cmpi
     // CHECK-COUNT-2: cf.cond_br
     // CHECK: simulation.return
-    simulation.func @conditional(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}, %select: i1 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
+    simulation.func @conditional(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}, %select: i1 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):
@@ -153,7 +153,7 @@ module {
     // CHECK: arith.cmpi ult
     // CHECK: cf.cond_br
     // CHECK: simulation.suspend.delay
-    simulation.func @timed(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 7 : i64} {
+    simulation.func @timed(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 7 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):
@@ -176,7 +176,7 @@ module {
     // CHECK-LABEL: simulation.func @side_exit
     // CHECK: arith.cmpi ult
     // CHECK: cf.cond_br
-    simulation.func @side_exit(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}, %break: i1 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 8 : i64} {
+    simulation.func @side_exit(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}, %break: i1 {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 8 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):
@@ -198,7 +198,7 @@ module {
     // CHECK-LABEL: simulation.func @large
     // CHECK: arith.cmpi ult
     // CHECK: cf.cond_br
-    simulation.func @large(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 9 : i64} {
+    simulation.func @large(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},  %out: !simulation.ref<i32> {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 9 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero : i32)
     ^head(%i: i32):

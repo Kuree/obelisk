@@ -336,8 +336,6 @@ recognizeBoundedLoopImpl(Block *header,
     predicate = reversed ? swapPredicate(compare.getPredicate())
                          : compare.getPredicate();
     if (!matchPattern(bound, m_ConstantInt(&limit))) {
-      if (!forMarking)
-        return std::nullopt;
       bool signedBound = *predicate == arith::CmpIPredicate::slt ||
                          *predicate == arith::CmpIPredicate::sgt;
       bool increasing = *predicate == arith::CmpIPredicate::slt ||
@@ -559,8 +557,7 @@ recognizeBoundedLoopImpl(Block *header,
                        loop.predicate == arith::CmpIPredicate::sgt ||
                        loop.predicate == arith::CmpIPredicate::sge;
   if (!matchInductionConstant(entryValue, loop.init)) {
-    if (fourState || !forMarking ||
-        loop.predicate == arith::CmpIPredicate::eq ||
+    if (fourState || loop.predicate == arith::CmpIPredicate::eq ||
         loop.predicate == arith::CmpIPredicate::ne)
       return std::nullopt;
     auto range = inferInvariantRange(entryValue, header, enclosing, dominance);

@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-growth=128},canonicalize,cse)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-growth=512},canonicalize,cse)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-growth=1},canonicalize,cse)))' | FileCheck %s --check-prefix=SMALL
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=1000},canonicalize,cse)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=2000},canonicalize,cse)))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=1},canonicalize,cse)))' | FileCheck %s --check-prefix=SMALL
 
 // Replication must expose constant addresses before state-domain analysis,
 // preserve every source-ordered publication, and repair loop-carried SSA.
-// The growth budget is independent of the termination proof.
+// The nest size limit is independent of the termination proof.
 !array = !simulation.unpacked_array<0 : 3 x i8>
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   simulation.design @unroll_indices {
@@ -55,8 +55,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     // CHECK-NOT: cf.
     // CHECK: simulation.return %[[SUM]] : i32
     // SMALL-LABEL: simulation.func @carried
-    // SMALL: cf.cond_br
-    // SMALL: arith.addi
+    // Even the smallest nonzero budget admits a fully constant reduction.
+    // SMALL: %[[SUM:.*]] = arith.constant 6 : i32
+    // SMALL-NOT: cf.
+    // SMALL: simulation.return %[[SUM]] : i32
     simulation.func @carried(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i32 attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
       %zero = arith.constant 0 : i32
       cf.br ^head(%zero, %zero : i32, i32)
@@ -73,7 +75,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.return %result : i32
     }
 
-    // Revisit the outer loop after the inner loop's backedge is removed.
+    // Replicate the whole nest with the outer induction bound first.
     // CHECK-LABEL: simulation.func @nested
     // CHECK-COUNT-4: simulation.ref.store
     // CHECK-NOT: cf.
