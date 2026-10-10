@@ -4,7 +4,9 @@
 // $readmemh load. Address records and data words take distinct validation
 // paths before converging on the token loop. The 512-word declaration still
 // emits one token/store loop. An exhausted explicit range has a distinct
-// rejection edge so extra data cannot look like a matching EOF.
+// rejection edge so extra data cannot look like a matching EOF. The task runs
+// as one event (IEEE 1800-2023 4.7), so a publication batch brackets every
+// path from the successful open to the close; the failed open opens none.
 
 module {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
@@ -48,8 +50,8 @@ module {
 // once that is ruled out. The address-range check folds into the same branch
 // here because this memory's bounds are static.
 // CHECK: %[[OPENED:.*]] = arith.cmpi ne, %[[FD]], %{{.*}}
-// CHECK: cf.cond_br %[[OPENED]], ^[[LOOP:bb[0-9]+]]({{.*}} : i64, i1, i64, i1), ^[[OPEN_ERROR:bb[0-9]+]]
-// CHECK: ^[[LOOP]](%[[CURSOR:.*]]: i64, %[[SAW_ADDRESS:.*]]: i1, %[[COUNT:.*]]: i64, %[[EXHAUSTED:.*]]: i1):
+// CHECK: cf.cond_br %[[OPENED]], ^[[READ:bb[0-9]+]], ^[[OPEN_ERROR:bb[0-9]+]]
+// CHECK: ^[[LOOP:bb[0-9]+]](%[[CURSOR:.*]]: i64, %[[SAW_ADDRESS:.*]]: i1, %[[COUNT:.*]]: i64, %[[EXHAUSTED:.*]]: i1):
 // CHECK-COUNT-1: %[[DATA:.*]], %[[KIND:.*]], %[[ADDRESS:.*]] = simulation.file.readmem_token {{.*}} {radix = #simulation.radix<hex>}
 // CHECK: cf.cond_br {{.*}}, ^[[COUNT_CHECK:bb[0-9]+]], ^[[CLASSIFY:bb[0-9]+]]
 // CHECK: ^[[CLASSIFY]]:
@@ -76,6 +78,10 @@ module {
 // CHECK: simulation.display
 // CHECK: ^[[ADDRESS_ERROR]]:
 // CHECK: simulation.display
+// CHECK: ^[[READ]]:
+// CHECK-NEXT: simulation.publication.batch_begin
+// CHECK-NOT: ^bb
+// CHECK: cf.br ^[[LOOP]]({{.*}} : i64, i1, i64, i1)
 // The failed-open report names the file and records an unsuccessful run. It
 // shares nothing with the read but its exit; in particular it must not close a
 // descriptor the open never handed out.
@@ -84,5 +90,7 @@ module {
 // CHECK: simulation.display
 // CHECK-NEXT: simulation.error
 // CHECK-NOT: simulation.file.close
+// CHECK-NOT: simulation.publication
 // CHECK: ^[[EXIT]]:
-// CHECK: simulation.file.close {{.*}}, %[[FD]]
+// CHECK-NEXT: simulation.publication.batch_end
+// CHECK-NEXT: simulation.file.close {{.*}}, %[[FD]]

@@ -106,6 +106,10 @@ func.func @runtime_calls(
       (!runtime.context, i32) -> !runtime.status
   %runtime_error_status = runtime.error %ctx :
       (!runtime.context) -> !runtime.status
+  %batch_begin_status = runtime.publication.batch_begin %ctx :
+      (!runtime.context) -> !runtime.status
+  %batch_end_status = runtime.publication.batch_end %ctx :
+      (!runtime.context) -> !runtime.status
   %termination_requested = runtime.termination.requested %ctx :
       (!runtime.context) -> i1
   %time_input = arith.constant 1.25 : f64

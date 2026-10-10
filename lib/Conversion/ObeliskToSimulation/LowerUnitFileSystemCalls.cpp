@@ -938,6 +938,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     cf::CondBranchOp::create(builder, location, opened, readFile, ValueRange{},
                              openError, ValueRange{});
     setCurrent(readFile);
+    // IEEE 1800-2023 4.7: the task has no time control and runs as one event,
+    // so its word stores may publish their update events together. Every path
+    // from here leaves through `exit`.
+    sim::SimPublicationBatchBeginOp::create(builder, location, context);
 
     Value validBounds = arith::AndIOp::create(
         builder, location, withinMemory(*start), withinMemory(*finish));
@@ -1229,6 +1233,7 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
     cf::BranchOp::create(builder, location, done);
 
     setCurrent(exit);
+    sim::SimPublicationBatchEndOp::create(builder, location, context);
     sim::SimFileCloseOp::create(builder, location, context, descriptor);
     cf::BranchOp::create(builder, location, done);
 

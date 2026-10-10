@@ -760,6 +760,41 @@ struct NativeStaticStateRange {
   uint32_t id = 0;
 };
 
+// Static transitions merged while one statement executes as one event; see
+// obelisk_rt_v1_scheduler_publication_batch_begin. The window covers
+// kWindowBits root-relative bits from windowLow plus one word of overhang.
+// changed/posedge/negedge accumulate the OR of every write; old* holds each
+// bit before its first write and new* its latest value.
+struct PublicationBatch {
+  static constexpr uint64_t kWindowWords = 1024;
+  static constexpr uint64_t kWindowBits = kWindowWords * 64;
+  enum Plane : unsigned {
+    Changed,
+    Posedge,
+    Negedge,
+    Seen,
+    OldValue,
+    OldUnknown,
+    NewValue,
+    NewUnknown,
+    PlaneCount
+  };
+  uint32_t depth = 0;
+  bool merging = false;
+  bool flushing = false;
+  uint32_t staticID = 0; // zero while the window is empty
+  uint64_t logicalProcessToken = 0;
+  const obelisk_rt_context *aotContext = nullptr;
+  uint64_t rootWidth = 0;
+  uint64_t windowLow = 0;
+  uint64_t touchedLow = 0;
+  uint64_t touchedHigh = 0;
+  std::vector<uint64_t> words; // PlaneCount planes of kWindowWords + 1
+  uint64_t *plane(Plane plane) {
+    return words.data() + plane * (kWindowWords + 1);
+  }
+};
+
 struct ScheduledNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
@@ -2088,6 +2123,7 @@ struct obelisk_rt_context {
                      SignalSubscriptionBucketKeyHash>
       signalSubscriptionBuckets;
   std::array<uint64_t, 256> signalSubscriptionObjectFilter{};
+  PublicationBatch publicationBatch;
   // Dynamic native subscriptions are omitted from the frozen AOT fanout.
   // Computed waits and custom Clause 31.5 descriptors share this already-hot
   // specialization guard instead of adding a transition-path feature probe.

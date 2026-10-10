@@ -4043,6 +4043,20 @@ void obelisk_rt_v1_scheduler_static_transition_owned(
     obelisk_rt_context *context, uint32_t actor_slot, uint32_t static_state,
     uint64_t low_bit, uint64_t bit_width, uint64_t old_value,
     uint64_t old_unknown, uint64_t new_value, uint64_t new_unknown);
+// Bracket one statement that the caller executes as one event (IEEE 1800-2023
+// 4.7): between begin and end there is no time control and no call that may
+// observe signal values or run another process. While no observer of
+// individual occurrences exists (VPI value change 38.36.1, computed or
+// conditional waits 9.4.3, coverage, clock occurrences, force/assign, runtime
+// subscriptions of the root), static transitions published in between are
+// delivered at end as one transition per root window carrying the OR of every
+// write's change and edge masks. That wakes exactly the waiters per-write
+// publication wakes (9.4.2); otherwise each publishes immediately. Batches
+// nest; only the outermost end delivers.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_publication_batch_begin(obelisk_rt_context *context);
+obelisk_rt_status
+obelisk_rt_v1_scheduler_publication_batch_end(obelisk_rt_context *context);
 // Activate a compiler-grouped set of exact static-fanout compute nodes. This
 // is an internal clean-transaction leaf; dynamic/VPI handoff continues to use
 // ordinary scalar transition publication.

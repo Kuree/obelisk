@@ -2261,12 +2261,271 @@ void schedulerSignalTransition(obelisk_rt_context *context, uint64_t bitOffset,
   }
 }
 
+// The context whose merging publication batch this thread is executing.
+thread_local obelisk_rt_context *publicationBatchContext = nullptr;
+
+// The generated leaf of obelisk_rt_v1_scheduler_static_transition is valid
+// only while the installed exact-fanout plan is the active clean AOT kernel.
+// Otherwise the transition takes the ordinary transition path.
+bool staticTransitionTakesOrdinaryPath(const obelisk_rt_context *context) {
+  return activeNativeAOTContext != context || !canUseStaticAOTFanout(context) ||
+         ((context->nativeSchedulePlan->flags &
+           OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+          !context->nativeStaticEvalIslandCertified);
+}
+
+// IEEE 1800-2023 4.7 lets a statement without time control execute as one
+// event, so no process runs between the writes of a batch. Each condition
+// names a publication-time consumer of individual occurrences or of
+// intermediate values: force/assign masking (10.6.2), toggle coverage, clock
+// occurrences and covergroup clock events, VPI value-change callbacks (38.36.1,
+// 4.10), observer evaluation, signal snapshots, and computed or conditional
+// waits (9.4.2, 9.4.3). Without them, and without a runtime subscription of the
+// root (checked per transition), a publication only inserts pending
+// activations of the root's exact static fanout. Those are set members: a
+// waiter resumes on its first matching change and is then no longer waiting
+// (9.4.2), so the OR of the per-write masks selects the same waiters.
+bool publicationBatchCanMerge(const obelisk_rt_context *context) {
+  return context->schedulerStatus == OBELISK_RT_OK &&
+         context->forceMask.empty() && context->assignMask.empty() &&
+         !context->coverage && !context->clockOccurrences &&
+         !context->covergroupClockEvents && !context->vpiObservationDemand &&
+         !context->observerDepth && !context->observerForcesCanonicalPlane &&
+         context->signalValueSnapshots.empty() &&
+         context->pendingNativeComputedWaiters.empty() &&
+         context->pendingDesignComputedWaiters.empty() &&
+         !obelisk_rt_has_conditional_signal_waiters(context);
+}
+
+uint64_t extractBatchBits(const uint64_t *plane, uint64_t position,
+                          uint64_t width) {
+  uint64_t shift = position % 64;
+  uint64_t bits = plane[position / 64] >> shift;
+  if (shift != 0 && shift + width > 64)
+    bits |= plane[position / 64 + 1] << (64 - shift);
+  return bits & packedWidthMask(width);
+}
+
+// Replace the bits selected by the width-relative mask.
+void depositBatchBits(uint64_t *plane, uint64_t position, uint64_t width,
+                      uint64_t mask, uint64_t bits) {
+  uint64_t shift = position % 64;
+  uint64_t &low = plane[position / 64];
+  low = (low & ~(mask << shift)) | ((bits & mask) << shift);
+  if (shift != 0 && shift + width > 64) {
+    uint64_t &high = plane[position / 64 + 1];
+    high = (high & ~(mask >> (64 - shift))) | ((bits & mask) >> (64 - shift));
+  }
+}
+
+enum class BatchDeferral { Deferred, Flush, Publish };
+
+BatchDeferral deferStaticTransitionUnlocked(
+    obelisk_rt_context *context, uint32_t staticState, uint64_t lowBit,
+    uint64_t bitWidth, uint64_t oldValue, uint64_t oldUnknown,
+    uint64_t newValue, uint64_t newUnknown, uint64_t changed) {
+  PublicationBatch &batch = context->publicationBatch;
+  // A write under another logical identity (a fused activation's owned
+  // transition) suppresses a different self wakeup, and one from another
+  // AOT entry may take the generated leaf; both publish in order.
+  if (!batch.merging || batch.flushing ||
+      context->schedulerStatus != OBELISK_RT_OK ||
+      context->activeLogicalProcessToken != batch.logicalProcessToken ||
+      activeNativeAOTContext != batch.aotContext ||
+      context->signalSubscriptionObjectFilter
+              [signalSubscriptionObjectFilterIndex(
+                  OBELISK_RT_STABLE_HANDLE_STATIC, staticState)] != 0)
+    return BatchDeferral::Publish;
+  if (batch.staticID == 0) {
+    const NativeStaticState *state = findNativeStaticState(context, staticState);
+    if (!state || lowBit > state->bitWidth ||
+        bitWidth > state->bitWidth - lowBit)
+      return BatchDeferral::Publish;
+    batch.staticID = staticState;
+    batch.rootWidth = state->bitWidth;
+    batch.windowLow = lowBit - lowBit % PublicationBatch::kWindowBits;
+    batch.touchedLow = UINT64_MAX;
+    batch.touchedHigh = 0;
+  } else if (staticState != batch.staticID || lowBit < batch.windowLow ||
+             lowBit - batch.windowLow >= PublicationBatch::kWindowBits) {
+    return BatchDeferral::Flush;
+  } else if (lowBit > batch.rootWidth || bitWidth > batch.rootWidth - lowBit) {
+    return BatchDeferral::Publish;
+  }
+  uint64_t position = lowBit - batch.windowLow;
+  uint64_t mask = packedWidthMask(bitWidth);
+  // IEEE 1800-2023 9.4.2, Table 9-2, per write.
+  uint64_t oldZero = ~oldUnknown & ~oldValue & mask;
+  uint64_t oldOne = ~oldUnknown & oldValue & mask;
+  uint64_t newZero = ~newUnknown & ~newValue & mask;
+  uint64_t newOne = ~newUnknown & newValue & mask;
+  uint64_t posedge = (oldZero & ~newZero) | (oldUnknown & newOne);
+  uint64_t negedge = (oldOne & ~newOne) | (oldUnknown & newZero);
+  auto deposit = [&](PublicationBatch::Plane plane, uint64_t select,
+                     uint64_t bits) {
+    depositBatchBits(batch.plane(plane), position, bitWidth, select, bits);
+  };
+  deposit(PublicationBatch::Changed, changed, changed);
+  deposit(PublicationBatch::Posedge, posedge, posedge);
+  deposit(PublicationBatch::Negedge, negedge, negedge);
+  uint64_t unseen =
+      mask & ~extractBatchBits(batch.plane(PublicationBatch::Seen), position,
+                               bitWidth);
+  deposit(PublicationBatch::OldValue, unseen, oldValue);
+  deposit(PublicationBatch::OldUnknown, unseen, oldUnknown);
+  deposit(PublicationBatch::Seen, unseen, unseen);
+  deposit(PublicationBatch::NewValue, mask, newValue);
+  deposit(PublicationBatch::NewUnknown, mask, newUnknown);
+  batch.touchedLow = std::min(batch.touchedLow, position);
+  batch.touchedHigh = std::max(batch.touchedHigh, position + bitWidth);
+  return BatchDeferral::Deferred;
+}
+
+// Deliver the held window through the ordinary transition path, under the
+// logical identity that executed the writes.
+void flushPublicationBatch(obelisk_rt_context *context) {
+  // Only this thread fills its batch window (publicationBatchContext).
+  if (context->publicationBatch.staticID == 0)
+    return;
+  ContextTransaction transaction(context);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    PublicationBatch &batch = context->publicationBatch;
+    if (batch.staticID == 0 || batch.flushing)
+      return;
+    uint64_t firstWord = batch.touchedLow / 64;
+    uint64_t lastWord = (batch.touchedHigh - 1) / 64;
+    uint64_t low = batch.windowLow + firstWord * 64;
+    uint64_t width = batch.windowLow + batch.touchedHigh - low;
+    bool changed = false;
+    for (uint64_t word = firstWord; word <= lastWord; ++word)
+      changed |= batch.plane(PublicationBatch::Changed)[word] != 0;
+    struct Reset {
+      obelisk_rt_context *context;
+      uint64_t firstWord, lastWord, previousToken;
+      ~Reset() {
+        PublicationBatch &batch = context->publicationBatch;
+        for (unsigned plane = 0; plane != PublicationBatch::PlaneCount; ++plane)
+          std::fill(batch.plane(PublicationBatch::Plane(plane)) + firstWord,
+                    batch.plane(PublicationBatch::Plane(plane)) + lastWord + 1,
+                    uint64_t{0});
+        batch.staticID = 0;
+        batch.flushing = false;
+        context->activeLogicalProcessToken = previousToken;
+      }
+    } reset{context, firstWord, lastWord, context->activeLogicalProcessToken};
+    batch.flushing = true;
+    context->activeLogicalProcessToken = batch.logicalProcessToken;
+    if (changed && context->schedulerStatus == OBELISK_RT_OK) {
+      auto bytes = [&](PublicationBatch::Plane plane) {
+        return reinterpret_cast<const uint8_t *>(batch.plane(plane) +
+                                                 firstWord);
+      };
+      (void)publishNativeSignalTransitionUnlocked(
+          context,
+          obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC,
+                                          batch.staticID,
+                                          static_cast<int64_t>(low)),
+          width, bytes(PublicationBatch::Changed),
+          bytes(PublicationBatch::Posedge), bytes(PublicationBatch::Negedge),
+          bytes(PublicationBatch::OldValue),
+          bytes(PublicationBatch::OldUnknown),
+          bytes(PublicationBatch::NewValue),
+          bytes(PublicationBatch::NewUnknown), false);
+      // Publication is the only state change inside a batch. Should it select
+      // the generated leaf for later writes, they are no longer held.
+      batch.merging &= staticTransitionTakesOrdinaryPath(context);
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
+  }
+  OBELISK_RT_CATCH_ALL {
+    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+  }
+}
+
+bool deferBatchedStaticTransition(obelisk_rt_context *context,
+                                  uint32_t staticState, uint64_t lowBit,
+                                  uint64_t bitWidth, uint64_t oldValue,
+                                  uint64_t oldUnknown, uint64_t newValue,
+                                  uint64_t newUnknown, uint64_t changed) {
+  for (unsigned attempt = 0; attempt != 2; ++attempt) {
+    BatchDeferral result;
+    {
+      ContextMutexLock lock(context);
+      result = deferStaticTransitionUnlocked(context, staticState, lowBit,
+                                             bitWidth, oldValue, oldUnknown,
+                                             newValue, newUnknown, changed);
+    }
+    if (result != BatchDeferral::Flush)
+      return result == BatchDeferral::Deferred;
+    flushPublicationBatch(context);
+  }
+  return false;
+}
+
 } // namespace
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_publication_batch_begin(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    PublicationBatch &batch = context->publicationBatch;
+    if (batch.depth++ != 0)
+      return OBELISK_RT_OK;
+    // One statement executes in one context, so this replaces any marker a
+    // terminally failed batch left behind on this thread.
+    batch.merging = staticTransitionTakesOrdinaryPath(context) &&
+                    publicationBatchCanMerge(context);
+    if (!batch.merging)
+      return OBELISK_RT_OK;
+    if (batch.words.empty())
+      batch.words.assign(PublicationBatch::PlaneCount *
+                             (PublicationBatch::kWindowWords + 1),
+                         0);
+    batch.logicalProcessToken = context->activeLogicalProcessToken;
+    batch.aotContext = activeNativeAOTContext;
+    publicationBatchContext = context;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) {
+    // Merging is only an optimization; publish every write instead.
+    context->publicationBatch.merging = false;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_publication_batch_end(obelisk_rt_context *context) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  {
+    ContextMutexLock lock(context);
+    PublicationBatch &batch = context->publicationBatch;
+    if (batch.depth == 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    if (--batch.depth != 0)
+      return OBELISK_RT_OK;
+  }
+  flushPublicationBatch(context);
+  ContextMutexLock lock(context);
+  context->publicationBatch.merging = false;
+  if (publicationBatchContext == context)
+    publicationBatchContext = nullptr;
+  return OBELISK_RT_OK;
+}
 
 extern "C" void obelisk_rt_v1_scheduler_signal_transition(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown) {
+  // Held batch transitions precede this one in source order.
+  if (publicationBatchContext && publicationBatchContext == context)
+    flushPublicationBatch(context);
   schedulerSignalTransition(context, bitOffset, bitWidth, oldValue, oldUnknown,
                             newValue, newUnknown, false);
 }
@@ -2330,13 +2589,21 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition(
   if (changed == 0)
     return;
 
-  // The generated leaf is valid only while the installed exact-fanout plan is
-  // the active clean AOT kernel. A mid-slot handover remains correct by
-  // entering the ordinary transition path with the same scalar planes.
-  if (activeNativeAOTContext != context || !canUseStaticAOTFanout(context) ||
-      ((context->nativeSchedulePlan->flags &
-        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-       !context->nativeStaticEvalIslandCertified)) {
+  // A merging publication batch holds the transitions it proved take the
+  // ordinary path below. The generated AOT leaf publishes differently (an
+  // eval island has already raised its own ingress), so it is never held; it
+  // follows the held writes.
+  if (publicationBatchContext == context) {
+    if (deferBatchedStaticTransition(context, staticState, lowBit, bitWidth,
+                                     oldValue, oldUnknown, newValue,
+                                     newUnknown, changed))
+      return;
+    flushPublicationBatch(context);
+  }
+
+  // A mid-slot handover remains correct by entering the ordinary transition
+  // path with the same scalar planes.
+  if (staticTransitionTakesOrdinaryPath(context)) {
     uint64_t handle = obelisk_rt_stable_handle_encode(
         OBELISK_RT_STABLE_HANDLE_STATIC, staticState,
         static_cast<int64_t>(lowBit));

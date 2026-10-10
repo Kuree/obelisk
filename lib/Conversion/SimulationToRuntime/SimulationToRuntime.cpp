@@ -468,6 +468,25 @@ public:
   }
 };
 
+template <typename SimOp, typename RuntimeOp>
+class PublicationBatchConversion final : public SimIOConversion<SimOp> {
+public:
+  using SimIOConversion<SimOp>::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(SimOp op,
+                  typename SimIOConversion<SimOp>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value status = RuntimeOp::create(
+        rewriter, loc, runtime::StatusType::get(rewriter.getContext()),
+        runtimeContext(rewriter, loc, adaptor.getContext().front()));
+    sim::SimStatusCheckOp::create(rewriter, loc, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class SchedulerTimeConversion final
     : public SimIOConversion<sim::SimTimeNowOp> {
 public:
@@ -824,7 +843,8 @@ public:
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimTimeFormatOp, sim::SimTimeScanScaleOp,
         sim::SimFinishOp, sim::SimProgramExitOp, sim::SimStopOp,
-        sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
+        sim::SimFatalOp, sim::SimErrorOp, sim::SimPublicationBatchBeginOp,
+        sim::SimPublicationBatchEndOp, sim::SimTerminationRequestedOp,
         sim::SimTimeNowOp, sim::SimDisplayOp, sim::SimStringOutputFormatOp,
         sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
         sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
@@ -867,6 +887,11 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
   patterns.add<ProgramExitConversion>(converter, context);
   patterns.add<ErrorConversion, TerminationRequestedConversion,
                SchedulerTimeConversion>(converter, context);
+  patterns.add<PublicationBatchConversion<sim::SimPublicationBatchBeginOp,
+                                          runtime::RTPublicationBatchBeginOp>,
+               PublicationBatchConversion<sim::SimPublicationBatchEndOp,
+                                          runtime::RTPublicationBatchEndOp>>(
+      converter, context);
   patterns.add<OpenConversion<sim::SimFileOpenMCDOp, runtime::RTFileOpenMCDOp>,
                OpenConversion<sim::SimFileOpenOp, runtime::RTFileOpenOp>,
                DescriptorTaskConversion<sim::SimFileCloseOp,

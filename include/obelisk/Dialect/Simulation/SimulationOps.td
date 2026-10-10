@@ -2939,6 +2939,39 @@ def SimErrorOp : SimOp<"error", [
   let assemblyFormat = "$context attr-dict";
 }
 
+// Plain storage stays free to move across a batch: a store moved out publishes
+// alone and a store moved in is merged, both exact. Every effect at which
+// another process or an observer could run is ordered against it.
+class SimPublicationBatchOp<string mnemonic>
+    : SimOp<mnemonic, [MemoryEffects<[
+          MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+          MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+          MemRead<SimExternalResource>, MemWrite<SimExternalResource>,
+          MemRead<SimIOResource>, MemWrite<SimIOResource>]>]> {
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimPublicationBatchBeginOp
+    : SimPublicationBatchOp<"publication.batch_begin"> {
+  let summary = "begin executing one statement as one event";
+  let description = [{
+    Brackets, with `sim.publication.batch_end`, a statement that the process
+    executes as one event (IEEE 1800-2023 4.7): in between there is no time
+    control and no operation that may observe signal values or run another
+    process. The runtime may then deliver the update events of the stores in
+    between together, with the OR of every store's change and edge masks. That
+    wakes exactly the waiters that per-store publication wakes (9.4.2); while
+    any observer of individual occurrences exists each store still publishes
+    immediately. Batches nest. Merging never changes semantics, so a backend
+    may drop both operations.
+  }];
+}
+
+def SimPublicationBatchEndOp : SimPublicationBatchOp<"publication.batch_end"> {
+  let summary = "deliver the update events held since the matching begin";
+}
+
 def SimTerminationRequestedOp : SimOp<"termination.requested", [
   MemoryEffects<[MemRead<SimSchedulerResource>]>
 ]> {

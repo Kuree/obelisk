@@ -815,6 +815,30 @@ schedulerSelfTriggerExecute(obelisk_rt_process_instance_v1 *instance) {
   return OBELISK_RT_OK;
 }
 
+unsigned schedulerWaitWakeCount;
+
+// Count resumptions and wait again on schedulerWaitHandle.
+obelisk_rt_status
+schedulerWaitCountExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action || !instance->context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  if (instance->continuation != 0)
+    ++schedulerWaitWakeCount;
+  auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  *entry = {schedulerWaitHandle, OBELISK_RT_WAIT_EDGE_CHANGE,
+            schedulerWaitWidth};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_CHANGE,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       48};
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 schedulerCheckpointThenNativeExecute(obelisk_rt_process_instance_v1 *instance) {
   if (!instance || !instance->action)
@@ -3440,6 +3464,102 @@ TEST(Scheduler, AOTStaticTransitionRetriggersTheExecutingWait) {
   EXPECT_TRUE(context->scheduledProcesses.empty());
   schedulerSelfTriggerStaticState = 0;
   obelisk_rt_v1_context_destroy(context);
+}
+
+// IEEE 1800-2023 4.7, 9.4.2: writes held by a publication batch wake each
+// static-fanout waiter exactly as per-write publication does: once, even when
+// the waited bits change and change back, and never a waiter whose bits no
+// write changed. An observer of individual occurrences (here VPI) disables
+// holding, and the outcome never depends on the batch. A waiter beyond the
+// first window makes the batch deliver one window before holding the next.
+TEST(Scheduler, PublicationBatchMergesStaticTransitions) {
+  constexpr uint64_t rootWidth = PublicationBatch::kWindowBits + 16;
+  auto wakes = [](uint64_t waitLow, bool batched, bool vpiObserved,
+                  bool touchWaitedBits) {
+    AOTTestState state;
+    const obelisk_rt_static_fanout_entry fanout[] = {
+        {1, 0, 1, OBELISK_RT_WAIT_EDGE_CHANGE, 1, 0, waitLow, 8},
+    };
+    obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+    plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+                 OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT;
+    plan.fanout_entries = fanout;
+    plan.fanout_entry_count = std::size(fanout);
+    obelisk_rt_execution_descriptor_v1 execution{};
+    execution.version = OBELISK_RT_VERSION;
+    execution.state_bit_count = rootWidth;
+    obelisk_rt_context *context = nullptr;
+    EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_native_state_register_static(context, 1, 0, rootWidth),
+        OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+              OBELISK_RT_OK);
+    SchedulerFixture fixture(44);
+    fixture.descriptor.execution = &execution;
+    fixture.descriptor.native_execute = schedulerWaitCountExecute;
+    schedulerWaitHandle = obelisk_rt_stable_handle_encode(
+        OBELISK_RT_STABLE_HANDLE_STATIC, 1, static_cast<int64_t>(waitLow));
+    schedulerWaitWidth = 8;
+    schedulerWaitWakeCount = 0;
+    EXPECT_EQ(obelisk_rt_v1_scheduler_add_aot(context,
+                                              makeSchedulerInstance(fixture), 0,
+                                              0, 0, nullptr, nullptr, 0,
+                                              nullptr, 0),
+              OBELISK_RT_OK);
+    constexpr obelisk_rt_native_schedule_node nodes[] = {
+        {0, 0, UINT32_MAX},
+        {0, 1, UINT32_MAX},
+    };
+    EXPECT_EQ(
+        obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+        OBELISK_RT_OK);
+    EXPECT_EQ(schedulerWaitWakeCount, 0u);
+
+    context->vpiObservationDemand = vpiObserved;
+    if (batched) {
+      EXPECT_EQ(obelisk_rt_v1_scheduler_publication_batch_begin(context),
+                OBELISK_RT_OK);
+      EXPECT_EQ(obelisk_rt_v1_scheduler_publication_batch_begin(context),
+                OBELISK_RT_OK);
+    }
+    obelisk_rt_v1_scheduler_static_transition(context, 1, 0, 8, 0, 0, 0xa5, 0);
+    if (touchWaitedBits) {
+      obelisk_rt_v1_scheduler_static_transition(context, 1, waitLow, 8, 0, 0,
+                                                0x5a, 0);
+      obelisk_rt_v1_scheduler_static_transition(context, 1, waitLow, 8, 0x5a,
+                                                0, 0, 0);
+    }
+    if (batched) {
+      bool held = !vpiObserved;
+      EXPECT_EQ(context->publicationBatch.staticID != 0, held);
+      EXPECT_EQ(obelisk_rt_v1_scheduler_publication_batch_end(context),
+                OBELISK_RT_OK);
+      // Only the outermost end delivers the held window.
+      EXPECT_EQ(context->publicationBatch.staticID != 0, held);
+      EXPECT_EQ(obelisk_rt_v1_scheduler_publication_batch_end(context),
+                OBELISK_RT_OK);
+      EXPECT_EQ(context->publicationBatch.staticID, 0u);
+      EXPECT_EQ(obelisk_rt_v1_scheduler_publication_batch_end(context),
+                OBELISK_RT_INVALID_LIFECYCLE);
+    }
+    context->vpiObservationDemand = false;
+    EXPECT_EQ(
+        obelisk_rt_v1_scheduler_run_aot_nodes(context, nodes, std::size(nodes)),
+        OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(context);
+    return schedulerWaitWakeCount;
+  };
+  for (uint64_t waitLow : {uint64_t{8}, PublicationBatch::kWindowBits + 8}) {
+    for (bool touchWaitedBits : {false, true}) {
+      unsigned expected = touchWaitedBits ? 1u : 0u;
+      EXPECT_EQ(wakes(waitLow, true, false, touchWaitedBits), expected);
+      EXPECT_EQ(wakes(waitLow, false, false, touchWaitedBits), expected);
+      EXPECT_EQ(wakes(waitLow, true, true, touchWaitedBits),
+                wakes(waitLow, false, true, touchWaitedBits));
+    }
+  }
 }
 
 TEST(Scheduler, AOTStaticTransitionCanSuppressTheExecutingWait) {

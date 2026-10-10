@@ -14,13 +14,18 @@ module attributes {
         -> (!simulation.logic<13>, i32, i64)
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %fd = arith.constant 2147483648 : i32
+      simulation.publication.batch_begin %ctx
       %data, %kind, %address =
           simulation.file.readmem_token %ctx, %fd {radix = #simulation.radix<hex>} :
           (!simulation.context, i32) -> (!simulation.logic<13>, i32, i64)
+      simulation.publication.batch_end %ctx
       simulation.return %data, %kind, %address :
           !simulation.logic<13>, i32, i64
     }
   }
 }
 
+// The interpreter publishes each store itself, so the publication batch that
+// brackets a $readmem encodes no instruction.
 // CHECK: intrinsic 0: id=0x00010113 inputs=2 outputs=3 flags=0
+// CHECK-NOT: intrinsic 1:

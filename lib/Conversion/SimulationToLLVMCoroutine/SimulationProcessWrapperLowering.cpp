@@ -378,6 +378,7 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
       mayTerminate |=
           isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
               sim::SimProgramExitOp, sim::SimErrorOp,
+              sim::SimPublicationBatchBeginOp, sim::SimPublicationBatchEndOp,
               sim::SimTerminationRequestedOp, sim::SimStatusCheckOp,
               sim::SimDisplayOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
               sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,

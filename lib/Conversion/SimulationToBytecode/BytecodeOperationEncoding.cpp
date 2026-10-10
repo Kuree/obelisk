@@ -122,6 +122,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicFatal, {op.getVerbosity()}, {});
   if (isa<sim::SimErrorOp>(operation))
     return emitIntrinsic(plan, kIntrinsicError, {}, {});
+  // The interpreter publishes each store itself; merging is optional.
+  if (isa<sim::SimPublicationBatchBeginOp, sim::SimPublicationBatchEndOp>(
+          operation))
+    return success();
   if (auto op = dyn_cast<sim::SimTerminationRequestedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicTerminationRequested, {},
                          {op.getResult()});

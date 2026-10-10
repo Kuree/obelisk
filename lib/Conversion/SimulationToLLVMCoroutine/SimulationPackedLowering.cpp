@@ -995,7 +995,8 @@ LogicalResult lowerPackedSimulationOperations(
                         schedule::NativeWordExtractOp>();
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
-        sim::SimFatalOp, sim::SimErrorOp, sim::SimTerminationRequestedOp,
+        sim::SimFatalOp, sim::SimErrorOp, sim::SimPublicationBatchBeginOp,
+        sim::SimPublicationBatchEndOp, sim::SimTerminationRequestedOp,
         sim::SimProgramExitOp, sim::SimTimeNowOp, sim::SimDisplayOp,
         sim::SimStringOutputFormatOp, sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
         sim::SimFileCloseOp, sim::SimFileFlushOp, sim::SimFileGetcOp,

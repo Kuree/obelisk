@@ -454,6 +454,19 @@ remain excluded under 10.6 and 21.7. Large partial updates retain their canonica
 stores and forward eligible loads, avoiding whole-memory copies for sparse
 writes.
 
+A `$readmemb` or `$readmemh` call has no time control, so it may execute as one
+event (4.7). Its lowering keeps every element store and brackets the word loop
+with `sim.publication.batch_begin` and `sim.publication.batch_end`. Static
+transitions that would take the ordinary publication path are then held per
+root window and delivered once, carrying the OR of every write's change and
+Table 9-2 edge masks. Every change still contributes, and a waiter resumed by
+an earlier write is no longer waiting for a later one (9.4.2), so the same
+processes wake. Holding requires that no consumer sees individual occurrences:
+no VPI value-change demand (38.36.1, 4.10), computed or conditional wait (9.4.3),
+toggle coverage, clock occurrence, force or assign, signal snapshot, or runtime
+subscription of the root. The bytecode tier publishes each store and ignores
+the batch.
+
 `schedule-optimize-native-aggregates` forwards SSA array reads from preceding
 updates at the same selector when dense scoped ranges prove that selector known
 and in bounds. It also removes overwritten updates and read/write identities;

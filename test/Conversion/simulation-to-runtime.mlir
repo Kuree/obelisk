@@ -59,6 +59,8 @@ module {
     simulation.stop %ctx, %verbosity
     simulation.fatal %ctx, %verbosity
     simulation.error %ctx
+    simulation.publication.batch_begin %ctx
+    simulation.publication.batch_end %ctx
     %termination_requested = simulation.termination.requested %ctx
     return %line, %line_count, %data, %read_count : i13, i32, i13, i32
   }
@@ -193,6 +195,10 @@ module {
 // CHECK-NEXT: simulation.status.check %[[FATAL_STATUS]]
 // CHECK: %[[ERROR_STATUS:.*]] = runtime.error
 // CHECK-NEXT: simulation.status.check %[[ERROR_STATUS]]
+// CHECK: %[[BATCH_BEGIN_STATUS:.*]] = runtime.publication.batch_begin
+// CHECK-NEXT: simulation.status.check %[[BATCH_BEGIN_STATUS]]
+// CHECK: %[[BATCH_END_STATUS:.*]] = runtime.publication.batch_end
+// CHECK-NEXT: simulation.status.check %[[BATCH_END_STATUS]]
 // CHECK: %[[TERMINATION_REQUESTED:.*]] = runtime.termination.requested
 
 // CHECK-LABEL: func.func @aggregate_io(

@@ -1726,6 +1726,10 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_static_transition,
 ABI_FUNCTION(obelisk_rt_v1_scheduler_static_transition_owned,
              void (*)(obelisk_rt_context *, uint32_t, uint32_t, uint64_t,
                       uint64_t, uint64_t, uint64_t, uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_publication_batch_begin,
+             obelisk_rt_status (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_publication_batch_end,
+             obelisk_rt_status (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_activate_static_nodes,
              void (*)(obelisk_rt_context *, const uint64_t *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_real_transition,
