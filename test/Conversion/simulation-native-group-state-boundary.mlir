@@ -69,12 +69,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   // CHECK-LABEL: llvm.func @group()
   // CHECK-SAME: schedule.eval.ssa_unknown_ranges = 1 : i64
   // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
-  // CHECK: %[[X:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
-  // CHECK: %[[XP:.*]] = llvm.getelementptr %[[X]][0]
-  // CHECK: llvm.load %[[XP]]{{[ {]}}
-  // CHECK: %[[V:.*]] = llvm.mlir.addressof @__obelisk_state_value
-  // CHECK: %[[VP:.*]] = llvm.getelementptr %[[V]][0]
+  // Acquire at the first access, while addresses remain hoisted.
+  // CHECK-DAG: %[[X:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+  // CHECK-DAG: %[[XP:.*]] = llvm.getelementptr %[[X]][0]
+  // CHECK-DAG: %[[V:.*]] = llvm.mlir.addressof @__obelisk_state_value
+  // CHECK-DAG: %[[VP:.*]] = llvm.getelementptr %[[V]][0]
   // CHECK: llvm.load %[[VP]]{{[ {]}}
+  // CHECK: llvm.load %[[XP]]{{[ {]}}
   // CHECK: llvm.store {{.*}}, %[[VP]]{{[ {]}}
   // CHECK-NEXT: llvm.store {{.*}}, %[[XP]]{{[ {]}}
   // CHECK-NEXT: {{.*}}llvm.call @mutate()

@@ -1080,9 +1080,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     evalScheduler = cleanSuperstep && staticFanoutPlan.exact;
   if (staticSpecialization && useAOT) {
     FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
-        buildNativeStaticActorRootPlan(module, *stateLayout,
-                                       aotEligibility.getActorSlots(),
-                                       checkpointOnlyActors);
+        buildNativeStaticActorRootPlan(
+            module, *stateLayout, aotEligibility.getActorSlots(),
+            checkpointOnlyActors, vpi.allowsWrite(), writableVPIUnscopedActors);
     if (failed(dependencies))
       return failure();
     staticActorRoots = std::move(*dependencies);
@@ -1700,6 +1700,13 @@ LogicalResult NativePipelineAnalysis::resolveEval() {
           periodicAliases);
       if (failed(resolvedEval))
         return failure();
+      // Source observers/overrides retain their ordered lifetime. Writable
+      // VPI instead uses the existing scoped guards and exports the captured
+      // continuation before a foreign cut (LRM 38.15/38.34, 4.9.4). The
+      // writable service and Tier-2/3 routing are absent from off/read code.
+      if (hasLanguageObserver || hasLanguageOverride ||
+          !module->hasAttr(sim::metadata::nativeClosedExecutable))
+        resolvedEval->transaction.roots.clear();
     }
   }
 

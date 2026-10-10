@@ -4302,6 +4302,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
           design, sorted(observers->observable));
       ::obelisk::schedule::set<schedule::metadata::nbaChangeWatched>(
           design, sorted(observers->changeWatched));
+      if (observers->immediateWriters)
+        schedule::set<schedule::Field::NbaImmediateWriters>(
+            design, sorted(*observers->immediateWriters));
       // Keep original activation dependencies: a fused summary would connect
       // unrelated reads and writes. Sparse backward dataflow closes observer
       // influence through immediate state updates and aliases before fusion.
@@ -4333,6 +4336,40 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
       preserveEvalNBASiteOrigins(function);
   analysis::SimulationVPIAnalysis vpi =
       analysis::SimulationVPIAnalysis::compute(design);
+  if (vpi.allowsWrite() &&
+      !schedule::has<schedule::Field::NbaGuardedPrivateInfluence>(design))
+    if (auto observers = computeNBATransientObservers(design, true)) {
+      // LRM 38.15/38.34, 4.9.4: capability alone is not a live observer.
+      // Preserve a separate source-only proof before fusion; native lowering
+      // may use it only behind its writable visibility guard and foreign cut.
+      // Source DPI/unknown effects still reject this certificate.
+      using Influence = analysis::NBAInfluenceAnalysis;
+      SmallVector<Influence::Root> sinks;
+      for (uint64_t root : observers->observable)
+        sinks.emplace_back(schedule::ComputeResourceKind::Storage, root);
+      for (uint64_t root : observers->netObservable)
+        sinks.emplace_back(schedule::ComputeResourceKind::Net, root);
+      Influence influence(design, sinks, true);
+      SmallVector<int64_t> roots;
+      design.walk([&](sim::SimStorageDeclOp storage) {
+        if (!observers->changeWatched.contains(storage.getId()) &&
+            !influence.mayReachObserver(
+                {schedule::ComputeResourceKind::Storage, storage.getId()}))
+          roots.push_back(storage.getId());
+      });
+      llvm::sort(roots);
+      schedule::set<schedule::Field::NbaGuardedPrivateInfluence>(
+          design, DenseI64ArrayAttr::get(design.getContext(), roots));
+      // Writer completeness is independent of observation. Keep this source
+      // inventory in full too, without authorizing unread-state elimination.
+      if (observers->immediateWriters) {
+        SmallVector<int64_t> writers(observers->immediateWriters->begin(),
+                                     observers->immediateWriters->end());
+        llvm::sort(writers);
+        schedule::set<schedule::Field::NbaImmediateWriters>(
+            design, DenseI64ArrayAttr::get(design.getContext(), writers));
+      }
+    }
   bool prepareTier1Promotion =
       evalScheduler && !vpi.allowsWrite() &&
       (cloneEvaluators || vpi.getMode() == schedule::ComputeVPIMode::Off);

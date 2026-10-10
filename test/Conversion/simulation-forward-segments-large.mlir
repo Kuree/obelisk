@@ -9,8 +9,9 @@
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, {{.*}}27, 28>
 // Deferred readiness is charged before expansion; the remaining helper
-// budget admits one state range. Readiness itself already uses region SSA.
-// PLAN-SAME: schedule.eval.ssa_value_ranges = 1 : i64
+// budget admits four state ranges using their actual joins and memory cuts.
+// Readiness itself already uses region SSA.
+// PLAN-SAME: schedule.eval.ssa_value_ranges = 4 : i64
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_2(
 // PLAN-SAME: schedule.eval.cache_hint_words = 2 : i64
 // PLAN-SAME: schedule.eval.predicated_dataflow

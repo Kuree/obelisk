@@ -46,8 +46,9 @@ module attributes {
 // CHECK-SAME: %{{.*}}: !llvm.ptr, %{{.*}}: i1,
 // CHECK-SAME: %{{.*}}: i8, %{{.*}}: i8, %{{.*}}: i8, %{{.*}}: i8)
 // CHECK-SAME: -> !llvm.struct<(i8, i8)>
-// CHECK: llvm.select
-// CHECK: llvm.select
+// The private callee's only call supplies a true condition, so IPO removes
+// both plane selections while retaining the stable function signature.
+// CHECK-NOT: llvm.select
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @caller(
 // CHECK: llvm.call @select

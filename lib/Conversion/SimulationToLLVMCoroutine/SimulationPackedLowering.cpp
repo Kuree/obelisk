@@ -970,38 +970,41 @@ LogicalResult lowerPackedSimulationOperations(
   if (virtualTaskABI.wasInterrupted())
     return failure();
   ReferenceArgumentMap referenceArguments;
-  WalkResult lifetimeInputs = module.walk<
-      WalkOrder::PreOrder>([&](sim::SimFuncOp function) {
-    if (function.getBody().empty())
-      return WalkResult::skip();
-    // Observer captures are borrowed from the persistent computed-wait
-    // record. Unlike an ordinary direct call, invoking an observer does not
-    // transfer one retained reference per argument, so its return must not
-    // consume captured automatic state. The waiting activation owns that
-    // state across suspension and releases it on resumption or cancellation.
-    if (function.getEntryKind() == sim::EntryKind::Observer ||
-        ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
-      return WalkResult::skip();
-    unsigned physical = 0;
-    for (BlockArgument argument : function.getBody().front().getArguments()) {
-      SmallVector<Type> converted;
-      if (failed(packedConverter.convertType(argument.getType(), converted)))
-        return WalkResult::interrupt();
-      if (isa<sim::RefType>(argument.getType())) {
-        if (converted.size() != 1)
-          return WalkResult::interrupt();
-        referenceArguments[function.getOperation()].push_back(physical);
-      }
-      physical += converted.size();
-    }
-    SmallVector<int64_t> referenceIndices;
-    for (unsigned index : referenceArguments[function.getOperation()])
-      referenceIndices.push_back(index);
-    function->setAttr(nativeTransferredReferencesAttr,
-                      DenseI64ArrayAttr::get(context, referenceIndices));
-    return WalkResult::skip();
-  });
+  WalkResult lifetimeInputs =
+      module.walk<WalkOrder::PreOrder>([&](sim::SimFuncOp function) {
+        if (function.getBody().empty())
+          return WalkResult::skip();
+        // Observer captures are borrowed from the persistent computed-wait
+        // record. Unlike an ordinary direct call, invoking an observer does not
+        // transfer one retained reference per argument, so its return must not
+        // consume captured automatic state. The waiting activation owns that
+        // state across suspension and releases it on resumption or
+        // cancellation.
+        if (function.getEntryKind() == sim::EntryKind::Observer ||
+            ::obelisk::schedule::has<
+                ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
+          return WalkResult::skip();
+        unsigned physical = 0;
+        for (BlockArgument argument :
+             function.getBody().front().getArguments()) {
+          SmallVector<Type> converted;
+          if (failed(
+                  packedConverter.convertType(argument.getType(), converted)))
+            return WalkResult::interrupt();
+          if (isa<sim::RefType>(argument.getType())) {
+            if (converted.size() != 1)
+              return WalkResult::interrupt();
+            referenceArguments[function.getOperation()].push_back(physical);
+          }
+          physical += converted.size();
+        }
+        SmallVector<int64_t> referenceIndices;
+        for (unsigned index : referenceArguments[function.getOperation()])
+          referenceIndices.push_back(index);
+        function->setAttr(nativeTransferredReferencesAttr,
+                          DenseI64ArrayAttr::get(context, referenceIndices));
+        return WalkResult::skip();
+      });
   if (lifetimeInputs.wasInterrupted())
     return failure();
   markTiming("managed lifetime inventory");
@@ -1052,10 +1055,9 @@ LogicalResult lowerPackedSimulationOperations(
   populatePackedPatterns(packedConverter, packedPatterns);
   auto configurePackedTarget = [&](ConversionTarget &target,
                                    SimulationToStandardTypeConverter &c) {
-    target.addIllegalOp<schedule::NativeWordTableOp,
-                        schedule::NativeWordReverseOp,
-                        schedule::NativeWordResizeLanesOp,
-                        schedule::NativeWordExtractOp>();
+    target.addIllegalOp<
+        schedule::NativeWordTableOp, schedule::NativeWordReverseOp,
+        schedule::NativeWordResizeLanesOp, schedule::NativeWordExtractOp>();
     target.addIllegalOp<
         sim::SimBytesConstantOp, sim::SimFinishOp, sim::SimStopOp,
         sim::SimFatalOp, sim::SimErrorOp, sim::SimPublicationBatchBeginOp,
@@ -1076,12 +1078,12 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimOverrideOp, sim::SimDynamicOverrideOp,
         sim::SimReleaseOverrideOp, sim::SimNetExtractOp, sim::SimRefExtractOp,
         sim::SimRefDynExtractOp, schedule::NativeWordViewOp,
-        sim::SimRefSubelementOp,
-        sim::SimRefArrayElementOp, sim::SimNetReadOp, sim::SimNetCountDriversOp,
-        sim::SimPassSwitchControlOp, sim::SimPassSwitchControlDelayedOp,
-        sim::SimMosDriveDelayedOp, sim::SimDriverDriveInertialOp,
-        sim::SimDriverDriveInertialPathOp, sim::SimRefStoreInertialPathOp,
-        sim::SimDriverDriveOp, sim::SimDriverDriveInertialStrengthPairOp,
+        sim::SimRefSubelementOp, sim::SimRefArrayElementOp, sim::SimNetReadOp,
+        sim::SimNetCountDriversOp, sim::SimPassSwitchControlOp,
+        sim::SimPassSwitchControlDelayedOp, sim::SimMosDriveDelayedOp,
+        sim::SimDriverDriveInertialOp, sim::SimDriverDriveInertialPathOp,
+        sim::SimRefStoreInertialPathOp, sim::SimDriverDriveOp,
+        sim::SimDriverDriveInertialStrengthPairOp,
         sim::SimDriverDriveInertialPathStrengthPairOp,
         sim::SimDriverDriveDelayedNetOp, sim::SimDriverDriveChangedOp,
         sim::SimDriverExtractOp, sim::SimDriverDynExtractOp,
@@ -1218,18 +1220,52 @@ LogicalResult lowerPackedSimulationOperations(
 
   SmallVector<SmallVector<Operation *>> functionChunks;
   constexpr size_t functionsPerChunk = 64;
+  constexpr uint64_t operationsPerChunk = 4096;
+  uint64_t chunkOperations = 0;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
+        uint64_t operations = 0;
+        function.walk([&](Operation *) { ++operations; });
         if (functionChunks.empty() ||
             functionChunks.back().size() == functionsPerChunk ||
+            chunkOperations + operations > operationsPerChunk ||
             ::obelisk::schedule::has<cleanEvalBodyAttr>(
                 functionChunks.back().front()) !=
-                ::obelisk::schedule::has<cleanEvalBodyAttr>(function))
+                ::obelisk::schedule::has<cleanEvalBodyAttr>(function)) {
           functionChunks.emplace_back();
+          chunkOperations = 0;
+        }
         functionChunks.back().push_back(function);
+        chunkOperations += operations;
       });
+  struct ChunkTiming {
+    std::string largestFunction;
+    uint64_t sourceOps = 0;
+    uint64_t loweredOps = 0;
+    double cfgSeconds = 0;
+    double storageSeconds = 0;
+    double conversionSeconds = 0;
+  };
+  std::vector<ChunkTiming> chunkTimings(functionChunks.size());
   if (failed(failableParallelForEach(
-          context, functionChunks, [&](ArrayRef<Operation *> functions) {
+          context, llvm::seq<size_t>(0, functionChunks.size()),
+          [&](size_t index) {
+            ArrayRef<Operation *> functions = functionChunks[index];
+            auto &timing = chunkTimings[index];
+            auto started = std::chrono::steady_clock::now();
+            if (detailedTiming) {
+              uint64_t largest = 0;
+              for (Operation *function : functions) {
+                uint64_t count = 0;
+                function->walk([&](Operation *) { ++count; });
+                timing.sourceOps += count;
+                if (count > largest) {
+                  largest = count;
+                  timing.largestFunction =
+                      cast<sim::SimFuncOp>(function).getSymName().str();
+                }
+              }
+            }
             // Access guards can split blocks. Expose CFG before reference
             // lowering and before signature conversion records block-indexed
             // two-state metadata. Keep access operations themselves intact so
@@ -1243,8 +1279,10 @@ LogicalResult lowerPackedSimulationOperations(
             if (failed(applyPartialConversion(functions, controlTarget,
                                               std::move(controlPatterns))))
               return failure();
+            auto cfgDone = std::chrono::steady_clock::now();
             LocalStorageLowering locals(functions, dataLayout,
                                         byteAddressableState);
+            auto storageDone = std::chrono::steady_clock::now();
             SimulationToStandardTypeConverter workerConverter;
             configurePackedConverter(workerConverter);
             locals.addValueConversions(workerConverter);
@@ -1256,10 +1294,33 @@ LogicalResult lowerPackedSimulationOperations(
             FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
             ConversionTarget workerTarget(*context);
             configurePackedTarget(workerTarget, workerConverter);
-            return applyFullConversion(functions, workerTarget, workerFrozen);
+            LogicalResult result =
+                applyFullConversion(functions, workerTarget, workerFrozen);
+            if (detailedTiming) {
+              auto converted = std::chrono::steady_clock::now();
+              timing.cfgSeconds =
+                  std::chrono::duration<double>(cfgDone - started).count();
+              timing.storageSeconds =
+                  std::chrono::duration<double>(storageDone - cfgDone).count();
+              timing.conversionSeconds =
+                  std::chrono::duration<double>(converted - storageDone)
+                      .count();
+              for (Operation *function : functions)
+                function->walk([&](Operation *) { ++timing.loweredOps; });
+            }
+            return result;
           })))
     return failure();
   markTiming("parallel function conversion");
+  if (detailedTiming)
+    for (const auto &timing : chunkTimings)
+      if (timing.cfgSeconds + timing.storageSeconds + timing.conversionSeconds >
+          1.0)
+        llvm::errs() << "obelisk packed chunk: " << timing.largestFunction
+                     << ": " << timing.sourceOps << " -> " << timing.loweredOps
+                     << " ops; CFG " << timing.cfgSeconds << " s; storage "
+                     << timing.storageSeconds << " s; conversion "
+                     << timing.conversionSeconds << " s\n";
   SmallVector<Operation *> nonFunctionRoots;
   for (Operation &operation : *module.getBody()) {
     if (auto design = dyn_cast<sim::SimDesignOp>(operation)) {
@@ -1284,51 +1345,52 @@ LogicalResult lowerPackedSimulationOperations(
   // doing this inside the signature pattern would not update future one-to-N
   // operand adaptors owned by the conversion driver.
   WalkResult specializedBlockArguments =
-      ::obelisk::detail::walkNativeFunctions<
-          sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
-        auto mappings =
-            function->getAttrOfType<ArrayAttr>(nativeTwoStateBlockUnknownsAttr);
-        if (!mappings)
-          return WalkResult::advance();
-        if (mappings.size() != function.getBody().getBlocks().size()) {
-          function.emitOpError(
-              "has invalid native two-state block-argument metadata");
-          return WalkResult::interrupt();
-        }
-        OpBuilder builder(context);
-        for (auto [block, mapping] :
-             llvm::zip_equal(function.getBody(), mappings)) {
-          auto indices = dyn_cast<DenseI64ArrayAttr>(mapping);
-          if (!indices) {
-            function.emitOpError(
-                "has malformed native two-state block-argument metadata");
-            return WalkResult::interrupt();
-          }
-          builder.setInsertionPointToStart(&block);
-          for (int64_t index : indices.asArrayRef()) {
-            if (index < 0 ||
-                static_cast<uint64_t>(index) >= block.getNumArguments()) {
+      ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+          module, [&](sim::SimFuncOp function) {
+            auto mappings = function->getAttrOfType<ArrayAttr>(
+                nativeTwoStateBlockUnknownsAttr);
+            if (!mappings)
+              return WalkResult::advance();
+            if (mappings.size() != function.getBody().getBlocks().size()) {
               function.emitOpError(
-                  "has out-of-range native two-state block argument");
+                  "has invalid native two-state block-argument metadata");
               return WalkResult::interrupt();
             }
-            BlockArgument argument =
-                block.getArgument(static_cast<unsigned>(index));
-            auto type = dyn_cast<IntegerType>(argument.getType());
-            if (!type) {
-              function.emitOpError(
-                  "has non-integer native two-state unknown plane");
-              return WalkResult::interrupt();
+            OpBuilder builder(context);
+            for (auto [block, mapping] :
+                 llvm::zip_equal(function.getBody(), mappings)) {
+              auto indices = dyn_cast<DenseI64ArrayAttr>(mapping);
+              if (!indices) {
+                function.emitOpError(
+                    "has malformed native two-state block-argument metadata");
+                return WalkResult::interrupt();
+              }
+              builder.setInsertionPointToStart(&block);
+              for (int64_t index : indices.asArrayRef()) {
+                if (index < 0 ||
+                    static_cast<uint64_t>(index) >= block.getNumArguments()) {
+                  function.emitOpError(
+                      "has out-of-range native two-state block argument");
+                  return WalkResult::interrupt();
+                }
+                BlockArgument argument =
+                    block.getArgument(static_cast<unsigned>(index));
+                auto type = dyn_cast<IntegerType>(argument.getType());
+                if (!type) {
+                  function.emitOpError(
+                      "has non-integer native two-state unknown plane");
+                  return WalkResult::interrupt();
+                }
+                Value zero = arith::ConstantOp::create(
+                    builder, function.getLoc(), type,
+                    builder.getIntegerAttr(type,
+                                           APInt::getZero(type.getWidth())));
+                argument.replaceAllUsesWith(zero);
+              }
             }
-            Value zero = arith::ConstantOp::create(
-                builder, function.getLoc(), type,
-                builder.getIntegerAttr(type, APInt::getZero(type.getWidth())));
-            argument.replaceAllUsesWith(zero);
-          }
-        }
-        function->removeAttr(nativeTwoStateBlockUnknownsAttr);
-        return WalkResult::advance();
-      });
+            function->removeAttr(nativeTwoStateBlockUnknownsAttr);
+            return WalkResult::advance();
+          });
   if (specializedBlockArguments.wasInterrupted())
     return failure();
   // These summaries describe semantic scalar arguments and results. Packed

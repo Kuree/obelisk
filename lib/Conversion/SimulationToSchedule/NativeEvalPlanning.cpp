@@ -559,6 +559,7 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
   if (!design || !(result.sourceGraph = design.getComputeGraphAttr()))
     return result;
   analysis::HandleDataflowAnalysis handles(design);
+  result.completeNBAWriters = true;
   SymbolTable symbols(design);
   llvm::MapVector<StringAttr, SmallVector<schedule::ComputeEffectAttr>>
       effectsByOwner;
@@ -567,6 +568,17 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
     auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
     if (!fragment)
       continue;
+    for (auto effect :
+         fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
+      if (effect.getEffect() != schedule::ComputeEffectKind::NBA)
+        continue;
+      if (effect.getResource() != schedule::ComputeResourceKind::Storage ||
+          effect.getTarget() != schedule::ComputeTargetKind::Descriptor) {
+        result.completeNBAWriters = false;
+        continue;
+      }
+      result.nbaWriters[effect.getDescriptor()].push_back(fragment.getId());
+    }
     StringAttr owner = fragment.getFunction().getAttr();
     if (fragment.getAction() == schedule::ComputeActionKind::SuspendChange ||
         fragment.getAction() == schedule::ComputeActionKind::SuspendAny)
@@ -1144,6 +1156,108 @@ resolveNativeEvalPlan(ModuleOp module,
                      [](uint64_t word) { return word != 0; }))
       result.nbaTaintedRecords.set(recordIndex);
   }
+  // LRM 4.9.4 and 10.4.2: local pending values belong to captured NBA
+  // statements, never to ordinary current-state reads. Revalidate the source
+  // graph revision and require complete writer coverage by non-bootstrap
+  // generated continuations. A private batch certificate alone is insufficient.
+  unsigned pendingCandidates = 0, pendingWriters = 0;
+  unsigned pendingBootstrap = 0, pendingCheckpoint = 0, pendingTier2 = 0;
+  unsigned pendingMissingOwner = 0, pendingMissingFragment = 0;
+  if (activationInputs.sourceGraph == computeGraph &&
+      activationInputs.completeNBAWriters &&
+      staticNBAPlan.completeSourceWriters) {
+    result.transaction.sourceGraph = computeGraph;
+    for (auto [index, root] : llvm::enumerate(staticNBAPlan.roots)) {
+      if (root.bit_width > 64 ||
+          index >= staticNBAPlan.rootDescriptors.size() ||
+          !staticNBAPlan.mergeSafeRoots[index] ||
+          !staticNBAPlan.privateInfluenceRoots[index])
+        continue;
+      // runtimeQueueRoots certifies that a shared fallback queue is available;
+      // it does not say the generated producer uses that queue. The lowering
+      // certificate below must cover every source site with its actual fixed
+      // capture form (LRM 4.9.4/10.4.2), including all outlined variants.
+      ++pendingCandidates;
+      uint64_t descriptor = staticNBAPlan.rootDescriptors[index];
+      auto writers = activationInputs.nbaWriters.find(descriptor);
+      if (writers == activationInputs.nbaWriters.end() ||
+          writers->second.empty())
+        continue;
+      ++pendingWriters;
+      NativeEvalTransactionRoot planned{
+          descriptor,
+          static_cast<uint32_t>(index),
+          root.static_state,
+          staticNBAPlan.generatedOffsets[index],
+          root.bit_width,
+          staticNBAPlan.generatedFixedWriteMasks[index],
+          OBELISK_RT_REGION_NBA,
+          staticNBAPlan.trackTransients[index],
+          writers->second,
+          {},
+          {}};
+      for (const auto &site : staticNBAPlan.sites)
+        if (site.root == index) {
+          auto origin = staticNBAPlan.siteSemanticOrigins.find(site.site);
+          planned.sites.push_back(
+              origin == staticNBAPlan.siteSemanticOrigins.end()
+                  ? site.site
+                  : origin->second);
+        }
+      llvm::sort(planned.sites);
+      planned.sites.erase(
+          std::unique(planned.sites.begin(), planned.sites.end()),
+          planned.sites.end());
+      bool covered = llvm::all_of(planned.writerFragments, [&](uint32_t id) {
+        bool found = false;
+        bool matched = false;
+        for (const auto &direct : directFragments) {
+          if (!llvm::is_contained(direct.fragmentIDs, id))
+            continue;
+          matched = true;
+          if (direct.initialActivation || direct.runtimeCheckpoint ||
+              direct.tier2Convergence) {
+            pendingBootstrap += direct.initialActivation;
+            pendingCheckpoint += direct.runtimeCheckpoint;
+            pendingTier2 += direct.tier2Convergence;
+            continue;
+          }
+          auto owner = llvm::find(result.mergedExecutors, direct.wrapper);
+          if (owner == result.mergedExecutors.end()) {
+            ++pendingMissingOwner;
+            continue;
+          }
+          planned.owners.push_back(
+              static_cast<uint32_t>(owner - result.mergedExecutors.begin()));
+          found = true;
+        }
+        pendingMissingFragment += !matched;
+        return found;
+      });
+      if (!covered)
+        continue;
+      llvm::sort(planned.owners);
+      planned.owners.erase(
+          std::unique(planned.owners.begin(), planned.owners.end()),
+          planned.owners.end());
+      result.transaction.roots.push_back(std::move(planned));
+    }
+  }
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk eval transaction source roots: "
+                 << result.transaction.roots.size() << "/"
+                 << staticNBAPlan.roots.size()
+                 << " graph=" << (activationInputs.sourceGraph == computeGraph)
+                 << " nba-writers=" << activationInputs.completeNBAWriters
+                 << " complete-writers=" << staticNBAPlan.completeSourceWriters
+                 << " candidates=" << pendingCandidates
+                 << " writers=" << pendingWriters
+                 << " writer-descriptors=" << activationInputs.nbaWriters.size()
+                 << " bootstrap=" << pendingBootstrap
+                 << " checkpoint=" << pendingCheckpoint
+                 << " tier2=" << pendingTier2
+                 << " missing-owner=" << pendingMissingOwner
+                 << " missing-fragment=" << pendingMissingFragment << '\n';
   return result;
 }
 

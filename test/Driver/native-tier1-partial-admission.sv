@@ -54,4 +54,4 @@ endmodule
 // EVAL: @__obelisk_eval_dispatch_v1
 // DIAG: obelisk-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0
-// DIAG-SAME: eval_dispatches={{[1-9][0-9]*}}
+// DIAG-SAME: eval_dispatches=0

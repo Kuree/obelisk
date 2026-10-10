@@ -770,21 +770,23 @@ std::optional<CombinationalFusionBody>
 CombinationalFusionAnalysis::analyzeForReordering(
     sim::SimFuncOp function, const analysis::HandleDataflowAnalysis &provenance,
     CombinationalFusionFailure *failureReason) const {
-  auto body = analyze(function, provenance, /*interleaved=*/true,
-                      failureReason, /*finalValuesOnly=*/true);
+  auto body = analyze(function, provenance, /*interleaved=*/true, failureReason,
+                      /*finalValuesOnly=*/true);
   if (!body || !body->structured)
     return std::nullopt;
   const auto &memory = body->structured->getMemory();
   // analyze() has proved that every incoming output cell used on a path is
   // copied back unchanged on that path. Thus an extra union-watch activation
-  // with unchanged inputs cannot advance retained state. getActivationSliceOrder
-  // keeps source-local read/write dependencies together, including the old
-  // cell and every publication using it; this is not a license to drop state
-  // dependencies or to reorder those stores within the slice. The closed
-  // observer certificate below still excludes observable intermediate values.
+  // with unchanged inputs cannot advance retained state.
+  // getActivationSliceOrder keeps source-local read/write dependencies
+  // together, including the old cell and every publication using it; this is
+  // not a license to drop state dependencies or to reorder those stores within
+  // the slice. The closed observer certificate below still excludes observable
+  // intermediate values.
   if (!memory.hasValueDependencies()) {
     if (failureReason)
-      *failureReason = {CombinationalFusionFailure::Reason::IncomingOutputState};
+      *failureReason = {
+          CombinationalFusionFailure::Reason::IncomingOutputState};
     return std::nullopt;
   }
   if (!canReorder({function}, failureReason))
@@ -1315,10 +1317,11 @@ Operation *singleSuspension(sim::SimFuncOp function) {
 } // namespace
 
 std::optional<NBATransientObservers>
-computeNBATransientObservers(sim::SimDesignOp design) {
+computeNBATransientObservers(sim::SimDesignOp design, bool guardedVPI) {
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   // VPI value-change callbacks run at each update.
-  if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off)
+  if (!graph ||
+      (!guardedVPI && graph.getVpi() != schedule::ComputeVPIMode::Off))
     return std::nullopt;
   llvm::DenseMap<
       uint64_t,
@@ -1381,6 +1384,59 @@ computeNBATransientObservers(sim::SimDesignOp design) {
     return std::nullopt;
 
   NBATransientObservers result;
+  // IEEE 1800-2023 4.9.3, 4.9.4, 6.8: declaration initialization cannot
+  // intervene between an NBA capture and its commit. Called tasks/functions
+  // are already instantiated into each process summary. Preserve this source
+  // inventory before fusion introduces private references and loses precision.
+  llvm::DenseSet<uint64_t> immediateWriters;
+  bool immediateComplete = true;
+  for (sim::SimFuncOp function : functions) {
+    if (function.getEntryKind() == sim::EntryKind::RootInitializer ||
+        function.getEntryKind() == sim::EntryKind::Function ||
+        function.getEntryKind() == sim::EntryKind::Task)
+      continue;
+    auto summary = function.getEffectSummaryAttr();
+    if (!summary) {
+      immediateComplete = false;
+      continue;
+    }
+    for (auto effect : summary.getAsRange<schedule::ComputeEffectAttr>()) {
+      if (effect.getEffect() != schedule::ComputeEffectKind::Write &&
+          effect.getEffect() != schedule::ComputeEffectKind::Drive)
+        continue;
+      if (effect.getResource() == schedule::ComputeResourceKind::Unknown)
+        immediateComplete = false;
+      else if (effect.getResource() == schedule::ComputeResourceKind::Storage) {
+        if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor)
+          immediateComplete = false;
+        else {
+          immediateWriters.insert(effect.getDescriptor());
+        }
+      }
+    }
+  }
+  // Inspect callees too: instantiated summaries may omit an opaque mutation
+  // in a task body. Such a mutation invalidates the whole writer certificate.
+  design.walk([&](sim::SimFuncOp function) {
+    if (function.getEntryKind() == sim::EntryKind::RootInitializer)
+      return;
+    function.walk([&](Operation *operation) {
+      if (isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimRefStoreOp,
+              sim::SimRefAllocOp, sim::SimNBAEnqueueOp>(operation))
+        return;
+      if (auto effects = dyn_cast<MemoryEffectOpInterface>(operation)) {
+        SmallVector<MemoryEffects::EffectInstance> instances;
+        effects.getEffects(instances);
+        for (const auto &effect : instances)
+          if (isa<MemoryEffects::Write>(effect.getEffect()) &&
+              isa<sim::StorageResource>(effect.getResource()))
+            immediateComplete = false;
+      }
+    });
+  });
+  if (immediateComplete) {
+    result.immediateWriters = std::move(immediateWriters);
+  }
   llvm::DenseSet<uint64_t> &observable = result.observable;
   design.walk([&](sim::SimStorageDeclOp storage) {
     if (storage->hasAttr(sim::metadata::coverageToggleObservable))

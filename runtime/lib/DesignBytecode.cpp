@@ -4991,7 +4991,7 @@ template <bool EnableReadyCohort>
 __attribute__((always_inline)) inline obelisk_rt_status
 runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
                      uint32_t maximumRank, uint64_t maximumInsertionSequence,
-                     bool *outProgress) noexcept {
+                     bool *outProgress, bool stopBeforeExecution) noexcept {
   if (!context || !outProgress)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outProgress = false;
@@ -5312,6 +5312,11 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
            !(std::tuple{selectedRegion, selectedRank,
                         selectedInsertionSequence} < maximumKey)))
         return OBELISK_RT_OK;
+      if (stopBeforeExecution)
+        // LRM 38.34/4.9.4: dynamic task effects are not a scoped native
+        // certificate. Export the enclosing eval captures before execution,
+        // leaving this exact selected continuation and its frame intact.
+        return OBELISK_RT_TIER_UNAVAILABLE;
       if (found->suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
         const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
             found->frame.data() + found->waitOffset);
@@ -5881,16 +5886,19 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
   OBELISK_RT_CATCH_ALL { return abandonTask(OBELISK_RT_INVALID_BYTECODE); }
 }
 
-OBELISK_RT_FEATURE_TEXT obelisk_rt_status runOneDesignTaskCohort(
-    obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
-    uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
+OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+runOneDesignTaskCohort(obelisk_rt_context *context, uint32_t maximumRegion,
+                       uint32_t maximumRank, uint64_t maximumInsertionSequence,
+                       bool *outProgress, bool stopBeforeExecution) noexcept {
   return runOneDesignTaskImpl<true>(context, maximumRegion, maximumRank,
-                                    maximumInsertionSequence, outProgress);
+                                    maximumInsertionSequence, outProgress,
+                                    stopBeforeExecution);
 }
 
 obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
-    uint64_t maximumInsertionSequence, bool *outProgress) noexcept {
+    uint64_t maximumInsertionSequence, bool *outProgress,
+    bool stopBeforeExecution) noexcept {
   bool enableReadyCohort = false;
   if (context && !context->designReadyCohortExactScan &&
       !context->nativeScheduleDesignTaskFilterActive) {
@@ -5915,9 +5923,11 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
   }
   if (enableReadyCohort)
     return runOneDesignTaskCohort(context, maximumRegion, maximumRank,
-                                  maximumInsertionSequence, outProgress);
+                                  maximumInsertionSequence, outProgress,
+                                  stopBeforeExecution);
   return runOneDesignTaskImpl<false>(context, maximumRegion, maximumRank,
-                                     maximumInsertionSequence, outProgress);
+                                     maximumInsertionSequence, outProgress,
+                                     stopBeforeExecution);
 }
 
 obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,

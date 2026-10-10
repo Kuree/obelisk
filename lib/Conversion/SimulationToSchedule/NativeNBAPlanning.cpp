@@ -91,6 +91,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     uint32_t root = static_cast<uint32_t>(plan.roots.size());
     plan.roots.push_back({commit.getId(), decoded.id,
                           static_cast<uint64_t>(bound->width), nullptr});
+    plan.rootDescriptors.push_back(effect.getDescriptor());
     plan.generatedAccumulators.emplace_back();
     plan.generatedOffsets.push_back(bound->offset);
     plan.generatedCommitRegions.push_back(UINT32_MAX);
@@ -380,11 +381,46 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   SmallVector<bool> unobservable(plan.roots.size());
   plan.unreadRoots.assign(plan.roots.size(), false);
   plan.privateInfluenceRoots.assign(plan.roots.size(), false);
+  plan.guardedMergeRoots.assign(plan.roots.size(), false);
+  // LRM 4.6(b), 4.9.4, 38.36.1: an observer attached after capture still
+  // sees commits in enqueue order. The private scalar interface carries no
+  // global sequence number, so dormant writable observation is insufficient
+  // to batch it alongside other source sites. Require one semantic site in
+  // the entire design as well as the per-window execution bound below.
+  auto guardedPrivate =
+      module->hasAttr(sim::metadata::nativeClosedExecutable)
+          ? schedule::get<schedule::Field::NbaGuardedPrivateInfluence>(design)
+          : DenseI64ArrayAttr{};
+  if (guardedPrivate) {
+    llvm::SmallDenseSet<uint64_t, 4> guardedOrigins;
+    bool guardedOrderComplete = true;
+    module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+      auto site = enqueue.getSiteAttr();
+      if (!site || !plan.siteRoots.contains(site.getId()) ||
+          enqueue.getClockingOutputAttr() || enqueue.getDelay() ||
+          site.getTiming() ||
+          site.getStorage() ==
+              schedule::ComputeNBAStorageKind::DynamicFrontier ||
+          isa<sim::DriverType>(enqueue.getDestination().getType())) {
+        guardedOrderComplete = false;
+        return;
+      }
+      guardedOrigins.insert(plan.siteSemanticOrigins.lookup(site.getId()));
+    });
+    if (!guardedOrderComplete || guardedOrigins.size() != 1)
+      guardedPrivate = {};
+  }
   plan.trackTransients.assign(plan.roots.size(), false);
   plan.changeWatchedRoots.assign(plan.roots.size(), false);
   for (auto [index, root] : llvm::enumerate(plan.roots)) {
     plan.privateInfluenceRoots[index] =
         mergeSafety.commitHasPrivateInfluence(root.commit_node);
+    plan.guardedMergeRoots[index] =
+        guardedPrivate && root.bit_width <= 64 && plan.mergeSafeRoots[index] &&
+        llvm::is_contained(guardedPrivate.asArrayRef(),
+                           commitStorage.lookup(root.commit_node));
+    plan.privateInfluenceRoots[index] =
+        plan.privateInfluenceRoots[index] || plan.guardedMergeRoots[index];
     plan.unreadRoots[index] =
         module->hasAttr(sim::metadata::nativeClosedExecutable) &&
         plan.privateInfluenceRoots[index] &&
@@ -398,7 +434,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS &&
         mergeSafety.commitNeedsTransients(root.commit_node);
     unobservable[index] = mergeSafety.commitMayMerge(root.commit_node) ||
-                          plan.trackTransients[index];
+                          plan.trackTransients[index] ||
+                          plan.guardedMergeRoots[index];
   }
   // The generated commit scans roots in layout order, while the runtime NBA
   // queue performs updates in enqueue order across all roots (LRM 4.6(b)).
@@ -546,7 +583,34 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   // initialization precedes all processes (6.8); it cannot intervene here.
   llvm::DenseSet<uint32_t> immediateWriters;
   bool completeWriters = bool(design);
-  if (design)
+  unsigned explainedIncompleteWriters = 0;
+  auto incompleteWriter = [&](sim::SimFuncOp function, StringRef reason) {
+    completeWriters = false;
+    if (module->hasAttr("obelisk.debug.native_timing") &&
+        explainedIncompleteWriters++ < 3)
+      llvm::errs() << "obelisk NBA writer proof: " << function.getSymName()
+                   << " reason=" << reason << '\n';
+  };
+  auto recordDescriptor = [&](uint64_t descriptor) {
+    auto handle = stateLayout.storage.find(descriptor);
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (handle == stateLayout.storage.end() ||
+        !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+      return false;
+    immediateWriters.insert(decoded.id);
+    return true;
+  };
+  auto sourceWriters =
+      design ? schedule::get<schedule::Field::NbaImmediateWriters>(design)
+             : DenseI64ArrayAttr{};
+  // This logical-root certificate was captured before fusion. Generated
+  // scratch writes do not add source writers (4.3); unknown source effects
+  // leave it absent. Revalidate every root against the final native layout.
+  if (sourceWriters)
+    for (int64_t descriptor : sourceWriters.asArrayRef())
+      completeWriters &= descriptor >= 0 && recordDescriptor(descriptor);
+  if (design && !sourceWriters)
     design.walk([&](sim::SimFuncOp function) {
       if (function.getEntryKind() == sim::EntryKind::Function ||
           function.getEntryKind() == sim::EntryKind::Task ||
@@ -554,14 +618,19 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         return;
       auto summary = function.getEffectSummaryAttr();
       if (!summary) {
-        completeWriters = false;
+        incompleteWriter(function, "missing instantiated effects");
         return;
       }
+      bool unknownWrites = llvm::any_of(
+          summary.getAsRange<schedule::ComputeEffectAttr>(), [](auto effect) {
+            return effect.getResource() ==
+                       schedule::ComputeResourceKind::Unknown &&
+                   (effect.getEffect() == schedule::ComputeEffectKind::Write ||
+                    effect.getEffect() == schedule::ComputeEffectKind::Drive);
+          });
+      if (unknownWrites)
+        incompleteWriter(function, "unknown immediate writer effects");
       for (auto effect : summary.getAsRange<schedule::ComputeEffectAttr>()) {
-        if (effect.getResource() == schedule::ComputeResourceKind::Unknown) {
-          completeWriters = false;
-          continue;
-        }
         if (effect.getResource() != schedule::ComputeResourceKind::Storage ||
             (effect.getEffect() != schedule::ComputeEffectKind::Write &&
              effect.getEffect() != schedule::ComputeEffectKind::Drive))
@@ -572,23 +641,30 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
             handle == stateLayout.storage.end() ||
             !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
             decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC) {
-          completeWriters = false;
+          incompleteWriter(function, "unmapped immediate storage writer");
           continue;
         }
         immediateWriters.insert(decoded.id);
       }
     });
   plan.unchangedSafeRoots.assign(plan.roots.size(), false);
-  for (auto [index, root] : llvm::enumerate(plan.roots))
+  plan.completeSourceWriters = completeWriters;
+  for (auto [index, root] : llvm::enumerate(plan.roots)) {
     plan.unchangedSafeRoots[index] =
-        completeWriters && root.bit_width <= 64 &&
+        completeWriters &&
         module->hasAttr(sim::metadata::nativeClosedExecutable) &&
         plan.privateInfluenceRoots[index] && seen[index] &&
         immediateOnly[index] && !immediateWriters.contains(root.static_state);
+  }
   if (module->hasAttr("obelisk.debug.native_timing"))
     llvm::errs() << "obelisk native unchanged NBA roots: "
                  << llvm::count(plan.unchangedSafeRoots, true) << "/"
-                 << plan.roots.size() << '\n';
+                 << plan.roots.size() << " complete-writers=" << completeWriters
+                 << " immediate-only=" << llvm::count(immediateOnly, true)
+                 << " immediate-writers=" << immediateWriters.size()
+                 << " closed-executable="
+                 << module->hasAttr(sim::metadata::nativeClosedExecutable)
+                 << '\n';
   return plan;
 }
 

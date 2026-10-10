@@ -52,9 +52,11 @@ private:
 } // namespace
 
 NBAInfluenceAnalysis::NBAInfluenceAnalysis(sim::SimDesignOp design,
-                                           ArrayRef<Root> observers) {
+                                           ArrayRef<Root> observers,
+                                           bool guardedVPI) {
   if (!design || !design.getComputeGraphAttr() ||
-      design.getComputeGraphAttr().getVpi() != schedule::ComputeVPIMode::Off)
+      (!guardedVPI &&
+       design.getComputeGraphAttr().getVpi() != schedule::ComputeVPIMode::Off))
     return;
   using Resource = schedule::ComputeResourceKind;
   using Effect = schedule::ComputeEffectKind;

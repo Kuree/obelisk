@@ -1,3 +1,4 @@
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/PassManager.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
@@ -45,7 +46,10 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
   manager.addPass(createPlanNativeExecutableNodesPass());
   manager.addPass(createResolveNativeEvalSchedulePass());
   manager.addPass(createMaterializeNativeProcessesPass());
-  manager.addPass(createConvertPreparedSimProcessesToLLVMCoroutinesPass());
+  manager.addPass(createPrepareNativeLLVMFunctionsPass());
+  manager.nest<mlir::LLVM::LLVMFuncOp>().addPass(
+      createConvertNativeFunctionBodyPass());
+  manager.addPass(createFinalizeNativeLLVMPass());
 }
 void registerSimulationToLLVMCoroutinePipeline() {
   struct Options : mlir::PassPipelineOptions<Options> {

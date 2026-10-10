@@ -215,7 +215,23 @@ struct SchedulerRunOptions {
   // Return checkpoint-generated ingress to the plan's continuation trampoline.
   // Bootstrap drains must still settle that ingress before clock admission.
   bool returnGeneratedIngress = false;
+  // A generated eval continuation stays on the stack. Drain Active/Inactive
+  // work and return before the common NBA barrier instead of reentering it.
+  bool stopBeforeNBA = false;
+  // A generated transaction may hold its NBA captures locally. Include that
+  // region in the same arbitration even when the canonical dirty set is empty.
+  uint32_t localPendingNBARegion = UINT32_MAX;
+  // Finish exactly one already-started generated NBA barrier. Its compiled
+  // prefix has run, so only the remaining runtime queues may execute here.
+  uint32_t completeNBABarrier = UINT32_MAX;
+  bool generatedNBAChanged = false;
+  // Only write-capable private continuations request this foreign-code cut.
+  // Their canonical wrapper must export before an unscoped actor executes.
+  // Use trailing padding: exceeding 16 bytes makes AArch64 pass the whole
+  // options argument indirectly, taxing off/read calls as well.
+  bool stopBeforeUnscopedActors = false;
 };
+static_assert(sizeof(SchedulerRunOptions) <= 16);
 obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                SchedulerRunOptions options = {});
 obelisk_rt_status executeNativeAOTNodeUnlocked(obelisk_rt_context *context,

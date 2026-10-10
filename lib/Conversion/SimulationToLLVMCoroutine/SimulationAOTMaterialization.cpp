@@ -699,6 +699,7 @@ FailureOr<bool> makeNativeEvalPlan(
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
     ArrayRef<obelisk_rt_static_actor_root> actorRoots,
+    ArrayRef<uint32_t> writableVPIUnscopedActors,
     ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
     schedule::ComputeGraphAttr computeGraph,
@@ -1044,11 +1045,11 @@ FailureOr<bool> makeNativeEvalPlan(
       std::move(resolved->recordNBATaintMasks);
   llvm::BitVector nbaTaintedRecords = std::move(resolved->nbaTaintedRecords);
   bool prioritySignalHandoff = false;
-  ::obelisk::detail::walkNativeFunctions<
-      sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
-    prioritySignalHandoff |= ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::PrioritySignalResume>(function);
-  });
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        prioritySignalHandoff |= ::obelisk::schedule::has<
+            ::obelisk::schedule::Field::PrioritySignalResume>(function);
+      });
   struct DynamicEvalNBA {
     uint32_t rootIndex;
     uint64_t site;
@@ -2053,32 +2054,32 @@ FailureOr<bool> makeNativeEvalPlan(
     // offset/value locally and the generated NBA epilogue publishes it after
     // the activation returns, without constructing a runtime NBA object.
     SmallVector<std::pair<LLVM::CallOp, bool>> runtimeEscapes;
-    ::obelisk::detail::walkNativeFunctions<
-        sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function, selectedRawBodies))
-        return;
-      bool twoState = ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
-      function.walk([&](LLVM::CallOp call) {
-        if (!call.getCallee())
-          return;
-        bool staticNBA =
-            *call.getCallee() == "obelisk_rt_v1_scheduler_static_nba";
-        bool staticNBAFailure = false;
-        if (*call.getCallee() == "obelisk_rt_v1_scheduler_fail" &&
-            call.getArgOperands().size() == 2)
-          if (auto source =
-                  call.getArgOperands()[1].getDefiningOp<LLVM::CallOp>())
-            staticNBAFailure =
-                source.getCallee() &&
-                *source.getCallee() == "obelisk_rt_v1_scheduler_static_nba";
-        // A generic NBA call retained for an unsafe root still needs its
-        // scheduler_fail companion. Only remove the companion for a static
-        // call that this pass replaces with a generated stage.
-        if (staticNBA || staticNBAFailure)
-          runtimeEscapes.push_back({call, twoState});
-      });
-    });
+    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+        module, [&](sim::SimFuncOp function) {
+          if (!isGeneratedEvalBody(function, selectedRawBodies))
+            return;
+          bool twoState = ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
+          function.walk([&](LLVM::CallOp call) {
+            if (!call.getCallee())
+              return;
+            bool staticNBA =
+                *call.getCallee() == "obelisk_rt_v1_scheduler_static_nba";
+            bool staticNBAFailure = false;
+            if (*call.getCallee() == "obelisk_rt_v1_scheduler_fail" &&
+                call.getArgOperands().size() == 2)
+              if (auto source =
+                      call.getArgOperands()[1].getDefiningOp<LLVM::CallOp>())
+                staticNBAFailure =
+                    source.getCallee() &&
+                    *source.getCallee() == "obelisk_rt_v1_scheduler_static_nba";
+            // A generic NBA call retained for an unsafe root still needs its
+            // scheduler_fail companion. Only remove the companion for a static
+            // call that this pass replaces with a generated stage.
+            if (staticNBA || staticNBAFailure)
+              runtimeEscapes.push_back({call, twoState});
+          });
+        });
     for (auto [call, twoState] : runtimeEscapes) {
       LLVM::CallOp handleOffsetToErase;
       Operation *handleSelectToErase = nullptr;
@@ -2257,6 +2258,62 @@ FailureOr<bool> makeNativeEvalPlan(
                                   baseOffset));
         Value requestedStart = arith::AddIOp::create(nbaBuilder, call.getLoc(),
                                                      safeDynamic, baseOffset);
+        // A hold assignment is inert only when no earlier update to this root
+        // is pending and no immediate writer can intervene before NBA. The
+        // source plan certifies both the writer inventory and absence of an
+        // external observer influence; fixed target facts preserve sampling.
+        // Compare a complete wide source before setting any dirty bits, so a
+        // changed early chunk does not accidentally authorize later chunks.
+        // IEEE 1800-2023 4.3, 4.6(b), 4.9.4 and 10.4.2: an equal update is
+        // removable only with no intervening writer and no pending earlier
+        // assignment to overwrite. Both X/Z and value bits participate; the
+        // captured RHS/target are retained and are never recomputed at NBA.
+        auto fixedTarget = staticNBAPlan.siteFixedOffsets.find(*site);
+        bool inertCandidate =
+            *width > 64 &&
+            root->second < staticNBAPlan.unchangedSafeRoots.size() &&
+            staticNBAPlan.unchangedSafeRoots[root->second] &&
+            fixedTarget != staticNBAPlan.siteFixedOffsets.end() &&
+            fixedTarget->second <= rootWidth &&
+            *width <= rootWidth - fixedTarget->second;
+        if (inertCandidate) {
+          Value difference = zero64;
+          uint64_t offset = staticNBAPlan.generatedOffsets[root->second] +
+                            fixedTarget->second;
+          for (uint64_t chunk = 0; chunk < (*width + 63) / 64; ++chunk) {
+            unsigned bits = std::min<uint64_t>(64, *width - chunk * 64);
+            difference = arith::OrIOp::create(
+                nbaBuilder, call.getLoc(), difference,
+                buildNativeNBAChange(
+                    nbaBuilder, call.getLoc(), offset + chunk * 64, bits,
+                    loadChunk(arguments[7], chunk), loadUnknownChunk(chunk)));
+          }
+          Value dirty = LLVM::LoadOp::create(
+              nbaBuilder, call.getLoc(), i64,
+              byteGEP(nbaBuilder, call.getLoc(),
+                      LLVM::AddressOfOp::create(nbaBuilder, call.getLoc(),
+                                                pointer, nbaDirtyRootsName),
+                      uint64_t{root->second / 64} * 8),
+              8);
+          Value pending = arith::AndIOp::create(
+              nbaBuilder, call.getLoc(), dirty,
+              llvmConstant(nbaBuilder, call.getLoc(), i64,
+                           uint64_t{1} << (root->second % 64)));
+          if (orderedWide &&
+              !schedule::has<schedule::Field::EvalRuntimeCalendar>(module))
+            pending = arith::OrIOp::create(
+                nbaBuilder, call.getLoc(), pending,
+                arith::ExtUIOp::create(
+                    nbaBuilder, call.getLoc(), i64,
+                    evalNBAQueueSize(nbaBuilder, call.getLoc())));
+          Value needed = arith::CmpIOp::create(
+              nbaBuilder, call.getLoc(), arith::CmpIPredicate::ne,
+              arith::OrIOp::create(nbaBuilder, call.getLoc(), difference,
+                                   pending),
+              zero64);
+          overlaps = arith::AndIOp::create(nbaBuilder, call.getLoc(), overlaps,
+                                           needed);
+        }
         if (orderedWide) {
           uint64_t chunks = (*width + 63) / 64;
           auto chunkSite = [&](uint64_t index) {
@@ -2401,6 +2458,19 @@ FailureOr<bool> makeNativeEvalPlan(
             cf::BranchOp::create(nbaBuilder, call.getLoc(), next);
           }
         } else if (periodicWideLatch) {
+          Block *inertContinuation = nullptr;
+          if (inertCandidate) {
+            Block *before = call->getBlock();
+            inertContinuation = before->splitBlock(call->getIterator());
+            auto *stage = new Block;
+            before->getParent()->getBlocks().insert(
+                Region::iterator(inertContinuation), stage);
+            nbaBuilder.setInsertionPointToEnd(before);
+            cf::CondBranchOp::create(nbaBuilder, call.getLoc(), overlaps, stage,
+                                     ValueRange{}, inertContinuation,
+                                     ValueRange{});
+            nbaBuilder.setInsertionPointToStart(stage);
+          }
           uint64_t chunks = (*width + 63) / 64;
           for (uint64_t index = 0; index != chunks; ++index) {
             uint64_t slotSite =
@@ -2498,6 +2568,10 @@ FailureOr<bool> makeNativeEvalPlan(
             };
             setBit(nbaDirtyRootsName, word, uint64_t{1} << (root->second % 64));
             setBit(nbaDirtySummaryName, word / 64, uint64_t{1} << (word % 64));
+          }
+          if (inertContinuation) {
+            cf::BranchOp::create(nbaBuilder, call.getLoc(), inertContinuation);
+            nbaBuilder.setInsertionPointToStart(inertContinuation);
           }
         } else {
           Value below = arith::CmpIOp::create(nbaBuilder, call.getLoc(),
@@ -2670,18 +2744,18 @@ FailureOr<bool> makeNativeEvalPlan(
     // and the root bounds check, but do not re-enter the runtime for each
     // register-file read.
     SmallVector<std::pair<LLVM::CallOp, bool>> dynamicPlaneLoads;
-    ::obelisk::detail::walkNativeFunctions<
-        sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function, selectedRawBodies))
-        return;
-      bool twoState = ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
-      function.walk([&](LLVM::CallOp call) {
-        if (call.getCallee() &&
-            *call.getCallee() == "obelisk_rt_v1_native_state_load_plane")
-          dynamicPlaneLoads.push_back({call, twoState});
-      });
-    });
+    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+        module, [&](sim::SimFuncOp function) {
+          if (!isGeneratedEvalBody(function, selectedRawBodies))
+            return;
+          bool twoState = ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
+          function.walk([&](LLVM::CallOp call) {
+            if (call.getCallee() &&
+                *call.getCallee() == "obelisk_rt_v1_native_state_load_plane")
+              dynamicPlaneLoads.push_back({call, twoState});
+          });
+        });
     for (auto [call, twoState] : dynamicPlaneLoads) {
       ValueRange arguments = call.getArgOperands();
       if (arguments.size() != 8)
@@ -2843,7 +2917,8 @@ FailureOr<bool> makeNativeEvalPlan(
               auto branch = dyn_cast<BranchOpInterface>(use.getOwner());
               if (!branch || ++shown > 4)
                 continue;
-              auto operands = branch.getSuccessorOperands(use.getOperandNumber());
+              auto operands =
+                  branch.getSuccessorOperands(use.getOperandNumber());
               if (!operands.isOperandProduced(argument.getArgNumber()))
                 diagnostic.attachNote(branch->getLoc())
                     << "incoming root " << operands[argument.getArgNumber()];
@@ -3022,114 +3097,116 @@ FailureOr<bool> makeNativeEvalPlan(
     // handle as the outer slice's base. Inline that pure constant-root offset
     // calculation, including the signed 32-bit handle bounds. The outer NBA
     // guard still rejects invalid array indices and a mismatched root tag.
-    ::obelisk::detail::walkNativeFunctions<
-        sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
-      if (!isGeneratedEvalBody(function, selectedRawBodies))
-        return;
-      SmallVector<LLVM::CallOp> offsets;
-      function.walk([&](LLVM::CallOp call) {
-        if (call.getCallee() &&
-            *call.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
-            call.getArgOperands().size() == 2 && !call->use_empty())
-          offsets.push_back(call);
-      });
-      for (LLVM::CallOp call : llvm::reverse(offsets)) {
-        Value base = call.getArgOperands()[0];
-        Value physicalRoot = base;
-        while (true) {
-          if (auto selected = physicalRoot.getDefiningOp<arith::SelectOp>();
-              selected && constantU64(selected.getFalseValue()) ==
-                              std::optional<uint64_t>{UINT64_MAX}) {
-            physicalRoot = selected.getTrueValue();
-            continue;
+    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+        module, [&](sim::SimFuncOp function) {
+          if (!isGeneratedEvalBody(function, selectedRawBodies))
+            return;
+          SmallVector<LLVM::CallOp> offsets;
+          function.walk([&](LLVM::CallOp call) {
+            if (call.getCallee() &&
+                *call.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+                call.getArgOperands().size() == 2 && !call->use_empty())
+              offsets.push_back(call);
+          });
+          for (LLVM::CallOp call : llvm::reverse(offsets)) {
+            Value base = call.getArgOperands()[0];
+            Value physicalRoot = base;
+            while (true) {
+              if (auto selected = physicalRoot.getDefiningOp<arith::SelectOp>();
+                  selected && constantU64(selected.getFalseValue()) ==
+                                  std::optional<uint64_t>{UINT64_MAX}) {
+                physicalRoot = selected.getTrueValue();
+                continue;
+              }
+              if (auto inner = physicalRoot.getDefiningOp<LLVM::CallOp>();
+                  inner && inner.getCallee() &&
+                  *inner.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+                  inner.getArgOperands().size() == 2) {
+                physicalRoot = inner.getArgOperands()[0];
+                continue;
+              }
+              break;
+            }
+            auto root = constantU64(physicalRoot);
+            obelisk_rt_stable_handle_v1 decoded{};
+            if (!root || !obelisk_rt_stable_handle_decode(*root, &decoded) ||
+                decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+              continue;
+            OpBuilder offsetBuilder(call);
+            Location loc = call.getLoc();
+            auto constant = [&](int64_t value) {
+              return llvmConstant(offsetBuilder, loc, i64, value);
+            };
+            Value amount = call.getArgOperands()[1];
+            if (call->hasAttr(nativeInBoundsHandleOffsetAttr)) {
+              Value result =
+                  arith::AddIOp::create(offsetBuilder, loc, base, amount);
+              call.getResult().replaceAllUsesWith(result);
+              call.erase();
+              continue;
+            }
+            Value baseOffset = LLVM::SExtOp::create(
+                offsetBuilder, loc, i64,
+                LLVM::TruncOp::create(offsetBuilder, loc, i32, base));
+            Value valid = arith::AndIOp::create(
+                offsetBuilder, loc,
+                arith::CmpIOp::create(
+                    offsetBuilder, loc, arith::CmpIPredicate::sge, amount,
+                    arith::SubIOp::create(offsetBuilder, loc,
+                                          constant(INT32_MIN), baseOffset)),
+                arith::CmpIOp::create(
+                    offsetBuilder, loc, arith::CmpIPredicate::sle, amount,
+                    arith::SubIOp::create(offsetBuilder, loc,
+                                          constant(INT32_MAX), baseOffset)));
+            valid = arith::AndIOp::create(
+                offsetBuilder, loc, valid,
+                arith::CmpIOp::create(offsetBuilder, loc,
+                                      arith::CmpIPredicate::ne, base,
+                                      constant(-1)));
+            Value offset =
+                arith::AddIOp::create(offsetBuilder, loc, amount, baseOffset);
+            offset = arith::AndIOp::create(offsetBuilder, loc, offset,
+                                           constant(UINT32_MAX));
+            Value encoded = arith::OrIOp::create(
+                offsetBuilder, loc, offset,
+                constant(*root & UINT64_C(0xffffffff00000000)));
+            Value result = arith::SelectOp::create(offsetBuilder, loc, valid,
+                                                   encoded, constant(-1));
+            call.getResult().replaceAllUsesWith(result);
+            call.erase();
           }
-          if (auto inner = physicalRoot.getDefiningOp<LLVM::CallOp>();
-              inner && inner.getCallee() &&
-              *inner.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
-              inner.getArgOperands().size() == 2) {
-            physicalRoot = inner.getArgOperands()[0];
-            continue;
-          }
-          break;
-        }
-        auto root = constantU64(physicalRoot);
-        obelisk_rt_stable_handle_v1 decoded{};
-        if (!root || !obelisk_rt_stable_handle_decode(*root, &decoded) ||
-            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
-          continue;
-        OpBuilder offsetBuilder(call);
-        Location loc = call.getLoc();
-        auto constant = [&](int64_t value) {
-          return llvmConstant(offsetBuilder, loc, i64, value);
-        };
-        Value amount = call.getArgOperands()[1];
-        if (call->hasAttr(nativeInBoundsHandleOffsetAttr)) {
-          Value result = arith::AddIOp::create(offsetBuilder, loc, base, amount);
-          call.getResult().replaceAllUsesWith(result);
-          call.erase();
-          continue;
-        }
-        Value baseOffset = LLVM::SExtOp::create(
-            offsetBuilder, loc, i64,
-            LLVM::TruncOp::create(offsetBuilder, loc, i32, base));
-        Value valid = arith::AndIOp::create(
-            offsetBuilder, loc,
-            arith::CmpIOp::create(
-                offsetBuilder, loc, arith::CmpIPredicate::sge, amount,
-                arith::SubIOp::create(offsetBuilder, loc, constant(INT32_MIN),
-                                      baseOffset)),
-            arith::CmpIOp::create(
-                offsetBuilder, loc, arith::CmpIPredicate::sle, amount,
-                arith::SubIOp::create(offsetBuilder, loc, constant(INT32_MAX),
-                                      baseOffset)));
-        valid = arith::AndIOp::create(
-            offsetBuilder, loc, valid,
-            arith::CmpIOp::create(offsetBuilder, loc, arith::CmpIPredicate::ne,
-                                  base, constant(-1)));
-        Value offset =
-            arith::AddIOp::create(offsetBuilder, loc, amount, baseOffset);
-        offset = arith::AndIOp::create(offsetBuilder, loc, offset,
-                                       constant(UINT32_MAX));
-        Value encoded = arith::OrIOp::create(
-            offsetBuilder, loc, offset,
-            constant(*root & UINT64_C(0xffffffff00000000)));
-        Value result = arith::SelectOp::create(offsetBuilder, loc, valid,
-                                               encoded, constant(-1));
-        call.getResult().replaceAllUsesWith(result);
-        call.erase();
-      }
-    });
+        });
     // Reference lowering can leave a short chain of now-dead validity selects
     // above a handle-offset call.  Peel it to a fixed point so the hot-closure
     // verifier sees neither the obsolete runtime call nor its guard plumbing.
     while (true) {
       SmallVector<Operation *> deadHandleOperations;
-      ::obelisk::detail::walkNativeFunctions<
-          sim::SimFuncOp>(module, [&](sim::SimFuncOp function) {
-        if (!isGeneratedEvalBody(function, selectedRawBodies))
-          return;
-        function.walk([&](Operation *operation) {
-          if (!operation->use_empty())
-            return;
-          if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
-            if (call.getCallee() &&
-                *call.getCallee() == "obelisk_rt_v1_native_handle_offset")
-              deadHandleOperations.push_back(operation);
-            return;
-          }
-          if (!isa<arith::SelectOp, LLVM::SelectOp>(operation))
-            return;
-          bool selectsHandleOffset = llvm::any_of(
-              operation->getOperands().drop_front(), [](Value operand) {
-                auto producer = operand.getDefiningOp<LLVM::CallOp>();
-                return producer && producer.getCallee() &&
-                       *producer.getCallee() ==
-                           "obelisk_rt_v1_native_handle_offset";
-              });
-          if (selectsHandleOffset)
-            deadHandleOperations.push_back(operation);
-        });
-      });
+      ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+          module, [&](sim::SimFuncOp function) {
+            if (!isGeneratedEvalBody(function, selectedRawBodies))
+              return;
+            function.walk([&](Operation *operation) {
+              if (!operation->use_empty())
+                return;
+              if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
+                if (call.getCallee() &&
+                    *call.getCallee() == "obelisk_rt_v1_native_handle_offset")
+                  deadHandleOperations.push_back(operation);
+                return;
+              }
+              if (!isa<arith::SelectOp, LLVM::SelectOp>(operation))
+                return;
+              bool selectsHandleOffset = llvm::any_of(
+                  operation->getOperands().drop_front(), [](Value operand) {
+                    auto producer = operand.getDefiningOp<LLVM::CallOp>();
+                    return producer && producer.getCallee() &&
+                           *producer.getCallee() ==
+                               "obelisk_rt_v1_native_handle_offset";
+                  });
+              if (selectsHandleOffset)
+                deadHandleOperations.push_back(operation);
+            });
+          });
       if (deadHandleOperations.empty())
         break;
       for (Operation *operation : deadHandleOperations)
@@ -5041,6 +5118,37 @@ FailureOr<bool> makeNativeEvalPlan(
   for (const DynamicEvalNBA &entry : dynamicEvalNBAs)
     if (!entry.queued)
       dynamicNBAValidNames.push_back(entry.validName);
+  SmallVector<Attribute> transactionRoots;
+  for (const auto &root : resolved->transaction.roots) {
+    SmallVector<int64_t> entry{static_cast<int64_t>(root.descriptor),
+                               root.root,
+                               root.staticState,
+                               static_cast<int64_t>(root.bitOffset),
+                               static_cast<int64_t>(root.bitWidth),
+                               static_cast<int64_t>(root.writeMask),
+                               root.region,
+                               root.trackTransients};
+    SmallVector<int64_t> writers(root.writerFragments.begin(),
+                                 root.writerFragments.end());
+    SmallVector<int64_t> owners(root.owners.begin(), root.owners.end());
+    SmallVector<int64_t> sites(root.sites.begin(), root.sites.end());
+    transactionRoots.push_back(DictionaryAttr::get(
+        context,
+        {builder.getNamedAttr("root", DenseI64ArrayAttr::get(context, entry)),
+         builder.getNamedAttr(
+             "accumulator",
+             FlatSymbolRefAttr::get(
+                 context, staticNBAPlan.generatedAccumulators[root.root])),
+         builder.getNamedAttr("writers",
+                              DenseI64ArrayAttr::get(context, writers)),
+         builder.getNamedAttr("owners",
+                              DenseI64ArrayAttr::get(context, owners)),
+         builder.getNamedAttr("sites",
+                              DenseI64ArrayAttr::get(context, sites))}));
+  }
+  if (!transactionRoots.empty())
+    schedule::set<schedule::Field::EvalTransactionRoots>(
+        module, ArrayAttr::get(context, transactionRoots));
   NativeEvalCoordinatorPlan coordinatorPlan{
       clockKernels,          mergedFragments,
       mergedExecutors,       mergedTwoStateExecutors,
@@ -5048,6 +5156,40 @@ FailureOr<bool> makeNativeEvalPlan(
       recordNBATaintMasks,   nbaTaintedRecords,
       nbaTaintWordCount,     prioritySignalHandoff,
       dynamicNBAValidNames,  hasOrderedNBA};
+  SmallVector<SmallVector<uint32_t>> ownerStaticStates;
+  SmallVector<APInt> ownerFineIngress;
+  if (vpi.allowsWrite()) {
+    ownerStaticStates.resize(mergedFragments.size());
+    ownerFineIngress.assign(mergedFragments.size(), APInt(ownerCount, 0));
+    for (auto [owner, record] : llvm::enumerate(mergedFragments)) {
+      llvm::SmallDenseSet<uint32_t, 8> actors;
+      actors.insert(record.actor_slot);
+      for (auto [member, exact] : llvm::enumerate(mergedFragments))
+        if (ownerSubsumptionMasks[owner][exact.bit])
+          actors.insert(exact.actor_slot);
+      for (const auto &dependency : actorRoots)
+        if (dependency.static_state && actors.contains(dependency.actor_slot))
+          ownerStaticStates[owner].push_back(dependency.static_state);
+      if (llvm::any_of(writableVPIUnscopedActors,
+                       [&](uint32_t actor) { return actors.contains(actor); }))
+        // The dirty-path query on an unmapped root rejects this owner;
+        // no whole-model root scan is needed for an incomplete certificate.
+        ownerStaticStates[owner].push_back(UINT32_MAX);
+      llvm::sort(ownerStaticStates[owner]);
+      ownerStaticStates[owner].erase(
+          std::unique(ownerStaticStates[owner].begin(),
+                      ownerStaticStates[owner].end()),
+          ownerStaticStates[owner].end());
+      for (auto [index, entry] : llvm::enumerate(indexedFanoutEntries))
+        if (index < periodicOwnerBits.size() &&
+            periodicOwnerBits[index] == record.bit &&
+            entry.merged_bit < ownerCount)
+          ownerFineIngress[owner].setBit(entry.merged_bit);
+    }
+    coordinatorPlan.writableVPI = true;
+    coordinatorPlan.ownerStaticStates = ownerStaticStates;
+    coordinatorPlan.ownerFineIngress = ownerFineIngress;
+  }
   auto rankedGroups = materializeNativeRankedGroups(module, coordinatorPlan);
   if (failed(rankedGroups))
     return failure();
@@ -6149,21 +6291,24 @@ FailureOr<bool> makeNativeEvalPlan(
             load, UnitAttr::get(context));
         stagedUnknown = load;
       }
-      Value writeMask =
-          fixedWriteMask != 0
-              ? llvmConstant(builder, location, i64, fixedWriteMask)
-              : arith::AndIOp::create(
-                    builder, location,
-                    LLVM::LoadOp::create(
-                        builder, location, i64,
-                        byteGEP(
-                            builder, location, accumulatorBase,
-                            offsetof(obelisk_rt_generated_nba_accumulator_256,
-                                     write_mask)),
-                        8),
-                    llvmConstant(builder, location, i64,
-                                 scalarMask(root.bit_width)))
-                    .getResult();
+      Value writeMask;
+      if (fixedWriteMask != 0) {
+        writeMask = llvmConstant(builder, location, i64, fixedWriteMask);
+      } else {
+        auto capturedMask = LLVM::LoadOp::create(
+            builder, location, i64,
+            byteGEP(
+                builder, location, accumulatorBase,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+            8);
+        // The NBA prefix consumes the captured mask even after claiming its
+        // dirty word (LRM 4.9.4/10.4.2); it is not a test for a new stage.
+        schedule::set<schedule::Field::EvalPendingMaskAtCommit>(
+            capturedMask, UnitAttr::get(context));
+        writeMask = arith::AndIOp::create(
+            builder, location, capturedMask,
+            llvmConstant(builder, location, i64, scalarMask(root.bit_width)));
+      }
       Value oldValue = loadRoot(stateValue, offset, root.bit_width);
       Value oldUnknown = forcedTwoStateEval
                              ? llvmConstant(builder, location, i64, 0)

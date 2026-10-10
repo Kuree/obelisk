@@ -30,8 +30,13 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/GenericIteratedDominanceFrontier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <functional>
 #include <map>
 
 using namespace mlir;
@@ -72,6 +77,137 @@ std::optional<uint64_t> staticByteOffset(Value pointer) {
     pointer = gep.getBase();
   }
   return bytes;
+}
+
+using NativeByteFootprint = SmallVector<std::pair<uint64_t, uint64_t>, 2>;
+struct NativeStateFootprint {
+  bool exact = false;
+  NativeByteFootprint value, unknown;
+};
+
+void normalizeNativeByteFootprint(NativeByteFootprint &ranges) {
+  llvm::sort(ranges);
+  NativeByteFootprint merged;
+  for (auto range : ranges)
+    if (!merged.empty() && range.first <= merged.back().second)
+      merged.back().second = std::max(merged.back().second, range.second);
+    else
+      merged.push_back(range);
+  ranges = std::move(merged);
+}
+
+// An outlined computation is not itself an observation boundary (LRM 4.3).
+// Inventory its complete call closure without inlining it or changing the
+// machine-IR growth budget. Unknown aliases and external calls remain cuts.
+llvm::StringMap<NativeStateFootprint>
+buildNativeStateFootprints(ModuleOp module,
+                           const llvm::StringMap<Type> &globalTypes,
+                           const llvm::StringSet<> &metadataOnly) {
+  llvm::StringMap<LLVM::LLVMFuncOp> functions;
+  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+    functions.try_emplace(function.getSymName(), function);
+  llvm::StringMap<NativeStateFootprint> results;
+  llvm::StringSet<> visiting;
+  std::function<NativeStateFootprint(StringRef)> visit = [&](StringRef name) {
+    if (metadataOnly.contains(name))
+      return NativeStateFootprint{true, {}, {}};
+    if (auto found = results.find(name); found != results.end())
+      return found->second;
+    auto function = functions.lookup(name);
+    if (!function || function.isExternal() || !visiting.insert(name).second)
+      return NativeStateFootprint{};
+    NativeStateFootprint result{true, {}, {}};
+    auto memory = [&](Operation *operation, Value pointer,
+                      std::optional<uint64_t> bytes) {
+      Value root = pointer;
+      while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
+        root = gep.getBase();
+      if (root.getDefiningOp<LLVM::AllocaOp>())
+        return;
+      auto address = root.getDefiningOp<LLVM::AddressOfOp>();
+      if (!address || !globalTypes.contains(address.getGlobalName())) {
+        result.exact = false;
+        return;
+      }
+      StringRef global = address.getGlobalName();
+      if (global != "__obelisk_state_value" &&
+          global != "__obelisk_state_unknown")
+        return;
+      if (!bytes) {
+        result.exact = false;
+        return;
+      }
+      auto offset = staticByteOffset(pointer);
+      auto array = dyn_cast<LLVM::LLVMArrayType>(globalTypes.lookup(global));
+      auto interval =
+          schedule::get<schedule::Field::EvalStateAccessBytes>(operation);
+      if (array && interval && interval.size() == 2 && interval[0] >= 0 &&
+          interval[1] > interval[0]) {
+        uint64_t begin = interval[0];
+        uint64_t end = std::min(uint64_t(interval[1]), array.getNumElements());
+        if (begin < end) {
+          (global == "__obelisk_state_value" ? result.value : result.unknown)
+              .emplace_back(begin, end);
+          return;
+        }
+      }
+      if (!offset || !array || *offset > array.getNumElements() ||
+          *bytes > array.getNumElements() - *offset) {
+        result.exact = false;
+        return;
+      }
+      if (*bytes)
+        (global == "__obelisk_state_value" ? result.value : result.unknown)
+            .emplace_back(*offset, *offset + *bytes);
+    };
+    function.walk([&](Operation *operation) {
+      if (!result.exact || operation == function.getOperation())
+        return;
+      if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
+        auto nested = call.getCallee() ? visit(*call.getCallee())
+                                       : NativeStateFootprint{};
+        result.exact &= nested.exact;
+        llvm::append_range(result.value, nested.value);
+        llvm::append_range(result.unknown, nested.unknown);
+      } else if (auto load = dyn_cast<LLVM::LoadOp>(operation)) {
+        auto type = dyn_cast<IntegerType>(load.getType());
+        memory(operation, load.getAddr(),
+               type && type.getWidth() % 8 == 0
+                   ? std::optional<uint64_t>(type.getWidth() / 8)
+                   : std::nullopt);
+      } else if (auto store = dyn_cast<LLVM::StoreOp>(operation)) {
+        auto type = dyn_cast<IntegerType>(store.getValue().getType());
+        memory(operation, store.getAddr(),
+               type && type.getWidth() % 8 == 0
+                   ? std::optional<uint64_t>(type.getWidth() / 8)
+                   : std::nullopt);
+      } else if (isa<LLVM::MemcpyOp, LLVM::MemsetOp>(operation)) {
+        Value length = isa<LLVM::MemcpyOp>(operation)
+                           ? cast<LLVM::MemcpyOp>(operation).getLen()
+                           : cast<LLVM::MemsetOp>(operation).getLen();
+        APInt bytes;
+        if (!matchPattern(length, m_ConstantInt(&bytes)) ||
+            bytes.getActiveBits() > 64)
+          result.exact = false;
+        else if (auto copy = dyn_cast<LLVM::MemcpyOp>(operation)) {
+          memory(operation, copy.getDst(), bytes.getZExtValue());
+          memory(operation, copy.getSrc(), bytes.getZExtValue());
+        } else
+          memory(operation, cast<LLVM::MemsetOp>(operation).getDst(),
+                 bytes.getZExtValue());
+      } else if (!isa<LLVM::ReturnOp, LLVM::AllocaOp>(operation) &&
+                 !isMemoryEffectFree(operation))
+        result.exact = false;
+    });
+    normalizeNativeByteFootprint(result.value);
+    normalizeNativeByteFootprint(result.unknown);
+    visiting.erase(name);
+    results.try_emplace(name, result);
+    return result;
+  };
+  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+    visit(function.getSymName());
+  return results;
 }
 
 /// Keep the ready words in SSA between executor boundaries. This is a local
@@ -209,9 +345,15 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
 /// value-domain proof is inferred here. Original transition computations and
 /// invalidation hooks still execute at each logical store. Only its physical
 /// publication is deferred until the next boundary (LRM 4.3, 4.6, 4.10).
-LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
-                                const llvm::StringMap<Type> &globalTypes,
-                                StringRef name, uint64_t &budget) {
+/// IEEE 1800-2023 4.3 permits this representation only with the same visible
+/// updates; 4.6(a) retains source statement order and 4.9.3 makes subsequent
+/// blocking reads see the updated current value. Opaque calls materialize
+/// both planes so VPI reads/writes (38.15, 38.34) observe coherent state.
+LogicalResult
+promoteGroupState(LLVM::LLVMFuncOp function,
+                  const llvm::StringMap<Type> &globalTypes, StringRef name,
+                  uint64_t &budget, const llvm::StringSet<> &metadataOnly,
+                  const llvm::StringMap<NativeStateFootprint> &callFootprints) {
   auto array = dyn_cast_or_null<LLVM::LLVMArrayType>(globalTypes.lookup(name));
   if (!array || !array.getElementType().isInteger(8))
     return success();
@@ -221,17 +363,59 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
     llvm::SmallDenseSet<uint32_t, 2> owners;
     bool read = false;
     bool written = false;
-    bool overlaps = false;
     unsigned stores = 0;
   };
   bool activation = schedule::has<schedule::Field::EvalRawCaptures>(function);
   std::map<std::pair<uint64_t, uint64_t>, Range> ranges;
   llvm::SetVector<Operation *> boundaries;
+  using Footprint = SmallVector<std::pair<uint64_t, uint64_t>, 2>;
+  DenseMap<Operation *, Footprint> boundaryFootprints;
+  DenseMap<Operation *, uint64_t> operationOrder;
+  uint64_t nextOperation = 0;
+  auto pointerFootprint = [&](Value pointer, uint64_t bytes,
+                              Footprint &footprint) {
+    Value root = pointer;
+    while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
+      root = gep.getBase();
+    if (root.getDefiningOp<LLVM::AllocaOp>())
+      return true;
+    auto address = root.getDefiningOp<LLVM::AddressOfOp>();
+    if (!address || !globalTypes.contains(address.getGlobalName()))
+      return false;
+    if (address.getGlobalName() != name)
+      return true;
+    auto offset = staticByteOffset(pointer);
+    if (!offset || *offset > array.getNumElements() ||
+        bytes > array.getNumElements() - *offset)
+      return false;
+    if (bytes)
+      footprint.emplace_back(*offset, *offset + bytes);
+    return true;
+  };
   bool supported = true;
   function.walk([&](Operation *operation) {
+    operationOrder.try_emplace(operation, nextOperation++);
     if (operation == function.getOperation())
       return;
-    if (isa<LLVM::CallOp, LLVM::ReturnOp>(operation)) {
+    if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
+      if (call.getCallee() && metadataOnly.contains(*call.getCallee()))
+        return;
+      if (call.getCallee())
+        if (auto found = callFootprints.find(*call.getCallee());
+            found != callFootprints.end() && found->second.exact) {
+          auto &footprint = name == "__obelisk_state_value"
+                                ? found->second.value
+                                : found->second.unknown;
+          if (!footprint.empty()) {
+            boundaries.insert(operation);
+            boundaryFootprints.try_emplace(operation, footprint);
+          }
+          return;
+        }
+      boundaries.insert(operation);
+      return;
+    }
+    if (isa<LLVM::ReturnOp>(operation)) {
       boundaries.insert(operation);
       return;
     }
@@ -242,6 +426,34 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
     if (!load && !store) {
       // Intrinsics and future memory operations must not silently bypass
       // publication. Unknown control effects cannot be resumed locally.
+      // Local memory intrinsics cannot observe canonical state. Preserve
+      // their original order, but do not flush unrelated state around them.
+      if (isa<LLVM::MemsetOp, LLVM::MemcpyOp>(operation)) {
+        Value length = isa<LLVM::MemsetOp>(operation)
+                           ? cast<LLVM::MemsetOp>(operation).getLen()
+                           : cast<LLVM::MemcpyOp>(operation).getLen();
+        APInt bytes;
+        Footprint footprint;
+        bool exact = matchPattern(length, m_ConstantInt(&bytes)) &&
+                     bytes.getActiveBits() <= 64;
+        if (exact) {
+          if (auto set = dyn_cast<LLVM::MemsetOp>(operation))
+            exact =
+                pointerFootprint(set.getDst(), bytes.getZExtValue(), footprint);
+          else {
+            auto copy = cast<LLVM::MemcpyOp>(operation);
+            exact = pointerFootprint(copy.getDst(), bytes.getZExtValue(),
+                                     footprint) &&
+                    pointerFootprint(copy.getSrc(), bytes.getZExtValue(),
+                                     footprint);
+          }
+        }
+        if (!exact || !footprint.empty())
+          boundaries.insert(operation);
+        if (exact)
+          boundaryFootprints.try_emplace(operation, std::move(footprint));
+        return;
+      }
       if (!isa<LLVM::AllocaOp>(operation) && !isMemoryEffectFree(operation)) {
         if (operation->getNumRegions() ||
             operation->hasTrait<OpTrait::IsTerminator>())
@@ -279,6 +491,17 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
     if ((!owner && !activation) || !plain || !type || type.getWidth() % 8 ||
         !offset) {
       boundaries.insert(operation);
+      Footprint footprint;
+      auto bytes =
+          schedule::get<schedule::Field::EvalStateAccessBytes>(operation);
+      if (bytes && bytes.size() == 2 && bytes[0] >= 0 && bytes[1] > bytes[0]) {
+        uint64_t begin = bytes[0];
+        uint64_t end = std::min(uint64_t(bytes[1]), array.getNumElements());
+        if (begin < end)
+          boundaryFootprints.try_emplace(operation, Footprint{{begin, end}});
+      } else if (type && type.getWidth() % 8 == 0 && offset &&
+                 pointerFootprint(pointer, type.getWidth() / 8, footprint))
+        boundaryFootprints.try_emplace(operation, std::move(footprint));
       return;
     }
     uint64_t width = type.getWidth() / 8;
@@ -299,6 +522,9 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
   // The global address must never escape into an opaque memory operation.
   // Calls are handled at boundaries, but storing the pointer or passing it
   // through control flow would hide later aliases from the access inventory.
+  // Ptr-to-int arithmetic only observes the address (including the explicit
+  // proof-publication offset), not the deferred payload. Any later int-to-ptr
+  // memory access is an unknown alias and already forces a boundary above.
   SmallVector<Value> pending;
   llvm::DenseSet<Value> seen;
   function.walk([&](LLVM::AddressOfOp address) {
@@ -316,37 +542,130 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
       else if (auto store = dyn_cast<LLVM::StoreOp>(operation))
         supported &= store.getAddr() == pointer;
       else
-        supported &= isa<LLVM::LoadOp, LLVM::CallOp>(operation);
+        supported &= isa<LLVM::LoadOp, LLVM::CallOp, LLVM::MemcpyOp,
+                         LLVM::MemsetOp, LLVM::PtrToIntOp>(operation);
     }
   }
   if (!supported || ranges.empty())
     return success();
-  // Reject differently typed or partial overlaps with a sorted interval
-  // sweep. No all-pairs alias matrix and no union of copy-connected ports.
-  Range *longest = nullptr;
-  uint64_t end = 0;
+  // A connected physical window has one value, even when logical accesses
+  // have different widths. Keep overlapping byte slices together and express
+  // their loads/stores as exact integer extracts/inserts. This never unions
+  // unrelated copy-connected roots or includes bytes outside the window.
+  std::optional<bool> littleEndian;
+  if (auto layout =
+          function->getParentOfType<ModuleOp>()->getAttrOfType<StringAttr>(
+              "llvm.data_layout")) {
+    auto parsed = llvm::DataLayout::parse(layout.getValue());
+    if (!parsed) {
+      llvm::consumeError(parsed.takeError());
+      return function.emitError("invalid native state data layout");
+    }
+    littleEndian = parsed->isLittleEndian();
+  }
+  struct Window {
+    uint64_t offset, end;
+    SmallVector<Range *> ranges;
+    llvm::SmallDenseSet<uint32_t, 2> owners;
+    bool read = false, written = false;
+    unsigned stores = 0;
+    Block *scope = nullptr;
+    Operation *first = nullptr, *last = nullptr;
+    uint64_t beginOrder = UINT64_MAX, endOrder = 0;
+  };
+  SmallVector<Window> windows;
   for (auto &[key, range] : ranges) {
-    if (longest && key.first < end)
-      longest->overlaps = range.overlaps = true;
-    if (!longest || key.first + key.second > end) {
-      end = key.first + key.second;
-      longest = &range;
+    if (windows.empty() || key.first >= windows.back().end)
+      windows.push_back({key.first, key.first + key.second, {}});
+    Window &window = windows.back();
+    window.end = std::max(window.end, key.first + key.second);
+    window.ranges.push_back(&range);
+    window.owners.insert(range.owners.begin(), range.owners.end());
+    window.read |= range.read;
+    window.written |= range.written;
+    window.stores += range.stores;
+  }
+  DominanceInfo dominance(function);
+  for (Window &window : windows) {
+    bool oneBlock = true;
+    for (Range *range : window.ranges)
+      for (Operation *operation : range->operations) {
+        if (!window.scope)
+          window.scope = operation->getBlock();
+        oneBlock &= window.scope == operation->getBlock();
+        uint64_t order = operationOrder.lookup(operation);
+        if (order < window.beginOrder) {
+          window.beginOrder = order;
+          window.first = operation;
+        }
+        if (!window.last || order > window.endOrder) {
+          window.endOrder = order;
+          window.last = operation;
+        }
+      }
+    if (!oneBlock) {
+      window.scope = nullptr;
+      window.first = window.last = nullptr;
     }
   }
-  // Overlapping candidates are all rejected; noncandidate target accesses
-  // were recorded as boundaries above. Disjoint rejected ranges need no
-  // synchronization.
-  SmallVector<std::pair<uint64_t, Range *>> selected;
-  uint64_t perRangeCost = 4 + 6 * uint64_t(boundaries.size()) +
-                          function.getBody().getBlocks().size();
-  for (auto &[key, range] : ranges)
-    if (!range.overlaps && range.read && range.written &&
-        (range.owners.size() > 1 ||
-         (activation && key.second <= 8 && range.stores > boundaries.size())) &&
-        budget >= perRangeCost) {
-      selected.push_back({key.first, &range});
-      budget -= perRangeCost;
+  auto intersects = [&](Operation *boundary, const Window &window) {
+    if (window.scope && (boundary->getBlock() != window.scope ||
+                         operationOrder.lookup(boundary) < window.beginOrder ||
+                         operationOrder.lookup(boundary) > window.endOrder))
+      return false;
+    auto found = boundaryFootprints.find(boundary);
+    return found == boundaryFootprints.end() ||
+           llvm::any_of(found->second, [&](const auto &range) {
+             return window.offset < range.second && range.first < window.end;
+           });
+  };
+  SmallVector<Window *> selected;
+  for (Window &window : windows) {
+    uint64_t width = window.end - window.offset;
+    if (!window.read || !window.written || width > 32 ||
+        (window.ranges.size() > 1 && !littleEndian) ||
+        !(window.owners.size() > 1 || activation))
+      continue;
+    // Charge actual potential joins, not every block in an unrelated region.
+    // A large evaluator may have thousands of blocks but only a few reaching
+    // definitions for this window. The IDF bounds its SSA merge growth.
+    llvm::SmallPtrSet<Block *, 32> definitions;
+    definitions.insert(&function.getBody().front());
+    for (Range *range : window.ranges)
+      for (Operation *operation : range->operations)
+        if (isa<LLVM::StoreOp>(operation))
+          definitions.insert(operation->getBlock());
+    uint64_t relevantBoundaries = 0;
+    for (Operation *boundary : boundaries) {
+      if (!intersects(boundary, window))
+        continue;
+      ++relevantBoundaries;
+      if (!isa<LLVM::ReturnOp>(boundary))
+        definitions.insert(boundary->getBlock());
     }
+    // An activation-local lane with a single conditional write often gains
+    // a longer live range and unconditional epilogue stores, without saving
+    // any source store. Retain that canonical form unless accesses share one
+    // block or repeated writes can amortize the real publication cuts.
+    if (activation && window.owners.size() < 2 && !window.scope &&
+        window.stores <= relevantBoundaries)
+      continue;
+    SmallVector<Block *> joins;
+    if (!function.getBody().hasOneBlock()) {
+      llvm::IDFCalculatorBase<Block, false> idf(
+          dominance.getDomTree(&function.getBody()));
+      idf.setDefiningBlocks(definitions);
+      idf.calculate(joins);
+    }
+    uint64_t cost = 4 + 6 * relevantBoundaries + joins.size();
+    for (Range *range : window.ranges)
+      if (range->type != IntegerType::get(function.getContext(), width * 8))
+        cost += 5 * range->operations.size();
+    if (budget < cost)
+      continue;
+    budget -= cost;
+    selected.push_back(&window);
+  }
   if (selected.empty())
     return success();
   OpBuilder builder(function.getContext());
@@ -359,46 +678,103 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
     Value address;
     Value local;
     Type type;
+    Window *window;
   };
   SmallVector<Slot> slots;
   SmallVector<PromotableAllocationOpInterface> allocations;
-  for (auto [offset, range] : selected) {
-    Value address = byteGEP(builder, location, base, offset);
-    Value local = entryAlloca(builder, location, range->type, 1, 1);
+  for (Window *window : selected) {
+    auto type = builder.getIntegerType((window->end - window->offset) * 8);
+    Value address = byteGEP(builder, location, base, window->offset);
+    Value local = entryAlloca(builder, location, type, 1, 1);
     allocations.push_back(
         cast<PromotableAllocationOpInterface>(local.getDefiningOp()));
+    // IEEE 1800-2023 4.3, 4.6(a), 4.9.3: when every access is in one
+    // block, acquire at its first access and publish after its last access.
+    // This preserves source order and avoids touching state on a skipped
+    // branch. Intervening observers still flush/reacquire below (38.15/38.34).
+    if (window->scope)
+      builder.setInsertionPoint(window->first);
     LLVM::StoreOp::create(
         builder, location,
-        LLVM::LoadOp::create(builder, location, range->type, address, 1), local,
-        1);
-    slots.push_back({address, local, range->type});
-    for (Operation *operation : range->operations)
-      if (auto load = dyn_cast<LLVM::LoadOp>(operation)) {
-        load.getAddrMutable().assign(local);
-        load.setAlignment(1);
-      } else {
-        auto store = cast<LLVM::StoreOp>(operation);
-        store.getAddrMutable().assign(local);
-        store.setAlignment(1);
+        LLVM::LoadOp::create(builder, location, type, address, 1), local, 1);
+    slots.push_back({address, local, type, window});
+    for (Range *range : window->ranges)
+      for (Operation *operation : range->operations) {
+        builder.setInsertionPoint(operation);
+        auto load = dyn_cast<LLVM::LoadOp>(operation);
+        auto store = dyn_cast<LLVM::StoreOp>(operation);
+        Value pointer = load ? load.getAddr() : store.getAddr();
+        uint64_t byte = *staticByteOffset(pointer) - window->offset;
+        unsigned bits = cast<IntegerType>(range->type).getWidth();
+        unsigned shift = littleEndian.value_or(true)
+                             ? byte * 8
+                             : type.getWidth() - byte * 8 - bits;
+        Value value;
+        if (load) {
+          value = LLVM::LoadOp::create(builder, operation->getLoc(), type,
+                                       local, 1);
+          if (shift)
+            value = LLVM::LShrOp::create(
+                builder, operation->getLoc(), value,
+                llvmConstant(builder, operation->getLoc(), type, shift));
+          if (bits != type.getWidth())
+            value = LLVM::TruncOp::create(builder, operation->getLoc(),
+                                          range->type, value);
+          load.replaceAllUsesWith(value);
+        } else {
+          value = store.getValue();
+          if (bits != type.getWidth()) {
+            value =
+                LLVM::ZExtOp::create(builder, operation->getLoc(), type, value);
+            if (shift)
+              value = LLVM::ShlOp::create(
+                  builder, operation->getLoc(), value,
+                  llvmConstant(builder, operation->getLoc(), type, shift));
+            APInt keep =
+                ~APInt::getBitsSet(type.getWidth(), shift, shift + bits);
+            Value old = LLVM::LoadOp::create(builder, operation->getLoc(), type,
+                                             local, 1);
+            Value mask = LLVM::ConstantOp::create(builder, operation->getLoc(),
+                                                  type, keep);
+            value = LLVM::OrOp::create(
+                builder, operation->getLoc(),
+                LLVM::AndOp::create(builder, operation->getLoc(), old, mask),
+                value);
+          }
+          LLVM::StoreOp::create(builder, operation->getLoc(), value, local, 1);
+        }
+        if (window->scope && operation == window->last)
+          LLVM::StoreOp::create(builder, operation->getLoc(),
+                                LLVM::LoadOp::create(builder,
+                                                     operation->getLoc(), type,
+                                                     local, 1),
+                                address, 1);
+        operation->erase();
       }
+    builder.setInsertionPointAfter(base.getDefiningOp());
   }
   for (Operation *boundary : boundaries) {
     builder.setInsertionPoint(boundary);
-    for (const Slot &slot : slots)
+    for (const Slot &slot : slots) {
+      if (!intersects(boundary, *slot.window))
+        continue;
       LLVM::StoreOp::create(builder, boundary->getLoc(),
                             LLVM::LoadOp::create(builder, boundary->getLoc(),
                                                  slot.type, slot.local, 1),
                             slot.address, 1);
+    }
     if (isa<LLVM::ReturnOp>(boundary))
       continue;
     builder.setInsertionPointAfter(boundary);
-    for (const Slot &slot : slots)
+    for (const Slot &slot : slots) {
+      if (!intersects(boundary, *slot.window))
+        continue;
       LLVM::StoreOp::create(builder, boundary->getLoc(),
                             LLVM::LoadOp::create(builder, boundary->getLoc(),
                                                  slot.type, slot.address, 1),
                             slot.local, 1);
+    }
   }
-  DominanceInfo dominance(function);
   if (failed(tryToPromoteMemorySlots(allocations, builder,
                                      DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group state in SSA");
@@ -409,13 +785,535 @@ LogicalResult promoteGroupState(LLVM::LLVMFuncOp function,
   return success();
 }
 
+struct NativeEvalValueLane {
+  StringRef plane;
+  uint64_t begin, end;
+  bool written = false;
+  SmallVector<Operation *> accesses;
+};
+
+struct NativeEvalValueInterface {
+  LLVM::LLVMFuncOp body;
+  SmallVector<NativeEvalValueLane> lanes;
+  Type result;
+  bool returnsStatus = false;
+};
+
+// Only the already selected, closed computation is eligible. In particular,
+// the existence of a two-state implementation does not select that route.
+bool isNativeEvalValueCall(LLVM::CallOp call, LLVM::LLVMFuncOp callee) {
+  return callee && !callee.isExternal() &&
+         (schedule::has<schedule::Field::EvalGroupDomainSelected>(call) ||
+          schedule::has<schedule::metadata::evalInfallible>(callee) ||
+          schedule::has<schedule::Field::EvalRawCaptures>(callee) ||
+          schedule::has<schedule::Field::EvalFourStateSource>(callee) ||
+          schedule::has<schedule::Field::EvalConditionallyTwoState>(callee));
+}
+
+ArrayAttr extendNativeEvalArgumentAttrs(OpBuilder &builder, ArrayAttr original,
+                                        size_t count) {
+  if (!original)
+    return {};
+  SmallVector<Attribute> attrs(original.getValue());
+  attrs.resize(count, builder.getDictionaryAttr({}));
+  return builder.getArrayAttr(attrs);
+}
+
+// Preserve the cold canonical ABI, but move (rather than duplicate) its body
+// into a value interface. The source activation/route certificate still owns
+// execution; the exact complete memory inventory proves only representation.
+// IEEE 1800-2023 4.3 permits this representation change, while 4.6(a) and
+// 4.9.3 require every blocking update and its transition actions to retain
+// their original position. No final-value comparison replaces those actions.
+FailureOr<NativeEvalValueInterface>
+materializeNativeEvalValueInterface(LLVM::LLVMFuncOp function,
+                                    SmallVector<NativeEvalValueLane> lanes,
+                                    SymbolTable &symbols, bool littleEndian) {
+  OpBuilder builder(function.getContext());
+  Location location = function.getLoc();
+  auto originalType = function.getFunctionType();
+  bool status = !isa<LLVM::LLVMVoidType>(originalType.getReturnType());
+  SmallVector<Type> arguments(originalType.getParams()), results;
+  if (status)
+    results.push_back(originalType.getReturnType());
+  SmallVector<int64_t> description;
+  for (const auto &lane : lanes) {
+    Type type = builder.getIntegerType((lane.end - lane.begin) * 8);
+    arguments.push_back(type);
+    if (lane.written)
+      results.push_back(type);
+    description.append({int64_t(lane.plane == "__obelisk_state_unknown"),
+                        int64_t(lane.begin), int64_t(lane.end - lane.begin),
+                        int64_t(lane.written)});
+  }
+  Type result = results.empty()
+                    ? Type(LLVM::LLVMVoidType::get(function.getContext()))
+                    : Type(LLVM::LLVMStructType::getLiteral(
+                          function.getContext(), results));
+  builder.setInsertionPoint(function);
+  auto body = LLVM::LLVMFuncOp::create(
+      builder, location, function.getSymName().str() + ".__obelisk_eval_values",
+      LLVM::LLVMFunctionType::get(result, arguments, false),
+      LLVM::Linkage::Internal);
+  symbols.insert(body);
+  if (auto passthrough = function.getPassthroughAttr())
+    body.setPassthroughAttr(passthrough);
+  if (auto attrs = extendNativeEvalArgumentAttrs(
+          builder, function.getArgAttrsAttr(), arguments.size()))
+    body.setArgAttrsAttr(attrs);
+  schedule::set<schedule::Field::EvalValueLanes>(
+      body, builder.getDenseI64ArrayAttr(description));
+  body.getBody().takeBody(function.getBody());
+  Block &entry = body.getBody().front();
+  SmallVector<Value> locals;
+  SmallVector<PromotableAllocationOpInterface> allocations;
+  for (const auto &lane : lanes) {
+    Type type = builder.getIntegerType((lane.end - lane.begin) * 8);
+    Value argument = entry.addArgument(type, location);
+    builder.setInsertionPointToStart(&entry);
+    Value local = entryAlloca(builder, location, type, 1, 1);
+    locals.push_back(local);
+    allocations.push_back(
+        cast<PromotableAllocationOpInterface>(local.getDefiningOp()));
+    LLVM::StoreOp::create(builder, location, argument, local, 1);
+    for (Operation *operation : lane.accesses) {
+      builder.setInsertionPoint(operation);
+      auto load = dyn_cast<LLVM::LoadOp>(operation);
+      auto store = dyn_cast<LLVM::StoreOp>(operation);
+      auto narrow =
+          cast<IntegerType>(load ? load.getType() : store.getValue().getType());
+      uint64_t byte =
+          *staticByteOffset(load ? load.getAddr() : store.getAddr()) -
+          lane.begin;
+      unsigned shift = littleEndian ? byte * 8
+                                    : cast<IntegerType>(type).getWidth() -
+                                          byte * 8 - narrow.getWidth();
+      Value value;
+      if (load) {
+        value =
+            LLVM::LoadOp::create(builder, operation->getLoc(), type, local, 1);
+        if (shift)
+          value = LLVM::LShrOp::create(
+              builder, operation->getLoc(), value,
+              llvmConstant(builder, operation->getLoc(), type, shift));
+        if (narrow != type)
+          value = LLVM::TruncOp::create(builder, operation->getLoc(), narrow,
+                                        value);
+        load.replaceAllUsesWith(value);
+      } else {
+        value = store.getValue();
+        if (narrow != type) {
+          value =
+              LLVM::ZExtOp::create(builder, operation->getLoc(), type, value);
+          if (shift)
+            value = LLVM::ShlOp::create(
+                builder, operation->getLoc(), value,
+                llvmConstant(builder, operation->getLoc(), type, shift));
+          APInt keep = ~APInt::getBitsSet(cast<IntegerType>(type).getWidth(),
+                                          shift, shift + narrow.getWidth());
+          Value previous = LLVM::LoadOp::create(builder, operation->getLoc(),
+                                                type, local, 1);
+          value = LLVM::OrOp::create(
+              builder, operation->getLoc(), value,
+              LLVM::AndOp::create(builder, operation->getLoc(), previous,
+                                  LLVM::ConstantOp::create(builder,
+                                                           operation->getLoc(),
+                                                           type, keep)));
+        }
+        LLVM::StoreOp::create(builder, operation->getLoc(), value, local, 1);
+      }
+      operation->erase();
+    }
+  }
+  SmallVector<LLVM::ReturnOp> returns;
+  body.walk([&](LLVM::ReturnOp ret) { returns.push_back(ret); });
+  for (auto ret : returns) {
+    builder.setInsertionPoint(ret);
+    if (results.empty())
+      continue;
+    Value value = LLVM::UndefOp::create(builder, ret.getLoc(), result);
+    unsigned field = 0;
+    if (status)
+      value = insertValue(builder, ret.getLoc(), value, ret.getArg(), field++);
+    for (auto [i, lane] : llvm::enumerate(lanes))
+      if (lane.written)
+        value = insertValue(
+            builder, ret.getLoc(), value,
+            LLVM::LoadOp::create(builder, ret.getLoc(),
+                                 arguments[originalType.getNumParams() + i],
+                                 locals[i], 1),
+            field++);
+    LLVM::ReturnOp::create(builder, ret.getLoc(), value);
+    ret.erase();
+  }
+  DominanceInfo dominance(body);
+  if (failed(tryToPromoteMemorySlots(allocations, builder,
+                                     DataLayout::closest(body), dominance)))
+    return body.emitError("could not promote eval value interface");
+
+  // Old callers (fine Tier 2/3 execution, guards and function pointers) keep
+  // the same symbol and ABI. Only a selected generated caller bypasses this
+  // acquisition/publication wrapper. Observer/runtime calls still cut its
+  // caller's SSA lifetime (IEEE 1800-2023 4.3, 38.15 and 38.34).
+  Block *wrapper = function.addEntryBlock(builder);
+  builder.setInsertionPointToStart(wrapper);
+  SmallVector<Value> inputs(wrapper->getArguments()), addresses;
+  for (const auto &lane : lanes) {
+    Value base = LLVM::AddressOfOp::create(
+        builder, location, LLVM::LLVMPointerType::get(function.getContext()),
+        lane.plane);
+    Value address = byteGEP(builder, location, base, lane.begin);
+    addresses.push_back(address);
+    inputs.push_back(LLVM::LoadOp::create(
+        builder, location, builder.getIntegerType((lane.end - lane.begin) * 8),
+        address, 1));
+  }
+  auto call = LLVM::CallOp::create(
+      builder, location, results.empty() ? TypeRange{} : TypeRange{result},
+      body.getSymName(), inputs);
+  if (auto attrs = body.getArgAttrsAttr())
+    call.setArgAttrsAttr(attrs);
+  unsigned field = status;
+  for (auto [i, lane] : llvm::enumerate(lanes))
+    if (lane.written)
+      LLVM::StoreOp::create(
+          builder, location,
+          LLVM::ExtractValueOp::create(builder, location, call.getResult(),
+                                       ArrayRef<int64_t>{field++}),
+          addresses[i], 1);
+  if (status)
+    LLVM::ReturnOp::create(builder, location,
+                           LLVM::ExtractValueOp::create(builder, location,
+                                                        call.getResult(),
+                                                        ArrayRef<int64_t>{0}));
+  else
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+  for (auto &lane : lanes)
+    lane.accesses.clear();
+  return NativeEvalValueInterface{body, std::move(lanes), result, status};
+}
+
+// Outlining a closed computation must not force a canonical round trip.
+// Carry shared current lanes as arguments/results, allowing the existing
+// caller-side SSA promoter to combine them with inlined computation. Pending
+// NBA payloads remain separate; this never turns an enqueue into a blocking
+// write (IEEE 1800-2023 4.9.4 and 10.4.2).
+LogicalResult materializeNativeEvalValueCalls(
+    ModuleOp module,
+    SmallVector<std::pair<LLVM::LLVMFuncOp, uint64_t>> &callers,
+    const llvm::StringMap<Type> &globalTypes,
+    const llvm::StringMap<NativeStateFootprint> &footprints,
+    DenseSet<Operation *> &valueCallers) {
+  auto layout = module->getAttrOfType<StringAttr>("llvm.data_layout");
+  if (!layout)
+    return success();
+  auto parsed = llvm::DataLayout::parse(layout.getValue());
+  if (!parsed) {
+    llvm::consumeError(parsed.takeError());
+    return module.emitError("invalid native eval value data layout");
+  }
+  SymbolTable symbols(module);
+  DenseMap<Operation *, NativeEvalValueInterface> interfaces;
+  DenseSet<Operation *> rejected;
+  uint64_t valueCalls = 0;
+  for (auto &[caller, budget] : callers) {
+    SmallVector<LLVM::CallOp> calls;
+    caller.walk([&](LLVM::CallOp call) { calls.push_back(call); });
+    NativeStateFootprint callerAccesses{true, {}, {}};
+    caller.walk([&](Operation *operation) {
+      auto load = dyn_cast<LLVM::LoadOp>(operation);
+      auto store = dyn_cast<LLVM::StoreOp>(operation);
+      if (!load && !store)
+        return;
+      Value pointer = load ? load.getAddr() : store.getAddr(), root = pointer;
+      while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
+        root = gep.getBase();
+      auto address = root.getDefiningOp<LLVM::AddressOfOp>();
+      auto type = dyn_cast<IntegerType>(load ? load.getType()
+                                             : store.getValue().getType());
+      auto offset = staticByteOffset(pointer);
+      if (address && type && offset && type.getWidth() % 8 == 0 &&
+          (address.getGlobalName() == "__obelisk_state_value" ||
+           address.getGlobalName() == "__obelisk_state_unknown"))
+        (address.getGlobalName() == "__obelisk_state_value"
+             ? callerAccesses.value
+             : callerAccesses.unknown)
+            .emplace_back(*offset, *offset + type.getWidth() / 8);
+    });
+    normalizeNativeByteFootprint(callerAccesses.value);
+    normalizeNativeByteFootprint(callerAccesses.unknown);
+    SmallVector<std::pair<Operation *, const NativeStateFootprint *>>
+        nativeCalls;
+    for (auto call : calls)
+      if (call.getCallee()) {
+        auto definition = symbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
+        auto footprint = footprints.find(*call.getCallee());
+        if (isNativeEvalValueCall(call, definition) &&
+            footprint != footprints.end() && footprint->second.exact)
+          nativeCalls.emplace_back(call, &footprint->second);
+      }
+    for (auto call : calls) {
+      if (!call.getCallee())
+        continue;
+      auto callee = symbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
+      if (!isNativeEvalValueCall(call, callee) || callee == caller ||
+          rejected.contains(callee) || callee.getFunctionType().isVarArg() ||
+          callee.getCConv() != LLVM::cconv::CConv::C ||
+          call.getCConv() != LLVM::cconv::CConv::C ||
+          call.getTailCallKind() != LLVM::tailcallkind::TailCallKind::None ||
+          !call.getOpBundleSizes().empty())
+        continue;
+      auto found = interfaces.find(callee);
+      if (found == interfaces.end()) {
+        auto footprint = footprints.find(callee.getSymName());
+        Type originalResult = callee.getFunctionType().getReturnType();
+        bool status = !isa<LLVM::LLVMVoidType>(originalResult);
+        if (footprint == footprints.end() || !footprint->second.exact ||
+            (status && (!isa<IntegerType>(originalResult) ||
+                        cast<IntegerType>(originalResult).getWidth() > 64))) {
+          rejected.insert(callee);
+          continue;
+        }
+        SmallVector<NativeEvalValueLane> ranges;
+        NativeStateFootprint cuts{true, {}, {}};
+        auto cutPlane = [&](StringRef plane) -> NativeByteFootprint & {
+          return plane == "__obelisk_state_value" ? cuts.value : cuts.unknown;
+        };
+        auto cutPointer = [&](Value pointer) {
+          while (auto gep = pointer.getDefiningOp<LLVM::GEPOp>())
+            pointer = gep.getBase();
+          auto address = pointer.getDefiningOp<LLVM::AddressOfOp>();
+          if (!address ||
+              (address.getGlobalName() != "__obelisk_state_value" &&
+               address.getGlobalName() != "__obelisk_state_unknown"))
+            return;
+          auto array = cast<LLVM::LLVMArrayType>(
+              globalTypes.lookup(address.getGlobalName()));
+          cutPlane(address.getGlobalName())
+              .emplace_back(0, array.getNumElements());
+        };
+        // Freeze cuts once, rather than rescanning the complete body for every
+        // lane. Nested readers, intrinsics and dynamic/atomic accesses cannot
+        // be replaced by a fixed value argument/result interface.
+        callee.walk([&](Operation *operation) {
+          if (auto nested = dyn_cast<LLVM::CallOp>(operation)) {
+            if (nested.getCallee())
+              if (auto target = footprints.find(*nested.getCallee());
+                  target != footprints.end()) {
+                llvm::append_range(cuts.value, target->second.value);
+                llvm::append_range(cuts.unknown, target->second.unknown);
+              }
+            return;
+          }
+          if (auto copy = dyn_cast<LLVM::MemcpyOp>(operation)) {
+            cutPointer(copy.getSrc());
+            cutPointer(copy.getDst());
+            return;
+          }
+          if (auto set = dyn_cast<LLVM::MemsetOp>(operation)) {
+            cutPointer(set.getDst());
+            return;
+          }
+          auto load = dyn_cast<LLVM::LoadOp>(operation);
+          auto store = dyn_cast<LLVM::StoreOp>(operation);
+          if (!load && !store)
+            return;
+          Value pointer = load ? load.getAddr() : store.getAddr(),
+                root = pointer;
+          while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
+            root = gep.getBase();
+          auto address = root.getDefiningOp<LLVM::AddressOfOp>();
+          if (!address ||
+              (address.getGlobalName() != "__obelisk_state_value" &&
+               address.getGlobalName() != "__obelisk_state_unknown"))
+            return;
+          auto offset = staticByteOffset(pointer);
+          auto type = dyn_cast<IntegerType>(load ? load.getType()
+                                                 : store.getValue().getType());
+          auto array = dyn_cast_or_null<LLVM::LLVMArrayType>(
+              globalTypes.lookup(address.getGlobalName()));
+          bool plain =
+              load
+                  ? !load.getVolatile_() &&
+                        load.getOrdering() == LLVM::AtomicOrdering::not_atomic
+                  : !store.getVolatile_() &&
+                        store.getOrdering() == LLVM::AtomicOrdering::not_atomic;
+          if (!offset || !plain) {
+            auto bytes =
+                schedule::get<schedule::Field::EvalStateAccessBytes>(operation);
+            if (bytes && bytes.size() == 2 && bytes[0] >= 0 &&
+                bytes[1] > bytes[0])
+              cutPlane(address.getGlobalName())
+                  .emplace_back(bytes[0], bytes[1]);
+            else if (offset && type && type.getWidth() % 8 == 0)
+              cutPlane(address.getGlobalName())
+                  .emplace_back(*offset, *offset + type.getWidth() / 8);
+            else
+              cutPointer(pointer);
+            return;
+          }
+          if (type && type.getWidth() % 8 == 0 && array &&
+              *offset <= array.getNumElements() &&
+              type.getWidth() / 8 <= array.getNumElements() - *offset)
+            ranges.push_back({address.getGlobalName(),
+                              *offset,
+                              *offset + type.getWidth() / 8,
+                              bool(store),
+                              {operation}});
+        });
+        llvm::sort(ranges, [](const auto &a, const auto &b) {
+          return std::tie(a.plane, a.begin, a.end) <
+                 std::tie(b.plane, b.begin, b.end);
+        });
+        SmallVector<NativeEvalValueLane> windows;
+        for (auto &range : ranges) {
+          if (windows.empty() || windows.back().plane != range.plane ||
+              windows.back().end <= range.begin)
+            windows.push_back(std::move(range));
+          else {
+            auto &window = windows.back();
+            window.end = std::max(window.end, range.end);
+            window.written |= range.written;
+            llvm::append_range(window.accesses, range.accesses);
+          }
+        }
+        auto overlaps = [](const NativeEvalValueLane &lane,
+                           const NativeStateFootprint &footprint) {
+          const auto &ranges = lane.plane == "__obelisk_state_value"
+                                   ? footprint.value
+                                   : footprint.unknown;
+          auto first = llvm::lower_bound(
+              ranges, lane.begin,
+              [](auto range, uint64_t begin) { return range.second <= begin; });
+          return first != ranges.end() && first->first < lane.end;
+        };
+        normalizeNativeByteFootprint(cuts.value);
+        normalizeNativeByteFootprint(cuts.unknown);
+        llvm::erase_if(windows, [&](const auto &lane) {
+          if (lane.end - lane.begin > 16)
+            return true;
+          bool closed = !overlaps(lane, cuts);
+          bool shared = overlaps(lane, callerAccesses);
+          for (auto [other, footprint] : nativeCalls)
+            if (other != call.getOperation())
+              shared |= overlaps(lane, *footprint);
+          return !closed || !shared;
+        });
+        llvm::stable_sort(windows, [](const auto &a, const auto &b) {
+          return a.accesses.size() > b.accesses.size();
+        });
+        SmallVector<NativeEvalValueLane> selected;
+        unsigned outputs = status, arguments = 0;
+        for (Type argument : callee.getFunctionType().getParams())
+          arguments += isa<IntegerType>(argument)
+                           ? (cast<IntegerType>(argument).getWidth() + 63) / 64
+                           : 1;
+        uint64_t cost = 0;
+        for (auto &lane : windows) {
+          // Keep the return in at most two machine words and the complete
+          // input interface within the integer-register argument budget.
+          unsigned words = (lane.end - lane.begin + 7) / 8;
+          if (outputs + words * lane.written > 2 || arguments + words > 6)
+            continue;
+          uint64_t growth = 12 + 8 * callee.getBody().getBlocks().size();
+          for (auto *operation : lane.accesses) {
+            Type type =
+                isa<LLVM::LoadOp>(operation)
+                    ? cast<LLVM::LoadOp>(operation).getType()
+                    : cast<LLVM::StoreOp>(operation).getValue().getType();
+            if (cast<IntegerType>(type).getWidth() !=
+                (lane.end - lane.begin) * 8)
+              growth += 5;
+          }
+          if (cost + growth + 8 * (selected.size() + 1) > budget)
+            continue;
+          cost += growth;
+          outputs += words * lane.written;
+          arguments += words;
+          selected.push_back(std::move(lane));
+        }
+        if (selected.empty())
+          continue;
+        auto interface = materializeNativeEvalValueInterface(
+            callee, std::move(selected), symbols, parsed->isLittleEndian());
+        if (failed(interface))
+          return failure();
+        budget -= cost;
+        found = interfaces.try_emplace(callee, std::move(*interface)).first;
+      }
+      auto &interface = found->second;
+      uint64_t cost = 8 * interface.lanes.size();
+      if (budget < cost)
+        continue;
+      budget -= cost;
+      OpBuilder builder(call);
+      SmallVector<Value> arguments(call.getOperands()), addresses;
+      auto owner = schedule::get<schedule::Field::EvalGroupMember>(call);
+      for (const auto &lane : interface.lanes) {
+        Value base = LLVM::AddressOfOp::create(
+            builder, call.getLoc(),
+            LLVM::LLVMPointerType::get(module.getContext()), lane.plane);
+        Value address = byteGEP(builder, call.getLoc(), base, lane.begin);
+        addresses.push_back(address);
+        auto load = LLVM::LoadOp::create(
+            builder, call.getLoc(),
+            builder.getIntegerType((lane.end - lane.begin) * 8), address, 1);
+        if (owner)
+          schedule::set<schedule::Field::EvalGroupOwner>(load, owner);
+        arguments.push_back(load);
+      }
+      bool result = !isa<LLVM::LLVMVoidType>(interface.result);
+      auto replacement = LLVM::CallOp::create(
+          builder, call.getLoc(),
+          result ? TypeRange{interface.result} : TypeRange{},
+          interface.body.getSymName(), arguments);
+      if (auto attrs = extendNativeEvalArgumentAttrs(
+              builder, call.getArgAttrsAttr(), arguments.size()))
+        replacement.setArgAttrsAttr(attrs);
+      for (auto attr : call->getAttrs())
+        if (attr.getName().strref().starts_with("schedule.eval."))
+          replacement->setAttr(attr.getName(), attr.getValue());
+      unsigned field = interface.returnsStatus;
+      for (auto [i, lane] : llvm::enumerate(interface.lanes))
+        if (lane.written) {
+          auto store = LLVM::StoreOp::create(
+              builder, call.getLoc(),
+              LLVM::ExtractValueOp::create(builder, call.getLoc(),
+                                           replacement.getResult(),
+                                           ArrayRef<int64_t>{field++}),
+              addresses[i], 1);
+          if (owner)
+            schedule::set<schedule::Field::EvalGroupOwner>(store, owner);
+        }
+      if (interface.returnsStatus)
+        call.getResult().replaceAllUsesWith(LLVM::ExtractValueOp::create(
+            builder, call.getLoc(), replacement.getResult(),
+            ArrayRef<int64_t>{0}));
+      call.erase();
+      valueCallers.insert(caller);
+      ++valueCalls;
+    }
+  }
+  if (module->hasAttr("obelisk.debug.native_timing"))
+    llvm::errs() << "obelisk eval value interfaces: cores=" << interfaces.size()
+                 << " calls=" << valueCalls << '\n';
+  return success();
+}
+
 struct NativeGroupPromotionInputs {
   explicit NativeGroupPromotionInputs(Operation *operation) {
     for (auto global : cast<ModuleOp>(operation).getOps<LLVM::GlobalOp>())
       globalTypes.try_emplace(global.getSymName(), global.getGlobalType());
+    for (auto function : cast<ModuleOp>(operation).getOps<LLVM::LLVMFuncOp>())
+      if (schedule::has<schedule::Field::EvalStateMetadataOnly>(function))
+        metadataOnly.insert(function.getSymName());
+    callFootprints = buildNativeStateFootprints(cast<ModuleOp>(operation),
+                                                globalTypes, metadataOnly);
     debugTiming = operation->hasAttr("obelisk.debug.native_timing");
   }
   llvm::StringMap<Type> globalTypes;
+  llvm::StringSet<> metadataOnly;
+  llvm::StringMap<NativeStateFootprint> callFootprints;
   DenseMap<Operation *, std::pair<uint64_t, size_t>> residuals;
   std::shared_ptr<NativeGroupPromotionReport> report;
   bool debugTiming = false;
@@ -448,9 +1346,11 @@ public:
     if (failed(
             promoteGroupReadyWords(function, inputs.globalTypes, remaining)) ||
         failed(promoteGroupState(function, inputs.globalTypes,
-                                 "__obelisk_state_value", remaining)) ||
+                                 "__obelisk_state_value", remaining,
+                                 inputs.metadataOnly, inputs.callFootprints)) ||
         failed(promoteGroupState(function, inputs.globalTypes,
-                                 "__obelisk_state_unknown", remaining)))
+                                 "__obelisk_state_unknown", remaining,
+                                 inputs.metadataOnly, inputs.callFootprints)))
       return signalPassFailure();
     if (remaining == budget) {
       markAllAnalysesPreserved();
@@ -645,6 +1545,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   // initializers did in native partition cost estimation.
   llvm::DenseMap<Operation *, uint64_t> costs;
   SmallVector<std::pair<LLVM::LLVMFuncOp, uint64_t>> residuals;
+  DenseSet<Operation *> whollyOutlinedGroups;
   DenseMap<Operation *, uint64_t> residualBudgets;
   DenseSet<Operation *> finalized, discarded, refinedChildren;
   struct Refinement {
@@ -776,7 +1677,6 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     if (failed(lowerNativeScheduleActionsToLLVM(function)))
       return failure();
     uint64_t remaining = body.remaining;
-    uint64_t materialized = body.materialized;
     if (auto candidate = ::obelisk::schedule::get<
             ::obelisk::schedule::Field::EvalDataflowCandidate>(function)) {
       auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
@@ -854,11 +1754,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         if (failed(promoteGroupReadyWords(original, inputs.globalTypes,
                                           remaining->second)) ||
             failed(promoteGroupState(original, inputs.globalTypes,
-                                     "__obelisk_state_value",
-                                     remaining->second)) ||
-            failed(promoteGroupState(original, inputs.globalTypes,
-                                     "__obelisk_state_unknown",
-                                     remaining->second)))
+                                     "__obelisk_state_value", remaining->second,
+                                     inputs.metadataOnly,
+                                     inputs.callFootprints)) ||
+            failed(promoteGroupState(
+                original, inputs.globalTypes, "__obelisk_state_unknown",
+                remaining->second, inputs.metadataOnly, inputs.callFootprints)))
           return failure();
         finalized.insert(original);
       }
@@ -946,10 +1847,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
           original, FlatSymbolRefAttr::get(function));
       continue;
     }
-    if (materialized || refinedChildren.contains(function)) {
-      residuals.emplace_back(function, remaining);
-      residualBudgets[function] = remaining;
-    }
+    // A completely outlined group can still carry current lanes through
+    // explicit helper interfaces; zero inlined calls is not an eval exit.
+    if (!body.materialized && !refinedChildren.contains(function))
+      whollyOutlinedGroups.insert(function);
+    residuals.emplace_back(function, remaining);
+    residualBudgets[function] = remaining;
   }
   for (auto &refinement : llvm::reverse(refinements)) {
     bool useful = llvm::any_of(refinement.children, [](auto child) {
@@ -1071,6 +1974,22 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         schedule::has<schedule::Field::EvalRawCaptures>(function) &&
         !schedule::has<schedule::Field::EvalRankedMembers>(function))
       residuals.emplace_back(function, operationLimit);
+  DenseSet<Operation *> valueCallers;
+  if (failed(
+          materializeNativeEvalValueCalls(module, residuals, inputs.globalTypes,
+                                          inputs.callFootprints, valueCallers)))
+    return failure();
+  // Retain the original ready-word representation when no computation was
+  // exposed. Promoting readiness alone can add spills without avoiding any
+  // state round trip in a completely outlined group.
+  llvm::erase_if(residuals, [&](const auto &residual) {
+    return whollyOutlinedGroups.contains(residual.first) &&
+           !valueCallers.contains(residual.first);
+  });
+  // Value cores and their canonical wrappers have different footprints. Freeze
+  // the new complete closure before any function-local promotion worker runs.
+  inputs.callFootprints = buildNativeStateFootprints(module, inputs.globalTypes,
+                                                     inputs.metadataOnly);
   report->diagnostics.resize(residuals.size());
   for (auto [index, residual] : llvm::enumerate(residuals))
     inputs.residuals.try_emplace(residual.first,

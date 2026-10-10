@@ -473,6 +473,10 @@ public:
       builder.setInsertionPoint(store);
       Value old =
           LLVM::LoadOp::create(builder, location, type, store.getAddr(), 1);
+      if (auto footprint =
+              schedule::get<schedule::Field::EvalStateAccessBytes>(store))
+        schedule::set(old.getDefiningOp(),
+                      schedule::Field::EvalStateAccessBytes, footprint);
       Value delta =
           LLVM::XOrOp::create(builder, location, old, store.getValue());
       Value base = LLVM::AddressOfOp::create(builder, location, pointer,
@@ -610,6 +614,11 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   auto publish = getOrDeclareLLVMFunction(
       module, "__obelisk_eval_promotion_publish_unknown_v1", voidType,
       {i64, i64, i64});
+  // All state inputs are explicit old/new unknown-mask deltas. The callees
+  // invalidate/recheck proof metadata without acquiring state or running an
+  // observer. Physical state may stay local while this ordered action runs.
+  schedule::set(publish, schedule::Field::EvalStateMetadataOnly,
+                builder.getUnitAttr());
   publish->setAttr("passthrough", maskHook->getAttr("passthrough"));
   Block *publication = publish.addEntryBlock(builder);
   builder.setInsertionPointToStart(publication);

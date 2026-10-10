@@ -905,8 +905,9 @@ public:
         rewriter.eraseOp(op);
         return success();
       }
-      Value useDirect =
-          staticNBASpecializationGuard(rewriter, location, rootIndex);
+      Value useDirect = staticNBASpecializationGuard(
+          rewriter, location, rootIndex,
+          staticPlan->guardedMergeRoots[rootIndex]);
       Block *head = rewriter.getInsertionBlock();
       guardContinuation =
           rewriter.splitBlock(head, rewriter.getInsertionPoint());
@@ -1164,6 +1165,27 @@ public:
           !generatedAccumulator.empty() && rootWidth <= 64;
       bool directGeneratedStage = commitRegion != UINT32_MAX &&
                                   (directPartialScalarStage || directLaneStage);
+      auto certifyCapture = [&](Operation *stage) {
+        uint64_t origin = site.getId();
+        if (auto source = schedule::get<schedule::Field::EvalOriginNbaSite>(op))
+          origin = source.getValue().getZExtValue();
+        else if (auto source =
+                     staticPlan->siteSemanticOrigins.find(site.getId());
+                 source != staticPlan->siteSemanticOrigins.end())
+          origin = source->second;
+        // LRM 4.9.4/10.4.2: the target and RHS are captured together.
+        // Descriptor provenance alone did not authorize this literal mask.
+        uint64_t mask =
+            (*width == 64 ? UINT64_MAX : (uint64_t{1} << *width) - 1)
+            << decoded.offset;
+        schedule::set<schedule::Field::EvalPendingStageSpec>(
+            stage,
+            rewriter.getDenseI64ArrayAttr(
+                {staticRoot->second,
+                 staticPlan->roots[staticRoot->second].static_state,
+                 static_cast<int64_t>(rootWidth), static_cast<int64_t>(mask),
+                 commitRegion, static_cast<int64_t>(origin)}));
+      };
       auto emitDirectGeneratedStage = [&] {
         Block *unchangedContinuation = nullptr;
         if (directPartialScalarStage &&
@@ -1185,6 +1207,9 @@ public:
                                             "__obelisk_aot_nba_dirty_roots_v1"),
                   uint64_t{staticRoot->second / 64} * 8),
               8);
+          schedule::set<schedule::Field::EvalPendingDirtyRoot>(
+              dirty.getDefiningOp(),
+              rewriter.getI32IntegerAttr(staticRoot->second));
           Value pending = arith::AndIOp::create(
               rewriter, location, dirty,
               llvmConstant(rewriter, location, i64,
@@ -1278,6 +1303,9 @@ public:
                           static_cast<uint64_t>(staticRoot->second / 64) *
                               sizeof(uint64_t)),
                   8);
+              schedule::set<schedule::Field::EvalPendingDirtyRoot>(
+                  dirty.getDefiningOp(),
+                  rewriter.getI32IntegerAttr(staticRoot->second));
               Value bit = arith::AndIOp::create(
                   rewriter, location, dirty,
                   llvmConstant(rewriter, location, i64,
@@ -1372,11 +1400,18 @@ public:
             static_cast<uint64_t>(staticRoot->second / 64) * sizeof(uint64_t));
         Value previous =
             LLVM::LoadOp::create(rewriter, location, i64, dirtyWord, 8);
+        schedule::set<schedule::Field::EvalPendingDirtyRoot>(
+            previous.getDefiningOp(),
+            rewriter.getI32IntegerAttr(staticRoot->second));
         Value marked = LLVM::OrOp::create(
             rewriter, location, previous,
             llvmConstant(rewriter, location, i64,
                          uint64_t{1} << (staticRoot->second % 64)));
-        LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
+        auto markDirty =
+            LLVM::StoreOp::create(rewriter, location, marked, dirtyWord, 8);
+        schedule::set<schedule::Field::EvalPendingDirtyRoot>(
+            markDirty, rewriter.getI32IntegerAttr(staticRoot->second));
+        certifyCapture(markDirty);
         if (!compactEvalMetadata) {
           Value summaryBase =
               LLVM::AddressOfOp::create(rewriter, location, pointer,
@@ -1391,8 +1426,10 @@ public:
               rewriter, location, previousSummary,
               llvmConstant(rewriter, location, i64,
                            uint64_t{1} << (dirtyWordIndex % 64)));
-          LLVM::StoreOp::create(rewriter, location, markedSummary, summaryWord,
-                                8);
+          auto markSummary = LLVM::StoreOp::create(
+              rewriter, location, markedSummary, summaryWord, 8);
+          schedule::set<schedule::Field::EvalPendingSummaryRoot>(
+              markSummary, rewriter.getI32IntegerAttr(staticRoot->second));
         }
         if (unchangedContinuation) {
           cf::BranchOp::create(rewriter, location, unchangedContinuation);
@@ -1405,8 +1442,9 @@ public:
         return success();
       }
       if (useGuardedClaim && directGeneratedStage) {
-        Value useDirect = staticNBASpecializationGuard(rewriter, location,
-                                                       staticRoot->second);
+        Value useDirect = staticNBASpecializationGuard(
+            rewriter, location, staticRoot->second,
+            staticPlan->guardedMergeRoots[staticRoot->second]);
         Block *head = rewriter.getInsertionBlock();
         Block *continuation =
             rewriter.splitBlock(head, rewriter.getInsertionPoint());
@@ -1448,6 +1486,7 @@ public:
                     llvmConstant(rewriter, location, i64, *width), value,
                     unknown})
                 .getResult();
+        certifyCapture(status.getDefiningOp());
         LLVM::CallOp::create(rewriter, location, TypeRange{},
                              SymbolRefAttr::get(rewriter.getContext(),
                                                 "obelisk_rt_v1_scheduler_fail"),
@@ -1546,8 +1585,8 @@ public:
                                               "obelisk_rt_v1_scheduler_fail"),
                            ValueRange{runtimeContext, status});
     } else {
-      bool mappedSite = site && staticPlan &&
-                        staticPlan->siteRoots.contains(site.getId());
+      bool mappedSite =
+          site && staticPlan && staticPlan->siteRoots.contains(site.getId());
       uint32_t rootIndex =
           mappedSite ? staticPlan->siteRoots.lookup(site.getId()) : UINT32_MAX;
       bool orderedEvalQueue =
@@ -1591,6 +1630,9 @@ public:
                                       : "obelisk_rt_v1_scheduler_nba"),
               arguments)
               .getResult();
+      if (mappedSite)
+        schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+            status.getDefiningOp(), rewriter.getI32IntegerAttr(rootIndex));
       LLVM::CallOp::create(rewriter, location, TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
                                               "obelisk_rt_v1_scheduler_fail"),
@@ -1612,8 +1654,7 @@ private:
 
 void emitGeneratedNBATransient(OpBuilder &builder, Location location,
                                Value accumulator, uint64_t word, Value mask,
-                               Value newValue, Value newUnknown,
-                               Value staged) {
+                               Value newValue, Value newUnknown, Value staged) {
   Type i64 = builder.getI64Type();
   auto field = [&](size_t offset) {
     return byteGEP(builder, location, accumulator,
@@ -1648,6 +1689,13 @@ void emitGeneratedNBATransient(OpBuilder &builder, Location location,
           builder, location, transient,
           arith::AndIOp::create(builder, location, staged, differs)),
       transientAddress, 8);
+}
+
+Value buildNativeNBAChange(OpBuilder &builder, Location location,
+                           uint64_t bitOffset, unsigned width, Value value,
+                           Value unknown) {
+  return buildGeneratedNBAChange(builder, location, bitOffset, width, value,
+                                 unknown);
 }
 
 void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,

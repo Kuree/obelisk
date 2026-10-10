@@ -92,6 +92,9 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
     SymbolTableCollection *symbolTables = nullptr);
 
 #define GEN_PASS_DEF_CONVERTPREPAREDSIMPROCESSESTOLLVMCOROUTINESPASS
+#define GEN_PASS_DEF_PREPARENATIVELLVMFUNCTIONSPASS
+#define GEN_PASS_DEF_CONVERTNATIVEFUNCTIONBODYPASS
+#define GEN_PASS_DEF_FINALIZENATIVELLVMPASS
 #include "obelisk/Conversion/Passes.h.inc"
 
 namespace {
@@ -204,6 +207,10 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   // Verification does not mutate symbols. Build the index once instead of
   // scanning the module for each edge in the generated call closure.
   SymbolTable symbols(module);
+  bool writableEval = llvm::any_of(
+      module.getOps<LLVM::LLVMFuncOp>(), [](LLVM::LLVMFuncOp function) {
+        return function.getSymName().starts_with("__obelisk_eval_write_guard_");
+      });
   constexpr auto allowedCalleesAttr =
       ::obelisk::schedule::Field::EvalAllowedCallees;
   // This query only reads the scheduler's priority-handoff latch.  Generated
@@ -238,7 +245,37 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
     WalkResult result = function.walk([&](LLVM::CallOp call) {
       SmallVector<FlatSymbolRefAttr> targets;
       if (std::optional<StringRef> callee = call.getCallee()) {
+        if (function.getSymName() == detail::evalDispatchName && writableEval &&
+            *callee == "obelisk_rt_v1_scheduler_execute_aot_actor" &&
+            call.getArgOperands().size() == 2 &&
+            call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>())
+          return WalkResult::advance();
+        // IEEE 1800-2023 4.4.2.3-4.4.2.4 and 4.5: these are explicit
+        // coordinator arbitration cuts, not calls from an actor activation.
+        // The common loop cannot recursively enter this continuation. The
+        // compiled NBA prefix is a barrier executor, whose runtime publication
+        // contract is distinct from the non-suspending Active call closure.
+        if (function.getSymName() == detail::evalDispatchName &&
+            schedule::has<schedule::Field::EvalRuntimeCalendar>(module)) {
+          if ((*callee == "obelisk_rt_v1_scheduler_prepare_eval_nba" &&
+               call.getArgOperands().size() == 2) ||
+              (*callee == "obelisk_rt_v1_scheduler_complete_eval_nba" &&
+               call.getArgOperands().size() == 3))
+            return WalkResult::advance();
+          if (*callee == "__obelisk_aot_runtime_nba_commit_v1" &&
+              call.getArgOperands().size() == 4) {
+            auto barrier = symbols.lookup<LLVM::LLVMFuncOp>(*callee);
+            if (barrier && !barrier.isExternal())
+              return WalkResult::advance();
+          }
+        }
         if (callee->starts_with("obelisk_rt_")) {
+          // This read-only dependency/override query cannot execute HDL or
+          // mutate readiness. Only full VPI emits these scheduling guards;
+          // off/read retain their original generated execution paths.
+          if (*callee == "obelisk_rt_v1_static_specialization_guard" &&
+              function.getSymName().starts_with("__obelisk_eval_write_guard_"))
+            return WalkResult::advance();
           if (*callee == prioritySignalQuery ||
               *callee == strengthResolveQuery || *callee == coveragePointHit ||
               // A value helper's post-call termination poll only reads the
@@ -1564,6 +1601,76 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   if (invalidPreLowerFusion)
     return failure();
 
+  // Publish the exact no-observer roots before packed stores manufacture
+  // old/new snapshots and transition CFG. An active actor cannot wake its
+  // own suppressed wait, and its borrowed evaluator has that same owner.
+  // Any external owner, runtime observer or toggle probe retains publication.
+  constexpr StringLiteral noTransitionRoots =
+      "obelisk.native.no_transition_roots";
+  module.walk([&](sim::SimFuncOp function) {
+    function->removeAttr(noTransitionRoots);
+  });
+  if (stateLayout->transitionHandlesExact && staticFanoutPlan.exact) {
+    DenseSet<uint32_t> observedRoots = staticFanoutPlan.runtimeTransitionStates;
+    module.walk([&](sim::SimStorageDeclOp storage) {
+      if (!storage->hasAttr(sim::metadata::coverageToggleObservable))
+        return;
+      auto handle = stateLayout->storage.find(storage.getId());
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (handle != stateLayout->storage.end() &&
+          obelisk_rt_stable_handle_decode(handle->second, &decoded))
+        observedRoots.insert(decoded.id);
+    });
+    DenseMap<uint32_t, SmallVector<const obelisk_rt_static_fanout_entry *>>
+        observers;
+    for (const auto &entry : staticFanoutPlan.entries)
+      observers[entry.static_state].push_back(&entry);
+    llvm::StringMap<DenseI32ArrayAttr> bodyRoots;
+    SymbolTableCollection symbols;
+    for (sim::SimFuncOp actor : currentActors) {
+      auto body = schedule::get<schedule::Field::EvalBody>(actor);
+      auto evaluator =
+          body ? symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(actor, body)
+               : sim::SimFuncOp{};
+      auto continuation =
+          evaluator
+              ? schedule::get<schedule::Field::EvalContinuation>(evaluator)
+              : IntegerAttr{};
+      if (!continuation)
+        continue;
+      uint32_t slot = *aotActorSlotFor(actor);
+      SmallVector<int32_t> roots;
+      for (const auto &[root, entries] : observers) {
+        if (observedRoots.contains(root) ||
+            !llvm::all_of(entries, [&](const auto *entry) {
+              return entry->actor_slot == slot &&
+                     entry->continuation == continuation.getUInt() &&
+                     (entry->reserved &
+                      OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0;
+            }))
+          continue;
+        roots.push_back(static_cast<int32_t>(root));
+      }
+      llvm::sort(roots);
+      if (roots.empty())
+        continue;
+      auto attribute = DenseI32ArrayAttr::get(context, roots);
+      actor->setAttr(noTransitionRoots, attribute);
+      bodyRoots.try_emplace(body.getValue(), attribute);
+    }
+    module.walk([&](sim::SimFuncOp function) {
+      if (!schedule::has<schedule::Field::EvalRawCaptures>(function))
+        return;
+      StringRef name = function.getSymName();
+      if (auto source =
+              schedule::get<schedule::Field::EvalFourStateSource>(function))
+        name = source.getValue();
+      auto found = bodyRoots.find(name);
+      if (found != bodyRoots.end())
+        function->setAttr(noTransitionRoots, found->second);
+    });
+  }
+
   // Preserve explicitly selected-body NBA facts before packed conversion can
   // replace their containing function. Generated variants receive the same
   // operation-local certificate when they are created above.
@@ -1705,11 +1812,12 @@ LogicalResult NativePipelineAnalysis::materialize() {
       FailureOr<bool> evalPlan = makeNativeEvalPlan(
           module, dataLayout, aotEligibility.getActorSlots().size(),
           executableNodes, *resolvedEval, *stateLayout, staticNBAPlan,
-          staticFanoutPlan, staticActorRoots, *directFragments, evalOwnership,
-          threeTierPlan.sourceGraph, periodicClocks, periodicAliases,
-          directStaticState, staticNBA, staticControl, staticFanout,
-          cleanSuperstep, aotEligibility.isFullyEligible(), staticEvalIsland,
-          rootSlotZero, vpi);
+          staticFanoutPlan, staticActorRoots, writableVPIUnscopedActors,
+          *directFragments, evalOwnership, threeTierPlan.sourceGraph,
+          periodicClocks, periodicAliases, directStaticState, staticNBA,
+          staticControl, staticFanout, cleanSuperstep,
+          aotEligibility.isFullyEligible(), staticEvalIsland, rootSlotZero,
+          vpi);
       if (failed(evalPlan))
         return failure();
       if (!*evalPlan) {
@@ -3585,12 +3693,17 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
 }
 
 struct NativeBodyConversionInputs {
-  NativeBodyConversionInputs(Operation *operation, AnalysisManager &manager)
+  NativeBodyConversionInputs(Operation *operation, AnalysisManager &)
       : symbols(), lockedSymbols(symbols), layout("") {
-    auto cached = manager.getCachedAnalysis<detail::NativePipelineAnalysis>();
-    if (cached) {
-      layout = cached->get().dataLayout;
-      valid = true;
+    auto attribute = operation->getAttrOfType<StringAttr>("llvm.data_layout");
+    if (attribute) {
+      auto parsed = llvm::DataLayout::parse(attribute.getValue());
+      if (parsed) {
+        layout = std::move(*parsed);
+        valid = true;
+      } else {
+        llvm::consumeError(parsed.takeError());
+      }
     }
     symbols.getSymbolTable(cast<ModuleOp>(operation));
   }
@@ -3601,13 +3714,13 @@ struct NativeBodyConversionInputs {
 };
 
 class ConvertNativeFunctionBodyPass final
-    : public PassWrapper<ConvertNativeFunctionBodyPass,
-                         InterfacePass<FunctionOpInterface>> {
+    : public impl::ConvertNativeFunctionBodyPassBase<
+          ConvertNativeFunctionBodyPass> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertNativeFunctionBodyPass)
   ConvertNativeFunctionBodyPass() = default;
   ConvertNativeFunctionBodyPass(const ConvertNativeFunctionBodyPass &other)
-      : PassWrapper(other) {}
+      : ConvertNativeFunctionBodyPassBase(other) {}
   StringRef getArgument() const final {
     return "convert-native-function-body-to-llvm";
   }
@@ -3693,9 +3806,9 @@ private:
   std::unique_ptr<ConversionTarget> target;
 };
 
-class ConvertPreparedSimProcessesToLLVMCoroutinesPass final
-    : public impl::ConvertPreparedSimProcessesToLLVMCoroutinesPassBase<
-          ConvertPreparedSimProcessesToLLVMCoroutinesPass> {
+class PrepareNativeLLVMFunctionsPass final
+    : public impl::PrepareNativeLLVMFunctionsPassBase<
+          PrepareNativeLLVMFunctionsPass> {
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -3771,11 +3884,6 @@ public:
     populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
     if (failed(verify(module)))
       return signalPassFailure();
-    ConversionTarget target(getContext());
-    target.addLegalDialect<LLVM::LLVMDialect>();
-    target.addLegalOp<
-        schedule::NativeByteAddressOp, schedule::NativeReadyReadOp,
-        schedule::NativeReadyUpdateOp, schedule::NativeReadyCommitOp>();
     SmallVector<schedule::NativeObserverOp> deadObservers;
     module.walk([&](schedule::NativeObserverOp observer) {
       if (observer->use_empty())
@@ -3783,31 +3891,69 @@ public:
     });
     for (auto observer : deadObservers)
       observer.erase();
-    target.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
-    target.markUnknownOpDynamicallyLegal(
-        [](Operation *operation) { return isa<LLVM::LLVMFuncOp>(operation); });
     FrozenRewritePatternSet frozenPatterns(std::move(patterns));
 
     // Publish LLVM function shells before body workers run. Their physical
     // signatures are already fixed; converted calls must resolve to LLVM
     // symbols even while sibling bodies have not yet been converted.
     ConversionTarget signatureTarget(getContext());
-    signatureTarget.addIllegalOp<func::FuncOp>();
+    // Calls and returns must change with their function shells: func.return
+    // has a func.func parent constraint, and func.call verifies a func.func
+    // callee. Leave a verifiable module at this public stage boundary.
+    signatureTarget.addIllegalDialect<func::FuncDialect>();
     signatureTarget.markUnknownOpDynamicallyLegal(
         [](Operation *) { return true; });
     if (failed(applyPartialConversion(module, signatureTarget, frozenPatterns)))
       return signalPassFailure();
     markTiming("function ABI conversion");
 
-    // Cache immutable ABI inputs and the frozen, locked symbol index once.
-    // Function workers obtain this analysis through their parent manager.
+    // Publish the immutable ABI inputs at the module barrier. The nested
+    // llvm.func pipeline can now run using MLIR's native worker scheduling.
     getAnalysis<NativeBodyConversionInputs>();
-    OpPassManager bodyPipeline(ModuleOp::getOperationName());
-    bodyPipeline.nestAny().addPass(
-        std::make_unique<ConvertNativeFunctionBodyPass>());
-    if (failed(runPipeline(bodyPipeline, module)))
+    markAnalysesPreserved<NativeBodyConversionInputs>();
+  }
+};
+
+class FinalizeNativeLLVMPass final
+    : public impl::FinalizeNativeLLVMPassBase<FinalizeNativeLLVMPass> {
+public:
+  void runOnOperation() override {
+    ModuleOp module = getOperation();
+    auto &inputs = getAnalysis<NativeBodyConversionInputs>();
+    if (!inputs.valid) {
+      module.emitError("native LLVM finalization requires a target layout");
       return signalPassFailure();
-    markTiming("function-body conversion");
+    }
+    bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+    auto lastTiming = std::chrono::steady_clock::now();
+    auto markTiming = [&](StringRef name) {
+      if (!detailedTiming)
+        return;
+      auto now = std::chrono::steady_clock::now();
+      llvm::errs() << "obelisk native preparation timing: " << name << ": "
+                   << std::chrono::duration<double>(now - lastTiming).count()
+                   << " s\n";
+      lastTiming = now;
+    };
+    LowerToLLVMOptions options(&getContext());
+    options.dataLayout = inputs.layout;
+    LLVMTypeConverter converter(&getContext(), options);
+    converter.addConversion([&](Type type) -> std::optional<Type> {
+      Type converted = convertProcessType(type, &getContext());
+      return converted != type ? std::optional<Type>(converted) : std::nullopt;
+    });
+    addRuntimeToLLVMTypeConversions(converter);
+    RewritePatternSet patterns(&getContext());
+    populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
+    ConversionTarget target(getContext());
+    target.addLegalDialect<LLVM::LLVMDialect>();
+    target.addLegalOp<
+        ModuleOp, UnrealizedConversionCastOp, schedule::NativeByteAddressOp,
+        schedule::NativeReadyReadOp, schedule::NativeReadyUpdateOp,
+        schedule::NativeReadyCommitOp>();
+    target.markUnknownOpDynamicallyLegal(
+        [](Operation *operation) { return isa<LLVM::LLVMFuncOp>(operation); });
+    FrozenRewritePatternSet frozenPatterns(std::move(patterns));
     if (failed(applyFullConversion(module, target, frozenPatterns))) {
       signalPassFailure();
       return;
@@ -3873,6 +4019,16 @@ public:
       return;
     }
     markTiming("eval call closure verification");
+    if (!(*groupPromotions)->diagnostics.empty()) {
+      OpPassManager promotion(ModuleOp::getOperationName());
+      promotion.nest<LLVM::LLVMFuncOp>().addPass(
+          detail::createPromoteNativeGroupFunctionPass());
+      if (failed(runPipeline(promotion, module)))
+        return signalPassFailure();
+    }
+    if (failed(detail::materializeNativeEvalTransactions(module)))
+      return signalPassFailure();
+    markTiming("native eval transaction materialization");
     schedule::cacheNativePureCones(module);
     auto partitionInventory =
         detail::prepareNativePartitionManifest(module, getAnalysisManager());
@@ -3887,8 +4043,6 @@ public:
       return signalPassFailure();
     OpPassManager finalization(ModuleOp::getOperationName());
     auto &functions = finalization.nest<LLVM::LLVMFuncOp>();
-    if (!(*groupPromotions)->diagnostics.empty())
-      functions.addPass(detail::createPromoteNativeGroupFunctionPass());
     if (*partitionInventory)
       functions.addPass(detail::createInventoryNativeFunctionSymbolsPass());
     functions.addPass(detail::createNativeFunctionFinalizationPass());
@@ -3923,6 +4077,23 @@ public:
       signalPassFailure();
     else
       markTiming("final verification");
+  }
+};
+
+// Keep the original module entry point as a composition for existing explicit
+// pipelines; production exposes the same three stages to the pass manager.
+class ConvertPreparedSimProcessesToLLVMCoroutinesPass final
+    : public impl::ConvertPreparedSimProcessesToLLVMCoroutinesPassBase<
+          ConvertPreparedSimProcessesToLLVMCoroutinesPass> {
+public:
+  void runOnOperation() override {
+    OpPassManager pipeline(ModuleOp::getOperationName());
+    pipeline.addPass(createPrepareNativeLLVMFunctionsPass());
+    pipeline.nest<LLVM::LLVMFuncOp>().addPass(
+        createConvertNativeFunctionBodyPass());
+    pipeline.addPass(createFinalizeNativeLLVMPass());
+    if (failed(runPipeline(pipeline, getOperation())))
+      signalPassFailure();
   }
 };
 

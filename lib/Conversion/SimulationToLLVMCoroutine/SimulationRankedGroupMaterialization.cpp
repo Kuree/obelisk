@@ -22,7 +22,7 @@ FailureOr<SmallVector<std::string>>
 materializeNativeRankedGroups(ModuleOp module,
                               const NativeEvalCoordinatorPlan &plan) {
   SmallVector<std::string> executors(plan.fragments.size());
-  if (plan.clockKernels.empty() || plan.rankedNodes.empty())
+  if (plan.clockKernels.empty() || plan.rankedNodes.empty() || plan.writableVPI)
     return executors;
   llvm::StringMap<sim::SimFuncOp> functions;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(

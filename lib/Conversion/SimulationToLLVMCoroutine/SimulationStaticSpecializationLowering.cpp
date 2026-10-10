@@ -103,7 +103,8 @@ Value staticSpecializationGuard(ConversionPatternRewriter &rewriter,
 }
 
 Value staticNBASpecializationGuard(ConversionPatternRewriter &rewriter,
-                                   Location location, uint32_t rootIndex) {
+                                   Location location, uint32_t rootIndex,
+                                   bool guardedVisibility) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   IntegerType i32 = rewriter.getI32Type();
   Block *head = rewriter.getInsertionBlock();
@@ -128,11 +129,13 @@ Value staticNBASpecializationGuard(ConversionPatternRewriter &rewriter,
                                                    "__obelisk_current_context");
   Value context =
       LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
+  StringRef guardName =
+      guardedVisibility ? "obelisk_rt_v1_static_nba_specialization_guard_write"
+                        : "obelisk_rt_v1_static_nba_specialization_guard";
   Value allowed =
       LLVM::CallOp::create(
           rewriter, location, TypeRange{i32},
-          SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_static_nba_specialization_guard"),
+          SymbolRefAttr::get(rewriter.getContext(), guardName),
           ValueRange{context, llvmConstant(rewriter, location, i32, rootIndex)})
           .getResult();
   Value useDirect = arith::CmpIOp::create(

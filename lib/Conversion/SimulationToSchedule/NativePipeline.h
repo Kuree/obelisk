@@ -124,6 +124,7 @@ struct NativePipelineAnalysis {
   llvm::SmallVector<NativePeriodicAlias> periodicAliases;
   NativeThreeTierPlan threeTierPlan;
   llvm::SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
+  llvm::SmallVector<uint32_t> writableVPIUnscopedActors;
   mlir::FailureOr<analysis::SimulationScheduleAnalysis> scheduleRanks =
       mlir::failure();
   bool guardedAOTSpecialization = false, cleanWritableEval = false;

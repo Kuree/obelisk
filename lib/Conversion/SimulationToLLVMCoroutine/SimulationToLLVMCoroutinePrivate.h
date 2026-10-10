@@ -435,7 +435,8 @@ mlir::Value staticSpecializationGuard(mlir::ConversionPatternRewriter &rewriter,
                                       uint32_t staticID, uint32_t flags);
 mlir::Value
 staticNBASpecializationGuard(mlir::ConversionPatternRewriter &rewriter,
-                             mlir::Location location, uint32_t rootIndex);
+                             mlir::Location location, uint32_t rootIndex,
+                             bool guardedVisibility = false);
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(mlir::Value handle, unsigned width,
                               const NativeStateLayout *layout);

@@ -80,12 +80,31 @@ bool nativePeriodicAOTEnvironmentClean(const obelisk_rt_context *context) {
          context->designConditionalSignalWaiters.empty();
 }
 
+static bool canUseScopedGeneratedEval(const obelisk_rt_context *context) {
+  const auto *plan = context ? context->nativeSchedulePlan : nullptr;
+  return plan && !context->nativeScheduleDeoptimized &&
+         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) &&
+         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) &&
+         context->nativeScopedWrite &&
+         !context->nativeScopedWrite->unscopedWritePending &&
+         (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+                         OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL)) &&
+         plan->timeslot_coordinator && !context->vpiObservationDemand &&
+         !obelisk_rt_covergroup_strobes_pending_unlocked(context) &&
+         nativeStaticSpecializationEnvironmentClean(context);
+}
+
 static bool canUseRuntimeCalendarEval(const obelisk_rt_context *context) {
-  return context && context->nativeSchedulePlan &&
-         (context->nativeSchedulePlan->flags &
-          OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-         !context->nativeScheduleStopAtCleanBoundary &&
-         nativeAOTTransientBoundaryClean(context);
+  const auto *plan = context ? context->nativeSchedulePlan : nullptr;
+  return plan && !context->nativeScheduleDeoptimized &&
+         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+         ((!context->nativeScheduleStopAtCleanBoundary &&
+           nativeAOTTransientBoundaryClean(context)) ||
+          // Full-VPI coordinators guard each source owner independently.
+          // A force/deposit changes addressing/scheduling proof, even with a
+          // known value (IEEE 1800-2023 38.34, 10.6). Dirty owners use their
+          // original fine executor; unrelated owners retain generated eval.
+          canUseScopedGeneratedEval(context));
 }
 
 bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
@@ -101,7 +120,8 @@ bool canUseStaticAOTFanout(const obelisk_rt_context *context) {
     return false;
   if ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) &&
       (!plan->specialization_fast || !*plan->specialization_fast) &&
-      !nativeAOTTransientBoundaryClean(context))
+      !nativeAOTTransientBoundaryClean(context) &&
+      !canUseScopedGeneratedEval(context))
     return false;
   // IEEE 1800-2017 Clause 31.7 requires a timing condition to be sampled only
   // after its primary publication. Before periodic preparation proves that no
@@ -155,8 +175,9 @@ bool canUseIndexedExternalAOTFanout(const obelisk_rt_context *context) {
          (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
                          OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0 &&
          !context->nativeScheduleDeoptimized &&
-         !context->nativeScheduleExternalWritePending &&
-         !context->nativeScheduleDirtyRootsPresent &&
+         ((!context->nativeScheduleExternalWritePending &&
+           !context->nativeScheduleDirtyRootsPresent) ||
+          canUseScopedGeneratedEval(context)) &&
          !context->nativeScheduleNodes.empty() &&
          context->nativeScheduleReadyNodes.wordCount() != 0 &&
          nativeStaticSpecializationEnvironmentClean(context);
@@ -188,6 +209,9 @@ bool nativeStaticRootDirty(const obelisk_rt_context *context,
                 context->nativeSchedulePersistentDirtyRoots));
 }
 
+static void restoreNativeRootSubscriptionsUnlocked(obelisk_rt_context *,
+                                                   uint32_t);
+
 void markNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
                                  bool persistent) {
   auto &dirty = persistent ? context->nativeSchedulePersistentDirtyRoots
@@ -205,6 +229,8 @@ void markNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
       summary[summaryWord] |= uint64_t{1} << (word % 64);
   }
   context->nativeScheduleDirtyRootsPresent = true;
+  if (canUseScopedGeneratedEval(context))
+    restoreNativeRootSubscriptionsUnlocked(context, id);
 }
 
 void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
@@ -2080,7 +2106,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       removeNativeAOTDeadlineUnlocked(context, actorSlot);
       // Invalidate the generic heap entry too. Shared slot drains must not
       // execute the source actor a second time (LRM 4.5, 9.4.1).
-      context->scheduledProcesses[context->nativeScheduleActorIndices[actorSlot]]
+      context
+          ->scheduledProcesses[context->nativeScheduleActorIndices[actorSlot]]
           .wakeTime = UINT64_MAX;
     }
     context->nativePeriodicTerminationRequested =
@@ -2113,6 +2140,82 @@ obelisk_rt_v1_scheduler_enter_periodic_aot(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_LIFECYCLE;
   context->schedulerTime = time;
   return enterSchedulerTimeSlotUnlocked(context);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_prepare_eval_nba(obelisk_rt_context *context,
+                                         uint32_t *outRegion) {
+  return obelisk_rt_v1_scheduler_prepare_eval_nba_local(context, UINT32_MAX,
+                                                        outRegion);
+}
+
+static obelisk_rt_status prepareEvalNBALocal(obelisk_rt_context *context,
+                                             uint32_t localRegion,
+                                             uint32_t *outRegion,
+                                             bool writable) {
+  if (localRegion != UINT32_MAX && localRegion != OBELISK_RT_REGION_NBA)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!context || !outRegion || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || !context->nativeSchedulePlan ||
+      !(context->nativeSchedulePlan->flags &
+        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL))
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  // Active captures cannot authorize an NBA in the middle of Reactive/Re-NBA
+  // (LRM 4.5). Return the continuation so it can export at this real cut.
+  if (context->schedulerDrainingReactive)
+    return OBELISK_RT_TIER_UNAVAILABLE;
+  SchedulerRunOptions options;
+  options.nativePlan = true;
+  options.currentSlotOnly = true;
+  options.stopBeforeNBA = true;
+  options.localPendingNBARegion = localRegion;
+  options.stopBeforeUnscopedActors = writable;
+  auto status = runScheduler(context, options);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (context->nativeScheduleDeoptimized)
+    return OBELISK_RT_TIER_UNAVAILABLE;
+  if (context->schedulerFinishRequested.load(std::memory_order_relaxed)) {
+    *outRegion = UINT32_MAX;
+    return OBELISK_RT_OK;
+  }
+  // The continuation will consume every newly published fine ingress bit.
+  // This flag belongs to the outer scheduler trampoline, not another queue.
+  context->nativeScheduleClockIngressPending = false;
+  *outRegion = std::min(nextDueNBABarrierRegionUnlocked(context), localRegion);
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+    obelisk_rt_context *context, uint32_t localRegion, uint32_t *outRegion) {
+  return prepareEvalNBALocal(context, localRegion, outRegion, false);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_prepare_eval_nba_local_write(
+    obelisk_rt_context *context, uint32_t localRegion, uint32_t *outRegion) {
+  return prepareEvalNBALocal(context, localRegion, outRegion, true);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_scheduler_complete_eval_nba(obelisk_rt_context *context,
+                                          uint32_t region, uint32_t changed) {
+  if (!context || activeNativeAOTContext != context ||
+      lockedNativeAOTContext != context || !context->nativeSchedulePlan ||
+      !(context->nativeSchedulePlan->flags &
+        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
+      region != OBELISK_RT_REGION_NBA)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  refreshStaticNBAAccumulatorsPending(context);
+  // A queue prefix can publish generated ingress without changing its final
+  // value. Preserve that ingress on any subsequent handoff as well.
+  context->nativeScheduleClockIngressPending = true;
+  SchedulerRunOptions options;
+  options.nativePlan = true;
+  options.currentSlotOnly = true;
+  options.completeNBABarrier = region;
+  options.generatedNBAChanged = changed != 0;
+  return runScheduler(context, options);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_drain_periodic_aot(
@@ -3018,6 +3121,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleActorRoots = nullptr;
   context->nativeScheduleActorRootCount = 0;
   context->nativeScheduleActorRootRanges.clear();
+  context->nativeScopedWrite.reset();
   context->nativePeriodicGeneratedWritableStates.clear();
   context->nativeScheduleNBASiteIndex.clear();
   context->nativeScheduleNBARootIndex.clear();
@@ -3076,7 +3180,38 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleCheckpointCallback = nullptr;
 }
 
-static void disturbNativeScheduleUnlocked(obelisk_rt_context *context) {
+static void restoreNativeSubscriptionUnlocked(obelisk_rt_context *context,
+                                              ScheduledProcess &scheduled) {
+  if (!scheduled.instance || !scheduled.started ||
+      !scheduled.signalSubscriptions.empty() ||
+      (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
+       scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
+    return;
+  obelisk_rt_register_signal_wait_unlocked(
+      context, currentWait(scheduled), scheduled.signalSubscriptions,
+      scheduled.signalLatch, scheduled.token, false);
+}
+
+static void restoreNativeActorSubscriptionUnlocked(obelisk_rt_context *context,
+                                                   uint32_t slot) {
+  if (slot >= context->nativeScheduleActorIndices.size())
+    return;
+  size_t index = context->nativeScheduleActorIndices[slot];
+  if (index < context->scheduledProcesses.size())
+    restoreNativeSubscriptionUnlocked(context,
+                                      context->scheduledProcesses[index]);
+}
+
+static void restoreNativeRootSubscriptionsUnlocked(obelisk_rt_context *context,
+                                                   uint32_t root) {
+  if (auto found = context->nativeScopedWrite->rootDependentActors.find(root);
+      found != context->nativeScopedWrite->rootDependentActors.end())
+    for (uint32_t slot : found->second)
+      restoreNativeActorSubscriptionUnlocked(context, slot);
+}
+
+static void disturbNativeScheduleUnlocked(obelisk_rt_context *context,
+                                          bool restoreAll = false) {
   if (!context || !context->nativeSchedulePlan ||
       context->nativeScheduleDeoptimized)
     return;
@@ -3084,21 +3219,20 @@ static void disturbNativeScheduleUnlocked(obelisk_rt_context *context) {
     *context->nativeSchedulePlan->specialization_fast = 0;
   bool alreadyPending = context->nativeScheduleExternalWritePending;
   context->nativeScheduleExternalWritePending = true;
+  if (canUseScopedGeneratedEval(context)) {
+    // Root-specific dependents were restored when each dirty root was marked.
+    // Incomplete source summaries have explicit slots, so they remain safe
+    // without a model-wide scan (LRM 4.5, 9.4.2, 38.34, 10.6.2).
+    for (uint32_t slot : context->nativeScopedWrite->unscopedActors)
+      restoreNativeActorSubscriptionUnlocked(context, slot);
+    return;
+  }
   // Clean actors can wait solely through static fanout. Recreate their
   // runtime subscriptions before the intervening write is published, so both
   // that transition and subsequent clocks are visible during fine execution.
-  if (!alreadyPending)
-    for (ScheduledProcess &scheduled : context->scheduledProcesses) {
-      if (!scheduled.instance || !scheduled.started ||
-          !scheduled.signalSubscriptions.empty() ||
-          (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
-           scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE))
-        continue;
-      if (!obelisk_rt_register_signal_wait_unlocked(
-              context, currentWait(scheduled), scheduled.signalSubscriptions,
-              scheduled.signalLatch, scheduled.token, false))
-        return;
-    }
+  if (!alreadyPending || restoreAll || context->nativeScopedWrite)
+    for (ScheduledProcess &scheduled : context->scheduledProcesses)
+      restoreNativeSubscriptionUnlocked(context, scheduled);
 }
 
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
@@ -3107,7 +3241,12 @@ void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
       context->nativeScheduleDeoptimized)
     return;
   invalidateNativeTwoStatePromotionUnlocked(context);
-  disturbNativeScheduleUnlocked(context);
+  bool firstUnscopedWrite = false;
+  if (context->nativeScopedWrite) {
+    firstUnscopedWrite = !context->nativeScopedWrite->unscopedWritePending;
+    context->nativeScopedWrite->unscopedWritePending = true;
+  }
+  disturbNativeScheduleUnlocked(context, firstUnscopedWrite);
 }
 
 void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
@@ -3335,4 +3474,14 @@ obelisk_rt_v1_static_nba_specialization_guard(obelisk_rt_context *context,
                  !nativeStaticRootDirty(context, root.static_state)
              ? 1
              : 0;
+}
+
+extern "C" uint32_t
+obelisk_rt_v1_static_nba_specialization_guard_write(obelisk_rt_context *context,
+                                                    uint32_t rootIndex) {
+  // LRM 38.36.1/4.6(b): a live callback observes update order. A dormant
+  // capability does not. Only the full executor requests this separate check.
+  if (!context || context->vpiObservationDemand)
+    return 0;
+  return obelisk_rt_v1_static_nba_specialization_guard(context, rootIndex);
 }

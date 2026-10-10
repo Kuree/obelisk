@@ -180,6 +180,16 @@ private:
 };
 } // namespace
 std::optional<uint64_t> resolveCFGConstantInteger(Value value) {
+  // Most native handles are literal descriptors. Do not construct a solver
+  // and a program-point graph for each load/store of an already-known value.
+  APInt literal;
+  if (matchPattern(value, m_ConstantInt(&literal)) &&
+      literal.getBitWidth() <= 64)
+    return literal.getZExtValue();
+  // Only block arguments can forward constants through the CFG. Other
+  // producers are deliberately opaque to HandleConstantDataflow as well.
+  if (!isa<BlockArgument>(value))
+    return std::nullopt;
   DataFlowSolver solver;
   solver.load<HandleConstantDataflow>(value);
   Operation *owner = value.getDefiningOp();

@@ -4,16 +4,15 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-ranked-segment-external-clock.test.
 
-// Twelve copy actors cross native size-budget splits. VPI drives every clock
-// and observes the final copy after the same shared-loop slot has settled.
-// The segment must preserve timed callbacks, termination and startup counts.
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.segment(
-// PLAN-SAME: schedule.eval.segment_helpers
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_2(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_3(
+// Twelve copy actors cross native size-budget splits. Writable VPI retains
+// their fine ingress: dirty owners use the shared Tier 2/3 actor selector,
+// while an unaffected owner still calls its original Tier 1 executor.
+// PLAN-NOT: llvm.func @__obelisk_eval_ranked_group_
+// PLAN-LABEL: llvm.func @__obelisk_eval_write_guard_0_v1(
+// PLAN: llvm.call @obelisk_rt_v1_static_specialization_guard
+// PLAN-LABEL: llvm.func @__obelisk_eval_write_guard_12_v1(
+// PLAN: llvm.call @obelisk_rt_v1_static_specialization_guard
 // PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0.segment(
-// Startup initializes fourteen actors and reactivates three early-registered
-// relays. Subsequent external clock edges stay in native group execution.
+// PLAN: llvm.call @__obelisk_eval_write_guard_0_v1(
+// PLAN: llvm.call @__obelisk_eval_write_guard_12_v1(
+// PLAN: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor(

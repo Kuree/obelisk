@@ -1185,9 +1185,21 @@ separated by thousands of generated clock edges, with startup-only fragment
 dispatch at O0/O3 and required-bytecode output agreement.
 
 Full cocotb support still requires other VPI callbacks, including value-change
-and read/write synchronization, and control operations. Full integration of
-group-level partial routing also remains required; preserving compiled
-fragments alone does not prove that unaffected groups stay in Tier 1.
+and read/write synchronization, and control operations.
+
+Write-capable eval plans now retain original fine ingress and guard each owner
+with its complete source root dependencies, including dynamic selections and
+nets. A dirty owner uses the original shared Tier 2/3 actor selector; clean
+owners retain Tier 1 independently of knownness. Missing or opaque dependency
+facts conservatively reject that owner's dirty path. An inverse root index
+is built once when a write-capable guarded plan is installed and restores
+affected subscriptions before mutation publication, with explicit
+unscoped actors for incomplete inventories. Plans without guarded Tier 1
+coordination retain the existing full restoration path. Off/read builds emit
+neither the new mutation guards nor the completeness records. A force/release
+regression checks 1,000 edges, startup-only execution of an unrelated actor,
+and O0/O3 agreement with required bytecode.
+
 Writable-VPI continuous assignments require retained driver-value planes for
 force/release. Generic compiled fragments bind the runtime's canonical retained
 planes and update exact contribution ranges directly while their addressing
@@ -1560,6 +1572,75 @@ entry guard rejects the clean form after VPI writes, force/release, bytecode
 mutation, or any other specialization invalidation. The validating generic
 commit remains the handoff path for unsupported wide, boundary, or later-region
 roots without changing VPI database identities.
+
+Runtime-calendar eval now retains its generated continuation across common
+NBA cuts. The shared scheduler drains runtime Active/Inactive work before the
+generated prefix and completes the entire remaining NBA batch before Active
+resumes (IEEE 1800-2023 4.4.2.3-4.4.2.4, 4.5). This removes repeated dispatcher
+entry without deleting a semantic barrier. Wide equal-value captures may omit
+staging only with a complete pre-fusion immediate-writer inventory, private
+observer influence, no pending earlier update, and equal value and X/Z planes
+(4.3, 4.6(b), 4.9.4, 10.4.2). Initialization-only process writers still prevent
+this elision; periodic ingress alone does not exclude a time-zero activation.
+
+Physical state promotion uses exact call-closure and bounded dynamic byte
+footprints, including both planes and overlapping packed accesses. Proof-only
+notification helpers retain their logical deltas without forcing physical
+publication. Single-block lanes live from their first to their last access;
+other profitable lanes remain local until a required cut. Opaque calls flush
+and reacquire affected state for coherent observation and mutation (4.9.3,
+38.15, 38.34). The existing IR growth budget still applies.
+
+Closed runtime-calendar eval transactions also have a bounded private pending
+interface. A typed source plan identifies descriptors, captured targets,
+semantic sites, writer fragments, owners, masks and event regions before
+physical lowering. A second inventory requires exact scalar staging and a
+typed generated commit consumer in the final call closure. Up to sixteen
+machine-word roots in one dirty word use activation-local value, X/Z and
+transient fields with one pending bitmap. Generated helpers share this slot;
+their original symbols retain canonical wrappers for fine and cold entry.
+Validity follows the actual capture bit, including reads outside the selected
+commit branch. Adoption clears canonical validity and masks as well as the
+dirty bit, so ownership moves exactly once (4.9.4, 10.4.2).
+Logical dirty-word reads include private captures. Canonical dirty-word writes
+project those bits back to their existing canonical ownership, so control-flow
+joins cannot publish private captures for a second runtime consumption.
+
+The common NBA prepare service arbitrates private captures with canonical
+queues without advancing time or running a second event loop. Audited
+publication and metadata leaves do not force pending export. Opaque calls and
+runtime-owned consumers export captured operands and reacquire the surviving
+pending work afterward; ordinary blocking reads still see current state.
+Successful finish cancels the private bitmap before final procedures can cause
+another export (4.5, 20.2). Wide roots, mixed masks, incomplete writer/consumer
+proofs and unsupported regions retain materialized accumulators or fixed
+slots. The interface permits LLVM to promote local fields; it does not promise
+that every outlined call or every NBA payload disappears.
+
+Writable VPI emits owner guards and local Tier 2/3 routing independently of
+knownness. A separate guarded source proof can qualify private scalar captures
+only for a closed single-site design with an execution bound between NBA
+windows. Capability alone does not establish merge safety: an observer attached
+after capture must still see enqueue order (4.6(b), 38.36.1). Other writable
+captures retain canonical staging. A writable private continuation returns
+before a foreign callback, unscoped actor or dynamic task consumes readiness;
+its canonical wrapper exports before that executor runs. Off/read executors
+emit no writable guards, conditional observer certificates or writable prepare
+service calls. The scheduler options remain within AArch64's sixteen-byte
+register argument limit so adding this cut does not change their call convention.
+
+Closed outlined computations now carry selected exact packed current lanes as
+value arguments and results. The existing body moves into a private value
+interface; its original symbol retains a canonical acquisition/publication
+wrapper for fine and cold execution. A complete memory inventory rejects opaque
+effects, overlapping dynamic accesses, volatile/atomic accesses, and nested
+canonical readers of those lanes. The interface is bounded by the existing IR
+growth budget, six input machine words, and two return machine words. The caller
+can forward these values through other generated computation in SSA, including
+when no helper fits the inlining budget. Every original transition action stays
+at its source position (4.6(a), 4.9.3); observation and mutation still require
+publication/reacquisition. Pending NBA values use the separate captured-value
+interface described above; they are never ordinary current-value arguments.
 
 Timing sites likewise carry compiled policy metadata today. Constant delays
 select calendar sites, nonconstant delays select deadline slots, and

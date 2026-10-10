@@ -24,7 +24,8 @@ namespace obelisk::analysis {
 class NBAInfluenceAnalysis {
 public:
   using Root = std::pair<schedule::ComputeResourceKind, uint64_t>;
-  NBAInfluenceAnalysis(sim::SimDesignOp design, llvm::ArrayRef<Root> observers);
+  NBAInfluenceAnalysis(sim::SimDesignOp design, llvm::ArrayRef<Root> observers,
+                       bool guardedVPI = false);
   bool mayReachObserver(Root root) const {
     return !complete || !known.contains(root) || observed.contains(root);
   }

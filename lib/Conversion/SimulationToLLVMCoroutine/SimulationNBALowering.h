@@ -26,6 +26,8 @@ struct NativeStateLayout;
 
 struct NativeStaticNBAPlan {
   llvm::SmallVector<obelisk_rt_static_nba_root> roots;
+  llvm::SmallVector<uint64_t> rootDescriptors;
+  bool completeSourceWriters = false;
   llvm::SmallVector<obelisk_rt_static_nba_site> sites;
   llvm::DenseMap<uint64_t, uint32_t> siteRoots;
   // Graph rebuilding gives generated eval clones fresh site IDs. Preserve the
@@ -55,6 +57,9 @@ struct NativeStaticNBAPlan {
   // Source storage lies outside the pre-fusion sparse observer influence cone.
   // Missing proof means false, independently of the once-per-window proof.
   llvm::SmallVector<bool> privateInfluenceRoots;
+  // Conditional source-only proof. Full VPI checks visibility independently
+  // of value-domain specialization; fine/cold staging keeps its guarded ABI.
+  llvm::SmallVector<bool> guardedMergeRoots;
   // No read/watch anywhere in the design, including future activations, and
   // no external observation. Immediate plain NBA enqueues can be erased;
   // evaluation of their SSA operands and delayed events remains separate.
@@ -86,6 +91,13 @@ struct NativeStaticNBAPlan {
   // read-modify-written; repeated activations retain normal last-write wins.
   llvm::SmallVector<uint64_t> generatedFixedWriteMasks;
 };
+
+/// Compare a captured chunk with both canonical planes, excluding adjacent
+/// packed bits. The caller must prove the captured target is fixed/in-range.
+mlir::Value buildNativeNBAChange(mlir::OpBuilder &builder,
+                                 mlir::Location location, uint64_t bitOffset,
+                                 unsigned width, mlir::Value value,
+                                 mlir::Value unknown);
 
 /// Before an NBA write merges into a generated accumulator word, record the
 /// staged bits it overwrites with a different value: OR

@@ -189,8 +189,7 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
     amounts.push_back(offset.getArgOperands()[1]);
     root = offset.getArgOperands()[0];
   }
-  if (amounts.empty() ||
-      (guards.empty() && (!access || !access->inBounds)))
+  if (amounts.empty() || (guards.empty() && (!access || !access->inBounds)))
     return std::nullopt;
   std::optional<uint64_t> base = resolveCFGConstantInteger(root);
   obelisk_rt_stable_handle_v1 decoded{};
@@ -285,9 +284,29 @@ static unsigned getNativePackedWindowWidth(unsigned valueWidth) {
   return valueWidth <= 57 ? llvm::PowerOf2Ceil(valueWidth + 7) : 0;
 }
 
+static void annotateCanonicalAccess(Operation *operation, uint64_t rootOffset,
+                                    uint64_t rootWidth, unsigned spanWidth) {
+  if (rootOffset > UINT64_MAX - rootWidth ||
+      rootOffset + rootWidth > UINT64_MAX - 7)
+    return;
+  uint64_t begin = rootOffset / 8;
+  uint64_t end = (rootOffset + rootWidth + 7) / 8;
+  uint64_t padding = llvm::divideCeil(spanWidth, 8u);
+  if (end > UINT64_MAX - padding)
+    return;
+  end += padding;
+  // IEEE 1800-2023 11.5.1: the selector is contained or explicitly clamped
+  // before this access. Include its complete physical window, not merely
+  // the logical write mask, so adjacent packed fields cannot go stale.
+  schedule::set<schedule::Field::EvalStateAccessBytes>(
+      operation, DenseI64ArrayAttr::get(operation->getContext(),
+                                        {int64_t(begin), int64_t(end)}));
+}
+
 Value loadDynamicPackedWindow(ConversionPatternRewriter &rewriter,
                               Location location, StringRef globalName,
-                              IntegerType resultType, Value absolute) {
+                              IntegerType resultType, Value absolute,
+                              const DirectDynamicStateRange &range) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   IntegerType i8 = rewriter.getI8Type();
   IntegerType i64 = rewriter.getI64Type();
@@ -306,6 +325,8 @@ Value loadDynamicPackedWindow(ConversionPatternRewriter &rewriter,
   auto loadSpan = [&](unsigned spanWidth) {
     IntegerType spanType = rewriter.getIntegerType(spanWidth);
     Value span = LLVM::LoadOp::create(rewriter, location, spanType, address, 1);
+    annotateCanonicalAccess(span.getDefiningOp(), range.rootOffset,
+                            range.rootWidth, spanWidth);
     Value firstBitShift =
         spanWidth == 64 ? firstBit
         : spanWidth < 64
@@ -416,6 +437,9 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
                             base, ValueRange{byte});
     Value storage =
         LLVM::LoadOp::create(rewriter, location, storageType, address, 1);
+    if (range.inBounds)
+      annotateCanonicalAccess(storage.getDefiningOp(), range.rootOffset,
+                              range.rootWidth, storageType.getWidth());
     Value shifted = arith::ShRUIOp::create(
         rewriter, location, storage,
         llvmConstant(rewriter, location, storageType, unit->bitOffset));
@@ -453,7 +477,7 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
         llvmConstant(rewriter, location, i64,
                      range.rootOffset + range.localOffset));
     return loadDynamicPackedWindow(rewriter, location, globalName, resultType,
-                                   absolute);
+                                   absolute, range);
   }
   Value zero = llvmConstant(rewriter, location, i64, 0);
   Value minimum = llvmConstant(
@@ -512,7 +536,7 @@ Value loadDirectDynamicPackedPlane(ConversionPatternRewriter &rewriter,
                             llvmConstant(rewriter, location, i64,
                                          range.rootOffset + range.localOffset));
   Value loaded = loadDynamicPackedWindow(rewriter, location, globalName,
-                                         resultType, absolute);
+                                         resultType, absolute, range);
   Value resultShift =
       resultType.getWidth() == 64 ? absoluteDelta
       : resultType.getWidth() > 64
@@ -918,6 +942,12 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
                                               layout, access);
   if (!range || (range->guarded && (continuous || !assumeClean)))
     return false;
+  bool needsNotification = layout->transitionHandles.contains(range->staticID);
+  if (auto function = rewriter.getInsertionBlock()->getParentOp())
+    if (auto roots = function->getAttrOfType<DenseI32ArrayAttr>(
+            "obelisk.native.no_transition_roots"))
+      needsNotification &= !llvm::is_contained(
+          roots.asArrayRef(), static_cast<int32_t>(range->staticID));
   if (!access || access->root != range->staticID || !range->wholeOrInvalid)
     accessUnit.reset();
   if (range->rootWidth > 64 || accessUnit) {
@@ -1045,12 +1075,15 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
         bool wholeUnit = accessUnit && accessUnit->bitOffset == 0 &&
                          (inputType.getWidth() == accessUnit->width ||
                           accessUnit->ownsPadding);
-        bool readOld =
-            !wholeUnit || layout->transitionHandles.contains(range->staticID);
-        Value old = readOld ? resize(LLVM::LoadOp::create(rewriter, location,
-                                                          spanType, address, 1),
-                                     windowType)
-                            : llvmConstant(rewriter, location, windowType, 0);
+        bool readOld = !wholeUnit || needsNotification;
+        Value old = llvmConstant(rewriter, location, windowType, 0);
+        if (readOld) {
+          auto load =
+              LLVM::LoadOp::create(rewriter, location, spanType, address, 1);
+          annotateCanonicalAccess(load, range->rootOffset, range->rootWidth,
+                                  width);
+          old = resize(load, windowType);
+        }
         Value updated;
         if (wholeUnit) {
           updated = positioned;
@@ -1063,6 +1096,8 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
         }
         auto write = LLVM::StoreOp::create(
             rewriter, location, resize(updated, spanType), address, 1);
+        annotateCanonicalAccess(write, range->rootOffset, range->rootWidth,
+                                width);
         // The clipped mask preserves every bit outside the root, including
         // neighboring bits in the first and last byte. Retain that proof for
         // promotion bookkeeping even though the byte address is dynamic.
@@ -1114,7 +1149,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     if (!twoState)
       std::tie(oldUnknown, newUnknown) =
           store("__obelisk_state_unknown", unknown);
-    if (layout->transitionHandles.contains(range->staticID)) {
+    if (needsNotification) {
       Value context = LLVM::LoadOp::create(
           rewriter, location, pointer,
           LLVM::AddressOfOp::create(rewriter, location, pointer,
@@ -1223,7 +1258,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     storeDirectPackedPlane(rewriter, location, newUnknown,
                            "__obelisk_state_unknown", range->rootOffset, false,
                            range->containerWidth);
-  if (layout->transitionHandles.contains(range->staticID)) {
+  if (needsNotification) {
     Value rootHandle =
         llvmConstant(rewriter, location, i64,
                      obelisk_rt_stable_handle_encode(

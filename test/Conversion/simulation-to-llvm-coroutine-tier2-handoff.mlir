@@ -234,6 +234,8 @@ module attributes {
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_eval_nba
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_complete_eval_nba
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.switch
 // CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
@@ -244,7 +246,11 @@ module attributes {
 // CHECK: llvm.mlir.addressof @__obelisk_periodic_termination_v1
 // CHECK: llvm.load
 // CHECK: llvm.cond_br
-// CHECK-NOT: llvm.call @obelisk_rt_
+// IEEE 1800-2023 4.4.2.3-4.4.2.4 and 4.5: the runtime calendar cut
+// drains Inactive and the rest of the NBA batch before eval resumes.
+// CHECK: llvm.call @__obelisk_aot_runtime_nba_commit_v1
+// CHECK-LABEL: llvm.func @__obelisk_eval_four_state_nba_handoff_v1
+
 // CHECK: llvm.return
 // Immutable forwarded captures need no coroutine state, even without a
 // previously supplied certificate. Extraction proves their reconstruction.

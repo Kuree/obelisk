@@ -91,6 +91,8 @@ def main():
                   "seconds": elapsed, "returncode": completed.returncode,
                   "cycles": int(match[1]) if match else None, "files": files,
                   "command": command, "warmup": warmup}
+        if args.mode == "time":
+            result["simulation_output_sha256"] = hashlib.sha256(completed.stdout).hexdigest()
         if args.mode == "diagnostics":
             diag = re.search(r"obelisk-signal-diagnostics (.*)", log)
             result["diagnostics"] = dict(re.findall(r"(\w+)=(\d+)", diag[1])) if diag else {}
@@ -115,6 +117,8 @@ def main():
                 labels.reverse()
             pair = [run(label, workload, repetition) for label in labels]
             assert pair[0]["files"] == pair[1]["files"], pair
+            if args.mode == "time":
+                assert pair[0]["simulation_output_sha256"] == pair[1]["simulation_output_sha256"], pair
             runs.extend(pair)
     summary = {}
     for workload in ["HelloWorld", "Fibonacci", "reset"]:

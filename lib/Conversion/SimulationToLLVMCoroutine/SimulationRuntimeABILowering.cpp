@@ -1,6 +1,7 @@
 //===- SimulationRuntimeABILowering.cpp - Native runtime declarations -===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -64,6 +65,16 @@ void declareNativeRuntimeABI(ModuleOp module) {
       module, "obelisk_rt_v1_static_nba_specialization_guard",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
+  bool guardedVisibility = false;
+  module.walk([&](Operation *op) {
+    guardedVisibility |=
+        schedule::has<schedule::Field::NbaGuardedPrivateInfluence>(op);
+  });
+  if (guardedVisibility)
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_static_nba_specialization_guard_write",
+        IntegerType::get(context, 32),
+        {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),

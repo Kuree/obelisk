@@ -6,12 +6,14 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -483,7 +485,8 @@ FailureOr<SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
     const DenseMap<Operation *, uint32_t> &actorSlots,
-    const DenseSet<uint64_t> &checkpointOnlyActors) {
+    const DenseSet<uint64_t> &checkpointOnlyActors, bool writableVPI,
+    SmallVectorImpl<uint32_t> &unscopedActors) {
   SmallVector<obelisk_rt_static_actor_root> plan;
   sim::SimDesignOp design;
   module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
@@ -492,10 +495,12 @@ buildNativeStaticActorRootPlan(
           ? ::obelisk::schedule::get<schedule::metadata::staticSpecialization>(
                 design)
           : schedule::StaticSpecializationAttr{};
-  if (!specialization)
+  if (!design || (!specialization && !writableVPI))
     return plan;
   SymbolTable symbols(design);
-  for (Attribute attribute : specialization.getActorRoots()) {
+  for (Attribute attribute : specialization
+                                 ? specialization.getActorRoots().getValue()
+                                 : ArrayRef<Attribute>{}) {
     auto dependency = dyn_cast<schedule::StaticActorRootAttr>(attribute);
     if (!dependency)
       return module.emitError("invalid static actor/root dependency"),
@@ -528,6 +533,103 @@ buildNativeStaticActorRootPlan(
                      (dependency.getWrite() ? OBELISK_RT_STATIC_ROOT_WRITE : 0);
     if (flags != 0)
       plan.push_back({actor->second, decoded.id, flags, 0});
+  }
+  if (writableVPI) {
+    // IEEE 1800-2023 38.34, 10.6.2: mutation routing depends on the whole
+    // logical root, including dynamic selections and net driver state. The
+    // constant-access specialization table alone cannot certify that cone.
+    DenseSet<Operation *> opaqueStorageFunctions;
+    design.walk([&](sim::SimFuncOp function) {
+      function.walk([&](Operation *operation) {
+        if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimRefAllocOp,
+                sim::SimNBAEnqueueOp, sim::SimCallOp, sim::SimTaskCallOp>(
+                operation))
+          return;
+        if (auto effects = dyn_cast<MemoryEffectOpInterface>(operation)) {
+          SmallVector<MemoryEffects::EffectInstance> instances;
+          effects.getEffects(instances);
+          if (llvm::any_of(instances, [](const auto &effect) {
+                return isa<sim::StorageResource>(effect.getResource()) &&
+                       isa<MemoryEffects::Read, MemoryEffects::Write>(
+                           effect.getEffect());
+              }))
+            opaqueStorageFunctions.insert(function);
+        }
+      });
+    });
+    for (const auto &[operation, slot] : actorSlots) {
+      auto function = dyn_cast<sim::SimFuncOp>(operation);
+      auto summary = function ? function.getEffectSummaryAttr() : ArrayAttr{};
+      bool complete = bool(summary);
+      SmallVector<sim::SimFuncOp> pending;
+      if (function)
+        pending.push_back(function);
+      llvm::SmallPtrSet<Operation *, 8> visited;
+      while (complete && !pending.empty()) {
+        auto callee = pending.pop_back_val();
+        if (!visited.insert(callee).second)
+          continue;
+        complete &=
+            !callee.isExternal() && !opaqueStorageFunctions.contains(callee);
+        callee.walk([&](Operation *operation) {
+          StringRef name;
+          if (auto call = dyn_cast<sim::SimCallOp>(operation))
+            name = call.getCallee();
+          else if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
+            name = call.getCallee();
+          else
+            return;
+          if (auto nested = symbols.lookup<sim::SimFuncOp>(name))
+            pending.push_back(nested);
+          else
+            complete = false;
+        });
+      }
+      if (summary)
+        for (auto effect : summary.getAsRange<schedule::ComputeEffectAttr>()) {
+          if (effect.getResource() == schedule::ComputeResourceKind::Unknown) {
+            complete = false;
+            continue;
+          }
+          if (effect.getResource() != schedule::ComputeResourceKind::Storage &&
+              effect.getResource() != schedule::ComputeResourceKind::Net)
+            continue;
+          if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor) {
+            complete = false;
+            continue;
+          }
+          const auto &handles =
+              effect.getResource() == schedule::ComputeResourceKind::Storage
+                  ? stateLayout.storage
+                  : stateLayout.nets;
+          auto handle = handles.find(effect.getDescriptor());
+          obelisk_rt_stable_handle_v1 decoded{};
+          if (handle == handles.end() ||
+              !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+              decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+              decoded.offset != 0) {
+            complete = false;
+            continue;
+          }
+          uint32_t flags = 0;
+          if (effect.getEffect() == schedule::ComputeEffectKind::Read ||
+              effect.getEffect() == schedule::ComputeEffectKind::Watch)
+            flags |= OBELISK_RT_STATIC_ROOT_READ;
+          if (effect.getEffect() == schedule::ComputeEffectKind::Write ||
+              effect.getEffect() == schedule::ComputeEffectKind::Drive ||
+              effect.getEffect() == schedule::ComputeEffectKind::NBA)
+            flags |= OBELISK_RT_STATIC_ROOT_WRITE;
+          if (flags)
+            plan.push_back({slot, decoded.id, flags, 0});
+        }
+      if (!complete)
+        unscopedActors.push_back(slot);
+      plan.push_back({slot, 0,
+                      complete ? OBELISK_RT_STATIC_ROOT_COMPLETE
+                               : OBELISK_RT_STATIC_ROOT_UNSCOPED,
+                      0});
+    }
+    llvm::sort(unscopedActors);
   }
   llvm::sort(plan, [](const auto &lhs, const auto &rhs) {
     return std::tuple{lhs.actor_slot, lhs.static_state, lhs.flags} <

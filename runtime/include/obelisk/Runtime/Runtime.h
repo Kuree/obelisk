@@ -3423,6 +3423,10 @@ typedef struct obelisk_rt_native_merged_fragment {
 
 #define OBELISK_RT_STATIC_ROOT_READ UINT32_C(1)
 #define OBELISK_RT_STATIC_ROOT_WRITE UINT32_C(2)
+// Write-capable plans carry one zero-state completeness record per actor.
+// Unknown dependencies remain conservatively affected by every disturbance.
+#define OBELISK_RT_STATIC_ROOT_UNSCOPED UINT32_C(4)
+#define OBELISK_RT_STATIC_ROOT_COMPLETE UINT32_C(8)
 
 typedef struct obelisk_rt_static_actor_root {
   uint32_t actor_slot;
@@ -3597,6 +3601,29 @@ obelisk_rt_status obelisk_rt_v1_scheduler_activate_clock_kernel(
 // coordinator owns the shared-kernel drain and the single NBA/fanout epilogue.
 obelisk_rt_status
 obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context);
+// Keep a generated eval continuation active across the common NBA barrier.
+// Prepare drains runtime Active/Inactive work without reentering generated
+// eval or advancing time. UINT32_MAX means no barrier is pending. Generated
+// ingress must be checked again before running the compiled NBA prefix.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_prepare_eval_nba(obelisk_rt_context *context,
+                                         uint32_t *out_region);
+// As above, including captured transaction-local NBA work. The only admitted
+// local region is NBA; UINT32_MAX denotes no local capture. This does not
+// publish, commit, or reevaluate any RHS or target (IEEE 1800-2023 4.9.4).
+obelisk_rt_status obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+    obelisk_rt_context *context, uint32_t local_region, uint32_t *out_region);
+// Write-capable generated continuations also return TIER_UNAVAILABLE before
+// an actor without a complete storage-effects certificate executes. The
+// caller exports its captured pending work before that actor can invoke VPI.
+// Off/read generated continuations use the service above.
+obelisk_rt_status obelisk_rt_v1_scheduler_prepare_eval_nba_local_write(
+    obelisk_rt_context *context, uint32_t local_region, uint32_t *out_region);
+// The caller has consumed the compiled NBA prefix for this region. Complete
+// the remaining queues before returning to any Active reader or observer.
+obelisk_rt_status
+obelisk_rt_v1_scheduler_complete_eval_nba(obelisk_rt_context *context,
+                                          uint32_t region, uint32_t changed);
 // Enter/leave one compiler-proven clean fragment without resuming its
 // coroutine. The actor remains suspended at the same stable continuation so a
 // transactional fallback can use the original frame immediately.
@@ -3671,6 +3698,10 @@ uint32_t obelisk_rt_v1_static_specialization_guard(obelisk_rt_context *context,
 uint32_t
 obelisk_rt_v1_static_nba_specialization_guard(obelisk_rt_context *context,
                                               uint32_t root_index);
+// Full-only visibility guard for conditionally private captures (38.36.1).
+uint32_t
+obelisk_rt_v1_static_nba_specialization_guard_write(obelisk_rt_context *context,
+                                                    uint32_t root_index);
 // Return the scheduler-owned tagged logical identity used by await/join
 // records. The token is never a host address and is not reused within a
 // context. Native identities carry OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG.

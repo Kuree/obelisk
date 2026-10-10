@@ -4,6 +4,7 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/Runtime.h"
 #include <map>
 
@@ -98,12 +99,18 @@ public:
           // A mixed NBA/Re-NBA accumulator can remain staged after fixed
           // slots commit. Preserve its dirty bit for the later barrier.
           Value retained = c(0);
-          if (auto acc = root.getLayoutAttr().getAccumulator())
-            retained = resize(
-                load32(byteGEP(
-                    b, loc, address(acc),
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid))),
-                i64);
+          if (auto acc = root.getLayoutAttr().getAccumulator()) {
+            Value stillPending = load32(byteGEP(
+                b, loc, address(acc),
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)));
+            // This tests remaining captures after emitRoot, unlike the
+            // entry validity test. LRM 4.9.4/10.4.2: consume each capture
+            // exactly once, while retaining a later event-region form.
+            schedule::set<schedule::Field::EvalPendingDirtyRoot>(
+                stillPending.getDefiningOp(),
+                b.getI32IntegerAttr(root.getRoot()));
+            retained = resize(stillPending, i64);
+          }
           store(bor(load(consumed), select(ne(retained, c(0)), c(0), c(bit))),
                 consumed);
           cf::BranchOp::create(b, loc, after);

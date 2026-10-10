@@ -1,7 +1,8 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups | FileCheck %s
 
-// Differently sized overlapping accesses cannot be independent SSA slots.
-// Their rejection must not prevent forwarding a separate exact range.
+// Differently sized overlapping accesses share one physical SSA window.
+// A byte read observes the preceding wide blocking store (LRM 4.9.3),
+// while a separate range remains a separate slot.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
   llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
 
@@ -31,16 +32,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     llvm.return
   }
   // CHECK-LABEL: llvm.func @group()
-  // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
+  // CHECK-SAME: schedule.eval.ssa_value_ranges = 2 : i64
   // CHECK: llvm.getelementptr {{.*}}[4]
-  // CHECK: llvm.load {{.*}}schedule.eval.group_owner = 0{{.*}} -> i16
-  // CHECK: llvm.store {{.*}}schedule.eval.group_owner = 0{{.*}} : i16
-  // CHECK-NOT: llvm.store {{.*}}schedule.eval.group_owner = 0{{.*}} : i8
-  // CHECK: llvm.load {{.*}}schedule.eval.group_owner = 1{{.*}} -> i16
-  // CHECK: llvm.load {{.*}}schedule.eval.group_owner = 1{{.*}} -> i8
-  // CHECK: llvm.store {{.*}}schedule.eval.group_owner = 1{{.*}} : i16
+  // CHECK: llvm.load {{.*}} -> i16
+  // CHECK: llvm.load {{.*}} -> i8
   // CHECK-NOT: llvm.load
-  // CHECK-NOT: llvm.store {{.*}}schedule.eval.group_owner = 1{{.*}} : i8
+  // CHECK: llvm.lshr {{.*}} : i16
+  // CHECK: llvm.trunc {{.*}} : i16 to i8
+  // CHECK-NOT: llvm.load
+  // CHECK: llvm.store {{.*}} : i16
+  // CHECK-NOT: llvm.load
+  // CHECK: llvm.store {{.*}} : i8
   // CHECK: llvm.return
   llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0>} {
     llvm.call @wide() {schedule.eval.group_member = 0 : i32} : () -> ()

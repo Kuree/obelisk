@@ -2382,7 +2382,8 @@ static obelisk_rt_status stageStaticNBAPacked(
       context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
       return context->schedulerStatus;
     }
-    if (nativeStaticRootDirty(context, root.static_state)) {
+    if (nativeStaticRootDirty(context, root.static_state) ||
+        (context->nativeScopedWrite && context->vpiObservationDemand)) {
       context->staticNBASlowRoots[rootIndex] = 1;
       context->staticNBASlowRootsPresent = true;
     }

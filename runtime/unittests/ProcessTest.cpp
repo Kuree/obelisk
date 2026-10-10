@@ -3991,6 +3991,36 @@ TEST(Scheduler, AOTPlanInstallBindRunAndExclusiveMutableState) {
   EXPECT_EQ(schedulerPromotionReadyCount, 0u);
 }
 
+TEST(Scheduler, ScopedRootInventoryRequiresEveryActorExactlyOnce) {
+  AOTTestState state;
+  auto plan = makeAOTPlan(state);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  const obelisk_rt_static_actor_root incomplete[] = {
+      {0, 0, OBELISK_RT_STATIC_ROOT_COMPLETE, 0}};
+  plan.actor_roots = incomplete;
+  plan.actor_root_count = std::size(incomplete);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  const obelisk_rt_static_actor_root duplicate[] = {
+      {0, 0, OBELISK_RT_STATIC_ROOT_UNSCOPED, 0},
+      {0, 0, OBELISK_RT_STATIC_ROOT_COMPLETE, 0}};
+  plan.actor_roots = duplicate;
+  plan.actor_root_count = std::size(duplicate);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  const obelisk_rt_static_actor_root complete[] = {
+      {0, 0, OBELISK_RT_STATIC_ROOT_COMPLETE, 0},
+      {1, 0, OBELISK_RT_STATIC_ROOT_UNSCOPED, 0}};
+  plan.actor_roots = complete;
+  plan.actor_root_count = std::size(complete);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  // A complete inventory alone cannot authorize local disturbance routing.
+  // This plan has no guarded Tier 1 coordinator and allocates no index.
+  EXPECT_FALSE(context->nativeScopedWrite);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, PeriodicWriteFootprintTracksInstalledPlanOwnership) {
   AOTTestState state;
   uint64_t ingress = 0;
@@ -8442,6 +8472,162 @@ TEST(Scheduler, ReactiveIterationSurvivesSingleStepReentry) {
   ASSERT_EQ(runScheduler(context), OBELISK_RT_OK);
   EXPECT_EQ(context->events.count(3), 1u);
   EXPECT_EQ(context->schedulerTime, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, LocalEvalNBACapturesUseTheCommonBarrier) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+  context->nativeSchedulePlan = &plan;
+  auto enqueue = [&](uint64_t id, uint32_t region, uint64_t time = 0) {
+    ScheduledDesignEvent event;
+    event.stableID = id;
+    event.execRegion = region;
+    event.dueTime = time;
+    event.sequence = context->nextSchedulerSequence++;
+    context->scheduledDesignEvents.push_back(event);
+  };
+  enqueue(1, OBELISK_RT_REGION_ACTIVE);
+  enqueue(2, OBELISK_RT_REGION_INACTIVE);
+  enqueue(3, OBELISK_RT_REGION_POSTPONED);
+  enqueue(4, OBELISK_RT_REGION_ACTIVE, 7);
+  {
+    ContextMutexLock lock(context);
+    NativeAOTContextScope aot(context);
+    NativeAOTMutexScope mutex(context);
+    uint32_t region = UINT32_MAX;
+    // LRM 4.5, 4.9.4: no global NBA payload or ingress exists, but the local
+    // capture still waits for Active/Inactive and precedes later observations.
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, OBELISK_RT_REGION_NBA, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(region, OBELISK_RT_REGION_NBA);
+    EXPECT_EQ(context->events.count(1), 1u);
+    EXPECT_EQ(context->events.count(2), 1u);
+    EXPECT_EQ(context->events.count(3), 0u);
+    EXPECT_EQ(context->events.count(4), 0u);
+    EXPECT_EQ(context->schedulerTime, 0u);
+    EXPECT_EQ(nextDueNBABarrierRegionUnlocked(context),
+              OBELISK_RT_REGION_POSTPONED);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_complete_eval_nba(context, region, 1),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->events.count(3), 0u);
+    region = 99;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, UINT32_MAX, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(region, OBELISK_RT_REGION_POSTPONED);
+    EXPECT_EQ(context->events.count(3), 0u);
+    EXPECT_EQ(context->schedulerTime, 0u);
+    EXPECT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, OBELISK_RT_REGION_RE_NBA, &region),
+              OBELISK_RT_INVALID_ARGUMENT);
+    context->schedulerDrainingReactive = true;
+    EXPECT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, OBELISK_RT_REGION_NBA, &region),
+              OBELISK_RT_TIER_UNAVAILABLE);
+    context->schedulerDrainingReactive = false;
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, EvalNBACutRetainsCanonicalNBAs) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+  context->nativeSchedulePlan = &plan;
+  ScheduledDesignEvent event;
+  event.stableID = 1;
+  event.execRegion = OBELISK_RT_REGION_NBA;
+  context->scheduledDesignEvents.push_back(event);
+  {
+    ContextMutexLock lock(context);
+    NativeAOTContextScope aot(context);
+    NativeAOTMutexScope mutex(context);
+    uint32_t region = UINT32_MAX;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba(context, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(region, OBELISK_RT_REGION_NBA);
+    EXPECT_EQ(context->events.count(1), 0u);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_complete_eval_nba(context, region, 0),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->events.count(1), 1u);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, EvalNBACutReturnsBeforeTimedForeignCallback) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+  context->nativeSchedulePlan = &plan;
+  context->nextVPITimeCallback = 0;
+  ScheduledDesignEvent event;
+  event.stableID = 1;
+  event.execRegion = OBELISK_RT_REGION_ACTIVE;
+  context->scheduledDesignEvents.push_back(event);
+  {
+    ContextMutexLock lock(context);
+    NativeAOTContextScope aot(context);
+    NativeAOTMutexScope mutex(context);
+    uint32_t region = 99;
+    // LRM 38.36.2/4.9.4: return while the local capture and callback deadline
+    // are intact, before running either the callback or subsequent Active work.
+    EXPECT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, OBELISK_RT_REGION_NBA, &region),
+              OBELISK_RT_TIER_UNAVAILABLE);
+    EXPECT_EQ(region, 99u);
+    EXPECT_EQ(context->nextVPITimeCallback, 0u);
+    EXPECT_EQ(context->events.count(1), 0u);
+    EXPECT_EQ(context->schedulerTime, 0u);
+    context->nextVPITimeCallback.reset();
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, OBELISK_RT_REGION_NBA, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->events.count(1), 1u);
+    EXPECT_EQ(region, OBELISK_RT_REGION_NBA);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, WritableEvalNBACutReturnsBeforeUnscopedActor) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+  context->nativeSchedulePlan = &plan;
+  SchedulerFixture actor(101);
+  schedulerResumeCount = 0;
+  schedulerOrder.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(actor), 0),
+      OBELISK_RT_OK);
+  {
+    ContextMutexLock lock(context);
+    NativeAOTContextScope aot(context);
+    NativeAOTMutexScope mutex(context);
+    uint32_t region = 99;
+    // LRM 38.34/4.9.4: the unmapped actor could call VPI. Its exact original
+    // continuation must remain runnable after the private capture is exported.
+    EXPECT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local_write(
+                  context, OBELISK_RT_REGION_NBA, &region),
+              OBELISK_RT_TIER_UNAVAILABLE);
+    EXPECT_EQ(schedulerResumeCount, 0u);
+    EXPECT_EQ(region, 99u);
+    ASSERT_EQ(context->scheduledProcesses.size(), 1u);
+    EXPECT_FALSE(context->scheduledProcesses[0].started);
+    // Off/read use the ordinary service and do not make this mutation query.
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba_local(
+                  context, OBELISK_RT_REGION_NBA, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{101}));
+    EXPECT_EQ(region, OBELISK_RT_REGION_NBA);
+    EXPECT_EQ(context->schedulerTime, 0u);
+  }
   obelisk_rt_v1_context_destroy(context);
 }
 

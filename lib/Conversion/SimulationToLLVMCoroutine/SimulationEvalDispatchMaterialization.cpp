@@ -96,6 +96,61 @@ materializeNativeEvalDispatch(ModuleOp module,
   // part of this lookup snapshot, and no executor is added, renamed or erased.
   SymbolTable executorSymbols(module);
   builder.setInsertionPointToEnd(module.getBody());
+  SmallVector<std::string> writeGuards;
+  if (plan.writableVPI) {
+    // IEEE 1800-2023 38.34 and 10.6: a deposit/force invalidates only the
+    // affected source dependencies. Keep scheduling and knownness separate;
+    // a known forced value still requires override-aware fine execution.
+    for (unsigned owner = 0; owner != mergedFragments.size(); ++owner) {
+      std::string name =
+          "__obelisk_eval_write_guard_" + std::to_string(owner) + "_v1";
+      auto guard = LLVM::LLVMFuncOp::create(
+          builder, location, name,
+          LLVM::LLVMFunctionType::get(builder.getI1Type(), {pointer}, false));
+      writeGuards.push_back(name);
+      Block *entry = guard.addEntryBlock(builder), *check = new Block,
+            *clean = new Block;
+      guard.getBody().push_back(check);
+      guard.getBody().push_back(clean);
+      builder.setInsertionPointToStart(entry);
+      Value fast = LLVM::LoadOp::create(
+          builder, location, i32,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    "__obelisk_static_specialization_fast_v1"),
+          4);
+      Value isClean =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                fast, llvmConstant(builder, location, i32, 0));
+      cf::CondBranchOp::create(builder, location, isClean, clean, ValueRange{},
+                               check, ValueRange{});
+      builder.setInsertionPointToStart(clean);
+      LLVM::ReturnOp::create(
+          builder, location,
+          llvmConstant(builder, location, builder.getI1Type(), 1));
+      builder.setInsertionPointToStart(check);
+      Value allowed = llvmConstant(builder, location, builder.getI1Type(), 1);
+      for (uint32_t state : plan.ownerStaticStates[owner]) {
+        Value root =
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                "obelisk_rt_v1_static_specialization_guard",
+                ValueRange{entry->getArgument(0),
+                           llvmConstant(builder, location, i32, UINT32_MAX),
+                           llvmConstant(builder, location, i32, state),
+                           llvmConstant(builder, location, i32,
+                                        OBELISK_RT_STATIC_ROOT_READ |
+                                            OBELISK_RT_STATIC_ROOT_WRITE)})
+                .getResult();
+        allowed = arith::AndIOp::create(
+            builder, location, allowed,
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  root,
+                                  llvmConstant(builder, location, i32, 0)));
+      }
+      LLVM::ReturnOp::create(builder, location, allowed);
+      builder.setInsertionPointAfter(guard);
+    }
+  }
   SmallVector<Type> coordinatorArguments{pointer, pointer};
   auto fastCoordinator = LLVM::LLVMFuncOp::create(
       builder, location, functionName,
@@ -142,6 +197,12 @@ materializeNativeEvalDispatch(ModuleOp module,
   };
   auto combinedIngress = [&] {
     return maskedOwnerWords(builder, location, ingressAddress(), allOwners);
+  };
+  auto ownerWritableClean = [&](unsigned owner) -> Value {
+    return LLVM::CallOp::create(
+               builder, location, TypeRange{builder.getI1Type()},
+               writeGuards[owner], ValueRange{fastEntry->getArgument(1)})
+        .getResult();
   };
   auto clearIngressMask = [&](const APInt &mask, Value condition = Value{}) {
     updateOwnerMask(builder, location, ingressAddress(), mask,
@@ -200,6 +261,10 @@ materializeNativeEvalDispatch(ModuleOp module,
                                 llvmConstant(builder, location, i64,
                                              uint64_t{1} << (record.bit % 64))),
           llvmConstant(builder, location, i64, 0));
+      if (plan.writableVPI)
+        coordinatorPending =
+            arith::AndIOp::create(builder, location, coordinatorPending,
+                                  ownerWritableClean(recordIndex));
       for (unsigned word = 0; word != ready.size(); ++word) {
         uint64_t members = ownerMaskWord(subsumed, word);
         if (!members)
@@ -302,6 +367,35 @@ materializeNativeEvalDispatch(ModuleOp module,
         if (allowedOwnerMask[parentRecord.bit] &&
             ownerSubsumptionMasks[parent][record.bit])
           superseding.setBit(parentRecord.bit);
+      if (plan.writableVPI) {
+        Value parents = llvmConstant(builder, location, i64, 0);
+        for (auto [parent, parentRecord] : llvm::enumerate(mergedFragments)) {
+          if (!superseding[parentRecord.bit])
+            continue;
+          Value pending = maskedOwnerWords(
+              builder, location, ingressAddress(),
+              APInt::getOneBitSet(ownerCount, parentRecord.bit));
+          pending = arith::SelectOp::create(
+              builder, location, ownerWritableClean(parent), pending,
+              llvmConstant(builder, location, i64, 0));
+          parents = arith::OrIOp::create(builder, location, parents, pending);
+        }
+        // The ordinary normalization below must not drop exact work when its
+        // containing Tier-1 owner has lost only its scheduling/override proof.
+        superseding.clearAllBits();
+        Value covered = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, parents,
+            llvmConstant(builder, location, i64, 0));
+        Block *skip = new Block, *uncovered = new Block;
+        fastCoordinator.getBody().push_back(skip);
+        fastCoordinator.getBody().push_back(uncovered);
+        cf::CondBranchOp::create(builder, location, covered, skip, ValueRange{},
+                                 uncovered, ValueRange{});
+        builder.setInsertionPointToStart(skip);
+        clearIngressMask(APInt::getOneBitSet(ownerCount, record.bit));
+        cf::BranchOp::create(builder, location, dispatch);
+        builder.setInsertionPointToStart(uncovered);
+      }
       if (!superseding.isZero()) {
         // Normalize only the selected exact owner. Eagerly walking every
         // subsumption relation at every dispatch is quadratic in a large
@@ -323,6 +417,45 @@ materializeNativeEvalDispatch(ModuleOp module,
         cf::BranchOp::create(builder, location, dispatch);
         builder.setInsertionPointToStart(uncovered);
       }
+    }
+    if (plan.writableVPI) {
+      Block *clean = new Block, *fine = new Block;
+      fastCoordinator.getBody().push_back(clean);
+      fastCoordinator.getBody().push_back(fine);
+      cf::CondBranchOp::create(builder, location,
+                               ownerWritableClean(recordIndex), clean,
+                               ValueRange{}, fine, ValueRange{});
+      builder.setInsertionPointToStart(fine);
+      // Consume only this activation. Exact existing ingress is retained;
+      // clock-only full sweeps seed the original clock-triggered fine entries.
+      // Do not replay upstream producers after an internal VPI deposit (38.34).
+      clearIngressMask(APInt::getOneBitSet(ownerCount, record.bit));
+      if (!ownerSubsumptionMasks[recordIndex].isZero()) {
+        updateOwnerMask(builder, location, ingressAddress(),
+                        plan.ownerFineIngress[recordIndex], /*clear=*/false, {},
+                        &readyLayout);
+        cf::BranchOp::create(builder, location, dispatch);
+      } else {
+        LLVM::StoreOp::create(
+            builder, location,
+            llvmConstant(builder, location, builder.getI1Type(), 1),
+            fourStateFallback, 1);
+        if (ownerMayTaintNBA(recordIndex))
+          markOwnerNBATaint(recordIndex);
+        Value status =
+            LLVM::CallOp::create(builder, location, TypeRange{i32},
+                                 "obelisk_rt_v1_scheduler_execute_aot_actor",
+                                 ValueRange{fastEntry->getArgument(1),
+                                            llvmConstant(builder, location, i32,
+                                                         record.actor_slot)})
+                .getResult();
+        Value ok = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, status,
+            llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        cf::CondBranchOp::create(builder, location, ok, dispatch, ValueRange{},
+                                 failed, ValueRange{status});
+      }
+      builder.setInsertionPointToStart(clean);
     }
     Value ownerBit =
         llvmConstant(builder, location, i64, uint64_t{1} << (record.bit % 64));
@@ -517,15 +650,75 @@ materializeNativeEvalDispatch(ModuleOp module,
   builder.setInsertionPointToStart(commit);
   if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module)) {
-    // IEEE 1800-2023 4.4.2.2-4.4.2.4, 4.5, 10.4.2: finish generated
-    // Active work as one batch. The shared scheduler owns
-    // this mixed NBA barrier and must first drain runtime Active observers.
-    // Its canonical commit consumes the generated scalar accumulators and
-    // publishes both runtime waiters and subsequent generated ingress.
-    LLVM::ReturnOp::create(builder, location,
-                           llvmConstant(builder, location, i32, OBELISK_RT_OK));
-    performCommit->erase();
-    afterCommit->erase();
+    // Keep the eval continuation active across NBA. The common loop drains
+    // runtime Active/Inactive work at the cut, then completes the remaining
+    // NBA queues before any generated or runtime Active reader can resume.
+    // IEEE 1800-2023 4.4.2.3-4.4.2.4 requires Inactive to settle before NBA;
+    // 4.5 permits new Active evaluation only after the whole NBA event batch.
+    // The captured prefix retains 4.6(b) assignment order and 4.9.4/10.4.2
+    // enqueue-time RHS/target values; runtime cuts never reevaluate them.
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_prepare_eval_nba",
+                             i32, {pointer, pointer});
+    getOrDeclareLLVMFunction(module,
+                             "obelisk_rt_v1_scheduler_complete_eval_nba", i32,
+                             {pointer, i32, i32});
+    Value region = entryAlloca(builder, location, i32, 1, 4);
+    Value prepareStatus =
+        LLVM::CallOp::create(builder, location, TypeRange{i32},
+                             "obelisk_rt_v1_scheduler_prepare_eval_nba",
+                             ValueRange{fastEntry->getArgument(1), region})
+            .getResult();
+    Block *prepared = new Block, *commitPrefix = new Block;
+    fastCoordinator.getBody().push_back(prepared);
+    fastCoordinator.getBody().push_back(commitPrefix);
+    Value prepareOK = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, prepareStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, prepareOK, prepared,
+                             ValueRange{}, failed, ValueRange{prepareStatus});
+    builder.setInsertionPointToStart(prepared);
+    Value ingress = combinedIngress();
+    Value hasIngress = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, ingress,
+        llvmConstant(builder, location, ingress.getType(), 0));
+    cf::CondBranchOp::create(builder, location, hasIngress, dispatch,
+                             ValueRange{}, performCommit, ValueRange{});
+    builder.setInsertionPointToStart(performCommit);
+    Value barrier = LLVM::LoadOp::create(builder, location, i32, region, 4);
+    Value isNBA = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, barrier,
+        llvmConstant(builder, location, i32, OBELISK_RT_REGION_NBA));
+    cf::CondBranchOp::create(
+        builder, location, isNBA, commitPrefix, ValueRange{}, complete,
+        ValueRange{llvmConstant(builder, location, i32, OBELISK_RT_OK)});
+    builder.setInsertionPointToStart(commitPrefix);
+    LLVM::StoreOp::create(builder, location,
+                          llvmConstant(builder, location, i32, 0), changed, 4);
+    Value prefixStatus =
+        LLVM::CallOp::create(builder, location, TypeRange{i32},
+                             "__obelisk_aot_runtime_nba_commit_v1",
+                             ValueRange{fastEntry->getArgument(0),
+                                        fastEntry->getArgument(1), barrier,
+                                        changed})
+            .getResult();
+    Value prefixOK = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, prefixStatus,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, prefixOK, afterCommit,
+                             ValueRange{}, failed, ValueRange{prefixStatus});
+    builder.setInsertionPointToStart(afterCommit);
+    Value status =
+        LLVM::CallOp::create(builder, location, TypeRange{i32},
+                             "obelisk_rt_v1_scheduler_complete_eval_nba",
+                             ValueRange{fastEntry->getArgument(1), barrier,
+                                        LLVM::LoadOp::create(builder, location,
+                                                             i32, changed, 4)})
+            .getResult();
+    Value ok = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, status,
+        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    cf::CondBranchOp::create(builder, location, ok, dispatch, ValueRange{},
+                             failed, ValueRange{status});
     emitReturns();
     return success();
   }

@@ -1976,6 +1976,12 @@ struct PlusargIndexEdge {
   uint8_t character = 0;
 };
 
+struct NativeScopedWriteState {
+  std::unordered_map<uint32_t, std::vector<uint32_t>> rootDependentActors;
+  std::vector<uint32_t> unscopedActors;
+  bool unscopedWritePending = false;
+};
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -2442,6 +2448,10 @@ struct obelisk_rt_context {
   std::optional<uint64_t> nextVPITimeCallback;
   bool vpiTimeCallbackActive = false;
 
+  // Allocated only for write-capable eval plans with complete source roots.
+  // Tail placement retains all existing context offsets for off/read models.
+  std::unique_ptr<NativeScopedWriteState> nativeScopedWrite;
+
   obelisk_rt_context();
   ~obelisk_rt_context();
 };
@@ -2488,7 +2498,8 @@ inline void obelisk_rt_record_native_ready_publication_unlocked(
   if (!batch || !batch->valid)
     return;
   if (!inserted || batch->generation != previous ||
-      context->schedulerSelectionGeneration == 1 || batch->queued.count(token)) {
+      context->schedulerSelectionGeneration == 1 ||
+      batch->queued.count(token)) {
     batch->valid = false;
     return;
   }
@@ -3124,7 +3135,8 @@ obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
                                    uint64_t end, bool *outConnected) noexcept;
 obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
-    uint64_t maximumInsertionSequence, bool *outProgress) noexcept;
+    uint64_t maximumInsertionSequence, bool *outProgress,
+    bool stopBeforeExecution = false) noexcept;
 obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
                                                uint64_t taskID) noexcept;
 obelisk_rt_status

@@ -172,14 +172,41 @@ struct NativeActivationInputs {
       liveIns;
   llvm::DenseMap<mlir::StringAttr, analysis::ActivationMemoryAnalysis::Ranges>
       mayWrites;
+  /// All instantiated NBA writers, captured before packing. Unknown effects
+  /// invalidate the inventory; an empty map alone is never a certificate.
+  bool completeNBAWriters = false;
+  llvm::DenseMap<uint64_t, llvm::SmallVector<uint32_t>> nbaWriters;
 };
 NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
                                                      bool explain);
+
+/// Source-certified local pending state for a common-loop eval transaction.
+/// Current state remains independently materialized at runtime cuts. These
+/// roots have no observable value sequence and every NBA writer enters the
+/// generated continuation. This is stronger than private commit batching.
+struct NativeEvalTransactionRoot {
+  uint64_t descriptor = 0;
+  uint32_t root = 0;
+  uint32_t staticState = 0;
+  uint64_t bitOffset = 0;
+  uint64_t bitWidth = 0;
+  uint64_t writeMask = 0;
+  uint32_t region = UINT32_MAX;
+  bool trackTransients = false;
+  llvm::SmallVector<uint32_t> writerFragments;
+  llvm::SmallVector<uint32_t> owners;
+  llvm::SmallVector<uint64_t> sites;
+};
+struct NativeEvalTransactionPlan {
+  schedule::ComputeGraphAttr sourceGraph;
+  llvm::SmallVector<NativeEvalTransactionRoot> roots;
+};
 
 /// Immutable result of eval scheduling analysis.  All identities are resolved
 /// before LLVM CFG construction starts; emission must not infer ownership from
 /// transformed symbols or recompute graph closure.
 struct ResolvedNativeEvalPlan {
+  NativeEvalTransactionPlan transaction;
   llvm::SmallVector<obelisk_rt_static_fanout_entry> fanoutEntries;
   llvm::SmallVector<NativeEvalClockKernel> clockKernels;
   llvm::SmallVector<obelisk_rt_native_merged_fragment> mergedFragments;
@@ -220,6 +247,12 @@ struct NativeEvalCoordinatorPlan {
   bool hasOrderedNBA = false;
   /// Shared bounded ranked sweeps, indexed by the original owner identity.
   mlir::ArrayRef<std::string> rankedGroupExecutors;
+  // Writable VPI alone needs scheduling/override guards. Knownness remains
+  // independent. These exact source actor dependencies and clock ingress bits
+  // retain the original fine activations when a whole owner is fractured.
+  bool writableVPI = false;
+  mlir::ArrayRef<llvm::SmallVector<uint32_t>> ownerStaticStates;
+  mlir::ArrayRef<llvm::APInt> ownerFineIngress;
 };
 
 struct NativeThreeTierKernelPlan {
@@ -272,7 +305,8 @@ mlir::FailureOr<llvm::SmallVector<obelisk_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
-    const llvm::DenseSet<uint64_t> &checkpointOnlyActors);
+    const llvm::DenseSet<uint64_t> &checkpointOnlyActors, bool writableVPI,
+    llvm::SmallVectorImpl<uint32_t> &unscopedActors);
 mlir::FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
@@ -306,6 +340,7 @@ struct NativeGroupPromotionReport {
 mlir::FailureOr<std::shared_ptr<NativeGroupPromotionReport>>
 materializeNativeEvalGroupBodies(mlir::ModuleOp module,
                                  mlir::AnalysisManager manager);
+mlir::LogicalResult materializeNativeEvalTransactions(mlir::ModuleOp module);
 std::unique_ptr<mlir::Pass> createPromoteNativeGroupFunctionPass();
 
 mlir::FailureOr<llvm::SmallVector<std::string>>
@@ -355,6 +390,7 @@ mlir::FailureOr<bool> makeNativeEvalPlan(
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
     mlir::ArrayRef<obelisk_rt_static_actor_root> actorRoots,
+    mlir::ArrayRef<uint32_t> writableVPIUnscopedActors,
     mlir::ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
     schedule::ComputeGraphAttr computeGraph,

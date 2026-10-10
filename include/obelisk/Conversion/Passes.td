@@ -302,6 +302,37 @@ def FoldNativeScalarValuesPass
                           "mlir::arith::ArithDialect"];
 }
 
+def PrepareNativeLLVMFunctionsPass
+    : Pass<"prepare-native-llvm-functions", "mlir::ModuleOp"> {
+  let summary = "Publish native LLVM function ABIs and shared runtime symbols";
+  let description = [{
+    Requires materialize-native-processes. Serializes shared globals and
+    runtime declarations and replaces every func.func with an LLVM function
+    shell. Function bodies may still contain arithmetic, control-flow and
+    Schedule operations. Caches immutable ABI and symbol inputs for the
+    following llvm.func-anchored conversion.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+}
+
+def ConvertNativeFunctionBodyPass
+    : Pass<"convert-native-function-body-to-llvm", "mlir::LLVM::LLVMFuncOp"> {
+  let summary = "Convert one prepared native function body to LLVM";
+  let description = [{
+    Run nested under llvm.func after prepare-native-llvm-functions. Workers
+    own their type converters and mutate only their function, using the
+    published ABI and locked symbol index. MLIR schedules functions in
+    parallel unless threading is disabled.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect", "mlir::math::MathDialect"];
+}
+
+def FinalizeNativeLLVMPass
+    : Pass<"finalize-native-llvm", "mlir::ModuleOp"> {
+  let summary = "Finalize native scheduling, proofs and LLVM partition manifests";
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+}
+
 def ConvertPreparedSimProcessesToLLVMCoroutinesPass
     : Pass<"convert-prepared-sim-processes-to-llvm-coroutines",
            "mlir::ModuleOp"> {

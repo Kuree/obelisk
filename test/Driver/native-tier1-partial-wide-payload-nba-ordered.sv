@@ -52,5 +52,5 @@ endmodule
 // NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
 // LLVM: @__obelisk_eval_ordered_nba_queue_v1
 // LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// TRACE: eval_dispatches={{[1-9][0-9]*}}
+// TRACE: eval_dispatches=0
 // OUTPUT: ordered top=4 low_edges=4 high_edges=4 mix=

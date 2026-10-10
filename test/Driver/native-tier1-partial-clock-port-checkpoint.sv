@@ -35,4 +35,4 @@ endmodule
 // LLVM-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
 // LLVM: call void @obelisk_rt_v1_scheduler_static_transition_owned
 // LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// TRACE: eval_dispatches={{[1-9][0-9]*}}
+// TRACE: eval_dispatches=0

@@ -467,7 +467,8 @@ static uint32_t schedulerOrderingRegion(const obelisk_rt_context &context,
   // before it can publish readiness. Designs without timing observers need
   // no frame lookup to establish an ordinary actor's ordering region. Retain
   // the check for installed plans, which can own waits without subscriptions.
-  if (signalResume && (context.clockOccurrences || context.nativeSchedulePlan) &&
+  if (signalResume &&
+      (context.clockOccurrences || context.nativeSchedulePlan) &&
       obelisk_rt_is_slot_final_clock_occurrence_wait(currentWait(process)))
     return OBELISK_RT_REGION_POSTPONED;
   return process.queuedRegion == OBELISK_RT_REGION_POSTPONED
@@ -669,7 +670,8 @@ void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
   context->scheduledProcessIndices.reserve(context->scheduledProcesses.size());
   context->scheduledProcessTokens.reserve(context->scheduledProcesses.size());
   context->nativePollCandidates.reserve(context->scheduledProcesses.size());
-  context->scheduledProcessDelayHeap.reserve(context->scheduledProcesses.size());
+  context->scheduledProcessDelayHeap.reserve(
+      context->scheduledProcesses.size());
   for (size_t index = 0; index != context->scheduledProcesses.size(); ++index) {
     const ScheduledProcess &process = context->scheduledProcesses[index];
     context->scheduledProcessIndices[process.token] = index;
@@ -1504,8 +1506,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     for (uint64_t slot = 0; slot != root.generated_slot_count; ++slot) {
       const auto &entry = root.generated_slots[slot];
       if (!entry.offset || !entry.value || !entry.unknown || !entry.valid ||
-          !entry.transition ||
-          !entry.bit_width || entry.bit_width > 64 ||
+          !entry.transition || !entry.bit_width || entry.bit_width > 64 ||
           entry.bit_width > root.bit_width)
         return OBELISK_RT_INVALID_ARGUMENT;
     }
@@ -1593,20 +1594,31 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           mergedFragments[previous].bit == merged.bit)
         return OBELISK_RT_INVALID_ARGUMENT;
   }
+  uint64_t scopedActorCount = 0;
   for (uint64_t index = 0; index != actorRootCount; ++index) {
     const obelisk_rt_static_actor_root &entry = actorRoots[index];
-    if (entry.actor_slot >= plan->actor_capacity || entry.static_state == 0 ||
-        entry.reserved != 0 || entry.flags == 0 ||
-        (entry.flags &
-         ~(OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE)) != 0 ||
-        !findNativeStaticState(context, entry.static_state) ||
+    bool scopeRecord = entry.static_state == 0 &&
+                       (entry.flags == OBELISK_RT_STATIC_ROOT_COMPLETE ||
+                        entry.flags == OBELISK_RT_STATIC_ROOT_UNSCOPED);
+    if (entry.actor_slot >= plan->actor_capacity || entry.reserved != 0 ||
+        entry.flags == 0 ||
+        (!scopeRecord &&
+         ((entry.flags & ~(OBELISK_RT_STATIC_ROOT_READ |
+                           OBELISK_RT_STATIC_ROOT_WRITE)) != 0 ||
+          !findNativeStaticState(context, entry.static_state))) ||
+        (scopeRecord && index != 0 &&
+         actorRoots[index - 1].actor_slot == entry.actor_slot &&
+         actorRoots[index - 1].static_state == 0) ||
         (index != 0 &&
          std::tuple{actorRoots[index - 1].actor_slot,
                     actorRoots[index - 1].static_state,
                     actorRoots[index - 1].flags} >=
              std::tuple{entry.actor_slot, entry.static_state, entry.flags}))
       return OBELISK_RT_INVALID_ARGUMENT;
+    scopedActorCount += scopeRecord;
   }
+  if (scopedActorCount && scopedActorCount != plan->actor_capacity)
+    return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
@@ -1695,6 +1707,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         if (range.first == actorRootCount)
           range.first = index;
         range.second = index + 1;
+      }
+      // IEEE 1800-2023 38.34 and 10.6.2: restore exact source waits before
+      // publishing a deposit/force. Only write-capable compiler plans carry
+      // the complete actor inventory needed for this inverse dependency map.
+      context->nativeScopedWrite.reset();
+      if (scopedActorCount == plan->actor_capacity &&
+          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) &&
+          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION)) {
+        context->nativeScopedWrite = std::make_unique<NativeScopedWriteState>();
+        for (uint64_t index = 0; index != actorRootCount; ++index) {
+          const auto &root = actorRoots[index];
+          if (!root.static_state) {
+            if (root.flags == OBELISK_RT_STATIC_ROOT_UNSCOPED)
+              context->nativeScopedWrite->unscopedActors.push_back(
+                  root.actor_slot);
+            continue;
+          }
+          auto &actors = context->nativeScopedWrite
+                             ->rootDependentActors[root.static_state];
+          if (actors.empty() || actors.back() != root.actor_slot)
+            actors.push_back(root.actor_slot);
+        }
       }
       // Periodic re-entry is frequent for trace-heavy models. The ownership
       // table is immutable, so build its write footprint once rather than
@@ -1826,8 +1860,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         context->nativeScheduleNBARootIndex.assign(
             size_t{maxNBAStaticState} + 1, UINT32_MAX);
         for (uint32_t index = 0; index != nbaRootCount; ++index) {
-          uint32_t &mapped = context->nativeScheduleNBARootIndex[
-              nbaRoots[index].static_state];
+          uint32_t &mapped =
+              context->nativeScheduleNBARootIndex[nbaRoots[index].static_state];
           if (mapped == UINT32_MAX)
             mapped = index;
         }
@@ -2346,8 +2380,8 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
-                                     uint8_t *value, uint8_t *unknown,
-                                     uint64_t bitCount) {
+                                       uint8_t *value, uint8_t *unknown,
+                                       uint64_t bitCount) {
   if (!context || !value || !unknown || value == unknown ||
       (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
       (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)))
@@ -2364,7 +2398,7 @@ obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_LIFECYCLE;
   if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
     return OBELISK_RT_LAYOUT_MISMATCH;
-#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || \
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
     defined(_WIN32)
   context->stateValue.bind(value, (bitCount + 63) / 64);
   context->stateUnknown.bind(unknown, (bitCount + 63) / 64);
@@ -3010,8 +3044,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       bool exactProcessCount =
           context->scheduledProcesses.size() == cachedNativeReadyProcessCount;
       bool cacheShapeStable =
-          cachedNativeReadyValid &&
-          selectionGenerationCompatible() &&
+          cachedNativeReadyValid && selectionGenerationCompatible() &&
           cachedNativeReadyTime == context->schedulerTime &&
           cachedNativeReadyFinals == context->schedulerRunningFinals &&
           exactProcessCount &&
@@ -3092,6 +3125,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           !context->schedulerFinishRequested.load(std::memory_order_relaxed) &&
           !context->vpiTimeCallbackActive && context->nextVPITimeCallback &&
           *context->nextVPITimeCallback <= context->schedulerTime) {
+        // LRM 38.36.2, 38.15/38.34: a timed callback can inspect or mutate
+        // visible state. Return the private eval continuation so its wrapper
+        // exports captured NBAs before invoking foreign code; never advance
+        // the NBA or recapture its RHS here (4.9.4/10.4.2).
+        if (options.stopBeforeNBA)
+          return OBELISK_RT_TIER_UNAVAILABLE;
         obelisk_rt_status status =
             obelisk_rt_vpi_dispatch_time_callbacks_unlocked(context);
         if (status != OBELISK_RT_OK)
@@ -3175,7 +3214,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                               plan->state_bit_count)))
           return OBELISK_RT_LAYOUT_MISMATCH;
       }
-      if (context->nativeScheduleClockIngressPending &&
+      if ((context->nativeScheduleClockIngressPending ||
+           options.stopBeforeNBA) &&
+          options.completeNBABarrier == UINT32_MAX &&
           !context->vpiTimeCallbackActive && !context->schedulerRunningFinals &&
           !context->schedulerDrainingReactive) {
         const auto *plan = context->nativeSchedulePlan;
@@ -3185,7 +3226,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // too. Its drain must return to the generated checkpoint trampoline
         // before executing those owners, regardless of calendar ownership.
         deferredEvalIngress =
-            options.returnGeneratedIngress ||
+            options.returnGeneratedIngress || options.stopBeforeNBA ||
             ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
              !context->nativeStaticEvalIslandCertified);
         if (!deferredEvalIngress) {
@@ -3334,8 +3375,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         }
       } else {
         bool cacheShapeValid =
-            cachedNativeReadyValid &&
-            selectionGenerationCompatible() &&
+            cachedNativeReadyValid && selectionGenerationCompatible() &&
             cachedNativeReadyTime == context->schedulerTime &&
             cachedNativeReadyFinals == context->schedulerRunningFinals &&
             cachedUnstartedRegion == unstartedActorRegion &&
@@ -3508,7 +3548,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 for (const auto &ready : cachedNativeReady)
                   publications.queued.insert(ready.token);
                 publications.queued.insert(cachedNativeSlowCandidates.begin(),
-                                            cachedNativeSlowCandidates.end());
+                                           cachedNativeSlowCandidates.end());
                 publications.generation = context->schedulerSelectionGeneration;
                 publications.valid = true;
                 context->nativeReadyPublicationBatch = &publications;
@@ -3563,8 +3603,32 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         }
       }
       barrierRegion = nextDueNBABarrierRegionUnlocked(context);
+      // IEEE 1800-2023 4.4.2.4, 4.5, 10.4.2: the representation of an NBA
+      // capture does not change its place after Active/Inactive. A generated
+      // local capture participates in this calendar, without a dirty-index
+      // publication or a second region loop.
+      if (!context->schedulerRunningFinals &&
+          !context->schedulerDrainingReactive)
+        barrierRegion = std::min(barrierRegion, options.localPendingNBARegion);
       covergroupStrobePending =
           obelisk_rt_covergroup_strobes_pending_unlocked(context);
+    }
+    if (options.completeNBABarrier != UINT32_MAX) {
+      // The generated prefix can wake Active readers, but they must wait for
+      // the rest of this barrier (IEEE 1800-2023 4.5, 10.4.2). Preserve cached
+      // readiness and use the same NBA drain below without selecting actors.
+      if (cachedNativeSelection && cachedNativeReadyValid) {
+        pushCachedNativeReady(*cachedNativeSelection);
+        cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      }
+      cachedNativeSelection.reset();
+      nativeCandidateIndex = SIZE_MAX;
+      nativeCandidateToken = 0;
+      nativeRegion = UINT32_MAX;
+      nativeRank = UINT32_MAX;
+      nativeInsertionSequence = UINT64_MAX;
+      barrierRegion = options.completeNBABarrier;
+      covergroupStrobePending = false;
     }
     bool cachedCandidateExpected =
         cachedNativeSelection &&
@@ -3603,13 +3667,24 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     }
     bool designProgress = false;
     if (deferredEvalIngress && maximumRegion > OBELISK_RT_REGION_ACTIVE) {
-      maximumRegion = OBELISK_RT_REGION_INACTIVE;
+      maximumRegion = options.stopBeforeNBA ? OBELISK_RT_REGION_NBA
+                                            : OBELISK_RT_REGION_INACTIVE;
       maximumRank = 0;
       maximumInsertionSequence = 0;
     }
-    obelisk_rt_status designStatus = obelisk_rt_run_one_design_task(
-        context, maximumRegion, maximumRank, maximumInsertionSequence,
-        &designProgress);
+    if (options.stopBeforeNBA && !context->schedulerRunningFinals &&
+        maximumRegion >= OBELISK_RT_REGION_NBA) {
+      maximumRegion = OBELISK_RT_REGION_NBA;
+      maximumRank = 0;
+      maximumInsertionSequence = 0;
+    }
+    obelisk_rt_status designStatus = OBELISK_RT_OK;
+    if (options.completeNBABarrier == UINT32_MAX)
+      designStatus = obelisk_rt_run_one_design_task(
+          context, maximumRegion, maximumRank, maximumInsertionSequence,
+          &designProgress,
+          options.stopBeforeUnscopedActors &&
+              options.localPendingNBARegion != UINT32_MAX);
     if (designStatus != OBELISK_RT_OK)
       return designStatus;
     if (designProgress) {
@@ -3632,8 +3707,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       setSchedulerDrainingReactive(context, false);
       continue;
     }
-    if (deferredEvalIngress && nativeRegion > OBELISK_RT_REGION_ACTIVE &&
-        barrierRegion > OBELISK_RT_REGION_ACTIVE) {
+    uint32_t evalCutRegion = options.stopBeforeNBA ? OBELISK_RT_REGION_NBA
+                                                   : OBELISK_RT_REGION_INACTIVE;
+    if ((deferredEvalIngress ||
+         (options.stopBeforeNBA && !context->schedulerRunningFinals)) &&
+        nativeRegion >= evalCutRegion && barrierRegion >= evalCutRegion) {
       // IEEE 1800-2023 4.4, 4.5, 10.4.2: a generated coordinator includes its
       // NBA drain. Finish current runtime Active work before invoking it, so
       // a clocked testbench still reads the pre-NBA state of that edge.
@@ -3645,7 +3723,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       // trampoline. Leave ingress pending for the outer plan entry, which
       // can queue the next exact checkpoint before resuming the closure.
       // Do not cross the NBA barrier in between (LRM 4.4-4.5, 10.4.2).
-      if (options.returnGeneratedIngress)
+      if (options.returnGeneratedIngress || options.stopBeforeNBA)
         return OBELISK_RT_OK;
       ContextMutexLock lock(context);
       const auto *plan = context->nativeSchedulePlan;
@@ -3733,7 +3811,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           selectedInsertionSequence = candidate.urgent ? 0 : std::get<2>(key);
         }
       }
-      if (!selected && (!scanStateUnchanged || nativeCandidateExpected)) {
+      if (!selected && options.completeNBABarrier == UINT32_MAX &&
+          (!scanStateUnchanged || nativeCandidateExpected)) {
         if (context->signalDiagnosticsEnabled)
           ++context->signalDiagnostics.fallbackRescans;
         for (size_t step = 0; step < processCount; ++step) {
@@ -3779,6 +3858,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       if (selected) {
         ScheduledProcess &candidate =
             context->scheduledProcesses[selectedIndex];
+        if (options.stopBeforeUnscopedActors &&
+            options.localPendingNBARegion != UINT32_MAX) {
+          const auto *scope = context->nativeScopedWrite.get();
+          if (!scope || candidate.aotActorSlot == UINT32_MAX ||
+              std::binary_search(scope->unscopedActors.begin(),
+                                 scope->unscopedActors.end(),
+                                 candidate.aotActorSlot))
+            // LRM 38.34/4.9.4: export pending captures before unknown foreign
+            // effects. Return before consuming a wait, ready bit or source
+            // continuation, including the compiled-node execution below.
+            return OBELISK_RT_TIER_UNAVAILABLE;
+        }
         if (candidate.suspendedAOTActorSlot != UINT32_MAX &&
             candidate.callers.empty()) {
           // Restore only the original caller, including after task disable
@@ -3893,7 +3984,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           barrierRegion != UINT32_MAX) {
         if (isReactiveSchedulerRegion(barrierRegion))
           setSchedulerDrainingReactive(context, true);
-        bool changed = false;
+        bool changed = options.generatedNBAChanged;
         bool eventTriggered = false;
         obelisk_rt_status clockingStatus =
             resolveClockingDriveConflictsUnlocked(context, barrierRegion);
@@ -4719,8 +4810,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // four-queue merge nor one vector erase per committed assignment.
         // Compact future/other-region entries once after draining this
         // barrier; this changes the common case from quadratic to linear work.
-        obelisk_rt_status staticNBAStatus = commitStaticNBAAccumulatorsUnlocked(
-            context, barrierRegion, changed);
+        obelisk_rt_status staticNBAStatus = OBELISK_RT_OK;
+        if (options.completeNBABarrier == UINT32_MAX)
+          staticNBAStatus = commitStaticNBAAccumulatorsUnlocked(
+              context, barrierRegion, changed);
         if (staticNBAStatus != OBELISK_RT_OK)
           return staticNBAStatus;
         if (context->scheduledManagedNBAs.empty() &&
@@ -4813,7 +4906,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               replaceableEvent = replaceable->calendar.end();
               for (auto event = replaceable->calendar.begin();
                    event != replaceable->calendar.end() &&
-                   event->first.first <= context->schedulerTime; ++event) {
+                   event->first.first <= context->schedulerTime;
+                   ++event) {
                 if (event->second.execRegion == barrierRegion &&
                     event->second.sequence < replaceableSequence) {
                   replaceableSequence = event->second.sequence;
@@ -5036,7 +5130,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           return context->schedulerStatus;
         }
         ++context->schedulerSlotProgress;
-        if (context->nativeScheduleSingleStep)
+        if (context->nativeScheduleSingleStep ||
+            options.completeNBABarrier != UINT32_MAX)
           return OBELISK_RT_OK;
         continue;
       }

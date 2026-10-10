@@ -1,0 +1,53 @@
+// RUN: %python %S/../Runtime/Inputs/gen-native-eval-value-interfaces.py > %t.input.mlir
+// RUN: obelisk-opt %t.input.mlir --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: FileCheck %s < %t.mlir
+// RUN: obelisk-opt %t.input.mlir --mlir-disable-threading --obelisk-materialize-native-eval-groups -o %t.serial.mlir
+// RUN: diff %t.mlir %t.serial.mlir
+// RUN: %python %S/../Runtime/Inputs/gen-native-eval-value-interfaces.py --dynamic-cut > %t.dynamic.mlir
+// RUN: obelisk-opt %t.dynamic.mlir --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=DYNAMIC
+
+// The existing growth budget keeps these helpers outlined. Their selected
+// packed lanes cross the call as values; observers still publish/reacquire.
+// CHECK-LABEL: llvm.func internal @lane_write.__obelisk_eval_values(
+// CHECK-SAME: i16
+// CHECK-SAME: schedule.eval.value_lanes = array<i64: 0, 0, 2, 1, 1, 0, 2, 1>
+// CHECK-NOT: llvm.load {{.*}} -> i16
+// CHECK-NOT: llvm.store {{.*}} : i16, !llvm.ptr
+// CHECK: llvm.mlir.addressof @checksum
+// CHECK: llvm.store
+// CHECK-NOT: llvm.load {{.*}} -> i16
+// CHECK: llvm.and
+// CHECK: llvm.return
+// CHECK-LABEL: llvm.func @lane_write(
+// CHECK: llvm.load
+// CHECK: llvm.call @lane_write.__obelisk_eval_values
+// CHECK: llvm.store
+// CHECK-LABEL: llvm.func internal @lane_read.__obelisk_eval_values(
+// CHECK-SAME: schedule.eval.value_lanes = array<i64: 1, 0, 2, 0, 0, 0, 2, 0>
+// CHECK-NOT: llvm.load
+// CHECK: llvm.mlir.addressof @checksum
+// CHECK: llvm.return
+// CHECK-LABEL: llvm.func @lane_read(
+// CHECK: llvm.call @lane_read.__obelisk_eval_values
+
+// The bounded dynamic value-plane store intersects the fixed lane, so the
+// writer's value plane stays canonical; its independent X/Z lane can travel.
+// DYNAMIC-LABEL: llvm.func internal @lane_write.__obelisk_eval_values(
+// DYNAMIC-SAME: schedule.eval.value_lanes = array<i64: 1, 0, 2, 1>
+// DYNAMIC: llvm.load {{.*}} -> i16
+// DYNAMIC: llvm.store {{.*}}schedule.eval.state_access_bytes
+// CHECK-LABEL: llvm.func @lane_run(
+// CHECK-SAME: schedule.eval.ssa_unknown_ranges = 1 : i64
+// CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
+// CHECK: llvm.load
+// CHECK: llvm.load
+// CHECK: llvm.call @lane_write.__obelisk_eval_values
+// CHECK-NOT: llvm.load
+// CHECK-NOT: llvm.store
+// CHECK: llvm.call @lane_read.__obelisk_eval_values
+// CHECK: llvm.store
+// CHECK: llvm.store
+// CHECK: llvm.call @observer
+// CHECK: llvm.load
+// CHECK: llvm.load
+// CHECK: llvm.call @lane_read.__obelisk_eval_values

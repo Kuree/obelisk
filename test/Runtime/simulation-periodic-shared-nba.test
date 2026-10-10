@@ -41,7 +41,9 @@
 // PLAN: llvm.return
 // DIAG: aot_nba_stages=512 aot_nba_commits=512
 // DIAG-SAME: aot_checkpoints=0
-// DIAG-SAME: eval_dispatches=4
+// The generated continuation drains post-NBA ingress without returning to
+// the scheduler's coordinator trampoline at each barrier.
+// DIAG-SAME: eval_dispatches=0
 // TIMED: aot_nba_stages=512 aot_nba_commits=512
 // TIMED-SAME: aot_checkpoints=0
 // TIMED-SAME: periodic_preparations={{[1-9][0-9]*}}

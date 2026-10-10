@@ -1114,9 +1114,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
       for (const obelisk::analysis::NativeAOTBoundaryCost &entry :
            aot.getBoundaryCosts())
         errs() << "obelisk native boundary cost: cost=" << entry.cost
-               << " fragments=" << entry.fragments
-               << " actors=" << entry.actors << " reason=" << entry.reason
-               << '\n';
+               << " fragments=" << entry.fragments << " actors=" << entry.actors
+               << " reason=" << entry.reason << '\n';
     }
     if (!aot.isEligible() || !aot.isAOTCostEffective())
       *nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
@@ -1445,6 +1444,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
       std::vector<std::string> partitionBitcode(splitPlan->groups.size());
       std::vector<double> partitionCodegenSeconds(splitPlan->groups.size(),
                                                   0.0);
+      std::vector<double> partitionParseSeconds(splitPlan->groups.size(), 0.0);
+      std::vector<double> partitionOptimizationSeconds(splitPlan->groups.size(),
+                                                       0.0);
+      std::vector<double> partitionObjectSeconds(splitPlan->groups.size(), 0.0);
+      double bitcodeSerializationSeconds = 0.0;
       std::vector<std::unique_ptr<TargetMachine>> partitionTargets;
       partitionTargets.reserve(splitPlan->groups.size());
       for (auto [index, group] : llvm::enumerate(splitPlan->groups)) {
@@ -1452,7 +1456,12 @@ LogicalResult emitTargetOutput(ModuleOp module,
             cloneNativeModulePartition(*llvmModule, *splitPlan, group);
         SmallVector<char, 0> storage;
         raw_svector_ostream stream(storage);
+        auto serializationStart = std::chrono::steady_clock::now();
         WriteBitcodeToFile(*partition, stream);
+        bitcodeSerializationSeconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          serializationStart)
+                .count();
         partitionBitcode[index].assign(storage.begin(), storage.end());
         FailureOr<SmallString<256>> temporary = makeTemporaryBeside(
             (Twine(options.outputPath) + ".part-" + Twine(index)).str(), ".o");
@@ -1475,6 +1484,9 @@ LogicalResult emitTargetOutput(ModuleOp module,
         partitionTargets.push_back(std::move(workerTarget));
       }
       llvmModule.reset();
+      if (options.timing)
+        errs() << "obelisk backend timing: partition bitcode serialization: "
+               << bitcodeSerializationSeconds << " s\n";
       markBackendTiming("partition serialization and target creation");
 
       ThreadPoolStrategy strategy =
@@ -1497,16 +1509,26 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                   "obelisk: error: partition parse failed: ");
             return false;
           }
+          auto optimizationStart = std::chrono::steady_clock::now();
+          partitionParseSeconds[index] =
+              std::chrono::duration<double>(optimizationStart - workerStart)
+                  .count();
           if (failed(optimizeLLVMModule(**parsed, *partitionTargets[index],
-                                        hostOptLevel)) ||
-              failed(writeObject(**parsed, *partitionTargets[index],
+                                        hostOptLevel)))
+            return false;
+          auto objectStart = std::chrono::steady_clock::now();
+          partitionOptimizationSeconds[index] =
+              std::chrono::duration<double>(objectStart - optimizationStart)
+                  .count();
+          if (failed(writeObject(**parsed, *partitionTargets[index],
                                  modulePaths[index],
                                  backend->getDescription())))
             return false;
+          auto workerEnd = std::chrono::steady_clock::now();
+          partitionObjectSeconds[index] =
+              std::chrono::duration<double>(workerEnd - objectStart).count();
           partitionCodegenSeconds[index] =
-              std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                            workerStart)
-                  .count();
+              std::chrono::duration<double>(workerEnd - workerStart).count();
           return true;
         }));
       pool.wait();
@@ -1516,9 +1538,19 @@ LogicalResult emitTargetOutput(ModuleOp module,
           return failure();
         }
       if (options.timing)
-        for (auto [index, seconds] : llvm::enumerate(partitionCodegenSeconds))
+        for (auto [index, seconds] : llvm::enumerate(partitionCodegenSeconds)) {
           errs() << "obelisk backend timing: partition " << index
                  << " optimization and codegen: " << seconds << " s\n";
+          errs() << "obelisk backend timing: partition " << index
+                 << " bitcode parsing: " << partitionParseSeconds[index]
+                 << " s\n";
+          errs() << "obelisk backend timing: partition " << index
+                 << " LLVM optimization: "
+                 << partitionOptimizationSeconds[index] << " s\n";
+          errs() << "obelisk backend timing: partition " << index
+                 << " object emission: " << partitionObjectSeconds[index]
+                 << " s\n";
+        }
       markBackendTiming("parallel partition optimization and codegen");
     }
   } else {

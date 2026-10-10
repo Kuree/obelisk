@@ -507,6 +507,12 @@ public:
       if (directRange && (assumeClean || !directRange->guarded))
         needsNotification =
             directLayout->transitionHandles.contains(directRange->staticID);
+    if (needsNotification && directRange &&
+        (assumeClean || !directRange->guarded))
+      if (auto roots = function->getAttrOfType<DenseI32ArrayAttr>(
+              "obelisk.native.no_transition_roots"))
+        needsNotification = !llvm::is_contained(
+            roots.asArrayRef(), static_cast<int32_t>(directRange->staticID));
     if (isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())) {
       Location location = op.getLoc();
       Value handle = adaptor.getReference().front();

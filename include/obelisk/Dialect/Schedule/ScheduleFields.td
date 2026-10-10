@@ -77,6 +77,10 @@ def EvalInductiveTwoStateAccess : ScheduleField<"EvalInductiveTwoStateAccess", "
     "::mlir::UnitAttr">;
 def EvalInfallible : ScheduleField<"EvalInfallible", "schedule.eval.infallible",
     "::mlir::UnitAttr">;
+// A lowering interface, not an ownership certificate. Tuples describe the
+// exact packed lanes carried as values: (unknown-plane, byte, bytes, written).
+def EvalValueLanes : ScheduleField<"EvalValueLanes", "schedule.eval.value_lanes",
+    "::mlir::DenseI64ArrayAttr">;
 def EvalInheritedTwoStateCheckpoint : ScheduleField<"EvalInheritedTwoStateCheckpoint", "schedule.eval.inherited_two_state_checkpoint",
     "::mlir::UnitAttr">;
 def EvalInstanceCoordinator : ScheduleField<"EvalInstanceCoordinator", "schedule.eval.instance_coordinator",
@@ -147,6 +151,10 @@ def EvalSsaUnknownRanges : ScheduleField<"EvalSsaUnknownRanges", "schedule.eval.
     "::mlir::IntegerAttr">;
 def EvalSsaValueRanges : ScheduleField<"EvalSsaValueRanges", "schedule.eval.ssa_value_ranges",
     "::mlir::IntegerAttr">;
+// A generated proof-publication helper consumes explicit deltas and changes
+// only proof metadata. It cannot read state, run observers or reenter actors.
+def EvalStateMetadataOnly : ScheduleField<"EvalStateMetadataOnly", "schedule.eval.state_metadata_only",
+    "::mlir::UnitAttr">;
 def EvalTier2Convergence : ScheduleField<"EvalTier2Convergence", "schedule.eval.tier2_convergence",
     "::mlir::UnitAttr">;
 def EvalTrustedTwoStateClosure : ScheduleField<"EvalTrustedTwoStateClosure", "schedule.eval.trusted_two_state_closure",
@@ -157,6 +165,27 @@ def EvalTwoStateZeroUnknown : ScheduleField<"EvalTwoStateZeroUnknown", "schedule
     "::mlir::UnitAttr">;
 def EvalUnknownWriteRange : ScheduleField<"EvalUnknownWriteRange", "schedule.eval.unknown_write_range",
     "::mlir::DenseI64ArrayAttr">;
+// Conservative physical byte interval [begin, end) of a bounds-checked
+// canonical access. It includes padding and neighboring bytes of its window.
+def EvalStateAccessBytes : ScheduleField<"EvalStateAccessBytes", "schedule.eval.state_access_bytes",
+    "::mlir::DenseI64ArrayAttr">;
+// Immutable source ownership projected into lowering. Entries contain logical
+// descriptor/root identity, exact canonical range, captured mask and region.
+def EvalTransactionRoots : ScheduleField<"EvalTransactionRoots", "schedule.eval.transaction_roots",
+    "::mlir::ArrayAttr">;
+// Semantic roles emitted at NBA lowering, rather than recovered from GEPs.
+def EvalPendingDirtyRoot : ScheduleField<"EvalPendingDirtyRoot", "schedule.eval.pending_dirty_root",
+    "::mlir::IntegerAttr">;
+def EvalPendingSummaryRoot : ScheduleField<"EvalPendingSummaryRoot", "schedule.eval.pending_summary_root",
+    "::mlir::IntegerAttr">;
+// Literal target captured by native lowering: root, state, width, mask,
+// region, semantic site. Every source site must have the same certified form.
+def EvalPendingStageSpec : ScheduleField<"EvalPendingStageSpec", "schedule.eval.pending_stage_spec",
+    "::mlir::DenseI64ArrayAttr">;
+def EvalPendingRuntimeRoot : ScheduleField<"EvalPendingRuntimeRoot", "schedule.eval.pending_runtime_root",
+    "::mlir::IntegerAttr">;
+def EvalPendingMaskAtCommit : ScheduleField<"EvalPendingMaskAtCommit", "schedule.eval.pending_mask_at_commit",
+    "::mlir::UnitAttr">;
 def EvalUnsupportedCheckpointOwner : ScheduleField<"EvalUnsupportedCheckpointOwner", "schedule.eval.unsupported_checkpoint_owner",
     "::mlir::StringAttr">;
 def EvalUseCanonicalTwoStateNba : ScheduleField<"EvalUseCanonicalTwoStateNba", "schedule.eval.use_canonical_two_state_nba",
@@ -174,6 +203,15 @@ def NativeSchedulerAutoRequested : ScheduleField<"NativeSchedulerAutoRequested",
 def NbaChangeWatched : ScheduleField<"NbaChangeWatched", "schedule.nba.change_watched",
     "::mlir::DenseI64ArrayAttr">;
 def NbaPrivateInfluence : ScheduleField<"NbaPrivateInfluence", "schedule.nba.private_influence",
+    "::mlir::DenseI64ArrayAttr">;
+// Source-only observer proof, usable by a closed writable-VPI executor with
+// observation/override guards and canonical publication at foreign cuts.
+// Never an unconditional permission for source folding or dead-state removal.
+def NbaGuardedPrivateInfluence : ScheduleField<"NbaGuardedPrivateInfluence", "schedule.nba.guarded_private_influence",
+    "::mlir::DenseI64ArrayAttr">;
+// Complete source-process inventory before fusion adds private scratch.
+// Absence means unknown; an empty array certifies no intervening writers.
+def NbaImmediateWriters : ScheduleField<"NbaImmediateWriters", "schedule.nba.immediate_writers",
     "::mlir::DenseI64ArrayAttr">;
 def NbaTransientObservable : ScheduleField<"NbaTransientObservable", "schedule.nba.transient_observable",
     "::mlir::DenseI64ArrayAttr">;

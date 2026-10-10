@@ -75,10 +75,10 @@ public:
   /// Admit overwritten incoming state or a path-proven idempotent transition
   /// only with the full 4.3 observer proof. Such a member must use publication
   /// slicing, which keeps source-local snapshots and their writers together.
-  std::optional<CombinationalFusionBody>
-  analyzeForReordering(sim::SimFuncOp function,
-                       const analysis::HandleDataflowAnalysis &provenance,
-                       CombinationalFusionFailure *failureReason = nullptr) const;
+  std::optional<CombinationalFusionBody> analyzeForReordering(
+      sim::SimFuncOp function,
+      const analysis::HandleDataflowAnalysis &provenance,
+      CombinationalFusionFailure *failureReason = nullptr) const;
   /// Internal transitions can be hidden from the union wait only after all
   /// external watches and toggle observers of repeated writes are excluded.
   bool canInterleave(llvm::ArrayRef<sim::SimFuncOp> functions,
@@ -145,12 +145,15 @@ struct NBATransientObservers {
   /// Net value-sequence observers seed the influence cone through drives and
   /// aliases. Plain change consumers are covered by exact pending activations.
   llvm::DenseSet<uint64_t> netObservable;
+  /// Immediate source-process writers, excluding declaration initialization.
+  /// Absence is incomplete, rather than an empty writer set.
+  std::optional<llvm::DenseSet<uint64_t>> immediateWriters;
 };
 
 /// Classify the design's storage, or std::nullopt when its observers cannot
 /// be inventoried.
 std::optional<NBATransientObservers>
-computeNBATransientObservers(sim::SimDesignOp design);
+computeNBATransientObservers(sim::SimDesignOp design, bool guardedVPI = false);
 
 /// Return continuation targets that can coexist in the Active ready set when
 /// the given sensitivity awakens. A constant-delay continuation is excluded
