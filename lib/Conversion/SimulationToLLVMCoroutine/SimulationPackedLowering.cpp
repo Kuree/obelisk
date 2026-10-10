@@ -9,6 +9,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Analysis/ClassBitstreamPlan.h"
+#include "obelisk/Analysis/IntegerRangeIPO.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -38,6 +39,7 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
+#include <vector>
 
 using namespace mlir;
 
@@ -292,10 +294,17 @@ LogicalResult lowerPackedSimulationOperations(
   // and local producers expose a constant-zero unknown plane to LLVM.
   DenseSet<Value> nativeTwoStateValues;
   DenseSet<Operation *> nativeTwoStateOperations;
+  module.walk([&](Operation *operation) {
+    if (operation->hasAttr(analysis::knownLogicResultAttr) &&
+        operation->getNumResults() == 1 &&
+        isa<sim::LogicType>(operation->getResult(0).getType()))
+      nativeTwoStateValues.insert(operation->getResult(0));
+  });
   // Keep selector proofs separate from value-domain proofs: a known index
   // does not imply that the selected four-state data is known. This snapshot
   // is consumed by the access patterns before their source ops are erased.
   DenseMap<Operation *, NativeStateAccessInfo> stateAccesses;
+  DenseSet<Operation *> inBoundsSelections;
   DenseSet<Value> byteAddressableState;
   uint64_t stateDomainFunctionLimit = std::numeric_limits<uint64_t>::max();
   auto optimizationLevel =
@@ -308,6 +317,110 @@ LogicalResult lowerPackedSimulationOperations(
       return module.emitError(
           "native state-domain function limit cannot be negative");
     stateDomainFunctionLimit = limit.getUInt();
+  }
+  // Selector safety is independent of optional whole-design X/Z propagation.
+  // Freeze design normalization once, then solve each function in isolation
+  // against the already-published interprocedural integer summaries.
+  SmallVector<sim::SimFuncOp> proofFunctions;
+  DenseMap<Operation *, size_t> proofIndices;
+  DenseMap<Operation *, std::unique_ptr<analysis::HandleDataflowAnalysis>>
+      designHandleInputs;
+  module.walk([&](sim::SimDesignOp design) {
+    designHandleInputs[design] =
+        std::make_unique<analysis::HandleDataflowAnalysis>(design);
+    for (auto function : design.getOps<sim::SimFuncOp>())
+      if (!function.isExternal()) {
+        proofIndices[function] = proofFunctions.size();
+        proofFunctions.push_back(function);
+      }
+  });
+  std::vector<analysis::HandleDataflowResult> handleProofs(
+      proofFunctions.size());
+  parallelForEach(
+      context, llvm::seq<size_t>(0, proofFunctions.size()), [&](size_t index) {
+        auto function = proofFunctions[index];
+        auto design = function->getParentOfType<sim::SimDesignOp>();
+        handleProofs[index] =
+            designHandleInputs.find(design)->second->analyze(function);
+      });
+  for (const auto &handles : handleProofs) {
+    nativeTwoStateValues.insert(handles.knownLogicValues.begin(),
+                                handles.knownLogicValues.end());
+    for (const auto &[reference, certificate] : handles.certificates) {
+      Operation *selection = reference.getDefiningOp();
+      if (!selection || !certificate.inBounds ||
+          !isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
+               schedule::NativeWordViewOp>(selection))
+        continue;
+      auto fact = handles.facts.find(reference);
+      if (fact == handles.facts.end() || !fact->second.descriptor ||
+          fact->second.resource != schedule::ComputeResourceKind::Storage ||
+          fact->second.rootWidth > INT32_MAX)
+        continue;
+      auto root = stateLayout.storage.find(*fact->second.descriptor);
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (root != stateLayout.storage.end() &&
+          obelisk_rt_stable_handle_decode(root->second, &decoded) &&
+          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
+        inBoundsSelections.insert(selection);
+    }
+  }
+  markTiming("parallel selector proofs");
+  for (auto [index, function] : llvm::enumerate(proofFunctions)) {
+    const auto &handles = handleProofs[index];
+    const auto &provenance = handles.facts;
+    // Freeze selector admission before rewriting handles. The producer can
+    // omit its range/knownness/invalid-handle guard when every enclosing
+    // selection is proved valid in a representable static storage root.
+    function.walk([&](Operation *operation) {
+      Value reference;
+      if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+        reference = load.getReference();
+      else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
+        reference = store.getReference();
+      else
+        return;
+      auto fact = provenance.find(reference);
+      auto proof = handles.certificates.find(reference);
+      if (fact == provenance.end() || proof == handles.certificates.end() ||
+          !fact->second.descriptor ||
+          fact->second.resource != schedule::ComputeResourceKind::Storage)
+        return;
+      auto root = stateLayout.storage.find(*fact->second.descriptor);
+      auto offset = stateLayout.storageOffsets.find(*fact->second.descriptor);
+      if (proof->second.inBounds && proof->second.constantAddress &&
+          !fact->second.dynamic && !proof->second.clipped &&
+          offset != stateLayout.storageOffsets.end() &&
+          (offset->second + fact->second.low) % 8 == 0)
+        byteAddressableState.insert(reference);
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (root != stateLayout.storage.end() &&
+          obelisk_rt_stable_handle_decode(root->second, &decoded) &&
+          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+        auto isByteAddressable = [&](Value parent) {
+          auto proof = handles.certificates.find(parent);
+          return proof != handles.certificates.end() &&
+                 proof->second.laneKnown && !proof->second.clipped &&
+                 proof->second.low % 8 == 0 &&
+                 (proof->second.constantAddress ||
+                  proof->second.stride % 8 == 0);
+        };
+        auto unit =
+            stateLayout.packedStorage->get(reference, isByteAddressable);
+        // An ordinary byte-addressed scalar fills its LLVM memory unit.
+        // Preserve runtime index guards, but do not read neighboring bytes
+        // merely to store a complete element (Clang EmitStoreThroughLValue).
+        auto width = nativeStateWidth(
+            cast<sim::RefType>(reference.getType()).getElementType());
+        if (!unit && width && *width % 8 == 0 && isByteAddressable(reference))
+          unit = PackedAccessUnit{0, *width};
+        stateAccesses.try_emplace(
+            operation, NativeStateAccessInfo{decoded.id, proof->second.inBounds,
+                                             proof->second.laneKnown &&
+                                                 !proof->second.clipped,
+                                             unit});
+      }
+    });
   }
   WalkResult stateDomainsComputed = module.walk([&](sim::SimDesignOp design) {
     if (design.getBody().empty()) {
@@ -366,58 +479,8 @@ LogicalResult lowerPackedSimulationOperations(
                     ? guardedDomains.isTwoStateWithInductiveRoots(value)
                     : stateDomains->isTwoState(value));
       };
-      auto handles =
-          analysis::HandleDataflowAnalysis(function).analyze(function);
+      const auto &handles = handleProofs[proofIndices.lookup(function)];
       const auto &provenance = handles.facts;
-      function.walk([&](Operation *operation) {
-        Value reference;
-        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
-          reference = load.getReference();
-        else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
-          reference = store.getReference();
-        else
-          return;
-        auto fact = provenance.find(reference);
-        auto proof = handles.certificates.find(reference);
-        if (fact == provenance.end() || proof == handles.certificates.end() ||
-            !fact->second.descriptor ||
-            fact->second.resource != schedule::ComputeResourceKind::Storage)
-          return;
-        auto root = stateLayout.storage.find(*fact->second.descriptor);
-        auto offset = stateLayout.storageOffsets.find(*fact->second.descriptor);
-        if (proof->second.inBounds && proof->second.constantAddress &&
-            !fact->second.dynamic && !proof->second.clipped &&
-            offset != stateLayout.storageOffsets.end() &&
-            (offset->second + fact->second.low) % 8 == 0)
-          byteAddressableState.insert(reference);
-        obelisk_rt_stable_handle_v1 decoded{};
-        if (root != stateLayout.storage.end() &&
-            obelisk_rt_stable_handle_decode(root->second, &decoded) &&
-            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
-          auto isByteAddressable = [&](Value parent) {
-            auto proof = handles.certificates.find(parent);
-            return proof != handles.certificates.end() &&
-                   proof->second.laneKnown && !proof->second.clipped &&
-                   proof->second.low % 8 == 0 &&
-                   (proof->second.constantAddress ||
-                    proof->second.stride % 8 == 0);
-          };
-          auto unit =
-              stateLayout.packedStorage->get(reference, isByteAddressable);
-          // An ordinary byte-addressed scalar fills its LLVM memory unit.
-          // Preserve runtime index guards, but do not read neighboring bytes
-          // merely to store a complete element (Clang EmitStoreThroughLValue).
-          auto width = nativeStateWidth(
-              cast<sim::RefType>(reference.getType()).getElementType());
-          if (!unit && width && *width % 8 == 0 && isByteAddressable(reference))
-            unit = PackedAccessUnit{0, *width};
-          stateAccesses.try_emplace(
-              operation,
-              NativeStateAccessInfo{
-                  decoded.id, proof->second.inBounds,
-                  proof->second.laneKnown && !proof->second.clipped, unit});
-        }
-      });
       auto isValidSelection = [&](Value handle) {
         auto root = provenance.find(handle);
         auto proof = handles.certificates.find(handle);
@@ -967,9 +1030,9 @@ LogicalResult lowerPackedSimulationOperations(
     populateReferenceLifetimeToLLVMConversionPatterns(patterns, c);
     if (locals)
       populateLocalStorageConversionPatterns(patterns, c, *locals);
-    populateNativeHandleConversionPatterns(patterns, c, stateLayout.storage,
-                                           stateLayout.nets,
-                                           stateLayout.drivers, locals);
+    populateNativeHandleConversionPatterns(
+        patterns, c, stateLayout.storage, stateLayout.nets, stateLayout.drivers,
+        locals, &inBoundsSelections);
     populateSchedulerToLLVMConversionPatterns(patterns, c);
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
@@ -1268,6 +1331,17 @@ LogicalResult lowerPackedSimulationOperations(
       });
   if (specializedBlockArguments.wasInterrupted())
     return failure();
+  // These summaries describe semantic scalar arguments and results. Packed
+  // conversion has changed their ABI and indices; no later pass may reuse
+  // them as facts about the physical planes.
+  module.walk([&](Operation *operation) {
+    operation->removeAttr(analysis::integerResultRangesAttr);
+    operation->removeAttr(analysis::integerResultExprsAttr);
+    operation->removeAttr(analysis::knownLogicResultAttr);
+    if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+      for (unsigned index = 0; index < function.getNumArguments(); ++index)
+        function.removeArgAttr(index, analysis::integerRangeAttr);
+  });
   markTiming("two-state block specialization");
   SmallVector<runtime::RTScratchOp> scratchBuffers;
   module.walk(

@@ -53,7 +53,7 @@ module {
     }
     // CHECK: body umin=0 umax=3
     // CHECK: carried umin=0 umax=3
-    // CHECK: exit umin=0 umax=4
+    // CHECK: exit umin=4 umax=4
 
     simulation.code_unit.decl 3 in 0 function hierarchy "parallel_unknown"
     simulation.func @parallel_unknown(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %choose: i1 {simulation.capture_kind = 2 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {

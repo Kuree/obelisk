@@ -12,7 +12,8 @@
 // SHIFT-COUNT-20: arith.shli
 // SHIFT: return
 // OR-LABEL: func.func @replicate_1024(
-// OR-COUNT-22: arith.ori
+// The two initial zero ORs are folded by the producer.
+// OR-COUNT-20: arith.ori
 // OR: return
 func.func @replicate_1024(%input: !simulation.logic<1>)
     -> !simulation.logic<1024> {

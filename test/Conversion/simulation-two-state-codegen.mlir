@@ -105,14 +105,14 @@ module attributes {
 }
 
 // The final AOT SSA still has the stable two-plane function signature at O0,
-// but neither the entry unknown plane nor the converted CFG unknown block
-// argument participates in the computation.
+// and IPO proves its only call supplies 41. The producer folds the result to
+// 42 before either physical plane needs arithmetic.
 // AOT-O0-LABEL: define { i64, i64 } @add_known(
 // AOT-O0-SAME: i64 %[[O0_VALUE:[0-9]+]], i64 %[[O0_UNKNOWN:[0-9]+]])
 // AOT-O0-NOT: %[[O0_UNKNOWN]]{{[^0-9]}}
-// AOT-O0: add i64
+// AOT-O0-NOT: add i64
 // AOT-O0-NOT: %[[O0_UNKNOWN]]{{[^0-9]}}
-// AOT-O0: ret { i64, i64 }
+// AOT-O0: ret { i64, i64 } { i64 42, i64 0 }
 
 // The public function's unknown plane remains live despite its known direct
 // caller; external callers are allowed to supply X/Z through the stable ABI.
@@ -131,11 +131,10 @@ module attributes {
 // AOT-LABEL: define { i64, i64 } @add_known(
 // AOT-SAME: i64 %[[VALUE:[0-9]+]], i64 %[[UNKNOWN:[0-9]+]])
 // AOT-NOT: %[[UNKNOWN]]{{[^0-9]}}
-// AOT: %[[SUM:.*]] = add i64 %[[VALUE]], 1
+// AOT-NOT: add i64
 // AOT-NOT: select i1
 // AOT-NOT: %[[UNKNOWN]]{{[^0-9]}}
-// AOT: insertvalue { i64, i64 } {{.*}}, i64 0, 1
-// AOT: ret { i64, i64 }
+// AOT: ret { i64, i64 } { i64 42, i64 0 }
 
 // AOT-LABEL: define i1 @public_truth(
 // AOT-SAME: i64 %[[PUBLIC_VALUE:[0-9]+]], i64 %[[PUBLIC_UNKNOWN:[0-9]+]])
@@ -148,12 +147,15 @@ module attributes {
 // BYTECODE-LABEL: simulation.func @root
 // BYTECODE-SAME: obelisk.bytecode.two_state_logic_registers = 3 : i32
 
-// The O3 compile-time budget conservatively retains the unknown plane instead
-// of applying a whole-design two-state proof on an oversized design.
+// Function-owned IPO/SCEV facts remain available when the optional whole-
+// design state-domain analysis is skipped by its compile-time budget.
 // BUDGET-NOT: obelisk.native.max_state_domain_functions
 // BUDGET-NOT: obelisk.native.optimization_level
 // BUDGET-LABEL: llvm.func @add_known(
 // BUDGET-SAME: %[[VALUE:[a-zA-Z0-9_]+]]: i64, %[[UNKNOWN:[a-zA-Z0-9_]+]]: i64)
-// BUDGET: llvm.br ^bb1(%[[VALUE]], %[[UNKNOWN]] : i64, i64)
-// BUDGET: ^bb1(%{{.*}}: i64, %[[BLOCK_UNKNOWN:.*]]: i64):
-// BUDGET: llvm.icmp "ne" %[[BLOCK_UNKNOWN]],
+// BUDGET-NOT: llvm.icmp "ne"
+// BUDGET: llvm.br ^bb1
+// BUDGET: ^bb1:
+// BUDGET-NOT: llvm.icmp "ne"
+// BUDGET: llvm.return
+// BUDGET-LABEL: llvm.func @public_truth(

@@ -488,6 +488,33 @@ their four-state semantics. These local patterns let standard constant
 propagation and integer-range analyses see the expressions before loop proofs;
 a variable induction value still requires a loop proof.
 
+Scoped ranges also use LLVM ScalarEvolution over a disposable integer CFG.
+Each function owns its LLVM context, dominator tree, loop information, and
+analysis caches. Opaque producers remain arbitrary values at their original
+execution points, modeled with [LLVM `freeze`](https://llvm.org/docs/LangRef.html#freeze-instruction).
+The shadow CFG is verified before analysis. Arithmetic wraps at the resolved
+expression width; translation does not invent `nsw` or `nuw` flags. X/Z
+knownness is proved separately from integer algebra, including loop-carried
+values and inputs wider than the proof slice. This preserves 7.4.5 and 11.5
+invalid selections, 11.4.3 division-by-zero results, and 6.11.2 conversions of
+X/Z to two-state zero bits.
+
+A module barrier recomputes bounded interprocedural may ranges and symbolic
+return summaries before function workers run. Public, escaping, and runtime
+observer entries keep unconstrained arguments. Summaries retain relationships
+for each call result; memory-dependent results remain opaque even when their
+range certifies they exclude X/Z. Recursive refinement starts unconstrained.
+Certificates are checked for shape, width, and nonempty intervals, and are
+discarded when the call graph or packed ABI changes. Function workers collect
+constant replacements before mutating SSA, preserving call effects and the
+loop control needed by scheduling.
+
+When ranges cannot prove a selector safe, bounded Z3 bit-vector queries can
+prove correlations through wrapping arithmetic, comparisons, and selects.
+They use only facts available at the access; phi nodes and unsupported
+producers remain free variables. Query results are cached with those facts.
+Unavailable Z3, exhausted budgets, and unknown answers retain the bounds check.
+
 At `-O3`, `obelisk-sim-unroll-bounded-loops` replicates small, finite loop
 nests before four-state expansion and compute-graph construction. Its
 `maximum-loop-size` option limits simplified weighted simulation cost per nest;

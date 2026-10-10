@@ -1,5 +1,6 @@
 #include "AnalysisTestPasses.h"
 #include "obelisk/Analysis/DemandedBitAnalysis.h"
+#include "obelisk/Analysis/IntegerRangeIPO.h"
 #include "obelisk/Analysis/LogicBitAnalysis.h"
 #include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
@@ -165,6 +166,7 @@ public:
     return "query selector ranges and bound retained scoped facts";
   }
   void runOnOperation() final {
+    obelisk::analysis::prepareIntegerRangeIPO(getOperation());
     getOperation().walk([&](obelisk::sim::SimFuncOp function) {
       DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
       solver.load<dataflow::DeadCodeAnalysis>();
@@ -194,6 +196,16 @@ public:
           range->umax().print(llvm::errs(), false);
         } else
           llvm::errs() << " unknown";
+        if (auto bounds =
+                op->getAttrOfType<DenseI64ArrayAttr>("test.prove_bounds")) {
+          bool valid = false;
+          unsigned repeats = op->hasAttr("test.repeat_proof") ? 64 : 1;
+          for (unsigned i = 0; i < repeats; ++i)
+            valid = analysis->proveBounds(op->getOperand(1), *state,
+                                          APInt(65, bounds[0], true),
+                                          APInt(65, bounds[1], true));
+          llvm::errs() << " proven=" << valid;
+        }
         llvm::errs() << '\n';
       });
       if (auto limit = function->getAttrOfType<IntegerAttr>("test.scoped_max"))
@@ -203,7 +215,13 @@ public:
           signalPassFailure();
         }
     });
-    markAllAnalysesPreserved();
+    getOperation().walk([&](Operation *op) {
+      op->removeAttr(obelisk::analysis::integerResultRangesAttr);
+      op->removeAttr(obelisk::analysis::integerResultExprsAttr);
+      if (auto function = dyn_cast<obelisk::sim::SimFuncOp>(op))
+        for (unsigned i = 0; i < function.getNumArguments(); ++i)
+          function.removeArgAttr(i, obelisk::analysis::integerRangeAttr);
+    });
   }
 };
 } // namespace

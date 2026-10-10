@@ -1,5 +1,6 @@
 add_mlir_library(ObeliskSimulationToLLVMCoroutine
   NativePipeline.cpp
+  NativeScalarFolding.cpp
   NativeWordRegionLowering.cpp
   PackedStorageLayout.cpp
   SimulationAggregateLowering.cpp

@@ -19,7 +19,8 @@ namespace obelisk::detail {
 namespace {
 
 Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
-                         Value offset, bool local = false) {
+                         Value offset, bool local = false,
+                         bool inBounds = false) {
   if (local) {
     Value invalid =
         llvmConstant(builder, location, builder.getI64Type(), UINT64_MAX);
@@ -46,12 +47,17 @@ Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
         builder, location, builder.getI64Type(),
         builder.getI64IntegerAttr(static_cast<int64_t>(folded)));
   }
-  return LLVM::CallOp::create(
-             builder, location, TypeRange{builder.getI64Type()},
-             SymbolRefAttr::get(builder.getContext(),
-                                "obelisk_rt_v1_native_handle_offset"),
-             ValueRange{handle, offset})
-      .getResult();
+  auto call = LLVM::CallOp::create(
+      builder, location, TypeRange{builder.getI64Type()},
+      SymbolRefAttr::get(builder.getContext(),
+                         "obelisk_rt_v1_native_handle_offset"),
+      ValueRange{handle, offset});
+  // Keep the root/offset form until native access and NBA consumers finish
+  // resolving it. The proof permits plain encoded addition afterwards: the
+  // physical root fits in the nonnegative signed 32-bit offset field.
+  if (inBounds)
+    call->setAttr(nativeInBoundsHandleOffsetAttr, builder.getUnitAttr());
+  return call.getResult();
 }
 
 Value isValidHandle(OpBuilder &builder, Location location, Value handle) {
@@ -106,10 +112,30 @@ template <typename Op>
 class HandleViewConversion : public OpConversionPattern<Op> {
 public:
   HandleViewConversion(const TypeConverter &converter, MLIRContext *context,
-                       const LocalStorageLowering *locals)
-      : OpConversionPattern<Op>(converter, context), locals(locals) {}
+                       const LocalStorageLowering *locals,
+                       const DenseSet<Operation *> *inBoundsSelections)
+      : OpConversionPattern<Op>(converter, context), locals(locals),
+        inBoundsSelections(inBoundsSelections) {}
 
 protected:
+  bool isInBounds(Op operation) const {
+    return inBoundsSelections && inBoundsSelections->contains(operation);
+  }
+
+  SignedI64Index convertIndex(OpBuilder &builder, Location location,
+                              Value value, bool inBounds) const {
+    if (!inBounds)
+      return resizeSignedIndexToI64(builder, location, value);
+    unsigned width = cast<IntegerType>(value.getType()).getWidth();
+    auto i64 = builder.getI64Type();
+    Value index = value;
+    if (width < 64)
+      index = builder.createOrFold<arith::ExtSIOp>(location, i64, value);
+    else if (width > 64)
+      index = builder.createOrFold<arith::TruncIOp>(location, i64, value);
+    return {index, llvmConstant(builder, location, builder.getI1Type(), 1)};
+  }
+
   bool isLocal(Value reference) const {
     return locals && locals->lookup(reference);
   }
@@ -123,6 +149,7 @@ protected:
 
 private:
   const LocalStorageLowering *locals;
+  const DenseSet<Operation *> *inBoundsSelections;
 };
 
 template <typename Op>
@@ -159,47 +186,55 @@ public:
     if (adaptor.getInput().size() != 1 || adaptor.getLowBit().empty())
       return failure();
     Location location = op.getLoc();
-    SignedI64Index convertedLow =
-        resizeSignedIndexToI64(rewriter, location, adaptor.getLowBit().front());
+    bool inBounds = this->isInBounds(op);
+    SignedI64Index convertedLow = this->convertIndex(
+        rewriter, location, adaptor.getLowBit().front(), inBounds);
     Value low = convertedLow.value;
     uint64_t inputWidth =
         *sim::getProvenanceSpan(op.getInput().getType().getElementType());
     unsigned resultWidth =
         *sim::getPackedWidth(op.getResult().getType().getElementType());
-    Value minimum = arith::ConstantOp::create(
-        rewriter, location, rewriter.getI64Type(),
-        rewriter.getI64IntegerAttr(
-            std::is_same_v<Op, schedule::NativeWordViewOp>
-                ? 0
-                : -static_cast<int64_t>(resultWidth - 1)));
-    Value maximum = arith::ConstantOp::create(
-        rewriter, location, rewriter.getI64Type(),
-        rewriter.getI64IntegerAttr(
-            std::is_same_v<Op, schedule::NativeWordViewOp>
-                ? inputWidth - resultWidth
-                : inputWidth - 1));
-    Value overlapsLow = arith::CmpIOp::create(
-        rewriter, location, arith::CmpIPredicate::sge, low, minimum);
-    Value inRange = arith::CmpIOp::create(
-        rewriter, location, arith::CmpIPredicate::sle, low, maximum);
-    Value valid =
-        arith::AndIOp::create(rewriter, location, overlapsLow, inRange);
-    valid = arith::AndIOp::create(rewriter, location, valid,
-                                  convertedLow.representable);
-    valid = arith::AndIOp::create(
-        rewriter, location, valid,
-        isValidHandle(rewriter, location, adaptor.getInput().front()));
-    if (adaptor.getLowBit().size() == 2) {
-      Value known = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::eq, adaptor.getLowBit()[1],
-          arith::ConstantOp::create(
-              rewriter, location, adaptor.getLowBit()[1].getType(),
-              rewriter.getZeroAttr(adaptor.getLowBit()[1].getType())));
-      valid = arith::AndIOp::create(rewriter, location, valid, known);
+    Value valid;
+    if (!inBounds) {
+      Value minimum = arith::ConstantOp::create(
+          rewriter, location, rewriter.getI64Type(),
+          rewriter.getI64IntegerAttr(
+              std::is_same_v<Op, schedule::NativeWordViewOp>
+                  ? 0
+                  : -static_cast<int64_t>(resultWidth - 1)));
+      Value maximum = arith::ConstantOp::create(
+          rewriter, location, rewriter.getI64Type(),
+          rewriter.getI64IntegerAttr(
+              std::is_same_v<Op, schedule::NativeWordViewOp>
+                  ? inputWidth - resultWidth
+                  : inputWidth - 1));
+      Value overlapsLow = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::sge, low, minimum);
+      Value inRange = arith::CmpIOp::create(
+          rewriter, location, arith::CmpIPredicate::sle, low, maximum);
+      valid = arith::AndIOp::create(rewriter, location, overlapsLow, inRange);
+      valid = arith::AndIOp::create(rewriter, location, valid,
+                                    convertedLow.representable);
+      valid = arith::AndIOp::create(
+          rewriter, location, valid,
+          isValidHandle(rewriter, location, adaptor.getInput().front()));
+      if (adaptor.getLowBit().size() == 2) {
+        Value known = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::eq,
+            adaptor.getLowBit()[1],
+            arith::ConstantOp::create(
+                rewriter, location, adaptor.getLowBit()[1].getType(),
+                rewriter.getZeroAttr(adaptor.getLowBit()[1].getType())));
+        valid = arith::AndIOp::create(rewriter, location, valid, known);
+      }
     }
     Value selected =
         offsetNativeHandle(rewriter, location, adaptor.getInput().front(), low,
-                           this->isLocal(op.getInput()));
+                           this->isLocal(op.getInput()), inBounds);
+    if (inBounds) {
+      rewriter.replaceOp(op, selected);
+      return success();
+    }
     Value invalid = arith::ConstantOp::create(
         rewriter, location, rewriter.getI64Type(),
         rewriter.getI64IntegerAttr(static_cast<int64_t>(UINT64_MAX)));
@@ -285,8 +320,9 @@ public:
 
     Location location = op.getLoc();
     IntegerType i64 = rewriter.getI64Type();
-    SignedI64Index convertedIndex =
-        resizeSignedIndexToI64(rewriter, location, adaptor.getIndex().front());
+    bool inBounds = this->isInBounds(op);
+    SignedI64Index convertedIndex = this->convertIndex(
+        rewriter, location, adaptor.getIndex().front(), inBounds);
     Value index = convertedIndex.value;
     Value leftValue = arith::ConstantOp::create(
         rewriter, location, i64, rewriter.getI64IntegerAttr(left));
@@ -295,35 +331,43 @@ public:
     Value valid;
     Value ordinal;
     if (left >= right) {
-      Value atMostLeft = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::sle, index, leftValue);
-      Value atLeastRight = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::sge, index, rightValue);
-      valid =
-          arith::AndIOp::create(rewriter, location, atMostLeft, atLeastRight);
-      ordinal = arith::SubIOp::create(rewriter, location, leftValue, index);
+      if (!inBounds) {
+        Value atMostLeft = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::sle, index, leftValue);
+        Value atLeastRight = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::sge, index, rightValue);
+        valid =
+            arith::AndIOp::create(rewriter, location, atMostLeft, atLeastRight);
+      }
+      ordinal =
+          rewriter.createOrFold<arith::SubIOp>(location, leftValue, index);
     } else {
-      Value atLeastLeft = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::sge, index, leftValue);
-      Value atMostRight = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::sle, index, rightValue);
-      valid =
-          arith::AndIOp::create(rewriter, location, atLeastLeft, atMostRight);
-      ordinal = arith::SubIOp::create(rewriter, location, index, leftValue);
+      if (!inBounds) {
+        Value atLeastLeft = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::sge, index, leftValue);
+        Value atMostRight = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::sle, index, rightValue);
+        valid =
+            arith::AndIOp::create(rewriter, location, atLeastLeft, atMostRight);
+      }
+      ordinal =
+          rewriter.createOrFold<arith::SubIOp>(location, index, leftValue);
     }
-    valid = arith::AndIOp::create(rewriter, location, valid,
-                                  convertedIndex.representable);
-    if (adaptor.getIndex().size() == 2) {
-      Value known = arith::CmpIOp::create(
-          rewriter, location, arith::CmpIPredicate::eq, adaptor.getIndex()[1],
-          arith::ConstantOp::create(
-              rewriter, location, adaptor.getIndex()[1].getType(),
-              rewriter.getZeroAttr(adaptor.getIndex()[1].getType())));
-      valid = arith::AndIOp::create(rewriter, location, valid, known);
+    if (!inBounds) {
+      valid = arith::AndIOp::create(rewriter, location, valid,
+                                    convertedIndex.representable);
+      if (adaptor.getIndex().size() == 2) {
+        Value known = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::eq, adaptor.getIndex()[1],
+            arith::ConstantOp::create(
+                rewriter, location, adaptor.getIndex()[1].getType(),
+                rewriter.getZeroAttr(adaptor.getIndex()[1].getType())));
+        valid = arith::AndIOp::create(rewriter, location, valid, known);
+      }
+      valid = arith::AndIOp::create(
+          rewriter, location, valid,
+          isValidHandle(rewriter, location, adaptor.getInput().front()));
     }
-    valid = arith::AndIOp::create(
-        rewriter, location, valid,
-        isValidHandle(rewriter, location, adaptor.getInput().front()));
     if (packed) {
       Value last = arith::ConstantOp::create(
           rewriter, location, i64,
@@ -335,7 +379,11 @@ public:
     Value offset = arith::MulIOp::create(rewriter, location, ordinal, stride);
     Value selected =
         offsetNativeHandle(rewriter, location, adaptor.getInput().front(),
-                           offset, this->isLocal(op.getInput()));
+                           offset, this->isLocal(op.getInput()), inBounds);
+    if (inBounds) {
+      rewriter.replaceOp(op, selected);
+      return success();
+    }
     Value invalid = arith::ConstantOp::create(
         rewriter, location, i64,
         rewriter.getI64IntegerAttr(static_cast<int64_t>(UINT64_MAX)));
@@ -352,7 +400,8 @@ void populateNativeHandleConversionPatterns(
     const DenseMap<uint64_t, uint64_t> &storageHandles,
     const DenseMap<uint64_t, uint64_t> &netHandles,
     const DenseMap<uint64_t, uint64_t> &driverHandles,
-    const LocalStorageLowering *locals) {
+    const LocalStorageLowering *locals,
+    const DenseSet<Operation *> *inBoundsSelections) {
   MLIRContext *context = patterns.getContext();
   patterns.add<ContextHandleConversion<sim::SimContextStorageOp>>(
       converter, context, storageHandles);
@@ -371,7 +420,7 @@ void populateNativeHandleConversionPatterns(
                SubelementHandleConversion<sim::SimDriverSubelementOp>,
                ArrayElementHandleConversion<sim::SimRefArrayElementOp>,
                ArrayElementHandleConversion<sim::SimDriverArrayElementOp>>(
-      converter, context, locals);
+      converter, context, locals, inBoundsSelections);
 }
 
 } // namespace obelisk::detail

@@ -58,6 +58,10 @@ struct HandleCertificate {
 struct HandleDataflowResult {
   HandleFacts facts;
   llvm::DenseMap<mlir::Value, HandleCertificate> certificates;
+  /// Scalar proofs collected with selector analysis. These values have a
+  /// zero unknown plane on every execution, including all admitted calls.
+  /// Consumers may elide the internal plane without weakening the ABI.
+  llvm::DenseSet<mlir::Value> knownLogicValues;
   /// Only blocks proved dead by the solver are excluded. Missing facts or a
   /// failed analysis never constitute a proof that a block cannot execute.
   llvm::DenseSet<mlir::Block *> nonExecutableBlocks;

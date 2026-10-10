@@ -6,6 +6,8 @@ add_mlir_library(ObeliskSimulationAnalysis
   AccessFootprintAnalysis.cpp
   BoundedLoopAnalysis.cpp
   ScopedIntegerRangeAnalysis.cpp
+  ScalarEvolutionAnalysis.cpp
+  IntegerRangeIPO.cpp
   ClassBitstreamAnalysis.cpp
   ClassBitstreamPlan.cpp
   ClassDispatchAnalysis.cpp
@@ -45,6 +47,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   ObeliskSimulationIR
   ObeliskScheduleIR
   MLIRAnalysis
+  MLIRArithDialect
   MLIRControlFlowDialect
   MLIRControlFlowInterfaces
   MLIRFuncDialect
@@ -52,6 +55,8 @@ add_mlir_library(ObeliskSimulationAnalysis
   MLIRUBDialect
   MLIRIR
   LLVMCore
+  LLVMAnalysis
+  ObeliskSolver
 )
 
 target_include_directories(ObeliskSimulationAnalysis PRIVATE

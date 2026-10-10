@@ -86,6 +86,8 @@ inline constexpr llvm::StringLiteral nativeContainerPatternPlanSizeAttr =
 
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
     "obelisk.native.two_state_block_unknowns";
+inline constexpr llvm::StringLiteral nativeInBoundsHandleOffsetAttr =
+    "obelisk.native.in_bounds_handle_offset";
 inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
     "obelisk.managed_root_range_record";
 inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
@@ -402,7 +404,8 @@ void populateNativeHandleConversionPatterns(
     const llvm::DenseMap<uint64_t, uint64_t> &storageHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &netHandles,
     const llvm::DenseMap<uint64_t, uint64_t> &driverHandles,
-    const LocalStorageLowering *locals = nullptr);
+    const LocalStorageLowering *locals = nullptr,
+    const llvm::DenseSet<mlir::Operation *> *inBoundsSelections = nullptr);
 void populateOverrideToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const llvm::DataLayout &dataLayout);

@@ -189,7 +189,8 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
     amounts.push_back(offset.getArgOperands()[1]);
     root = offset.getArgOperands()[0];
   }
-  if (guards.empty() || amounts.empty())
+  if (amounts.empty() ||
+      (guards.empty() && (!access || !access->inBounds)))
     return std::nullopt;
   std::optional<uint64_t> base = resolveCFGConstantInteger(root);
   obelisk_rt_stable_handle_v1 decoded{};
@@ -234,6 +235,10 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
         true,
         bound->containerWidth};
   }
+  // A guard-free handle is admitted only with the matching access proof.
+  // Losing a certificate on a rewritten access must keep the generic path.
+  if (guards.empty())
+    return std::nullopt;
   Value valid = guards.front();
   for (Value next : ArrayRef<Value>(guards).drop_front())
     valid = arith::AndIOp::create(builder, location, valid, next);

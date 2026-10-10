@@ -1,6 +1,7 @@
 //===- SimulationWideIntegerLowering.cpp - Word-vector bitwise planes ----===//
 
 #include "SimulationPackedLowering.h"
+#include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -194,6 +195,22 @@ struct NativeFunctionFinalizationPass
     uint64_t inlineOperationLimit = configuration.inlineOperationLimit;
     bool changed =
         lowerWideNativeBitwiseIntegers(function, configuration.dataLayout);
+    SmallVector<LLVM::CallOp> provenOffsets;
+    function.walk([&](LLVM::CallOp call) {
+      if (call->hasAttr(nativeInBoundsHandleOffsetAttr) && call.getCallee() &&
+          *call.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+          call.getArgOperands().size() == 2)
+        provenOffsets.push_back(call);
+    });
+    for (auto call : provenOffsets) {
+      OpBuilder builder(call);
+      Value result =
+          LLVM::AddOp::create(builder, call.getLoc(), call.getArgOperands()[0],
+                              call.getArgOperands()[1]);
+      call.getResult().replaceAllUsesWith(result);
+      call.erase();
+      changed = true;
+    }
     // Source ownership has been consumed by scheduling and publication
     // proofs. Drop this dialect attribute from remaining runtime calls before
     // exporting a standalone LLVM module to the upstream LLVM translator.

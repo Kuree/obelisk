@@ -19,6 +19,7 @@
 #include "SimulationProcessFunctionLowering.h"
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/IntegerRangeIPO.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
@@ -3964,6 +3965,13 @@ class PrepareNativeScheduleInputsPass final
           PrepareNativeScheduleInputsPass> {
   void runOnOperation() override {
     using Analysis = detail::NativePipelineAnalysis;
+    if (auto cached = getCachedAnalysis<Analysis>();
+        cached && cached->get().stage != Analysis::Stage::Empty) {
+      getOperation().emitError("prepare-native-schedule-inputs requires native "
+                               "pipeline phase Empty");
+      return signalPassFailure();
+    }
+    analysis::prepareIntegerRangeIPO(getOperation());
     auto &state = getAnalysis<Analysis>();
     if (state.stage != Analysis::Stage::Empty) {
       getOperation().emitError("prepare-native-schedule-inputs requires native "
@@ -4158,6 +4166,25 @@ class PrepareNativeFragmentsPass final
       getOperation().emitError("prepare-native-fragments requires native "
                                "pipeline phase EvalVariants");
       return signalPassFailure();
+    }
+    if (!state.bytecodeOnly) {
+      // Publish semantic call facts and fold after actor/frame/schedule proofs
+      // have consumed the canonical SSA. Rewriting its phi inputs earlier
+      // weakens activation memory facts and changes native scheduling quality.
+      analysis::prepareIntegerRangeIPO(getOperation());
+      // Anchor the dynamic pipelines below the module, retaining its frozen
+      // NativePipelineAnalysis just as frame and root workers do.
+      OpPassManager folding(sim::SimDesignOp::getOperationName());
+      folding.nest<sim::SimFuncOp>().addPass(
+          createFoldNativeScalarValuesPass());
+      for (auto design : getOperation().getOps<sim::SimDesignOp>())
+        if (failed(runPipeline(folding, design)))
+          return signalPassFailure();
+      OpPassManager directFunctions(sim::SimFuncOp::getOperationName());
+      directFunctions.addPass(createFoldNativeScalarValuesPass());
+      for (auto function : getOperation().getOps<sim::SimFuncOp>())
+        if (failed(runPipeline(directFunctions, function)))
+          return signalPassFailure();
     }
     auto threadStatuses = [&]() -> LogicalResult {
       return detail::threadRuntimeStatuses(getOperation(),

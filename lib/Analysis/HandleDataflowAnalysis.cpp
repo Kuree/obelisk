@@ -193,10 +193,19 @@ public:
             APInt low = bounds->smin().sext(comparisonWidth);
             APInt high = bounds->smax().sext(comparisonWidth);
             auto inDeclaredRange = [&](int64_t left, int64_t right) {
-              return low.sge(
-                         APInt(comparisonWidth, std::min(left, right), true)) &&
-                     high.sle(
-                         APInt(comparisonWidth, std::max(left, right), true));
+              bool valid =
+                  low.sge(
+                      APInt(comparisonWidth, std::min(left, right), true)) &&
+                  high.sle(APInt(comparisonWidth, std::max(left, right), true));
+              if (!valid && scopedRanges) {
+                const auto *scoped = getOrCreateFor<ScopedRangeLattice>(
+                    getProgramPointAfter(op), getProgramPointBefore(op));
+                valid = scopedRanges->proveBounds(
+                    selector, *scoped,
+                    APInt(comparisonWidth, std::min(left, right), true),
+                    APInt(comparisonWidth, std::max(left, right), true));
+              }
+              return valid;
             };
             Type parentType =
                 llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
@@ -210,6 +219,14 @@ public:
               selectorValid =
                   parentWidth && *width <= *parentWidth && !low.isNegative() &&
                   high.ule(APInt(comparisonWidth, *parentWidth - *width));
+              if (!selectorValid && parentWidth && *width <= *parentWidth &&
+                  scopedRanges) {
+                const auto *scoped = getOrCreateFor<ScopedRangeLattice>(
+                    getProgramPointAfter(op), getProgramPointBefore(op));
+                selectorValid = scopedRanges->proveBounds(
+                    selector, *scoped, APInt(comparisonWidth, 0),
+                    APInt(comparisonWidth, *parentWidth - *width));
+              }
             } else if (auto arrayType =
                            dyn_cast<sim::UnpackedArrayType>(parentType))
               selectorValid =
@@ -435,6 +452,9 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   if (failed(solver.initializeAndRun(function)))
     return result;
   auto record = [&](Value value) {
+    if (scopedRanges && isa<sim::LogicType>(value.getType()) &&
+        scopedRanges->excludesXZ(value))
+      result.knownLogicValues.insert(value);
     if (resourceKind(value.getType()) == schedule::ComputeResourceKind::Unknown)
       return;
     auto *state = solver.lookupState<ReferenceLattice>(value);

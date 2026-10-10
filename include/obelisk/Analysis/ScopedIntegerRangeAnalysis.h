@@ -10,6 +10,7 @@
 #include <memory>
 
 namespace obelisk::analysis {
+class ScalarEvolutionAnalysis;
 /// May ranges at a program point. Missing entries are unconstrained; bottom
 /// represents an unvisited edge. CFG joins union ranges, never intersect paths.
 class ScopedRangeLattice final : public mlir::dataflow::AbstractDenseLattice {
@@ -32,13 +33,16 @@ private:
 /// Dense path-sensitive ranges complement the sparse integer-range analysis.
 /// Induction limits come from independently validated finite, nonwrapping CFG
 /// loops. They include the exit value; continuation edges refine body scopes.
-/// Only selectors and their integer dependencies are tracked. Ranges widen at
-/// joins to guarantee convergence for other, unbounded loop-carried values.
+/// By default only selectors, calls, returns and their dependencies are
+/// tracked. Consumers can request all scalar values for general folding.
+/// Ranges widen at joins to converge for unbounded loop-carried values.
 class ScopedIntegerRangeAnalysis final
     : public mlir::dataflow::DenseForwardDataFlowAnalysis<ScopedRangeLattice> {
 public:
   ScopedIntegerRangeAnalysis(mlir::DataFlowSolver &solver,
-                             mlir::Operation *function);
+                             mlir::Operation *function,
+                             bool allScalarValues = false);
+  ~ScopedIntegerRangeAnalysis();
   mlir::LogicalResult visitOperation(mlir::Operation *op,
                                      const ScopedRangeLattice &before,
                                      ScopedRangeLattice *after) override;
@@ -51,11 +55,15 @@ public:
       const ScopedRangeLattice &before, ScopedRangeLattice *after) override;
   std::optional<mlir::ConstantIntRanges>
   getRange(mlir::Value value, const ScopedRangeLattice &state) const;
+  bool excludesXZ(mlir::Value value) const;
+  bool proveBounds(mlir::Value value, const ScopedRangeLattice &state,
+                   const llvm::APInt &lower, const llvm::APInt &upper) const;
 
 private:
   void setToEntryState(ScopedRangeLattice *state) override;
   mlir::Liveness liveness;
   llvm::DenseSet<mlir::Value> relevant;
+  std::unique_ptr<ScalarEvolutionAnalysis> evolution;
   ScopedRangeLattice::Ranges inductionBounds;
   // Exact edge certificates are scoped to this header's continuation edge.
   llvm::DenseMap<mlir::Operation *,

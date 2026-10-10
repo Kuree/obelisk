@@ -123,38 +123,44 @@ static Value boolConstant(OpBuilder &builder, Location loc, bool value) {
   return integerConstant(builder, loc, builder.getI1Type(), value ? 1 : 0);
 }
 
+// Fold scalar algebra while expanding the two planes, rather than building
+// dead X/Z propagation and waiting for the final LLVM canonicalizer. This
+// uses only dialect folds; unknown planes and invalid-index semantics stay
+// explicit whenever their values are not proved constant.
 static Value bitNot(OpBuilder &builder, Location loc, Value value) {
-  return arith::XOrIOp::create(builder, loc, value,
-                               ones(builder, loc, integerType(value)));
+  return builder.createOrFold<arith::XOrIOp>(
+      loc, value, ones(builder, loc, integerType(value)));
 }
 
 static Value boolNot(OpBuilder &builder, Location loc, Value value) {
-  return arith::XOrIOp::create(builder, loc, value,
-                               boolConstant(builder, loc, true));
+  return builder.createOrFold<arith::XOrIOp>(loc, value,
+                                             boolConstant(builder, loc, true));
 }
 
 static Value boolAnd(OpBuilder &builder, Location loc, Value lhs, Value rhs) {
-  return arith::AndIOp::create(builder, loc, lhs, rhs);
+  return builder.createOrFold<arith::AndIOp>(loc, lhs, rhs);
 }
 
 static Value boolOr(OpBuilder &builder, Location loc, Value lhs, Value rhs) {
-  return arith::OrIOp::create(builder, loc, lhs, rhs);
+  return builder.createOrFold<arith::OrIOp>(loc, lhs, rhs);
 }
 
 static Value isNonZero(OpBuilder &builder, Location loc, Value value) {
-  return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne, value,
-                               zero(builder, loc, integerType(value)));
+  return builder.createOrFold<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::ne, value,
+      zero(builder, loc, integerType(value)));
 }
 
 static Value isZero(OpBuilder &builder, Location loc, Value value) {
-  return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, value,
-                               zero(builder, loc, integerType(value)));
+  return builder.createOrFold<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, value,
+      zero(builder, loc, integerType(value)));
 }
 
 static Value select(OpBuilder &builder, Location loc, Value condition,
                     Value trueValue, Value falseValue) {
-  return arith::SelectOp::create(builder, loc, condition, trueValue,
-                                 falseValue);
+  return builder.createOrFold<arith::SelectOp>(loc, condition, trueValue,
+                                               falseValue);
 }
 
 static Value resizeInteger(OpBuilder &builder, Location loc, Value value,
@@ -164,10 +170,10 @@ static Value resizeInteger(OpBuilder &builder, Location loc, Value value,
     return value;
   auto target = builder.getIntegerType(width);
   if (source.getWidth() > width)
-    return arith::TruncIOp::create(builder, loc, target, value);
+    return builder.createOrFold<arith::TruncIOp>(loc, target, value);
   if (isSigned)
-    return arith::ExtSIOp::create(builder, loc, target, value);
-  return arith::ExtUIOp::create(builder, loc, target, value);
+    return builder.createOrFold<arith::ExtSIOp>(loc, target, value);
+  return builder.createOrFold<arith::ExtUIOp>(loc, target, value);
 }
 
 static LogicValue getLogic(ArrayRef<ValueRange> operands, unsigned index) {
@@ -218,7 +224,8 @@ static LogicValue canonicalUnknown(OpBuilder &builder, Location loc,
 /// operand. They are mutually exclusive.
 static TruthValue getTruth(OpBuilder &builder, Location loc, LogicValue input) {
   Value knownBits = bitNot(builder, loc, input.unknown);
-  Value knownOnes = arith::AndIOp::create(builder, loc, input.value, knownBits);
+  Value knownOnes =
+      builder.createOrFold<arith::AndIOp>(loc, input.value, knownBits);
   Value isTrue = isNonZero(builder, loc, knownOnes);
   Value hasUnknown = isNonZero(builder, loc, input.unknown);
   Value isUnknown =
@@ -231,12 +238,13 @@ static Value parity(OpBuilder &builder, Location loc, Value value) {
   Value folded = value;
   for (uint64_t shift = 1; shift < type.getWidth(); shift <<= 1) {
     Value amount = integerConstant(builder, loc, type, shift);
-    Value shifted = arith::ShRUIOp::create(builder, loc, folded, amount);
-    folded = arith::XOrIOp::create(builder, loc, folded, shifted);
+    Value shifted = builder.createOrFold<arith::ShRUIOp>(loc, folded, amount);
+    folded = builder.createOrFold<arith::XOrIOp>(loc, folded, shifted);
   }
   if (type.getWidth() == 1)
     return folded;
-  return arith::TruncIOp::create(builder, loc, builder.getI1Type(), folded);
+  return builder.createOrFold<arith::TruncIOp>(loc, builder.getI1Type(),
+                                               folded);
 }
 
 /// Build a poison-free partial dynamic selection. The input is placed between
@@ -286,9 +294,8 @@ static FailureOr<LogicValue> dynamicExtract(OpBuilder &builder, Location loc,
   Value overlaps = boolAnd(builder, loc, indexKnown,
                            boolAnd(builder, loc, aboveLower, belowUpper));
 
-  Value adjusted =
-      arith::AddIOp::create(builder, loc, checkedLow,
-                            integerConstant(builder, loc, checkType, padding));
+  Value adjusted = builder.createOrFold<arith::AddIOp>(
+      loc, checkedLow, integerConstant(builder, loc, checkType, padding));
   Value paddedAmount =
       resizeInteger(builder, loc, adjusted, paddedType.getWidth(), false);
   Value safeAmount = select(builder, loc, overlaps, paddedAmount,
@@ -302,11 +309,12 @@ static FailureOr<LogicValue> dynamicExtract(OpBuilder &builder, Location loc,
           builder, loc, padded,
           integerConstant(builder, loc, paddedType, padding));
     if (paddingValue)
-      padded = arith::OrIOp::create(builder, loc, padded, paddingValue);
+      padded = builder.createOrFold<arith::OrIOp>(loc, padded, paddingValue);
     return padded;
   };
   auto selectPlane = [&](Value padded, Value fallback) -> Value {
-    Value shifted = arith::ShRUIOp::create(builder, loc, padded, safeAmount);
+    Value shifted =
+        builder.createOrFold<arith::ShRUIOp>(loc, padded, safeAmount);
     Value extracted =
         resizeInteger(builder, loc, shifted, resultType.getWidth(), false);
     return select(builder, loc, overlaps, extracted, fallback);
@@ -372,9 +380,8 @@ static FailureOr<LogicValue> dynamicInsert(OpBuilder &builder, Location loc,
   Value overlaps = boolAnd(builder, loc, indexKnown,
                            boolAnd(builder, loc, aboveLower, belowUpper));
 
-  Value adjusted =
-      arith::AddIOp::create(builder, loc, checkedLow,
-                            integerConstant(builder, loc, checkType, padding));
+  Value adjusted = builder.createOrFold<arith::AddIOp>(
+      loc, checkedLow, integerConstant(builder, loc, checkType, padding));
   Value paddedAmount =
       resizeInteger(builder, loc, adjusted, paddedType.getWidth(), false);
   Value safeAmount = select(builder, loc, overlaps, paddedAmount,
@@ -394,13 +401,13 @@ static FailureOr<LogicValue> dynamicInsert(OpBuilder &builder, Location loc,
           integerConstant(builder, loc, paddedType, padding));
     Value kept = arith::AndIOp::create(
         builder, loc, paddedBase,
-        arith::XOrIOp::create(builder, loc, shiftedMask,
-                              ones(builder, loc, paddedType)));
+        builder.createOrFold<arith::XOrIOp>(loc, shiftedMask,
+                                            ones(builder, loc, paddedType)));
     Value widePiece =
         resizeInteger(builder, loc, piece, paddedType.getWidth(), false);
     Value shiftedPiece =
-        arith::ShLIOp::create(builder, loc, widePiece, safeAmount);
-    Value updated = arith::OrIOp::create(builder, loc, kept, shiftedPiece);
+        builder.createOrFold<arith::ShLIOp>(loc, widePiece, safeAmount);
+    Value updated = builder.createOrFold<arith::OrIOp>(loc, kept, shiftedPiece);
     if (padding != 0)
       updated = arith::ShRUIOp::create(
           builder, loc, updated,
@@ -798,7 +805,7 @@ public:
     LogicValue input = getLogic(operands, 0);
     Value known = bitNot(rewriter, op.getLoc(), input.unknown);
     Value converted =
-        arith::AndIOp::create(rewriter, op.getLoc(), input.value, known);
+        rewriter.createOrFold<arith::AndIOp>(op.getLoc(), input.value, known);
     replaceInteger(op, converted, rewriter);
     return success();
   }
@@ -832,15 +839,16 @@ public:
     LogicValue trueValue = getLogic(operands, 1);
     LogicValue falseValue = getLogic(operands, 2);
 
-    Value valueMismatch =
-        arith::XOrIOp::create(rewriter, loc, trueValue.value, falseValue.value);
-    Value eitherUnknown = arith::OrIOp::create(rewriter, loc, trueValue.unknown,
-                                               falseValue.unknown);
+    Value valueMismatch = rewriter.createOrFold<arith::XOrIOp>(
+        loc, trueValue.value, falseValue.value);
+    Value eitherUnknown = rewriter.createOrFold<arith::OrIOp>(
+        loc, trueValue.unknown, falseValue.unknown);
     Value mismatch =
-        arith::OrIOp::create(rewriter, loc, valueMismatch, eitherUnknown);
-    LogicValue merged{arith::AndIOp::create(rewriter, loc, trueValue.value,
-                                            bitNot(rewriter, loc, mismatch)),
-                      mismatch};
+        rewriter.createOrFold<arith::OrIOp>(loc, valueMismatch, eitherUnknown);
+    LogicValue merged{
+        rewriter.createOrFold<arith::AndIOp>(loc, trueValue.value,
+                                             bitNot(rewriter, loc, mismatch)),
+        mismatch};
 
     Value conditionKnown = boolNot(rewriter, loc, condition.unknown);
     LogicValue selected{select(rewriter, loc, condition.value, trueValue.value,
@@ -881,12 +889,12 @@ public:
         operands[0].size() == 2 ? operands[0][1] : zero(rewriter, loc, type);
     Value known = bitNot(rewriter, loc, inputUnknown);
     Value stateMasks[4] = {
-        arith::AndIOp::create(rewriter, loc, bitNot(rewriter, loc, inputValue),
-                              known),
-        arith::AndIOp::create(rewriter, loc, inputValue, known),
-        arith::AndIOp::create(rewriter, loc, bitNot(rewriter, loc, inputValue),
-                              inputUnknown),
-        arith::AndIOp::create(rewriter, loc, inputValue, inputUnknown)};
+        rewriter.createOrFold<arith::AndIOp>(
+            loc, bitNot(rewriter, loc, inputValue), known),
+        rewriter.createOrFold<arith::AndIOp>(loc, inputValue, known),
+        rewriter.createOrFold<arith::AndIOp>(
+            loc, bitNot(rewriter, loc, inputValue), inputUnknown),
+        rewriter.createOrFold<arith::AndIOp>(loc, inputValue, inputUnknown)};
 
     Value selected = zero(rewriter, loc, type);
     for (size_t index = 1; index < operands.size(); ++index) {
@@ -905,7 +913,7 @@ public:
       for (unsigned state = 0; state != 4; ++state) {
         Value mask = select(rewriter, loc, selectors[state], stateMasks[state],
                             zero(rewriter, loc, type));
-        selected = arith::OrIOp::create(rewriter, loc, selected, mask);
+        selected = rewriter.createOrFold<arith::OrIOp>(loc, selected, mask);
       }
     }
     // Counting does not require a packed copy of the aggregate. Mask ABI
@@ -916,7 +924,7 @@ public:
     if (!logicalMask.isAllOnes()) {
       Value mask = arith::ConstantOp::create(
           rewriter, loc, rewriter.getIntegerAttr(type, logicalMask));
-      selected = arith::AndIOp::create(rewriter, loc, selected, mask);
+      selected = rewriter.createOrFold<arith::AndIOp>(loc, selected, mask);
     }
     Value count =
         math::CtPopOp::create(rewriter, loc, type, selected).getResult();
@@ -937,15 +945,16 @@ public:
     LogicValue input = getLogic(operands, 0);
     Location loc = op.getLoc();
     auto type = integerType(input.value);
-    Value value = arith::AndIOp::create(rewriter, loc, input.value,
-                                        bitNot(rewriter, loc, input.unknown));
+    Value value = rewriter.createOrFold<arith::AndIOp>(
+        loc, input.value, bitNot(rewriter, loc, input.unknown));
     Value decremented = arith::SubIOp::create(
         rewriter, loc, value, integerConstant(rewriter, loc, type, 1));
     Value leading =
         math::CountLeadingZerosOp::create(rewriter, loc, type, decremented)
             .getResult();
     Value width = integerConstant(rewriter, loc, type, type.getWidth());
-    Value nonzeroResult = arith::SubIOp::create(rewriter, loc, width, leading);
+    Value nonzeroResult =
+        rewriter.createOrFold<arith::SubIOp>(loc, width, leading);
     Value result = select(rewriter, loc, isZero(rewriter, loc, value),
                           zero(rewriter, loc, type), nonzeroResult);
     replaceInteger(op, resizeInteger(rewriter, loc, result, 32, false),
@@ -1002,8 +1011,8 @@ public:
     }
     case sim::UnaryKind::BitNot: {
       Value inverted = bitNot(rewriter, loc, input.value);
-      result = {arith::AndIOp::create(rewriter, loc, inverted,
-                                      bitNot(rewriter, loc, input.unknown)),
+      result = {rewriter.createOrFold<arith::AndIOp>(
+                    loc, inverted, bitNot(rewriter, loc, input.unknown)),
                 input.unknown};
       break;
     }
@@ -1095,38 +1104,38 @@ public:
       if (op.getKind() == sim::BinaryKind::And) {
         Value knownZero = arith::OrIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(rewriter, loc,
-                                  bitNot(rewriter, loc, lhs.value), lhsKnown),
-            arith::AndIOp::create(rewriter, loc,
-                                  bitNot(rewriter, loc, rhs.value), rhsKnown));
+            rewriter.createOrFold<arith::AndIOp>(
+                loc, bitNot(rewriter, loc, lhs.value), lhsKnown),
+            rewriter.createOrFold<arith::AndIOp>(
+                loc, bitNot(rewriter, loc, rhs.value), rhsKnown));
         Value knownOne = arith::AndIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(rewriter, loc, lhs.value, lhsKnown),
-            arith::AndIOp::create(rewriter, loc, rhs.value, rhsKnown));
-        resultUnknown =
-            bitNot(rewriter, loc,
-                   arith::OrIOp::create(rewriter, loc, knownZero, knownOne));
+            rewriter.createOrFold<arith::AndIOp>(loc, lhs.value, lhsKnown),
+            rewriter.createOrFold<arith::AndIOp>(loc, rhs.value, rhsKnown));
+        resultUnknown = bitNot(
+            rewriter, loc,
+            rewriter.createOrFold<arith::OrIOp>(loc, knownZero, knownOne));
         resultValue = knownOne;
       } else if (op.getKind() == sim::BinaryKind::Or) {
         Value knownOne = arith::OrIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(rewriter, loc, lhs.value, lhsKnown),
-            arith::AndIOp::create(rewriter, loc, rhs.value, rhsKnown));
+            rewriter.createOrFold<arith::AndIOp>(loc, lhs.value, lhsKnown),
+            rewriter.createOrFold<arith::AndIOp>(loc, rhs.value, rhsKnown));
         Value knownZero = arith::AndIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(rewriter, loc,
-                                  bitNot(rewriter, loc, lhs.value), lhsKnown),
-            arith::AndIOp::create(rewriter, loc,
-                                  bitNot(rewriter, loc, rhs.value), rhsKnown));
-        resultUnknown =
-            bitNot(rewriter, loc,
-                   arith::OrIOp::create(rewriter, loc, knownZero, knownOne));
+            rewriter.createOrFold<arith::AndIOp>(
+                loc, bitNot(rewriter, loc, lhs.value), lhsKnown),
+            rewriter.createOrFold<arith::AndIOp>(
+                loc, bitNot(rewriter, loc, rhs.value), rhsKnown));
+        resultUnknown = bitNot(
+            rewriter, loc,
+            rewriter.createOrFold<arith::OrIOp>(loc, knownZero, knownOne));
         resultValue = knownOne;
       } else {
         resultUnknown =
-            arith::OrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
+            rewriter.createOrFold<arith::OrIOp>(loc, lhs.unknown, rhs.unknown);
         Value computed =
-            arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value);
+            rewriter.createOrFold<arith::XOrIOp>(loc, lhs.value, rhs.value);
         if (op.getKind() == sim::BinaryKind::Xnor)
           computed = bitNot(rewriter, loc, computed);
         resultValue = arith::AndIOp::create(
@@ -1143,13 +1152,16 @@ public:
     Value extraInvalid = boolConstant(rewriter, loc, false);
     switch (op.getKind()) {
     case sim::BinaryKind::Add:
-      computed = arith::AddIOp::create(rewriter, loc, lhs.value, rhs.value);
+      computed =
+          rewriter.createOrFold<arith::AddIOp>(loc, lhs.value, rhs.value);
       break;
     case sim::BinaryKind::Sub:
-      computed = arith::SubIOp::create(rewriter, loc, lhs.value, rhs.value);
+      computed =
+          rewriter.createOrFold<arith::SubIOp>(loc, lhs.value, rhs.value);
       break;
     case sim::BinaryKind::Mul:
-      computed = arith::MulIOp::create(rewriter, loc, lhs.value, rhs.value);
+      computed =
+          rewriter.createOrFold<arith::MulIOp>(loc, lhs.value, rhs.value);
       break;
     case sim::BinaryKind::UDiv:
     case sim::BinaryKind::UMod:
@@ -1167,9 +1179,9 @@ public:
             rewriter, loc, arith::CmpIPredicate::eq, lhs.value,
             integerConstant(rewriter, loc, type,
                             APInt::getSignedMinValue(type.getWidth())));
-        Value rhsIsMinusOne =
-            arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
-                                  rhs.value, ones(rewriter, loc, type));
+        Value rhsIsMinusOne = rewriter.createOrFold<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, rhs.value,
+            ones(rewriter, loc, type));
         overflow = boolAnd(rewriter, loc, lhsIsMin, rhsIsMinusOne);
       }
       Value dangerous = boolOr(rewriter, loc, divisorZero, overflow);
@@ -1183,15 +1195,17 @@ public:
         dividend = select(rewriter, loc, dangerous, zero(rewriter, loc, type),
                           lhs.value);
       if (isSigned && isRemainder)
-        computed = arith::RemSIOp::create(rewriter, loc, dividend, safeDivisor);
+        computed =
+            rewriter.createOrFold<arith::RemSIOp>(loc, dividend, safeDivisor);
       else if (isSigned)
-        computed = arith::DivSIOp::create(rewriter, loc, dividend, safeDivisor);
+        computed =
+            rewriter.createOrFold<arith::DivSIOp>(loc, dividend, safeDivisor);
       else if (isRemainder)
         computed =
-            arith::RemUIOp::create(rewriter, loc, lhs.value, safeDivisor);
+            rewriter.createOrFold<arith::RemUIOp>(loc, lhs.value, safeDivisor);
       else
         computed =
-            arith::DivUIOp::create(rewriter, loc, lhs.value, safeDivisor);
+            rewriter.createOrFold<arith::DivUIOp>(loc, lhs.value, safeDivisor);
       if (isSigned) {
         Value wrapped = isRemainder ? zero(rewriter, loc, type) : lhs.value;
         computed = select(rewriter, loc, overflow, wrapped, computed);
@@ -1330,23 +1344,25 @@ public:
     switch (op.getKind()) {
     case sim::ShiftKind::Left:
       shifted = {
-          arith::ShLIOp::create(rewriter, loc, input.value, safeAmount),
-          arith::ShLIOp::create(rewriter, loc, input.unknown, safeAmount)};
+          rewriter.createOrFold<arith::ShLIOp>(loc, input.value, safeAmount),
+          rewriter.createOrFold<arith::ShLIOp>(loc, input.unknown, safeAmount)};
       break;
     case sim::ShiftKind::Right:
       shifted = {
-          arith::ShRUIOp::create(rewriter, loc, input.value, safeAmount),
-          arith::ShRUIOp::create(rewriter, loc, input.unknown, safeAmount)};
+          rewriter.createOrFold<arith::ShRUIOp>(loc, input.value, safeAmount),
+          rewriter.createOrFold<arith::ShRUIOp>(loc, input.unknown,
+                                                safeAmount)};
       break;
     case sim::ShiftKind::RightArith: {
       shifted = {
-          arith::ShRSIOp::create(rewriter, loc, input.value, safeAmount),
-          arith::ShRSIOp::create(rewriter, loc, input.unknown, safeAmount)};
+          rewriter.createOrFold<arith::ShRSIOp>(loc, input.value, safeAmount),
+          rewriter.createOrFold<arith::ShRSIOp>(loc, input.unknown,
+                                                safeAmount)};
       Value last =
           integerConstant(rewriter, loc, inputType, inputType.getWidth() - 1);
       oversizedResult = {
-          arith::ShRSIOp::create(rewriter, loc, input.value, last),
-          arith::ShRSIOp::create(rewriter, loc, input.unknown, last)};
+          rewriter.createOrFold<arith::ShRSIOp>(loc, input.value, last),
+          rewriter.createOrFold<arith::ShRSIOp>(loc, input.unknown, last)};
       break;
     }
     }
@@ -1400,14 +1416,14 @@ public:
       } else if (op.getKind() == sim::CompareKind::CaseZEq) {
         wildcard = arith::OrIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(rewriter, loc, lhs.unknown, lhs.value),
-            arith::AndIOp::create(rewriter, loc, rhs.unknown, rhs.value));
+            rewriter.createOrFold<arith::AndIOp>(loc, lhs.unknown, lhs.value),
+            rewriter.createOrFold<arith::AndIOp>(loc, rhs.unknown, rhs.value));
       } else {
         wildcard =
-            arith::OrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
+            rewriter.createOrFold<arith::OrIOp>(loc, lhs.unknown, rhs.unknown);
       }
       Value valueMismatch =
-          arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value);
+          rewriter.createOrFold<arith::XOrIOp>(loc, lhs.value, rhs.value);
       Value mismatch;
       Value relevantUnknown = zero(rewriter, loc, integerType(lhs.unknown));
       if (op.getKind() == sim::CompareKind::WildEq ||
@@ -1415,18 +1431,19 @@ public:
         Value compared = bitNot(rewriter, loc, rhs.unknown);
         mismatch = arith::AndIOp::create(
             rewriter, loc,
-            arith::AndIOp::create(rewriter, loc, valueMismatch,
-                                  bitNot(rewriter, loc, lhs.unknown)),
+            rewriter.createOrFold<arith::AndIOp>(
+                loc, valueMismatch, bitNot(rewriter, loc, lhs.unknown)),
             compared);
         relevantUnknown =
-            arith::AndIOp::create(rewriter, loc, lhs.unknown, compared);
+            rewriter.createOrFold<arith::AndIOp>(loc, lhs.unknown, compared);
       } else {
         Value unknownMismatch =
-            arith::XOrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
-        mismatch = arith::AndIOp::create(
-            rewriter, loc,
-            arith::OrIOp::create(rewriter, loc, valueMismatch, unknownMismatch),
-            bitNot(rewriter, loc, wildcard));
+            rewriter.createOrFold<arith::XOrIOp>(loc, lhs.unknown, rhs.unknown);
+        mismatch =
+            arith::AndIOp::create(rewriter, loc,
+                                  rewriter.createOrFold<arith::OrIOp>(
+                                      loc, valueMismatch, unknownMismatch),
+                                  bitNot(rewriter, loc, wildcard));
       }
       Value equal = isZero(rewriter, loc, mismatch);
       Value unknown = boolAnd(rewriter, loc, equal,
@@ -1446,10 +1463,10 @@ public:
     if (op.getKind() == sim::CompareKind::Eq ||
         op.getKind() == sim::CompareKind::Ne) {
       Value unknownBits =
-          arith::OrIOp::create(rewriter, loc, lhs.unknown, rhs.unknown);
+          rewriter.createOrFold<arith::OrIOp>(loc, lhs.unknown, rhs.unknown);
       Value mismatchBits = arith::AndIOp::create(
           rewriter, loc,
-          arith::XOrIOp::create(rewriter, loc, lhs.value, rhs.value),
+          rewriter.createOrFold<arith::XOrIOp>(loc, lhs.value, rhs.value),
           bitNot(rewriter, loc, unknownBits));
       Value knownMismatch = isNonZero(rewriter, loc, mismatchBits);
       Value unknown =
@@ -1499,8 +1516,8 @@ public:
     default:
       llvm_unreachable("deterministic comparisons handled above");
     }
-    Value compared =
-        arith::CmpIOp::create(rewriter, loc, predicate, lhs.value, rhs.value);
+    Value compared = rewriter.createOrFold<arith::CmpIOp>(loc, predicate,
+                                                          lhs.value, rhs.value);
     Value unknown = boolOr(rewriter, loc, isNonZero(rewriter, loc, lhs.unknown),
                            isNonZero(rewriter, loc, rhs.unknown));
     replaceLogic(op,
@@ -1524,12 +1541,12 @@ public:
     LogicValue lhs = getLogic(operands, 0);
     LogicValue rhs = getLogic(operands, 1);
     Value valueDifference =
-        arith::XOrIOp::create(rewriter, op.getLoc(), lhs.value, rhs.value);
-    Value unknownDifference =
-        arith::XOrIOp::create(rewriter, op.getLoc(), lhs.unknown, rhs.unknown);
+        rewriter.createOrFold<arith::XOrIOp>(op.getLoc(), lhs.value, rhs.value);
+    Value unknownDifference = rewriter.createOrFold<arith::XOrIOp>(
+        op.getLoc(), lhs.unknown, rhs.unknown);
     replaceInteger(op,
-                   arith::OrIOp::create(rewriter, op.getLoc(), valueDifference,
-                                        unknownDifference),
+                   rewriter.createOrFold<arith::OrIOp>(
+                       op.getLoc(), valueDifference, unknownDifference),
                    rewriter);
     return success();
   }
@@ -1558,12 +1575,13 @@ public:
                                     resultType.getWidth(), false);
       if (offset != 0) {
         Value amount = integerConstant(rewriter, loc, resultType, offset);
-        value = arith::ShLIOp::create(rewriter, loc, value, amount);
-        unknown = arith::ShLIOp::create(rewriter, loc, unknown, amount);
+        value = rewriter.createOrFold<arith::ShLIOp>(loc, value, amount);
+        unknown = rewriter.createOrFold<arith::ShLIOp>(loc, unknown, amount);
       }
-      resultValue = arith::OrIOp::create(rewriter, loc, resultValue, value);
+      resultValue =
+          rewriter.createOrFold<arith::OrIOp>(loc, resultValue, value);
       resultUnknown =
-          arith::OrIOp::create(rewriter, loc, resultUnknown, unknown);
+          rewriter.createOrFold<arith::OrIOp>(loc, resultUnknown, unknown);
     }
     replaceLogic(op, {resultValue, resultUnknown}, rewriter);
     return success();
@@ -1601,13 +1619,13 @@ public:
         if (offset != 0) {
           Value amount = integerConstant(rewriter, loc, resultType, offset);
           placed = {
-              arith::ShLIOp::create(rewriter, loc, chunk.value, amount),
-              arith::ShLIOp::create(rewriter, loc, chunk.unknown, amount)};
+              rewriter.createOrFold<arith::ShLIOp>(loc, chunk.value, amount),
+              rewriter.createOrFold<arith::ShLIOp>(loc, chunk.unknown, amount)};
         }
         resultValue =
-            arith::OrIOp::create(rewriter, loc, resultValue, placed.value);
-        resultUnknown =
-            arith::OrIOp::create(rewriter, loc, resultUnknown, placed.unknown);
+            rewriter.createOrFold<arith::OrIOp>(loc, resultValue, placed.value);
+        resultUnknown = rewriter.createOrFold<arith::OrIOp>(loc, resultUnknown,
+                                                            placed.unknown);
         placedCopies += chunkCopies;
       }
 
@@ -1616,12 +1634,13 @@ public:
         break;
       uint64_t chunkWidth = chunkCopies * inputWidth;
       Value amount = integerConstant(rewriter, loc, resultType, chunkWidth);
-      chunk = {arith::OrIOp::create(
-                   rewriter, loc, chunk.value,
-                   arith::ShLIOp::create(rewriter, loc, chunk.value, amount)),
-               arith::OrIOp::create(rewriter, loc, chunk.unknown,
-                                    arith::ShLIOp::create(
-                                        rewriter, loc, chunk.unknown, amount))};
+      chunk = {
+          arith::OrIOp::create(
+              rewriter, loc, chunk.value,
+              rewriter.createOrFold<arith::ShLIOp>(loc, chunk.value, amount)),
+          rewriter.createOrFold<arith::OrIOp>(
+              loc, chunk.unknown,
+              arith::ShLIOp::create(rewriter, loc, chunk.unknown, amount))};
       chunkCopies <<= 1;
     }
     replaceLogic(op, {resultValue, resultUnknown}, rewriter);
@@ -1647,8 +1666,8 @@ public:
     Value unknown = input.unknown;
     if (low != 0) {
       Value amount = integerConstant(rewriter, loc, inputType, low);
-      value = arith::ShRUIOp::create(rewriter, loc, value, amount);
-      unknown = arith::ShRUIOp::create(rewriter, loc, unknown, amount);
+      value = rewriter.createOrFold<arith::ShRUIOp>(loc, value, amount);
+      unknown = rewriter.createOrFold<arith::ShRUIOp>(loc, unknown, amount);
     }
     value = resizeInteger(rewriter, loc, value, resultWidth, false);
     unknown = resizeInteger(rewriter, loc, unknown, resultWidth, false);
@@ -1760,12 +1779,12 @@ public:
         APInt::getLowBitsSet(type.getWidth(), replacementWidth).shl(low);
     Value keepMask = integerConstant(rewriter, loc, type, ~replacementMask);
     auto insertPlane = [&](Value base, Value piece) -> Value {
-      Value kept = arith::AndIOp::create(rewriter, loc, base, keepMask);
+      Value kept = rewriter.createOrFold<arith::AndIOp>(loc, base, keepMask);
       Value wide = resizeInteger(rewriter, loc, piece, type.getWidth(), false);
       if (low != 0)
-        wide = arith::ShLIOp::create(rewriter, loc, wide,
-                                     integerConstant(rewriter, loc, type, low));
-      return arith::OrIOp::create(rewriter, loc, kept, wide);
+        wide = rewriter.createOrFold<arith::ShLIOp>(
+            loc, wide, integerConstant(rewriter, loc, type, low));
+      return rewriter.createOrFold<arith::OrIOp>(loc, kept, wide);
     };
     replaceLogic(op,
                  {insertPlane(input.value, replacement.value),

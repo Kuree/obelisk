@@ -295,6 +295,13 @@ def MaterializeObeliskNativeEvalGroupsPass
   let dependentDialects = ["mlir::LLVM::LLVMDialect"];
 }
 
+def FoldNativeScalarValuesPass
+    : Pass<"fold-native-scalar-values", "obelisk::sim::SimFuncOp"> {
+  let summary = "Fold SSA values proved constant by scoped scalar evolution";
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                          "mlir::arith::ArithDialect"];
+}
+
 def ConvertPreparedSimProcessesToLLVMCoroutinesPass
     : Pass<"convert-prepared-sim-processes-to-llvm-coroutines",
            "mlir::ModuleOp"> {

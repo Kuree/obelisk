@@ -1,10 +1,11 @@
 set(OBELISK_SOLVER_SOURCES
+  BitVectorProof.cpp
   BooleanDNF.cpp
   RandomProgramSMT.cpp
   SolverHeuristic.cpp
   SolverZ3.cpp
 )
-set(OBELISK_SOLVER_LIBS MLIRSupport)
+set(OBELISK_SOLVER_LIBS MLIRSupport LLVMCore)
 
 if(OBELISK_ENABLE_Z3)
   # add_mlir_library compiles through an internal object target. Define the
@@ -15,7 +16,7 @@ if(OBELISK_ENABLE_Z3)
     add_compile_definitions(OBELISK_Z3_SINGLE_THREADED=1)
   endif()
   # Z3's public C++ header predates LLVM's suggest-override policy.
-  set_source_files_properties(BooleanDNF.cpp SolverZ3.cpp PROPERTIES
+  set_source_files_properties(BitVectorProof.cpp BooleanDNF.cpp SolverZ3.cpp PROPERTIES
     COMPILE_OPTIONS "-fexceptions;-Wno-suggest-override")
   list(APPEND OBELISK_SOLVER_LIBS MLIRIR MLIRSMT)
 endif()

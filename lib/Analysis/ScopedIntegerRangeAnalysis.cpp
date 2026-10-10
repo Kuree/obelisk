@@ -4,11 +4,35 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "obelisk/Analysis/IntegerRangeIPO.h"
+#include "obelisk/Analysis/ScalarEvolutionAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 namespace obelisk::analysis {
+static arith::CmpIPredicate swapComparison(arith::CmpIPredicate predicate) {
+  switch (predicate) {
+  case arith::CmpIPredicate::slt:
+    return arith::CmpIPredicate::sgt;
+  case arith::CmpIPredicate::sle:
+    return arith::CmpIPredicate::sge;
+  case arith::CmpIPredicate::sgt:
+    return arith::CmpIPredicate::slt;
+  case arith::CmpIPredicate::sge:
+    return arith::CmpIPredicate::sle;
+  case arith::CmpIPredicate::ult:
+    return arith::CmpIPredicate::ugt;
+  case arith::CmpIPredicate::ule:
+    return arith::CmpIPredicate::uge;
+  case arith::CmpIPredicate::ugt:
+    return arith::CmpIPredicate::ult;
+  case arith::CmpIPredicate::uge:
+    return arith::CmpIPredicate::ule;
+  default:
+    return predicate;
+  }
+}
 const ScopedRangeLattice::Ranges &ScopedRangeLattice::getRanges() const {
   static const Ranges empty;
   return ranges ? *ranges : empty;
@@ -58,10 +82,21 @@ void ScopedRangeLattice::print(raw_ostream &os) const {
 }
 
 ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
-                                                       Operation *function)
+                                                       Operation *function,
+                                                       bool allScalarValues)
     : DenseForwardDataFlowAnalysis(solver), liveness(function) {
   SmallVector<Value> pending;
   function->walk([&](Operation *op) {
+    if (allScalarValues) {
+      llvm::append_range(pending, op->getResults());
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          llvm::append_range(pending, block.getArguments());
+    }
+    if (isa<sim::SimCallOp, sim::SimReturnOp>(op))
+      for (Value value : op->getOperands())
+        if (isa<IntegerType, sim::LogicType>(value.getType()))
+          pending.push_back(value);
     if (isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
             schedule::NativeWordViewOp, sim::SimDriverArrayElementOp,
             sim::SimDriverDynExtractOp, sim::SimLogicDynExtractOp,
@@ -75,9 +110,10 @@ ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
         *width > 128 || !relevant.insert(value).second)
       continue;
     if (auto *op = value.getDefiningOp())
-      if (isa<InferIntRangeInterface, sim::SimLogicFromBitsOp,
+      if (isa<InferIntRangeInterface, sim::SimCallOp, sim::SimLogicFromBitsOp,
               sim::SimLogicToBitsOp, sim::SimLogicBinaryOp,
-              sim::SimLogicResizeOp>(op))
+              sim::SimLogicResizeOp, sim::SimLogicCompareOp,
+              sim::SimLogicIsTrueOp>(op))
         llvm::append_range(pending, op->getOperands());
     // Phi inputs are also data dependencies; no predecessor recursion is
     // required for range solving. This walk only builds the analysis slice.
@@ -103,6 +139,11 @@ ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
       if (body && relevant.contains(loop.induction))
         bodyBounds.try_emplace(loop.condition, loop.induction, *body);
     }
+  evolution = std::make_unique<ScalarEvolutionAnalysis>(function, relevant);
+}
+ScopedIntegerRangeAnalysis::~ScopedIntegerRangeAnalysis() = default;
+bool ScopedIntegerRangeAnalysis::excludesXZ(Value value) const {
+  return evolution->excludesXZ(value);
 }
 std::optional<ConstantIntRanges>
 ScopedIntegerRangeAnalysis::getRange(Value value,
@@ -119,16 +160,48 @@ ScopedIntegerRangeAnalysis::getRange(Value value,
   auto cap = inductionBounds.find(value);
   const auto &ranges = state.getRanges();
   auto scoped = ranges.find(value);
+  std::optional<ConstantIntRanges> result;
+  if (auto argument = dyn_cast<BlockArgument>(value))
+    if (auto function =
+            dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
+        function && argument.getOwner()->isEntryBlock())
+      result = decodeIntegerRange(
+          function.getArgAttr(argument.getArgNumber(), integerRangeAttr),
+          width);
+  if (auto range = getIntegerResultRange(value))
+    result = result ? result->intersection(*range) : *range;
   if (cap != inductionBounds.end())
-    return scoped == ranges.end() ? cap->second
-                                  : cap->second.intersection(scoped->second);
+    result = result ? result->intersection(cap->second) : cap->second;
   if (scoped != ranges.end())
-    return scoped->second;
+    result = result ? result->intersection(scoped->second) : scoped->second;
+  if (auto symbolic = evolution->getRange(value))
+    result = result ? result->intersection(*symbolic) : *symbolic;
+  if (result)
+    return result;
   // A logic range is also a proof that the selector has no X/Z bits. Missing
   // logic facts cannot be replaced by a two-state maximal interval.
   return isa<IntegerType>(value.getType())
              ? std::optional(ConstantIntRanges::maxRange(*width))
              : std::nullopt;
+}
+bool ScopedIntegerRangeAnalysis::proveBounds(Value value,
+                                             const ScopedRangeLattice &state,
+                                             const APInt &lower,
+                                             const APInt &upper) const {
+  return evolution->proveBounds(value, lower, upper, [&](Value input) {
+    // Only facts available at this access may constrain an SMT expression.
+    // A definition in another branch may alias a shared integer while its
+    // path-specific range is inapplicable here.
+    if (input == value || state.getRanges().contains(input))
+      return getRange(input, state);
+    if (auto argument = dyn_cast<BlockArgument>(input);
+        argument && argument.getOwner()->isEntryBlock())
+      return getRange(input, state);
+    APInt constant;
+    if (matchPattern(input, m_ConstantInt(&constant)))
+      return std::optional(ConstantIntRanges::constant(constant));
+    return std::optional<ConstantIntRanges>{};
+  });
 }
 void ScopedIntegerRangeAnalysis::setToEntryState(ScopedRangeLattice *state) {
   propagateIfChanged(state, state->merge(ScopedRangeLattice::Ranges{}));
@@ -228,6 +301,72 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
   auto next = before.getRanges();
   Operation *terminator = predecessor->getTerminator();
   if (auto branch = dyn_cast<cf::CondBranchOp>(terminator)) {
+    if (branch.getTrueDest() != branch.getFalseDest())
+      if (auto cmp = branch.getCondition().getDefiningOp<arith::CmpIOp>()) {
+        auto predicate = cmp.getPredicate();
+        if (branch.getFalseDest() == block)
+          predicate = arith::invertPredicate(predicate);
+        for (unsigned side = 0; side < 2; ++side) {
+          Value value = cmp->getOperand(side);
+          if (!relevant.contains(value))
+            continue;
+          auto range = getRange(value, before);
+          auto other = getRange(cmp->getOperand(1 - side), before);
+          if (!range || !other)
+            continue;
+          auto pred = side ? swapComparison(predicate) : predicate;
+          unsigned width = range->umin().getBitWidth();
+          std::optional<ConstantIntRanges> edgeRange;
+          APInt zero(width, 0), umax = APInt::getMaxValue(width);
+          APInt smin = APInt::getSignedMinValue(width),
+                smax = APInt::getSignedMaxValue(width);
+          switch (pred) {
+          case arith::CmpIPredicate::eq:
+            edgeRange = *other;
+            break;
+          case arith::CmpIPredicate::ult:
+            if (!other->umax().isZero())
+              edgeRange =
+                  ConstantIntRanges::fromUnsigned(zero, other->umax() - 1);
+            break;
+          case arith::CmpIPredicate::ule:
+            edgeRange = ConstantIntRanges::fromUnsigned(zero, other->umax());
+            break;
+          case arith::CmpIPredicate::ugt:
+            if (!other->umin().isMaxValue())
+              edgeRange =
+                  ConstantIntRanges::fromUnsigned(other->umin() + 1, umax);
+            break;
+          case arith::CmpIPredicate::uge:
+            edgeRange = ConstantIntRanges::fromUnsigned(other->umin(), umax);
+            break;
+          case arith::CmpIPredicate::slt:
+            if (!other->smax().isMinSignedValue())
+              edgeRange =
+                  ConstantIntRanges::fromSigned(smin, other->smax() - 1);
+            break;
+          case arith::CmpIPredicate::sle:
+            edgeRange = ConstantIntRanges::fromSigned(smin, other->smax());
+            break;
+          case arith::CmpIPredicate::sgt:
+            if (!other->smin().isMaxSignedValue())
+              edgeRange =
+                  ConstantIntRanges::fromSigned(other->smin() + 1, smax);
+            break;
+          case arith::CmpIPredicate::sge:
+            edgeRange = ConstantIntRanges::fromSigned(other->smin(), smax);
+            break;
+          default:
+            break;
+          }
+          if (edgeRange) {
+            auto refined = range->intersection(*edgeRange);
+            if (refined.umin().ule(refined.umax()) &&
+                refined.smin().sle(refined.smax()))
+              next.insert_or_assign(value, refined);
+          }
+        }
+      }
     // The validated structural certificate is an edge fact, never a global
     // narrowing of the induction variable to its body-only range.
     auto bound = bodyBounds.find(branch);
@@ -237,7 +376,7 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
   }
   auto interface = dyn_cast<BranchOpInterface>(terminator);
   ScopedRangeLattice edge(getProgramPointAfter(terminator));
-  edge.merge(next);
+  (void)edge.merge(next);
   // Incoming operands refer to the predecessor's SSA bindings. Compute all
   // phi inputs before assigning any successor arguments (including swaps).
   for (Operation &op : *block)

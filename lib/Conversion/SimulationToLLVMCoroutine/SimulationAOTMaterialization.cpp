@@ -3063,6 +3063,12 @@ FailureOr<bool> makeNativeEvalPlan(
           return llvmConstant(offsetBuilder, loc, i64, value);
         };
         Value amount = call.getArgOperands()[1];
+        if (call->hasAttr(nativeInBoundsHandleOffsetAttr)) {
+          Value result = arith::AddIOp::create(offsetBuilder, loc, base, amount);
+          call.getResult().replaceAllUsesWith(result);
+          call.erase();
+          continue;
+        }
         Value baseOffset = LLVM::SExtOp::create(
             offsetBuilder, loc, i64,
             LLVM::TruncOp::create(offsetBuilder, loc, i32, base));
