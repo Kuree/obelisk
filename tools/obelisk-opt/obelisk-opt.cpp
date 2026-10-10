@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
 #ifdef OBELISK_INCLUDE_TESTS
   obelisk::registerAccessFootprintAnalysisTestPass();
   obelisk::registerActivationMemoryAnalysisTestPass();
+  obelisk::registerActivationPhaseAnalysisTestPass();
   obelisk::registerClockInferenceAnalysisTestPass();
   obelisk::registerCombinationalDependencyAnalysisTestPass();
   obelisk::registerStorageWriteAnalysisTestPass();

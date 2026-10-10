@@ -1,0 +1,42 @@
+// Runtime semantics for ../Conversion/simulation-clocked-kernel-*.mlir. Each
+// design runs once through clocked kernels with direct NBA stores and once as
+// the unfused bytecode reference; both must print the IEEE 1800-2023 4.9.4
+// results.
+
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-direct-nba.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.direct.mlir
+// RUN: obelisk-opt %t.direct.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.direct.ll
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.direct.ll | %llc -filetype=obj -relocation-model=pic -o %t.direct.o0.o
+// RUN: %llvm_dist/bin/clang++ %t.direct.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.direct.o0.exe
+// RUN: %t.direct.o0.exe | FileCheck %s --check-prefix=DIRECT
+// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.direct.ll | %llc -filetype=obj -relocation-model=pic -o %t.direct.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.direct.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.direct.o3.exe
+// RUN: %t.direct.o3.exe | FileCheck %s --check-prefix=DIRECT
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-direct-nba.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.direct.bc.o
+// RUN: %llvm_dist/bin/clang++ %t.direct.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.direct.bc.exe
+// RUN: %t.direct.bc.exe | FileCheck %s --check-prefix=DIRECT
+
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-retained-nba.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.retained.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.retained.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.retained.o3.exe
+// RUN: %t.retained.o3.exe | FileCheck %s --check-prefix=RETAINED
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-retained-nba.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.retained.bc.o
+// RUN: %llvm_dist/bin/clang++ %t.retained.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.retained.bc.exe
+// RUN: %t.retained.bc.exe | FileCheck %s --check-prefix=RETAINED
+
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-snapshot-loop.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.loop.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.loop.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.loop.o3.exe
+// RUN: %t.loop.o3.exe | FileCheck %s --check-prefix=LOOP
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-snapshot-loop.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.loop.bc.o
+// RUN: %llvm_dist/bin/clang++ %t.loop.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.loop.bc.exe
+// RUN: %t.loop.bc.exe | FileCheck %s --check-prefix=LOOP
+
+// Ten rising edges by time 100. `a <= b + 1; b <= a` swaps through old
+// values: (0,0) (1,0) (1,1) ... (5,5). `c` samples `a + b` from before the
+// tenth edge, 5 + 4. Applying `a` early would give 10.
+// DIRECT: {{^ *}}5 {{ *}}9{{$}}
+
+// `q` toggles from 0 ten times. `r` and the same-edge sampler both see the
+// old `q` of the tenth edge.
+// RETAINED: {{^}}1 1{{$}}
+
+// `r` counts the edges.
+// LOOP: {{^ *}}10{{$}}

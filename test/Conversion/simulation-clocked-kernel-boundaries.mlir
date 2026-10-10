@@ -1,0 +1,491 @@
+// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
+// RUN: FileCheck %s < %t.mlir
+// RUN: FileCheck %s --check-prefix=REPORT < %t.log
+
+// Where clocked kernels stop. Each case states the IEEE 1800-2023 rule that
+// keeps an NBA, or a member out of a kernel.
+
+// Two independent clocks that rise in the same slot give two kernels; each
+// one's edge wakes the other's processes in the same Active region (4.5).
+// `cross` reads `a`, which the other clock's kernel writes, so it must still
+// see the old `a` (4.9.4): `a` keeps its NBA. `b` and `c` are read only after
+// a delay and become stores.
+
+!bit = !simulation.logic<1>
+!byte = !simulation.logic<8>
+!bitref = !simulation.ref<!bit>
+!byteref = !simulation.ref<!byte>
+module attributes {obelisk.debug.native_timing} {
+  simulation.design @two_clocks {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !bit design
+    simulation.storage.decl 2 in 0 : !byte design
+    simulation.storage.decl 3 in 0 : !byte design
+    simulation.storage.decl 4 in 0 : !byte design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clocks"
+    simulation.code_unit.decl 3 in 0 always_ff hierarchy "count"
+    simulation.code_unit.decl 4 in 0 always_ff hierarchy "cross"
+    simulation.code_unit.decl 5 in 0 initial hierarchy "report"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk0 = simulation.context.storage %ctx[0] : !bitref
+      %clk1 = simulation.context.storage %ctx[1] : !bitref
+      %a = simulation.context.storage %ctx[2] : !byteref
+      %b = simulation.context.storage %ctx[3] : !byteref
+      %c = simulation.context.storage %ctx[4] : !byteref
+      %p0 = simulation.spawn @clocks(%ctx, %clk0, %clk1) : !simulation.context, !bitref, !bitref -> !simulation.process
+      %p1 = simulation.spawn @count(%ctx, %clk0, %a, %c) : !simulation.context, !bitref, !byteref, !byteref -> !simulation.process
+      %p2 = simulation.spawn @cross(%ctx, %clk1, %a, %b) : !simulation.context, !bitref, !byteref, !byteref -> !simulation.process
+      %p3 = simulation.spawn @report(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @clocks(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk0: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %clk1: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.nba.enqueue %one to %clk0 : (!bit, !bitref) -> ()
+      simulation.nba.enqueue %one to %clk1 : (!bit, !bitref) -> ()
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.nba.enqueue %zero to %clk0 : (!bit, !bitref) -> ()
+      simulation.nba.enqueue %zero to %clk1 : (!bit, !bitref) -> ()
+      cf.br ^low
+    }
+    // CHECK-LABEL: simulation.design @two_clocks
+    // CHECK-DAG: simulation.spawn @__obelisk_clocked_0_1_0(
+    // CHECK-DAG: simulation.spawn @__obelisk_clocked_1_1_0(
+    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK: %[[NEXT:.*]] = simulation.logic.binary add
+    // CHECK-NEXT: simulation.nba.enqueue %[[NEXT]]
+    // CHECK-NEXT: simulation.ref.store %[[NEXT]]
+    // CHECK-LABEL: simulation.func private @__obelisk_clocked_1_1_0
+    // CHECK: %[[A:.*]] = simulation.ref.load
+    // CHECK-NEXT: simulation.ref.store %[[A]]
+    // CHECK-NOT: simulation.nba.enqueue
+    // CHECK: cf.br
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1 retained=0
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_1_1_0 members=1 eligible=1 retained=0
+    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
+    simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk0: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %c: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 4 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk0 to ^body : !bitref
+    ^body:
+      %av = simulation.ref.load %a : !byteref -> !byte
+      %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
+      %next = simulation.logic.binary add %av, %one : !byte
+      simulation.nba.enqueue %next to %a : (!byte, !byteref) -> ()
+      simulation.nba.enqueue %next to %c : (!byte, !byteref) -> ()
+      cf.br ^wait
+    }
+    simulation.func private @cross(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk1: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %b: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 4 : i64} {
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk1 to ^body : !bitref
+    ^body:
+      %av = simulation.ref.load %a : !byteref -> !byte
+      simulation.nba.enqueue %av to %b : (!byte, !byteref) -> ()
+      cf.br ^wait
+    }
+    simulation.func @report(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
+      %delay = simulation.time.constant 100
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      %b = simulation.context.storage %ctx[3] : !byteref
+      %c = simulation.context.storage %ctx[4] : !byteref
+      %bv = simulation.ref.load %b : !byteref -> !byte
+      %cv = simulation.ref.load %c : !byteref -> !byte
+      %stdout = arith.constant -2147483647 : i32
+      %format = simulation.bytes.constant "%d %d"
+      simulation.display %ctx to %stdout(%format, %bv, %cv) newline = true radix = <decimal> flags = [0, 0, 0] : !simulation.bytes, !byte, !byte
+      %zero = arith.constant 0 : i32
+      simulation.finish %ctx, %zero
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// `late` waits on `inner`, a copy of `port`, itself a copy of `clk` (23.3.3).
+// It runs after both copies and always reads the new `port`. In a kernel that
+// waits on `clk`, the copy into `port` may not have run yet (4.7), so no
+// member may read any root of its clock class.
+
+!bit = !simulation.logic<1>
+!byte = !simulation.logic<8>
+!bitref = !simulation.ref<!bit>
+!byteref = !simulation.ref<!byte>
+module attributes {obelisk.debug.native_timing} {
+  simulation.design @alias_reader {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !bit design
+    simulation.storage.decl 2 in 0 : !byte design
+    simulation.storage.decl 3 in 0 : !bit design
+    simulation.storage.decl 4 in 0 : !bit design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 port_input hierarchy "copy"
+    simulation.code_unit.decl 4 in 0 always_ff hierarchy "count"
+    simulation.code_unit.decl 5 in 0 always_ff hierarchy "late"
+    simulation.code_unit.decl 6 in 0 initial hierarchy "report"
+    simulation.code_unit.decl 7 in 0 port_input hierarchy "copy_inner"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk = simulation.context.storage %ctx[0] : !bitref
+      %port = simulation.context.storage %ctx[1] : !bitref
+      %a = simulation.context.storage %ctx[2] : !byteref
+      %seen = simulation.context.storage %ctx[3] : !bitref
+      %inner = simulation.context.storage %ctx[4] : !bitref
+      %p0 = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !bitref -> !simulation.process
+      %p1 = simulation.spawn @copy(%ctx, %clk, %port) : !simulation.context, !bitref, !bitref -> !simulation.process
+      %p5 = simulation.spawn @copy_inner(%ctx, %port, %inner) : !simulation.context, !bitref, !bitref -> !simulation.process
+      %p2 = simulation.spawn @count(%ctx, %clk, %a) : !simulation.context, !bitref, !byteref -> !simulation.process
+      %p3 = simulation.spawn @late(%ctx, %inner, %port, %seen) : !simulation.context, !bitref, !bitref, !bitref -> !simulation.process
+      %p4 = simulation.spawn @report(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @clock(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.nba.enqueue %one to %clk : (!bit, !bitref) -> ()
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.nba.enqueue %zero to %clk : (!bit, !bitref) -> ()
+      cf.br ^low
+    }
+    simulation.func @copy(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %port: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 9 : i32, code_unit_id = 3 : i64} {
+      cf.br ^body
+    ^body:
+      %value = simulation.ref.load %clk : !bitref -> !bit
+      simulation.ref.store %value to %port {simulation.continuous_store} : !bit, !bitref
+      simulation.suspend.change %clk to ^body : !bitref
+    }
+    simulation.func @copy_inner(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %port: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %inner: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 4 : i64}) attributes {entry_kind = 9 : i32, code_unit_id = 7 : i64} {
+      cf.br ^body
+    ^body:
+      %value = simulation.ref.load %port : !bitref -> !bit
+      simulation.ref.store %value to %inner {simulation.continuous_store} : !bit, !bitref
+      simulation.suspend.change %port to ^body : !bitref
+    }
+    // CHECK-LABEL: simulation.design @alias_reader
+    // CHECK-NOT: __obelisk_clocked
+    // CHECK: simulation.func private @count
+    // CHECK: simulation.func private @late
+    // REPORT-NOT: obelisk clocked kernel:
+    // REPORT: obelisk clocked kernel rejection: member accesses its clock = 1
+    simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 4 : i64} {
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk to ^body : !bitref
+    ^body:
+      %av = simulation.ref.load %a : !byteref -> !byte
+      %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
+      %next = simulation.logic.binary add %av, %one : !byte
+      simulation.nba.enqueue %next to %a : (!byte, !byteref) -> ()
+      cf.br ^wait
+    }
+    simulation.func private @late(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %inner: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 4 : i64}, %port: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %seen: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 5 : i64} {
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %inner to ^body : !bitref
+    ^body:
+      %pv = simulation.ref.load %port : !bitref -> !bit
+      simulation.nba.enqueue %pv to %seen : (!bit, !bitref) -> ()
+      cf.br ^wait
+    }
+    simulation.func @report(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 6 : i64} {
+      %delay = simulation.time.constant 100
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      %a = simulation.context.storage %ctx[2] : !byteref
+      %seen = simulation.context.storage %ctx[3] : !bitref
+      %av = simulation.ref.load %a : !byteref -> !byte
+      %sv = simulation.ref.load %seen : !bitref -> !bit
+      %stdout = arith.constant -2147483647 : i32
+      %format = simulation.bytes.constant "%d %b"
+      simulation.display %ctx to %stdout(%format, %av, %sv) newline = true radix = <decimal> flags = [0, 0, 0] : !simulation.bytes, !byte, !bit
+      %zero = arith.constant 0 : i32
+      simulation.finish %ctx, %zero
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// `q` has a blocking writer in the kernel, `set`, besides the NBA in
+// `clear`. Their relative order in the slot decides the final `q` (4.9.4
+// applies the NBA after the blocking store), so `q` keeps its NBA. `r` still
+// becomes a store.
+
+!bit = !simulation.logic<1>
+!bitref = !simulation.ref<!bit>
+module attributes {obelisk.debug.native_timing} {
+  simulation.design @mixed_writers {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !bit design
+    simulation.storage.decl 2 in 0 : !bit design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 always_ff hierarchy "clear"
+    simulation.code_unit.decl 4 in 0 always hierarchy "set"
+    simulation.code_unit.decl 5 in 0 initial hierarchy "report"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk = simulation.context.storage %ctx[0] : !bitref
+      %q = simulation.context.storage %ctx[1] : !bitref
+      %r = simulation.context.storage %ctx[2] : !bitref
+      %p0 = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !bitref -> !simulation.process
+      %p1 = simulation.spawn @clear(%ctx, %clk, %q, %r) : !simulation.context, !bitref, !bitref, !bitref -> !simulation.process
+      %p2 = simulation.spawn @set(%ctx, %clk, %q) : !simulation.context, !bitref, !bitref -> !simulation.process
+      %p3 = simulation.spawn @report(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @clock(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.nba.enqueue %one to %clk : (!bit, !bitref) -> ()
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.nba.enqueue %zero to %clk : (!bit, !bitref) -> ()
+      cf.br ^low
+    }
+    // CHECK-LABEL: simulation.design @mixed_writers
+    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK: %[[ZERO:.*]] = simulation.logic.constant false, false
+    // CHECK: simulation.nba.enqueue %[[ZERO]] to %[[Q:arg[0-9]+]]
+    // CHECK-NEXT: simulation.ref.store %[[ZERO]] to %[[R:arg[0-9]+]]
+    // CHECK: simulation.ref.store %{{.*}} to %[[Q]]
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=2 eligible=1 retained=0
+    // REPORT: obelisk clocked kernel rejection: root writers = 1
+    simulation.func private @clear(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk to ^body : !bitref
+    ^body:
+      simulation.nba.enqueue %zero to %q : (!bit, !bitref) -> ()
+      simulation.nba.enqueue %zero to %r : (!bit, !bitref) -> ()
+      cf.br ^wait
+    }
+    simulation.func private @set(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
+      %one = simulation.logic.constant true, false : !bit
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk to ^body : !bitref
+    ^body:
+      simulation.ref.store %one to %q : !bit, !bitref
+      cf.br ^wait
+    }
+    simulation.func @report(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
+      %delay = simulation.time.constant 100
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      %q = simulation.context.storage %ctx[1] : !bitref
+      %r = simulation.context.storage %ctx[2] : !bitref
+      %qv = simulation.ref.load %q : !bitref -> !bit
+      %rv = simulation.ref.load %r : !bitref -> !bit
+      %stdout = arith.constant -2147483647 : i32
+      %format = simulation.bytes.constant "%b %b"
+      simulation.display %ctx to %stdout(%format, %qv, %rv) newline = true radix = <binary> flags = [0, 0, 0] : !simulation.bytes, !bit, !bit
+      %zero = arith.constant 0 : i32
+      simulation.finish %ctx, %zero
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// An NBA to a dynamically selected element stores at its statement as well
+// (4.9.4 evaluates the index there). The later read of another element in
+// the same activation goes through the snapshot of the whole array, with the
+// element view rebuilt on the snapshot.
+
+!byte = !simulation.logic<8>
+!bit = !simulation.logic<1>
+!mem = !simulation.unpacked_array<0 : 3 x !byte>
+!bitref = !simulation.ref<!bit>
+!byteref = !simulation.ref<!byte>
+!memref = !simulation.ref<!mem>
+module attributes {obelisk.debug.native_timing} {
+  simulation.design @dynamic_element {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !mem design
+    simulation.storage.decl 2 in 0 : i64 design
+    simulation.storage.decl 3 in 0 : !byte design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 always_ff hierarchy "write"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "report"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk = simulation.context.storage %ctx[0] : !bitref
+      %mem = simulation.context.storage %ctx[1] : !memref
+      %index = simulation.context.storage %ctx[2] : !simulation.ref<i64>
+      %out = simulation.context.storage %ctx[3] : !byteref
+      %p0 = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !bitref -> !simulation.process
+      %p1 = simulation.spawn @write(%ctx, %clk, %mem, %index, %out) : !simulation.context, !bitref, !memref, !simulation.ref<i64>, !byteref -> !simulation.process
+      %p2 = simulation.spawn @report(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @clock(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.nba.enqueue %one to %clk : (!bit, !bitref) -> ()
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.nba.enqueue %zero to %clk : (!bit, !bitref) -> ()
+      cf.br ^low
+    }
+    // CHECK-LABEL: simulation.design @dynamic_element
+    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK: simulation.suspend.edge posedge %{{.*}} to ^[[START:bb[0-9]+]]
+    // CHECK: ^[[START]]:
+    // CHECK-NEXT: %[[OLD:.*]] = simulation.ref.load %[[MEM:arg[0-9]+]] : !simulation.ref<!simulation.unpacked_array
+    // CHECK-NEXT: %[[SNAP:.*]] = simulation.ref.alloc %[[OLD]]
+    // CHECK: %[[ELEMENT:.*]] = simulation.ref.array_element %[[MEM]][%{{.*}}]
+    // CHECK-NEXT: simulation.ref.store %{{.*}} to %[[ELEMENT]]
+    // CHECK: %[[VIEW:.*]] = simulation.ref.array_element %[[SNAP]][%{{.*}}]
+    // CHECK-NEXT: simulation.ref.load %[[VIEW]]
+    // CHECK-NOT: simulation.nba.enqueue
+    // CHECK: cf.br
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=1
+    simulation.func private @write(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %mem: !memref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %index: !simulation.ref<i64> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %out: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
+      %value = simulation.logic.constant 7 : i8, 0 : i8 : !byte
+      %first = arith.constant 0 : i64
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk to ^body : !bitref
+    ^body:
+      %i = simulation.ref.load %index : !simulation.ref<i64> -> i64
+      %element = simulation.ref.array_element %mem[%i] : (!memref, i64) -> !byteref
+      simulation.nba.enqueue %value to %element : (!byte, !byteref) -> ()
+      %head = simulation.ref.array_element %mem[%first] : (!memref, i64) -> !byteref
+      %hv = simulation.ref.load %head : !byteref -> !byte
+      simulation.nba.enqueue %hv to %out : (!byte, !byteref) -> ()
+      cf.br ^wait
+    }
+    simulation.func @report(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %delay = simulation.time.constant 100
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      %mem = simulation.context.storage %ctx[1] : !memref
+      %out = simulation.context.storage %ctx[3] : !byteref
+      %first = arith.constant 1 : i64
+      %element = simulation.ref.array_element %mem[%first] : (!memref, i64) -> !byteref
+      %ev = simulation.ref.load %element : !byteref -> !byte
+      %ov = simulation.ref.load %out : !byteref -> !byte
+      %stdout = arith.constant -2147483647 : i32
+      %format = simulation.bytes.constant "%d %d"
+      simulation.display %ctx to %stdout(%format, %ev, %ov) newline = true radix = <decimal> flags = [0, 0, 0] : !simulation.bytes, !byte, !byte
+      %zero = arith.constant 0 : i32
+      simulation.finish %ctx, %zero
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// A function called after the NBA reads `q` through the design context. The
+// call needs the old `q` (4.9.4) but cannot be rebased onto a snapshot, so `q`
+// keeps its NBA.
+
+!bit = !simulation.logic<1>
+!bitref = !simulation.ref<!bit>
+module attributes {obelisk.debug.native_timing} {
+  simulation.design @opaque_late_read {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !bit design
+    simulation.storage.decl 2 in 0 : !bit design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 always_ff hierarchy "toggle"
+    simulation.code_unit.decl 4 in 0 function hierarchy "peek"
+    simulation.code_unit.decl 5 in 0 initial hierarchy "report"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk = simulation.context.storage %ctx[0] : !bitref
+      %q = simulation.context.storage %ctx[1] : !bitref
+      %r = simulation.context.storage %ctx[2] : !bitref
+      %p0 = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !bitref -> !simulation.process
+      %p1 = simulation.spawn @toggle(%ctx, %clk, %q, %r) : !simulation.context, !bitref, !bitref, !bitref -> !simulation.process
+      %p2 = simulation.spawn @report(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @clock(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.nba.enqueue %one to %clk : (!bit, !bitref) -> ()
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.nba.enqueue %zero to %clk : (!bit, !bitref) -> ()
+      cf.br ^low
+    }
+    simulation.func @peek(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> !bit attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
+      %q = simulation.context.storage %ctx[1] : !bitref
+      %qv = simulation.ref.load %q : !bitref -> !bit
+      simulation.return %qv : !bit
+    }
+    // CHECK-LABEL: simulation.design @opaque_late_read
+    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK: simulation.nba.enqueue %{{.*}} to %[[Q:arg[0-9]+]]
+    // CHECK-NEXT: %[[OLD:.*]] = simulation.call @peek
+    // CHECK-NEXT: simulation.ref.store %[[OLD]] to %{{.*}}
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=1 snapshots=0
+    simulation.func private @toggle(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk to ^body : !bitref
+    ^body:
+      %old = simulation.ref.load %q : !bitref -> !bit
+      %next = simulation.logic.unary logical_not %old : (!bit) -> !bit
+      simulation.nba.enqueue %next to %q : (!bit, !bitref) -> ()
+      %seen = simulation.call @peek(%ctx) : (!simulation.context) -> !bit
+      simulation.nba.enqueue %seen to %r : (!bit, !bitref) -> ()
+      cf.br ^wait
+    }
+    simulation.func @report(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
+      %delay = simulation.time.constant 100
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      %q = simulation.context.storage %ctx[1] : !bitref
+      %r = simulation.context.storage %ctx[2] : !bitref
+      %qv = simulation.ref.load %q : !bitref -> !bit
+      %rv = simulation.ref.load %r : !bitref -> !bit
+      %stdout = arith.constant -2147483647 : i32
+      %format = simulation.bytes.constant "%b %b"
+      simulation.display %ctx to %stdout(%format, %qv, %rv) newline = true radix = <binary> flags = [0, 0, 0] : !simulation.bytes, !bit, !bit
+      %zero = arith.constant 0 : i32
+      simulation.finish %ctx, %zero
+      simulation.return
+    }
+  }
+}

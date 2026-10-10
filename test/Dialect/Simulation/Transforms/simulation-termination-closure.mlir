@@ -28,8 +28,10 @@ module {
     }
     // CHECK-LABEL: simulation.func @polls
     // CHECK: simulation.termination.requested
+    // The cleared poll's branch is folded away; the poll after the writer
+    // remains.
     // CHECK: simulation.call @helper
-    // CHECK: arith.constant false
+    // CHECK-NOT: simulation.termination.requested
     // CHECK: simulation.call @writer
     // CHECK: simulation.termination.requested
     simulation.func @polls(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {

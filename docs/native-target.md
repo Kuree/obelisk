@@ -691,6 +691,50 @@ failed guards leave work pending for canonical commit. Each NBA barrier
 remains distinct, including repeated Active/NBA iterations within one time
 slot (IEEE 1800-2023 4.3–4.6, 4.9.4, 9.4.2 and 10.4.2).
 
+### Clocked kernels and direct NBA stores
+
+With VPI off, `obelisk-sim-fuse-clocked-kernels` runs after the first compute
+graph and fuses every root-started, single-edge `always`/`always_ff` process
+of one clock alias class and edge into a single activation, across instances.
+The Active events woken by one edge may be taken in any order (4.4.2.2, 4.7),
+and a proven port copy changes its destination in the same phase as its
+source (23.3.3, 4.9.1), so members waiting on different copies of one clock
+can share the activation.
+
+Inside the kernel an NBA becomes a store at its statement when the store is
+invisible until the NBA region would have applied it (4.3):
+
+- every read of the root that the kernel can execute after one of its NBA
+  sites reads a snapshot taken when the activation starts (a dense forward
+  analysis of the roots an earlier NBA of the activation may target);
+  members are ordered so that readers of a root precede its writers where
+  the source allows it;
+- the kernel's NBA sites are the root's only writers, apart from static
+  initialization and activations that cannot share the kernel's phase;
+- every process waiting on the root, transitively through its writes, is a
+  side-effect-free combinational process (glitch insensitivity), so no edge,
+  level, event or toggle observer can see the early update;
+- no activation that may share the kernel's phase reads or writes the root
+  or anything in its combinational cone.
+
+Phases come from `ActivationPhaseAnalysis`, a dense forward dataflow over every
+process and task with lattice anchors for root changes and process starts. It
+numbers the Active passes of a time slot by the NBA regions before them (4.5)
+and tracks the time-zero slot separately from later slots: a positive delay
+resumes in phase 1 of a later slot, a blocking update wakes in the writer's
+phase, an NBA one phase later, and a zero or unknown delay in any phase. Two
+activations can interleave only when their phases meet. Roots that fail a
+condition keep their NBA and its commit; the remaining statements retain their
+source order (4.6) and NBA execution order (4.6(b)).
+
+The kernel never suspends between members; 4.7 permits but does not require
+interleaving other processes there. `$monitor` and `$strobe` print in the
+Observed and Postponed regions (21.2.2, 21.2.3), and a VCD dump records the
+values each time increment ends with (21.7.2.1), so the earlier store is not
+visible to them. VPI value-change callbacks could see it, so the pass needs
+VPI off. It leaves designs with `force`, procedural `assign` or DPI calls
+unchanged.
+
 `-c` always emits a conventional native ELF relocatable, independent of the
 optimization level. Executable links disable LTO by default:
 

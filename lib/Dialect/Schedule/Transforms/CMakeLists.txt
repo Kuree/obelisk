@@ -1,6 +1,7 @@
 add_mlir_library(ObeliskScheduleTransforms
   PARTIAL_SOURCES_INTENDED
   ComputeFusion.cpp
+  FuseClockedKernels.cpp
   FuseComputeFragments.cpp
   LowerConditionalReferenceAccesses.cpp
   MaterializeComputeFusion.cpp

@@ -5,8 +5,11 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/DemandedBitAnalysis.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
@@ -177,6 +180,7 @@ void simplifyTerminationPolls(
             solver.getProgramPointBefore(poll));
         state && state->reachable && !state->mayTerminate)
       redundant.push_back(poll);
+  SmallVector<Operation *> branches;
   for (auto poll : redundant) {
     OpBuilder builder(poll);
     Value clear =
@@ -184,7 +188,21 @@ void simplifyTerminationPolls(
                                   builder.getBoolAttr(false));
     poll.replaceAllUsesWith(clear);
     poll.erase();
+    for (Operation *user : clear.getUsers())
+      if (isa<cf::CondBranchOp>(user))
+        branches.push_back(user);
   }
+  if (branches.empty())
+    return;
+  // Canonicalize the branches on the cleared polls now. The private-storage
+  // promotion below proves activation shapes on this same CFG, and a return
+  // left behind a constant-false edge is not an exit of the process.
+  RewritePatternSet patterns(function.getContext());
+  cf::CondBranchOp::getCanonicalizationPatterns(patterns,
+                                                function.getContext());
+  (void)applyOpPatternsGreedily(branches, std::move(patterns));
+  IRRewriter rewriter(function.getContext());
+  (void)eraseUnreachableBlocks(rewriter, function.getBody());
 }
 
 /// A private subroutine may inherit the scheduler's clear finish latch only

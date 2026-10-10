@@ -91,14 +91,15 @@ public:
   /// transparent combinational observers for every written range.
   bool canReorder(llvm::ArrayRef<sim::SimFuncOp> functions,
                   CombinationalFusionFailure *failureReason = nullptr) const;
-
-private:
   /// Storage roots whose intermediate values no user-visible observer can
   /// see: invisible state whose every waiting process is a side-effect-free
   /// combinational activation (complete writes, final-output independence or
   /// a path-proven idempotent transition) writing only such roots. Greatest
-  /// fixpoint, computed on first use.
+  /// fixpoint, computed on first use. Net roots carry the activation-memory
+  /// net tag.
   const llvm::DenseSet<uint64_t> &getGlitchInsensitiveStorage() const;
+
+private:
   bool unsupported = false;
   sim::SimDesignOp design;
   const analysis::HandleDataflowAnalysis *provenance = nullptr;

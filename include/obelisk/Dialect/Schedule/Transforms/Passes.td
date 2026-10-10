@@ -109,6 +109,25 @@ def ObeliskSimFuseComputeFragmentsPass
   ];
 }
 
+def ObeliskSimFuseClockedKernelsPass
+    : Pass<"obelisk-sim-fuse-clocked-kernels", "obelisk::sim::SimDesignOp"> {
+  let summary = "Run each clock edge's processes as one activation with direct NBA stores";
+  let description = [{
+    Fuses the root-spawned edge-triggered processes of one clock alias class
+    and edge, across instances, into a single activation. Inside it, an NBA
+    whose root is written only there, is observed only by side-effect-free
+    combinational processes, and is not accessed by any activation that can
+    run between the kernel and the NBA region becomes a store at its
+    statement; reads after the store use a snapshot of the incoming value.
+    Requires VPI off and a single worker; invalidates the compute graph when
+    it changes the design.
+  }];
+  let dependentDialects = [
+    "obelisk::sim::ObeliskSimulationDialect",
+    "mlir::cf::ControlFlowDialect"
+  ];
+}
+
 def PlanCombinationalStatementsPass
     : Pass<"schedule-plan-combinational-statements", "obelisk::sim::SimDesignOp"> {
   let summary = "Plan source-ordered DAGs across combinational process boundaries";
