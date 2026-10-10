@@ -9,6 +9,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
@@ -26,6 +27,14 @@ struct PendingRoot {
   uint32_t region;
   bool transient;
   std::string accumulator;
+  uint64_t bitmapOffset = 0;
+  uint64_t payloadOffset = 0;
+};
+
+struct PendingWord {
+  uint32_t canonicalWord;
+  uint64_t offset, mask = 0;
+  SmallVector<unsigned> roots;
 };
 
 struct Address {
@@ -96,9 +105,16 @@ void store(OpBuilder &builder, Location loc, Value frame, uint64_t offset,
 }
 
 uint64_t field(const PendingRoot &root, unsigned lane) {
-  // One readiness word, then only the scalar value/XZ/transient fields that
-  // exist in this bounded transaction. No whole-root or model-wide copy.
-  return 8 + uint64_t{root.ordinal} * 24 + lane * 8;
+  return root.payloadOffset + lane * 8;
+}
+
+Value pendingBits(OpBuilder &builder, Location loc, Value frame,
+                  ArrayRef<PendingWord> words) {
+  Value bits = constant(builder, loc, 0);
+  for (const auto &word : words)
+    bits = LLVM::OrOp::create(builder, loc, bits,
+                              load(builder, loc, frame, word.offset));
+  return bits;
 }
 
 Value selected(OpBuilder &builder, Location loc, Value bits,
@@ -121,223 +137,233 @@ Value selected(OpBuilder &builder, Location loc, Value bits,
 // than replaying producers (LRM 4.6(b), 4.9.4, 10.4.2). Packed CURRENT state
 // remains handled by its existing publication proof; this is PENDING state.
 void transfer(OpBuilder &builder, Location loc, Value frame,
-              ArrayRef<PendingRoot> roots, uint64_t mask, bool exporting,
-              bool writable) {
-  uint64_t scope = 0;
-  for (const auto &root : roots)
-    if (mask & (uint64_t{1} << root.ordinal))
-      scope |= uint64_t{1} << (root.root % 64);
-  if (!scope)
-    return;
-  Value available;
-  if (exporting) {
-    available = load(builder, loc, frame, 0);
-  } else {
-    Value dirty = LLVM::AddressOfOp::create(
-        builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-        dirtyName);
-    available = LLVM::LoadOp::create(
-        builder, loc, builder.getI64Type(),
-        byteGEP(builder, loc, dirty, uint64_t{roots.front().root / 64} * 8), 8);
-  }
-  Value any =
-      LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne,
-                           LLVM::AndOp::create(builder, loc, available,
-                                               constant(builder, loc, scope)),
-                           constant(builder, loc, 0));
-  Block *entry = builder.getInsertionBlock();
-  Block *done = entry->splitBlock(builder.getInsertionPoint());
-  Block *body = new Block;
-  entry->getParent()->getBlocks().insert(Region::iterator(done), body);
-  builder.setInsertionPointToEnd(entry);
-  LLVM::CondBrOp::create(builder, loc, any, body, ValueRange{}, done,
-                         ValueRange{});
-  builder.setInsertionPointToStart(body);
-  for (const auto &root : roots) {
-    if (!(mask & (uint64_t{1} << root.ordinal)))
+              ArrayRef<PendingRoot> roots, ArrayRef<PendingWord> words,
+              const llvm::SmallBitVector &mask, bool exporting, bool writable) {
+  // Each sparse word has its own empty fast path. Preserve source bit
+  // positions and transfer only this function's closure, without imposing a
+  // model-wide root count or permuting the logical readiness index.
+  for (const auto &word : words) {
+    uint64_t scope = 0;
+    for (unsigned ordinal : word.roots) {
+      const auto &root = roots[ordinal];
+      if (mask.test(root.ordinal))
+        scope |= uint64_t{1} << (root.root % 64);
+    }
+    if (!scope)
       continue;
-    Value dirty = LLVM::AddressOfOp::create(
-        builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-        dirtyName);
-    Value leaf = byteGEP(builder, loc, dirty, uint64_t{root.root / 64} * 8);
-    Value bits = exporting ? load(builder, loc, frame, 0)
-                           : LLVM::LoadOp::create(builder, loc,
-                                                  builder.getI64Type(), leaf, 8)
-                                 .getResult();
-    unsigned bit = root.root % 64;
-    Value present = LLVM::ICmpOp::create(
-        builder, loc, LLVM::ICmpPredicate::ne,
-        LLVM::AndOp::create(builder, loc, bits,
-                            constant(builder, loc, uint64_t{1} << bit)),
-        constant(builder, loc, 0));
-    Block *head = builder.getInsertionBlock();
-    Block *tail = head->splitBlock(builder.getInsertionPoint());
-    Block *copy = new Block;
-    head->getParent()->getBlocks().insert(Region::iterator(tail), copy);
-    builder.setInsertionPointToEnd(head);
-    LLVM::CondBrOp::create(builder, loc, present, copy, ValueRange{}, tail,
-                           ValueRange{});
-    builder.setInsertionPointToStart(copy);
-    Value accumulator = LLVM::AddressOfOp::create(
-        builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-        root.accumulator);
-    if (!exporting) {
-      Value contextAddress = LLVM::AddressOfOp::create(
-          builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-          "__obelisk_current_context");
-      Value runtimeContext = LLVM::LoadOp::create(
-          builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-          contextAddress, 8);
-      Value allowed =
-          LLVM::CallOp::create(
-              builder, loc, TypeRange{builder.getI32Type()},
-              writable ? "obelisk_rt_v1_static_nba_specialization_guard_write"
-                       : "obelisk_rt_v1_static_nba_specialization_guard",
-              ValueRange{
-                  runtimeContext,
-                  llvmConstant(builder, loc, builder.getI32Type(), root.root)})
-              .getResult();
-      Value valid = LLVM::LoadOp::create(
-          builder, loc, builder.getI32Type(),
-          byteGEP(builder, loc, accumulator,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
-          4);
-      Value generated = LLVM::ICmpOp::create(
-          builder, loc, LLVM::ICmpPredicate::ne,
-          LLVM::AndOp::create(builder, loc, allowed, valid),
-          llvmConstant(builder, loc, builder.getI32Type(), 0));
-      Value region = LLVM::LoadOp::create(
-          builder, loc, builder.getI32Type(),
-          byteGEP(
-              builder, loc, accumulator,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
-          4);
-      Value capturedMask = LLVM::LoadOp::create(
-          builder, loc, builder.getI64Type(),
-          byteGEP(
-              builder, loc, accumulator,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
-          8);
-      generated = LLVM::AndOp::create(
-          builder, loc, generated,
-          LLVM::AndOp::create(
-              builder, loc,
-              LLVM::ICmpOp::create(
-                  builder, loc, LLVM::ICmpPredicate::eq, region,
-                  llvmConstant(builder, loc, builder.getI32Type(),
-                               root.region)),
-              LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq,
-                                   capturedMask,
-                                   constant(builder, loc, root.mask))));
-      // The leaf bit also covers runtime/ordered captures. Leave those forms
-      // addressable for the common NBA prefix; importing their bit alone
-      // would consume work without its captured payload (LRM 4.9.4/10.4.2).
-      Block *adopt = new Block;
-      copy->getParent()->getBlocks().insert(Region::iterator(tail), adopt);
-      LLVM::CondBrOp::create(builder, loc, generated, adopt, ValueRange{}, tail,
-                             ValueRange{});
-      builder.setInsertionPointToStart(adopt);
-    }
-    constexpr uint64_t offsets[] = {
-        offsetof(obelisk_rt_generated_nba_accumulator_256, value),
-        offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
-        offsetof(obelisk_rt_generated_nba_accumulator_256, transient)};
-    for (unsigned lane = 0; lane != 3; ++lane) {
-      if (lane == 2 && !root.transient)
-        continue;
-      Value canonical = byteGEP(builder, loc, accumulator, offsets[lane]);
-      if (exporting)
-        LLVM::StoreOp::create(builder, loc,
-                              load(builder, loc, frame, field(root, lane)),
-                              canonical, 8);
-      else
-        store(builder, loc, frame, field(root, lane),
-              LLVM::LoadOp::create(builder, loc, builder.getI64Type(),
-                                   canonical, 8));
-    }
+    Value available;
     if (exporting) {
-      LLVM::StoreOp::create(
-          builder, loc, constant(builder, loc, root.mask),
-          byteGEP(
-              builder, loc, accumulator,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
-          8);
-      LLVM::StoreOp::create(
-          builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 1),
-          byteGEP(builder, loc, accumulator,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
-          4);
-      LLVM::StoreOp::create(
-          builder, loc,
-          llvmConstant(builder, loc, builder.getI32Type(), root.region),
-          byteGEP(
-              builder, loc, accumulator,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
-          4);
-      Value old =
-          LLVM::LoadOp::create(builder, loc, builder.getI64Type(), leaf, 8);
-      LLVM::StoreOp::create(
-          builder, loc,
-          LLVM::OrOp::create(
-              builder, loc, old,
-              constant(builder, loc, uint64_t{1} << (root.root % 64))),
-          leaf, 8);
-      Value summary = LLVM::AddressOfOp::create(
+      available = load(builder, loc, frame, word.offset);
+    } else {
+      Value dirty = LLVM::AddressOfOp::create(
           builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-          summaryName);
-      Value page =
-          byteGEP(builder, loc, summary, uint64_t{root.root / 4096} * 8);
-      Value oldPage =
-          LLVM::LoadOp::create(builder, loc, builder.getI64Type(), page, 8);
-      LLVM::StoreOp::create(
-          builder, loc,
-          LLVM::OrOp::create(
-              builder, loc, oldPage,
-              constant(builder, loc, uint64_t{1} << ((root.root / 64) % 64))),
-          page, 8);
-      store(builder, loc, frame, 0,
+          dirtyName);
+      available = LLVM::LoadOp::create(
+          builder, loc, builder.getI64Type(),
+          byteGEP(builder, loc, dirty, uint64_t{word.canonicalWord} * 8), 8);
+    }
+    Value any =
+        LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne,
+                             LLVM::AndOp::create(builder, loc, available,
+                                                 constant(builder, loc, scope)),
+                             constant(builder, loc, 0));
+    Block *entry = builder.getInsertionBlock();
+    Block *done = entry->splitBlock(builder.getInsertionPoint());
+    Block *body = new Block;
+    entry->getParent()->getBlocks().insert(Region::iterator(done), body);
+    builder.setInsertionPointToEnd(entry);
+    LLVM::CondBrOp::create(builder, loc, any, body, ValueRange{}, done,
+                           ValueRange{});
+    builder.setInsertionPointToStart(body);
+    for (unsigned ordinal : word.roots) {
+      const auto &root = roots[ordinal];
+      if (!mask.test(root.ordinal))
+        continue;
+      Value dirty = LLVM::AddressOfOp::create(
+          builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
+          dirtyName);
+      Value leaf = byteGEP(builder, loc, dirty, uint64_t{root.root / 64} * 8);
+      Value bits = exporting ? load(builder, loc, frame, word.offset)
+                             : LLVM::LoadOp::create(
+                                   builder, loc, builder.getI64Type(), leaf, 8)
+                                   .getResult();
+      unsigned bit = root.root % 64;
+      Value present = LLVM::ICmpOp::create(
+          builder, loc, LLVM::ICmpPredicate::ne,
+          LLVM::AndOp::create(builder, loc, bits,
+                              constant(builder, loc, uint64_t{1} << bit)),
+          constant(builder, loc, 0));
+      Block *head = builder.getInsertionBlock();
+      Block *tail = head->splitBlock(builder.getInsertionPoint());
+      Block *copy = new Block;
+      head->getParent()->getBlocks().insert(Region::iterator(tail), copy);
+      builder.setInsertionPointToEnd(head);
+      LLVM::CondBrOp::create(builder, loc, present, copy, ValueRange{}, tail,
+                             ValueRange{});
+      builder.setInsertionPointToStart(copy);
+      Value accumulator = LLVM::AddressOfOp::create(
+          builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
+          root.accumulator);
+      if (!exporting) {
+        Value contextAddress = LLVM::AddressOfOp::create(
+            builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
+            "__obelisk_current_context");
+        Value runtimeContext = LLVM::LoadOp::create(
+            builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
+            contextAddress, 8);
+        Value allowed =
+            LLVM::CallOp::create(
+                builder, loc, TypeRange{builder.getI32Type()},
+                writable ? "obelisk_rt_v1_static_nba_specialization_guard_write"
+                         : "obelisk_rt_v1_static_nba_specialization_guard",
+                ValueRange{runtimeContext,
+                           llvmConstant(builder, loc, builder.getI32Type(),
+                                        root.root)})
+                .getResult();
+        Value valid = LLVM::LoadOp::create(
+            builder, loc, builder.getI32Type(),
+            byteGEP(builder, loc, accumulator,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            4);
+        Value generated = LLVM::ICmpOp::create(
+            builder, loc, LLVM::ICmpPredicate::ne,
+            LLVM::AndOp::create(builder, loc, allowed, valid),
+            llvmConstant(builder, loc, builder.getI32Type(), 0));
+        Value region = LLVM::LoadOp::create(
+            builder, loc, builder.getI32Type(),
+            byteGEP(builder, loc, accumulator,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256,
+                             exec_region)),
+            4);
+        Value capturedMask = LLVM::LoadOp::create(
+            builder, loc, builder.getI64Type(),
+            byteGEP(
+                builder, loc, accumulator,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+            8);
+        generated = LLVM::AndOp::create(
+            builder, loc, generated,
+            LLVM::AndOp::create(
+                builder, loc,
+                LLVM::ICmpOp::create(
+                    builder, loc, LLVM::ICmpPredicate::eq, region,
+                    llvmConstant(builder, loc, builder.getI32Type(),
+                                 root.region)),
+                LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq,
+                                     capturedMask,
+                                     constant(builder, loc, root.mask))));
+        // The leaf bit also covers runtime/ordered captures. Leave those forms
+        // addressable for the common NBA prefix; importing their bit alone
+        // would consume work without its captured payload (LRM 4.9.4/10.4.2).
+        Block *adopt = new Block;
+        copy->getParent()->getBlocks().insert(Region::iterator(tail), adopt);
+        LLVM::CondBrOp::create(builder, loc, generated, adopt, ValueRange{},
+                               tail, ValueRange{});
+        builder.setInsertionPointToStart(adopt);
+      }
+      constexpr uint64_t offsets[] = {
+          offsetof(obelisk_rt_generated_nba_accumulator_256, value),
+          offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+          offsetof(obelisk_rt_generated_nba_accumulator_256, transient)};
+      for (unsigned lane = 0; lane != 3; ++lane) {
+        if (lane == 2 && !root.transient)
+          continue;
+        Value canonical = byteGEP(builder, loc, accumulator, offsets[lane]);
+        if (exporting)
+          LLVM::StoreOp::create(builder, loc,
+                                load(builder, loc, frame, field(root, lane)),
+                                canonical, 8);
+        else
+          store(builder, loc, frame, field(root, lane),
+                LLVM::LoadOp::create(builder, loc, builder.getI64Type(),
+                                     canonical, 8));
+      }
+      if (exporting) {
+        LLVM::StoreOp::create(
+            builder, loc, constant(builder, loc, root.mask),
+            byteGEP(
+                builder, loc, accumulator,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+            8);
+        LLVM::StoreOp::create(
+            builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 1),
+            byteGEP(builder, loc, accumulator,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            4);
+        LLVM::StoreOp::create(
+            builder, loc,
+            llvmConstant(builder, loc, builder.getI32Type(), root.region),
+            byteGEP(builder, loc, accumulator,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256,
+                             exec_region)),
+            4);
+        Value old =
+            LLVM::LoadOp::create(builder, loc, builder.getI64Type(), leaf, 8);
+        LLVM::StoreOp::create(
+            builder, loc,
+            LLVM::OrOp::create(
+                builder, loc, old,
+                constant(builder, loc, uint64_t{1} << (root.root % 64))),
+            leaf, 8);
+        Value summary = LLVM::AddressOfOp::create(
+            builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
+            summaryName);
+        Value page =
+            byteGEP(builder, loc, summary, uint64_t{root.root / 4096} * 8);
+        Value oldPage =
+            LLVM::LoadOp::create(builder, loc, builder.getI64Type(), page, 8);
+        LLVM::StoreOp::create(
+            builder, loc,
+            LLVM::OrOp::create(
+                builder, loc, oldPage,
+                constant(builder, loc, uint64_t{1} << ((root.root / 64) % 64))),
+            page, 8);
+        store(
+            builder, loc, frame, word.offset,
             LLVM::AndOp::create(builder, loc, bits,
                                 constant(builder, loc, ~(uint64_t{1} << bit))));
-      if (root.transient)
-        store(builder, loc, frame, field(root, 2), constant(builder, loc, 0));
-    } else {
-      // Adoption transfers ownership, not just the index bit. Runtime
-      // snapshots and generated knownness predicates also inspect validity
-      // directly. A stale canonical valid/mask could republish this capture
-      // after the private consumer commits it (LRM 4.9.4/10.4.2).
-      LLVM::StoreOp::create(
-          builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 0),
-          byteGEP(builder, loc, accumulator,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
-          4);
-      LLVM::StoreOp::create(
-          builder, loc, constant(builder, loc, 0),
-          byteGEP(
-              builder, loc, accumulator,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
-          8);
-      if (root.transient)
+        if (root.transient)
+          store(builder, loc, frame, field(root, 2), constant(builder, loc, 0));
+      } else {
+        // Adoption transfers ownership, not just the index bit. Runtime
+        // snapshots and generated knownness predicates also inspect validity
+        // directly. A stale canonical valid/mask could republish this capture
+        // after the private consumer commits it (LRM 4.9.4/10.4.2).
+        LLVM::StoreOp::create(
+            builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 0),
+            byteGEP(builder, loc, accumulator,
+                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            4);
         LLVM::StoreOp::create(
             builder, loc, constant(builder, loc, 0),
             byteGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, transient)),
+                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
             8);
-      LLVM::StoreOp::create(
-          builder, loc,
-          LLVM::AndOp::create(
-              builder, loc, bits,
-              constant(builder, loc, ~(uint64_t{1} << (root.root % 64)))),
-          leaf, 8);
-      store(builder, loc, frame, 0,
-            LLVM::OrOp::create(builder, loc, load(builder, loc, frame, 0),
-                               constant(builder, loc, uint64_t{1} << bit)));
+        if (root.transient)
+          LLVM::StoreOp::create(
+              builder, loc, constant(builder, loc, 0),
+              byteGEP(builder, loc, accumulator,
+                      offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               transient)),
+              8);
+        LLVM::StoreOp::create(
+            builder, loc,
+            LLVM::AndOp::create(
+                builder, loc, bits,
+                constant(builder, loc, ~(uint64_t{1} << (root.root % 64)))),
+            leaf, 8);
+        store(builder, loc, frame, word.offset,
+              LLVM::OrOp::create(builder, loc,
+                                 load(builder, loc, frame, word.offset),
+                                 constant(builder, loc, uint64_t{1} << bit)));
+      }
+      LLVM::BrOp::create(builder, loc, ValueRange{}, tail);
+      builder.setInsertionPointToStart(tail);
     }
-    LLVM::BrOp::create(builder, loc, ValueRange{}, tail);
-    builder.setInsertionPointToStart(tail);
+    LLVM::BrOp::create(builder, loc, ValueRange{}, done);
+    builder.setInsertionPointToStart(done);
   }
-  LLVM::BrOp::create(builder, loc, ValueRange{}, done);
-  builder.setInsertionPointToStart(done);
 }
 
 ArrayAttr extendArgAttrs(MLIRContext *context, ArrayAttr original, unsigned n) {
@@ -345,9 +371,18 @@ ArrayAttr extendArgAttrs(MLIRContext *context, ArrayAttr original, unsigned n) {
   if (original)
     llvm::append_range(attrs, original.getValue());
   attrs.resize(n, DictionaryAttr::get(context));
+  // Generated cores use this activation-local pointer only for frame accesses
+  // and forwarding to other cores. Opaque cuts receive canonical captured
+  // operands. Publish the nonescaping contract across LLVM partitions so those
+  // calls do not force private readiness/payload words back into memory.
   attrs.push_back(DictionaryAttr::get(
-      context, {NamedAttribute(StringAttr::get(context, "llvm.noalias"),
-                               UnitAttr::get(context))}));
+      context,
+      {NamedAttribute(
+           StringAttr::get(context, LLVM::LLVMDialect::getNoAliasAttrName()),
+           UnitAttr::get(context)),
+       NamedAttribute(
+           StringAttr::get(context, LLVM::LLVMDialect::getNoCaptureAttrName()),
+           UnitAttr::get(context))}));
   return ArrayAttr::get(context, attrs);
 }
 
@@ -529,20 +564,27 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                        read.getOrdering() == LLVM::AtomicOrdering::not_atomic
                  : !write.getVolatile_() &&
                        write.getOrdering() == LLVM::AtomicOrdering::not_atomic;
+        bool index = name == dirtyName || name == summaryName;
         bool word =
-            at->offset ==
-                offsetof(obelisk_rt_generated_nba_accumulator_256, value) ||
-            at->offset ==
-                offsetof(obelisk_rt_generated_nba_accumulator_256, unknown) ||
-            at->offset == offsetof(obelisk_rt_generated_nba_accumulator_256,
-                                   write_mask) ||
-            at->offset ==
-                offsetof(obelisk_rt_generated_nba_accumulator_256, transient);
+            index ? at->offset % 8 == 0
+                  : at->offset ==
+                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                     value) ||
+                        at->offset ==
+                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                     unknown) ||
+                        at->offset ==
+                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                     write_mask) ||
+                        at->offset ==
+                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                     transient);
         bool flag =
-            at->offset ==
-                offsetof(obelisk_rt_generated_nba_accumulator_256, valid) ||
-            at->offset ==
-                offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region);
+            !index &&
+            (at->offset ==
+                 offsetof(obelisk_rt_generated_nba_accumulator_256, valid) ||
+             at->offset == offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                    exec_region));
         memory.exact &=
             (word && type.isInteger(64)) || (flag && type.isInteger(32));
       } else if (auto call = dyn_cast<LLVM::CallOp>(nested)) {
@@ -555,11 +597,14 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
       }
     });
   }
+  // Dynamic or escaping readiness addresses cannot be projected onto the
+  // private sparse index. Retain one canonical owner rather than localizing
+  // only the visible constant-offset queries (LRM 4.9.4/10.4.2).
+  for (StringRef name : {StringRef(dirtyName), StringRef(summaryName)})
+    if (auto memory = memoryInventory.find(name);
+        memory != memoryInventory.end() && !memory->second.exact)
+      return success();
   SmallVector<PendingRoot> candidates;
-  DenseMap<uint32_t, unsigned> wordCounts;
-  // This bound controls scratch and wrapper growth, not semantic admission.
-  // Larger roots stay on their addressable canonical path without copying.
-  constexpr unsigned maxRoots = 16;
   for (Attribute raw : certificate) {
     auto record = dyn_cast<DictionaryAttr>(raw);
     auto info =
@@ -600,32 +645,38 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                           static_cast<uint64_t>(lowered.target[3]),
                           static_cast<uint32_t>(data[6]), bool(data[7]),
                           name.getValue().str()});
-    ++wordCounts[candidates.back().root / 64];
   }
-  // Retain source bit positions in one dense dirty word. Readiness tests and
-  // barrier claims then need one mask/OR rather than a per-root permutation.
-  uint32_t bestWord = UINT32_MAX;
-  unsigned bestCount = 0;
-  for (auto [word, count] : wordCounts)
-    if (count > bestCount || (count == bestCount && word < bestWord)) {
-      bestWord = word;
-      bestCount = count;
-    }
-  SmallVector<PendingRoot> roots;
-  llvm::StringMap<unsigned> byAccumulator;
-  DenseMap<uint32_t, unsigned> byRoot;
-  for (auto root : candidates) {
-    if (root.root / 64 != bestWord)
-      continue;
-    root.ordinal = roots.size();
-    byAccumulator.try_emplace(root.accumulator, root.ordinal);
-    byRoot.try_emplace(root.root, root.ordinal);
-    roots.push_back(std::move(root));
-    if (roots.size() == maxRoots)
-      break;
-  }
+  // Admit the complete proved set. Scratch is proportional to admitted scalar
+  // payloads, and wrappers/word transfers use each function's transitive scope.
+  // The readiness layout is sparse in canonical words; gaps cost no storage.
+  SmallVector<PendingRoot> roots = candidates;
+  llvm::sort(roots,
+             [](const auto &a, const auto &b) { return a.root < b.root; });
   if (roots.empty())
     return success();
+  SmallVector<PendingWord> words;
+  DenseMap<uint32_t, unsigned> byWord;
+  llvm::StringMap<unsigned> byAccumulator;
+  DenseMap<uint32_t, unsigned> byRoot;
+  for (auto [ordinal, root] : llvm::enumerate(roots)) {
+    root.ordinal = ordinal;
+    uint32_t canonicalWord = root.root / 64;
+    if (words.empty() || words.back().canonicalWord != canonicalWord) {
+      byWord.try_emplace(canonicalWord, words.size());
+      words.push_back({canonicalWord, words.size() * 8});
+    }
+    auto &word = words.back();
+    root.bitmapOffset = word.offset;
+    word.mask |= uint64_t{1} << (root.root % 64);
+    word.roots.push_back(ordinal);
+    byAccumulator.try_emplace(root.accumulator, root.ordinal);
+    byRoot.try_emplace(root.root, root.ordinal);
+  }
+  uint64_t frameBytes = words.size() * 8;
+  for (auto &root : roots) {
+    root.payloadOffset = frameBytes;
+    frameBytes += root.transient ? 24 : 16;
+  }
 
   // Freeze the transitive pure-call inventory before moving bodies. Outlined
   // computation is not itself a publication cut; an opaque descendant is.
@@ -664,13 +715,21 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                    << " sites=" << externalCuts.lookup(name) << '\n';
   }
 
-  DenseMap<Operation *, uint64_t> masks;
+  DenseMap<Operation *, llvm::SmallBitVector> masks;
   DenseMap<Operation *, SmallVector<Operation *>> callers;
   for (Operation *operation : reachable) {
     auto function = cast<LLVM::LLVMFuncOp>(operation);
+    auto &scope = masks.try_emplace(operation, roots.size()).first->second;
     if (function.isVarArg() || function.getCConv() != LLVM::CConv::C)
       return success();
     function.walk([&](Operation *nested) {
+      for (auto role :
+           {schedule::get<schedule::Field::EvalPendingDirtyRoot>(nested),
+            schedule::get<schedule::Field::EvalPendingSummaryRoot>(nested)})
+        if (role)
+          if (auto root = byRoot.find(role.getValue().getZExtValue());
+              root != byRoot.end())
+            scope.set(root->second);
       if (auto call = dyn_cast<LLVM::CallOp>(nested)) {
         if (call.getCallee())
           if (auto callee = functions.lookup(*call.getCallee()))
@@ -683,20 +742,53 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
       else if (auto write = dyn_cast<LLVM::StoreOp>(nested))
         pointer = write.getAddr();
       if (pointer)
-        if (auto at = address(pointer))
+        if (auto at = address(pointer)) {
           if (auto root = byAccumulator.find(at->global);
               root != byAccumulator.end())
-            masks[operation] |= uint64_t{1} << root->second;
+            scope.set(root->second);
+          // Untagged logical index queries can select private captures even
+          // when this function has no direct accumulator access. Tagged
+          // producers for canonical roots keep their canonical RMW interface.
+          if (schedule::has<schedule::Field::EvalPendingRuntimeRoot>(nested))
+            return;
+          if (at->global == dirtyName &&
+              !schedule::has<schedule::Field::EvalPendingDirtyRoot>(nested)) {
+            if (auto word = byWord.find(at->offset / 8); word != byWord.end())
+              for (unsigned ordinal : words[word->second].roots)
+                scope.set(ordinal);
+          } else if (at->global == summaryName &&
+                     !schedule::has<schedule::Field::EvalPendingSummaryRoot>(
+                         nested)) {
+            for (const auto &word : words)
+              if (word.canonicalWord / 64 == at->offset / 8)
+                for (unsigned ordinal : word.roots)
+                  scope.set(ordinal);
+          }
+        }
     });
   }
+  if (module->hasAttr("obelisk.debug.native_timing")) {
+    SmallVector<std::pair<unsigned, StringRef>> scopes;
+    for (const auto &[operation, mask] : masks)
+      if (mask.any())
+        scopes.emplace_back(mask.count(),
+                            cast<LLVM::LLVMFuncOp>(operation).getSymName());
+    llvm::sort(scopes, [](auto a, auto b) {
+      return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    for (auto [count, name] : ArrayRef(scopes).take_front(8))
+      llvm::errs() << "obelisk eval pending direct scope: roots=" << count
+                   << " function=" << name << '\n';
+  }
   SmallVector<Operation *> pending;
-  for (auto [operation, mask] : masks)
-    if (mask)
+  for (const auto &[operation, mask] : masks)
+    if (mask.any())
       pending.push_back(operation);
   while (!pending.empty()) {
     Operation *callee = pending.pop_back_val();
     for (Operation *caller : callers[callee]) {
-      uint64_t merged = masks[caller] | masks[callee];
+      llvm::SmallBitVector merged = masks[caller];
+      merged |= masks[callee];
       if (merged != masks[caller]) {
         masks[caller] = merged;
         pending.push_back(caller);
@@ -712,7 +804,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
     cast<LLVM::LLVMFuncOp>(operation).walk([&](LLVM::CallOp call) {
       auto callee = call.getCallee() ? functions.lookup(*call.getCallee())
                                      : LLVM::LLVMFuncOp{};
-      if (callee && masks.lookup(callee.getOperation()))
+      if (callee && masks.lookup(callee.getOperation()).any())
         supported &=
             call.getCConv() == LLVM::CConv::C &&
             call.getTailCallKind() == LLVM::tailcallkind::TailCallKind::None &&
@@ -726,7 +818,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   DenseMap<Operation *, LLVM::LLVMFuncOp> cores;
   SmallVector<LLVM::LLVMFuncOp> originals;
   for (Operation *operation : reachable)
-    if (masks.lookup(operation))
+    if (masks.lookup(operation).any())
       originals.push_back(cast<LLVM::LLVMFuncOp>(operation));
   for (auto original : originals) {
     OpBuilder builder(original);
@@ -751,7 +843,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
     cores.try_emplace(original.getOperation(), core);
   }
 
-  uint64_t allRoots = (uint64_t{1} << roots.size()) - 1;
+  llvm::SmallBitVector allRoots(roots.size(), true);
   for (auto original : originals) {
     auto core = cores.lookup(original.getOperation());
     Value frame = core.getBody().front().getArguments().back();
@@ -764,12 +856,14 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
           schedule::get<schedule::Field::EvalPendingDirtyRoot>(operation);
       auto summaryRole =
           schedule::get<schedule::Field::EvalPendingSummaryRoot>(operation);
+      bool canonicalIndex =
+          schedule::has<schedule::Field::EvalPendingRuntimeRoot>(operation);
       OpBuilder builder(operation);
       Location loc = operation->getLoc();
       if (rootRole && byRoot.contains(rootRole.getValue().getZExtValue())) {
         const auto &root =
             roots[byRoot.lookup(rootRole.getValue().getZExtValue())];
-        Value bits = load(builder, loc, frame, 0);
+        Value bits = load(builder, loc, frame, root.bitmapOffset);
         if (read) {
           Value pending = selected(builder, loc, bits, root, root.root % 64);
           if (read.getType().isInteger(32))
@@ -780,7 +874,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
           read.replaceAllUsesWith(pending);
           read.erase();
         } else if (write) {
-          store(builder, loc, frame, 0,
+          store(builder, loc, frame, root.bitmapOffset,
                 LLVM::OrOp::create(
                     builder, loc, bits,
                     constant(builder, loc, uint64_t{1} << (root.root % 64))));
@@ -812,6 +906,15 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                             transient))
             lane = 2;
           if (lane) {
+            if (*lane == 2 && !root.transient) {
+              if (read) {
+                read.replaceAllUsesWith(constant(builder, loc, 0));
+                read.erase();
+              } else {
+                write.erase();
+              }
+              continue;
+            }
             Value local = byteGEP(builder, loc, frame, field(root, *lane));
             if (read) {
               read.getAddrMutable().assign(local);
@@ -842,9 +945,10 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
               // when a private batch clears its leaf word only afterward.
               // Do not republish an already committed capture at the next
               // opaque cut (LRM 4.9.4/10.4.2).
-              store(builder, loc, frame, 0,
+              store(builder, loc, frame, root.bitmapOffset,
                     LLVM::AndOp::create(
-                        builder, loc, load(builder, loc, frame, 0),
+                        builder, loc,
+                        load(builder, loc, frame, root.bitmapOffset),
                         constant(builder, loc,
                                  ~(uint64_t{1} << (root.root % 64)))));
             }
@@ -857,8 +961,9 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                       read)) {
                 replacement = constant(builder, loc, root.mask);
               } else {
-                Value staged = selected(builder, loc,
-                                        load(builder, loc, frame, 0), root, 0);
+                Value staged = selected(
+                    builder, loc, load(builder, loc, frame, root.bitmapOffset),
+                    root, 0);
                 replacement = LLVM::SelectOp::create(
                     builder, loc,
                     LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne,
@@ -876,11 +981,12 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
               // (LRM 4.9.4/10.4.2).
               replacement = LLVM::ZExtOp::create(
                   builder, loc, read.getType(),
-                  LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne,
-                                       selected(builder, loc,
-                                                load(builder, loc, frame, 0),
-                                                root, 0),
-                                       constant(builder, loc, 0)));
+                  LLVM::ICmpOp::create(
+                      builder, loc, LLVM::ICmpPredicate::ne,
+                      selected(builder, loc,
+                               load(builder, loc, frame, root.bitmapOffset),
+                               root, 0),
+                      constant(builder, loc, 0)));
             } else {
               replacement = llvmConstant(
                   builder, loc, read.getType(),
@@ -895,17 +1001,17 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
           }
           continue;
         }
-        if (at->global == dirtyName && at->offset % 8 == 0 && !rootRole) {
-          uint64_t localMask = 0;
-          for (const auto &root : roots)
-            if (root.root / 64 == at->offset / 8)
-              localMask |= uint64_t{1} << (root.root % 64);
-          if (!localMask)
+        if (at->global == dirtyName && at->offset % 8 == 0 && !rootRole &&
+            !canonicalIndex) {
+          auto mappedWord = byWord.find(at->offset / 8);
+          if (mappedWord == byWord.end())
             continue;
+          const auto &word = words[mappedWord->second];
+          uint64_t localMask = word.mask;
           if (write && zero(write.getValue())) {
-            store(builder, loc, frame, 0,
+            store(builder, loc, frame, word.offset,
                   LLVM::AndOp::create(builder, loc,
-                                      load(builder, loc, frame, 0),
+                                      load(builder, loc, frame, word.offset),
                                       constant(builder, loc, ~localMask)));
           } else if (write) {
             // Reads use the complete logical index, including private bits.
@@ -926,12 +1032,58 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
           } else if (read) {
             OpBuilder after(read);
             after.setInsertionPointAfter(read);
-            Value bits = load(after, loc, frame, 0);
+            Value bits = load(after, loc, frame, word.offset);
             Value combined = LLVM::AndOp::create(
                 after, loc, bits, constant(after, loc, localMask));
             Value old = read.getResult();
             auto merged = LLVM::OrOp::create(after, loc, old, combined);
             old.replaceAllUsesExcept(merged, merged);
+          }
+          continue;
+        }
+        if (at->global == summaryName && at->offset % 8 == 0 && !summaryRole &&
+            !canonicalIndex) {
+          Value privatePage = constant(builder, loc, 0);
+          uint64_t localMask = 0;
+          for (const auto &word : words) {
+            if (word.canonicalWord / 64 != at->offset / 8)
+              continue;
+            uint64_t bit = uint64_t{1} << (word.canonicalWord % 64);
+            localMask |= bit;
+            Value bits;
+            if (read) {
+              bits = load(builder, loc, frame, word.offset);
+            } else {
+              // A logical page may contain private-only leaf words. The
+              // canonical summary indexes canonical payloads only; testing
+              // the canonical leaf also preserves mixed private/canonical
+              // words (LRM 4.9.4/10.4.2: coherent ownership at both levels).
+              Value dirty = LLVM::AddressOfOp::create(
+                  builder, loc, LLVM::LLVMPointerType::get(context), dirtyName);
+              bits =
+                  load(builder, loc, dirty, uint64_t{word.canonicalWord} * 8);
+            }
+            Value present =
+                LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne,
+                                     bits, constant(builder, loc, 0));
+            privatePage = LLVM::OrOp::create(
+                builder, loc, privatePage,
+                LLVM::SelectOp::create(builder, loc, present,
+                                       constant(builder, loc, bit),
+                                       constant(builder, loc, 0)));
+          }
+          if (!localMask)
+            continue;
+          if (read) {
+            builder.setInsertionPointAfter(read);
+            auto merged =
+                LLVM::OrOp::create(builder, loc, read.getResult(), privatePage);
+            read.getResult().replaceAllUsesExcept(merged, merged);
+          } else {
+            Value canonical = LLVM::OrOp::create(
+                builder, loc, privatePage, constant(builder, loc, ~localMask));
+            write.getValueMutable().assign(
+                LLVM::AndOp::create(builder, loc, write.getValue(), canonical));
           }
           continue;
         }
@@ -961,7 +1113,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
       } else if (call.getCallee() &&
                  *call.getCallee() ==
                      "obelisk_rt_v1_scheduler_prepare_eval_nba") {
-        Value bits = load(builder, loc, frame, 0);
+        Value bits = pendingBits(builder, loc, frame, words);
         Value localRegion = LLVM::SelectOp::create(
             builder, loc,
             LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne, bits,
@@ -999,19 +1151,20 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
         Value ended = LLVM::ICmpOp::create(
             builder, loc, LLVM::ICmpPredicate::eq, barrier,
             llvmConstant(builder, loc, builder.getI32Type(), UINT32_MAX));
-        store(builder, loc, frame, 0,
-              LLVM::SelectOp::create(builder, loc, ended,
-                                     constant(builder, loc, 0),
-                                     load(builder, loc, frame, 0)));
+        for (const auto &word : words)
+          store(builder, loc, frame, word.offset,
+                LLVM::SelectOp::create(builder, loc, ended,
+                                       constant(builder, loc, 0),
+                                       load(builder, loc, frame, word.offset)));
         LLVM::BrOp::create(builder, loc, ValueRange{}, tail);
       } else if (!pendingRuntimeTransparent(call, byRoot) &&
                  (!callee || !reachable.contains(callee.getOperation()) ||
                   opaque.contains(callee.getOperation()))) {
         // Cold/fine/opaque execution retains the existing captured NBA ABI.
         // LRM 38.15/38.34: no private continuation is exposed to foreign code.
-        transfer(builder, loc, frame, roots, allRoots, true, writable);
+        transfer(builder, loc, frame, roots, words, allRoots, true, writable);
         builder.setInsertionPointAfter(call);
-        transfer(builder, loc, frame, roots, allRoots, false, writable);
+        transfer(builder, loc, frame, roots, words, allRoots, false, writable);
       }
     }
 
@@ -1021,12 +1174,21 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
     Location loc = original.getLoc();
     Block *entry = original.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
-    Value local = entryAlloca(builder, loc, builder.getI64Type(),
-                              1 + roots.size() * 3, 8);
-    for (unsigned i = 0; i != 1 + roots.size() * 3; ++i)
-      store(builder, loc, local, uint64_t{i} * 8, constant(builder, loc, 0));
-    transfer(builder, loc, local, roots, masks.lookup(original.getOperation()),
-             false, writable);
+    Value local =
+        entryAlloca(builder, loc, builder.getI64Type(), frameBytes / 8, 8);
+    for (const auto &word : words)
+      store(builder, loc, local, word.offset, constant(builder, loc, 0));
+    const auto &scope = masks[original.getOperation()];
+    // Unrelated payloads never need initialization. A later opaque adoption
+    // writes a payload before setting its bit. Initialize this closure's lanes
+    // for predicates and partial-stage RMWs that execute without a capture.
+    for (const auto &root : roots)
+      if (scope.test(root.ordinal))
+        for (unsigned lane = 0; lane != (root.transient ? 3u : 2u); ++lane)
+          store(builder, loc, local, field(root, lane),
+                constant(builder, loc, 0));
+    transfer(builder, loc, local, roots, words,
+             masks.lookup(original.getOperation()), false, writable);
     SmallVector<Value> args(entry->getArguments());
     args.push_back(local);
     auto call = LLVM::CallOp::create(
@@ -1035,8 +1197,8 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
             ? TypeRange{}
             : TypeRange{original.getFunctionType().getReturnType()},
         core.getSymName(), args);
-    transfer(builder, loc, local, roots, masks.lookup(original.getOperation()),
-             true, writable);
+    transfer(builder, loc, local, roots, words,
+             masks.lookup(original.getOperation()), true, writable);
     LLVM::ReturnOp::create(builder, loc, call.getResults());
   }
   getOrDeclareLLVMFunction(
@@ -1055,7 +1217,9 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   if (module->hasAttr("obelisk.debug.native_timing"))
     llvm::errs() << "obelisk eval local pending roots: " << roots.size()
                  << " cores=" << cores.size()
-                 << " fixed-candidates=" << candidates.size() << '\n';
+                 << " fixed-candidates=" << candidates.size()
+                 << " bitmap-words=" << words.size()
+                 << " frame-bytes=" << frameBytes << '\n';
   return success();
 }
 

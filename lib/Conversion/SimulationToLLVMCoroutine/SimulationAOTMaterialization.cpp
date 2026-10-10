@@ -2295,6 +2295,9 @@ FailureOr<bool> makeNativeEvalPlan(
                                                 pointer, nbaDirtyRootsName),
                       uint64_t{root->second / 64} * 8),
               8);
+          schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+              dirty.getDefiningOp(),
+              nbaBuilder.getI32IntegerAttr(root->second));
           Value pending = arith::AndIOp::create(
               nbaBuilder, call.getLoc(), dirty,
               llvmConstant(nbaBuilder, call.getLoc(), i64,
@@ -2447,12 +2450,17 @@ FailureOr<bool> makeNativeEvalPlan(
                             uint64_t{index} * 8);
                 Value prior = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
                                                    i64, address, 8);
-                LLVM::StoreOp::create(
+                auto marked = LLVM::StoreOp::create(
                     nbaBuilder, call.getLoc(),
                     arith::OrIOp::create(
                         nbaBuilder, call.getLoc(), prior,
                         llvmConstant(nbaBuilder, call.getLoc(), i64, mask)),
                     address, 8);
+                auto rootRole = nbaBuilder.getI32IntegerAttr(root->second);
+                schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+                    prior.getDefiningOp(), rootRole);
+                schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+                    marked, rootRole);
               }
             }
             cf::BranchOp::create(nbaBuilder, call.getLoc(), next);
@@ -2560,11 +2568,19 @@ FailureOr<bool> makeNativeEvalPlan(
               Value selected = arith::SelectOp::create(
                   nbaBuilder, call.getLoc(), overlaps,
                   llvmConstant(nbaBuilder, call.getLoc(), i64, mask), zero64);
-              LLVM::StoreOp::create(nbaBuilder, call.getLoc(),
-                                    arith::OrIOp::create(nbaBuilder,
-                                                         call.getLoc(),
-                                                         previous, selected),
-                                    address, 8);
+              auto marked = LLVM::StoreOp::create(
+                  nbaBuilder, call.getLoc(),
+                  arith::OrIOp::create(nbaBuilder, call.getLoc(), previous,
+                                       selected),
+                  address, 8);
+              // The fixed-slot ABI retains canonical ownership. Its producer
+              // RMW does not query private captures elsewhere in this page
+              // (LRM 4.9.4/10.4.2). Preserve that role through LLVM lowering.
+              auto rootRole = nbaBuilder.getI32IntegerAttr(root->second);
+              schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+                  previous.getDefiningOp(), rootRole);
+              schedule::set<schedule::Field::EvalPendingRuntimeRoot>(marked,
+                                                                     rootRole);
             };
             setBit(nbaDirtyRootsName, word, uint64_t{1} << (root->second % 64));
             setBit(nbaDirtySummaryName, word / 64, uint64_t{1} << (word % 64));
@@ -2699,10 +2715,16 @@ FailureOr<bool> makeNativeEvalPlan(
               llvmConstant(nbaBuilder, call.getLoc(), i64,
                            uint64_t{1} << (root->second % 64)),
               zero64);
-          LLVM::StoreOp::create(nbaBuilder, call.getLoc(),
-                                arith::OrIOp::create(nbaBuilder, call.getLoc(),
-                                                     previousDirty, dirtyBit),
-                                dirtyAddress, 8);
+          auto markedDirty = LLVM::StoreOp::create(
+              nbaBuilder, call.getLoc(),
+              arith::OrIOp::create(nbaBuilder, call.getLoc(), previousDirty,
+                                   dirtyBit),
+              dirtyAddress, 8);
+          auto rootRole = nbaBuilder.getI32IntegerAttr(root->second);
+          schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+              previousDirty.getDefiningOp(), rootRole);
+          schedule::set<schedule::Field::EvalPendingRuntimeRoot>(markedDirty,
+                                                                 rootRole);
           Value summaryBase = LLVM::AddressOfOp::create(
               nbaBuilder, call.getLoc(), pointer, nbaDirtySummaryName);
           Value summaryAddress =
@@ -2715,11 +2737,15 @@ FailureOr<bool> makeNativeEvalPlan(
               llvmConstant(nbaBuilder, call.getLoc(), i64,
                            uint64_t{1} << (dirtyWord % 64)),
               zero64);
-          LLVM::StoreOp::create(nbaBuilder, call.getLoc(),
-                                arith::OrIOp::create(nbaBuilder, call.getLoc(),
-                                                     previousSummary,
-                                                     summaryBit),
-                                summaryAddress, 8);
+          auto markedSummary = LLVM::StoreOp::create(
+              nbaBuilder, call.getLoc(),
+              arith::OrIOp::create(nbaBuilder, call.getLoc(), previousSummary,
+                                   summaryBit),
+              summaryAddress, 8);
+          schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+              previousSummary.getDefiningOp(), rootRole);
+          schedule::set<schedule::Field::EvalPendingRuntimeRoot>(markedSummary,
+                                                                 rootRole);
         }
       }
       if (call.getNumResults() != 0) {

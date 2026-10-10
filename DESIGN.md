@@ -1591,20 +1591,35 @@ other profitable lanes remain local until a required cut. Opaque calls flush
 and reacquire affected state for coherent observation and mutation (4.9.3,
 38.15, 38.34). The existing IR growth budget still applies.
 
-Closed runtime-calendar eval transactions also have a bounded private pending
+Closed runtime-calendar eval transactions also have a private pending
 interface. A typed source plan identifies descriptors, captured targets,
 semantic sites, writer fragments, owners, masks and event regions before
 physical lowering. A second inventory requires exact scalar staging and a
-typed generated commit consumer in the final call closure. Up to sixteen
-machine-word roots in one dirty word use activation-local value, X/Z and
-transient fields with one pending bitmap. Generated helpers share this slot;
-their original symbols retain canonical wrappers for fine and cold entry.
+typed generated commit consumer in the final call closure. Every qualifying
+machine-word root uses activation-local value and X/Z fields, with a transient
+field only when required. A sparse bitmap retains canonical bit positions and
+allocates one word per occupied canonical leaf, including across summary pages.
+There is no root-count cap or single-word selection. Generated helpers share
+this slot; their original symbols retain canonical wrappers for fine and cold entry.
 Validity follows the actual capture bit, including reads outside the selected
 commit branch. Adoption clears canonical validity and masks as well as the
 dirty bit, so ownership moves exactly once (4.9.4, 10.4.2).
 Logical dirty-word reads include private captures. Canonical dirty-word writes
 project those bits back to their existing canonical ownership, so control-flow
 joins cannot publish private captures for a second runtime consumption.
+Logical summary reads also include private leaf words; canonical summary writes
+index only canonical payloads, including mixed private/canonical leaf words.
+Dynamic or escaping index addresses retain canonical staging.
+
+Function scopes use dynamically sized root sets propagated through the complete
+call closure. Exact producer roles distinguish canonical summary read/modify/
+write from logical readiness queries. Fine/cold wrappers initialize only their
+scope's payloads and adopt/export only that scope. Each occupied bitmap word has
+an empty fast path at a transfer; sparse gaps add no scratch or transfer work.
+The frame argument carries LLVM `noalias` and `nocapture` contracts; it is used
+only by generated accesses and forwarded calls within the private closure.
+Opaque execution cuts still transfer all live private captures because a foreign
+executor can observe or change unrelated roots (4.9.4, 10.4.2, 38.15, 38.34).
 
 The common NBA prepare service arbitrates private captures with canonical
 queues without advancing time or running a second event loop. Audited

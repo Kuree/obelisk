@@ -872,10 +872,18 @@ public:
                   static_cast<uint64_t>(rootIndex / 64) * sizeof(uint64_t));
       Value previousDirty =
           LLVM::LoadOp::create(rewriter, location, i64, dirtyAddress, 8);
-      LLVM::StoreOp::create(
+      auto markDirty = LLVM::StoreOp::create(
           rewriter, location,
           arith::OrIOp::create(rewriter, location, previousDirty, dirtyBit),
           dirtyAddress, 8);
+      // A variable overlap/mask keeps the fixed-slot canonical capture ABI.
+      // These RMWs do not query private captures in the same leaf/page, and
+      // cannot be admitted as unconditional scalar producers (LRM 4.9.4).
+      auto rootRole = rewriter.getI32IntegerAttr(rootIndex);
+      schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+          previousDirty.getDefiningOp(), rootRole);
+      schedule::set<schedule::Field::EvalPendingRuntimeRoot>(markDirty,
+                                                             rootRole);
       uint32_t dirtyWord = rootIndex / 64;
       Value summaryBase = LLVM::AddressOfOp::create(
           rewriter, location, pointer, "__obelisk_aot_nba_dirty_summary_v1");
@@ -889,10 +897,14 @@ public:
                                   zero);
       Value previousSummary =
           LLVM::LoadOp::create(rewriter, location, i64, summaryAddress, 8);
-      LLVM::StoreOp::create(
+      auto markSummary = LLVM::StoreOp::create(
           rewriter, location,
           arith::OrIOp::create(rewriter, location, previousSummary, summaryBit),
           summaryAddress, 8);
+      schedule::set<schedule::Field::EvalPendingRuntimeRoot>(
+          previousSummary.getDefiningOp(), rootRole);
+      schedule::set<schedule::Field::EvalPendingRuntimeRoot>(markSummary,
+                                                             rootRole);
     };
 
     Block *guardContinuation = nullptr;
@@ -1422,6 +1434,12 @@ public:
               static_cast<uint64_t>(dirtyWordIndex / 64) * sizeof(uint64_t));
           Value previousSummary =
               LLVM::LoadOp::create(rewriter, location, i64, summaryWord, 8);
+          // This is a producer's canonical RMW, not a query of every root in
+          // the summary page. Keep the exact role across physical lowering so
+          // private pending scopes remain local (LRM 4.9.4/10.4.2).
+          schedule::set<schedule::Field::EvalPendingSummaryRoot>(
+              previousSummary.getDefiningOp(),
+              rewriter.getI32IntegerAttr(staticRoot->second));
           Value markedSummary = LLVM::OrOp::create(
               rewriter, location, previousSummary,
               llvmConstant(rewriter, location, i64,
