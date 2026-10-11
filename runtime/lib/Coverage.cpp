@@ -4,6 +4,7 @@
 
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
+#include "../../lib/Coverage/CoverageIndex.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include <cctype>
@@ -24,6 +25,9 @@
 #endif
 
 namespace {
+using obelisk::coverage::detail::IndexMap;
+using obelisk::coverage::detail::IndexSet;
+using obelisk::coverage::detail::sortByKey;
 
 int32_t saturateI32(uint64_t value) {
   return value > static_cast<uint64_t>(INT32_MAX) ? INT32_MAX
@@ -719,18 +723,19 @@ mergePersistentMetricSlice(obelisk::coverage::Database &destination,
   if (computeSchemaFingerprint(result) != computeSchemaFingerprint(source))
     return Status::SchemaMismatch;
 
+  IndexMap<UUID, size_t> runPositions;
+  for (size_t index = 0; index != result.runs.size(); ++index)
+    runPositions.emplace(result.runs[index].uuid, index);
   for (const Run &run : source.runs) {
     if (run.flags != selected.runFlag)
       return Status::InvalidDatabase;
-    auto existing =
-        std::lower_bound(result.runs.begin(), result.runs.end(), run.uuid,
-                         [](const Run &candidate, const UUID &uuid) {
-                           return candidate.uuid < uuid;
-                         });
-    if (existing == result.runs.end() || existing->uuid != run.uuid) {
-      result.runs.insert(existing, run);
+    auto found = runPositions.find(run.uuid);
+    if (found == runPositions.end()) {
+      runPositions.emplace(run.uuid, result.runs.size());
+      result.runs.push_back(run);
       continue;
     }
+    auto *existing = &result.runs[found->second];
 
     // Clause 40 database operations select one metric at a time. Two slices
     // from the same simulation may therefore share a run UUID while carrying
@@ -752,13 +757,13 @@ mergePersistentMetricSlice(obelisk::coverage::Database &destination,
       return Status::InvalidDatabase;
     result.counters.push_back(counter);
   }
-  std::sort(result.counters.begin(), result.counters.end(),
-            [](const Counter &left, const Counter &right) {
-              return std::tie(left.run, left.metric, left.entity, left.instance,
-                              left.subindex) <
-                     std::tie(right.run, right.metric, right.entity,
-                              right.instance, right.subindex);
+  sortByKey(result.counters.begin(), result.counters.end(),
+            [](const auto &row) {
+              return std::tie(row.run, row.metric, row.entity, row.instance,
+                              row.subindex);
             });
+  sortByKey(result.runs.begin(), result.runs.end(),
+            [](const Run &run) { return run.uuid; });
   status = validate(result);
   if (status != Status::Ok)
     return status;
@@ -877,7 +882,8 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
   run.seed = context->configuredSeed;
   run.flags = availableRunCoverage(coverage) & coverage.persistedRunFlags;
   run.tags = coverage.tags;
-  std::sort(run.tags.begin(), run.tags.end());
+  sortByKey(run.tags.begin(), run.tags.end(),
+            [](const auto &tag) { return tag; });
   if (std::any_of(
           result.runs.begin(), result.runs.end(),
           [&](const auto &existing) { return existing.uuid == run.uuid; }))
@@ -909,15 +915,20 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
     }
   }
   if (run.flags & obelisk::coverage::RunContainsFunctional) {
-    using Owner =
-        obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
+    using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
     using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
     using ValueKind = obelisk::coverage::FunctionalConfigurationValueKind;
     auto appendTypeUnsignedOption = [&](uint64_t owner, Owner ownerKind,
                                         Option option, uint64_t value) {
-      result.resolvedInstanceOptions.push_back(
-          {run.uuid, 0, owner, ownerKind, option, ValueKind::Unsigned, {},
-           value, 0});
+      result.resolvedInstanceOptions.push_back({run.uuid,
+                                                0,
+                                                owner,
+                                                ownerKind,
+                                                option,
+                                                ValueKind::Unsigned,
+                                                {},
+                                                value,
+                                                0});
     };
     for (const auto &[typeID, options] : coverage.typeOptions) {
       if (options.goal)
@@ -929,33 +940,54 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       if (options.mergeInstances)
         appendTypeUnsignedOption(typeID, Owner::Group, Option::MergeInstances,
                                  *options.mergeInstances ? 1 : 0);
-      if (auto comment = options.comments.find(0);
-          comment != options.comments.end())
-        result.resolvedInstanceOptions.push_back(
-            {run.uuid, 0, typeID, Owner::Group, Option::Comment,
-             ValueKind::String, comment->second, 0, 0});
       for (const auto &[item, value] : options.itemGoals)
         appendTypeUnsignedOption(item, Owner::Item, Option::Goal, value);
       for (const auto &[item, value] : options.itemWeights)
         appendTypeUnsignedOption(item, Owner::Item, Option::Weight, value);
       for (const auto &[item, value] : options.comments)
-        if (item)
-          result.resolvedInstanceOptions.push_back(
-              {run.uuid, 0, item, Owner::Item, Option::Comment,
-               ValueKind::String, value, 0, 0});
+        result.resolvedInstanceOptions.push_back(
+            {run.uuid, 0, item ? item : typeID,
+             item ? Owner::Item : Owner::Group, Option::Comment,
+             ValueKind::String, value, 0, 0});
     }
-    std::vector<uint64_t> instanceHandles;
-    instanceHandles.reserve(coverage.instances.size());
-    for (const auto &entry : coverage.instances)
-      instanceHandles.push_back(entry.first);
-    std::sort(instanceHandles.begin(), instanceHandles.end());
-    for (uint64_t handle : instanceHandles) {
-      const FunctionalCoverageInstanceState &instance =
-          coverage.instances.at(handle);
+    using ResolvedKey =
+        std::tuple<uint64_t, obelisk::coverage::Digest, uint64_t>;
+    IndexMap<ResolvedKey, const obelisk::coverage::ResolvedFunctionalItem *>
+        itemsByID;
+    for (const auto &item : result.resolvedFunctionalItems)
+      itemsByID.emplace(ResolvedKey{item.type, item.configuration, item.id},
+                        &item);
+    IndexMap<ResolvedKey, uint64_t> crossTemplates;
+    IndexMap<std::pair<uint64_t, obelisk::coverage::Digest>,
+             const FunctionalCoverageTypeState *>
+        typesByConfiguration;
+    for (const auto &[key, type] : coverage.types) {
+      typesByConfiguration.emplace(
+          std::make_pair(key.typeID, key.configuration), &type);
+      for (const auto &cross : type.crosses)
+        crossTemplates.emplace(
+            ResolvedKey{key.typeID, key.configuration, cross.id},
+            cross.templateItem);
+    }
+    IndexMap<uint64_t, const FunctionalCoverageInstanceState *>
+        instancesByHandle;
+    for (const auto &[handle, instance] : coverage.instances)
+      instancesByHandle.emplace(handle, &instance);
+    for (const auto &[handle, state] : instancesByHandle) {
+      const auto &instance = *state;
       auto type =
-          coverage.types.find({instance.typeID, instance.configuration});
-      if (type == coverage.types.end())
+          typesByConfiguration.find({instance.typeID, instance.configuration});
+      if (type == typesByConfiguration.end())
         continue;
+      IndexMap<uint64_t, const std::string *> comments;
+      for (const auto &[owner, comment] : instance.comments)
+        comments.emplace(owner, &comment);
+      IndexMap<uint64_t, uint64_t> printMissingByItem;
+      for (const auto &[owner, value] : instance.crossNumPrintMissing)
+        printMissingByItem.emplace(owner, value);
+      IndexSet<uint64_t> explicitPrintMissingItems;
+      for (uint64_t owner : instance.explicitCrossNumPrintMissingItems)
+        explicitPrintMissingItems.insert(owner);
       result.resolvedInstances.push_back(
           {run.uuid, instance.typeID, handle, instance.name,
            instance.generatedName
@@ -964,9 +996,15 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
            instance.configuration});
       auto appendUnsignedOption = [&](uint64_t owner, Owner ownerKind,
                                       Option option, uint64_t value) {
-        result.resolvedInstanceOptions.push_back(
-            {run.uuid, handle, owner, ownerKind, option, ValueKind::Unsigned,
-             {}, value, 0});
+        result.resolvedInstanceOptions.push_back({run.uuid,
+                                                  handle,
+                                                  owner,
+                                                  ownerKind,
+                                                  option,
+                                                  ValueKind::Unsigned,
+                                                  {},
+                                                  value,
+                                                  0});
       };
       appendUnsignedOption(0, Owner::Group, Option::Goal,
                            instance.instanceGoal);
@@ -976,53 +1014,44 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
                            instance.groupAtLeast);
       appendUnsignedOption(0, Owner::Group, Option::CrossNumPrintMissing,
                            instance.groupCrossNumPrintMissing);
-      if (auto comment = instance.comments.find(0);
-          comment != instance.comments.end())
+      if (auto comment = comments.find(0); comment != comments.end())
         result.resolvedInstanceOptions.push_back(
             {run.uuid, handle, 0, Owner::Group, Option::Comment,
-             ValueKind::String, comment->second, 0, 0});
-      if (instance.itemGoals.size() != type->second.items.size() ||
-          instance.itemWeights.size() != type->second.items.size() ||
-          instance.itemAtLeast.size() != type->second.items.size())
+             ValueKind::String, *comment->second, 0, 0});
+      if (instance.itemGoals.size() != type->second->items.size() ||
+          instance.itemWeights.size() != type->second->items.size() ||
+          instance.itemAtLeast.size() != type->second->items.size())
         return OBELISK_RT_INVALID_DESIGN;
-      for (size_t itemIndex = 0; itemIndex != type->second.items.size();
+      for (size_t itemIndex = 0; itemIndex != type->second->items.size();
            ++itemIndex) {
-        uint64_t resolvedID = type->second.items[itemIndex];
-        auto resolved = std::find_if(
-            result.resolvedFunctionalItems.begin(),
-            result.resolvedFunctionalItems.end(), [&](const auto &item) {
-              return item.type == instance.typeID &&
-                     item.configuration == instance.configuration &&
-                     item.id == resolvedID;
-            });
-        if (resolved == result.resolvedFunctionalItems.end())
+        uint64_t resolvedID = type->second->items[itemIndex];
+        auto foundItem = itemsByID.find(
+            {instance.typeID, instance.configuration, resolvedID});
+        if (foundItem == itemsByID.end())
           return OBELISK_RT_INVALID_DESIGN;
+        const auto *resolved = foundItem->second;
         appendUnsignedOption(resolved->templateItem, Owner::Item, Option::Goal,
                              instance.itemGoals[itemIndex]);
         appendUnsignedOption(resolved->templateItem, Owner::Item,
                              Option::Weight, instance.itemWeights[itemIndex]);
         appendUnsignedOption(resolved->templateItem, Owner::Item,
-                             Option::AtLeast,
-                             instance.itemAtLeast[itemIndex]);
-        if (instance.explicitCrossNumPrintMissingItems.count(
-                resolved->templateItem)) {
-          auto printMissing =
-              instance.crossNumPrintMissing.find(resolved->templateItem);
-          if (resolved->kind !=
-                  obelisk::coverage::FunctionalItemKind::Cross ||
-              printMissing == instance.crossNumPrintMissing.end())
+                             Option::AtLeast, instance.itemAtLeast[itemIndex]);
+        if (explicitPrintMissingItems.count(resolved->templateItem)) {
+          auto printMissing = printMissingByItem.find(resolved->templateItem);
+          if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross ||
+              printMissing == printMissingByItem.end())
             return OBELISK_RT_INVALID_DESIGN;
           appendUnsignedOption(resolved->templateItem, Owner::Item,
                                Option::CrossNumPrintMissing,
                                printMissing->second);
         }
-        if (auto comment = instance.comments.find(resolved->templateItem);
-            comment != instance.comments.end())
+        if (auto comment = comments.find(resolved->templateItem);
+            comment != comments.end())
           result.resolvedInstanceOptions.push_back(
               {run.uuid, handle, resolved->templateItem, Owner::Item,
-               Option::Comment, ValueKind::String, comment->second, 0, 0});
+               Option::Comment, ValueKind::String, *comment->second, 0, 0});
       }
-      if (instance.bins.size() != type->second.bins.size())
+      if (instance.bins.size() != type->second->bins.size())
         return OBELISK_RT_INVALID_DESIGN;
       for (const FunctionalCoverageBinState &counter : instance.bins)
         result.counters.push_back(
@@ -1031,10 +1060,9 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       for (const auto &crossEntry : instance.crossTuples) {
         const uint64_t resolvedCross = crossEntry.first;
         const auto &tuples = crossEntry.second;
-        auto cross = std::find_if(
-            type->second.crosses.begin(), type->second.crosses.end(),
-            [&](const auto &entry) { return entry.id == resolvedCross; });
-        if (cross == type->second.crosses.end())
+        auto cross = crossTemplates.find(
+            {instance.typeID, instance.configuration, resolvedCross});
+        if (cross == crossTemplates.end())
           return OBELISK_RT_INVALID_DESIGN;
         for (const auto &[components, counter] : tuples) {
           if (components.size() > UINT32_MAX ||
@@ -1048,7 +1076,7 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
               result.sparseCrossTupleComponents.end(), components.begin(),
               components.end());
           result.sparseCrossTuples.push_back(
-              {run.uuid, handle, cross->templateItem, first,
+              {run.uuid, handle, cross->second, first,
                static_cast<uint32_t>(components.size()), counter.count,
                counter.overflow ? obelisk::coverage::SparseCrossTupleOverflow
                                 : 0});
@@ -1056,37 +1084,24 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       }
     }
   }
-  std::sort(result.runs.begin(), result.runs.end(),
-            [](const auto &left, const auto &right) {
-              return left.uuid < right.uuid;
+  sortByKey(result.runs.begin(), result.runs.end(),
+            [](const auto &row) { return row.uuid; });
+  sortByKey(result.counters.begin(), result.counters.end(),
+            [](const auto &row) {
+              return std::tie(row.run, row.metric, row.entity, row.instance,
+                              row.subindex);
             });
-  std::sort(result.counters.begin(), result.counters.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.run, left.metric, left.entity, left.instance,
-                              left.subindex) <
-                     std::tie(right.run, right.metric, right.entity,
-                              right.instance, right.subindex);
+  sortByKey(result.resolvedInstances.begin(), result.resolvedInstances.end(),
+            [](const auto &row) { return std::tie(row.run, row.id); });
+  sortByKey(result.resolvedInstanceOptions.begin(),
+            result.resolvedInstanceOptions.end(), [](const auto &row) {
+              return std::tie(row.run, row.instance, row.ownerKind, row.owner,
+                              row.option);
             });
-  std::sort(result.resolvedInstances.begin(), result.resolvedInstances.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.run, left.id) <
-                     std::tie(right.run, right.id);
-            });
-  std::sort(result.resolvedInstanceOptions.begin(),
-            result.resolvedInstanceOptions.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.run, left.instance, left.ownerKind,
-                              left.owner, left.option) <
-                     std::tie(right.run, right.instance, right.ownerKind,
-                              right.owner, right.option);
-            });
-  std::sort(result.illegalBinDiagnostics.begin(),
-            result.illegalBinDiagnostics.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.run, left.instance, left.bin,
-                              left.simulationTime) <
-                     std::tie(right.run, right.instance, right.bin,
-                              right.simulationTime);
+  sortByKey(result.illegalBinDiagnostics.begin(),
+            result.illegalBinDiagnostics.end(), [](const auto &row) {
+              return std::tie(row.run, row.instance, row.bin,
+                              row.simulationTime);
             });
   struct OrderedSparseTuple {
     obelisk::coverage::SparseCrossTuple tuple;
@@ -1105,13 +1120,10 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
              result.sparseCrossTupleComponents.begin() + tuple.firstComponent +
                  tuple.componentCount)});
   }
-  std::sort(sparse.begin(), sparse.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.tuple.run, left.tuple.instance,
-                              left.tuple.cross, left.components) <
-                     std::tie(right.tuple.run, right.tuple.instance,
-                              right.tuple.cross, right.components);
-            });
+  sortByKey(sparse.begin(), sparse.end(), [](const auto &row) {
+    return std::tie(row.tuple.run, row.tuple.instance, row.tuple.cross,
+                    row.components);
+  });
   result.sparseCrossTuples.clear();
   result.sparseCrossTupleComponents.clear();
   for (OrderedSparseTuple &entry : sparse) {
