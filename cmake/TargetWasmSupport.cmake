@@ -28,7 +28,7 @@ set(OBELISK_TARGET_TRIPLE "wasm32-unknown-emscripten" CACHE STRING
 # the entire runtime for every design.
 # Ordinary wasm objects do not need to match the embedded LLVM's bitcode
 # version, but they must match Emscripten's ABI. Use Emscripten's compiler so
-# exception lowering and the libc++/libunwind archives agree exactly.
+# exception lowering and the libc++/libc++abi archives agree exactly.
 set(_obelisk_wasm_cxx "${CMAKE_CXX_COMPILER}")
 set(_obelisk_wasm_ar "${CMAKE_AR}")
 foreach(tool _obelisk_wasm_cxx _obelisk_wasm_ar)
@@ -68,6 +68,12 @@ set(_obelisk_target_coverage_headers
 
 set(_obelisk_target_runtime_definitions
   -DOBELISK_RT_IGNORE_EXCEPTIONS=1)
+if(OBELISK_ENABLE_RUNTIME_Z3)
+  include("${_obelisk_source_dir}/cmake/RuntimeZ3.cmake")
+  obelisk_build_runtime_z3(wasm)
+  list(APPEND _obelisk_target_runtime_definitions
+    -DOBELISK_RUNTIME_Z3=1 -I "${OBELISK_TARGET_Z3_INCLUDE_DIR}")
+endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   list(APPEND _obelisk_target_runtime_definitions
     -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
@@ -104,22 +110,31 @@ set(_obelisk_target_runtime_common_sources
     DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
     Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
     ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
-    ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSolveWide Runtime
+    ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSolveSMT RandSolveWide Runtime
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
     ContainerBitstreamBytecode ClassBitstream ClassBitstreamBytecode DPIExport
     DPIExportBytecode)
 set(_obelisk_target_runtime_check_sources
-    DesignReflectionABI VPIObjectModelABI)
+    DesignReflectionABI VPIObjectModelABI WasmExceptionABI)
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_check_objects)
 foreach(source IN LISTS _obelisk_target_runtime_common_sources
                         _obelisk_target_runtime_cold_tail_sources
                         _obelisk_target_runtime_check_sources)
   set(object "${_obelisk_target_runtime_dir}/${source}.o")
+  set(_obelisk_source_flags)
+  if(source STREQUAL "WasmExceptionABI")
+    get_filename_component(_obelisk_emscripten_dir "${_obelisk_wasm_cxx}" DIRECTORY)
+    list(APPEND _obelisk_source_flags
+      -I "${_obelisk_emscripten_dir}/system/lib/libcxxabi/src")
+  endif()
   set(source_dependencies
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
+  if(source STREQUAL "RandSolveSMT" AND OBELISK_ENABLE_RUNTIME_Z3)
+    list(APPEND source_dependencies ${OBELISK_TARGET_Z3_PROJECT})
+  endif()
   if(source STREQUAL "CoverageDatabase")
     list(APPEND source_dependencies
       "${_obelisk_source_dir}/lib/Coverage/CoverageFileSupport.h"
@@ -142,7 +157,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     OUTPUT "${object}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${_obelisk_target_runtime_dir}"
-    COMMAND "${_obelisk_wasm_cxx}" ${_obelisk_wasm_flags}
+    COMMAND "${_obelisk_wasm_cxx}" ${_obelisk_wasm_flags} ${_obelisk_source_flags}
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
     DEPENDS
       ${source_dependencies}
@@ -157,7 +172,12 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
   COMMAND "${_obelisk_wasm_ar}" rcs "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
           ${_obelisk_target_runtime_objects}
-  DEPENDS ${_obelisk_target_runtime_objects}
+  COMMAND "${CMAKE_COMMAND}" "-DARCHIVER=${_obelisk_wasm_ar}"
+    "-DRUNTIME=${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+    "-DZ3=${OBELISK_TARGET_Z3_ARCHIVE}"
+    -P "${_obelisk_source_dir}/cmake/MergeRuntimeZ3.cmake"
+  DEPENDS ${_obelisk_target_runtime_objects} ${OBELISK_TARGET_Z3_ARCHIVE}
+    "${_obelisk_source_dir}/cmake/MergeRuntimeZ3.cmake"
   COMMENT "Archiving wasm32 libobelisk_rt.a"
   VERBATIM)
 add_custom_target(obelisk_target_runtime
@@ -179,12 +199,19 @@ add_custom_command(
   OUTPUT "${OBELISK_NATIVE_SUPPORT_STAMP}"
   BYPRODUCTS
     "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
+    "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/z3/LICENSE"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${OBELISK_NATIVE_SUPPORT_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
           "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt.a"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory
+          "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/z3"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${_obelisk_source_dir}/docs/third-party/licenses/MIT.txt"
+          "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/z3/LICENSE"
   COMMAND "${CMAKE_COMMAND}" -E touch "${OBELISK_NATIVE_SUPPORT_STAMP}"
   DEPENDS "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
+          "${_obelisk_source_dir}/docs/third-party/licenses/MIT.txt"
   COMMENT "Staging wasm32 target-link support"
   VERBATIM)
 add_custom_target(obelisk_native_support

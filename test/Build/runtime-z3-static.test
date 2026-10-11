@@ -1,0 +1,12 @@
+# REQUIRES: runtime-z3
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %native_support/libobelisk_rt.a \
+# RUN:   | FileCheck %s --check-prefix=STATIC
+# RUN: %llvm_dist/bin/llvm-ar t %native_support/libobelisk_rt.a \
+# RUN:   | FileCheck %s --check-prefix=MEMBERS --implicit-check-not=libz3.a
+
+# C API definitions must belong to the target archive, alongside the residual
+# solver. An archive nested as one member would not satisfy static linking.
+# STATIC-DAG: T Z3_mk_context{{$}}
+# STATIC-DAG: T Z3_solver_check{{$}}
+# STATIC-DAG: T obelisk_rt_v1_random_solve_modes_state{{$}}
+# MEMBERS: RandSolveSMT.o

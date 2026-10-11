@@ -27,7 +27,7 @@ await globalThis.installObeliskToolchain({ FS }, {
 
 assert.deepEqual(loaded, [
   'libobelisk_rt.a', 'libstubs.a', 'libnoexit.a', 'libc.a', 'libdlmalloc.a',
-  'libc++.a', 'libc++abi.a', 'libcompiler_rt.a', 'libunwind.a',
+  'libc++.a', 'libc++abi.a', 'libclang_rt.builtins.a',
 ]);
 const target = '/lib/obelisk/targets/wasm32-unknown-emscripten';
 assert.equal(new TextDecoder().decode(files.get(`${target}/libobelisk_rt.a`)),

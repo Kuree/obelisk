@@ -137,3 +137,5 @@ if config.enable_real_uvm_tests:
 
 if config.enable_z3:
     config.available_features.add("z3")
+if config.enable_runtime_z3:
+    config.available_features.add("runtime-z3")

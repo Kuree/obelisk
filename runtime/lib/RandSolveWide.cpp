@@ -1,6 +1,7 @@
 //===- RandSolveWide.cpp - Wide constrained-random fallback --------------===//
 
 #include "ExceptionSupport.h"
+#include "RandSolveSMT.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -363,7 +364,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
       (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0)
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                 OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) != 0)
     return false;
   result.hasSoft = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   uint64_t instructionBytes = static_cast<uint64_t>(instructionCount) *
@@ -1059,6 +1061,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     if (program.hasSoft && complete && hasBest) {
       std::copy(best.words.begin(), best.words.end(), outAssignmentWords);
       *outSuccess = 1;
+    }
+    if (!complete && maxAttempts != 0 &&
+        (read32(programBytes + 20) &
+         OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) {
+      auto result = obelisk::runtime::completeRandomProgram(
+          programBytes, static_cast<size_t>(programSize), startWords,
+          mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
+          captureWidths, captureCount, outAssignmentWords);
+      if (result == obelisk::runtime::SMTCompletion::Satisfiable)
+        *outSuccess = 1;
+      else
+        std::fill_n(outAssignmentWords,
+                    static_cast<size_t>(assignmentWordCount), 0);
     }
     *outRngState = randomState.state;
     return OBELISK_RT_OK;

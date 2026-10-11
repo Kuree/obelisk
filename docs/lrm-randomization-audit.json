@@ -2,7 +2,7 @@
   "standard": "IEEE 1800-2023",
   "clause": 18,
   "method": "Manual normative review, compiler/runtime inspection, and MLIR regression evidence. This inventory is not a full conformance certification.",
-  "z3": "Compiler-side in-process Z3 4.13.4 bit-vector planning; no Z3 dependency in generated simulator runtime.",
+  "z3": "Pinned in-process Z3 4.13.4 for compiler bit-vector planning and ordinary runtime residual completion; native and WASM target libraries are statically merged into simulator runtime archives.",
   "sections": [
     {
       "section": "18.1",
@@ -115,7 +115,7 @@
         {
           "feature": "Complete solution discovery",
           "status": "partial",
-          "detail": "Z3 proves compile-time plans; runtime residual traversal is bounded to 2^20 assignments and can miss a valid large-domain solution."
+          "detail": "Compiler Z3 proves static plans. Native and WASM runtime Z3 complete ordinary integral residual programs with live captures, frozen bits, domains, block masks and optimal soft priorities. Ordered/weighted residuals and runtime foreach retain bounded traversal; non-integral forms remain incomplete."
         },
         {
           "feature": "Failure leaves random properties unchanged",
@@ -125,7 +125,7 @@
         {
           "feature": "Uniform joint sampling",
           "status": "partial",
-          "detail": "Exact Z3 structural plans and complete tables are sampled uniformly; arbitrary bounded residual traversal does not establish full uniformity."
+          "detail": "Exact compiler Z3 plans and complete tables are uniform. Ordinary runtime completion selects the first cyclic legal assignment, so arbitrary residual relations still need exact uniform sampling."
         }
       ],
       "evidence": {
@@ -135,7 +135,8 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "runtime/lib/RandSolveSMT.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -166,7 +167,8 @@
           "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir"
         ]
       }
     },
@@ -991,12 +993,14 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "runtime/lib/RandSolveSMT.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir"
         ]
       }
     },
@@ -1022,12 +1026,14 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "runtime/lib/RandSolveSMT.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir"
         ]
       }
     },

@@ -4571,6 +4571,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       program.push_back(static_cast<uint8_t>(value >> (index * 8)));
   };
   uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
+#ifdef OBELISK_RUNTIME_Z3
+  programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
+#endif
   if (hasSolveBefore)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
   if (!distPlans.empty())

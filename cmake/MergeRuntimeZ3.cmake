@@ -1,0 +1,18 @@
+# MRI adds archive members, rather than an unusable nested archive member.
+if(NOT DEFINED ARCHIVER OR NOT DEFINED RUNTIME OR NOT DEFINED Z3)
+  message(FATAL_ERROR "Runtime archive merging requires ARCHIVER, RUNTIME and Z3")
+endif()
+if(Z3 STREQUAL "")
+  return()
+endif()
+set(_merged "${RUNTIME}.merged")
+set(_script "${RUNTIME}.mri")
+file(WRITE "${_script}" "create ${_merged}\naddlib ${RUNTIME}\naddlib ${Z3}\nsave\nend\n")
+execute_process(COMMAND "${ARCHIVER}" -M INPUT_FILE "${_script}"
+  RESULT_VARIABLE _result)
+file(REMOVE "${_script}")
+if(NOT _result EQUAL 0)
+  file(REMOVE "${_merged}")
+  message(FATAL_ERROR "Merging the static runtime Z3 library failed")
+endif()
+file(RENAME "${_merged}" "${RUNTIME}")

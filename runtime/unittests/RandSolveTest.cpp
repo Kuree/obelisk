@@ -1316,4 +1316,59 @@ TEST_F(RandSolveTest, RejectsMalformedPrograms) {
             OBELISK_RT_INVALID_ARGUMENT);
 }
 
+#ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveTest, CompletesSparseRootsWithLiveCapturesAndSoftModes) {
+  std::vector<uint8_t> bytes =
+      program(32, 3,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+               {OBELISK_RT_RANDOM_MUL_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 1},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 1, 0},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 2},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 2, 1}},
+              true);
+  uint64_t captures[] = {49, 7, 9};
+  uint64_t assignment = 0, nextState = 0;
+  uint32_t success = 0;
+  auto solve = [&](uint64_t modes, uint64_t attempts) {
+    return obelisk_rt_v1_random_solve_modes_state(
+        context, bytes.data(), bytes.size(), 0x40000000, UINT32_MAX, modes,
+        attempts, 71, 15, captures, 3, &assignment, &success, &nextState);
+  };
+  // Preserve the old API's enumeration work bound unless the compiler opts in.
+  ASSERT_EQ(solve(0, 1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
+  ASSERT_EQ(solve(0, 1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 7u);
+  EXPECT_EQ(nextState, 71u);
+  ASSERT_EQ(solve(uint64_t{1} << 1, 1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 0x7ffffff9u);
+  ASSERT_EQ(solve(uint64_t{1} << 2, 1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 7u);
+  ASSERT_EQ(solve(1, 1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 9u);
+  captures[0] = 2;
+  ASSERT_EQ(solve(0, 1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(assignment, 0u);
+  EXPECT_EQ(nextState, 71u);
+  captures[0] = 49;
+  ASSERT_EQ(solve(0, 0), OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+}
+#endif
+
 } // namespace

@@ -1,4 +1,5 @@
 // RUN: %llvm_dist/bin/llvm-nm %runtime_archive | FileCheck %s
+// UNSUPPORTED: runtime-z3
 
 // This is a link-boundary regression, not SystemVerilog source. Z3 may be
 // linked into compiler tools when enabled, but no Z3 C or C++ API symbol may

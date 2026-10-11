@@ -196,7 +196,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0 ||
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                        OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() - headerSize) /
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2)
     return std::nullopt;

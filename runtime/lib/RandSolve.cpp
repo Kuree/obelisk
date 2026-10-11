@@ -1,6 +1,7 @@
 //===- RandSolve.cpp - Constrained-random residual solver -----------------===//
 
 #include "ExceptionSupport.h"
+#include "RandSolveSMT.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -577,7 +578,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS)) != 0)
+                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                        OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
                             static_cast<uint64_t>(instructionCount) *
@@ -1166,6 +1168,17 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     if (encodedSoft && complete && hasHardFallback) {
       *outAssignment = hardFallback;
       *outSuccess = 1;
+    }
+    if (!complete && maxAttempts != 0 &&
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) {
+      uint64_t assignment = 0;
+      auto result = obelisk::runtime::completeRandomProgram(
+          program, static_cast<size_t>(programSize), &start, &mutableMask, 1,
+          constraintMask, captures, nullptr, captureCount, &assignment);
+      if (result == obelisk::runtime::SMTCompletion::Satisfiable) {
+        *outAssignment = assignment;
+        *outSuccess = 1;
+      }
     }
     return OBELISK_RT_OK;
   }

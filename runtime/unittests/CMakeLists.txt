@@ -74,6 +74,9 @@ target_include_directories(ObeliskRuntimeTests SYSTEM PRIVATE
   ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
 )
 target_compile_features(ObeliskRuntimeTests PRIVATE cxx_std_17)
+if(OBELISK_ENABLE_RUNTIME_Z3)
+  target_compile_definitions(ObeliskRuntimeTests PRIVATE OBELISK_RUNTIME_Z3=1)
+endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   target_compile_definitions(ObeliskRuntimeTests PRIVATE
     OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)

@@ -4686,6 +4686,10 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DIST UINT32_C(4)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS UINT32_C(8)
+// Permit target Z3 to complete an unfinished ordinary residual traversal.
+// max_attempts then bounds the enumeration fast path rather than the solver.
+// This flag does not alter ordered or weighted sampling.
+#define OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION UINT32_C(16)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_DIST_HEADER_SIZE UINT16_C(8)
@@ -5093,6 +5097,8 @@ obelisk_rt_status obelisk_rt_v1_random_cycle_next(uint64_t key,
 // the first aggregate assignment and `max_attempts` is a deterministic work
 // bound. A successful solve writes both outputs. Exhaustion is reported by
 // out_success == 0 and is not a runtime API error.
+// SMT_COMPLETION programs additionally ask target Z3 to finish an exhausted
+// nonzero traversal. Legacy programs retain the deterministic work bound.
 obelisk_rt_status obelisk_rt_v1_random_solve(
     obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
     uint64_t start, uint64_t max_attempts, const uint64_t *captures,

@@ -34,6 +34,7 @@ set(_obelisk_runtime_common_sources
   lib/Plusargs.cpp
   lib/Random.cpp
   lib/RandSolve.cpp
+  lib/RandSolveSMT.cpp
   lib/RandSolveWide.cpp
   lib/Runtime.cpp
   lib/Sampled.cpp
@@ -86,6 +87,10 @@ target_include_directories(obelisk_rt PRIVATE
 
 target_compile_features(obelisk_rt PUBLIC cxx_std_17)
 target_link_libraries(obelisk_rt PUBLIC Threads::Threads)
+if(OBELISK_ENABLE_RUNTIME_Z3)
+  target_compile_definitions(obelisk_rt PRIVATE OBELISK_RUNTIME_Z3=1)
+  target_link_libraries(obelisk_rt PUBLIC ObeliskZ3)
+endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   target_compile_definitions(obelisk_rt PRIVATE
     OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)

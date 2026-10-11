@@ -636,4 +636,51 @@ TEST_F(RandSolveWideTest, RejectsNonContiguousSoftPriorities) {
   EXPECT_EQ(nextState, 71u);
 }
 
+#ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveWideTest, CompletesWideSystemFunctionsWithCaptureBoundaries) {
+  std::vector<uint8_t> bytes =
+      program(128, 2,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {OBELISK_RT_RANDOM_COUNT_ONES_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {1}},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {OBELISK_RT_RANDOM_CLOG2_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 1},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION);
+  uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, UINT64_MAX};
+  uint64_t captures[] = {96, 0, uint64_t{1} << 32};
+  uint32_t captureWidths[] = {32, 128};
+  uint64_t assignment[] = {0, 0}, nextState = 0;
+  uint32_t success = 0;
+  auto solve = [&] {
+    return obelisk_rt_v1_random_solve_wide_modes_state(
+        context, bytes.data(), bytes.size(), start, mutableMask, 2, 0, 1, 71,
+        15, captures, 3, captureWidths, 2, assignment, &success, &nextState);
+  };
+  ASSERT_EQ(solve(), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment[0], 0u);
+  EXPECT_EQ(assignment[1], uint64_t{1} << 32);
+  EXPECT_EQ(nextState, 71u);
+  // Freezing the required bit at zero makes the relation unsatisfiable.
+  mutableMask[1] ^= uint64_t{1} << 32;
+  ASSERT_EQ(solve(), OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(assignment[0], 0u);
+  EXPECT_EQ(assignment[1], 0u);
+  EXPECT_EQ(nextState, 71u);
+}
+#endif
+
 } // namespace
