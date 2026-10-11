@@ -691,6 +691,20 @@ def SimCovergroupCastOp : SimOp<"covergroup.cast", [
   }];
 }
 
+def SimCovergroupEqualOp : SimOp<"covergroup.equal", [
+    Pure, Commutative, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "compare nullable covergroup instance identities";
+  let arguments = (ins SimCovergroupHandleType:$lhs,
+                       SimCovergroupHandleType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` qualified(type($lhs)) `,`
+    qualified(type($rhs))
+  }];
+  let hasFolder = 1;
+}
+
 def SimVirtualInterfaceNullOp
     : SimOp<"virtual_interface.null", [Pure, ConstantLike]> {
   let summary = "typed null virtual interface handle";

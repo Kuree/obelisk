@@ -33,6 +33,22 @@ public:
   }
 };
 
+class CovergroupEqualConversion final
+    : public OpConversionPattern<sim::SimCovergroupEqualOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimCovergroupEqualOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getLhs().size() != 1 || adaptor.getRhs().size() != 1)
+      return failure();
+    rewriter.replaceOpWithNewOp<LLVM::ICmpOp>(op, LLVM::ICmpPredicate::eq,
+                                              adaptor.getLhs().front(),
+                                              adaptor.getRhs().front());
+    return success();
+  }
+};
+
 struct FunctionalValueLayout {
   uint64_t pointerSize = 0;
   uint64_t unknown = 0;
@@ -1193,7 +1209,7 @@ void populateManagedCoverageToLLVMConversionPatterns(
       CoverageDatabaseConversion<sim::SimCoverageSaveOp>,
       CoverageDatabaseConversion<sim::SimCoverageMergeOp>,
       CovergroupNullConversion, CovergroupCastConversion,
-      FunctionalCoverageGetConversion,
+      CovergroupEqualConversion, FunctionalCoverageGetConversion,
       FunctionalCoverageDatabaseConversion<
           sim::SimFunctionalCoverageSetDbNameOp>,
       FunctionalCoverageDatabaseConversion<sim::SimFunctionalCoverageLoadDbOp>,

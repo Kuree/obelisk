@@ -1371,6 +1371,15 @@ SimCovergroupCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult
+SimCovergroupEqualOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  for (CovergroupHandleType type : {getLhs().getType(), getRhs().getType()})
+    if (!symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+            *this, type.getCovergroupName()))
+      return emitOpError("references an unknown covergroup declaration");
+  return success();
+}
+
 LogicalResult SimVirtualInterfaceBindOp::verify() {
   if (failed(verifyPositive(*this, getScopeIdAttr(), "interface scope ID")))
     return failure();

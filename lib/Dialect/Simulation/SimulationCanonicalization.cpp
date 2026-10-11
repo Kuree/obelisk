@@ -215,6 +215,12 @@ OpFoldResult SimChandleEqualOp::fold(FoldAdaptor) {
     return BoolAttr::get(getContext(), true);
   return {};
 }
+OpFoldResult SimCovergroupEqualOp::fold(FoldAdaptor) {
+  if (getLhs() == getRhs() || (getLhs().getDefiningOp<SimCovergroupNullOp>() &&
+                               getRhs().getDefiningOp<SimCovergroupNullOp>()))
+    return BoolAttr::get(getContext(), true);
+  return {};
+}
 OpFoldResult SimProcessEqualOp::fold(FoldAdaptor) {
   if (getLhs() == getRhs())
     return BoolAttr::get(getContext(), true);

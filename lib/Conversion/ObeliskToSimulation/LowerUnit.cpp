@@ -2325,6 +2325,8 @@ FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
     null = sim::SimProcessNullOp::create(builder, location);
   else if (isa<sim::ClassHandleType>(type))
     null = sim::SimClassNullOp::create(builder, location, type);
+  else if (isa<sim::CovergroupHandleType>(type))
+    null = sim::SimCovergroupNullOp::create(builder, location, type);
   else if (isa<sim::EventType>(type))
     null = sim::SimEventNullOp::create(builder, location, type);
   else if (isa<sim::VirtualInterfaceType>(type))

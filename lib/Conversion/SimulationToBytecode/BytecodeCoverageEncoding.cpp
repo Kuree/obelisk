@@ -64,6 +64,11 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
     emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimCovergroupEqualOp>(operation)) {
+    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimCovergroupCreateOp>(operation)) {
     auto declaration =
         SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(

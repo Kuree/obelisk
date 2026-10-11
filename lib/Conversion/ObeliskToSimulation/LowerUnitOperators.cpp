@@ -125,7 +125,8 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
   }
   if (kind == semantic::SVUnaryOperator::LogicalNot &&
       isa<sim::ChandleType, sim::ProcessType, sim::ClassHandleType,
-          sim::EventType, sim::VirtualInterfaceType>((*input).getType())) {
+          sim::CovergroupHandleType, sim::EventType, sim::VirtualInterfaceType>(
+          (*input).getType())) {
     // A handle has no packed value to reduce; IEEE 1800-2017 12.4's reading of
     // a condition against zero becomes a comparison with null.
     FailureOr<Value> truth = truthValue(*input, location);
@@ -463,6 +464,10 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       else if (isa<sim::ClassHandleType>((*rhs).getType()))
         lhs = sim::SimClassNullOp::create(builder, location, (*rhs).getType())
                   .getResult();
+      else if (isa<sim::CovergroupHandleType>((*rhs).getType()))
+        lhs = sim::SimCovergroupNullOp::create(builder, location,
+                                               (*rhs).getType())
+                  .getResult();
       else if (isa<sim::EventType>((*rhs).getType()))
         lhs = sim::SimEventNullOp::create(builder, location, (*rhs).getType())
                   .getResult();
@@ -480,6 +485,10 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
         rhs = sim::SimProcessNullOp::create(builder, location).getResult();
       else if (isa<sim::ClassHandleType>((*lhs).getType()))
         rhs = sim::SimClassNullOp::create(builder, location, (*lhs).getType())
+                  .getResult();
+      else if (isa<sim::CovergroupHandleType>((*lhs).getType()))
+        rhs = sim::SimCovergroupNullOp::create(builder, location,
+                                               (*lhs).getType())
                   .getResult();
       else if (isa<sim::EventType>((*lhs).getType()))
         rhs = sim::SimEventNullOp::create(builder, location, (*lhs).getType())
@@ -647,6 +656,23 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     return kind == Binary::Inequality || kind == Binary::CaseInequality ||
            kind == Binary::WildcardInequality;
   };
+  if (isa<sim::CovergroupHandleType>((*lhs).getType()) ||
+      isa<sim::CovergroupHandleType>((*rhs).getType())) {
+    if (!isa<sim::CovergroupHandleType>((*lhs).getType()) ||
+        !isa<sim::CovergroupHandleType>((*rhs).getType()) ||
+        (!handleEquality() && !handleInequality())) {
+      unsupported(op) << " (covergroup-handle operator)";
+      return failure();
+    }
+    Value equal =
+        sim::SimCovergroupEqualOp::create(builder, location, *lhs, *rhs);
+    if (handleInequality())
+      equal = arith::XOrIOp::create(
+          builder, location, equal,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+    return convert(equal, *resultType, false, location);
+  }
   if (isa<sim::ClassHandleType>((*lhs).getType()) ||
       isa<sim::ClassHandleType>((*rhs).getType())) {
     if (!isa<sim::ClassHandleType>((*lhs).getType()) ||
@@ -1248,7 +1274,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
 
 FailureOr<Value> UnitLowering::conditionalPredicate(Value value,
                                                     Location location) {
-  if (isa<sim::StringType, FloatType>(value.getType())) {
+  if (isa<sim::StringType, FloatType, sim::CovergroupHandleType>(
+          value.getType())) {
     FailureOr<Value> truth = truthValue(value, location);
     if (failed(truth))
       return failure();
@@ -1339,6 +1366,9 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
   }
   if (isa<sim::ProcessType>(type))
     return sim::SimProcessEqualOp::create(builder, location, lhs, rhs)
+        .getResult();
+  if (isa<sim::CovergroupHandleType>(type))
+    return sim::SimCovergroupEqualOp::create(builder, location, lhs, rhs)
         .getResult();
   if (isa<sim::VirtualInterfaceType>(type))
     return sim::SimVirtualInterfaceEqualOp::create(builder, location, lhs, rhs)
@@ -1606,7 +1636,7 @@ FailureOr<Value> UnitLowering::logicalEqual(Value lhs, Value rhs, Type type,
     return fromBits(equal);
   }
   if (isa<FloatType, sim::StringType, sim::ClassHandleType, sim::ProcessType,
-          sim::EventType>(type)) {
+          sim::CovergroupHandleType, sim::EventType>(type)) {
     FailureOr<Value> equal = conditionalEqual(lhs, rhs, type, location);
     if (failed(equal))
       return failure();

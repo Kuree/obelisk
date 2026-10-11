@@ -104,6 +104,19 @@ Container, mailbox, and associative-array verifiers reject truncated, four-state
 or managed-heap representations. Descriptor construction and scalar handle
 transfers add constant work; bulk copies retain their existing linear traversal.
 
+Handle probes also exposed missing covergroup identity comparisons and null
+conditions. The new pure, commutative `simulation.covergroup.equal` operation
+compares instance identities, including across nominal covergroup types; equal
+configuration digests do not imply equal instances (19.3, 8.12). Null operands,
+logical/case/wildcard equality, unary negation, `if`, array element equality, and
+conditional expressions share this operation. Ambiguous conditional arms
+preserve equal handles and otherwise produce the type's null default (11.4.11).
+Symbol verification uses the supplied `SymbolTableCollection`; folding only
+proves reflexivity and known nulls. Native lowering uses converted operands in
+one LLVM integer comparison, and bytecode emits one comparison instruction.
+The source, backend, canonicalization, and invalid-symbol regressions cover
+both tiers at O0 and O3 without adding runtime metadata lookups.
+
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime
 code stays independent of MLIR and LLVM. This follows the analysis-lifetime and
