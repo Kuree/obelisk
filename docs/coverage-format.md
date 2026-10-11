@@ -65,6 +65,17 @@ Snapshots and loads pack the bundles in radix order and rebase each referenced
 payload once. These storage and indexing steps cost O(N), including amortized
 vector growth; exact semantic expansion retains the bounds described below.
 
+Runtime method queries index configurations by type, items by stable identity,
+and bins by their owning item. Loaded configurations are partitioned once;
+binding adopts each rebased bundle into its static type projection. A single
+indexed join groups persisted instances, options, counters, and sparse tuples,
+and retains their immutable profiles until the next database load. Queries visit
+their configuration's contributors and each item's actual bins, rather than
+rescanning every global table per configuration, instance, or item. Index
+construction and these joins cost O(N); each ordinary aggregate query costs the
+represented contributor/profile data it visits. Symbolic cross unions retain
+their separate expansion bounds below.
+
 Snapshot generation indexes items, types, handles, and cross identities once.
 Report generation groups configuration options once, aggregates selected
 counters once, and visits actual contributors. Toggle field intervals are
@@ -153,6 +164,19 @@ tiers, load and merge, and JSON/text/HTML/LCOV generation; the runtime unit chec
 invalid references as well as valid empty identities. Existing typed declaration,
 symbol, and payload-batch verification accepts the empty inventories without
 changing the MLIR operation contracts.
+
+Method-query review preserves the instance-weighted average, name-based bin
+union, and maximum contributing `at_least` threshold required by 19.11.1 and
+19.11.3. Explicitly named persisted instances merge within their configuration;
+generated identities remain independent. Item projections borrow the original
+profile ordinal, including procedural instance options. Database loads reset
+derived indexes and loaded profiles while retaining live instance counters and
+immutable configuration metadata. Procedural type options still affect later
+queries without rewriting cached instance profiles. The new load-refresh unit
+uses two tiny runs; the existing 16-configuration source fixture now also checks
+loaded and merged type/item queries in both tiers. A small MLIR conversion test
+checks empty constructor batches, absence of synthesized schema items/bins,
+the three query results, both backend ABIs, and LLVM IR verification.
 
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime

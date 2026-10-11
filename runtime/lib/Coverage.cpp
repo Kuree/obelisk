@@ -32,6 +32,9 @@ struct FunctionalCoverageConstructionSchemas {
       uint64_t, std::shared_ptr<const obelisk::coverage::Database>>
       types;
   obelisk::coverage::detail::IndexSet<uint64_t> itemIDs, binIDs, valueSetIDs;
+  obelisk::coverage::detail::IndexMap<uint64_t,
+                                      obelisk::coverage::FunctionalItem>
+      items;
   using TypeProfile = obelisk::coverage::detail::IndexMap<
       std::tuple<obelisk::coverage::FunctionalConfigurationOptionOwnerKind,
                  uint64_t,
@@ -39,6 +42,47 @@ struct FunctionalCoverageConstructionSchemas {
       std::tuple<obelisk::coverage::FunctionalConfigurationValueKind, uint64_t,
                  std::string>>;
   obelisk::coverage::detail::IndexMap<uint64_t, TypeProfile> loadedTypeProfiles;
+};
+
+struct FunctionalCoverageConfigurationSchemas {
+  const obelisk::coverage::Database *source = nullptr;
+  obelisk::coverage::detail::IndexMap<
+      FunctionalCoverageTypeKey,
+      std::shared_ptr<const obelisk::coverage::Database>>
+      configurations;
+};
+
+struct FunctionalCoverageQueryMetadata {
+  std::shared_ptr<const FunctionalCoverageConstructionSchemas> templates;
+  std::vector<obelisk::coverage::ResolvedFunctionalItem> items;
+  std::vector<obelisk::coverage::ResolvedFunctionalBin> bins;
+  obelisk::coverage::detail::IndexMap<uint64_t, size_t> itemPositions;
+  obelisk::coverage::detail::IndexMap<uint64_t, size_t> templateItemPositions;
+  obelisk::coverage::detail::IndexMap<uint64_t, size_t> binPositions;
+  obelisk::coverage::detail::IndexMap<uint64_t, size_t> crossPositions;
+  std::vector<std::vector<size_t>> itemBins;
+  obelisk::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
+};
+
+struct FunctionalCoverageLoadedData {
+  struct Instance {
+    uint64_t typeID = 0;
+    obelisk::coverage::Digest configuration{};
+    obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> counts;
+    // Cross identities here are template IDs, shared by all configurations.
+    obelisk::coverage::detail::IndexMap<
+        uint64_t, obelisk::coverage::detail::IndexMap<
+                      std::vector<uint64_t>, FunctionalCoverageCrossTupleState>>
+        crossTuples;
+    std::vector<obelisk::coverage::ResolvedInstanceOption> options;
+    // The persisted profile is immutable until the next database load. Point
+    // queries borrow this full profile using their original item ordinal.
+    mutable std::shared_ptr<const FunctionalCoverageInstanceState> profile;
+  };
+  const obelisk::coverage::Database *source = nullptr;
+  obelisk::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
+                                      std::vector<Instance>>
+      configurations;
 };
 
 namespace {
@@ -2208,6 +2252,7 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     itemTypes.emplace(row.id, row.type);
     owners.emplace(std::make_pair(Owner::Item, row.id), row.type);
     prepared->itemIDs.insert(row.id);
+    prepared->items.emplace(row.id, row);
   }
   for (const auto &row : source.functionalBins) {
     uint64_t type = itemTypes.at(row.item);
@@ -6955,12 +7000,9 @@ obelisk_rt_status resolveStaticFunctionalType(
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status applyFunctionalTypeOptions(
-    CoverageState &coverage, uint64_t typeID, FunctionalCoverageTypeState &type,
-    const obelisk::coverage::Database *resolvedSchema = nullptr) {
-  if (!resolvedSchema)
-    resolvedSchema = type.configurationSchema ? type.configurationSchema.get()
-                                              : coverage.schema.get();
+obelisk_rt_status
+applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
+                           FunctionalCoverageTypeState &type) {
   auto overrides = coverage.typeOptions.find(typeID);
   if (overrides == coverage.typeOptions.end())
     return OBELISK_RT_OK;
@@ -6972,18 +7014,11 @@ obelisk_rt_status applyFunctionalTypeOptions(
   if (options.mergeInstances)
     type.mergeInstances = *options.mergeInstances;
   if (type.items.size() != type.typeItemGoals.size() ||
-      type.items.size() != type.typeItemWeights.size() || !resolvedSchema)
+      type.items.size() != type.typeItemWeights.size() || !type.queryMetadata ||
+      type.queryMetadata->items.size() != type.items.size())
     return OBELISK_RT_INVALID_DESIGN;
   for (size_t index = 0; index != type.items.size(); ++index) {
-    auto resolved = std::find_if(
-        resolvedSchema->resolvedFunctionalItems.begin(),
-        resolvedSchema->resolvedFunctionalItems.end(), [&](const auto &item) {
-          return item.type == typeID &&
-                 item.configuration == type.configuration &&
-                 item.id == type.items[index];
-        });
-    if (resolved == resolvedSchema->resolvedFunctionalItems.end())
-      return OBELISK_RT_INVALID_DESIGN;
+    const auto *resolved = &type.queryMetadata->items[index];
     if (auto goal = options.itemGoals.find(resolved->templateItem);
         goal != options.itemGoals.end())
       type.typeItemGoals[index] = goal->second;
@@ -7000,6 +7035,30 @@ obelisk_rt_status createResolvedFunctionalType(
     FunctionalCoverageTypeState &result) {
   FunctionalCoverageTypeState type;
   type.configuration = configuration;
+  auto metadata = std::make_shared<FunctionalCoverageQueryMetadata>();
+  metadata->templates = coverage.constructionSchemas;
+  using namespace obelisk::coverage;
+  const auto optionsByOwner = detail::groupRecords(
+      schema.functionalConfigurationOptions, [](const auto &option) {
+        return std::make_tuple(option.type, option.configuration,
+                               option.ownerKind, option.owner);
+      });
+  auto optionsFor = [&](FunctionalConfigurationOptionOwnerKind ownerKind,
+                        uint64_t owner) -> const auto & {
+    return detail::lookupRows(
+        optionsByOwner,
+        std::make_tuple(typeID, configuration, ownerKind, owner));
+  };
+  const auto &groupOptions =
+      optionsFor(FunctionalConfigurationOptionOwnerKind::Group, typeID);
+  IndexMap<uint64_t, const ResolvedFunctionalBinPlan *> binPlans;
+  for (const auto &plan : schema.resolvedFunctionalBinPlans)
+    if (plan.type == typeID && plan.configuration == configuration)
+      binPlans.emplace(plan.bin, &plan);
+  IndexSet<uint64_t> excludedEntities;
+  for (const auto &entry : schema.exclusions)
+    if (entry.metric == MetricKind::Functional)
+      excludedEntities.insert(entry.entity);
   std::unordered_set<uint64_t> emptyTransitionBins;
   obelisk_rt_status transitionExclusionStatus = deriveTransitionExclusions(
       schema, typeID, configuration, type.suppressedTransitionAlternatives,
@@ -7034,7 +7093,7 @@ obelisk_rt_status createResolvedFunctionalType(
         !(foundBin->flags & obelisk::coverage::FunctionalBinEmpty))
       return OBELISK_RT_INVALID_DESIGN;
   }
-  for (const auto &option : schema.functionalConfigurationOptions) {
+  for (const auto &option : groupOptions) {
     if (option.type != typeID || option.configuration != configuration ||
         option.owner != typeID ||
         option.ownerKind !=
@@ -7082,11 +7141,11 @@ obelisk_rt_status createResolvedFunctionalType(
   for (const auto &item : schema.resolvedFunctionalItems)
     if (item.type == typeID && item.configuration == type.configuration)
       items.push_back(&item);
-  std::sort(items.begin(), items.end(), [](const auto *a, const auto *b) {
-    return a->ordinal < b->ordinal;
-  });
+  sortByKey(items.begin(), items.end(),
+            [](const auto *item) { return item->ordinal; });
+  metadata->itemBins.resize(items.size());
   uint64_t groupAtLeast = 1;
-  for (const auto &option : schema.functionalConfigurationOptions)
+  for (const auto &option : groupOptions)
     if (option.type == typeID && option.configuration == configuration &&
         option.owner == typeID &&
         option.ownerKind == obelisk::coverage::
@@ -7097,14 +7156,20 @@ obelisk_rt_status createResolvedFunctionalType(
             obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
       groupAtLeast = option.value;
   for (const auto *item : items) {
+    const auto &itemOptions =
+        optionsFor(FunctionalConfigurationOptionOwnerKind::Item, item->id);
     const bool nonAggregating =
         (item->flags & obelisk::coverage::FunctionalItemNonAggregating) != 0;
+    metadata->itemPositions.emplace(item->id, type.items.size());
+    metadata->templateItemPositions.emplace(item->templateItem,
+                                            type.items.size());
+    metadata->items.push_back(*item);
     type.items.push_back(item->id);
     type.itemAggregating.push_back(nonAggregating ? 0 : 1);
     type.itemGoals.push_back(item->goal);
     type.itemWeights.push_back(nonAggregating ? 0 : item->weight);
     uint64_t itemAtLeast = groupAtLeast;
-    for (const auto &option : schema.functionalConfigurationOptions)
+    for (const auto &option : itemOptions)
       if (option.type == typeID && option.configuration == configuration &&
           option.owner == item->id &&
           option.ownerKind == obelisk::coverage::
@@ -7114,7 +7179,7 @@ obelisk_rt_status createResolvedFunctionalType(
           option.option ==
               obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
         itemAtLeast = option.value;
-    for (const auto &option : schema.functionalConfigurationOptions)
+    for (const auto &option : itemOptions)
       if (option.type == typeID && option.configuration == configuration &&
           option.owner == item->id &&
           option.ownerKind == obelisk::coverage::
@@ -7132,7 +7197,7 @@ obelisk_rt_status createResolvedFunctionalType(
     type.itemAtLeast.push_back(itemAtLeast);
     uint32_t typeGoal = 100;
     uint32_t typeWeight = 1;
-    for (const auto &option : schema.functionalConfigurationOptions) {
+    for (const auto &option : itemOptions) {
       if (option.type != typeID || option.configuration != configuration ||
           option.owner != item->id ||
           option.ownerKind !=
@@ -7157,25 +7222,20 @@ obelisk_rt_status createResolvedFunctionalType(
   for (const auto &bin : schema.resolvedFunctionalBins) {
     if (bin.type != typeID || bin.configuration != type.configuration)
       continue;
-    auto plan = std::find_if(
-        schema.resolvedFunctionalBinPlans.begin(),
-        schema.resolvedFunctionalBinPlans.end(), [&](const auto &entry) {
-          return entry.type == typeID &&
-                 entry.configuration == type.configuration &&
-                 entry.bin == bin.id;
-        });
+    auto plan = binPlans.find(bin.id);
     uint32_t flags = bin.flags;
-    bool excluded = std::any_of(
-        schema.exclusions.begin(), schema.exclusions.end(),
-        [&](const auto &entry) {
-          return entry.metric == obelisk::coverage::MetricKind::Functional &&
-                 (entry.entity == bin.id || entry.entity == bin.templateBin);
-        });
-    type.bins.push_back({bin.id, bin.templateBin, bin.item,
-                         plan == schema.resolvedFunctionalBinPlans.end()
-                             ? uint64_t{0}
-                             : plan->valueSet,
-                         bin.atLeast, bin.kind, flags, 0, false, excluded});
+    bool excluded = excludedEntities.count(bin.id) ||
+                    excludedEntities.count(bin.templateBin);
+    type.bins.push_back(
+        {bin.id, bin.templateBin, bin.item,
+         plan == binPlans.end() ? uint64_t{0} : plan->second->valueSet,
+         bin.atLeast, bin.kind, flags, 0, false, excluded});
+    auto position = metadata->itemPositions.find(bin.item);
+    if (position == metadata->itemPositions.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    metadata->itemBins[position->second].push_back(metadata->bins.size());
+    metadata->binPositions.emplace(bin.id, metadata->bins.size());
+    metadata->bins.push_back(bin);
   }
   const uint64_t selectorResolutionLimit =
       obelisk::coverage::ParseLimits{}.maxRecords;
@@ -7520,10 +7580,21 @@ obelisk_rt_status createResolvedFunctionalType(
       }
       cross.explicitBins.push_back(std::move(explicitBin));
     }
+    metadata->crossPositions.emplace(cross.id, type.crosses.size());
     type.crosses.push_back(std::move(cross));
   }
+  for (const auto &option : schema.functionalConfigurationOptions)
+    if (option.type == typeID && option.configuration == configuration &&
+        option.ownerKind ==
+            obelisk::coverage::FunctionalConfigurationOptionOwnerKind::Item &&
+        option.scope ==
+            obelisk::coverage::FunctionalOptionScopeKind::Instance &&
+        option.option ==
+            obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
+      metadata->explicitAtLeastItems.insert(option.owner);
+  type.queryMetadata = std::move(metadata);
   obelisk_rt_status typeOptionStatus =
-      applyFunctionalTypeOptions(coverage, typeID, type, &schema);
+      applyFunctionalTypeOptions(coverage, typeID, type);
   if (typeOptionStatus != OBELISK_RT_OK)
     return typeOptionStatus;
   obelisk_rt_status overlapStatus =
@@ -7533,6 +7604,8 @@ obelisk_rt_status createResolvedFunctionalType(
   result = std::move(type);
   return OBELISK_RT_OK;
 }
+
+obelisk_rt_status ensureFunctionalConfigurationSchemas(CoverageState &coverage);
 
 obelisk_rt_status
 bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
@@ -7549,11 +7622,18 @@ bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
   indexFunctionalConfigurations(coverage);
   if (!coverage.configurationKeys.count(key))
     return OBELISK_RT_INVALID_DESIGN;
-  FunctionalCoverageTypeState type;
-  obelisk_rt_status status = createResolvedFunctionalType(
-      coverage, *coverage.schema, typeID, configuration, type);
+  obelisk_rt_status status = ensureFunctionalConfigurationSchemas(coverage);
   if (status != OBELISK_RT_OK)
     return status;
+  auto bundle = coverage.loadedConfigurationSchemas->configurations.find(key);
+  if (bundle == coverage.loadedConfigurationSchemas->configurations.end())
+    return OBELISK_RT_INVALID_DESIGN;
+  FunctionalCoverageTypeState type;
+  status = createResolvedFunctionalType(coverage, *bundle->second, typeID,
+                                        configuration, type);
+  if (status != OBELISK_RT_OK)
+    return status;
+  type.configurationSchema = bundle->second;
   auto insertion = coverage.types.emplace(key, std::move(type));
   result = &insertion.first->second;
   return OBELISK_RT_OK;
@@ -7673,6 +7753,10 @@ void appendPreparedConfiguration(obelisk::coverage::Database &destination,
   auto append = [](auto &to, auto &from) {
     using Row = typename std::decay_t<decltype(to)>::value_type;
     static_assert(std::is_nothrow_move_constructible_v<Row>);
+    if (to.empty()) {
+      to.swap(from);
+      return;
+    }
     assert(to.capacity() - to.size() >= from.size());
     to.insert(to.end(), std::make_move_iterator(from.begin()),
               std::make_move_iterator(from.end()));
@@ -7713,6 +7797,42 @@ void appendPreparedConfiguration(obelisk::coverage::Database &destination,
          prepared.resolvedFunctionalTupleSetTuples);
   append(destination.resolvedFunctionalTupleSetComponents,
          prepared.resolvedFunctionalTupleSetComponents);
+}
+
+obelisk_rt_status
+ensureFunctionalConfigurationSchemas(CoverageState &coverage) {
+  if (!coverage.schema)
+    return OBELISK_RT_INVALID_DESIGN;
+  if (coverage.loadedConfigurationSchemas &&
+      coverage.loadedConfigurationSchemas->source == coverage.schema.get())
+    return OBELISK_RT_OK;
+  obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+  if (status != OBELISK_RT_OK)
+    return status;
+  std::vector<obelisk::coverage::Database> bundles;
+  auto partitionStatus = obelisk::coverage::partitionFunctionalConfigurations(
+      *coverage.schema, bundles);
+  if (partitionStatus != obelisk::coverage::Status::Ok)
+    return mapCoverageStatus(partitionStatus);
+  auto prepared = std::make_shared<FunctionalCoverageConfigurationSchemas>();
+  prepared->source = coverage.schema.get();
+  for (auto &bundle : bundles) {
+    const auto &row = bundle.functionalConfigurations.front();
+    const FunctionalCoverageTypeKey key{row.type, row.configuration};
+    auto source = coverage.constructionSchemas->types.find(row.type);
+    if (source == coverage.constructionSchemas->types.end() ||
+        !obelisk::coverage::isSchemaOnly(*source->second))
+      return OBELISK_RT_INVALID_DESIGN;
+    auto schema =
+        std::make_shared<obelisk::coverage::Database>(*source->second);
+    // Partitioning has already checked/rebased each owned payload. The static
+    // projection has no resolved rows, so adopt its bundle without another
+    // allocation, copy, or rebase of the twenty resolved columns.
+    appendPreparedConfiguration(*schema, bundle);
+    prepared->configurations.emplace(key, std::move(schema));
+  }
+  coverage.loadedConfigurationSchemas = std::move(prepared);
+  return OBELISK_RT_OK;
 }
 
 obelisk_rt_status
@@ -10076,10 +10196,38 @@ void markStaticallyEmptyStateBins(
 
 const FunctionalCoverageCrossState *
 findFunctionalCross(const FunctionalCoverageTypeState &type, uint64_t item) {
+  if (type.queryMetadata) {
+    auto found = type.queryMetadata->crossPositions.find(item);
+    return found == type.queryMetadata->crossPositions.end()
+               ? nullptr
+               : &type.crosses[found->second];
+  }
   auto found =
       std::find_if(type.crosses.begin(), type.crosses.end(),
                    [&](const auto &cross) { return cross.id == item; });
   return found == type.crosses.end() ? nullptr : &*found;
+}
+
+const obelisk::coverage::ResolvedFunctionalItem *
+queryItemMetadata(const FunctionalCoverageTypeState &type, size_t itemIndex) {
+  const size_t index =
+      type.projectedItemIndex == SIZE_MAX ? itemIndex : type.projectedItemIndex;
+  if (!type.queryMetadata || index >= type.queryMetadata->items.size() ||
+      itemIndex >= type.items.size() ||
+      type.queryMetadata->items[index].id != type.items[itemIndex])
+    return nullptr;
+  return &type.queryMetadata->items[index];
+}
+
+const std::vector<size_t> &
+queryItemBinOrdinals(const FunctionalCoverageTypeState &type, uint64_t item) {
+  static const std::vector<size_t> empty;
+  if (!type.queryMetadata)
+    return empty;
+  auto position = type.queryMetadata->itemPositions.find(item);
+  return position == type.queryMetadata->itemPositions.end()
+             ? empty
+             : type.queryMetadata->itemBins[position->second];
 }
 
 CoverageResult
@@ -10134,7 +10282,8 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
                                  obelisk::coverage::FunctionalBinIllegal |
                                  obelisk::coverage::FunctionalBinEmpty;
     uint64_t explicitTotal = 0;
-    for (const auto &bin : instance.bins) {
+    for (size_t ordinal : queryItemBinOrdinals(type, item)) {
+      const auto &bin = instance.bins[ordinal];
       if (bin.item != item || (bin.flags & omitted) || bin.excluded)
         continue;
       explicitTotal = saturatingAdd(explicitTotal, 1);
@@ -10167,7 +10316,8 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
                                obelisk::coverage::FunctionalBinEmpty |
                                obelisk::coverage::FunctionalBinDefault |
                                obelisk::coverage::FunctionalBinDefaultSequence;
-  for (const auto &bin : instance.bins) {
+  for (size_t ordinal : queryItemBinOrdinals(type, item)) {
+    const auto &bin = instance.bins[ordinal];
     if (bin.item != item || (bin.flags & omitted) || bin.excluded)
       continue;
     const uint64_t atLeast = cumulativeAtLeast
@@ -10232,18 +10382,7 @@ CoverageResult queryInstance(
   return result;
 }
 
-struct LoadedFunctionalInstance {
-  obelisk::coverage::UUID run{};
-  uint64_t typeID = 0;
-  uint64_t id = 0;
-  std::string name;
-  obelisk::coverage::Digest configuration{};
-  std::vector<uint64_t> counts;
-  std::map<uint64_t,
-           std::map<std::vector<uint64_t>, FunctionalCoverageCrossTupleState>>
-      crossTuples;
-  std::vector<obelisk::coverage::ResolvedInstanceOption> options;
-};
+using LoadedFunctionalInstance = FunctionalCoverageLoadedData::Instance;
 
 void initializeFunctionalInstanceProfile(
     FunctionalCoverageInstanceState &instance,
@@ -10261,113 +10400,133 @@ void initializeFunctionalInstanceProfile(
     instance.crossAtLeast.emplace(cross.id, cross.atLeast);
 }
 
-std::vector<LoadedFunctionalInstance>
+const std::vector<LoadedFunctionalInstance> &
 collectLoadedFunctionalInstances(const CoverageState &coverage, uint64_t typeID,
                                  const FunctionalCoverageTypeState &type) {
-  std::vector<LoadedFunctionalInstance> groups;
+  using namespace obelisk::coverage;
+  static const std::vector<LoadedFunctionalInstance> empty;
   if (!coverage.schema)
-    return groups;
-  for (const auto &instance : coverage.schema->resolvedInstances) {
-    if (instance.type != typeID || instance.configuration != type.configuration)
-      continue;
-    auto group = groups.end();
-    if (!instance.name.empty() &&
-        !(instance.flags & obelisk::coverage::ResolvedInstanceGeneratedName))
-      group =
-          std::find_if(groups.begin(), groups.end(), [&](const auto &entry) {
-            return entry.name == instance.name &&
-                   entry.configuration == instance.configuration;
-          });
-    if (group == groups.end()) {
-      groups.push_back({instance.run,
-                        instance.type,
-                        instance.id,
-                        instance.name,
-                        instance.configuration,
-                        std::vector<uint64_t>(type.bins.size(), 0),
-                        {},
-                        {}});
-      group = std::prev(groups.end());
+    return empty;
+  if (!coverage.loadedData ||
+      coverage.loadedData->source != coverage.schema.get()) {
+    auto prepared = std::make_shared<FunctionalCoverageLoadedData>();
+    prepared->source = coverage.schema.get();
+    struct Location {
+      FunctionalCoverageTypeKey configuration;
+      size_t ordinal;
+    };
+    IndexMap<std::pair<UUID, uint64_t>, Location> instances;
+    IndexMap<std::tuple<uint64_t, Digest, std::string>, size_t> named;
+    // Generated/anonymous instances remain separate; explicit names merge only
+    // within one configuration. Publish the cache after every row is indexed.
+    for (const auto &instance : coverage.schema->resolvedInstances) {
+      FunctionalCoverageTypeKey key{instance.type, instance.configuration};
+      auto &groups = prepared->configurations[key];
+      size_t ordinal = groups.size();
+      if (!instance.name.empty() &&
+          !(instance.flags & ResolvedInstanceGeneratedName)) {
+        auto insertion =
+            named.emplace(std::make_tuple(instance.type, instance.configuration,
+                                          instance.name),
+                          ordinal);
+        ordinal = insertion.first->second;
+      }
+      if (ordinal == groups.size()) {
+        groups.emplace_back();
+        groups.back().typeID = instance.type;
+        groups.back().configuration = instance.configuration;
+      }
+      instances.emplace(std::make_pair(instance.run, instance.id),
+                        Location{key, ordinal});
     }
+    auto groupFor = [&](const UUID &run,
+                        uint64_t instance) -> LoadedFunctionalInstance * {
+      auto found = instances.find({run, instance});
+      if (found == instances.end())
+        return nullptr;
+      return &prepared->configurations.at(
+          found->second.configuration)[found->second.ordinal];
+    };
     for (const auto &option : coverage.schema->resolvedInstanceOptions)
-      if (option.run == instance.run && option.instance == instance.id)
+      if (auto *group = groupFor(option.run, option.instance))
         group->options.push_back(option);
     for (const auto &counter : coverage.schema->counters) {
-      if (counter.metric != obelisk::coverage::MetricKind::Functional ||
-          counter.run != instance.run || counter.instance != instance.id)
+      if (counter.metric != MetricKind::Functional)
         continue;
-      auto bin = std::find_if(
-          type.bins.begin(), type.bins.end(),
-          [&](const auto &entry) { return entry.id == counter.entity; });
-      if (bin == type.bins.end())
-        continue;
-      size_t ordinal = static_cast<size_t>(bin - type.bins.begin());
-      group->counts[ordinal] =
-          saturatingAdd(group->counts[ordinal], counter.value);
+      if (auto *group = groupFor(counter.run, counter.instance)) {
+        uint64_t &count = group->counts[counter.entity];
+        count = saturatingAdd(count, counter.value);
+      }
     }
     for (const auto &tuple : coverage.schema->sparseCrossTuples) {
-      if (tuple.run != instance.run || tuple.instance != instance.id ||
-          uint64_t{tuple.firstComponent} + tuple.componentCount >
-              coverage.schema->sparseCrossTupleComponents.size())
-        continue;
-      auto cross = std::find_if(
-          coverage.schema->resolvedFunctionalItems.begin(),
-          coverage.schema->resolvedFunctionalItems.end(),
-          [&](const auto &entry) {
-            return entry.type == typeID &&
-                   entry.configuration == type.configuration &&
-                   entry.templateItem == tuple.cross &&
-                   entry.kind == obelisk::coverage::FunctionalItemKind::Cross;
-          });
-      if (cross == coverage.schema->resolvedFunctionalItems.end())
+      auto *group = groupFor(tuple.run, tuple.instance);
+      if (!group || uint64_t{tuple.firstComponent} + tuple.componentCount >
+                        coverage.schema->sparseCrossTupleComponents.size())
         continue;
       std::vector<uint64_t> components(
           coverage.schema->sparseCrossTupleComponents.begin() +
               tuple.firstComponent,
           coverage.schema->sparseCrossTupleComponents.begin() +
               tuple.firstComponent + tuple.componentCount);
-      FunctionalCoverageCrossTupleState &state =
-          group->crossTuples[cross->id][components];
-      uint64_t previous = state.count;
+      auto &state = group->crossTuples[tuple.cross][components];
+      const uint64_t previous = state.count;
       state.count = saturatingAdd(state.count, tuple.hits);
-      state.overflow =
-          state.overflow ||
-          (tuple.flags & obelisk::coverage::SparseCrossTupleOverflow) ||
-          state.count < previous || (UINT64_MAX - previous < tuple.hits);
+      state.overflow = state.overflow ||
+                       (tuple.flags & SparseCrossTupleOverflow) ||
+                       UINT64_MAX - previous < tuple.hits;
     }
+    coverage.loadedData = std::move(prepared);
   }
-  return groups;
+  auto found =
+      coverage.loadedData->configurations.find({typeID, type.configuration});
+  return found == coverage.loadedData->configurations.end() ? empty
+                                                            : found->second;
 }
 
-obelisk_rt_status materializeLoadedFunctionalInstance(
-    const CoverageState &coverage, const LoadedFunctionalInstance &loaded,
-    const FunctionalCoverageTypeState &type,
-    FunctionalCoverageInstanceState &instance) {
+obelisk_rt_status
+buildLoadedFunctionalInstance(const CoverageState &coverage,
+                              const LoadedFunctionalInstance &loaded,
+                              const FunctionalCoverageTypeState &type,
+                              FunctionalCoverageInstanceState &instance) {
   using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
   using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
+  if (!coverage.schema || !type.queryMetadata ||
+      type.projectedItemIndex != SIZE_MAX)
+    return OBELISK_RT_INVALID_DESIGN;
+  const auto &metadata = *type.queryMetadata;
   initializeFunctionalInstanceProfile(instance, type);
   instance.bins = type.bins;
-  if (instance.bins.size() != loaded.counts.size() || !coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
-  for (size_t index = 0; index != instance.bins.size(); ++index)
-    instance.bins[index].count = loaded.counts[index];
-  instance.crossTuples = loaded.crossTuples;
+  for (auto &bin : instance.bins) {
+    auto count = loaded.counts.find(bin.id);
+    bin.count = count == loaded.counts.end() ? 0 : count->second;
+  }
+  for (const auto &[templateItem, tuples] : loaded.crossTuples) {
+    auto position = metadata.templateItemPositions.find(templateItem);
+    if (position == metadata.templateItemPositions.end() ||
+        metadata.items[position->second].kind !=
+            obelisk::coverage::FunctionalItemKind::Cross)
+      continue;
+    auto &destination =
+        instance.crossTuples[metadata.items[position->second].id];
+    // Radix iteration is ordered, so the legacy live tuple map can adopt
+    // this immutable profile with an amortized constant insertion hint.
+    for (const auto &[components, state] : tuples)
+      destination.emplace_hint(destination.end(), components, state);
+  }
   bool hasGroupGoal = false;
   bool hasGroupWeight = false;
-  std::unordered_set<uint64_t> itemGoals;
-  std::unordered_set<uint64_t> itemWeights;
+  IndexSet<uint64_t> itemGoals, itemWeights;
   std::optional<uint64_t> groupAtLeast;
-  std::map<uint64_t, uint64_t> itemAtLeast;
+  IndexMap<uint64_t, uint64_t> itemAtLeast;
   std::optional<uint64_t> groupCrossNumPrintMissing;
-  std::map<uint64_t, uint64_t> itemCrossNumPrintMissing;
+  IndexMap<uint64_t, uint64_t> itemCrossNumPrintMissing;
   for (const auto &option : loaded.options) {
     if (option.ownerKind == Owner::Group) {
       if (option.option == Option::Goal) {
-        instance.instanceGoal = hasGroupGoal
-                                    ? std::max(
-                                          instance.instanceGoal,
-                                          static_cast<uint32_t>(option.value))
-                                    : static_cast<uint32_t>(option.value);
+        instance.instanceGoal =
+            hasGroupGoal ? std::max(instance.instanceGoal,
+                                    static_cast<uint32_t>(option.value))
+                         : static_cast<uint32_t>(option.value);
         hasGroupGoal = true;
       } else if (option.option == Option::Weight) {
         instance.instanceWeight =
@@ -10376,91 +10535,46 @@ obelisk_rt_status materializeLoadedFunctionalInstance(
                            static_cast<uint32_t>(option.value))
                 : static_cast<uint32_t>(option.value);
         hasGroupWeight = true;
-      }
-      else if (option.option == Option::AtLeast)
+      } else if (option.option == Option::AtLeast) {
         groupAtLeast = groupAtLeast ? std::max(*groupAtLeast, option.value)
                                     : option.value;
-      else if (option.option == Option::CrossNumPrintMissing)
+      } else if (option.option == Option::CrossNumPrintMissing) {
         groupCrossNumPrintMissing =
             groupCrossNumPrintMissing
                 ? std::max(*groupCrossNumPrintMissing, option.value)
                 : option.value;
+      }
       continue;
     }
-    auto resolved = std::find_if(
-        coverage.schema->resolvedFunctionalItems.begin(),
-        coverage.schema->resolvedFunctionalItems.end(), [&](const auto &item) {
-          return item.type == loaded.typeID &&
-                 item.configuration == loaded.configuration &&
-                 item.templateItem == option.owner;
-        });
-    if (resolved == coverage.schema->resolvedFunctionalItems.end())
+    auto position = metadata.templateItemPositions.find(option.owner);
+    if (position == metadata.templateItemPositions.end())
       return OBELISK_RT_INVALID_DESIGN;
-    auto position = std::find(type.items.begin(), type.items.end(), resolved->id);
-    // A point/cross method query projects the type to one item. The snapshot
-    // still correctly carries the mutable profiles of its sibling items.
-    if (position == type.items.end() && type.projectedItemIndex != SIZE_MAX)
-      continue;
-    if (position == type.items.end())
+    const size_t index = position->second;
+    if (index >= type.items.size())
       return OBELISK_RT_INVALID_DESIGN;
-    size_t index = static_cast<size_t>(position - type.items.begin());
+    const auto &resolved = metadata.items[position->second];
     if (option.option == Option::Goal) {
-      const bool seen = !itemGoals.insert(resolved->templateItem).second;
+      const bool seen = !itemGoals.insert(resolved.templateItem).second;
       instance.itemGoals[index] =
           seen ? std::max(instance.itemGoals[index],
                           static_cast<uint32_t>(option.value))
                : static_cast<uint32_t>(option.value);
     } else if (option.option == Option::Weight) {
-      const bool seen = !itemWeights.insert(resolved->templateItem).second;
+      const bool seen = !itemWeights.insert(resolved.templateItem).second;
       instance.itemWeights[index] =
           seen ? std::max(instance.itemWeights[index],
                           static_cast<uint32_t>(option.value))
                : static_cast<uint32_t>(option.value);
-    }
-    else if (option.option == Option::AtLeast)
-      itemAtLeast[resolved->templateItem] =
-          std::max(itemAtLeast[resolved->templateItem], option.value);
-    else if (option.option == Option::CrossNumPrintMissing) {
-      if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross)
+    } else if (option.option == Option::AtLeast) {
+      itemAtLeast[resolved.templateItem] =
+          std::max(itemAtLeast[resolved.templateItem], option.value);
+    } else if (option.option == Option::CrossNumPrintMissing) {
+      if (resolved.kind != obelisk::coverage::FunctionalItemKind::Cross)
         return OBELISK_RT_INVALID_DESIGN;
-      itemCrossNumPrintMissing[resolved->templateItem] = std::max(
-          itemCrossNumPrintMissing[resolved->templateItem], option.value);
+      itemCrossNumPrintMissing[resolved.templateItem] = std::max(
+          itemCrossNumPrintMissing[resolved.templateItem], option.value);
     }
   }
-  std::unordered_set<uint64_t> staticallyExplicitAtLeast;
-  for (const auto &option : coverage.schema->functionalConfigurationOptions) {
-    if (option.type != loaded.typeID ||
-        option.configuration != loaded.configuration ||
-        option.ownerKind != Owner::Item || option.option != Option::AtLeast ||
-        option.scope !=
-            obelisk::coverage::FunctionalOptionScopeKind::Instance)
-      continue;
-    auto resolved = std::find_if(
-        coverage.schema->resolvedFunctionalItems.begin(),
-        coverage.schema->resolvedFunctionalItems.end(), [&](const auto &item) {
-          return item.type == loaded.typeID &&
-                 item.configuration == loaded.configuration &&
-                 item.id == option.owner;
-        });
-    if (resolved == coverage.schema->resolvedFunctionalItems.end())
-      return OBELISK_RT_INVALID_DESIGN;
-    staticallyExplicitAtLeast.insert(resolved->templateItem);
-  }
-  auto applyAtLeast = [&](uint64_t resolvedItem, uint64_t threshold) {
-    auto position =
-        std::find(type.items.begin(), type.items.end(), resolvedItem);
-    if (position == type.items.end())
-      return false;
-    instance.itemAtLeast[static_cast<size_t>(position - type.items.begin())] =
-        threshold;
-    for (auto &bin : instance.bins)
-      if (bin.item == resolvedItem)
-        bin.atLeast = threshold;
-    if (auto cross = instance.crossAtLeast.find(resolvedItem);
-        cross != instance.crossAtLeast.end())
-      cross->second = threshold;
-    return true;
-  };
   if (groupAtLeast)
     instance.groupAtLeast = *groupAtLeast;
   if (groupCrossNumPrintMissing)
@@ -10469,52 +10583,68 @@ obelisk_rt_status materializeLoadedFunctionalInstance(
     instance.crossNumPrintMissing[item] = value;
     instance.explicitCrossNumPrintMissingItems.insert(item);
   }
-  for (uint64_t resolvedID : type.items) {
-    auto resolved = std::find_if(
-        coverage.schema->resolvedFunctionalItems.begin(),
-        coverage.schema->resolvedFunctionalItems.end(), [&](const auto &item) {
-          return item.type == loaded.typeID &&
-                 item.configuration == loaded.configuration &&
-                 item.id == resolvedID;
-        });
-    if (resolved == coverage.schema->resolvedFunctionalItems.end())
+  IndexMap<uint64_t, uint64_t> effectiveAtLeast;
+  for (size_t index = 0; index != type.items.size(); ++index) {
+    if (index >= metadata.items.size())
       return OBELISK_RT_INVALID_DESIGN;
-    if (auto threshold = itemAtLeast.find(resolved->templateItem);
-        threshold != itemAtLeast.end()) {
-      if (!applyAtLeast(resolvedID, threshold->second))
-        return OBELISK_RT_INVALID_DESIGN;
+    const auto &resolved = metadata.items[index];
+    auto threshold = itemAtLeast.find(resolved.templateItem);
+    if (threshold != itemAtLeast.end()) {
+      effectiveAtLeast.emplace(resolved.id, threshold->second);
+    } else if (groupAtLeast &&
+               !metadata.explicitAtLeastItems.count(resolved.id)) {
+      effectiveAtLeast.emplace(resolved.id, *groupAtLeast);
+    } else {
       continue;
     }
-    if (groupAtLeast &&
-        !staticallyExplicitAtLeast.count(resolved->templateItem))
-      if (!applyAtLeast(resolvedID, *groupAtLeast))
-        return OBELISK_RT_INVALID_DESIGN;
+    instance.itemAtLeast[index] = effectiveAtLeast.at(resolved.id);
   }
+  for (auto &bin : instance.bins)
+    if (auto threshold = effectiveAtLeast.find(bin.item);
+        threshold != effectiveAtLeast.end())
+      bin.atLeast = threshold->second;
+  for (auto &[cross, value] : instance.crossAtLeast)
+    if (auto threshold = effectiveAtLeast.find(cross);
+        threshold != effectiveAtLeast.end())
+      value = threshold->second;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status materializeLoadedFunctionalInstance(
+    const CoverageState &coverage, const LoadedFunctionalInstance &loaded,
+    const FunctionalCoverageTypeState &type,
+    const FunctionalCoverageInstanceState *&result) {
+  if (!loaded.profile) {
+    auto fullType = coverage.types.find({loaded.typeID, loaded.configuration});
+    if (fullType == coverage.types.end() ||
+        fullType->second.queryMetadata != type.queryMetadata)
+      return OBELISK_RT_INVALID_DESIGN;
+    auto prepared = std::make_shared<FunctionalCoverageInstanceState>();
+    obelisk_rt_status status = buildLoadedFunctionalInstance(
+        coverage, loaded, fullType->second, *prepared);
+    if (status != OBELISK_RT_OK)
+      return status;
+    loaded.profile = std::move(prepared);
+  }
+  result = loaded.profile.get();
   return OBELISK_RT_OK;
 }
 
 obelisk_rt_status collectCumulativeAtLeast(
     const CoverageState &coverage, uint64_t typeID,
     const std::vector<const FunctionalCoverageTypeState *> &types,
-    std::map<uint64_t, uint64_t> &thresholds) {
+    IndexMap<uint64_t, uint64_t> &thresholds) {
   if (!coverage.schema)
     return OBELISK_RT_INVALID_DESIGN;
-  thresholds.clear();
+  thresholds = {};
   for (const FunctionalCoverageTypeState *type : types) {
     if (!type)
       return OBELISK_RT_INVALID_DESIGN;
     std::vector<uint64_t> templateItems;
     templateItems.reserve(type->items.size());
-    for (uint64_t resolvedID : type->items) {
-      auto resolved = std::find_if(
-          coverage.schema->resolvedFunctionalItems.begin(),
-          coverage.schema->resolvedFunctionalItems.end(),
-          [&](const auto &item) {
-            return item.type == typeID &&
-                   item.configuration == type->configuration &&
-                   item.id == resolvedID;
-          });
-      if (resolved == coverage.schema->resolvedFunctionalItems.end())
+    for (size_t index = 0; index != type->items.size(); ++index) {
+      const auto *resolved = queryItemMetadata(*type, index);
+      if (!resolved)
         return OBELISK_RT_INVALID_DESIGN;
       templateItems.push_back(resolved->templateItem);
     }
@@ -10543,12 +10673,12 @@ obelisk_rt_status collectCumulativeAtLeast(
     }
     for (const LoadedFunctionalInstance &loaded :
          collectLoadedFunctionalInstances(coverage, typeID, *type)) {
-      FunctionalCoverageInstanceState instance;
+      const FunctionalCoverageInstanceState *instance = nullptr;
       obelisk_rt_status status =
           materializeLoadedFunctionalInstance(coverage, loaded, *type, instance);
       if (status != OBELISK_RT_OK)
         return status;
-      if (!accumulate(instance, false))
+      if (!accumulate(*instance, true))
         return OBELISK_RT_INVALID_DESIGN;
     }
   }
@@ -10573,11 +10703,14 @@ obelisk_rt_status queryMergedType(
     bool hasProfile = false;
     bool cross = false;
     std::vector<FunctionalCrossProfile> automaticProfiles;
-    std::map<std::string, MergedBin> bins;
-    std::map<std::vector<std::string>, uint64_t> tuples;
+    IndexMap<std::string, MergedBin> bins;
+    IndexMap<std::vector<std::string>, uint64_t> tuples;
+    IndexSet<
+        std::tuple<uint64_t, uint64_t, Digest, uint64_t, uint64_t, uint32_t>>
+        profileKeys;
   };
-  std::map<uint64_t, MergedItem> items;
-  std::map<uint64_t, uint64_t> cumulativeAtLeast;
+  IndexMap<uint64_t, MergedItem> items;
+  IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
   result = {};
   instanceCount = 0;
   obelisk_rt_status thresholdStatus = collectCumulativeAtLeast(
@@ -10596,15 +10729,8 @@ obelisk_rt_status queryMergedType(
         if (!type->itemAggregating[itemIndex])
           continue;
         const uint64_t resolvedItemID = type->items[itemIndex];
-        auto resolvedItem =
-            std::find_if(coverage.schema->resolvedFunctionalItems.begin(),
-                         coverage.schema->resolvedFunctionalItems.end(),
-                         [&](const auto &entry) {
-                           return entry.type == typeID &&
-                                  entry.configuration == type->configuration &&
-                                  entry.id == resolvedItemID;
-                         });
-        if (resolvedItem == coverage.schema->resolvedFunctionalItems.end())
+        const auto *resolvedItem = queryItemMetadata(*type, itemIndex);
+        if (!resolvedItem || !type->queryMetadata)
           return OBELISK_RT_INVALID_DESIGN;
         MergedItem &item = items[resolvedItem->templateItem];
         auto threshold = cumulativeAtLeast.find(resolvedItem->templateItem);
@@ -10636,9 +10762,11 @@ obelisk_rt_status queryMergedType(
                 cross->id,
                 cross->automaticRoot,
                 static_cast<uint32_t>(cross->targets.size())};
-            if (std::find(item.automaticProfiles.begin(),
-                          item.automaticProfiles.end(),
-                          profile) == item.automaticProfiles.end())
+            if (item.profileKeys
+                    .insert(std::make_tuple(
+                        profile.atLeast, profile.type, profile.configuration,
+                        profile.cross, profile.root, profile.targetCount))
+                    .second)
               item.automaticProfiles.push_back(std::move(profile));
           }
           auto tuples = instance.crossTuples.find(resolvedItemID);
@@ -10649,65 +10777,42 @@ obelisk_rt_status queryMergedType(
               std::vector<std::string> names;
               names.reserve(components.size());
               for (uint64_t binID : components) {
-                auto resolvedBin = std::find_if(
-                    coverage.schema->resolvedFunctionalBins.begin(),
-                    coverage.schema->resolvedFunctionalBins.end(),
-                    [&](const auto &entry) {
-                      return entry.type == typeID &&
-                             entry.configuration == type->configuration &&
-                             entry.id == binID;
-                    });
-                if (resolvedBin ==
-                    coverage.schema->resolvedFunctionalBins.end())
+                auto bin = type->queryMetadata->binPositions.find(binID);
+                if (bin == type->queryMetadata->binPositions.end())
                   return OBELISK_RT_INVALID_DESIGN;
-                names.push_back(resolvedBin->name);
+                names.push_back(type->queryMetadata->bins[bin->second].name);
               }
               item.tuples[names] =
                   saturatingAdd(item.tuples[names], state.count);
             }
           }
-          for (const FunctionalCoverageBinState &bin : instance.bins) {
+          for (size_t ordinal : queryItemBinOrdinals(*type, resolvedItemID)) {
+            const auto &bin = instance.bins[ordinal];
             constexpr uint32_t omitted =
                 FunctionalBinIgnore | FunctionalBinIllegal | FunctionalBinEmpty;
             if (bin.item != resolvedItemID || (bin.flags & omitted) ||
                 bin.excluded)
               continue;
-            auto resolvedBin = std::find_if(
-                coverage.schema->resolvedFunctionalBins.begin(),
-                coverage.schema->resolvedFunctionalBins.end(),
-                [&](const auto &entry) {
-                  return entry.type == typeID &&
-                         entry.configuration == type->configuration &&
-                         entry.id == bin.id &&
-                         entry.kind == FunctionalBinKind::Cross;
-                });
-            if (resolvedBin == coverage.schema->resolvedFunctionalBins.end())
+            const auto &resolvedBin = type->queryMetadata->bins[ordinal];
+            if (resolvedBin.kind != FunctionalBinKind::Cross)
               return OBELISK_RT_INVALID_DESIGN;
-            MergedBin &merged = item.bins[resolvedBin->name];
+            MergedBin &merged = item.bins[resolvedBin.name];
             merged.count = saturatingAdd(merged.count, bin.count);
           }
           continue;
         }
         if (item.cross)
           return OBELISK_RT_INVALID_DESIGN;
-        for (const FunctionalCoverageBinState &bin : instance.bins) {
+        for (size_t ordinal : queryItemBinOrdinals(*type, resolvedItemID)) {
+          const auto &bin = instance.bins[ordinal];
           constexpr uint32_t omitted =
               FunctionalBinIgnore | FunctionalBinIllegal | FunctionalBinEmpty |
               FunctionalBinDefault | FunctionalBinDefaultSequence;
           if (bin.item != resolvedItemID || (bin.flags & omitted) ||
               bin.excluded)
             continue;
-          auto resolvedBin = std::find_if(
-              coverage.schema->resolvedFunctionalBins.begin(),
-              coverage.schema->resolvedFunctionalBins.end(),
-              [&](const auto &entry) {
-                return entry.type == typeID &&
-                       entry.configuration == type->configuration &&
-                       entry.id == bin.id;
-              });
-          if (resolvedBin == coverage.schema->resolvedFunctionalBins.end())
-            return OBELISK_RT_INVALID_DESIGN;
-          MergedBin &merged = item.bins[resolvedBin->name];
+          MergedBin &merged =
+              item.bins[type->queryMetadata->bins[ordinal].name];
           merged.count = saturatingAdd(merged.count, bin.count);
         }
       }
@@ -10725,12 +10830,12 @@ obelisk_rt_status queryMergedType(
     }
     for (const LoadedFunctionalInstance &instance :
          collectLoadedFunctionalInstances(coverage, typeID, *type)) {
-      FunctionalCoverageInstanceState materialized;
+      const FunctionalCoverageInstanceState *materialized = nullptr;
       obelisk_rt_status materialize = materializeLoadedFunctionalInstance(
           coverage, instance, *type, materialized);
       if (materialize != OBELISK_RT_OK)
         return materialize;
-      obelisk_rt_status status = accumulate(materialized);
+      obelisk_rt_status status = accumulate(*materialized);
       if (status != OBELISK_RT_OK)
         return status;
       ++instanceCount;
@@ -10827,32 +10932,23 @@ obelisk_rt_status queryMergedType(
   return OBELISK_RT_OK;
 }
 
-CoverageResult queryType(const CoverageState &coverage, uint64_t typeID,
-                         const FunctionalCoverageTypeState &type,
-                         uint64_t *outInstanceCount = nullptr,
-                         uint64_t *outTotalWeight = nullptr,
-                         const std::map<uint64_t, uint64_t>
-                             *cumulativeAtLeast = nullptr) {
+CoverageResult
+queryType(const CoverageState &coverage, uint64_t typeID,
+          const FunctionalCoverageTypeState &type,
+          uint64_t *outInstanceCount = nullptr,
+          uint64_t *outTotalWeight = nullptr,
+          const IndexMap<uint64_t, uint64_t> *cumulativeAtLeast = nullptr) {
   CoverageResult result;
   uint64_t instanceCount = 0;
   uint64_t totalWeight = 0;
   double weightedPercentage = 0.0;
   std::vector<std::optional<uint64_t>> itemThresholds(type.items.size());
-  if (cumulativeAtLeast && coverage.schema)
-    for (size_t itemIndex = 0; itemIndex != type.items.size(); ++itemIndex) {
-      auto resolved = std::find_if(
-          coverage.schema->resolvedFunctionalItems.begin(),
-          coverage.schema->resolvedFunctionalItems.end(),
-          [&](const auto &item) {
-            return item.type == typeID &&
-                   item.configuration == type.configuration &&
-                   item.id == type.items[itemIndex];
-          });
-      if (resolved != coverage.schema->resolvedFunctionalItems.end())
+  if (cumulativeAtLeast)
+    for (size_t itemIndex = 0; itemIndex != type.items.size(); ++itemIndex)
+      if (const auto *resolved = queryItemMetadata(type, itemIndex))
         if (auto threshold = cumulativeAtLeast->find(resolved->templateItem);
             threshold != cumulativeAtLeast->end())
           itemThresholds[itemIndex] = threshold->second;
-    }
   for (uint64_t handle : type.instances) {
     auto instance = coverage.instances.find(handle);
     if (instance == coverage.instances.end())
@@ -10872,16 +10968,16 @@ CoverageResult queryType(const CoverageState &coverage, uint64_t typeID,
   }
   for (const auto &instance :
        collectLoadedFunctionalInstances(coverage, typeID, type)) {
-    FunctionalCoverageInstanceState materialized;
+    const FunctionalCoverageInstanceState *materialized = nullptr;
     if (materializeLoadedFunctionalInstance(coverage, instance, type,
                                             materialized) != OBELISK_RT_OK)
       continue;
     CoverageResult current = queryInstance(
-        materialized, type, cumulativeAtLeast ? &itemThresholds : nullptr);
-    if (current.contributes && materialized.instanceWeight) {
-      weightedPercentage +=
-          current.percentage * static_cast<double>(materialized.instanceWeight);
-      totalWeight = saturatingAdd(totalWeight, materialized.instanceWeight);
+        *materialized, type, cumulativeAtLeast ? &itemThresholds : nullptr);
+    if (current.contributes && materialized->instanceWeight) {
+      weightedPercentage += current.percentage *
+                            static_cast<double>(materialized->instanceWeight);
+      totalWeight = saturatingAdd(totalWeight, materialized->instanceWeight);
     }
     result.covered = saturatingAdd(result.covered, current.covered);
     result.total = saturatingAdd(result.total, current.total);
@@ -10908,16 +11004,14 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
                            uint64_t *outTypeWeight = nullptr) {
   if (!coverage.schema)
     return OBELISK_RT_INVALID_DESIGN;
-  std::vector<obelisk::coverage::Digest> configurations;
-  for (const auto &configuration : coverage.schema->functionalConfigurations)
-    if (configuration.type == typeID)
-      configurations.push_back(configuration.configuration);
-  if (configurations.empty()) {
-    const bool knownType =
-        std::any_of(coverage.schema->functionalTypes.begin(),
-                    coverage.schema->functionalTypes.end(),
-                    [&](const auto &type) { return type.id == typeID; });
-    if (!knownType)
+  indexFunctionalConfigurations(coverage);
+  auto configurationRows = coverage.configurationsByType.find(typeID);
+  if (configurationRows == coverage.configurationsByType.end() ||
+      configurationRows->second.empty()) {
+    obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!coverage.constructionSchemas->types.count(typeID))
       return OBELISK_RT_INVALID_DESIGN;
 
     // A type query aggregates constructed instances.  Before the first
@@ -10935,6 +11029,7 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
     return OBELISK_RT_OK;
   }
 
+  const auto &configurations = configurationRows->second;
   std::vector<const FunctionalCoverageTypeState *> types;
   types.reserve(configurations.size());
   for (const auto &configuration : configurations) {
@@ -10962,7 +11057,7 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
     if (status != OBELISK_RT_OK)
       return status;
   } else {
-    std::map<uint64_t, uint64_t> cumulativeAtLeast;
+    IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
     obelisk_rt_status thresholdStatus =
         collectCumulativeAtLeast(coverage, typeID, types, cumulativeAtLeast);
     if (thresholdStatus != OBELISK_RT_OK)
@@ -11027,27 +11122,23 @@ findResolvedFunctionalItem(const CoverageState &coverage, uint64_t typeID,
                            uint64_t templateItem) {
   if (!coverage.schema || !templateItem)
     return nullptr;
-  auto exact = std::find_if(coverage.schema->resolvedFunctionalItems.begin(),
-                            coverage.schema->resolvedFunctionalItems.end(),
-                            [&](const auto &item) {
-                              return item.type == typeID &&
-                                     item.configuration == configuration &&
-                                     item.templateItem == templateItem;
-                            });
-  if (exact != coverage.schema->resolvedFunctionalItems.end())
-    return &*exact;
-
-  auto source =
-      std::find_if(coverage.schema->functionalItems.begin(),
-                   coverage.schema->functionalItems.end(),
-                   [&](const auto &item) { return item.id == templateItem; });
-  if (source == coverage.schema->functionalItems.end())
+  auto bound = coverage.types.find({typeID, configuration});
+  if (bound == coverage.types.end() || !bound->second.queryMetadata)
     return nullptr;
+  const auto &metadata = *bound->second.queryMetadata;
+  auto exact = metadata.templateItemPositions.find(templateItem);
+  if (exact != metadata.templateItemPositions.end())
+    return &metadata.items[exact->second];
 
+  if (!metadata.templates)
+    return nullptr;
+  auto source = metadata.templates->items.find(templateItem);
+  if (source == metadata.templates->items.end())
+    return nullptr;
   const obelisk::coverage::ResolvedFunctionalItem *result = nullptr;
-  for (const auto &candidate : coverage.schema->resolvedFunctionalItems) {
-    if (candidate.type != typeID || candidate.configuration != configuration ||
-        candidate.name != source->name || candidate.kind != source->kind ||
+  for (const auto &candidate : metadata.items) {
+    if (candidate.name != source->second.name ||
+        candidate.kind != source->second.kind ||
         (candidate.flags & obelisk::coverage::FunctionalItemNonAggregating) !=
             0)
       continue;
@@ -11068,10 +11159,10 @@ bool selectFunctionalItem(const CoverageState &coverage, uint64_t typeID,
                                  templateItem);
   if (!resolved)
     return false;
-  auto item = std::find(type.items.begin(), type.items.end(), resolved->id);
-  if (item == type.items.end())
+  auto item = type.queryMetadata->itemPositions.find(resolved->id);
+  if (item == type.queryMetadata->itemPositions.end())
     return false;
-  size_t index = static_cast<size_t>(item - type.items.begin());
+  const size_t index = item->second;
   if (index >= type.itemAggregating.size() || index >= type.itemGoals.size() ||
       index >= type.itemWeights.size() || index >= type.itemAtLeast.size() ||
       index >= type.typeItemGoals.size() ||
@@ -11144,13 +11235,13 @@ queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
   }
   for (const auto &loaded :
        collectLoadedFunctionalInstances(coverage, typeID, type)) {
-    FunctionalCoverageInstanceState instance;
+    const FunctionalCoverageInstanceState *instance = nullptr;
     obelisk_rt_status materialize =
         materializeLoadedFunctionalInstance(coverage, loaded, type, instance);
     if (materialize != OBELISK_RT_OK)
       return materialize;
     CoverageResult current =
-        queryFunctionalItemInstance(instance, type, false, cumulativeAtLeast);
+        queryFunctionalItemInstance(*instance, type, true, cumulativeAtLeast);
     if (current.contributes && type.instanceWeight) {
       weightedPercentage +=
           current.percentage * static_cast<double>(type.instanceWeight);
@@ -11217,27 +11308,30 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
                                              CoverageResult &result) {
   if (!coverage.schema || !templateItem)
     return OBELISK_RT_INVALID_DESIGN;
-  auto templateSchema = std::find_if(
-      coverage.schema->functionalItems.begin(),
-      coverage.schema->functionalItems.end(), [&](const auto &item) {
-        return item.id == templateItem && item.type == typeID;
-      });
-  if (templateSchema == coverage.schema->functionalItems.end())
+  obelisk_rt_status templateStatus =
+      ensureFunctionalConstructionSchemas(coverage);
+  if (templateStatus != OBELISK_RT_OK)
+    return templateStatus;
+  auto templateSchema = coverage.constructionSchemas->items.find(templateItem);
+  if (templateSchema == coverage.constructionSchemas->items.end() ||
+      templateSchema->second.type != typeID)
     return OBELISK_RT_INVALID_DESIGN;
 
   std::vector<FunctionalCoverageTypeState> selectedTypes;
-  for (const auto &configuration : coverage.schema->functionalConfigurations) {
-    if (configuration.type != typeID)
-      continue;
-    FunctionalCoverageTypeState *type = nullptr;
-    obelisk_rt_status status = bindResolvedFunctionalType(
-        coverage, typeID, configuration.configuration, type);
-    if (status != OBELISK_RT_OK)
-      return status;
-    selectedTypes.emplace_back();
-    if (!selectFunctionalItem(coverage, typeID, templateItem, *type,
-                              selectedTypes.back()))
-      return OBELISK_RT_INVALID_DESIGN;
+  indexFunctionalConfigurations(coverage);
+  auto configurations = coverage.configurationsByType.find(typeID);
+  if (configurations != coverage.configurationsByType.end()) {
+    for (const auto &configuration : configurations->second) {
+      FunctionalCoverageTypeState *type = nullptr;
+      obelisk_rt_status status =
+          bindResolvedFunctionalType(coverage, typeID, configuration, type);
+      if (status != OBELISK_RT_OK)
+        return status;
+      selectedTypes.emplace_back();
+      if (!selectFunctionalItem(coverage, typeID, templateItem, *type,
+                                selectedTypes.back()))
+        return OBELISK_RT_INVALID_DESIGN;
+    }
   }
   if (selectedTypes.empty()) {
     // Like the enclosing type query, a static item query has no contributing
@@ -11268,7 +11362,7 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
     projectedTypes.reserve(selectedTypes.size());
     for (const auto &type : selectedTypes)
       projectedTypes.push_back(&type);
-    std::map<uint64_t, uint64_t> cumulativeAtLeast;
+    IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
     obelisk_rt_status thresholdStatus = collectCumulativeAtLeast(
         coverage, typeID, projectedTypes, cumulativeAtLeast);
     if (thresholdStatus != OBELISK_RT_OK)
@@ -13483,6 +13577,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
     coverage->schema =
         std::make_unique<obelisk::coverage::Database>(std::move(combined));
     coverage->constructionSchemas.reset();
+    coverage->loadedConfigurationSchemas.reset();
+    coverage->loadedData.reset();
     coverage->configurationIndexSchema = nullptr;
     *outStatus = SVCovOK;
     return OBELISK_RT_OK;
@@ -13552,6 +13648,8 @@ obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
         std::make_unique<obelisk::coverage::Database>(std::move(combined));
     coverage->schema = std::move(committedSchema);
     coverage->constructionSchemas.reset();
+    coverage->loadedConfigurationSchemas.reset();
+    coverage->loadedData.reset();
     coverage->configurationIndexSchema = nullptr;
     return OBELISK_RT_OK;
   }

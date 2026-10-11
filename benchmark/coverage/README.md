@@ -76,3 +76,41 @@ not CI timing assertions or an extrapolation to larger inputs.
 The format regression uses 16 configurations. Codec and radix-index units use
 256 records; large fixture sizes belong in standalone measurements. The four
 new packing, failure, and static-profile regressions use at most two bundles.
+
+## Bounded method-query probe
+
+`query-configuration-scaling.sv` checks both instance-weighted averaging and
+name-based merging across distinct constructor configurations, including a
+load-only process. It defaults to 16 configurations per type and one query
+pair, and rejects more than 128 configurations or 16 query pairs. It is outside
+the unit and lit suites. Each process below has a one-second deadline:
+
+```sh
+build/tools/driver/obelisk --std=1800-2023 -O0 --target=native \
+  --coverage=functional -o build/coverage-query-scaling \
+  benchmark/coverage/query-configuration-scaling.sv
+timeout 1s build/coverage-query-scaling +N=128 +Q=16 \
+  --coverage-output=build/query-scaling.obcov
+timeout 1s build/coverage-query-scaling +N=128 +Q=16 +load_only \
+  --coverage-load=build/query-scaling.obcov \
+  --coverage-output=build/query-scaling-loaded.obcov
+```
+
+Both processes must print `AVERAGE 50 64/128`, `MERGED 100 1/1`, and
+`GLOBAL 75`. Timings include startup, schema loading/construction, all queries,
+and persistence. Compare builds with the same flags and inputs, sequentially;
+small-count setup overhead and scheduler variation matter at this duration.
+
+On the ARM64 Release build, median elapsed times from three sequential pairs
+of native `-O0` load-only processes, with 16 query pairs, were:
+
+| Configurations per type | Before (ms) | Indexed (ms) |
+| --- | ---: | ---: |
+| 32 | 12.20 | 13.08 |
+| 64 | 24.86 | 23.06 |
+| 128 | 55.65 | 42.06 |
+
+The indexes add setup cost at small counts. These bounded observations support
+the traversal review; they are not timing assertions or larger-input estimates.
+Native and bytecode queries agreed, and JSON, HTML, text, and LCOV reports
+matched after normalizing run metadata.

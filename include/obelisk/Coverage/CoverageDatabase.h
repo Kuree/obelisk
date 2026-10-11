@@ -916,6 +916,12 @@ Digest computeFunctionalConfigurationFingerprint(
 /// identities are preserved. Each referenced payload is copied once.
 Status canonicalizeFunctionalConfigurations(Database &database,
                                             Diagnostic *diagnostic = nullptr);
+/// Transactionally partitions resolved configuration rows and payloads into
+/// independent bundles. Static schema and run data are not copied. Builds one
+/// index and copies each referenced row/payload once across all bundles.
+Status partitionFunctionalConfigurations(const Database &database,
+                                         std::vector<Database> &result,
+                                         Diagnostic *diagnostic = nullptr);
 Digest sha256(const uint8_t *data, size_t size);
 
 Status merge(Database &destination, const Database &source,

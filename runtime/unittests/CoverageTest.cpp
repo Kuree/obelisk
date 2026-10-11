@@ -1997,6 +1997,101 @@ TEST(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences) 
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest,
+     LoadedQueryIndexesRefreshWithoutReplacingLiveProfiles) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  obelisk_rt_context *producer = createContextForSchema(schema);
+  obelisk_rt_context *consumer = createContextForSchema(schema);
+  ASSERT_NE(producer, nullptr);
+  ASSERT_NE(consumer, nullptr);
+  ASSERT_EQ(finalizeCoverage(producer, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(consumer, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 named = 0, generated = 0, live = 0;
+  ASSERT_EQ(createFunctional(producer, 10, &named), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(producer, 10, &generated), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(consumer, 10, &live), OBELISK_RT_OK);
+  ASSERT_EQ(withManagedString(producer, "same",
+                              [&](auto name) {
+                                return obelisk_rt_v1_covergroup_set_name(
+                                    producer, named, name);
+                              }),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+                producer, named, 20, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
+            OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(producer, named, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(producer, generated, 0, 2), OBELISK_RT_OK);
+  Database first = saveCoverage(producer, "loaded-query-first");
+  Database second = first;
+  second.runs.front().uuid.back() ^= 1;
+  second.runs.front().name = "second";
+  for (auto &instance : second.resolvedInstances)
+    instance.run = second.runs.front().uuid;
+  for (auto &option : second.resolvedInstanceOptions)
+    option.run = second.runs.front().uuid;
+  for (auto &counter : second.counters) {
+    counter.run = second.runs.front().uuid;
+    const auto bin =
+        std::find_if(second.resolvedFunctionalBins.begin(),
+                     second.resolvedFunctionalBins.end(),
+                     [&](const auto &row) { return row.id == counter.entity; });
+    ASSERT_NE(bin, second.resolvedFunctionalBins.end());
+    if (bin->templateBin == 30)
+      counter.value = 0;
+    else if (bin->templateBin == 31)
+      counter.value = 1;
+  }
+  auto query = [&](uint64_t item, double expected) {
+    double percentage = -1.0;
+    int32_t covered = -1, total = -1;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+                  consumer, 10, item, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_NEAR(percentage, expected, 1.0e-9);
+  };
+  query(0, 0.0); // Populate an empty loaded-data cache before the first load.
+  std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("obelisk-loaded-query-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()) +
+       ".obcov");
+  const std::string pathText = path.string();
+  ASSERT_EQ(writeFileAtomically(pathText, first), Status::Ok);
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
+      OBELISK_RT_OK);
+  query(0, 175.0 / 3.0);
+  ASSERT_EQ(writeFileAtomically(pathText, second), Status::Ok);
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
+      OBELISK_RT_OK);
+  // The explicit name merges across the two runs; generated names retain two
+  // identities. The live instance is still empty and independent.
+  query(0, 62.5);
+  query(20, 50.0);
+  query(21, 75.0);
+  ASSERT_EQ(sampleFunctional(consumer, live, 0, 2), OBELISK_RT_OK);
+  query(0, 81.25);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                consumer, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
+            OBELISK_RT_OK);
+  // With merge_instances off, type coverage depends on instance profiles,
+  // including their goals, rather than applying a second type goal (19.11.3).
+  query(0, 81.25);
+  query(20, 62.5); // Cached instance profiles retain their own item goals.
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                consumer, 10, 0, OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES, 1),
+            OBELISK_RT_OK);
+  query(0, 100.0);
+  query(20, 100.0);
+  obelisk_rt_v1_context_destroy(consumer);
+  obelisk_rt_v1_context_destroy(producer);
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+}
+
 TEST(CoverageDatabaseTest, AtomicWriteReplacesExistingImageAndCleansTemporary) {
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /

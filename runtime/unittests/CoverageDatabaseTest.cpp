@@ -2638,6 +2638,23 @@ TEST(CoverageDatabaseTest, PacksConstructionOrderWithoutChangingSemantics) {
             ? group.firstAlternative + alternativesPerBundle
             : group.firstAlternative - alternativesPerBundle;
   EXPECT_NE(validate(unordered), Status::Ok);
+  std::vector<Database> bundles;
+  ASSERT_EQ(partitionFunctionalConfigurations(unordered, bundles), Status::Ok);
+  ASSERT_EQ(bundles.size(), 2u);
+  for (auto &bundle : bundles) {
+    ASSERT_EQ(bundle.functionalConfigurations.size(), 1u);
+    EXPECT_TRUE(bundle.functionalTypes.empty());
+    EXPECT_TRUE(bundle.runs.empty());
+    EXPECT_TRUE(bundle.counters.empty());
+    const auto &configuration = bundle.functionalConfigurations.front();
+    // Digest every variable-length payload after isolation/rebasing, including
+    // transitions and automatic-cross graphs. Only static bin declarations
+    // are needed to recover array/distribution identities for this digest.
+    bundle.functionalBins = unordered.functionalBins;
+    EXPECT_EQ(computeFunctionalConfigurationFingerprint(
+                  bundle, configuration.type, configuration.configuration),
+              configuration.configuration);
+  }
   ASSERT_EQ(canonicalizeFunctionalConfigurations(unordered), Status::Ok);
   ASSERT_EQ(validate(unordered), Status::Ok);
   std::vector<uint8_t> actualImage;
@@ -2652,6 +2669,12 @@ TEST(CoverageDatabaseTest, FailedPackingPreservesAllColumns) {
   auto &alternative = database.resolvedTransitionAlternatives.front();
   const uint32_t firstStep = alternative.firstStep;
   alternative.firstStep = UINT32_MAX;
+  std::vector<Database> bundles(1);
+  bundles.front().producer = "preserved";
+  EXPECT_EQ(partitionFunctionalConfigurations(database, bundles),
+            Status::InvalidReference);
+  ASSERT_EQ(bundles.size(), 1u);
+  EXPECT_EQ(bundles.front().producer, "preserved");
   EXPECT_EQ(canonicalizeFunctionalConfigurations(database),
             Status::InvalidReference);
   EXPECT_EQ(database.resolvedTransitionAlternatives.front().firstStep,
@@ -2663,6 +2686,10 @@ TEST(CoverageDatabaseTest, FailedPackingPreservesAllColumns) {
 
   database.functionalConfigurations.push_back(
       database.functionalConfigurations.front());
+  EXPECT_EQ(partitionFunctionalConfigurations(database, bundles),
+            Status::UnsortedOrDuplicate);
+  ASSERT_EQ(bundles.size(), 1u);
+  EXPECT_EQ(bundles.front().producer, "preserved");
   EXPECT_EQ(canonicalizeFunctionalConfigurations(database),
             Status::UnsortedOrDuplicate);
   ASSERT_EQ(database.functionalConfigurations.size(), 2u);

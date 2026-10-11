@@ -1752,11 +1752,15 @@ struct FunctionalCoverageCrossTupleState {
   bool overflow = false;
 };
 
+struct FunctionalCoverageQueryMetadata;
+
 struct FunctionalCoverageTypeState {
   obelisk::coverage::Digest configuration{};
   /// Immutable constructor-resolved metadata for this configuration. Sampling
   /// and binding must not scan configurations constructed earlier.
   std::shared_ptr<const obelisk::coverage::Database> configurationSchema;
+  /// Immutable item/bin indexes shared by full and projected method queries.
+  std::shared_ptr<const FunctionalCoverageQueryMetadata> queryMetadata;
   uint32_t instanceGoal = 100;
   uint32_t instanceWeight = 1;
   uint32_t typeGoal = 100;
@@ -1905,11 +1909,16 @@ struct CovergroupBlockEventFeatureState {
 // avoid the context mutex. Toggle publication already serializes committed
 // state transitions and uses the same context lock as the shadow planes.
 struct FunctionalCoverageConstructionSchemas;
+struct FunctionalCoverageConfigurationSchemas;
+struct FunctionalCoverageLoadedData;
 
 struct CoverageState {
   std::unique_ptr<obelisk::coverage::Database> schema;
   std::shared_ptr<const FunctionalCoverageConstructionSchemas>
       constructionSchemas;
+  std::shared_ptr<const FunctionalCoverageConfigurationSchemas>
+      loadedConfigurationSchemas;
+  mutable std::shared_ptr<const FunctionalCoverageLoadedData> loadedData;
   obelisk::coverage::detail::IndexMap<uint64_t,
                                       std::vector<obelisk::coverage::Digest>>
       configurationsByType;

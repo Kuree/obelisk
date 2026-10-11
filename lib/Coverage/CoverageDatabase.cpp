@@ -2726,6 +2726,46 @@ bool isSchemaOnly(const Database &db) {
          db.sparseCrossTuples.empty() && db.sparseCrossTupleComponents.empty();
 }
 
+Status partitionFunctionalConfigurations(const Database &database,
+                                         std::vector<Database> &result,
+                                         Diagnostic *diagnostic) {
+#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+  try {
+#endif
+    IndexSet<ConfigurationKey> seen;
+    for (const auto &configuration : database.functionalConfigurations)
+      if (!seen.insert({configuration.type, configuration.configuration})
+               .second) {
+        setDiagnostic(diagnostic, Status::UnsortedOrDuplicate, 0,
+                      SectionKind::FunctionalConfigurations, NoRecord,
+                      "configuration");
+        return Status::UnsortedOrDuplicate;
+      }
+    const ConfigurationIndex index(database);
+    std::vector<Database> prepared;
+    prepared.reserve(index.views.size());
+    for (const auto &[key, view] : index.views) {
+      (void)key;
+      prepared.emplace_back();
+      Status status = appendConfigurationView(prepared.back(), database, view);
+      if (status != Status::Ok) {
+        setDiagnostic(diagnostic, status, 0,
+                      SectionKind::FunctionalConfigurations, NoRecord,
+                      "payload span");
+        return status;
+      }
+    }
+    result.swap(prepared);
+    return Status::Ok;
+#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+  } catch (const std::bad_alloc &) {
+    return Status::OutOfMemory;
+  } catch (const std::length_error &) {
+    return Status::IntegerOverflow;
+  }
+#endif
+}
+
 Status canonicalizeFunctionalConfigurations(Database &database,
                                             Diagnostic *diagnostic) {
 #if OBELISK_COVERAGE_HAS_EXCEPTIONS
