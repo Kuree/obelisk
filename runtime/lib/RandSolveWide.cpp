@@ -519,6 +519,13 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   result.captureOffsets.assign(encodedCaptureCount, 0);
   for (uint32_t capture : maskCaptures)
     result.captureWidths[capture] = result.aggregateWidth;
+  for (const auto &group : weightedGroups)
+    for (const auto &item : group.items)
+      for (const auto &interval : item.intervals)
+        if (interval.captured) {
+          result.captureWidths[interval.lower] = 64;
+          result.captureWidths[interval.cardinality] = 64;
+        }
   result.instructions.reserve(instructionCount);
   std::vector<uint8_t> literalUse(literalWordCount, 0);
   size_t depth = 0;

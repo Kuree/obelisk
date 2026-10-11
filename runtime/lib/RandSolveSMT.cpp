@@ -614,7 +614,7 @@ public:
           if (weightWidth % 64)
             weight.back() &= (uint64_t{1} << (weightWidth % 64)) - 1;
           ModelCount mass = ModelCount::fromWords(weight.data(), weight.size());
-          if (mass.zero())
+          if (mass.zero() || item.intervals.empty())
             continue;
           Z3_ast region = Z3_mk_false(context);
           for (const WeightedInterval &interval : item.intervals) {
@@ -1168,7 +1168,14 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
     size_t footerSize = OBELISK_RT_RANDOM_DIST_HEADER_SIZE +
                         records * OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
     if (!parseWeightedGroups(program + domainsOffset, footerSize, width,
-                             captureCount, weightedGroups))
+                             captureCount, weightedGroups) ||
+        !resolveWeightedIntervals(
+            weightedGroups, [&](uint64_t index, uint64_t &value) {
+              if (captureWidths && captureWidths[index] != 64)
+                return false;
+              value = captures[captureOffsets[index]];
+              return true;
+            }))
       return SMTCompletion::Unavailable;
     domainsOffset += footerSize;
   }

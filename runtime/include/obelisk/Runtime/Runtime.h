@@ -4742,6 +4742,13 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_DIST_TARGET_SIGNED UINT32_C(2)
 #define OBELISK_RT_RANDOM_DIST_RAW_WEIGHT UINT32_C(4)
 #define OBELISK_RT_RANDOM_DIST_PER_RANGE UINT32_C(8)
+// For captured intervals, the lower/cardinality fields instead identify two
+// 64-bit captures containing inclusive, sign-biased lower/upper bounds. An
+// upper bound below the lower bound denotes an empty intersection.
+#define OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL UINT32_C(16)
+// One per-range item represents the complement of all explicit intervals.
+// Its wire interval is the complete target domain, resolved at each call.
+#define OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT UINT32_C(32)
 #define OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE UINT16_C(32)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)

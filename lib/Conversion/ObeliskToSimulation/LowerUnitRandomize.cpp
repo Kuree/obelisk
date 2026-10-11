@@ -2962,6 +2962,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value weight;
     uint64_t itemIdentity;
     bool perRange;
+    uint32_t intervalFlags = 0;
+    Value capturedLower;
+    Value capturedUpper;
   };
   struct DistPlan {
     Operation *source;
@@ -3431,7 +3434,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
       uint64_t itemCount = itemCountAttr.getValue().getZExtValue();
-      if (itemCount == 0 || itemCount > static_cast<uint64_t>(INT64_MAX) ||
+      if ((itemCount == 0 && !hasDefaultWeight.getValue()) ||
+          itemCount > static_cast<uint64_t>(INT64_MAX) ||
           itemHasWeight.size() != static_cast<int64_t>(itemCount) ||
           itemWeightKinds.size() != static_cast<int64_t>(itemCount) ||
           nested.empty() ||
@@ -3527,15 +3531,30 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           SmallVector<Operation *> converted = getChildren(constant);
           if (converted.size() != 1)
             return failure();
-          return constantValue(converted.front());
+          FailureOr<ParsedConstant> value = constantValue(converted.front());
+          FailureOr<unsigned> width = expressionWidth(constant);
+          if (failed(value) || failed(width))
+            return failure();
+          bool sign = isSignedNode(converted.front());
+          value->value = sign ? value->value.sextOrTrunc(*width)
+                              : value->value.zextOrTrunc(*width);
+          value->unknown = sign ? value->unknown.sextOrTrunc(*width)
+                                : value->unknown.zextOrTrunc(*width);
+          return *value;
         }
         if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(constant)) {
           SmallVector<Operation *> operand = getChildren(unary);
           if (operand.size() != 1)
             return failure();
           FailureOr<ParsedConstant> value = constantValue(operand.front());
-          if (failed(value))
+          FailureOr<unsigned> width = expressionWidth(constant);
+          if (failed(value) || failed(width))
             return failure();
+          bool sign = isSignedNode(operand.front());
+          value->value = sign ? value->value.sextOrTrunc(*width)
+                              : value->value.zextOrTrunc(*width);
+          value->unknown = sign ? value->unknown.sextOrTrunc(*width)
+                                : value->unknown.zextOrTrunc(*width);
           switch (unary.getOperatorKind()) {
           case semantic::SVUnaryOperator::Plus:
             return *value;
@@ -3552,11 +3571,353 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         std::optional<StringRef> spelling = getConstantSpelling(constant);
         if (!spelling)
           return failure();
-        return parseSVInteger(*spelling, *comparisonWidth,
-                              getSemanticLocation(constant));
+        FailureOr<unsigned> width = expressionWidth(constant);
+        if (failed(width))
+          return failure();
+        return parseSVInteger(*spelling, *width, getSemanticLocation(constant));
       };
+      auto contextualConstant =
+          [&](Operation *endpoint) -> FailureOr<ParsedConstant> {
+        FailureOr<ParsedConstant> value = constantValue(endpoint);
+        if (failed(value))
+          return failure();
+        bool sign = isSignedNode(endpoint);
+        value->value = sign ? value->value.sextOrTrunc(*comparisonWidth)
+                            : value->value.zextOrTrunc(*comparisonWidth);
+        value->unknown = sign ? value->unknown.sextOrTrunc(*comparisonWidth)
+                              : value->unknown.zextOrTrunc(*comparisonWidth);
+        return *value;
+      };
+      llvm::DenseMap<Operation *, std::pair<uint32_t, Value>> weights;
+      std::optional<std::pair<uint32_t, Value>> implicitWeight;
+      auto materializeWeight =
+          [&](Operation *weight,
+              bool &isSigned) -> FailureOr<std::pair<uint32_t, Value>> {
+        if (weight) {
+          if (dependsOnCandidate(weight)) {
+            emitError(getSemanticLocation(weight))
+                << "dist weights cannot depend on randomized properties";
+            return failure();
+          }
+          if (auto found = weights.find(weight); found != weights.end()) {
+            isSigned = false;
+            return found->second;
+          }
+          FailureOr<SafeConstraintValue> safe = safeConstraintValue(weight);
+          FailureOr<Value> lowered = succeeded(safe)
+                                         ? FailureOr<Value>(safe->value)
+                                         : FailureOr<Value>(failure());
+          FailureOr<Value> scalar =
+              succeeded(lowered)
+                  ? toPackedScalar(*lowered, getSemanticLocation(weight))
+                  : FailureOr<Value>(failure());
+          if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
+            emitError(getSemanticLocation(weight))
+                << "dist weights must be packed integral values";
+            return failure();
+          }
+          // IEEE 1800-2023 18.5.3 interprets the self-determined weight
+          // expression as unsigned, including signed negative bit patterns.
+          if (!rawDistWeights &&
+              cast<IntegerType>((*scalar).getType()).getWidth() > 64) {
+            emitError(getSemanticLocation(weight))
+                << "dist weights wider than 64 bits are not executable yet";
+            return failure();
+          }
+          isSigned = false;
+          Type weightType =
+              rawDistWeights
+                  ? builder.getIntegerType(std::max<unsigned>(
+                        64, cast<IntegerType>((*scalar).getType()).getWidth()))
+                  : i64;
+          FailureOr<Value> extended =
+              convert(*scalar, weightType, isSigned,
+                      getSemanticLocation(weight), false);
+          if (failed(extended))
+            return failure();
+          uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+          programCaptures.push_back(*extended);
+          auto result = std::make_pair(capture, *extended);
+          weights[weight] = result;
+          return result;
+        }
+        isSigned = false;
+        if (!implicitWeight) {
+          uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+          Value one = constant64(1);
+          programCaptures.push_back(one);
+          implicitWeight = std::make_pair(capture, one);
+        }
+        return *implicitWeight;
+      };
+
+      // Runtime endpoints retain their self-determined range size before
+      // intersection with the rand property's domain or other constraints.
+      // The footer carries clipped ordinal bounds and the exact original mass.
+      auto staticEndpointInDomain = [&](Operation *endpoint) {
+        FailureOr<ParsedConstant> parsed = contextualConstant(endpoint);
+        if (failed(parsed))
+          return false;
+        if (!parsed->unknown.isZero())
+          return true; // The constant path diagnoses unknown bits below.
+        if (property.isSigned)
+          return parsed->value.sge(APInt::getSignedMinValue(property.width)
+                                       .sext(*comparisonWidth)) &&
+                 parsed->value.sle(APInt::getSignedMaxValue(property.width)
+                                       .sext(*comparisonWidth));
+        return parsed->value.ule(
+            APInt::getLowBitsSet(*comparisonWidth, property.width));
+      };
+      bool capturedIntervals = rawItems.empty() && defaultWeight;
+      for (const RawDistItem &item : rawItems) {
+        auto endpoints = isa<semantic::SVValueRangeExpressionOp>(item.value)
+                             ? getChildren(item.value)
+                             : SmallVector<Operation *>{item.value};
+        if (endpoints.empty() || endpoints.size() > 2)
+          return failure();
+        for (Operation *endpoint : endpoints)
+          capturedIntervals |= !staticEndpointInDomain(endpoint);
+      }
+      if (capturedIntervals) {
+        if (!rawDistWeights) {
+          emitError(getSemanticLocation(expression))
+              << "dynamic or clipped dist intervals require runtime Z3";
+          return failure();
+        }
+        if (defaultWeight && defaultWeightKind.getInt() == 0) {
+          emitError(getSemanticLocation(defaultWeight))
+              << "a default dist specification must use the :/ operator";
+          return failure();
+        }
+        auto orderedType = builder.getIntegerType(*comparisonWidth + 1);
+        auto orderedConstant = [&](const APInt &bits) -> Value {
+          return arith::ConstantOp::create(
+              builder, location, orderedType,
+              builder.getIntegerAttr(orderedType, bits));
+        };
+        APInt minimum = property.isSigned
+                            ? APInt::getSignedMinValue(property.width)
+                                  .sext(orderedType.getWidth())
+                            : APInt(orderedType.getWidth(), 0);
+        APInt maximum =
+            property.isSigned
+                ? APInt::getSignedMaxValue(property.width)
+                      .sext(orderedType.getWidth())
+                : APInt::getLowBitsSet(orderedType.getWidth(), property.width);
+        Value domainMinimum = orderedConstant(minimum);
+        Value domainMaximum = orderedConstant(maximum);
+        Value one = orderedConstant(APInt(orderedType.getWidth(), 1));
+        auto endpointValue = [&](Operation *endpoint) -> FailureOr<Value> {
+          if (dependsOnCandidate(endpoint)) {
+            emitError(getSemanticLocation(endpoint))
+                << "dist endpoints that depend on randomized properties are "
+                   "not executable yet";
+            return failure();
+          }
+          FailureOr<SafeConstraintValue> safe = safeConstraintValue(endpoint);
+          FailureOr<Value> scalar =
+              succeeded(safe)
+                  ? toRandomScalar(safe->value, getSemanticLocation(endpoint))
+                  : FailureOr<Value>(failure());
+          if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
+            emitError(getSemanticLocation(endpoint))
+                << "dynamic dist endpoints must be two-state integral values";
+            return failure();
+          }
+          FailureOr<Value> contextual = convert(
+              *scalar, builder.getIntegerType(*comparisonWidth),
+              isSignedNode(endpoint), getSemanticLocation(endpoint), false);
+          return succeeded(contextual)
+                     ? convert(*contextual, orderedType, property.isSigned,
+                               getSemanticLocation(endpoint), false)
+                     : FailureOr<Value>(failure());
+        };
+        auto capture = [&](Value value) {
+          uint32_t index = static_cast<uint32_t>(programCaptures.size());
+          programCaptures.push_back(value);
+          return index;
+        };
+        DistPlan plan{expression, propertyIndex,
+                      0,          activeProgramConstraintBlock,
+                      {},         activeSoftDistSource};
+        for (unsigned index = 0; index != propertyIndex; ++index)
+          plan.propertyOffset += planned[index].width;
+        SmallVector<std::pair<uint32_t, Value>> rawWeights;
+        for (auto [identity, item] : llvm::enumerate(rawItems)) {
+          auto endpoints = isa<semantic::SVValueRangeExpressionOp>(item.value)
+                               ? getChildren(item.value)
+                               : SmallVector<Operation *>{item.value};
+          if (endpoints.size() !=
+              (isa<semantic::SVValueRangeExpressionOp>(item.value) ? 2u : 1u))
+            return failure();
+          FailureOr<Value> first = endpointValue(endpoints.front());
+          FailureOr<Value> second =
+              endpoints.size() == 2 ? endpointValue(endpoints.back()) : first;
+          if (failed(first) || failed(second))
+            return failure();
+          Value ascending = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::sle, *first, *second);
+          Value lower = arith::SelectOp::create(builder, location, ascending,
+                                                *first, *second);
+          Value upper = arith::SelectOp::create(builder, location, ascending,
+                                                *second, *first);
+          Value cardinality = arith::AddIOp::create(
+              builder, location,
+              arith::SubIOp::create(builder, location, upper, lower), one);
+          Value aboveMinimum = arith::CmpIOp::create(builder, location,
+                                                     arith::CmpIPredicate::sge,
+                                                     lower, domainMinimum);
+          Value belowMaximum = arith::CmpIOp::create(builder, location,
+                                                     arith::CmpIPredicate::sle,
+                                                     upper, domainMaximum);
+          Value clippedLower = arith::SelectOp::create(
+              builder, location, aboveMinimum, lower, domainMinimum);
+          Value clippedUpper = arith::SelectOp::create(
+              builder, location, belowMaximum, upper, domainMaximum);
+          Value nonempty = arith::CmpIOp::create(builder, location,
+                                                 arith::CmpIPredicate::sle,
+                                                 clippedLower, clippedUpper);
+          Value biasedLower = arith::SubIOp::create(
+              builder, location, clippedLower, domainMinimum);
+          Value biasedUpper = arith::SubIOp::create(
+              builder, location, clippedUpper, domainMinimum);
+          biasedLower = arith::SelectOp::create(builder, location, nonempty,
+                                                biasedLower, one);
+          biasedUpper = arith::SelectOp::create(
+              builder, location, nonempty, biasedUpper,
+              orderedConstant(APInt(orderedType.getWidth(), 0)));
+          FailureOr<Value> lower64 =
+              convert(biasedLower, i64, false, location, false);
+          FailureOr<Value> upper64 =
+              convert(biasedUpper, i64, false, location, false);
+          if (failed(lower64) || failed(upper64))
+            return failure();
+          uint32_t lowerCapture = capture(*lower64);
+          uint32_t upperCapture = capture(*upper64);
+          bool weightSigned = false;
+          FailureOr<std::pair<uint32_t, Value>> weight =
+              materializeWeight(item.weight, weightSigned);
+          if (failed(weight))
+            return failure();
+          rawWeights.push_back(*weight);
+          uint32_t massCapture = weight->first;
+          Value mass = weight->second;
+          if (!item.perRange) {
+            auto massType = builder.getIntegerType(
+                cast<IntegerType>(mass.getType()).getWidth() +
+                orderedType.getWidth());
+            FailureOr<Value> extendedWeight =
+                convert(mass, massType, false, location, false);
+            FailureOr<Value> extendedCardinality =
+                convert(cardinality, massType, false, location, false);
+            if (failed(extendedWeight) || failed(extendedCardinality))
+              return failure();
+            mass = arith::MulIOp::create(builder, location, *extendedWeight,
+                                         *extendedCardinality);
+            massCapture = capture(mass);
+          }
+          plan.ranges.push_back({lowerCapture, upperCapture, 1, 1, massCapture,
+                                 false, mass, identity, true,
+                                 OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL,
+                                 *lower64, *upper64});
+        }
+        if (defaultWeight) {
+          bool weightSigned = false;
+          FailureOr<std::pair<uint32_t, Value>> weight =
+              materializeWeight(defaultWeight, weightSigned);
+          if (failed(weight))
+            return failure();
+          uint64_t cardinality =
+              property.width == 64 ? 0 : uint64_t{1} << property.width;
+          plan.ranges.push_back({0,
+                                 cardinality,
+                                 1,
+                                 1,
+                                 weight->first,
+                                 false,
+                                 weight->second,
+                                 rawItems.size(),
+                                 true,
+                                 OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT,
+                                 {},
+                                 {}});
+        }
+        auto emitMatch = [&](const DistRangePlan &range) -> LogicalResult {
+          auto emitOrdinal = [&]() -> LogicalResult {
+            if (failed(emitProgramExpression(nested.front())))
+              return failure();
+            instruction(OBELISK_RT_RANDOM_CAST_V1, property.width);
+            instruction(OBELISK_RT_RANDOM_CAST_V1, 64);
+            if (property.isSigned) {
+              instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, false, 0,
+                          uint64_t{1} << (property.width - 1));
+              instruction(OBELISK_RT_RANDOM_BIT_XOR_V1, 64);
+            }
+            return success();
+          };
+          if (failed(emitOrdinal()))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64, false,
+                      range.lower);
+          instruction(OBELISK_RT_RANDOM_GE_V1, 1);
+          if (failed(emitOrdinal()))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64, false,
+                      range.cardinality);
+          instruction(OBELISK_RT_RANDOM_LE_V1, 1);
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          return success();
+        };
+        auto emitPositive = [&](uint32_t index, Value weight) {
+          unsigned width = cast<IntegerType>(weight.getType()).getWidth();
+          instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, width, false, index);
+          instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, width, false, 0, 0);
+          instruction(OBELISK_RT_RANDOM_GT_V1, 1);
+        };
+        bool firstSupport = true;
+        for (size_t index = 0; index != rawItems.size(); ++index) {
+          const DistRangePlan &range = plan.ranges[index];
+          if (failed(emitMatch(range)))
+            return failure();
+          emitPositive(range.weightCapture, range.weight);
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          // The unscaled weight capture is shared by all its source uses;
+          // keeping it in the predicate also records its precise ABI width.
+          if (range.weightCapture != rawWeights[index].first) {
+            emitPositive(rawWeights[index].first, rawWeights[index].second);
+            instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          }
+          if (!firstSupport)
+            instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+          firstSupport = false;
+        }
+        if (defaultWeight) {
+          bool firstExplicit = true;
+          for (size_t index = 0; index != rawItems.size(); ++index) {
+            if (failed(emitMatch(plan.ranges[index])))
+              return failure();
+            if (!firstExplicit)
+              instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+            firstExplicit = false;
+          }
+          if (firstExplicit)
+            emitLiteral(false);
+          instruction(OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1);
+          emitPositive(plan.ranges.back().weightCapture,
+                       plan.ranges.back().weight);
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          if (!firstSupport)
+            instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+          firstSupport = false;
+        }
+        if (firstSupport)
+          emitLiteral(false);
+        distPlans.push_back(std::move(plan));
+        return success();
+      }
+
       auto constantBits = [&](Operation *value) -> FailureOr<uint64_t> {
-        FailureOr<ParsedConstant> parsed = constantValue(value);
+        FailureOr<ParsedConstant> parsed = contextualConstant(value);
         if (failed(parsed)) {
           emitError(getSemanticLocation(value))
               << "dist range endpoints must be compile-time integral "
@@ -3756,68 +4117,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         normalization *= factor;
       }
 
-      llvm::DenseMap<Operation *, std::pair<uint32_t, Value>> weights;
-      std::optional<std::pair<uint32_t, Value>> implicitWeight;
-      auto materializeWeight =
-          [&](Operation *weight,
-              bool &isSigned) -> FailureOr<std::pair<uint32_t, Value>> {
-        if (weight) {
-          if (dependsOnCandidate(weight)) {
-            emitError(getSemanticLocation(weight))
-                << "dist weights cannot depend on randomized properties";
-            return failure();
-          }
-          if (auto found = weights.find(weight); found != weights.end()) {
-            isSigned = false;
-            return found->second;
-          }
-          FailureOr<SafeConstraintValue> safe = safeConstraintValue(weight);
-          FailureOr<Value> lowered = succeeded(safe)
-                                         ? FailureOr<Value>(safe->value)
-                                         : FailureOr<Value>(failure());
-          FailureOr<Value> scalar =
-              succeeded(lowered)
-                  ? toPackedScalar(*lowered, getSemanticLocation(weight))
-                  : FailureOr<Value>(failure());
-          if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
-            emitError(getSemanticLocation(weight))
-                << "dist weights must be packed integral values";
-            return failure();
-          }
-          // IEEE 1800-2023 18.5.3 interprets the self-determined weight
-          // expression as unsigned, including signed negative bit patterns.
-          if (!rawDistWeights &&
-              cast<IntegerType>((*scalar).getType()).getWidth() > 64) {
-            emitError(getSemanticLocation(weight))
-                << "dist weights wider than 64 bits are not executable yet";
-            return failure();
-          }
-          isSigned = false;
-          Type weightType =
-              rawDistWeights
-                  ? builder.getIntegerType(std::max<unsigned>(
-                        64, cast<IntegerType>((*scalar).getType()).getWidth()))
-                  : i64;
-          FailureOr<Value> extended =
-              convert(*scalar, weightType, isSigned,
-                      getSemanticLocation(weight), false);
-          if (failed(extended))
-            return failure();
-          uint32_t capture = static_cast<uint32_t>(programCaptures.size());
-          programCaptures.push_back(*extended);
-          auto result = std::make_pair(capture, *extended);
-          weights[weight] = result;
-          return result;
-        }
-        isSigned = false;
-        if (!implicitWeight) {
-          uint32_t capture = static_cast<uint32_t>(programCaptures.size());
-          Value one = constant64(1);
-          programCaptures.push_back(one);
-          implicitWeight = std::make_pair(capture, one);
-        }
-        return *implicitWeight;
-      };
 
       DistPlan plan{expression, propertyIndex,
                     0,          activeProgramConstraintBlock,
@@ -5691,6 +5990,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           flags |= OBELISK_RT_RANDOM_DIST_RAW_WEIGHT;
           if (range.perRange)
             flags |= OBELISK_RT_RANDOM_DIST_PER_RANGE;
+          flags |= range.intervalFlags;
         }
         if (planned[plan.propertyIndex].isSigned)
           flags |= OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
@@ -7675,9 +7975,25 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           Value supported =
               arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(false));
+          Value mentioned = supported;
+          SmallVector<Value> intervalMatches;
           for (const DistRangePlan &range : plan->ranges) {
             Value matches;
-            if (range.cardinality == 0) {
+            if (range.intervalFlags &
+                OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT) {
+              intervalMatches.push_back({});
+              continue;
+            } else if (range.intervalFlags &
+                       OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL) {
+              Value atOrAbove = arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::uge, field,
+                  range.capturedLower);
+              Value atOrBelow = arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ule, field,
+                  range.capturedUpper);
+              matches = arith::AndIOp::create(builder, location, atOrAbove,
+                                              atOrBelow);
+            } else if (range.cardinality == 0) {
               matches = arith::ConstantOp::create(builder, location,
                                                   builder.getI1Type(),
                                                   builder.getBoolAttr(true));
@@ -7693,6 +8009,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               matches =
                   arith::AndIOp::create(builder, location, atOrAbove, belowEnd);
             }
+            intervalMatches.push_back(matches);
+            mentioned =
+                arith::OrIOp::create(builder, location, mentioned, matches);
+          }
+          for (auto [index, range] : llvm::enumerate(plan->ranges)) {
+            Value matches = intervalMatches[index];
+            if (range.intervalFlags & OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT)
+              matches = arith::XOrIOp::create(
+                  builder, location, mentioned,
+                  arith::ConstantOp::create(builder, location,
+                                            builder.getI1Type(),
+                                            builder.getBoolAttr(true)));
             arith::CmpIPredicate positivePredicate =
                 range.weightSigned ? arith::CmpIPredicate::sgt
                                    : arith::CmpIPredicate::ugt;

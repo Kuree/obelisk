@@ -468,7 +468,7 @@
         {
           "feature": "Singleton and range dist syntax",
           "status": "supported",
-          "detail": "Constant integral endpoints, explicit weights, default ranges, and additive overlapping items have executable plans."
+          "detail": "Constant and state-valued two-state integral endpoints, explicit weights, default ranges, and additive overlapping items have executable plans. Constant endpoints retain intermediate conversion widths and signedness."
         },
         {
           "feature": "Unsigned weight interpretation",
@@ -478,7 +478,7 @@
         {
           "feature": "Per-range and per-value probability",
           "status": "partial",
-          "detail": "Runtime Z3 preserves each constant integral item's original mass after filtering. Exact target projections and arbitrary-precision normalization support wide weights, overlapping items and noncontiguous defaults. Expression targets, dynamic endpoints and real ranges remain open."
+          "detail": "Runtime Z3 preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Expression targets, candidate-dependent endpoints and real ranges remain open."
         },
         {
           "feature": "Nonzero weights never make an otherwise legal solve fail",
@@ -497,8 +497,8 @@
         },
         {
           "feature": "Dynamic endpoints, candidate weights, and real ranges",
-          "status": "missing",
-          "detail": "Require a generalized distribution planner and real domains."
+          "status": "partial",
+          "detail": "State-valued two-state integral endpoints are captured at each call, clipped to the target domain, and combined with exact original := range masses. Default complement membership includes explicitly listed zero-weight items and supports a default-only distribution. Candidate-dependent endpoints and weights, unknown-plane state endpoints and real ranges remain open."
         }
       ],
       "evidence": {
@@ -520,7 +520,8 @@
           "test/Conversion/obelisk-to-simulation-random-weighted-diagnostics.mlir",
           "runtime/unittests/RandSolveTest.cpp",
           "runtime/unittests/RandSolveWideTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-dist-runtime.mlir"
         ]
       }
     },

@@ -435,23 +435,35 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       uint32_t capture = read32(record + 40);
       uint32_t flags = read32(record + 44);
       record += OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
-      uint64_t mask = width == 64  ? UINT64_MAX
+      uint64_t mask = width >= 64  ? UINT64_MAX
                       : width == 0 ? 0
                                    : (uint64_t{1} << width) - 1;
       bool fullDomain = cardinality == 0 && width == 64 && lower == 0;
+      bool captured = flags & OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL;
+      bool defaultComplement =
+          flags & OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT;
       if (group >= distGroupCount || width == 0 || width > 64 ||
           targetOffset > aggregateWidth ||
           width > aggregateWidth - targetOffset ||
-          (weighted ? reserved > 64 : reserved != 0) || lower > mask ||
-          (!fullDomain &&
-           (cardinality == 0 || cardinality - 1 > mask - lower)) ||
+          (weighted ? reserved > 64 : reserved != 0) ||
+          (captured ? lower >= captureCount || cardinality >= captureCount ||
+                          !(flags & OBELISK_RT_RANDOM_DIST_PER_RANGE)
+                    : lower > mask ||
+                          (!fullDomain && (cardinality == 0 ||
+                                           cardinality - 1 > mask - lower))) ||
+          (defaultComplement &&
+           (captured || !(flags & OBELISK_RT_RANDOM_DIST_PER_RANGE) ||
+            lower != 0 || cardinality != mask + 1)) ||
           (!weighted && coefficient == 0) || capture >= captureCount ||
-          (weighted ? !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
-                          (flags & ~(OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
-                                     OBELISK_RT_RANDOM_DIST_PER_RANGE |
-                                     OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0
-                    : (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
-                                 OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0) ||
+          (weighted
+               ? !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
+                     (flags & ~(OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
+                                OBELISK_RT_RANDOM_DIST_PER_RANGE |
+                                OBELISK_RT_RANDOM_DIST_TARGET_SIGNED |
+                                OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL |
+                                OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT)) != 0
+               : (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
+                            OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0) ||
           (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            constraintBlock >= 64))
         return std::nullopt;
